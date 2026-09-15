@@ -36,11 +36,12 @@ namespace JSC {
 
 const ClassInfo ModuleRegistryEntry::s_info = { "ModuleRegistryEntry"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleRegistryEntry) };
 
-ModuleRegistryEntry::ModuleRegistryEntry(VM& vm, Structure* structure, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleRegistryEntry::ModuleRegistryEntry(VM& vm, Structure* structure, JSModuleLoader* loader, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
     : Base(vm, structure)
     , m_key(WTF::move(key))
     , m_type(type)
     , m_scriptFetcher(WTF::move(scriptFetcher))
+    , m_loader(loader, WriteBarrierEarlyInit)
 {
 }
 
@@ -62,6 +63,7 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<ModuleRegistryEntry>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_loader);
     visitor.append(thisObject->m_record);
     visitor.append(thisObject->m_fetchPromise);
     visitor.append(thisObject->m_modulePromise);
@@ -71,16 +73,16 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(ModuleRegistryEntry);
 
-ModuleRegistryEntry* ModuleRegistryEntry::create(VM& vm, Structure* structure, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleRegistryEntry* ModuleRegistryEntry::create(VM& vm, Structure* structure, JSModuleLoader* loader, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
 {
-    ModuleRegistryEntry* instance = new (NotNull, allocateCell<ModuleRegistryEntry>(vm)) ModuleRegistryEntry(vm, structure, WTF::move(key), type, WTF::move(scriptFetcher));
+    ModuleRegistryEntry* instance = new (NotNull, allocateCell<ModuleRegistryEntry>(vm)) ModuleRegistryEntry(vm, structure, loader, WTF::move(key), type, WTF::move(scriptFetcher));
     instance->finishCreation(vm);
     return instance;
 }
 
-ModuleRegistryEntry* ModuleRegistryEntry::create(VM& vm, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
+ModuleRegistryEntry* ModuleRegistryEntry::create(VM& vm, JSModuleLoader* loader, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
 {
-    return create(vm, vm.moduleRegistryEntryStructure.get(), WTF::move(key), type, WTF::move(scriptFetcher));
+    return create(vm, vm.moduleRegistryEntryStructure.get(), loader, WTF::move(key), type, WTF::move(scriptFetcher));
 }
 
 const Identifier& ModuleRegistryEntry::key() const

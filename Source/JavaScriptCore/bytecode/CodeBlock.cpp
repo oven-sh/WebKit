@@ -406,20 +406,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     checker().set(CrashChecker::Metadata, checker().hash(this, m_metadata.get()));
 }
 
-static FunctionExecutable* instantiatedModuleFunctionExecutable(JSModuleEnvironment* moduleEnvironment, ScriptExecutable* topLevelExecutable, UnlinkedFunctionExecutable* unlinkedExecutable)
-{
-    SymbolTableEntry::Fast entry = moduleEnvironment->symbolTable()->get(unlinkedExecutable->name().impl());
-    if (entry.isNull())
-        return nullptr;
-    auto* function = dynamicDowncast<JSFunction>(moduleEnvironment->variableAt(entry.scopeOffset()).get());
-    if (!function)
-        return nullptr;
-    auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    if (!executable || executable->unlinkedExecutable() != unlinkedExecutable || executable->topLevelExecutable() != topLevelExecutable)
-        return nullptr;
-    return executable;
-}
-
 // The main purpose of this function is to generate linked bytecode from unlinked bytecode. The process
 // of linking is taking an abstract representation of bytecode and tying it to a GlobalObject and scope
 // chain. For example, this process allows us to cache the depth of lexical environment reads that reach
@@ -449,10 +435,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     // We already have the cloned symbol table for the module environment since we need to instantiate
     // the module environments before linking the code block. We replace the stored symbol table with the already cloned one.
-    JSModuleEnvironment* moduleEnvironment = nullptr;
+    ModuleProgramExecutable* moduleProgramExecutable = nullptr;
     if (UnlinkedModuleProgramCodeBlock* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(unlinkedCodeBlock)) {
-        moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
-        SymbolTable* clonedSymbolTable = uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->moduleEnvironmentSymbolTable();
+        moduleProgramExecutable = uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable);
+        SymbolTable* clonedSymbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
         if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes()) {
             ConcurrentJSLocker locker(clonedSymbolTable->m_lock);
             clonedSymbolTable->prepareForTypeProfiling(locker);
@@ -472,9 +458,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        FunctionExecutable* executable = moduleEnvironment ? instantiatedModuleFunctionExecutable(moduleEnvironment, topLevelExecutable, unlinkedExecutable) : nullptr;
-        if (!executable)
-            executable = unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+        FunctionExecutable* executable = moduleProgramExecutable ? moduleProgramExecutable->functionDeclaration(vm, i) : unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
         m_functionDecls[i].set(vm, this, executable);
     }
 
@@ -502,9 +486,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
         }
     }
-
-    // Bookkeep the strongly referenced module environments.
-    UncheckedKeyHashSet<JSModuleEnvironment*> stronglyReferencedModuleEnvironments;
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
@@ -642,15 +623,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
-            if (op.lexicalEnvironment) {
-                if (op.type == ModuleVar) {
-                    // Keep the linked module environment strongly referenced.
-                    if (stronglyReferencedModuleEnvironments.add(uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)).isNewEntry)
-                        addConstant(ConcurrentJSLocker(m_lock), op.lexicalEnvironment);
-                    metadata.m_lexicalEnvironment.set(vm, this, op.lexicalEnvironment);
-                } else
-                    metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
-            } else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
+            if (op.type == ModuleVar)
+                metadata.m_moduleImportSlot = op.moduleImportSlot;
+            else if (op.lexicalEnvironment)
+                metadata.m_symbolTable.set(vm, this, op.lexicalEnvironment->symbolTable());
+            else if (JSScope* constantScope = JSScope::constantScopeForCodeBlock(op.type, this)) {
                 metadata.m_constantScope.set(vm, this, constantScope);
                 if (op.type == GlobalProperty || op.type == GlobalPropertyWithVarInjectionChecks)
                     metadata.m_globalLexicalBindingEpoch = m_globalObject->globalLexicalBindingEpoch();
@@ -705,10 +682,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                         metadata.m_watchpointSet = iter->value.watchpointSet();
                     }
                     // Generator and async function bodies can resume on a new CodeBlock after the
-                    // original is cleared (e.g. by deleteAllCode). The new CodeBlock's constant pool
-                    // holds a fresh SymbolTable clone, but the suspended activation still references
-                    // the original. Firing the metadata WatchpointSet via touch() at runtime would
-                    // notify watchers of the wrong SymbolTable. Pre-invalidate here so DFG treats
+                    // original is cleared (e.g. by deleteAllCode). setConstantRegisters gives the new
+                    // CodeBlock the clone that the suspended activation's environments were made from
+                    // whenever it still describes the scope; when it does not, those environments keep a
+                    // SymbolTable that this CodeBlock's puts do not notify. Pre-invalidate here so DFG treats
                     // these captured variables as non-constant, matching ClosureVar semantics.
                     if (metadata.m_watchpointSet
                         && ownerExecutable->isFunctionExecutable()
@@ -866,7 +843,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
 // A module's heap-allocated function declarations got their FunctionExecutable when the module environment was created
 // (moduleDeclarationInstantiation) and no new_func names them, so their entries stay null for good (the eager path
-// looks the existing one up instead, instantiatedModuleFunctionExecutable()).
+// takes them from the ModuleProgramExecutable, which owns them).
 unsigned CodeBlock::firstLazilyMaterializedFunctionDecl() const
 {
     if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
@@ -1210,6 +1187,19 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
             moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
     }
 #endif
+    // An activation of a generator, an async function or a module body can outlive this code: while it is suspended its
+    // CodeBlock can be jettisoned and the unlinked code it was linked from thrown away, and it then resumes in a CodeBlock
+    // linked from code that was generated or decoded again, whose SymbolTable constants are new objects. The environments
+    // it made before came from the clones of the old ones, and closures over those are compiled against those clones'
+    // inferences (DFG::ByteCodeParser folds a closure's scope under SymbolTable::singleton()), so the environments it
+    // makes from here on have to come from the same clones, or nothing would ever tell that code about them.
+    JSCell* resumableCodeOwner = nullptr;
+    if (m_unlinkedCode->codeType() == ModuleCode) {
+        if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
+            resumableCodeOwner = ownerExecutable();
+    } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
+        resumableCodeOwner = uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable();
+
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();
         SourceCodeRepresentation representation = constantsSourceCodeRepresentation[i];
@@ -1236,15 +1226,42 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                         // If we didn't then we could jettison a compilation because that constant changed
                         // but invalidate the clone. Then the next compilation would see the original
                         // watchpoint intact and assume the value is still the original constant.
-                        SymbolTable* clone = globalObject->symbolTableCache().get(symbolTable);
-                        if (!clone) {
-                            // For non-builtin code, link the clone's singleton watchpoint to the master
-                            // SymbolTable held inside the UnlinkedCodeBlock so that all per-realm clones
-                            // share one InferredValue. This avoids re-firing the singleton watchpoint
-                            // independently in every realm (e.g. on navigation) for the same code.
-                            auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
-                            clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
-                            globalObject->symbolTableCache().set(symbolTable, clone);
+                        //
+                        // For non-builtin code, link the clone's singleton watchpoint to the master
+                        // SymbolTable held inside the UnlinkedCodeBlock so that all per-realm clones
+                        // share one InferredValue. This avoids re-firing the singleton watchpoint
+                        // independently in every realm (e.g. on navigation) for the same code.
+                        auto propagateCloneInvalidationToOriginal = m_unlinkedCode->isBuiltinFunction() ? SymbolTable::PropagateCloneInvalidationToOriginal::No : SymbolTable::PropagateCloneInvalidationToOriginal::Yes;
+                        SymbolTable* clone = nullptr;
+                        if (resumableCodeOwner) {
+                            // Found by whose code this is, not by the constant, which is another object by now if the
+                            // code was generated again.
+                            JSGlobalObject::ResumableCodeSymbolTableKey key { resumableCodeOwner, static_cast<unsigned>(i) };
+                            // The scope has older environments if an older clone is still around: a new clone must not
+                            // take the first one made from it for the only one there is.
+                            bool scopeHasOlderEnvironments = false;
+                            clone = globalObject->resumableCodeSymbolTableClones().get(key);
+                            if (clone && clone->clonedFrom() != symbolTable) {
+                                if (clone->isCloneOfScopePartOf(*symbolTable))
+                                    clone->adoptOriginal(vm, *symbolTable);
+                                else {
+                                    clone->invalidateInferencesOfAbandonedClone(vm);
+                                    scopeHasOlderEnvironments = true;
+                                    clone = nullptr;
+                                }
+                            }
+                            if (!clone) {
+                                clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                                if (scopeHasOlderEnvironments)
+                                    clone->singleton().invalidate(vm, StringFireDetail("The scope has environments that were made from another SymbolTable"));
+                                globalObject->resumableCodeSymbolTableClones().set(key, clone);
+                            }
+                        } else {
+                            clone = globalObject->symbolTableCache().get(symbolTable);
+                            if (!clone) {
+                                clone = symbolTable->cloneScopePart(vm, propagateCloneInvalidationToOriginal);
+                                globalObject->symbolTableCache().set(symbolTable, clone);
+                            }
                         }
                         if (wasCompiledWithDebuggingOpcodes())
                             clone->collectDebuggerInfo(this);
@@ -1919,6 +1936,8 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             // Right now this isn't strictly necessary. Any symbol tables that this will refer to
             // are for outer functions, and we refer to those functions strongly, and they refer
             // to the symbol table strongly. But it's nice to be on the safe side.
+            if (metadata.m_resolveType == ModuleVar)
+                return; // m_moduleImportSlot, not a cell.
             WriteBarrierBase<SymbolTable>& symbolTable = metadata.m_symbolTable;
             if (!symbolTable || vm.heap.isMarked(symbolTable.get()))
                 return;

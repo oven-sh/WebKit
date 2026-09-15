@@ -32,6 +32,7 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
+#include "JSModuleRecord.h"
 
 namespace JSC {
 
@@ -50,14 +51,36 @@ JSModuleEnvironment* JSModuleEnvironment::create(
     //     [ JSLexicalEnvironment ][ variable slots ]
     //
     // JSModuleEnvironment:
-    //     [ JSLexicalEnvironment ][ variable slots ][ additional slots for JSModuleEnvironment ]
+    //     [ JSLexicalEnvironment ][ variable slots ][ module record ][ import slot count ][ import slots ]
+    auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(moduleRecord);
+    unsigned importSlotCount = sourceTextModule ? sourceTextModule->importSlotCount() : 0;
     JSModuleEnvironment* result =
         new (
             NotNull,
-            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable)))
-        JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord);
+            allocateCell<JSModuleEnvironment>(vm, JSModuleEnvironment::allocationSize(symbolTable, importSlotCount)))
+        JSModuleEnvironment(vm, structure, currentScope, symbolTable, initialValue, moduleRecord, importSlotCount);
     result->finishCreation(vm);
     return result;
+}
+
+inline JSModuleEnvironment::JSModuleEnvironment(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue, AbstractModuleRecord* moduleRecord, unsigned importSlotCount)
+    : Base(vm, structure, currentScope, symbolTable, initialValue)
+{
+    moduleRecordSlot().setWithoutWriteBarrier(moduleRecord);
+    importSlotCountSlot() = importSlotCount;
+    for (unsigned i = 0; i < importSlotCount; ++i)
+        importSlot(i).clear();
+}
+
+JSModuleEnvironment* JSModuleEnvironment::fillImportSlot(JSGlobalObject* globalObject, JSScope* scope, unsigned depth, ScopeOffset slot)
+{
+    for (unsigned i = 0; i < depth; ++i)
+        scope = scope->next();
+    auto* importer = uncheckedDowncast<JSModuleEnvironment>(scope);
+    unsigned index = slot.offset() - importSlotScopeOffset(importer->symbolTable(), 0).offset();
+    if (JSModuleEnvironment* environment = importer->importSlot(index).get())
+        return environment;
+    return uncheckedDowncast<JSModuleRecord>(importer->moduleRecord())->fillImportSlot(globalObject, index);
 }
 
 template<typename Visitor>
@@ -68,6 +91,8 @@ void JSModuleEnvironment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.appendValues(thisObject->variables(), thisObject->symbolTable()->scopeSize());
     visitor.append(thisObject->moduleRecordSlot());
+    for (unsigned i = 0; i < thisObject->importSlotCount(); ++i)
+        visitor.append(thisObject->importSlot(i));
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleEnvironment);

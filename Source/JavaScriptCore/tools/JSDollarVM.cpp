@@ -31,6 +31,7 @@
 
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
+#include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
@@ -55,9 +56,12 @@
 #include "JSCInlines.h"
 #include "JSGlobalProxyInlines.h"
 #include "JSONObject.h"
+#include "JSModuleLoader.h"
+#include "JSLexicalEnvironmentInlines.h"
 #include "JSPromise.h"
 #include "JSString.h"
 #include "LinkBuffer.h"
+#include "MarkedSpaceInlines.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2176,6 +2180,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
+static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2242,7 +2247,11 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
+static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
+static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -2889,6 +2898,17 @@ static CodeBlock* codeBlockFromArg(JSGlobalObject* globalObject, CallFrame* call
     return nullptr;
 }
 
+// Usage: $vm.hasDecodedExpressionInfo(functionObj) or $vm.hasDecodedExpressionInfo(codeBlockToken)
+// False while the source positions of the function's code are still in a bytecode cache payload, undefined if it has no code block.
+JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(codeBlockToken))
 // Note: you cannot toString() a codeBlock because it's an internal object and not
@@ -3288,7 +3308,13 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateGlobalObject, (JSGlobalObject* globalObje
     JSValue prototype = jsNull();
     if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0)))
         prototype = object;
-    return JSValue::encode(JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype)));
+    JSGlobalObject* newGlobalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, prototype));
+#if defined(BUN_JSDOLLARVM_FORCE)
+    // The library omits $vm in this configuration, so JSGlobalObject::init() did not install it.
+    if (Options::useDollarVM())
+        newGlobalObject->exposeDollarVM(vm);
+#endif
+    return JSValue::encode(newGlobalObject);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateProxy, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -3930,10 +3956,127 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
+// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock }
+JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    unsigned blocks = 0;
+    unsigned blocksWithDecommittedPages = 0;
+    unsigned decommittedPages = 0;
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        blocks++;
+        if (unsigned count = handle->numberOfDecommittedPages()) {
+            blocksWithDecommittedPages++;
+            decommittedPages += count;
+        }
+    });
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "blocks"_s), jsNumber(blocks));
+    result->putDirect(vm, Identifier::fromString(vm, "blocksWithDecommittedPages"_s), jsNumber(blocksWithDecommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "decommittedPages"_s), jsNumber(decommittedPages));
+    result->putDirect(vm, Identifier::fromString(vm, "pagesPerBlock"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize / WTF::pageSize())));
+    return JSValue::encode(result);
+}
+
+// What poisonDecommittedMarkedBlockPages left in some decommitted page: "asan", "pattern" or "none". Does not read a poisoned byte.
+JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    ASCIILiteral result = "none"_s;
+    size_t pageSize = WTF::pageSize();
+    vm.heap.objectSpace().forEachBlock([&](MarkedBlock::Handle* handle) {
+        if (!handle->numberOfDecommittedPages())
+            return;
+        auto* base = std::bit_cast<uint8_t*>(&handle->block());
+        for (size_t offset = pageSize; offset < MarkedBlock::blockSize; offset += pageSize) {
+#if ASAN_ENABLED
+            if (__asan_address_is_poisoned(base + offset))
+                result = "asan"_s;
+#else
+            bool isPattern = true;
+            for (size_t i = 0; i < 64; ++i)
+                isPattern &= base[offset + i] == 0xbd;
+            if (isPattern)
+                result = "pattern"_s;
+#endif
+        }
+    });
+    return JSValue::encode(jsNontrivialString(vm, String(result)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
+}
+
+// $vm.createModuleLoader(bindings?, sharing?): another module loader for this global object,
+// as { loader }. With `bindings`, the loader's modules see that object's own enumerable
+// properties as variables of a lexical environment between them and the global scope. With
+// `sharing` (an earlier result made with the same property names), that environment reuses
+// the symbol table of sharing.loader's, so the two loaders' modules share executables.
+static JSModuleLoader* moduleLoaderFromHolder(VM& vm, JSValue value)
+{
+    JSObject* holder = value.getObject();
+    JSValue loader = holder ? holder->getDirect(vm, Identifier::fromString(vm, "loader"_s)) : JSValue();
+    return loader ? dynamicDowncast<JSModuleLoader>(loader) : nullptr;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSScope* moduleScope = globalObject->globalLexicalEnvironment();
+    if (JSObject* bindings = callFrame->argument(0).getObject()) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        bindings->methodTable()->getOwnPropertyNames(bindings, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        SymbolTable* symbolTable = nullptr;
+        if (!callFrame->argument(1).isUndefined()) {
+            JSModuleLoader* sharing = moduleLoaderFromHolder(vm, callFrame->argument(1));
+            auto* sharingScope = sharing ? dynamicDowncast<JSLexicalEnvironment>(sharing->moduleScope()) : nullptr;
+            if (!sharingScope || sharingScope->symbolTable()->scopeSize() != names.size())
+                return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
+            symbolTable = sharingScope->symbolTable();
+            for (auto& name : names) {
+                if (!symbolTable->contains(NoLockingNecessary, name.impl()))
+                    return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
+            }
+        } else {
+            symbolTable = SymbolTable::create(vm);
+            for (auto& name : names)
+                symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
+        }
+        JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+        for (auto& name : names) {
+            JSValue value = bindings->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            environment->variableAt(symbolTable->get(name.impl()).scopeOffset()).set(vm, environment, value);
+        }
+        moduleScope = environment;
+    }
+    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, moduleScope);
+    JSObject* result = constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);
+    return JSValue::encode(result);
+}
+
+// $vm.moduleLoaderImport({ loader }, specifier): import(specifier) through that loader, relative to the caller.
+JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    JSString* specifier = callFrame->argument(1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
@@ -5560,6 +5703,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
+    addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);
@@ -5646,8 +5790,12 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
+    addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
+    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
+    addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);

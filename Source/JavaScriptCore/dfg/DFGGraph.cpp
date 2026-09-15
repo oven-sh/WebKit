@@ -49,6 +49,7 @@
 #include "GetterSetter.h"
 #include "JIT.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "OperandsInlines.h"
@@ -1453,6 +1454,15 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         return JSValue();
     
     SymbolTable* symbolTable = activation->symbolTable();
+
+    // A module environment's import slot is written once (empty until then), so a
+    // filled slot is a constant without a watchpoint.
+    if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(activation)) {
+        unsigned firstImportSlot = JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset();
+        if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
+            return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
+    }
+
     JSValue value;
     InlineWatchpointSet* set;
     {

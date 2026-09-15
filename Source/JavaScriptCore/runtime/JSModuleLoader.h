@@ -74,17 +74,26 @@ public:
         Ready,
     };
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure)
+    // moduleScope: the scope the environments of this loader's modules are created
+    // in; the global lexical environment, or lexical environments ending in it.
+    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSScope* moduleScope)
     {
-        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure);
+        JSModuleLoader* object = new (NotNull, allocateCell<JSModuleLoader>(vm)) JSModuleLoader(vm, structure, moduleScope);
         object->finishCreation(globalObject, vm);
         return object;
     }
 
-    static JSModuleLoader* create(JSGlobalObject* globalObject, VM& vm)
-    {
-        return create(globalObject, vm, vm.moduleLoaderStructure.get());
-    }
+    JS_EXPORT_PRIVATE static JSModuleLoader* create(JSGlobalObject*, VM&, JSScope* moduleScope);
+
+    JSScope* moduleScope() const { return m_moduleScope.get(); }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
+    // this loader's modules runs in, its top-level await continuations included. Empty
+    // (the default): whatever is current when a module is executed.
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+#endif
 
     DECLARE_INFO;
 
@@ -165,7 +174,7 @@ public:
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
 
-    static JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
+    JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
     static ErrorInstance* duplicateError(JSGlobalObject*, ErrorInstance*);
@@ -255,7 +264,7 @@ public:
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
 private:
-    JSModuleLoader(VM&, Structure*);
+    JSModuleLoader(VM&, Structure*, JSScope* moduleScope);
     void finishCreation(JSGlobalObject*, VM&);
 
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
@@ -288,6 +297,10 @@ private:
     // Corresponds to RealmRecord.[[LoadedModules]].
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
+    WriteBarrier<JSScope> m_moduleScope;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
     ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;

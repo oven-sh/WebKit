@@ -43,6 +43,7 @@ namespace JSC {
 
 class CyclicModuleRecord;
 class JSModuleEnvironment;
+class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSMap;
 class JSPromise;
@@ -199,6 +200,7 @@ public:
     };
 
     const Identifier& moduleKey() const { return m_moduleKey; }
+    JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     ScriptFetchParameters::Type moduleType() const;
     const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
@@ -312,6 +314,7 @@ public:
     // import bindings come from the graph's resolutions. The by-name maps above are built from the graph the first time
     // something needs them.
     bool isPrelinked() const { return !!m_prelinked; }
+    bool importEntriesArePrelinked() const { return m_prelinked && !m_prelinkedEntriesMaterialized; }
     PrelinkedModuleGraph* prelinkedGraph() const { return m_prelinked.get(); }
     uint32_t prelinkedIndex() const { return m_prelinkedIndex; }
     const PrelinkedModuleGraph::Module& prelinkedModule() const { return m_prelinked->module(m_prelinkedIndex); }
@@ -332,7 +335,7 @@ public:
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
 
 protected:
-    AbstractModuleRecord(VM&, Structure*, Identifier, SourceProviderSourceType);
+    AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 #if USE(BUN_JSC_ADDITIONS)
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
@@ -362,6 +365,7 @@ private:
 
     // The loader resolves the given module name to the module key. The module key is the unique value to represent this module.
     Identifier m_moduleKey;
+    WriteBarrier<JSModuleLoader> m_moduleLoader;
 
     // Map localName -> ImportEntry.
     ImportEntries m_importEntries;

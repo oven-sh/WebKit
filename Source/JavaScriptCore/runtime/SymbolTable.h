@@ -701,6 +701,16 @@ public:
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
 
+    // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
+    // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go
+    // on using this clone and keep notifying the watchpoints that code compiled against the old environments holds.
+    bool isCloneOfScopePartOf(SymbolTable& original);
+    // It is `original`'s clone from then on.
+    void adoptOriginal(VM&, SymbolTable& original);
+    SymbolTable* clonedFrom() const { return m_clonedFrom.get(); }
+    // Otherwise nothing will notify this clone again: whatever was inferred through it is given up.
+    void invalidateInferencesOfAbandonedClone(VM&);
+
     void prepareForTypeProfiling(const ConcurrentJSLocker&);
 
     String NODELETE inferredName();

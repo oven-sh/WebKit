@@ -26,6 +26,7 @@
 #include "config.h"
 #include "AbstractModuleRecord.h"
 
+#include "BuiltinNames.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
 #include "JSCInlines.h"
@@ -75,9 +76,10 @@ auto AbstractModuleRecord::AsyncEvaluationOrder::order(int64_t order) -> AsyncEv
     return *this;
 }
 
-AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, Identifier moduleKey, SourceProviderSourceType sourceType)
+AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, JSModuleLoader* moduleLoader, Identifier moduleKey, SourceProviderSourceType sourceType)
     : Base(vm, structure)
     , m_moduleKey(WTF::move(moduleKey))
+    , m_moduleLoader(moduleLoader, WriteBarrierEarlyInit)
     , m_sourceType(sourceType)
 {
 }
@@ -99,6 +101,7 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     AbstractModuleRecord* thisObject = uncheckedDowncast<AbstractModuleRecord>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_moduleLoader);
     visitor.append(thisObject->m_moduleEnvironment);
     visitor.append(thisObject->m_moduleNamespaceObject);
     visitor.append(thisObject->m_deferredNamespaceObject);
@@ -400,7 +403,7 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRecordForResolution(JSGloba
 {
     if (moduleIndex == m_prelinkedIndex)
         return const_cast<AbstractModuleRecord*>(this);
-    JSModuleLoader* loader = globalObject()->moduleLoader();
+    JSModuleLoader* loader = moduleLoader();
     if (loader->prelinkedModuleGraph() != m_prelinked.get())
         return nullptr;
     AbstractModuleRecord* record = loader->prelinkedRecordForResolution(moduleIndex);
@@ -1469,11 +1472,13 @@ void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!m_moduleEnvironment);
+    bool putResult = false;
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    RETURN_IF_EXCEPTION(scope, void());
     // If module namespace object is materialized, we will materialize *namespace* slot too.
     if (m_moduleNamespaceObject) {
-        bool putResult = false;
-        constexpr bool shouldThrowReadOnlyError = false;
-        constexpr bool ignoreReadOnlyErrors = true;
         symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->starNamespacePrivateName, m_moduleNamespaceObject.get(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
         RETURN_IF_EXCEPTION(scope, void());
     }

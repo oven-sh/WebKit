@@ -27,12 +27,11 @@
 
 #include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
 #include <JavaScriptCore/ParserModes.h>
 #include <JavaScriptCore/SourceCode.h>
 
 namespace JSC {
-
-class ModuleProgramExecutable;
 
 // Based on the Source Text Module Record
 // http://www.ecma-international.org/ecma-262/6.0/#sec-source-text-module-records
@@ -57,12 +56,12 @@ public:
     static size_t estimatedSize(JSCell*, VM&);
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
-    static JSModuleRecord* create(JSGlobalObject*, VM&, Structure*, const Identifier&, const SourceCode&, CodeFeatures);
+    static JSModuleRecord* create(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);
 #if USE(BUN_JSC_ADDITIONS)
     // Module `moduleIndex` of the graph: features, TLA/TypeScript flags and requested modules come from the graph; no
     // import/export entries are added (AbstractModuleRecord::isPrelinked()). With Options::usePrelinkedModuleInfo() off
     // the result is instead an ordinary record whose entries were copied out of the graph.
-    JS_EXPORT_PRIVATE static JSModuleRecord* createPrelinked(JSGlobalObject*, VM&, Structure*, const Identifier& moduleKey, const SourceCode&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
+    JS_EXPORT_PRIVATE static JSModuleRecord* createPrelinked(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, const SourceCode&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
 #endif
 
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
@@ -77,13 +76,24 @@ public:
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
 
+    // Local names of the import entries that bind a single export (namespace imports
+    // are variables of this module's environment), sorted: the environment has one
+    // import slot per name in this order (JSModuleEnvironment::importSlot), so the order
+    // is the same for every record of the same source.
+    const Vector<Identifier>& importSlotNames();
+    unsigned importSlotCount() { return importSlotNames().size(); }
+    unsigned importSlotIndex(UniquedStringImpl* localName);
+    JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
+    std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
+
 private:
-    JSModuleRecord(VM&, Structure*, const Identifier&, const SourceCode&, CodeFeatures);
+    JSModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, const SourceCode&, CodeFeatures);
 
     void finishCreation(JSGlobalObject*, VM&);
 
     SourceCode m_sourceCode;
     WriteBarrier<ModuleProgramExecutable> m_moduleProgramExecutable;
+    std::optional<Vector<Identifier>> m_importSlotNames;
     CodeFeatures m_features;
 };
 

@@ -29,6 +29,7 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class SymbolTable;
 class UnlinkedModuleProgramCodeBlock;
 
@@ -44,7 +45,23 @@ public:
         return vm.moduleProgramExecutableSpace<mode>();
     }
 
-    static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&);
+    // What an imported binding read by this executable's code resolves to: the
+    // exporting module's source (whose text fixes the binding's ScopeOffset) and the
+    // binding's name there, or for exporters that are not source text modules the
+    // ScopeOffset itself.
+    struct ImportedBinding {
+        RefPtr<UniquedStringImpl> localName;
+        RefPtr<SourceProvider> exporterSource;
+        RefPtr<UniquedStringImpl> exporterLocalName;
+        unsigned offset { 0 };
+        bool operator==(const ImportedBinding&) const;
+    };
+    using ImportedBindings = Vector<ImportedBinding>;
+
+    // moduleScopeSymbolTables: the symbol tables of the lexical environments between
+    // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
+    // linked code embeds their variables' offsets too.
+    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&& = std::nullopt, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
 
     static void destroy(JSCell*);
 
@@ -75,15 +92,27 @@ public:
 
     SymbolTable* moduleEnvironmentSymbolTable() LIFETIME_BOUND { return m_moduleEnvironmentSymbolTable.get(); }
 
+    // Records for one URL and source text whose imports resolve alike share this
+    // executable (JSModuleRecord::getOrMakeExecutable), so the function declarations'
+    // executables live here rather than per record.
+    FunctionExecutable* functionDeclaration(VM&, unsigned index);
+    const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
+    bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
+    // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
+    bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
+
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
 private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&, const Vector<SymbolTable*>& moduleScopeSymbolTables);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
+    FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
+    std::optional<ImportedBindings> m_importedBindings;
+    FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
 

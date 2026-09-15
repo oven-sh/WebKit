@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Pointer-family arguments accept an object carrying a numeric/BigInt `ptr` property (Bun's
 // documented FFIType.function / pointer forms accept a JSCallback / Pointer / CString object).
 // The property get may run a getter, so its exceptions must propagate; a non-numeric `ptr`

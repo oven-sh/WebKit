@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Pointer-family conversions: TypedArray / DataView / ArrayBuffer / number
 // arguments, detached views, cstring transcoding of JS strings (a new

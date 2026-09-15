@@ -91,7 +91,7 @@ public:
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }
 
 protected:
-    CyclicModuleRecord(VM&, Structure*, const Identifier&, SourceProviderSourceType);
+    CyclicModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier&, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 
     WriteBarrier<Unknown> m_evaluationError;

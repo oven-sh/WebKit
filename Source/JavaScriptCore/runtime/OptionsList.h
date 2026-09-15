@@ -292,6 +292,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, warmUpMarkedBlockIdleTimeout, 10, Normal, "seconds without a MarkedBlock request before the helper thread releases what it is holding and shuts down"_s) \
     v(Bool, scribbleFreeCells, false, Normal, nullptr) \
     v(Bool, decommitUnusedMarkedBlockPages, true, Normal, "after sweeping a MarkedBlock, return its interior OS pages that hold no live cell to the OS (only where OS pages are smaller than a MarkedBlock)") \
+    v(Bool, poisonDecommittedMarkedBlockPages, false, Normal, "testing: make any read of a decommitted MarkedBlock page before the block's next sweep to a free list fail (ASan poison; without ASan a 0xbd fill)"_s) \
     v(Bool, decommitUnusedMarkedBlockPagesAfterEdenCollections, false, Normal, "also do it for blocks swept after an eden collection (mostly young blocks that are refilled straight away)") \
     v(Double, sizeClassProgression, 1.4, Normal, nullptr) \
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
@@ -448,6 +449,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, osrExitCountForReoptimizationFromLoop, 5, Normal, nullptr) \
     \
     v(Unsigned, reoptimizationRetryCounterMax, 0, Normal, nullptr)  \
+    v(Unsigned, weakReferenceJettisonReoptimizationLimit, 4, Normal, "Optimized code jettisoned because a cell it references weakly died counts toward the reoptimization back-off of its function, like code jettisoned for exiting too often, while the function's reoptimization retry counter is below this value. 0: it never counts."_s) \
     \
     v(Unsigned, minimumOptimizationDelay, 1, Normal, nullptr) \
     v(Unsigned, maximumOptimizationDelay, 5, Normal, nullptr) \
