@@ -2754,6 +2754,8 @@ void Heap::updateAllocationLimits()
     dataLogLnIf(verbose, "sizeAfterLastCollect = ", m_sizeAfterLastCollect);
 #if USE(BUN_JSC_ADDITIONS)
     m_bytesAllocatedInPastCycles += totalBytesAllocatedThisCycle();
+    if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full)
+        m_totalBytesAllocatedAtLastFullCollect = m_bytesAllocatedInPastCycles;
 #endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;

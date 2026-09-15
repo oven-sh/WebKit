@@ -395,6 +395,14 @@ public:
     size_t sizeAfterLastCollection() const { return m_sizeAfterLastCollect; }
     // Everything the mutator has allocated (cells and reported extra memory), the current cycle included. Mutator thread only.
     uint64_t totalBytesAllocated() const { return m_bytesAllocatedInPastCycles + m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // For an embedder that wants to say "the program has gone quiet, is a collection worth it now" in the heap's own terms and
+    // not in bytes of its own choosing. How much the mutator may allocate before the heap collects by itself: what
+    // updateAllocationLimits() decided. Only a full collection ever lowers that (an eden collection can only raise
+    // m_maxHeapSize) and nothing asks for one in a program that stopped allocating, so how much garbage there may be is
+    // not measured against it but against the last full collection: what has been allocated since, and what was live then.
+    // Mutator thread only. (sizeAfterLastFullCollection() is what was live then.)
+    size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
+    uint64_t bytesAllocatedSinceLastFullCollection() const { return totalBytesAllocated() - m_totalBytesAllocatedAtLastFullCollect; }
 #endif
     bool hasHeapAccess() const { return m_worldState.load() & hasAccessBit; }
     bool worldIsStopped() const { return m_worldIsStopped; }
@@ -896,6 +904,7 @@ private:
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
     uint64_t m_bytesAllocatedInPastCycles { 0 };
+    uint64_t m_totalBytesAllocatedAtLastFullCollect { 0 };
 #endif
     size_t m_sizeAfterLastCollect { 0 };
     size_t m_sizeAfterLastFullCollect { 0 };
