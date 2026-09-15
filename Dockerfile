@@ -257,6 +257,13 @@ RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 
     CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
     make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
 
+# Bun's mimalloc (mimalloc/source.json): what a lane built with USE_MIMALLOC compiles against and what its jsc links.
+ARG MIMALLOC_REPO
+ARG MIMALLOC_COMMIT
+ARG MIMALLOC_SHA256
+ADD --checksum=sha256:${MIMALLOC_SHA256} https://github.com/${MIMALLOC_REPO}/archive/${MIMALLOC_COMMIT}.tar.gz /mimalloc.tgz
+RUN mkdir /mimalloc && tar -xzf /mimalloc.tgz --strip-components=1 -C /mimalloc && rm /mimalloc.tgz && test -f /mimalloc/src/static.c && test -f /mimalloc/include/mimalloc.h
+
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
 FROM base as lane-x86_64
 
@@ -417,6 +424,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DMIMALLOC_SOURCE_DIR=/mimalloc \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \

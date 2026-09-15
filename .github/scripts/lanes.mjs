@@ -53,6 +53,14 @@ const SANITIZERS = "address,undefined";
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
 
+// Which mimalloc: mimalloc/source.json, and nowhere else. It is Bun's fork (oven-sh/mimalloc, branch bun-dev3-v2) at the
+// commit Bun itself links (MIMALLOC_COMMIT in scripts/build/deps/mimalloc.ts in oven-sh/bun), never upstream's: the
+// libraries compile against its headers and ship them as bmalloc/mimalloc.h, and jsc and testFFI link it, compiled with
+// Bun's settings (Source/bmalloc/mimalloc/CMakeLists.txt). sha256 is of
+// https://github.com/<repo>/archive/<commit>.tar.gz. Every platform's `base` stage downloads it.
+const mimalloc = JSON.parse(readFileSync(join(root, "mimalloc/source.json"), "utf8"));
+const MIMALLOC = { MIMALLOC_REPO: mimalloc.repo, MIMALLOC_COMMIT: mimalloc.commit, MIMALLOC_SHA256: mimalloc.sha256 };
+
 // The code generation floor. There is one per architecture: WebKit used to ship a haswell x64 build next to a nehalem
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
 // requirement silently or gave up cross-language LTO because the matching variant did not exist. A consumer that wants
@@ -61,7 +69,8 @@ const NEHALEM = "-march=nehalem";
 const ARMV8 = "-march=armv8-a+crc";
 
 // The variant is the label's suffix: bun-webkit-linux-amd64 is "release", bun-webkit-linux-amd64-debug-asan is
-// "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC).
+// "debug-asan". The optimized variants that ship in bun use mimalloc, which bun links itself (USE_EXTERNAL_MIMALLOC): the
+// libraries leave mi_* unresolved, and only the jsc and testFFI executables link the mimalloc of mimalloc/source.json.
 const variants = {
   "release": { buildType: "Release", mimalloc: true },
   "lto": { buildType: "Release", mimalloc: true, lto: true },
@@ -77,7 +86,7 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   dockerfile      builds the lane: `base` is the toolchain, the stages on top build ICU and WebKit
 //   packageOS       the "os" of the tarball's package.json
 //   lanes           arch -> variants built for it
-//   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG and USE_*_MIMALLOC
+//   args(arch, v)   the Dockerfile's build arguments, on top of WEBKIT_RELEASE_TYPE, LTO_FLAG, USE_*_MIMALLOC and MIMALLOC_*
 //   image(arch)     the name of the toolchain image, one per distinct `base` stage: per architecture where `base`
 //                   is built for one (MACOS_ARCH, FREEBSD_ARCH). See `images` below.
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
@@ -237,6 +246,7 @@ const lanes = platforms.flatMap(platform =>
         LTO_FLAG: v.lto ? (platform.lto ?? LTO) : "",
         USE_MIMALLOC: v.mimalloc ? "ON" : "OFF",
         USE_EXTERNAL_MIMALLOC: v.mimalloc ? "ON" : "OFF",
+        ...MIMALLOC,
         ...platform.args(arch, v, variant),
       };
       return {
