@@ -30,10 +30,13 @@
 #include "SlotVisitorMacros.h"
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/Compiler.h>
-#include <wtf/Deque.h>
+#include <wtf/FastMalloc.h>
+#include <wtf/IterationStatus.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/SentinelLinkedList.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/VectorTraits.h>
 
@@ -154,38 +157,61 @@ static_assert(sizeof(QueuedTask) <= 32, "Size of QueuedTask is critical for perf
 #endif
 static_assert(std::is_trivially_destructible_v<QueuedTask>);
 
+// A FIFO of QueuedTasks, stored in a singly linked list of fixed-size segments. A WTF::Deque keeps its
+// tasks in one buffer that doubles, and a buffer of 2^26 tasks is not a valid Vector capacity, so the
+// 2^25th pending task aborted the process. Script reaches that count (one promise with that many
+// reactions is enough), and enqueue() has no way to report a failure. With segments no allocation
+// grows with the queue, a task never moves, and a segment is freed when its last task is dequeued.
 class MarkedMicrotaskDeque {
+    WTF_MAKE_NONCOPYABLE(MarkedMicrotaskDeque);
 public:
     friend class MicrotaskQueue;
 
     MarkedMicrotaskDeque() = default;
+    ~MarkedMicrotaskDeque() { clear(); }
 
-    const QueuedTask& front() const LIFETIME_BOUND { return m_queue.first(); }
+    const QueuedTask& front() const LIFETIME_BOUND
+    {
+        ASSERT(!isEmpty());
+        return *m_front;
+    }
 
+    // This can free the segment that front() points into.
     QueuedTask dequeue()
     {
+        ASSERT(!isEmpty());
         if (m_markedBefore)
             --m_markedBefore;
-        return m_queue.takeFirst();
+        QueuedTask task = WTF::move(*m_front);
+        ++m_front;
+        if (m_front == m_back) {
+            // Empty. Start over at the first slot, so that a shallow queue stays in the same cache lines.
+            m_front = m_back = m_tail->begin();
+        } else if (m_front == m_head->end()) [[unlikely]]
+            removeHeadSegment();
+        return task;
     }
 
     void enqueue(QueuedTask&& task)
     {
-        m_queue.append(WTF::move(task));
+        if (m_back == m_backLimit) [[unlikely]]
+            appendSegment();
+        new (NotNull, m_back) QueuedTask(WTF::move(task));
+        ++m_back;
     }
 
-    bool isEmpty() const
+    // m_back can be one past the end of its segment. That address is never a slot of another segment,
+    // because a segment's slots start after its header.
+    bool isEmpty() const { return m_front == m_back; }
+
+    size_t size() const
     {
-        return m_queue.isEmpty();
+        if (!m_segmentCount)
+            return 0;
+        return (m_segmentCount - 1) * Segment::capacity + (m_back - m_tail->begin()) - (m_front - m_head->begin());
     }
 
-    size_t size() const { return m_queue.size(); }
-
-    void clear()
-    {
-        m_queue.clear();
-        m_markedBefore = 0;
-    }
+    JS_EXPORT_PRIVATE void clear();
 
 #if USE(BUN_JSC_ADDITIONS)
     // Defined in MicrotaskQueueInlines.h (requires globalObject() from QueuedTask).
@@ -199,7 +225,12 @@ public:
 
     void swap(MarkedMicrotaskDeque& other)
     {
-        m_queue.swap(other.m_queue);
+        std::swap(m_front, other.m_front);
+        std::swap(m_back, other.m_back);
+        std::swap(m_backLimit, other.m_backLimit);
+        std::swap(m_head, other.m_head);
+        std::swap(m_tail, other.m_tail);
+        std::swap(m_segmentCount, other.m_segmentCount);
         std::swap(m_markedBefore, other.m_markedBefore);
     }
 
@@ -208,7 +239,30 @@ public:
     DECLARE_VISIT_AGGREGATE;
 
 private:
-    Deque<QueuedTask> m_queue;
+    struct Segment {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Segment);
+
+        static constexpr size_t capacity = (16 * KB - sizeof(Segment*)) / sizeof(QueuedTask);
+
+        QueuedTask* begin() { return reinterpret_cast<QueuedTask*>(storage); }
+        QueuedTask* end() { return begin() + capacity; }
+
+        Segment* next { nullptr };
+        alignas(QueuedTask) std::byte storage[capacity * sizeof(QueuedTask)];
+    };
+
+    JS_EXPORT_PRIVATE void appendSegment();
+    JS_EXPORT_PRIVATE void removeHeadSegment();
+
+    // Calls the functor with each task in queue order, except for the first toSkip tasks.
+    template<typename Functor> void forEachTaskAfter(size_t toSkip, const Functor&) const;
+
+    QueuedTask* m_front { nullptr }; // The next task to dequeue, in m_head.
+    QueuedTask* m_back { nullptr }; // The slot for the next task to enqueue, in m_tail.
+    QueuedTask* m_backLimit { nullptr }; // m_tail->end(), or null before the first segment exists.
+    Segment* m_head { nullptr };
+    Segment* m_tail { nullptr };
+    size_t m_segmentCount { 0 };
     size_t m_markedBefore { 0 };
 };
 
