@@ -788,6 +788,7 @@ public:
     // code that keepsValueProfileSamplesInBuckets(), leave them alone (Keep), except for the ones that just died (KeepIfLive).
     enum class ValueProfileSamples : uint8_t { Record, Keep, KeepIfLive };
     bool keepsValueProfileSamplesInBuckets();
+    bool valueProfilePredictionsAreNeverRead();
     void updateAllNonLazyValueProfilePredictions(ValueProfileSamples = ValueProfileSamples::Record);
     void updateAllLazyValueProfilePredictions();
     void updateAllArrayProfilePredictions();

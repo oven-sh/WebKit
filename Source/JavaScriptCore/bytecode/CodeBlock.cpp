@@ -3511,11 +3511,21 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
+bool CodeBlock::valueProfilePredictionsAreNeverRead()
+{
+    // Only the optimizing compilers read them, and they never see code that is too large for them (DFG::mightCompile*).
+    return !Options::useDFGJIT() || bytecodeCost() > Options::maximumOptimizationCandidateBytecodeCost();
+}
+
 bool CodeBlock::keepsValueProfileSamplesInBuckets()
 {
     // The predictions of the value profiles cost as much as their buckets. Code that has run a couple of times and may
     // never run again only gets them when a compiler asks; until then a collection leaves the samples where they are.
-    if (jitType() != JITType::InterpreterThunk || !m_metadata || m_metadata->valueProfilePredictions())
+    if (!m_metadata || m_metadata->valueProfilePredictions())
+        return false;
+    if (valueProfilePredictionsAreNeverRead())
+        return true;
+    if (jitType() != JITType::InterpreterThunk)
         return false;
     return m_unlinkedCode->llintExecuteCounter().count() < Options::thresholdForValueProfilePredictions();
 }
@@ -3532,6 +3542,8 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     auto unlinkedValueProfiles = unlinkedProfiles ? unlinkedProfiles->valueProfiles() : std::span<UnlinkedValueProfile> { };
     if (samples != ValueProfileSamples::Record && !keepsValueProfileSamplesInBuckets())
         samples = ValueProfileSamples::Record;
+    else if (samples == ValueProfileSamples::Record && Options::useLazyValueProfilePredictions() && m_metadata && !m_metadata->valueProfilePredictions() && valueProfilePredictionsAreNeverRead())
+        samples = ValueProfileSamples::Keep; // The Baseline plan asks for them whatever the code is.
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
