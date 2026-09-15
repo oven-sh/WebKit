@@ -92,7 +92,9 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             JSModuleEnvironment* moduleEnvironment = uncheckedDowncast<JSModuleEnvironment>(scope);
             AbstractModuleRecord* moduleRecord = moduleEnvironment->moduleRecord();
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            AbstractModuleRecord::Resolution resolution = moduleRecord->resolveImport(globalObject, ident);
+            unsigned importSlot = 0;
+            auto* sourceTextModuleRecord = dynamicDowncast<JSModuleRecord>(moduleRecord);
+            AbstractModuleRecord::Resolution resolution = sourceTextModuleRecord ? sourceTextModuleRecord->resolveImportWithSlot(globalObject, ident, importSlot) : moduleRecord->resolveImport(globalObject, ident);
             catchScope.releaseAssertNoException();
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
@@ -103,7 +105,8 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 ASSERT(iter != symbolTable->end(locker));
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
-                unsigned moduleImportSlot = JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), uncheckedDowncast<JSModuleRecord>(moduleRecord)->importSlotIndex(ident.impl())).offset();
+                RELEASE_ASSERT(sourceTextModuleRecord);
+                unsigned moduleImportSlot = JSModuleEnvironment::importSlotScopeOffset(moduleEnvironment->symbolTable(), importSlot).offset();
                 op = ResolveOp(makeType(ModuleVar, needsVarInjectionChecks), depth, nullptr, importedEnvironment, entry.watchpointSet(), entry.scopeOffset().offset(), resolution.localName.impl(), moduleImportSlot);
                 return true;
             }
