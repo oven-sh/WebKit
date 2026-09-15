@@ -457,7 +457,10 @@ ALWAYS_INLINE JSString* stringReplaceAllStringString(JSGlobalObject* globalObjec
         if (matchStart == notFound)
             break;
 
-        matchStarts.append(matchStart);
+        if (!matchStarts.tryAppend(matchStart)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         matchStart += searchLength;
         if (search.isEmpty())
             ++matchStart;
