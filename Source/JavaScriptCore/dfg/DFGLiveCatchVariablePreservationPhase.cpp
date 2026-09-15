@@ -158,15 +158,6 @@ public:
             return cachedHandlerResult;
         };
 
-        auto computeLiveAtCatchHead = [&] (CatchHandler handler) {
-            liveAtCatchHead.fill(false);
-
-            BytecodeIndex catchBytecodeIndex = BytecodeIndex(handler.info->target);
-            m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, handler.inlineCallFrame), [&] (Operand operand) {
-                liveAtCatchHead.operand(operand) = true;
-            });
-        };
-
         Operands<VariableAccessData*> currentBlockAccessData(OperandsLike, block->variablesAtTail, nullptr);
 
         auto flushEverything = [&] (NodeOrigin origin, unsigned index) {
@@ -202,8 +193,14 @@ public:
                 if (newHandler.info != currentExceptionHandler.info && currentExceptionHandler)
                     flushEverything(node->origin, nodeIndex);
                 // Only now: the flush above is for the handler we are leaving, and try ranges can be adjacent.
-                if (newHandler && newHandler != currentExceptionHandler)
-                    computeLiveAtCatchHead(newHandler);
+                if (newHandler && newHandler != currentExceptionHandler) {
+                    liveAtCatchHead.fill(false);
+
+                    BytecodeIndex catchBytecodeIndex = BytecodeIndex(newHandler.info->target);
+                    m_graph.forAllLocalsAndTmpsLiveInBytecode(CodeOrigin(catchBytecodeIndex, newHandler.inlineCallFrame), [&] (Operand operand) {
+                        liveAtCatchHead.operand(operand) = true;
+                    });
+                }
                 currentExceptionHandler = newHandler;
             }
 
