@@ -1,5 +1,6 @@
-# Bun: the mimalloc here is Bun's fork, oven-sh/mimalloc (branch bun-dev3-v2), at the commit Bun itself links, and no
-# other: not upstream's, and not a copy kept in this tree. MIMALLOC_SOURCE_DIR is a checkout of it.
+# Bun: the mimalloc that is built is Bun's fork, oven-sh/mimalloc (branch bun-dev3-v2), at the commit Bun itself links,
+# and no other. MIMALLOC_SOURCE_DIR is a checkout of it. The copy upstream WebKit keeps next to this file (mimalloc/,
+# upstream mimalloc 3.2.8) is left as upstream has it and is not built: no add_subdirectory(mimalloc) here.
 #
 #   - CI: mimalloc/source.json names the commit, every Dockerfile's `base` stage downloads it to /mimalloc, and a lane
 #     passes -DMIMALLOC_SOURCE_DIR=/mimalloc.
@@ -15,7 +16,7 @@
 # Keep the two lists the same, so that what the tests run on is what Bun ships.
 
 if (NOT MIMALLOC_SOURCE_DIR)
-    message(FATAL_ERROR "USE_MIMALLOC needs -DMIMALLOC_SOURCE_DIR=<a checkout of https://github.com/oven-sh/mimalloc at the commit in mimalloc/source.json>. There is no other mimalloc to fall back to: see Source/bmalloc/mimalloc/CMakeLists.txt.")
+    message(FATAL_ERROR "USE_MIMALLOC needs -DMIMALLOC_SOURCE_DIR=<a checkout of https://github.com/oven-sh/mimalloc at the commit in mimalloc/source.json>. The copy of upstream's mimalloc in Source/bmalloc/mimalloc/mimalloc is deliberately not a fallback: see Source/bmalloc/mimalloc/CMakeLists.txt.")
 endif ()
 if (NOT EXISTS "${MIMALLOC_SOURCE_DIR}/src/static.c" OR NOT EXISTS "${MIMALLOC_SOURCE_DIR}/include/mimalloc.h")
     message(FATAL_ERROR "MIMALLOC_SOURCE_DIR (${MIMALLOC_SOURCE_DIR}) is not a mimalloc checkout: no src/static.c or include/mimalloc.h in it.")
