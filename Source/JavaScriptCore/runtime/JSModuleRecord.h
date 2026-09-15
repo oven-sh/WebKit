@@ -81,6 +81,8 @@ public:
     CodeFeatures features() const { return m_features; }
 
     ModuleProgramExecutable* getOrMakeExecutable(JSGlobalObject*);
+    // This record will not run its body (again): it ran to the end, it threw, a module it depends on did, or linking failed.
+    void didFinishWithExecutable(VM&);
 
     // Options::useLazyModuleFunctionDeclarations(). InitializeEnvironment hands over the function declarations it did
     // not instantiate; each is instantiated into its module environment slot when the slot is first read while empty.

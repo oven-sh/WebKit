@@ -118,14 +118,15 @@ public:
     FunctionExecutable* functionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
 
     // Every record that is going to evaluate the module with this executable says so (JSModuleRecord::getOrMakeExecutable),
-    // and says when its body ran to completion. Once none is left, and until another record adopts the executable, nothing
-    // needs the linked code; the unlinked code is dropped too if it can be had back for the asking.
+    // and says when it is done with it (JSModuleRecord::didFinishWithExecutable): its body ran to the end or threw, or the
+    // record got an error from a module it depends on or failed to link, and never runs. Once none is left, and until
+    // another record adopts the executable, nothing needs the linked code; the unlinked code is dropped too if it can be had back for the asking.
     void willBeEvaluatedByAnotherRecord() { ++m_recordsYetToFinishEvaluation; }
     void didFinishEvaluation(VM&);
     bool hasFinishedEvaluation() const { return m_hasBeenEvaluated && !m_recordsYetToFinishEvaluation; }
     // releaseUnlinkedCodeIfRecoverable() took the unlinked code; getUnlinkedCodeBlock() decodes the same code again.
     bool hasReleasedUnlinkedCode() const { return m_hasReleasedUnlinkedCode; }
-    // Only once the body has finished (an environment made for code that has yet to run is tied to that very code, see
+    // Only once no record is going to run the body (an environment made for code that has yet to run is tied to that very code, see
     // UnlinkedModuleProgramCodeBlock.h), and only if getUnlinkedCodeBlock() can decode the same code again.
     void releaseUnlinkedCodeIfRecoverable(VM&);
 
