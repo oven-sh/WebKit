@@ -19,6 +19,8 @@ const staysInterpreted = options.useLLInt && options.thresholdForJITAfterWarmUp 
 const releasesLinkedCode = staysInterpreted && options.useRunOnceCodeRelease;
 const releasesUnlinkedCode = releasesLinkedCode && options.useCodeRecoveryFromBytecodeCache && options.useLeanBytecodeCacheDecoder
     && options.useBorrowedBytecodeFromCache && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
+// What the executables hold, not how many code blocks are alive: the collector scans the stack conservatively, and a word
+// left behind in a frame of the run loop can keep a code block that nothing refers to any more for a while.
 const census = () => { fullGC(); return $vm.codeBlockCensus(); };
 const load = (path) => $vm.moduleLoaderImport($vm.createModuleLoader(), path);
 
@@ -30,7 +32,7 @@ async function test() {
     if (releasesLinkedCode)
         assert(now.moduleExecutablesWithLinkedCode === 0, "a's module code was released: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.unlinkedModule === 0, "and its unlinked code: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === 0, "and its unlinked code: " + JSON.stringify(now));
     assert(a.late(2) === 4, "a.late");
 
     // The second loader adopts the executable, released code and all.
@@ -41,13 +43,13 @@ async function test() {
     if (releasesLinkedCode)
         assert(now.moduleExecutablesWithLinkedCode === 0, "the module code was released again after b: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.unlinkedModule === 0, "and the unlinked code: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === 0, "and the unlinked code: " + JSON.stringify(now));
     // A declaration whose executable b links first is a's as well.
     assert(b.neverReadByTheFirstLoader(2) === 6, "b.neverReadByTheFirstLoader");
     assert($vm.codeBlockFor(a.neverReadByTheFirstLoader) === $vm.codeBlockFor(b.neverReadByTheFirstLoader), "one executable for both loaders");
     assert(a.neverReadByTheFirstLoader(3) === 9 && a.callCount() === 3 && b.callCount() === 2, "each counts its own calls");
     if (releasesUnlinkedCode)
-        assert(census().unlinkedModule === 0, "reading declarations did not bring the unlinked code back");
+        assert(census().moduleExecutablesWithUnlinkedCode === 0, "reading declarations did not bring the unlinked code back");
 
     // One loader is suspended in the module's body while another runs it to the end: the code stays until both are done.
     const tla = "./resources/module-loaders-released-code/tla.js";
@@ -64,7 +66,7 @@ async function test() {
     if (releasesLinkedCode && !options.useEagerCodeBlockJettisonTiming && !options.forceCodeBlockToJettisonDueToOldAge)
         assert(now.moduleExecutablesWithLinkedCode === 1, "the suspended loader keeps the module's code: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.unlinkedModule === 1, "linked and unlinked: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === 1, "linked and unlinked: " + JSON.stringify(now));
     openGate();
     const c = await pending;
     assert(c !== d && c.stage === "done" && c.describe() === "done:later", "the first loader resumed and finished");
@@ -72,7 +74,7 @@ async function test() {
     if (releasesLinkedCode)
         assert(now.moduleExecutablesWithLinkedCode === 0, "now it is released: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.unlinkedModule === 0, "linked and unlinked: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === 0, "linked and unlinked: " + JSON.stringify(now));
     assert($vm.codeBlockFor(c.describe) === $vm.codeBlockFor(d.describe), "shared declarations");
 
     // All code is deleted between two loaders: the second one's environment is made from another symbol table than the

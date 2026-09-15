@@ -32,7 +32,7 @@ async function test() {
         assert(!uninstantiated, "every declaration is instantiated: " + uninstantiated);
     const census = $vm.codeBlockCensus();
     if (releasesUnlinkedCode)
-        assert(census.unlinkedModule === 0, "the module's unlinked code is gone although declarations are uninstantiated: " + JSON.stringify(census));
+        assert(census.moduleExecutablesWithUnlinkedCode === 0, "the module's unlinked code is gone although declarations are uninstantiated: " + JSON.stringify(census));
 
     // Reading them now decodes them without the code block.
     assert(lib.neverReadUntilLate(4) === 112, "neverReadUntilLate");
@@ -47,7 +47,7 @@ async function test() {
         assert($vm.uninstantiatedFunctionDeclarations(lib) < uninstantiated, "reads instantiated them");
     if (releasesUnlinkedCode) {
         fullGC();
-        assert($vm.codeBlockCensus().unlinkedModule === 0, "and did not bring the module's unlinked code back");
+        assert($vm.codeBlockCensus().moduleExecutablesWithUnlinkedCode === 0, "and did not bring the module's unlinked code back");
     }
     const again = await import("./resources/module-lazy-declarations-released-code/lib.js");
     assert(again === lib && lib.neverReadUntilLate === again.neverReadUntilLate, "same namespace, same function");
