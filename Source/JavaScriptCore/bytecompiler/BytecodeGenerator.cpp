@@ -146,6 +146,7 @@ void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, 
         CASE(OpJngreatereq)
         CASE(OpJbelow)
         CASE(OpJbeloweq)
+        CASE(OpIteratorCloseCheck)
         default:
             ASSERT_NOT_REACHED();
         }
@@ -1182,6 +1183,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // makeFunction assumes that there's correct TDZ stack entries.
     // So it should be called after putting our lexical environment to the TDZ stack correctly.
 
+    Vector<std::pair<uint32_t, FunctionMetadataNode*>> heapAllocatedFunctions;
     for (FunctionMetadataNode* function : moduleProgramNode->functionStack()) {
         const auto& iterator = moduleProgramNode->lexicalVariables().find(function->ident().impl());
         RELEASE_ASSERT(iterator != moduleProgramNode->lexicalVariables().end());
@@ -1189,51 +1191,67 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
         VarKind varKind = lookUpVarKind(iterator->key.get(), iterator->value);
         if (varKind == VarKind::Scope) {
-            // http://www.ecma-international.org/ecma-262/6.0/#sec-moduledeclarationinstantiation
-            // Section 15.2.1.16.4, step 16-a-iv-1.
-            // All heap allocated function declarations should be instantiated when the module environment
-            // is created. They include the exported function declarations and not-exported-but-heap-allocated
-            // function declarations. This is required because exported function should be instantiated before
-            // executing the any module in the dependency graph. This enables the modules to link the imported
-            // bindings before executing the any module code.
-            //
-            // And since function declarations are instantiated before executing the module body code, the spec
-            // allows the functions inside the module to be executed before its module body is executed under
-            // the circular dependencies. The following is the example.
-            //
-            // Module A (executed first):
-            //    import { b } from "B";
-            //    // Here, the module "B" is not executed yet, but the function declaration is already instantiated.
-            //    // So we can call the function exported from "B".
-            //    b();
-            //
-            //    export function a() {
-            //    }
-            //
-            // Module B (executed second):
-            //    import { a } from "A";
-            //
-            //    export function b() {
-            //        c();
-            //    }
-            //
-            //    // c is not exported, but since it is referenced from the b, we should instantiate it before
-            //    // executing the "B" module code.
-            //    function c() {
-            //        a();
-            //    }
-            //
-            // Module Entrypoint (executed last):
-            //    import "B";
-            //    import "A";
-            //
-            unsigned index = m_codeBlock->addFunctionDecl(makeFunction(function));
-            codeBlock->setNumberOfHeapAllocatedFunctionDecls(index + 1);
+            SymbolTableEntry::Fast entry = moduleEnvironmentSymbolTable->get(NoLockingNecessary, function->ident().impl());
+            RELEASE_ASSERT(!entry.isNull() && entry.varOffset().isScope());
+            heapAllocatedFunctions.append({ entry.scopeOffset().offset(), function });
         } else {
             // Stack allocated functions can be allocated when executing the module's body.
             m_functionsToInitialize.append(std::make_pair(function, NormalFunctionVariable));
         }
     }
+
+    // http://www.ecma-international.org/ecma-262/6.0/#sec-moduledeclarationinstantiation
+    // Section 15.2.1.16.4, step 16-a-iv-1.
+    // All heap allocated function declarations should be instantiated when the module environment
+    // is created. They include the exported function declarations and not-exported-but-heap-allocated
+    // function declarations. This is required because exported function should be instantiated before
+    // executing the any module in the dependency graph. This enables the modules to link the imported
+    // bindings before executing the any module code.
+    //
+    // And since function declarations are instantiated before executing the module body code, the spec
+    // allows the functions inside the module to be executed before its module body is executed under
+    // the circular dependencies. The following is the example.
+    //
+    // Module A (executed first):
+    //    import { b } from "B";
+    //    // Here, the module "B" is not executed yet, but the function declaration is already instantiated.
+    //    // So we can call the function exported from "B".
+    //    b();
+    //
+    //    export function a() {
+    //    }
+    //
+    // Module B (executed second):
+    //    import { a } from "A";
+    //
+    //    export function b() {
+    //        c();
+    //    }
+    //
+    //    // c is not exported, but since it is referenced from the b, we should instantiate it before
+    //    // executing the "B" module code.
+    //    function c() {
+    //        a();
+    //    }
+    //
+    // Module Entrypoint (executed last):
+    //    import "B";
+    //    import "A";
+    //
+    // They come first among the function declarations, in module environment slot order: see
+    // ModuleFunctionDeclarationSlots.
+    std::ranges::sort(heapAllocatedFunctions, { }, [](const auto& pair) { return pair.first; });
+    m_moduleEnvironmentSymbolTableConstantIndex = constantSymbolTable->index();
+    for (auto& pair : heapAllocatedFunctions)
+        m_lazyModuleFunctionDeclarations.add(pair.second->ident().impl());
+    FixedVector<uint32_t> heapAllocatedFunctionDeclScopeOffsets(heapAllocatedFunctions.size());
+    for (unsigned i = 0; i < heapAllocatedFunctions.size(); ++i) {
+        unsigned index = m_codeBlock->addFunctionDecl(makeFunction(heapAllocatedFunctions[i].second));
+        RELEASE_ASSERT(index == i);
+        heapAllocatedFunctionDeclScopeOffsets[i] = heapAllocatedFunctions[i].first;
+    }
+    codeBlock->setNumberOfHeapAllocatedFunctionDecls(heapAllocatedFunctions.size());
+    codeBlock->setHeapAllocatedFunctionDeclSlots(ModuleFunctionDeclarationSlots::create(WTF::move(heapAllocatedFunctionDeclScopeOffsets)));
 
     // Remember the constant register offset to the top-most symbol table. This symbol table will be
     // cloned in the code block linking. After that, to create the module environment, we retrieve
@@ -2749,6 +2767,15 @@ RegisterID* BytecodeGenerator::emitResolveScope(RegisterID* dst, const Variable&
     return nullptr;
 }
 
+bool BytecodeGenerator::isLazyModuleFunctionDeclaration(const Variable& variable) const
+{
+    return m_moduleEnvironmentSymbolTableConstantIndex
+        && variable.offset().isScope()
+        && !variable.isSpecial()
+        && variable.symbolTableConstantIndex() == *m_moduleEnvironmentSymbolTableConstantIndex
+        && m_lazyModuleFunctionDeclarations.contains(variable.ident().impl());
+}
+
 RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable& variable, ResolveMode resolveMode)
 {
     switch (variable.offset().kind()) {
@@ -2767,7 +2794,7 @@ RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* sco
             kill(dst),
             scope,
             addConstant(variable.ident()),
-            GetPutInfo(resolveMode, variable.offset().isScope() ? ResolvedClosureVar : resolveType(), InitializationMode::NotInitialization, ecmaMode()),
+            GetPutInfo(resolveMode, variable.offset().isScope() ? (isLazyModuleFunctionDeclaration(variable) ? ResolvedLazyClosureVar : ResolvedClosureVar) : resolveType(), InitializationMode::NotInitialization, ecmaMode()),
             localScopeDepth(),
             variable.offset().isScope() ? variable.offset().scopeOffset().offset() : 0,
             nextValueProfileIndex());
@@ -3421,8 +3448,10 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             DeclaredNamesLink::Frame::Slots slots;
             for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
                 VarOffset offset = it->value.varOffset();
-                if (offset.isScope())
-                    slots.add(it->key, offset.scopeOffset().offset());
+                if (offset.isScope()) {
+                    bool isLazyFunctionSlot = m_moduleEnvironmentSymbolTableConstantIndex && entry.m_symbolTableConstantIndex == *m_moduleEnvironmentSymbolTableConstantIndex && m_lazyModuleFunctionDeclarations.contains(it->key.get());
+                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0));
+                }
             }
             node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
             m_frameSymbolTableSizes[i] = size;
@@ -3606,6 +3635,12 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSize(RegisterID* dst, RegisterID*
 RegisterID* BytecodeGenerator::emitNewArrayWithSpecies(RegisterID* dst, RegisterID* length, RegisterID* array)
 {
     OpNewArrayWithSpecies::emit(this, dst, length, array, nextValueProfileIndex());
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitNewRegExpForReceiver(RegisterID* dst, RegExp* regExp, bool forTest)
+{
+    OpNewRegExpShared::emit(this, dst, addConstantValue(regExp), forTest);
     return dst;
 }
 
@@ -5159,7 +5194,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             callBack(generator, value.get());
             generator.emitJump(loopStart.get());
         }, [&](BytecodeGenerator& generator) {
-            generator.emitIteratorGenericClose(iterator.get(), node);
+            generator.emitIteratorCloseAfterIteratorOpen(iterator.get(), nextOrIndex.get(), iterable.get(), node);
         });
 
         bool breakLabelIsBound = scope->breakTargetMayBeBound();
@@ -5168,7 +5203,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
         popFinallyControlFlowScope();
         if (breakLabelIsBound) {
             // IteratorClose sequence for break-ed control flow.
-            emitIteratorGenericClose(iterator.get(), node, EmitAwait::No);
+            emitIteratorCloseAfterIteratorOpen(iterator.get(), nextOrIndex.get(), iterable.get(), node);
         }
     }
     emitLabel(loopDone.get());
@@ -5523,6 +5558,7 @@ void BytecodeGenerator::emitIteratorOpen(RegisterID* iterator, RegisterID* nextO
     unsigned iterableValueProfile = nextValueProfileIndex();
     unsigned iteratorValueProfile = nextValueProfileIndex();
     unsigned nextValueProfile = nextValueProfileIndex();
+    ASSERT(iterator->isTemporary() && nextOrIndex->isTemporary());
     OpIteratorOpen::emit(this, iterator, nextOrIndex, symbolIterator, iterable.thisRegister(), iterable.stackOffset(), iterableValueProfile, iteratorValueProfile, nextValueProfile);
 }
 
@@ -5540,6 +5576,7 @@ void BytecodeGenerator::emitIteratorNext(RegisterID* done, RegisterID* value, Re
     unsigned nextResultValueProfile = nextValueProfileIndex();
     unsigned doneValueProfile = nextValueProfileIndex();
     unsigned valueValueProfile = nextValueProfileIndex();
+    ASSERT((iterable->isTemporary() || iterable->virtualRegister().isArgument()) && nextOrIndex->isTemporary());
     OpIteratorNext::emit(this, done, value, iterable, nextOrIndex, iterator.thisRegister(), iterator.stackOffset(), nextResultValueProfile, doneValueProfile, valueValueProfile);
 }
 
@@ -5602,6 +5639,16 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
     emitLabel(done.get());
 }
 
+
+void BytecodeGenerator::emitIteratorCloseAfterIteratorOpen(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
+{
+    // These are read back by op_iterator_next and op_iterator_close_check as the state of the iteration: nothing else may write them.
+    ASSERT(iterator->isTemporary() && nextOrIndex->isTemporary() && (iterable->isTemporary() || iterable->virtualRegister().isArgument()));
+    Ref<Label> done = newLabel();
+    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
+    emitIteratorGenericClose(iterator, node);
+    emitLabel(done.get());
+}
 
 RegisterID* BytecodeGenerator::emitDelegateYield(RegisterID* argument, ThrowableExpressionData* node)
 {

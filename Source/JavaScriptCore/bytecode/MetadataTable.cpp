@@ -40,6 +40,24 @@ MetadataTable::MetadataTable(UnlinkedMetadataTable& unlinkedMetadata)
         unlinkedMetadata,
         1,
     };
+    if (!Options::useLazyValueProfilePredictions()) [[unlikely]]
+        ensureValueProfilePredictions();
+}
+
+SpeculatedType* MetadataTable::ensureValueProfilePredictions()
+{
+    auto& slot = linkingData().valueProfilePredictions;
+    if (SpeculatedType* predictions = slot.load(std::memory_order_acquire))
+        return predictions;
+
+    // The mutator and the compiler threads can get here at the same time.
+    static_assert(!SpecNone);
+    auto* predictions = static_cast<SpeculatedType*>(MetadataTableMalloc::zeroedMalloc(static_cast<size_t>(unlinkedMetadata()->numValueProfiles()) * sizeof(SpeculatedType)));
+    SpeculatedType* expected = nullptr;
+    if (slot.compare_exchange_strong(expected, predictions, std::memory_order_acq_rel))
+        return predictions;
+    MetadataTableMalloc::free(predictions);
+    return expected;
 }
 
 struct DeallocTable {
@@ -69,10 +87,13 @@ void MetadataTable::destroy(MetadataTable* table)
         return;
     }
 
+    SpeculatedType* predictions = table->valueProfilePredictions();
     RefPtr<UnlinkedMetadataTable> unlinkedMetadata = WTF::move(table->linkingData().unlinkedMetadata);
     ASSERT(table->isDestroyed());
 
     table->~MetadataTable();
+    if (predictions)
+        MetadataTableMalloc::free(predictions);
 
     // Since UnlinkedMetadata::unlink frees the underlying memory of MetadataTable.
     // We need to destroy LinkingData before calling it.
@@ -81,7 +102,13 @@ void MetadataTable::destroy(MetadataTable* table)
 
 size_t MetadataTable::sizeInBytesForGC()
 {
-    return unlinkedMetadata()->sizeInBytesForGC(*this);
+    // Collector threads get here for every CodeBlock that shares the table, in parallel: no need to ref it.
+    return linkingData().unlinkedMetadata->sizeInBytesForGC(*this);
+}
+
+size_t MetadataTable::sizeOfOwnCallSiteDatas() const
+{
+    return static_cast<size_t>(numberOfOwnCallSiteDatas()) * sizeof(CallSiteData);
 }
 
 void MetadataTable::validate() const

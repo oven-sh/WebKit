@@ -2667,7 +2667,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setConstant(node, jsBoolean(childValue.isCell() && childValue.asCell() == node->cellOperand()->cell()));
             break;
         }
-        
+
+        // Something whose type rules the cell's type out is not that cell: an iterator object is not the sentinel cell that
+        // op_iterator_close_check compares it with, for one.
+        if (!(forNode(childNode).m_type & speculationFromCell(node->cellOperand()->cell()))) {
+            setConstant(node, jsBoolean(false));
+            break;
+        }
+
         setNonCellTypeForNode(node, SpecBoolean);
         break;
     }
@@ -4450,6 +4457,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case GetGlobalThis: {
         setTypeForNode(node, SpecGlobalProxy);
+        break;
+    }
+
+    case GetLazyClosureVar: {
+        if (JSValue value = m_graph.tryGetConstantClosureVar(forNode(node->child1()), node->scopeOffset()))
+            setConstant(node, *m_graph.freeze(value));
+        else
+            makeBytecodeTopForNode(node);
         break;
     }
 

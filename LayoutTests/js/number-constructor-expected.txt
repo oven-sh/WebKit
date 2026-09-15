@@ -24,7 +24,7 @@ PASS Number.isFinite(null) is false
 PASS Number.isFinite(Number.NaN) is false
 PASS Number.isFinite(Number.POSITIVE_INFINITY) is false
 PASS Number.isFinite(Number.NEGATIVE_INFINITY) is false
-PASS Number.isFinite(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.isFinite(foo) threw exception ReferenceError: foo is not defined.
 PASS Number.isInteger(0) is true
 PASS Number.isInteger(-0) is true
 PASS Number.isInteger(1) is true
@@ -46,7 +46,7 @@ PASS Number.isInteger(null) is false
 PASS Number.isInteger(Number.NaN) is false
 PASS Number.isInteger(Number.POSITIVE_INFINITY) is false
 PASS Number.isInteger(Number.NEGATIVE_INFINITY) is false
-PASS Number.isInteger(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.isInteger(foo) threw exception ReferenceError: foo is not defined.
 PASS Number.isNaN(Number.NaN) is true
 PASS Number.isNaN(0) is false
 PASS Number.isNaN(-0) is false
@@ -68,7 +68,7 @@ PASS Number.isNaN(Number.MAX_SAFE_INTEGER) is false
 PASS Number.isNaN(Number.MIN_SAFE_INTEGER) is false
 PASS Number.isNaN(Number.MAX_VALUE) is false
 PASS Number.isNaN(Number.MIN_VALUE) is false
-PASS Number.isNaN(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.isNaN(foo) threw exception ReferenceError: foo is not defined.
 PASS Number.isSafeInteger(0) is true
 PASS Number.isSafeInteger(-0) is true
 PASS Number.isSafeInteger(1) is true
@@ -94,7 +94,7 @@ PASS Number.isSafeInteger(Number.POSITIVE_INFINITY) is false
 PASS Number.isSafeInteger(Number.NEGATIVE_INFINITY) is false
 PASS Number.isSafeInteger(Number.MAX_SAFE_INTEGER + 1) is false
 PASS Number.isSafeInteger(Number.MIN_SAFE_INTEGER - 1) is false
-PASS Number.isSafeInteger(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.isSafeInteger(foo) threw exception ReferenceError: foo is not defined.
 PASS Number.parseFloat("0") is 0
 PASS Number.parseFloat("-0") is -0
 PASS Number.parseFloat("1") is 1
@@ -121,7 +121,7 @@ PASS Number.parseFloat("5E-324") is 5e-324
 PASS Number.parseFloat("5E-325") is 0
 PASS Number.parseFloat("20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") is 2e+307
 PASS Number.parseFloat("200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") is Infinity
-PASS Number.parseFloat(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.parseFloat(foo) threw exception ReferenceError: foo is not defined.
 PASS Number.parseInt is parseInt
 PASS var numberParseInt = Number.parseInt; parseInt = function () {}; numberParseInt is Number.parseInt
 PASS Number.parseInt.length is 2
@@ -154,7 +154,7 @@ PASS Number.parseInt("5E-324") is 5
 PASS Number.parseInt("5E-325") is 5
 PASS Number.parseInt("20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") is 2e+307
 PASS Number.parseInt("200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000") is Infinity
-PASS Number.parseInt(foo) threw exception ReferenceError: Can't find variable: foo.
+PASS Number.parseInt(foo) threw exception ReferenceError: foo is not defined.
 PASS successfullyParsed is true
 
 TEST COMPLETE

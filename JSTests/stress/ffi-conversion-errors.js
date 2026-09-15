@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Argument-conversion failures must be TypeErrors, identical whether they
 // come from the C++ host path, the IC stub's slow path or the DFG/FTL

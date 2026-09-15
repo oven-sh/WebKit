@@ -37,6 +37,7 @@ BaselineJITPlan::BaselineJITPlan(CodeBlock* codeBlock)
     : JITPlan(JITCompilationMode::Baseline, codeBlock)
 {
     JIT::doMainThreadPreparationBeforeCompile(codeBlock->vm());
+    codeBlock->unlinkedCodeBlock()->ensureValueAndArrayProfiles();
 }
 
 auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> CompilationPath

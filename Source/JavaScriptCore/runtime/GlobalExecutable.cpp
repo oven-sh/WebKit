@@ -26,8 +26,10 @@
 #include "config.h"
 #include "GlobalExecutable.h"
 
+#include "CodeBlock.h"
 #include "IsoCellSetInlines.h"
 #include "JSCellInlines.h"
+#include "JITWorklist.h"
 #include "ScriptExecutableInlines.h"
 
 namespace JSC {
@@ -75,6 +77,24 @@ CodeBlock* GlobalExecutable::replaceCodeBlockWith(VM& vm, CodeBlock* newCodeBloc
     CodeBlock* oldCodeBlock = codeBlock();
     m_codeBlock.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
+}
+
+bool GlobalExecutable::canReleaseLinkedCodeNow(VM& vm)
+{
+    CodeBlock* codeBlock = this->codeBlock();
+    if (!codeBlock)
+        return true;
+    if (codeBlock->jitType() != JITType::InterpreterThunk)
+        return false;
+#if ENABLE(JIT)
+    if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
+        if (worklist->compilationState(vm, JITCompilationKey(codeBlock->unlinkedCodeBlock(), JITCompilationMode::Baseline)) != JITWorklist::NotKnown)
+            return false;
+    }
+#else
+    UNUSED_PARAM(vm);
+#endif
+    return true;
 }
 
 void GlobalExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)

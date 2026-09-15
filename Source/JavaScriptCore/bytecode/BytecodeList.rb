@@ -46,6 +46,7 @@ types [
     :JSScope,
     :JSType,
     :JSValue,
+    :LazyCallLinkInfo,
     :ResultType,
     :OperandTypes,
     :PrivateFieldPutKind,
@@ -142,7 +143,7 @@ op :iterator_next,
         valueValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         doneModeMetadata: GetByIdModeMetadata,
         valueModeMetadata: GetByIdModeMetadata,
         iterableProfile: ArrayProfile,
@@ -216,7 +217,7 @@ op :iterator_open,
         nextValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         modeMetadata: GetByIdModeMetadata,
         arrayProfile: ArrayProfile,
         iterationMetadata: IterationModeMetadata,
@@ -240,7 +241,7 @@ op :async_iterator_open,
         nextValueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         modeMetadata: GetByIdModeMetadata,
         iterationMetadata: IterationModeMetadata,
     },
@@ -291,6 +292,19 @@ op :check_private_brand,
         brand: WriteBarrier[JSCell],
     }
 
+# A RegExp literal that is the receiver of a call to its own test or exec method, as in /x/.test(string), without the g or y flag.
+# Every evaluation of a literal makes a new object, but this one is only ever seen by that builtin, which neither writes to it
+# nor lets it out: while that is so (the realm's watchpoints say) one object per site does. See RegExpObject::isSharedLiteral().
+op :new_reg_exp_shared,
+    args: {
+        dst: VirtualRegister,
+        regexp: VirtualRegister,
+        forTest: bool,
+    },
+    metadata: {
+        cachedObject: WriteBarrier[JSCell],
+    }
+
 op :put_by_id,
     args: {
         base: VirtualRegister,
@@ -314,7 +328,7 @@ op :construct,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :super_construct,
@@ -326,7 +340,7 @@ op :super_construct,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         cachedCallee: WriteBarrier[JSCell],
     }
 
@@ -338,8 +352,7 @@ op :tail_call,
         argv: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :call_direct_eval,
@@ -354,7 +367,7 @@ op :call_direct_eval,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op_group :CreateInternalFieldObjectOp,
@@ -472,8 +485,7 @@ op :call,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 op :call_ignore_result,
@@ -483,8 +495,7 @@ op :call_ignore_result,
         argv: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
-        arrayProfile: ArrayProfile,
+        callLinkInfo: LazyCallLinkInfo,
     }
 
 # dst = next.call(iterator [, value]), or -- if next is the fast async generator driver sentinel --
@@ -507,7 +518,7 @@ op :async_iterator_next,
         valueProfile: unsigned,
     },
     metadata: {
-        callLinkInfo: DataOnlyCallLinkInfo,
+        callLinkInfo: LazyCallLinkInfo,
         iterationMetadata: IterationModeMetadata,
     }
 
@@ -552,10 +563,7 @@ op :get_from_scope,
     },
     metadata: {
         getPutInfo: GetPutInfo,
-        _: {
-            watchpointSet: InlineWatchpointSet.*,
-            structureID: WriteBarrierStructureID,
-        },
+        structureID: WriteBarrierStructureID,
         operand: uintptr_t,
     },
     metadata_initializers: {
@@ -1401,6 +1409,18 @@ op :typeof,
         value: VirtualRegister,
     }
 
+# Precedes the IteratorClose sequence of an iterator made by op_iterator_open. When op_iterator_open found an Array it may
+# not have made an iterator object: iterator is then a marker cell, next the index and iterable the Array. Jumps to targetLabel,
+# over the IteratorClose sequence, when iterator is that marker and IteratorClose cannot be observed (nothing to do); otherwise
+# falls through, after replacing a marker by the Array Iterator object it stands for.
+op :iterator_close_check,
+    args: {
+        iterator: VirtualRegister,
+        next: VirtualRegister,
+        iterable: VirtualRegister,
+        targetLabel: BoundLabel,
+    }
+
 op :is_cell_with_type,
     args: {
         dst: VirtualRegister,
@@ -1462,6 +1482,7 @@ op :llint_native_construct_trampoline
 op :llint_internal_function_call_trampoline
 op :llint_internal_function_construct_trampoline
 op :llint_default_call_trampoline
+op :llint_unlinked_call_trampoline
 op :llint_virtual_call_trampoline
 op :llint_virtual_construct_trampoline
 op :llint_virtual_tail_call_trampoline

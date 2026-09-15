@@ -1822,6 +1822,15 @@ void JIT::emit_op_new_reg_exp(const JSInstruction* currentInstruction)
     emitPutVirtualRegister(dst, returnValueGPR);
 }
 
+void JIT::emit_op_new_reg_exp_shared(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpNewRegExpShared>();
+    loadGlobalObject(argumentGPR0);
+    materializePointerIntoMetadata(bytecode, OpNewRegExpShared::Metadata::offsetOfCachedObject(), argumentGPR2);
+    callOperation(operationNewRegExpShared, argumentGPR0, TrustedImmPtr(uncheckedDowncast<RegExp>(m_unlinkedCodeBlock->getConstant(bytecode.m_regexp))), argumentGPR2, TrustedImm32(bytecode.m_forTest));
+    emitPutVirtualRegister(bytecode.m_dst, returnValueGPR);
+}
+
 template<typename Op>
 void JIT::emitNewFuncCommon(const JSInstruction* currentInstruction)
 {

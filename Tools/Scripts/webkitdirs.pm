@@ -533,6 +533,13 @@ sub determineNativeArchitecture($)
         }
     }
     chomp $output if defined $output;
+    # Bun: Windows has no uname. The machine's architecture is read from the registry, as oven-sh/bun's
+    # scripts/bootstrap.ps1 reads it: an x64 perl on Windows on ARM runs emulated and has AMD64 in
+    # %PROCESSOR_ARCHITECTURE%, and PROCESSOR_ARCHITEW6432 is only set for 32-bit processes.
+    if (not defined $output and isWindows()) {
+        my $query = `reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v PROCESSOR_ARCHITECTURE 2>NUL`;
+        $output = "arm64" if $query =~ /PROCESSOR_ARCHITECTURE\s+REG_\w+\s+ARM64\b/i;
+    }
     $output = "x86_64" if (not defined $output);
 
     # FIXME: Remove this when <rdar://problem/64208532> is resolved
@@ -607,7 +614,8 @@ sub determineArchitecture
 
     $architecture = 'x86_64' if $architecture =~ /amd64/i;
     $architecture = 'x86' if $architecture =~ /BePC/i && isHaiku();
-    $architecture = 'arm64' if $architecture =~ /aarch64/i;
+    # Bun: and "ARM64", which is how cmake on Windows spells CMAKE_SYSTEM_PROCESSOR.
+    $architecture = 'arm64' if $architecture =~ /aarch64|^arm64$/i;
 }
 
 sub xcodeBuildRequestsInRecencyOrder

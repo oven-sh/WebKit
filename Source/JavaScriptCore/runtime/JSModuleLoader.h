@@ -87,6 +87,14 @@ public:
 
     JSScope* moduleScope() const { return m_moduleScope.get(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
+    // this loader's modules runs in, its top-level await continuations included. Empty
+    // (the default): whatever is current when a module is executed.
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+#endif
+
     DECLARE_INFO;
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
@@ -262,6 +270,7 @@ private:
     void addResolutionFailure(VM&, const ResolutionMapKey&, JSValue error);
 #if USE(BUN_JSC_ADDITIONS)
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
+    void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
     RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
@@ -290,6 +299,9 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
     WriteBarrier<JSScope> m_moduleScope;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     ModuleMap<WriteBarrier<ModuleRegistryEntry>> m_moduleMap;
 
     ResolutionMap<WriteBarrier<Unknown>> m_resolutionFailures;

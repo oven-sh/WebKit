@@ -1491,6 +1491,9 @@ private:
         case GetClosureVar:
             compileGetClosureVar();
             break;
+        case GetLazyClosureVar:
+            compileGetLazyClosureVar();
+            break;
         case PutClosureVar:
             compilePutClosureVar();
             break;
@@ -13205,6 +13208,25 @@ IGNORE_CLANG_WARNINGS_END
         setJSValue(m_out.loadPtr(globalProxy, m_heaps.JSGlobalProxy_target));
     }
 
+    void compileGetLazyClosureVar()
+    {
+        LValue base = lowCell(m_node->child1());
+        LValue value = m_out.load64(base, m_heaps.JSLexicalEnvironment_variables[m_node->scopeOffset().offset()]);
+
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        ValueFromBlock fastResult = m_out.anchor(value);
+        m_out.branch(m_out.isZero64(value), rarely(slowCase), usually(continuation));
+
+        LBasicBlock lastNext = m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationGetLazyClosureVar, m_vmValue, base, m_out.constInt32(m_node->scopeOffset().offset())));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, fastResult, slowResult));
+    }
+
     void compileGetClosureVar()
     {
         LValue base = lowCell(m_node->child1());
@@ -14129,16 +14151,13 @@ IGNORE_CLANG_WARNINGS_END
                     shuffleData.numParameters = jit.codeBlock()->numParameters();
                     shuffleData.setupCalleeSaveRegisters(state->jitCode->calleeSaveRegisters());
 
-                    if (nativeFunction && !vm->isDebuggerHookInjected()) {
-                        jit.store32(
-                            CCallHelpers::TrustedImm32(callSiteIndex.bits()),
-                            CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-                        CallFrameShuffler(jit, shuffleData).prepareForTailCall();
-                        emitCallTarget();
-                        jit.ret();
-                        return;
-                    }
-
+                    // A tail call must not run the thunk from this CodeBlock's own code. The tail
+                    // call destroys this frame, so the conservative stack scan no longer finds
+                    // this CodeBlock and cannot keep it alive
+                    // (CodeBlockSet::m_currentlyExecuting). A jettison plus a collection inside
+                    // the host function then frees the code the host call returns into. A linked
+                    // direct tail call jumps to the executable's host call thunk, which lives as
+                    // long as the VM, and that thunk returns to our caller.
                     auto* callLinkInfo = state->jitCode->common.m_directCallLinkInfos.add(semanticNodeOrigin, CallLinkInfo::UseDataIC::No, state->graph.m_codeBlock, executable);
                     callLinkInfo->setCallType(CallLinkInfo::DirectTailCall);
                     if (numAllocatedArgs > numPassedArgs)

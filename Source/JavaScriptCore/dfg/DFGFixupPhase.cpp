@@ -2337,6 +2337,11 @@ private:
             break;
         }
 
+        case GetLazyClosureVar: {
+            fixEdge<KnownCellUse>(node->child1());
+            break;
+        }
+
         case GetGlobalVar:
         case GetGlobalLexicalVariable: {
             attemptToMakeDoubleResultForGet(node);

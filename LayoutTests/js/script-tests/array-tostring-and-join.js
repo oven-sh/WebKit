@@ -1,6 +1,6 @@
 description(
 
-"This test checks that an Array->string conversion that reaches the same array again, either directly or through another object's toString, throws a RangeError instead of substituting the empty string for the repeat visit."
+"This test checks that an Array->string conversion that reaches the same array again, either directly or through another object's toString, substitutes the empty string for the repeat visit, as V8 and SpiderMonkey do (Bun keeps StringRecursionChecker for arrays)."
 
 );
 
@@ -11,9 +11,9 @@ Object.prototype.toString = function() { return "*" + arr + "*"; }
 arr[2] = arr;
 arr[3] = obj;
 
-shouldThrow("arr.join()");
-shouldThrow("arr.toString()");
-shouldThrow("String(arr)");
+shouldBe("arr.join()", "'1,2,,**'");
+shouldBe("arr.toString()", "'1,2,,**'");
+shouldBe("String(arr)", "'1,2,,**'");
 
 Object.prototype.toString = originalToString;
 
