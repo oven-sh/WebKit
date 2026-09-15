@@ -1,11 +1,12 @@
 name: CI
 
-# Builds every lane of bun-webkit, publishes them as one GitHub release, and tests the lanes that are marked as tested.
+# Builds every lane of bun-webkit, tests the lanes that are marked as tested, and publishes them all as one GitHub
+# release when every lane built and every test passed.
 # A push to main and a pull request run exactly the same jobs; they differ in the commit that is built (env.REF), in
 # the name of the release (the `plan` job's `tag`), and in that a pull request gets a comment linking its release.
 #
-#   plan ──> image ──> build, build-tested ──> release
-#                           └────────> test
+#   plan ──> image ──> build ───────────────────> release
+#                  └──> build-tested ──> test ──┘
 #        ──> prune (main only)
 #
 # A lane is one <label>.tar.gz on the release. The lanes (which runner, which Dockerfile, which settings, tested or not)
@@ -307,9 +308,9 @@ jobs:
   # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
   # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
   #
-  # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
-  # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
-  # the job fails.
+  # `release` waits for this job: when any test fails, on any tested lane, the draft is deleted and nothing is
+  # published, on main as on a pull request. A test that fails once in a while is a failing test: nothing is run a
+  # second time. --no-fail-fast below means every test runs and every failure is reported before the job fails.
   test:
     name: Test ${{ matrix.label }}
     # It runs the branch's code, and only needs to check it out: the jsc shell is an artifact of this run.
@@ -500,8 +501,9 @@ jobs:
 
   release:
     name: release
-    # Runs whatever happened to the builds (also when the run was cancelled), so the draft never outlives the run: it
-    # is published when every build job succeeded and every listed asset is on it, and deleted otherwise.
+    # Runs whatever happened to the builds and the tests (also when the run was cancelled), so the draft never outlives
+    # the run: it is published when every build job succeeded, every test leg passed and every listed asset is on it,
+    # and deleted otherwise.
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -509,6 +511,7 @@ jobs:
       - plan
       - build
       - build-tested
+      - test
     steps:
       # Every lane uploads <label>.tar.gz. The lanes are the release: a label missing from it fails the job.
       - name: Publish or delete the draft
