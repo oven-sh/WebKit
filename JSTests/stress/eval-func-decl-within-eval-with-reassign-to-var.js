@@ -30,7 +30,7 @@ function foo() {
 
 for (var i = 0; i < testLoopCount; i++) {
     foo();
-    assertThrow(() => f, "ReferenceError: Can't find variable: f");
+    assertThrow(() => f, "ReferenceError: f is not defined");
 }
 
 function boo() {
@@ -44,7 +44,7 @@ function boo() {
 
 for (var i = 0; i < testLoopCount; i++){
     boo();
-    assertThrow(() => l, "ReferenceError: Can't find variable: l");
+    assertThrow(() => l, "ReferenceError: l is not defined");
 }
 
 function foobar() { 
@@ -54,7 +54,7 @@ function foobar() {
 
 for (var i = 0; i < testLoopCount; i++){
     foobar();
-    assertThrow(() => _bar, "ReferenceError: Can't find variable: _bar");
+    assertThrow(() => _bar, "ReferenceError: _bar is not defined");
 }
 
 // Current test does not work because it should raise exception
@@ -91,7 +91,7 @@ function hoo() {
 
 for (var i = 0; i < testLoopCount; i++) {
     hoo();
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }
 
 function joo() {
@@ -105,7 +105,7 @@ function joo() {
 
 for (var i = 0; i < testLoopCount; i++){
     joo();
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }
 
 function koo() {
@@ -119,7 +119,7 @@ function koo() {
 
 for (var i = 0; i < testLoopCount; i++){
     koo();
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }
 
 function loo() { 
@@ -136,5 +136,5 @@ function loo() {
 
 for (var i = 0; i < testLoopCount; i++) {
     loo();
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }

@@ -66,6 +66,9 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+    // Pinned when the body is about to run (ScriptExecutable::newCodeBlockFor); until then an executable that was made
+    // when the module was linked still gets code for a debugger that attached since.
+    codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
     unlinkedModuleProgramCode = vm.codeCache()->getUnlinkedModuleProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
 
     if (globalObject->hasDebugger())
@@ -79,7 +82,25 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
     SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
-    m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+    // The module's one environment was made from the clone this had before its code was cleared: as for the other scopes
+    // of a body that can be suspended (CodeBlock::setConstantRegisters), the code goes on with that clone.
+    SymbolTable* clone = m_moduleEnvironmentSymbolTable.get();
+    bool scopeHasOlderEnvironments = false;
+    if (clone && clone->clonedFrom() != symbolTable) {
+        if (clone->isCloneOfScopePartOf(*symbolTable))
+            clone->adoptOriginal(vm, *symbolTable);
+        else {
+            clone->invalidateInferencesOfAbandonedClone(vm);
+            scopeHasOlderEnvironments = true;
+            clone = nullptr;
+        }
+    }
+    if (!clone) {
+        clone = symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes);
+        if (scopeHasOlderEnvironments)
+            clone->singleton().invalidate(vm, StringFireDetail("The scope has environments that were made from another SymbolTable"));
+        m_moduleEnvironmentSymbolTable.set(vm, this, clone);
+    }
     {
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
