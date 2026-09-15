@@ -312,7 +312,7 @@ jobs:
   # published, on main as on a pull request. A test that fails once in a while is a failing test: nothing is run a
   # second time. --no-fail-fast below means every test runs and every failure is reported before the job fails.
   test:
-    name: Test ${{ matrix.label }}
+    name: Test ${{ matrix.label }} #${{ matrix.repeat }}
     # It runs the branch's code, and only needs to check it out: the jsc shell is an artifact of this run.
     permissions:
       contents: read
@@ -491,7 +491,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: jsc-test-results-${{ matrix.label }}
+          name: jsc-test-results-${{ matrix.label }}-${{ matrix.repeat }}
           path: |
             ${{ runner.temp }}/jsc-results.json
             ${{ runner.temp }}/jsc-failures.log
