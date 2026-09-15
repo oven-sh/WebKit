@@ -1709,7 +1709,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToLowerCase, (JSGlobalObject* globalObje
     auto s = sVal->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    String lowercasedString = s->convertToLowercaseWithoutLocale();
+    String lowercasedString = s->tryConvertToLowercaseWithoutLocale();
+    if (lowercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (lowercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1745,7 +1747,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToUpperCase, (JSGlobalObject* globalObje
     auto s = sVal->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    String uppercasedString = s->convertToUppercaseWithoutLocale();
+    String uppercasedString = s->tryConvertToUppercaseWithoutLocale();
+    if (uppercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (uppercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1862,32 +1866,24 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
     });
 
     // 12. If locale is undefined, let locale be "und".
-    if (locale.isNull()) {
-        // Case mapping is locale-independent here, so skip ICU and use the root conversion.
-        String converted = mode == CaseConversionMode::Lower ? s->convertToLowercaseWithoutLocale() : s->convertToUppercaseWithoutLocale();
-        if (converted.impl() == s->impl())
-            return JSValue::encode(sVal);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(converted))));
-    }
-
-    // Delegate the following steps to icu u_strToLower or u_strToUpper.
     // 13. Let cpList be a List containing in order the code points of S as defined in ES2015, 6.1.4, starting at the first element of S.
     // 14. For each code point c in cpList, if the Unicode Character Database provides a lower(/upper) case equivalent of c that is either language insensitive or for the language locale, then replace c in cpList with that/those equivalent code point(s).
     // 15. Let cuList be a new List.
     // 16. For each code point c in cpList, in order, append to cuList the elements of the UTF-16 Encoding (defined in ES2015, 6.1.4) of c.
     // 17. Let L be a String whose elements are, in order, the elements of cuList.
-
-    // Most strings lower/upper case will be the same size as original, so try that first.
-    Vector<char16_t> buffer;
-    if (!StringImpl::isValidLength<char16_t>(s->length()) || !buffer.tryReserveInitialCapacity(s->length())) [[unlikely]]
+    // WTF applies the language-sensitive mappings of "az", "el", "lt" and "tr" through ICU, and the
+    // root mappings for every other locale identifier, including the null one.
+    if (s->isEmpty())
+        return JSValue::encode(sVal);
+    AtomString localeIdentifier { locale };
+    String converted = mode == CaseConversionMode::Lower ? s->tryConvertToLowercaseWithLocale(localeIdentifier) : s->tryConvertToUppercaseWithLocale(localeIdentifier);
+    if (converted.isNull()) [[unlikely]]
         return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
-    auto convertCase = mode == CaseConversionMode::Lower ? u_strToLower : u_strToUpper;
-    auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), locale.utf8().data());
-    if (U_FAILURE(status))
-        return throwVMTypeError(globalObject, scope, String::fromLatin1(u_errorName(status)));
 
     // 18. Return L.
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String { WTF::move(buffer) })));
+    if (converted.impl() == s->impl())
+        return JSValue::encode(sVal);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(converted))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToLocaleLowerCase, (JSGlobalObject* globalObject, CallFrame* callFrame))
