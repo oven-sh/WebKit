@@ -439,6 +439,15 @@ if (COMPILER_IS_GCC_OR_CLANG)
                 add_compile_options("${_cc_sanitize}=address")
                 add_link_options("${_ld_sanitize}=address")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=address")
+                # Locals stay on the real stack, where the conservative root scan finds what they refer to (as
+                # OptionsCocoa.cmake does for the Apple ports). clang-cl has no such option: MSVC's ASAN runtime
+                # does not move locals unless asked to at run time. GCC spells it as a --param.
+                if (COMPILER_IS_CLANG AND NOT MSVC)
+                    add_compile_options("$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fsanitize-address-use-after-return=never>")
+                    add_link_options("$<$<NOT:$<LINK_LANGUAGE:Swift>>:-fsanitize-address-use-after-return=never>")
+                elseif (CMAKE_COMPILER_IS_GNUCXX)
+                    add_compile_options(--param=asan-use-after-return=0)
+                endif ()
             elseif (${SANITIZER} MATCHES "undefined")
                 # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")

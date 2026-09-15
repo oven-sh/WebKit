@@ -98,7 +98,10 @@ public:
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);
 
-    void clearCode(IsoCellSet&);
+    // KeepWhatNeedsParsing: linked code goes; unlinked code of a program, eval or module only if a bytecode cache can
+    // hand it back, and a module keeps the symbol table its environment was made from.
+    enum class ClearCode : uint8_t { All, KeepWhatNeedsParsing };
+    void clearCode(IsoCellSet&, ClearCode = ClearCode::All);
 
     Intrinsic intrinsic() const
     {
@@ -152,9 +155,10 @@ protected:
     static void visitCodeBlockEdge(Visitor&, CodeBlock*);
     void jettisonCodeBlockEdgeIfDead(VM&, WriteBarrier<CodeBlock>&);
 
-    // The body of a generator or an async function, and a module with a top-level await, keep their registers in a
-    // generator frame while they are suspended, and only code that was generated the same way finds them there again:
-    // once such a body has run, its code is always generated the way it was then, whatever the realm asks for by now.
+    // The body of a generator or an async function keeps its registers in a generator frame while it is suspended, and
+    // only code that was generated the same way finds them there again: once such a body has run, its code is always
+    // generated the way it was then, whatever the realm asks for by now. (A module keeps the mode its environment's
+    // symbol table was made for: ModuleProgramExecutable::getUnlinkedCodeBlock.)
     OptionSet<CodeGenerationMode> codeGenerationModeForResumableBody(OptionSet<CodeGenerationMode> current)
     {
         if (m_codeForGeneratorBodyWasGenerated)

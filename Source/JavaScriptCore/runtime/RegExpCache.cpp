@@ -124,6 +124,19 @@ void RegExpCache::deleteAllCode()
     }
 }
 
+// A RegExp that has matched since the last full collection began keeps its code; the others compile again when they
+// next match.
+void RegExpCache::deleteCodeNotUsedInCurrentFullCollectionCycle(VM& vm)
+{
+    Locker locker { m_lock };
+    for (auto& [key, weakHandle] : m_weakCache) {
+        RegExp* regExp = weakHandle.get();
+        if (!regExp || regExp->wasUsedInCurrentFullCollectionCycle(vm))
+            continue;
+        regExp->deleteCode();
+    }
+}
+
 template<typename Visitor>
 void RegExpCache::visitAggregateImpl(Visitor& visitor)
 {

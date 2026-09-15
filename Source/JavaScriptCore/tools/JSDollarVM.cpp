@@ -53,8 +53,12 @@
 #include "InterpreterInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
+#include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSGenerator.h"
 #include "JSGlobalProxyInlines.h"
+#include "JSModuleNamespaceObject.h"
+#include "JSModuleRecord.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
 #include "JSLexicalEnvironmentInlines.h"
@@ -2181,6 +2185,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockForFrame);
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
+static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
+static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2247,8 +2253,14 @@ static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionShrinkFootprintWhenIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache);
+static JSC_DECLARE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
@@ -2284,6 +2296,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionIsMemoryLimited);
+static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
@@ -2299,6 +2312,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
+static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
 static JSC_DECLARE_HOST_FUNCTION(functionJITSizeStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpJITSizeStatistics);
@@ -2907,6 +2921,32 @@ JSC_DEFINE_HOST_FUNCTION(functionHasDecodedExpressionInfo, (JSGlobalObject* glob
     if (!codeBlock)
         return JSValue::encode(jsUndefined());
     return JSValue::encode(jsBoolean(!!codeBlock->unlinkedCodeBlock()->expressionInfoIfDecoded()));
+}
+
+// Usage: $vm.numberOfOwnCallLinkInfos(functionObj)
+// How many call sites of the function's LLInt / Baseline code own a CallLinkInfo (LazyCallLinkInfo): the ones that ran twice,
+// and the tail calls that ran. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsNumber(metadataTable ? metadataTable->numberOfOwnCallSiteDatas() : 0));
+}
+
+// Usage: $vm.hasValueProfilePredictions(functionObj)
+// Whether the function's LLInt / Baseline code has the predictions of its value profiles (MetadataTable::valueProfilePredictions).
+// Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionHasValueProfilePredictions, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
+    return JSValue::encode(jsBoolean(metadataTable && metadataTable->valueProfilePredictions()));
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -3956,7 +3996,55 @@ JSC_DEFINE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle, (JSGlobalObject* globalO
     return JSValue::encode(jsUndefined());
 }
 
-// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock }
+// shrinkFootprintWhenIdle(keepCodeThatNeedsParsing = true, keepCodeInUse = false): the embedder's deep-idle step, without
+// the collection, once this call has returned to the event loop.
+JSC_DEFINE_HOST_FUNCTION(functionShrinkFootprintWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<VM::ShrinkFootprint> mode { VM::ShrinkFootprint::LeaveCollectionToCaller };
+    if (!callFrame->argumentCount() || callFrame->argument(0).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeThatNeedsParsing);
+    if (callFrame->argument(1).toBoolean(globalObject))
+        mode.add(VM::ShrinkFootprint::KeepCodeInUse);
+    vm->shrinkFootprintWhenIdle(mode);
+    return JSValue::encode(jsUndefined());
+}
+
+// isGeneratorBodyCodeInBytecodeCache(generator): whether the unlinked code of the function that a generator or an async
+// generator resumes in has been returned to the bytecode cache it was decoded from; undefined for anything else. (The
+// object behind an async function's activation cannot be reached from script.)
+JSC_DEFINE_HOST_FUNCTION(functionIsGeneratorBodyCodeInBytecodeCache, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSValue next = jsUndefined();
+    if (auto* generator = dynamicDowncast<JSGenerator>(callFrame->argument(0)))
+        next = generator->internalField(JSGenerator::Field::Next).get();
+    else if (auto* asyncGenerator = dynamicDowncast<JSAsyncGenerator>(callFrame->argument(0)))
+        next = asyncGenerator->internalField(JSAsyncGenerator::Field::Next).get();
+    auto* function = dynamicDowncast<JSFunction>(next);
+    if (!function || function->isHostOrBuiltinFunction())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(function->jsExecutable()->unlinkedExecutable()->isCached()));
+}
+
+// returnCodeToBytecodeCacheWhenIdle(onlyWithoutLinkedCode = false): Heap::deleteAllUnlinkedCodeBlocks for the code that can
+// be decoded again from a persistent bytecode cache and nothing else, the way an embedder can call it directly: linked
+// code stays, and so do the compiler threads' plans until the call itself finishes them.
+JSC_DEFINE_HOST_FUNCTION(functionReturnCodeToBytecodeCacheWhenIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM* vm = &globalObject->vm();
+    OptionSet<UnlinkedCodeToDelete> which { UnlinkedCodeToDelete::RecoverableFromCache };
+    if (callFrame->argument(0).toBoolean(globalObject))
+        which.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+    vm->whenIdle([=] () {
+        vm->heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, which);
+    });
+    return JSValue::encode(jsUndefined());
+}
+
+// { blocks, blocksWithDecommittedPages, decommittedPages, pagesPerBlock, blockSize }
 JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -3976,6 +4064,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMarkedBlockStatistics, (JSGlobalObject* globalO
     result->putDirect(vm, Identifier::fromString(vm, "blocksWithDecommittedPages"_s), jsNumber(blocksWithDecommittedPages));
     result->putDirect(vm, Identifier::fromString(vm, "decommittedPages"_s), jsNumber(decommittedPages));
     result->putDirect(vm, Identifier::fromString(vm, "pagesPerBlock"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize / WTF::pageSize())));
+    result->putDirect(vm, Identifier::fromString(vm, "blockSize"_s), jsNumber(static_cast<unsigned>(MarkedBlock::blockSize)));
     return JSValue::encode(result);
 }
 
@@ -4005,6 +4094,45 @@ JSC_DEFINE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison, (JSGlobalObje
     });
     return JSValue::encode(jsNontrivialString(vm, String(result)));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The storage of holder.target. Does not leave a pointer to the target itself in its caller's frame.
+static NEVER_INLINE Butterfly* storageOfTargetOf(VM& vm, JSObject* holder)
+{
+    JSValue target = holder->getDirect(vm, Identifier::fromString(vm, "target"_s));
+    return target.isObject() ? asObject(target)->butterfly() : nullptr;
+}
+
+// evacuateAuxiliaryBlocks(maximumOccupancy = 1, holder = undefined): Heap::evacuateSparseAuxiliaryBlocks, with JS on the stack.
+// With a holder, this frame keeps a pointer to the storage of holder.target (and nothing else of the target) across the
+// evacuation; heldStorageStayed says whether that is still the target's storage afterwards.
+JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double maximumOccupancy = callFrame->argument(0).isUndefined() ? 1 : callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* holder = callFrame->argument(1).getObject();
+    Butterfly* heldStorage = holder ? storageOfTargetOf(vm, holder) : nullptr;
+
+    auto evacuation = vm.heap.evacuateSparseAuxiliaryBlocks(maximumOccupancy);
+
+    JSObject* result = constructEmptyObject(globalObject);
+    if (evacuation.skipped)
+        result->putDirect(vm, Identifier::fromString(vm, "skipped"_s), jsNontrivialString(vm, String(evacuation.skipped)));
+    result->putDirect(vm, Identifier::fromString(vm, "candidateBlocks"_s), jsNumber(evacuation.candidateBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "evacuatedBlocks"_s), jsNumber(evacuation.evacuatedBlocks));
+    result->putDirect(vm, Identifier::fromString(vm, "movedCells"_s), jsNumber(evacuation.movedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "movedBytes"_s), jsNumber(evacuation.movedBytes));
+    result->putDirect(vm, Identifier::fromString(vm, "pinnedCells"_s), jsNumber(evacuation.pinnedCells));
+    result->putDirect(vm, Identifier::fromString(vm, "cellsWithoutSingleOwner"_s), jsNumber(evacuation.cellsWithoutSingleOwner));
+    result->putDirect(vm, Identifier::fromString(vm, "milliseconds"_s), jsNumber(evacuation.duration.milliseconds()));
+    if (heldStorage)
+        result->putDirect(vm, Identifier::fromString(vm, "heldStorageStayed"_s), jsBoolean(storageOfTargetOf(vm, holder) == heldStorage));
+    return JSValue::encode(result);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -4568,6 +4696,20 @@ JSC_DEFINE_HOST_FUNCTION(functionIsMemoryLimited, (JSGlobalObject*, CallFrame*))
 #endif
 }
 
+// Returns how many function declarations of a module have not been instantiated yet (Options::useLazyModuleFunctionDeclarations()).
+// Usage: $vm.uninstantiatedFunctionDeclarations(moduleNamespaceObject)
+JSC_DEFINE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* namespaceObject = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    if (!namespaceObject)
+        return JSValue::encode(jsUndefined());
+    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(namespaceObject->moduleRecord());
+    if (!moduleRecord)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsNumber(moduleRecord->numberOfUninstantiatedFunctionDeclarations()));
+}
+
 // Returns true if JIT is enabled.
 // Usage: $vm.useJIT()
 JSC_DEFINE_HOST_FUNCTION(functionUseJIT, (JSGlobalObject*, CallFrame*))
@@ -4712,6 +4854,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithScopeExtension, (JSGlobalObject* gl
         return throwVMException(globalObject, scope, exception);
 
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCodeBlockCensus, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(VMInspector::codeBlockCensus(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionHeapExtraMemorySize, (JSGlobalObject* globalObject, CallFrame*))
@@ -5704,6 +5852,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockFor"_s, functionCodeBlockFor, 1);
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
+    addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
+    addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);
@@ -5790,8 +5940,14 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);
 
     addFunction(vm, alwaysAllow, "deleteAllCodeWhenIdle"_s, functionDeleteAllCodeWhenIdle, 0);
+    addFunction(vm, alwaysAllow, "shrinkFootprintWhenIdle"_s, functionShrinkFootprintWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "returnCodeToBytecodeCacheWhenIdle"_s, functionReturnCodeToBytecodeCacheWhenIdle, 1);
+    addFunction(vm, alwaysAllow, "isGeneratorBodyCodeInBytecodeCache"_s, functionIsGeneratorBodyCodeInBytecodeCache, 1);
     addFunction(vm, alwaysAllow, "markedBlockStatistics"_s, functionMarkedBlockStatistics, 0);
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 2);
+#endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
@@ -5838,6 +5994,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asanEnabled"_s, functionAsanEnabled, 0);
 
     addFunction(vm, alwaysAllow, "isMemoryLimited"_s, functionIsMemoryLimited, 0);
+    addFunction(vm, alwaysAllow, "uninstantiatedFunctionDeclarations"_s, functionUninstantiatedFunctionDeclarations, 1);
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);
@@ -5858,6 +6015,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "evaluateWithScopeExtension"_s, functionEvaluateWithScopeExtension, 1);
 
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
+    addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
 #if ENABLE(JIT)
     addFunction(vm, allowIfNotFuzz, "jitSizeStatistics"_s, functionJITSizeStatistics, 0);

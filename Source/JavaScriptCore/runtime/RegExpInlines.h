@@ -100,6 +100,20 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
     return false;
 }
 
+// The low bits of the heap's marking version: one per full collection.
+ALWAYS_INLINE uint8_t RegExp::currentUseEpoch(VM& vm)
+{
+    return static_cast<uint8_t>(vm.heap.objectSpace().markingVersion());
+}
+
+// Only the VM's thread notes the use. A compiler thread (matchConcurrently()) runs code that is already there, and writes nothing here.
+template<Yarr::MatchFrom matchFrom>
+ALWAYS_INLINE void RegExp::noteUse(VM& vm)
+{
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+        m_lastUseEpoch = currentUseEpoch(vm);
+}
+
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     if (hasCodeFor(charSize))
@@ -147,6 +161,7 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     if (s.length() - startOffset < m_minimumSize)
         return -1;
 
+    noteUse<matchFrom>(vm);
     compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
@@ -304,6 +319,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     if (s.length() - startOffset < m_minimumSize)
         return MatchResult::failed();
 
+    noteUse<matchFrom>(vm);
     compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {

@@ -466,7 +466,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
-        m_functionExprs[i].set(vm, this, unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction()));
+        m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 
     if (unlinkedCodeBlock->numberOfExceptionHandlers()) {
@@ -496,7 +496,17 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     };
 
     auto link_callLinkInfo = [&](const auto& instruction, auto bytecode, auto& metadata) {
-        metadata.m_callLinkInfo.initialize(vm, this, CallLinkInfo::callTypeFor(decltype(bytecode)::opcodeID), CodeOrigin { instruction.index() });
+        auto callType = CallLinkInfo::callTypeFor(decltype(bytecode)::opcodeID);
+        if constexpr (std::is_same_v<decltype(metadata.m_callLinkInfo), DataOnlyCallLinkInfo>)
+            metadata.m_callLinkInfo.initialize(vm, this, callType, CodeOrigin { instruction.index() });
+        else if (Options::useLazyLLIntCallLinkInfos()) [[likely]] {
+            if constexpr (decltype(bytecode)::opcodeID == op_tail_call)
+                metadata.m_callLinkInfo.setTailCallNotExecuted(vm);
+            else
+                metadata.m_callLinkInfo.setNeverExecuted(vm);
+        }
+        else
+            metadata.m_callLinkInfo.ensure(vm, this, callType, CodeOrigin { instruction.index() });
     };
 
 #define LINK_FIELD(__field) \
@@ -525,7 +535,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
-        m_bytecodeCost += opcodeLengths[opcodeID] + 1;
+        // op_iterator_close_check stands in front of every IteratorClose sequence of a for-of or an array pattern and costs next to nothing
+        // in any tier. It is not counted: tier-up thresholds and inlining budgets scale with this number, and making every such function
+        // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
+        // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
+        if (opcodeID != op_iterator_close_check)
+            m_bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
         LINK(OpGetPrivateName)
@@ -551,6 +566,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         LINK(OpSetPrivateBrand)
         LINK(OpCheckPrivateBrand)
+        LINK(OpNewRegExpShared)
 
         LINK(OpNewArray)
         LINK(OpNewArrayWithSize)
@@ -639,23 +655,32 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         case op_get_from_scope: {
             INITIALIZE_METADATA(OpGetFromScope)
 
-            metadata.m_watchpointSet = nullptr;
-
             ASSERT(!isInitialization(bytecode.m_getPutInfo.initializationMode()));
             if (bytecode.m_getPutInfo.resolveType() == ResolvedClosureVar) {
                 metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+                break;
+            }
+            // Every CodeBlock of an UnlinkedCodeBlock has to link a given get_from_scope the same way as far as
+            // ClosureVar vs. LazyClosureVar goes (the baseline JIT's code for either is shared between them). What a
+            // statically located variable or a name found in an environment record is does not depend on the CodeBlock;
+            // what an import resolves to does, so those are all LazyClosureVar.
+            ResolveType closureVarType = Options::useLazyModuleFunctionDeclarations() ? LazyClosureVar : ClosureVar;
+            if (bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar) {
+                metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), closureVarType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
                 break;
             }
 
             const Identifier& ident = identifier(bytecode.m_var);
             ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_getPutInfo.resolveType(), InitializationMode::NotInitialization);
 
-            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), op.type, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == ModuleVar)
-                metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
-                metadata.m_watchpointSet = op.watchpointSet;
-            else if (op.structure)
+            ResolveType linkedType = op.type;
+            if (linkedType == ModuleVar)
+                linkedType = closureVarType;
+            else if ((linkedType == ClosureVar || linkedType == ClosureVarWithVarInjectionChecks) && op.lexicalEnvironment->type() == ModuleEnvironmentType
+                && uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)->isFunctionDeclarationSlot(ScopeOffset(op.operand)))
+                linkedType = makeType(LazyClosureVar, needsVarInjectionChecks(linkedType));
+            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), linkedType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+            if (op.structure)
                 metadata.m_structureID.set(vm, this, op.structure);
             metadata.m_operand = op.operand;
             break;
@@ -863,6 +888,14 @@ FunctionExecutable* CodeBlock::materializeFunctionExecutable(WriteBarrier<Functi
     return executable;
 }
 
+FunctionExecutable* CodeBlock::linkFunctionExpr(unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    ScriptExecutable* ownerExecutable = this->ownerExecutable();
+    if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables())
+        return uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->functionExpression(vm(), index, m_functionExprs.size(), unlinkedExecutable);
+    return unlinkedExecutable->link(vm(), ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
+}
+
 FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 {
     ASSERT(index >= firstLazilyMaterializedFunctionDecl());
@@ -871,6 +904,14 @@ FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 
 FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 {
+    if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) {
+        ASSERT(!m_functionExprs[index] && m_numberOfUnmaterializedFunctionExecutables);
+        RELEASE_ASSERT(!isCompilationThread());
+        FunctionExecutable* executable = linkFunctionExpr(index, m_unlinkedCode->functionExpr(index));
+        m_functionExprs[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     return materializeFunctionExecutable(m_functionExprs[index], m_unlinkedCode->functionExpr(index));
 }
 
@@ -886,6 +927,44 @@ void CodeBlock::ensureFunctionExecutablesMaterialized()
 }
 
 // ---- end lazy FunctionExecutables -----------------------------------------------------------------------------------
+
+LazyCallLinkInfo& CodeBlock::lazyCallLinkInfoAt(const JSInstruction* instruction)
+{
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        return instruction->as<__op>().metadata(this).m_callLinkInfo;
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+DataOnlyCallLinkInfo& CodeBlock::ensureCallLinkInfoAt(const JSInstruction* instruction)
+{
+    return lazyCallLinkInfoAt(instruction).ensure(vm(), this, CallLinkInfo::callTypeFor(instruction->opcodeID()), CodeOrigin { BytecodeIndex(bytecodeOffset(instruction)) });
+}
+
+DataOnlyCallLinkInfo* CodeBlock::callLinkInfoIfExistsAt(BytecodeIndex bytecodeIndex)
+{
+    if (!JITCode::couldBeInterpreted(jitType()) || !m_metadata)
+        return nullptr;
+    const JSInstruction* instruction = instructionAt(bytecodeIndex);
+    switch (instruction->opcodeID()) {
+#define CASE(__op) \
+    case __op::opcodeID: \
+        return instruction->as<__op>().metadata(this).m_callLinkInfo.get();
+
+    FOR_EACH_OPCODE_WITH_LAZY_CALL_LINK_INFO(CASE)
+
+#undef CASE
+    default:
+        return nullptr;
+    }
+}
 
 #if ENABLE(JIT)
 void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
@@ -1321,7 +1400,7 @@ size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
     CodeBlock* thisObject = uncheckedDowncast<CodeBlock>(cell);
     size_t extraMemoryAllocated = 0;
     if (thisObject->m_metadata)
-        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC();
+        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC() + thisObject->sizeOfOwnCallSiteDatas();
     RefPtr<JSC::JITCode> jitCode = thisObject->m_jitCode;
     if (jitCode && !jitCode->isShared())
         extraMemoryAllocated += jitCode->size();
@@ -1387,7 +1466,7 @@ void CodeBlock::visitChildren(Visitor& visitor)
 
         size_t extraMemory = 0;
         if (m_metadata)
-            extraMemory += m_metadata->sizeInBytesForGC();
+            extraMemory += m_metadata->sizeInBytesForGC() + sizeOfOwnCallSiteDatas();
         if (m_jitCode && !m_jitCode->isShared())
             extraMemory += m_jitCode->size();
         visitor.reportExtraMemoryVisited(extraMemory);
@@ -1399,7 +1478,7 @@ void CodeBlock::visitChildren(Visitor& visitor)
     // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
         if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType())) {
-            updateAllNonLazyValueProfilePredictions();
+            updateAllNonLazyValueProfilePredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::Keep : ValueProfileSamples::Record);
             updateAllLazyValueProfilePredictions();
         }
     }
@@ -2054,7 +2133,7 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
     if (JITCode::isBaselineCode(jitType()))
-        updateAllPredictions();
+        updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
@@ -2248,6 +2327,12 @@ void CodeBlock::stronglyVisitStrongReferences(const ConcurrentJSLocker& locker, 
     forEachObjectAllocationProfile([&](ObjectAllocationProfile& objectAllocationProfile) {
         objectAllocationProfile.visitAggregate(visitor);
     });
+    if (m_metadata) {
+        // Strong: optimized code is compiled with these objects as constants.
+        m_metadata->forEach<OpNewRegExpShared>([&](auto& metadata) {
+            visitor.append(metadata.m_cachedObject);
+        });
+    }
 
 #if ENABLE(JIT)
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
@@ -3324,6 +3409,16 @@ void CodeBlock::didFailFTLCompilation()
 
 #endif
 
+// The ArrayProfile of op_call, op_call_ignore_result and op_tail_call lives next to the site's CallLinkInfo, once the site has one.
+template<typename Metadata>
+static ALWAYS_INLINE ArrayProfile* arrayProfileFor(Metadata& metadata)
+{
+    if constexpr (requires { metadata.m_arrayProfile; })
+        return &metadata.m_arrayProfile;
+    else
+        return metadata.m_callLinkInfo.arrayProfile();
+}
+
 ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
 {
     auto instruction = instructions().at(bytecodeIndex);
@@ -3334,7 +3429,7 @@ ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
     switch (instruction->opcodeID()) {
 #define CASE(Op) \
     case Op::opcodeID: \
-        return &instruction->as<Op>().metadata(this).m_arrayProfile;
+        return arrayProfileFor(instruction->as<Op>().metadata(this));
 
     FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(CASE)
 
@@ -3428,7 +3523,26 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
-void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
+bool CodeBlock::valueProfilePredictionsAreNeverRead()
+{
+    // Only the optimizing compilers read them, and they never see code that is too large for them (DFG::mightCompile*).
+    return !Options::useDFGJIT() || bytecodeCost() > Options::maximumOptimizationCandidateBytecodeCost();
+}
+
+bool CodeBlock::keepsValueProfileSamplesInBuckets()
+{
+    // The predictions of the value profiles cost as much as their buckets. Code that has run a couple of times and may
+    // never run again only gets them when a compiler asks; until then a collection leaves the samples where they are.
+    if (!m_metadata || m_metadata->valueProfilePredictions())
+        return false;
+    if (valueProfilePredictionsAreNeverRead())
+        return true;
+    if (jitType() != JITType::InterpreterThunk)
+        return false;
+    return m_unlinkedCode->llintExecuteCounter().count() < Options::thresholdForValueProfilePredictions();
+}
+
+void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles, ValueProfileSamples samples)
 {
     numberOfLiveNonArgumentValueProfiles = 0;
     numberOfSamplesInProfiles = 0;
@@ -3436,18 +3550,37 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
-    auto unlinkedValueProfiles = unlinkedCodeBlock->unlinkedValueProfiles().mutableSpan();
+    auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
+    auto unlinkedValueProfiles = unlinkedProfiles ? unlinkedProfiles->valueProfiles() : std::span<UnlinkedValueProfile> { };
+    if (samples != ValueProfileSamples::Record && !keepsValueProfileSamplesInBuckets())
+        samples = ValueProfileSamples::Record;
+    else if (samples == ValueProfileSamples::Record && Options::useLazyValueProfilePredictions() && m_metadata && !m_metadata->valueProfilePredictions() && valueProfilePredictionsAreNeverRead())
+        samples = ValueProfileSamples::Keep; // The Baseline plan asks for them whatever the code is.
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
+        if constexpr (std::is_same_v<Profile, ValueProfileRef>) {
+            if (samples != ValueProfileSamples::Record) {
+                // Nothing marks the cell in a bucket. Once it is dead the sample has to go.
+                if (samples == ValueProfileSamples::KeepIfLive) {
+                    JSValue value = JSValue::decodeConcurrent(profile.m_buckets);
+                    if (value && value.isCell() && !vm().heap.isMarked(value.asCell()))
+                        updateEncodedJSValueConcurrent(*profile.m_buckets, JSValue::encode(JSValue()));
+                }
+                ++index;
+                return;
+            }
+        }
         bool wasLive = profile.computeUpdatedPrediction() != SpecNone;
         if (wasLive) {
             ++numberOfSamplesInProfiles;
             if (!isArgument)
                 ++numberOfLiveNonArgumentValueProfiles;
         }
-        if (!isBuiltinFunction)
+        if (unlinkedProfiles) {
+            ASSERT(index < unlinkedValueProfiles.size());
             unlinkedValueProfiles[index].update(profile);
+        }
         ++index;
     });
 
@@ -3462,10 +3595,10 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
     }
 }
 
-void CodeBlock::updateAllNonLazyValueProfilePredictions()
+void CodeBlock::updateAllNonLazyValueProfilePredictions(ValueProfileSamples samples)
 {
     unsigned ignoredValue1, ignoredValue2;
-    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2);
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(ignoredValue1, ignoredValue2, samples);
 }
 
 void CodeBlock::updateAllLazyValueProfilePredictions()
@@ -3483,23 +3616,28 @@ void CodeBlock::updateAllArrayProfilePredictions()
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
-    auto unlinkedArrayProfiles = unlinkedCodeBlock->unlinkedArrayProfiles().mutableSpan();
-    auto process = [&] (ArrayProfile& profile) {
-        profile.computeUpdatedPrediction(this);
-        if (!isBuiltinFunction)
-            unlinkedArrayProfiles[index].update(profile);
+    auto* unlinkedProfiles = isBuiltinFunction ? nullptr : unlinkedCodeBlock->valueAndArrayProfiles();
+    auto unlinkedArrayProfiles = unlinkedProfiles ? unlinkedProfiles->arrayProfiles() : std::span<UnlinkedArrayProfile> { };
+    auto process = [&] (ArrayProfile* profile) {
+        if (profile) {
+            profile->computeUpdatedPrediction(this);
+            if (unlinkedProfiles) {
+                ASSERT(index < unlinkedArrayProfiles.size());
+                unlinkedArrayProfiles[index].update(*profile);
+            }
+        }
         ++index;
     };
 
 #define VISIT(__op) \
-    m_metadata->forEach<__op>([&] (auto& metadata) { process(metadata.m_arrayProfile); });
+    m_metadata->forEach<__op>([&] (auto& metadata) { process(arrayProfileFor(metadata)); });
 
     FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(VISIT)
 
 #undef VISIT
 
     m_metadata->forEach<OpIteratorNext>([&] (auto& metadata) {
-        process(metadata.m_iterableProfile);
+        process(&metadata.m_iterableProfile);
     });
 }
 
@@ -3513,9 +3651,9 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
 // The samples are untraced JSValues and StructureIDs, so this only runs while they are still
 // readable, which means any time from marking up to the sweep that would free them.
-void CodeBlock::updateAllPredictions()
+void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
 {
-    updateAllNonLazyValueProfilePredictions();
+    updateAllNonLazyValueProfilePredictions(samples);
     updateAllLazyValueProfilePredictions();
     updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
@@ -3674,7 +3812,7 @@ void CodeBlock::dumpValueProfiles()
             dataLogF("   arg: ");
         else
             dataLogF("   bc: ");
-        if (!profile.numberOfSamples() && profile.m_prediction == SpecNone) {
+        if (!profile.numberOfSamples() && profile.prediction() == SpecNone) {
             dataLogF("<empty>\n");
             continue;
         }
@@ -3767,49 +3905,49 @@ String CodeBlock::nameForRegister(VirtualRegister virtualRegister)
     return out.toString();
 }
 
-ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ValueProfileRef CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     auto instruction = instructions().at(bytecodeIndex);
     switch (instruction->opcodeID()) {
 
 #define CASE(Op) \
     case Op::opcodeID: \
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(instruction->as<Op>().m_valueProfile)];
+        return m_metadata->valueProfileForOffset(instruction->as<Op>().m_valueProfile);
 
         FOR_EACH_OPCODE_WITH_VALUE_PROFILE(CASE)
 
 #undef CASE
 
     case op_iterator_open:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorOpen>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpIteratorOpen>(), bytecodeIndex.checkpoint()));
     case op_async_iterator_open:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpAsyncIteratorOpen>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpAsyncIteratorOpen>(), bytecodeIndex.checkpoint()));
     case op_iterator_next:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpIteratorNext>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpIteratorNext>(), bytecodeIndex.checkpoint()));
     case op_instanceof:
-        return &m_metadata->valueProfilesEnd()[-static_cast<ptrdiff_t>(valueProfileOffsetFor(instruction->as<OpInstanceof>(), bytecodeIndex.checkpoint()))];
+        return m_metadata->valueProfileForOffset(valueProfileOffsetFor(instruction->as<OpInstanceof>(), bytecodeIndex.checkpoint()));
 
     default:
-        return nullptr;
+        return { };
 
     }
 }
 
 SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(BytecodeIndex bytecodeIndex, JSValue* specFailValue)
 {
-    if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
+    if (ValueProfileRef valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
         if (specFailValue)
-            valueProfile->computeUpdatedPredictionForExtraValue(*specFailValue);
-        return valueProfile->computeUpdatedPrediction();
+            valueProfile.computeUpdatedPredictionForExtraValue(*specFailValue);
+        return valueProfile.computeUpdatedPrediction();
     }
     return SpecNone;
 }
 
-ValueProfile& CodeBlock::valueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ValueProfileRef CodeBlock::valueProfileForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    ValueProfile* profile = tryGetValueProfileForBytecodeIndex(bytecodeIndex);
+    ValueProfileRef profile = tryGetValueProfileForBytecodeIndex(bytecodeIndex);
     ASSERT(profile);
-    return *profile;
+    return profile;
 }
 
 void CodeBlock::validate()
