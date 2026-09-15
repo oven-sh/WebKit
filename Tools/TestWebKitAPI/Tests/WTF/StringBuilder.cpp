@@ -35,8 +35,38 @@
 #include "Helpers/Test.h"
 #include "Helpers/WTFTestUtilities.h"
 #include <sstream>
+#include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
+
+namespace TestWebKitAPI {
+
+// A run of 16-bit characters that a StringBuilder makes room for and that nobody writes.
+// A test can make a builder need a very long buffer with it and touch none of the memory.
+struct UnwrittenCharacters {
+    unsigned length;
+};
+
+} // namespace TestWebKitAPI
+
+namespace WTF {
+
+template<> class StringTypeAdapter<TestWebKitAPI::UnwrittenCharacters> {
+public:
+    StringTypeAdapter(TestWebKitAPI::UnwrittenCharacters characters)
+        : m_length { characters.length }
+    {
+    }
+
+    unsigned length() const { return m_length; }
+    bool is8Bit() const { return false; }
+    template<typename CharacterType> void writeTo(std::span<CharacterType>) const { }
+
+private:
+    unsigned m_length;
+};
+
+} // namespace WTF
 
 namespace TestWebKitAPI {
 
@@ -440,6 +470,103 @@ TEST(StringBuilderTest, ShouldShrinkToFit)
         builder.append('x');
     EXPECT_EQ(builder.length(), builder.capacity());
     EXPECT_FALSE(builder.shouldShrinkToFit());
+}
+
+// The longest 16-bit string is shorter than String::MaxLength, because the size of a StringImpl has to fit in an unsigned.
+static constexpr unsigned maxLength16Bit = StringImpl::maxValidLength<char16_t>();
+static_assert(maxLength16Bit < String::MaxLength);
+static_assert(StringImpl::isValidLength<char16_t>(maxLength16Bit) && !StringImpl::isValidLength<char16_t>(static_cast<size_t>(maxLength16Bit) + 1));
+static_assert(StringImpl::maxValidLength<Latin1Character>() == String::MaxLength);
+
+// Twice this capacity is more than the longest 16-bit string.
+static constexpr unsigned capacityAboveHalfOfMaxLength16Bit = maxLength16Bit / 2 + 1;
+static_assert(capacityAboveHalfOfMaxLength16Bit * 2 > maxLength16Bit);
+
+// The tests that call this reserve up to 6GB of address space and write to almost none of it. They return early
+// on a machine that cannot reserve that much. They do not call GTEST_SKIP(), because the TestWebKitAPI listener
+// reports a skipped test as a failure.
+template<typename FirstCharacterType, typename SecondCharacterType>
+static bool canAllocateBothBuffers(unsigned firstLength, unsigned secondLength)
+{
+    std::span<FirstCharacterType> firstCharacters;
+    std::span<SecondCharacterType> secondCharacters;
+    auto firstBuffer = StringImpl::tryCreateUninitialized(firstLength, firstCharacters);
+    auto secondBuffer = StringImpl::tryCreateUninitialized(secondLength, secondCharacters);
+    if (firstBuffer && secondBuffer)
+        return true;
+    dataLogLn("Cannot allocate the buffers for this test, so the test did not run.");
+    return false;
+}
+
+TEST(StringBuilderTest, UpconvertCapacityAboveHalfOfMaxLength)
+{
+    constexpr unsigned capacity8Bit = capacityAboveHalfOfMaxLength16Bit;
+    if (!canAllocateBothBuffers<Latin1Character, char16_t>(capacity8Bit, maxLength16Bit))
+        return;
+
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    builder.reserveCapacity(capacity8Bit);
+    builder.append("ab"_s);
+    ASSERT_FALSE(builder.hasOverflowed());
+    EXPECT_TRUE(builder.is8Bit());
+    EXPECT_EQ(capacity8Bit, builder.capacity());
+
+    const char16_t nonLatin1 = 0x1234;
+    builder.append(nonLatin1);
+    ASSERT_FALSE(builder.hasOverflowed());
+    EXPECT_FALSE(builder.is8Bit());
+    EXPECT_GE(builder.capacity(), capacity8Bit);
+    EXPECT_LE(builder.capacity(), maxLength16Bit);
+    EXPECT_EQ(3U, builder.length());
+    EXPECT_EQ('a', static_cast<char>(builder[0]));
+    EXPECT_EQ('b', static_cast<char>(builder[1]));
+    EXPECT_EQ(nonLatin1, builder[2]);
+}
+
+TEST(StringBuilderTest, Grow16BitCapacityAboveHalfOfMaxLength)
+{
+    constexpr unsigned capacity = capacityAboveHalfOfMaxLength16Bit;
+    if (!canAllocateBothBuffers<char16_t, char16_t>(capacity, maxLength16Bit))
+        return;
+
+    const char16_t nonLatin1 = 0x1234;
+    constexpr unsigned writtenLength = 16;
+
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    for (unsigned i = 0; i < writtenLength; ++i)
+        builder.append(nonLatin1);
+    builder.reserveCapacity(capacity);
+    ASSERT_FALSE(builder.hasOverflowed());
+    EXPECT_FALSE(builder.is8Bit());
+    EXPECT_EQ(capacity, builder.capacity());
+
+    // This string shares the buffer with the builder. A builder that is not the only owner of its buffer copies
+    // its characters to a new buffer. A builder that is the only owner reallocates, and that can copy all 2GB.
+    String sharesBuffer = builder.toStringPreserveCapacity();
+
+    builder.append(UnwrittenCharacters { capacity - writtenLength + 1 });
+    ASSERT_FALSE(builder.hasOverflowed());
+    EXPECT_EQ(capacity + 1, builder.length());
+    EXPECT_GE(builder.capacity(), builder.length());
+    EXPECT_LE(builder.capacity(), maxLength16Bit);
+    EXPECT_EQ(nonLatin1, builder[0]);
+    EXPECT_EQ(nonLatin1, builder[writtenLength - 1]);
+    EXPECT_EQ(writtenLength, sharesBuffer.length());
+    EXPECT_EQ(nonLatin1, sharesBuffer[0]);
+    EXPECT_EQ(nonLatin1, sharesBuffer[writtenLength - 1]);
+}
+
+TEST(StringBuilderTest, LengthAboveMaxLength16BitOverflows)
+{
+    const char16_t nonLatin1 = 0x1234;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    builder.append(nonLatin1);
+    ASSERT_FALSE(builder.hasOverflowed());
+    EXPECT_FALSE(builder.is8Bit());
+
+    // The longest 16-bit string plus one character. The builder has to refuse this length, whatever capacity it picks.
+    builder.append(UnwrittenCharacters { maxLength16Bit });
+    EXPECT_TRUE(builder.hasOverflowed());
 }
 
 TEST(StringBuilderTest, ToAtomString)
