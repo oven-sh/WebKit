@@ -1,3 +1,5 @@
+// numberOfDFGCompiles() is checked below, and lockdown runs with the JIT off.
+//@ $skipModes << :lockdown
 //@ requireOptions("--useDollarVM=1")
 
 let ab;

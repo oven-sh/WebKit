@@ -5,4 +5,4 @@ Test2.local
 Test2.eval
 Test2.local
 Test3.para
-Exception : ReferenceError: Can't find variable: Test4_Inner
+Exception : ReferenceError: Test4_Inner is not defined

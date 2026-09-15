@@ -258,7 +258,7 @@ This test checks stack trace corectness in special cases.
     5   yetAnotherInlinedCall at stack-trace.js:191:17
     6   makeInlinableCall at stack-trace.js:196:34
     7   g at stack-trace.js:205:34
-    8   map at [native code]
+    8   map at 
     9   global code at stack-trace.js:208:16
 
 --> Stack Trace:
@@ -269,7 +269,7 @@ This test checks stack trace corectness in special cases.
     4   yetAnotherInlinedCall at stack-trace.js:191:17
     5   makeInlinableCall at stack-trace.js:196:34
     6   g at stack-trace.js:205:34
-    7   map at [native code]
+    7   map at 
     8   global code at stack-trace.js:208:16
 
 --> Stack Trace:
@@ -280,7 +280,7 @@ This test checks stack trace corectness in special cases.
     4   yetAnotherInlinedCall at stack-trace.js:191:17
     5   makeInlinableCall at stack-trace.js:196:34
     6   g at stack-trace.js:205:34
-    7   map at [native code]
+    7   map at 
     8   global code at stack-trace.js:208:16
 
 --> Stack Trace:
@@ -292,20 +292,20 @@ This test checks stack trace corectness in special cases.
     5   yetAnotherInlinedCall at stack-trace.js:191:17
     6   makeInlinableCall at stack-trace.js:196:34
     7   g at stack-trace.js:205:34
-    8   map at [native code]
+    8   map at 
     9   global code at stack-trace.js:208:16
 
 --> Stack Trace:
     0   h at stack-trace.js:216:24
-    1   map at [native code]
+    1   map at 
     2   mapTest at stack-trace.js:223:10
     3   mapTestDriver at stack-trace.js:229:16
     4   global code at stack-trace.js:234:18
 
 --> Stack Trace:
-    0   map at [native code]
+    0   map at 
     1   h at stack-trace.js:218:21
-    2   map at [native code]
+    2   map at 
     3   mapTest at stack-trace.js:223:10
     4   mapTestDriver at stack-trace.js:229:16
     5   global code at stack-trace.js:240:18
@@ -313,7 +313,7 @@ This test checks stack trace corectness in special cases.
 --> Stack Trace:
     0   throwError at stack-trace.js:142:20
     1   dfgFunction at stack-trace.js:249:19
-    2   map at [native code]
+    2   map at 
     3   global code at stack-trace.js:258:18
 
 --> Stack Trace:

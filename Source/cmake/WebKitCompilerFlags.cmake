@@ -327,6 +327,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                                 -Wl,-U,_WTFTimer__isActive
                                                 -Wl,-U,_WTFTimer__secondsUntilTimer
                                                 -Wl,-U,_WTFTimer__cancel
+                                                -Wl,-U,_Bun__thisThreadHasVM
                                                 -Wl,-U,_Bun__errorInstance__finalize
                                                 -Wl,-U,_Bun__reportUnhandledError)
         else()
@@ -336,6 +337,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                                 -Wl,-u,_WTFTimer__isActive
                                                 -Wl,-u,_WTFTimer__secondsUntilTimer
                                                 -Wl,-u,_WTFTimer__cancel
+                                                -Wl,-u,_Bun__thisThreadHasVM
                                                 -Wl,-u,_Bun__errorInstance__finalize
                                                 -Wl,-u,_Bun__reportUnhandledError)
         endif()

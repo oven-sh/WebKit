@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Seeded fuzz (500+ cases) over the echo/add/sum fixtures with random edge
 // values, verified against a JS reference implementation of the SPEC

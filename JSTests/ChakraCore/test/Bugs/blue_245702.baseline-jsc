@@ -1,2 +1,2 @@
 0
-ReferenceError: Can't find variable: c
+ReferenceError: c is not defined
