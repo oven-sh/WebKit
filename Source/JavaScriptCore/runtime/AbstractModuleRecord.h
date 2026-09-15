@@ -356,6 +356,7 @@ private:
 protected:
     // nullopt: not answerable from the graph (take the by-name path).
     std::optional<Resolution> tryResolveImportPrelinked(JSGlobalObject*, const Identifier& localName);
+    std::optional<Resolution> tryResolveImportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Import&);
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const Identifier& exportName);
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Export&);
     std::optional<Resolution> prelinkedResolution(JSGlobalObject*, PrelinkedModuleGraph::ResolutionKind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid);

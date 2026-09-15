@@ -30,20 +30,28 @@
 #include "Debugger.h"
 #include "Error.h"
 #include "FunctionExecutable.h"
+#include "JSModuleRecord.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include "WeakInlines.h"
 
 namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
-    , m_importedBindings(WTF::move(importedBindings))
+    , m_linker(linker)
     , m_moduleScopeSymbolTables(moduleScopeSymbolTables.size())
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
+#if USE(BUN_JSC_ADDITIONS)
+    if (linker && linker->isPrelinked()) {
+        m_linkerPrelinkedGraph = linker->prelinkedGraph();
+        m_linkerPrelinkedIndex = linker->prelinkedIndex();
+    }
+#endif
     SourceProviderSourceType sourceType = source.provider()->sourceType();
     ASSERT(sourceType == SourceProviderSourceType::Module
     #if USE(BUN_JSC_ADDITIONS)
@@ -115,6 +123,17 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 }
 
+JSModuleRecord* ModuleProgramExecutable::linker() const
+{
+    return m_linker.get();
+}
+
+void ModuleProgramExecutable::setLinkerImportedBindings(std::optional<ImportedBindings>&& bindings)
+{
+    m_linkerImportedBindings = WTF::move(bindings);
+    m_linker.clear();
+}
+
 bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
 {
     if (m_moduleScopeSymbolTables.size() != symbolTables.size())
@@ -128,7 +147,7 @@ bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTabl
 
 bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
 {
-    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || !exporterSource != !other.exporterSource)
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || importSlot != other.importSlot || !exporterSource != !other.exporterSource)
         return false;
     if (!exporterSource || exporterSource == other.exporterSource)
         return true;
@@ -153,12 +172,12 @@ FunctionExecutable* ModuleProgramExecutable::linkFunctionDeclaration(VM& vm, uns
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, WTF::move(importedBindings), moduleScopeSymbolTables);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
     if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
         return nullptr;

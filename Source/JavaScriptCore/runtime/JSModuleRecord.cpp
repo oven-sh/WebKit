@@ -252,20 +252,25 @@ JSValue JSModuleRecord::evaluate(JSGlobalObject* globalObject, JSValue sentValue
 
     // Every module this one imports from has its environment now. Filling the import
     // slots here rather than on first use (JSModuleEnvironment::fillImportSlot) keeps
-    // optimized code shared with other records from meeting an empty slot per record.
+    // optimized code shared with other records from meeting an empty slot per record;
+    // code only this record runs fills them on first use.
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
 
-    JSModuleEnvironment* environment = moduleEnvironment();
-    for (unsigned i = 0, count = importSlotCount(); i < count; ++i) {
-        if (environment->importSlot(i))
-            continue;
-        Resolution resolution = resolveImport(globalObject, importSlotNames()[i]);
+    if (executable->isShared()) {
+        JSModuleEnvironment* environment = moduleEnvironment();
+        forEachImportSlot([&](unsigned index, const Identifier& localName) {
+            if (environment->importSlot(index))
+                return IterationStatus::Continue;
+            Resolution resolution = resolveImport(globalObject, localName);
+            RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+            if (resolution.type == Resolution::Type::Resolved)
+                environment->importSlot(index).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
+            return IterationStatus::Continue;
+        });
         if (scope.exception()) [[unlikely]] {
             didFinishWithExecutable(vm);
             return { };
         }
-        if (resolution.type == Resolution::Type::Resolved)
-            environment->importSlot(i).set(vm, environment, resolution.moduleRecord->moduleEnvironment());
     }
 
     JSValue resultOrAwaitedValue = vm.interpreter.executeModuleProgram(this, executable, globalObject, moduleEnvironment(), sentValue, resumeMode);
@@ -332,34 +337,100 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
 
 const Vector<Identifier>& JSModuleRecord::importSlotNames()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!isPrelinked());
+#endif
     if (!m_importSlotNames) {
         Vector<Identifier> names;
-#if USE(BUN_JSC_ADDITIONS)
-        if (importEntriesArePrelinked()) {
-            for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
-                if (!import.isNamespace())
-                    names.append(prelinkedGraph()->identifier(import.localSid));
-            }
-        } else
-#endif
-        {
-            for (const auto& entry : importEntries().values()) {
-                if (entry.type != ImportEntryType::Namespace)
-                    names.append(entry.localName);
-            }
+        for (const auto& entry : importEntries().values()) {
+            if (entry.type == ImportEntryType::Namespace)
+                continue;
+            m_importSlotIndices.add(entry.localName.impl(), names.size());
+            names.append(entry.localName);
         }
-        std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.string(), b.string()) < 0; });
         m_importSlotNames = WTF::move(names);
     }
     return *m_importSlotNames;
 }
 
+unsigned JSModuleRecord::importSlotCount()
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (isPrelinked())
+        return prelinkedModule().importCount;
+#endif
+    return importSlotNames().size();
+}
+
+const Identifier& JSModuleRecord::importSlotLocalName(unsigned index)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (isPrelinked())
+        return prelinkedGraph()->identifier(prelinkedGraph()->imports(prelinkedModule())[index].localSid);
+#endif
+    return importSlotNames()[index];
+}
+
+template<typename Functor>
+void JSModuleRecord::forEachImportSlot(const Functor& functor)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (isPrelinked()) {
+        auto imports = prelinkedGraph()->imports(prelinkedModule());
+        for (unsigned i = 0; i < imports.size(); ++i) {
+            if (!imports[i].isNamespace() && functor(i, importSlotLocalName(i)) == IterationStatus::Done)
+                return;
+        }
+        return;
+    }
+#endif
+    const Vector<Identifier>& names = importSlotNames();
+    for (unsigned i = 0; i < names.size(); ++i) {
+        if (functor(i, names[i]) == IterationStatus::Done)
+            return;
+    }
+}
+
 unsigned JSModuleRecord::importSlotIndex(UniquedStringImpl* localName)
 {
-    const Vector<Identifier>& names = importSlotNames();
-    auto iterator = std::lower_bound(names.begin(), names.end(), localName, [](const Identifier& name, UniquedStringImpl* localName) { return codePointCompare(StringView(name.string()), StringView(*localName)) < 0; });
-    RELEASE_ASSERT(iterator != names.end() && iterator->impl() == localName);
-    return iterator - names.begin();
+#if USE(BUN_JSC_ADDITIONS)
+    if (isPrelinked()) {
+        auto imports = prelinkedGraph()->imports(prelinkedModule());
+        const auto* import = prelinkedGraph()->findImport(prelinkedModule(), localName);
+        RELEASE_ASSERT(import && !import->isNamespace());
+        return import - imports.data();
+    }
+#endif
+    importSlotNames();
+    auto iterator = m_importSlotIndices.find(localName);
+    RELEASE_ASSERT(iterator != m_importSlotIndices.end());
+    return iterator->value;
+}
+
+auto JSModuleRecord::resolveImportWithSlot(JSGlobalObject* globalObject, const Identifier& localName, unsigned& importSlot) -> Resolution
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // One lookup in the graph answers both; resolveImport() and importSlotIndex() would each make it.
+    if (isPrelinked() && !Options::validatePrelinkedModuleInfo()) [[likely]] {
+        const auto* import = prelinkedGraph()->findImport(prelinkedModule(), localName.impl());
+        if (!import)
+            return Resolution::notFound();
+        std::optional<Resolution> resolution = tryResolveImportPrelinked(globalObject, *import);
+        RETURN_IF_EXCEPTION(scope, Resolution::error());
+        if (resolution) [[likely]] {
+            importSlot = import - prelinkedGraph()->imports(prelinkedModule()).data();
+            return *resolution;
+        }
+    }
+#endif
+    Resolution resolution = resolveImport(globalObject, localName);
+    RETURN_IF_EXCEPTION(scope, Resolution::error());
+    if (resolution.type == Resolution::Type::Resolved)
+        importSlot = importSlotIndex(localName.impl());
+    return resolution;
 }
 
 JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject, unsigned index)
@@ -367,7 +438,7 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Resolution resolution = resolveImport(globalObject, importSlotNames()[index]);
+    Resolution resolution = resolveImport(globalObject, importSlotLocalName(index));
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_ASSERT(resolution.type == Resolution::Type::Resolved);
     JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironment();
@@ -381,25 +452,71 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ModuleProgramExecutable::ImportedBindings bindings;
-    for (const Identifier& localName : importSlotNames()) {
+    bool comparable = true;
+    forEachImportSlot([&](unsigned index, const Identifier& localName) {
+#if USE(BUN_JSC_ADDITIONS)
+        // An import the graph resolved to a binding of another of its modules, whose record this one reaches through its
+        // loader's table, is left out: it is the same variable of the same source for every record of this module of the
+        // graph that reaches it that way (createPrelinked() is given a graph module's own source), and only those are
+        // compared with each other (ModuleProgramExecutable::wasLinkedFor). A record that resolves it some other way
+        // lists it, and so differs.
+        if (isPrelinked()) {
+            const auto& import = prelinkedGraph()->imports(prelinkedModule())[index];
+            if (import.resolution() == PrelinkedModuleGraph::ResolutionKind::Binding && dynamicDowncast<JSModuleRecord>(prelinkedRecordForResolution(globalObject, import.resolvedModule)))
+                return IterationStatus::Continue;
+        }
+#endif
         Resolution resolution = resolveImport(globalObject, localName);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (resolution.type != Resolution::Type::Resolved)
-            continue;
+            return IterationStatus::Continue;
         if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
-            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0 });
-            continue;
+            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index });
+            return IterationStatus::Continue;
         }
         JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
-        if (!environment)
-            return std::nullopt;
+        if (!environment) {
+            comparable = false;
+            return IterationStatus::Done;
+        }
         SymbolTable* symbolTable = environment->symbolTable();
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iterator = symbolTable->find(locker, resolution.localName.impl());
         RELEASE_ASSERT(iterator != symbolTable->end(locker));
-        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset() });
-    }
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index });
+        return IterationStatus::Continue;
+    });
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!comparable)
+        return std::nullopt;
     return bindings;
+}
+
+bool JSModuleRecord::resolvesImportsLike(JSGlobalObject* globalObject, ModuleProgramExecutable* executable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (!executable->wasLinkedFor(prelinkedGraph(), isPrelinked() ? prelinkedIndex() : PrelinkedModuleGraph::noModule))
+        return false;
+#endif
+    if (!executable->linkerImportedBindings()) {
+        // Nothing resolved the linker's imports for this when it linked the executable: there was no record to compare it
+        // with. What they resolve to does not change, so now is as good. A linker that is gone, or whose imports cannot
+        // be compared, leaves nothing to compare with.
+        JSModuleRecord* linker = executable->linker();
+        if (!linker)
+            return false;
+        std::optional<ModuleProgramExecutable::ImportedBindings> bindings = linker->importedBindings(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        executable->setLinkerImportedBindings(WTF::move(bindings));
+        if (!executable->linkerImportedBindings())
+            return false;
+    }
+    std::optional<ModuleProgramExecutable::ImportedBindings> mine = importedBindings(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return mine && *mine == *executable->linkerImportedBindings();
 }
 
 ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* globalObject)
@@ -419,8 +536,8 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // loaders' module scopes have the same symbol tables, share the executable:
     // CodeBlocks, JIT code and the function declarations' executables. A record for
     // which these differ links its own, which later records are then compared against.
-    std::optional<ModuleProgramExecutable::ImportedBindings> bindings = importedBindings(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    // Nothing about the imports is resolved for this until a second record for the key and module scope turns up
+    // (resolvesImportsLike): a record that is the only one to link a module pays for the comparison nothing.
     Vector<SymbolTable*> moduleScopeSymbolTables;
     for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next())
         moduleScopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(moduleScope)->symbolTable());
@@ -429,7 +546,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // reused for another module fails the URL / source comparison and is replaced.
     auto& executables = globalObject->moduleProgramExecutables();
     JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
-    if (bindings) {
+    {
         ModuleProgramExecutable* shared = executables.get(key);
         // (An executable whose code was deleted, ScriptExecutable::clearCode, is left to the
         // records that have it. One that only let go of unlinked code it can decode again,
@@ -437,24 +554,28 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // executable's code is in the mode of its first code, see getUnlinkedCodeBlock, which
         // has to be the one this record would ask for.)
         if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
-            && shared->importedBindings() == bindings && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+            && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
-            if (!shared->unlinkedCodeBlock()) {
-                shared->getUnlinkedCodeBlock(globalObject);
-                RETURN_IF_EXCEPTION(scope, nullptr);
+            bool alike = resolvesImportsLike(globalObject, shared);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (alike) {
+                if (!shared->unlinkedCodeBlock()) {
+                    shared->getUnlinkedCodeBlock(globalObject);
+                    RETURN_IF_EXCEPTION(scope, nullptr);
+                }
+                shared->willBeEvaluatedByAnotherRecord();
+                shared->didShare();
+                m_moduleProgramExecutable.set(vm, this, shared);
+                return shared;
             }
-            shared->willBeEvaluatedByAnotherRecord();
-            m_moduleProgramExecutable.set(vm, this, shared);
-            return shared;
         }
     }
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), WTF::move(bindings), moduleScopeSymbolTables);
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables);
     RETURN_IF_EXCEPTION(scope, nullptr);
     executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);
-    if (executable->importedBindings())
-        executables.set(key, Weak<ModuleProgramExecutable>(executable));
+    executables.set(key, Weak<ModuleProgramExecutable>(executable));
     return executable;
 }
 
