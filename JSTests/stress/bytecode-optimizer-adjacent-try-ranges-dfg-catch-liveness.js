@@ -107,6 +107,7 @@ function throwIf(flag) {
 noInline(throwIf);
 
 // The inlined recursive call reaches the same HandlerInfo through a second inline call frame, within one block.
+// noInline() on recursive itself would also stop it from being inlined into itself, so only its caller gets that.
 function recursive(depth, flag) {
     let saved = 0;
     try {
@@ -118,6 +119,10 @@ function recursive(depth, flag) {
     } catch {
         return saved;
     }
+}
+
+function callRecursive() {
+    return recursive(2, true);
 }
 
 function callThrough(f, kind) {
@@ -133,10 +138,10 @@ const cases = [
 ];
 for (let [f] of cases)
     noInline(f);
-noInline(recursive);
+noInline(callRecursive);
 noInline(callThrough);
 
-for (let i = 0; i < 5e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
     let hit = i % 3 === 0;
     let kind = hit ? "k" : "x";
     for (let [f, whenHit, whenMiss] of cases) {
@@ -144,7 +149,7 @@ for (let i = 0; i < 5e4; ++i) {
         if (result !== (hit ? whenHit : whenMiss))
             throw new Error(f.name + ": got " + result + " at " + i);
     }
-    if (recursive(2, true) !== 7)
+    if (callRecursive() !== 7)
         throw new Error("recursive: bad result at " + i);
 }
 
@@ -157,7 +162,7 @@ function forOfInlinee(kind) {
     }
     return false;
 }
-for (let i = 0; i < 5e4; ++i) {
+for (let i = 0; i < testLoopCount; ++i) {
     let hit = i % 3 === 0;
     if (callThrough(forOfInlinee, hit ? "k" : "x") !== hit)
         throw new Error("forOfInlinee: bad result at " + i);
