@@ -57,7 +57,7 @@ enum class SandboxExtensionType : uint8_t {
 class SandboxExtensionImpl {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(SandboxExtensionImpl);
 public:
-    static std::unique_ptr<SandboxExtensionImpl> create(const char* path, SandboxExtensionType, std::optional<audit_token_t> = std::nullopt, OptionSet<SandboxExtensionFlags> = SandboxExtensionFlags::Default);
+    static std::unique_ptr<SandboxExtensionImpl> create(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t> = std::nullopt, OptionSet<SandboxExtensionFlags> = SandboxExtensionFlags::Default);
     SandboxExtensionImpl(std::span<const uint8_t>);
     ~SandboxExtensionImpl();
 
@@ -69,9 +69,9 @@ public:
         : m_token(std::exchange(other.m_token, CString()))
         , m_handle(std::exchange(other.m_handle, 0)) { }
 private:
-    CString sandboxExtensionForType(const char* path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
+    CString sandboxExtensionForType(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
 
-    SandboxExtensionImpl(const char* path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
+    SandboxExtensionImpl(const UTF8CString& path, SandboxExtensionType, std::optional<audit_token_t>, OptionSet<SandboxExtensionFlags>);
 
     CString m_token;
     int64_t m_handle { 0 };

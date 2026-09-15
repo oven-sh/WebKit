@@ -131,6 +131,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-animation.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-update-reversed-animation.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-update.html
+/LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-scroll-range-source-content-resize.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-shorthand.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-subject-bounds-update.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-subject-in-shadow-root-with-timeline-scope.html

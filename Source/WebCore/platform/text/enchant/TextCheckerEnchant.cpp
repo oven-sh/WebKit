@@ -54,22 +54,22 @@ void TextCheckerEnchant::ignoreWord(const String& word)
 {
     auto utf8Word = word.utf8();
     for (auto& dictionary : m_enchantDictionaries)
-        enchant_dict_add_to_session(dictionary.get(), utf8Word.data(), utf8Word.length());
+        enchant_dict_add_to_session(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length());
 }
 
 void TextCheckerEnchant::learnWord(const String& word)
 {
     auto utf8Word = word.utf8();
     for (auto& dictionary : m_enchantDictionaries)
-        enchant_dict_add(dictionary.get(), utf8Word.data(), utf8Word.length());
+        enchant_dict_add(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length());
 }
 
 void TextCheckerEnchant::checkSpellingOfWord(const String& word, int start, int end, int& misspellingLocation, int& misspellingLength)
 {
-    CString string = word.substring(start, end - start).utf8();
+    auto string = word.substring(start, end - start).utf8();
 
     for (auto& dictionary : m_enchantDictionaries) {
-        if (!enchant_dict_check(dictionary.get(), string.data(), string.length())) {
+        if (!enchant_dict_check(dictionary.get(), string.legacyCStringPointer(), string.length())) {
             // Stop checking, this word is ok in at least one dict.
             misspellingLocation = -1;
             misspellingLength = 0;
@@ -118,7 +118,7 @@ Vector<String> TextCheckerEnchant::getGuessesForWord(const String& word)
     for (auto& dictionary : m_enchantDictionaries) {
         size_t numberOfSuggestions;
 
-        char** suggestions = enchant_dict_suggest(dictionary.get(), utf8Word.data(), utf8Word.length(), &numberOfSuggestions);
+        char** suggestions = enchant_dict_suggest(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length(), &numberOfSuggestions);
         if (numberOfSuggestions <= 0)
             continue;
 
@@ -139,17 +139,17 @@ void TextCheckerEnchant::updateSpellCheckingLanguages(const Vector<String>& lang
     Vector<UniqueEnchantDict> spellDictionaries;
     if (!languages.isEmpty()) {
         for (auto& language : languages) {
-            CString currentLanguage = language.utf8();
-            if (enchant_broker_dict_exists(m_broker, currentLanguage.data())) {
-                if (auto* dict = enchant_broker_request_dict(m_broker, currentLanguage.data()))
+            auto currentLanguage = language.utf8();
+            if (enchant_broker_dict_exists(m_broker, currentLanguage.legacyCStringPointer())) {
+                if (auto* dict = enchant_broker_request_dict(m_broker, currentLanguage.legacyCStringPointer()))
                     spellDictionaries.append(dict);
             }
         }
     } else {
         // Languages are not specified by user, try to get default language.
-        CString language = defaultLanguage().utf8();
-        if (enchant_broker_dict_exists(m_broker, language.data())) {
-            if (auto* dict = enchant_broker_request_dict(m_broker, language.data()))
+        auto language = defaultLanguage().utf8();
+        if (enchant_broker_dict_exists(m_broker, language.legacyCStringPointer())) {
+            if (auto* dict = enchant_broker_request_dict(m_broker, language.legacyCStringPointer()))
                 spellDictionaries.append(dict);
         } else {
             // No dictionaries selected, we get the first one from the list.

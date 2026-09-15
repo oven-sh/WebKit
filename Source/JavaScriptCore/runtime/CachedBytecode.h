@@ -143,8 +143,9 @@ public:
     {
         return m_childExecutables.isEmpty() ? FixedVector<Weak<UnlinkedFunctionExecutable>>() : m_childExecutables.take(key(index, recordOffset));
     }
-    // After each full collection: forget the parents none of whose children are alive any more.
-    void pruneStaleEntries() final;
+    // After each full collection: forget the parents none of whose children are alive any more. This table never
+    // marks itself dirty, so an eden collection does not visit it.
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
     // Before the heap's last finalization takes the weak references' storage.
     void clearChildExecutables() { m_childExecutables.clear(); }
 

@@ -2360,16 +2360,10 @@ webkit.org/b/187800 imported/w3c/web-platform-tests/custom-elements/Document-cre
 webkit.org/b/187800 imported/w3c/web-platform-tests/custom-elements/parser/parser-uses-create-an-element-for-a-token-svg.svg [ Skip ]
 
 # selectors
-imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-172a.xml [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-172b.xml [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-173a.xml [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-173b.xml [ ImageOnlyFailure ]
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-002.html [ Skip ]
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-003.html [ Skip ]
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-004.html [ Skip ]
 webkit.org/b/217904 imported/w3c/web-platform-tests/css/selectors/is-where-visited.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/selectors/xml-class-selector.xml [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/selectors/case-insensitive-parent.html [ ImageOnlyFailure ]
 
 # This test is bit heavy for debug
 [ Debug ] imported/w3c/web-platform-tests/css/selectors/invalidation/has-complexity.html [ Skip ]
@@ -3536,7 +3530,6 @@ webkit.org/b/214290 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens
 webkit.org/b/214290 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-shaping-001.html [ ImageOnlyFailure ]
 webkit.org/b/214290 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-span-002.html [ ImageOnlyFailure ]
 webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphenate-character-005.html [ ImageOnlyFailure ]
-webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphenate-limit-chars-001.html [ ImageOnlyFailure ]
 webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-auto-003.html [ ImageOnlyFailure ]
 webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-auto-control.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-text/hyphens/i18n/hyphens-i18n-auto-001.html [ ImageOnlyFailure ]
@@ -3884,9 +3877,6 @@ fast/css/css2-system-color.html [ Skip ]
 # Test disabled in r64074 after dropping -khtml prefix support
 fast/css/limited-vendor-prefix-behavior.html [ Skip ]
 
-# Test disabled in r42420 since it hits test-only release assert
-fast/dom/gc-8.html [ Skip ]
-
 # Test disabled in r27657
 fast/dom/Window/window-resize-nan.html [ Skip ]
 
@@ -3931,6 +3921,8 @@ webkit.org/b/99945 imported/w3c/web-platform-tests/css/css-text/text-justify/tex
 webkit.org/b/99945 imported/w3c/web-platform-tests/css/css-text/text-justify/text-justify-inter-character-001.html [ ImageOnlyFailure ]
 webkit.org/b/99945 imported/w3c/web-platform-tests/css/css-text/text-justify/text-justify-inter-word-001.html [ ImageOnlyFailure ]
 webkit.org/b/99945 imported/w3c/web-platform-tests/css/css-text/text-justify/text-justify-none-001.html [ ImageOnlyFailure ]
+webkit.org/b/322760 imported/w3c/web-platform-tests/css/css-text/word-spacing/word-spacing-combining-mark-001.html [ ImageOnlyFailure ]
+webkit.org/b/322760 imported/w3c/web-platform-tests/css/css-text/word-spacing/word-spacing-combining-mark-002.html [ ImageOnlyFailure ]
 
 # Link prefetch is disabled by default (needs ENABLE_LINK_PREFETCH)
 webkit.org/b/3652 fast/dom/HTMLLinkElement/link-and-subresource-test.html [ Skip ]
@@ -5134,7 +5126,6 @@ webgl/1.0.x/conformance/textures/misc/texture-corner-case-videos.html [ Failure 
 webgl/2.0.y/conformance/textures/misc/texture-corner-case-videos.html [ Failure ]
 
 # WebGL tests to be investigated and categorized.
-webkit.org/b/292182 webgl/1.0.x/conformance/textures/image_bitmap_from_video/tex-2d-luminance-luminance-unsigned_byte.html [ Pass Timeout ]
 webkit.org/b/292182 [ x86_64 ] webgl/1.0.x/conformance/textures/misc/copytexsubimage2d-large-partial-copy-corruption.html [ Failure Pass ]
 webkit.org/b/292182 webgl/1.0.x/conformance/textures/misc/texture-video-transparent.html [ Failure Pass ]
 webkit.org/b/292182 [ x86_64 ] webgl/2.0.y/conformance/textures/misc/copytexsubimage2d-large-partial-copy-corruption.html [ Failure Pass ]
@@ -5829,20 +5820,8 @@ webkit.org/b/217931 imported/w3c/web-platform-tests/html/semantics/scripting-1/t
 webkit.org/b/217931 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-success-external-module.html [ Pass Failure ]
 webkit.org/b/217931 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-success-inline-classic.html [ Pass Failure ]
 
-
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-deep-chain-001.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-inheritance-001.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-no-named-rule-001.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-no-named-rule-002.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-001.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-002.tentative.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-highlight-api/custom-highlight-universal-painting-003.tentative.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-currentcolor.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-highlight-api/highlight-image-stacked.html [ ImageOnlyFailure ]
-
-http/tests/webgl/1.0.x/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
-http/tests/webgl/2.0.y/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
-http/tests/webgl/2.0.y/conformance2/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
 
 # These are only enabled on Cocoa WK2 ports
 webanimations/multiple-transform-properties-and-multiple-transform-properties-animation-with-delay-on-forced-layer.html [ Skip ]
@@ -6613,23 +6592,19 @@ imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/ove
 imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/fallbacks-in-shadow-dom.html [ ImageOnlyFailure ]
 
 # Missing counter-style integration with symbols() rdar://106084071
-imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/symbols-function.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/symbols-function [ Skip ]
 
 webkit.org/b/297734 imported/w3c/web-platform-tests/css/css-counter-styles/counter-style-at-rule/descriptor-calc.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/css-counter-styles/counter-suffix.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-counter-styles/hebrew/counter-hebrew-nested.html [ ImageOnlyFailure ]
 
-# Missing support for extended range
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-informal/counter-korean-hanja-informal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/japanese-informal/counter-japanese-informal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/japanese-formal/counter-japanese-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-formal/counter-korean-hanja-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/korean-hangul-formal/counter-korean-hangul-formal-extended.html
-imported/w3c/web-platform-tests/css/css-counter-styles/simp-chinese-formal/counter-simp-chinese-formal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/simp-chinese-informal/counter-simp-chinese-informal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/trad-chinese-formal/counter-trad-chinese-formal.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-counter-styles/trad-chinese-informal/counter-trad-chinese-informal.html [ ImageOnlyFailure ]
+# These number past 2147483647, which a counter value cannot hold. webkit.org/b/323698
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-informal/counter-korean-hanja-informal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/japanese-informal/counter-japanese-informal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/japanese-formal/counter-japanese-formal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hanja-formal/counter-korean-hanja-formal-extended.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-counter-styles/korean-hangul-formal/counter-korean-hangul-formal-extended.html [ ImageOnlyFailure ]
 
 # Newly imported ruby WPTs
 imported/w3c/web-platform-tests/css/css-ruby/block-ruby-001.html [ ImageOnlyFailure ]
@@ -7774,9 +7749,8 @@ media/webkit-media-controls-not-visible-after-exiting-fullscreen.html [ Skip ]
 webkit.org/b/279297 fast/block/float/float-avoider-with-negative-margin.html [ ImageOnlyFailure ]
 webkit.org/b/298061 fast/block/crash-with-percent-padding.html [ Skip ]
 
-# imported/w3c/web-platform-tests/css/selectors/featureless-004/5.html are failures.
+# imported/w3c/web-platform-tests/css/selectors/featureless-004 is a failure.
 webkit.org/b/280685 imported/w3c/web-platform-tests/css/selectors/featureless-004.html [ ImageOnlyFailure ]
-webkit.org/b/280685 imported/w3c/web-platform-tests/css/selectors/featureless-005.html [ ImageOnlyFailure ]
 webkit.org/b/294638 imported/w3c/web-platform-tests/css/selectors/focus-visible-018-2.html [ Skip ]
 
 # Skip large regular expression tests on Debug to avoid timeout.
@@ -8205,8 +8179,6 @@ imported/w3c/web-platform-tests/html/semantics/forms/form-submission-target/form
 
 imported/w3c/web-platform-tests/html/browsers/the-window-object/open-close/open_fires_resize.tentative.html [ Skip ] # timeout
 
-webkit.org/b/311207 imported/w3c/web-platform-tests/workers/semantics/structured-clone/shared.html [ Pass Failure ]
-
 imported/w3c/web-platform-tests/svg/animations/conditional-processing-02.html [ Skip ] # Flaky
 imported/w3c/web-platform-tests/svg/animations/animate-fill-underlying-value-change.html [ Skip ] # Flaky
 imported/w3c/web-platform-tests/svg/embedded/image-large-bitmap.svg [ ImageOnlyFailure ] # Might be just fuzziness issue
@@ -8243,14 +8215,6 @@ imported/w3c/web-platform-tests/scroll-animations/animation-trigger/animation-tr
 imported/w3c/web-platform-tests/scroll-animations/animation-trigger/animation-trigger-fill-mode-none.tentative.html [ Pass ImageOnlyFailure ]
 imported/w3c/web-platform-tests/scroll-animations/animation-trigger/timeline-trigger-source-starts-in-trigger-range.tentative.html [ Pass Failure ]
 
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/path/shape-outside-path-000.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/path/shape-outside-path-001.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/path/shape-outside-path-002.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/path/shape-outside-path-003.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/shape/shape-outside-shape-000.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/shape/shape-outside-shape-001.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/shape/shape-outside-shape-002.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-shapes/shape-outside/supported-shapes/shape/shape-outside-shape-003.html [ ImageOnlyFailure ]
 
 webkit.org/b/317017 imported/w3c/web-platform-tests/largest-contentful-paint/multiple-redirects-TAO.html [ Pass Failure ]
 

@@ -151,7 +151,7 @@ void DesktopPortalCamera::accessCamera(Function<void(std::optional<int>)>&& call
     auto token = makeString("WebKit"_s, weakRandomNumber<uint32_t>());
     GVariantBuilder options;
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.utf8().data()));
+    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.utf8().legacyCStringPointer()));
 
     auto connection = g_dbus_proxy_get_connection(m_proxy.get());
     auto connectionString = StringView::fromLatin1(g_dbus_connection_get_unique_name(connection));
@@ -175,7 +175,7 @@ void DesktopPortalCamera::accessCamera(Function<void(std::optional<int>)>&& call
     };
 
     m_responseSignalId = g_dbus_connection_signal_subscribe(connection, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
-        "Response", objectPath.utf8().data(), nullptr, G_DBUS_SIGNAL_FLAGS_NO_MATCH_RULE, reinterpret_cast<GDBusSignalCallback>(+[](GDBusConnection*, const char* /* senderName */, const char* /* objectPath */, const char* /* interfaceName */, const char* /* signalName */, GVariant* parameters, gpointer userData) {
+        "Response", objectPath.utf8().legacyCStringPointer(), nullptr, G_DBUS_SIGNAL_FLAGS_NO_MATCH_RULE, reinterpret_cast<GDBusSignalCallback>(+[](GDBusConnection*, const char* /* senderName */, const char* /* objectPath */, const char* /* interfaceName */, const char* /* signalName */, GVariant* parameters, gpointer userData) {
             auto& self = *reinterpret_cast<DesktopPortal*>(userData);
             self.notifyResponse(parameters);
         }), this, nullptr);

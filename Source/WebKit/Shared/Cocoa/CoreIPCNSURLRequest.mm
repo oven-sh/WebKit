@@ -149,7 +149,7 @@ static void populateAppProperties(NSDictionary *protocolPropertiesDict, Protocol
             continue;
 
         if (isReservedProtocolPropertyKeyPrefix(key.get())) {
-            RELEASE_LOG_INFO_FORWARDABLE(API, CoreIpcNsurlRequestPropertyKeyNotAllowed, String(key.get()).utf8().data());
+            RELEASE_LOG_INFO_FORWARDABLE(API, CoreIpcNsurlRequestPropertyKeyNotAllowed, String(key.get()).utf8().legacyCStringPointer());
             continue;
         }
 

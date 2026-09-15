@@ -40,12 +40,12 @@ BytecodeSequence::BytecodeSequence(CodeBlock* codeBlock)
     {
         unsigned index = 0;
         for (auto& profile : codeBlock->argumentValueProfiles()) {
-            CString description = profile.briefDescription();
+            auto description = profile.briefDescription();
             if (!description.length())
                 continue;
             out.reset();
             out.print("arg", index++, ": ", description);
-            m_header.append(out.toCString());
+            m_header.append(out.toUTF8CString());
         }
     }
     
@@ -57,7 +57,7 @@ BytecodeSequence::BytecodeSequence(CodeBlock* codeBlock)
         codeBlock->dumpBytecode(out, bytecodeIndex, statusMap);
         auto instruction = codeBlock->instructions().at(bytecodeIndex);
         OpcodeID opcodeID = instruction->opcodeID();
-        m_sequence.append(Bytecode(bytecodeIndex, opcodeID, out.toCString()));
+        m_sequence.append(Bytecode(bytecodeIndex, opcodeID, out.toUTF8CString()));
         bytecodeIndex += instruction->size();
     }
 }

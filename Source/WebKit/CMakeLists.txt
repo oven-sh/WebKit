@@ -990,6 +990,12 @@ WEBKIT_SETUP_SWIFT_AND_GENERATE_SWIFT_CPP_INTEROP_HEADER(WebKit WebKit
     "${WebKit_SWIFT_INTEROP_MODULE_PATH}"
     "${WebKit_DERIVED_SOURCES_DIR}/WebKit-Swift-Generated.h")
 
+if (SWIFT_REQUIRED)
+    # should match the rest of WebKit and use -Onone, but it negatively impacts build time
+    webkit_target_add_swift_options(WebKit
+        "$<$<AND:$<COMPILE_LANGUAGE:Swift>,$<CONFIG:Debug>>:-O>")
+endif ()
+
 if (WebKit_PUBLIC_FRAMEWORK_HEADERS)
     WEBKIT_COPY_FILES(WebKit_CopyHeaders
         DESTINATION ${WebKit_HEADERS_DIR}
@@ -1443,6 +1449,12 @@ if (ENABLE_BACK_FORWARD_LIST_SWIFT)
     )
 endif ()
 
+if (ENABLE_BACK_FORWARD_LIST_SWIFT OR ENABLE_IPC_TESTING_SWIFT)
+    list(APPEND WebKit_SOURCES
+        ${WEBKIT_DIR}/Platform/IPC/MessageCheck.swift
+    )
+endif ()
+
 if (ENABLE_IPC_TESTING_SWIFT)
     list(APPEND WebKit_SOURCES
         ${WEBKIT_DIR}/Shared/IPCTesterReceiver.swift
@@ -1497,6 +1509,12 @@ if (USE_APPLE_INTERNAL_SDK)
     WEBKIT_TARGET_USE_PGO(WebKit PROFILE WebKit)
 endif ()
 WEBKIT_ADD_PREFIX_HEADER(WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX OBJCXX)
+
+if (APPLE AND USE_LIBWEBRTC)
+    target_link_options(WebKit PRIVATE
+        "LINKER:-weak_library,$<TARGET_FILE:webrtc>")
+    add_dependencies(WebKit webrtc)
+endif ()
 
 if (SWIFT_REQUIRED AND WEBKIT_SDK_IS_MACOS)
     WEBKIT_ADD_SWIFT_PREWARM(WebKit SwiftPrewarmMac.swift)

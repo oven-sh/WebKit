@@ -270,6 +270,6 @@ gchar* webkit_security_origin_to_string(WebKitSecurityOrigin* origin)
 {
     g_return_val_if_fail(origin, nullptr);
 
-    CString cstring = origin->securityOriginData.toString().utf8();
-    return cstring == "null"_s || cstring == ""_s ? nullptr : g_strdup (cstring.data());
+    auto cstring = origin->securityOriginData.toString().utf8();
+    return cstring == "null"_s || cstring == ""_s ? nullptr : g_strdup (cstring.legacyCStringPointer());
 }

@@ -292,7 +292,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
             RELEASE_ASSERT(error.isValid());
 #if ASSERT_ENABLED
             if (error.type() != ParserError::StackOverflow) {
-                WTFLogAlways("Error parsing builtin: %s\n", error.message().utf8().data());
+                WTFLogAlways("Error parsing builtin: %s\n", error.message().utf8().legacyCStringPointer());
                 CRASH();
             }
 #endif

@@ -52,7 +52,7 @@ static pid_t reapedChildPid()
     if (!child)
         _exit(0);
     if (child < 0) {
-        dataLogLn("    could not fork: ", safeStrerror(errno));
+        dataLogLn("    could not fork: ", safeStrerror(errno).data());
         return 0;
     }
 
@@ -65,7 +65,7 @@ static pid_t reapedChildPid()
 
     if (waited != child) {
         dataLogLn("    could not reap child ", child, ": waitpid returned ", waited,
-            ", errno ", errno, " (", safeStrerror(errno), ")");
+            ", errno ", errno, " (", safeStrerror(errno).data(), ")");
         return 0;
     }
     return child;

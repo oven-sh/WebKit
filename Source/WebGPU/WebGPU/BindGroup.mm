@@ -446,17 +446,150 @@ static MTLPixelFormat metalPixelFormat(CVPixelBufferRef pixelBuffer, size_t plan
     return MTLPixelFormatInvalid;
 }
 
+// A single-plane frame carries straight alpha, but textureSampleBaseClampToEdge() has to return
+// premultiplied color, and premultiplying after the sampler has filtered the plane is not the same as
+// filtering color that was already premultiplied. So the color is premultiplied into a copy before
+// the sampler ever sees it. Because the copy is in natural RGBA order, the alpha-first formats need
+// their permutation undone on the way in: those reach Metal as a format naming a different channel
+// order, which is also why they carry a swizzle out of metalPixelFormat(). MTLPixelFormatInvalid means
+// "leave this frame alone", either because nothing here can premultiply the format or because the
+// frame's alpha is not straight to begin with.
+struct PremultiplyAlphaParameters {
+    MTLPixelFormat destinationFormat { MTLPixelFormatInvalid };
+    std::optional<MTLTextureSwizzleChannels> sourceSwizzle;
+};
+
+static PremultiplyAlphaParameters premultiplyAlphaParameters(CVPixelBufferRef pixelBuffer)
+{
+    if (adoptCF(CVBufferCopyAttachment(pixelBuffer, kCVImageBufferAlphaChannelIsOpaque, nullptr)).get() == kCFBooleanTrue)
+        return { };
+
+    if (RetainPtr alphaMode = adoptCF(CVBufferCopyAttachment(pixelBuffer, kCVImageBufferAlphaChannelModeKey, nullptr)); alphaMode && CFEqual(alphaMode.get(), kCVImageBufferAlphaChannelMode_PremultipliedAlpha))
+        return { };
+
+    // Alpha comes first in memory, so every channel is one place further along than the Metal format
+    // says: red is in green, green in blue, blue in alpha, and alpha in red.
+    auto alphaFirstSwizzle = MTLTextureSwizzleChannelsMake(MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha, MTLTextureSwizzleRed);
+
+    switch (CVPixelBufferGetPixelFormatType(pixelBuffer)) {
+    case kCVPixelFormatType_32BGRA:
+    case kCVPixelFormatType_32RGBA:
+        return { MTLPixelFormatRGBA8Unorm, std::nullopt };
+    case kCVPixelFormatType_32ARGB:
+        return { MTLPixelFormatRGBA8Unorm, alphaFirstSwizzle };
+    case kCVPixelFormatType_64RGBALE:
+        return { MTLPixelFormatRGBA16Unorm, std::nullopt };
+    case kCVPixelFormatType_64ARGB:
+        return { MTLPixelFormatRGBA16Unorm, alphaFirstSwizzle };
+    default:
+        return { };
+    }
+}
+
 #endif
 
-Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace) const
+id<MTLComputePipelineState> Device::premultiplyAlphaPipeline() const
+{
+    if (m_premultiplyAlphaPipeline)
+        return m_premultiplyAlphaPipeline;
+
+    NSError *error = nil;
+    /* NOLINT */ id<MTLLibrary> library = [m_device newLibraryWithSource:@R"(
+using namespace metal;
+[[kernel]] void premultiplyAlpha(texture2d<float, access::read> source [[texture(0)]],
+    texture2d<float, access::write> destination [[texture(1)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= destination.get_width() || gid.y >= destination.get_height())
+        return;
+
+    float4 texel = source.read(gid);
+    destination.write(float4(texel.rgb * texel.a, texel.a), gid);
+})" /* NOLINT */ options:nil error:&error];
+    if (error) {
+        WTFLogAlways("%@", error); // NOLINT
+        return nil;
+    }
+
+    m_premultiplyAlphaPipeline = [m_device newComputePipelineStateWithFunction:[library newFunctionWithName:@"premultiplyAlpha"] error:&error];
+    if (error)
+        WTFLogAlways("%@", error); // NOLINT
+
+    return m_premultiplyAlphaPipeline;
+}
+
+id<MTLTexture> Device::premultipliedAlphaTexture(id<MTLTexture> source, MTLPixelFormat destinationFormat, std::optional<MTLTextureSwizzleChannels> sourceSwizzle) const
+{
+    id<MTLComputePipelineState> pipeline = premultiplyAlphaPipeline();
+    if (!pipeline)
+        return nil;
+
+    MTLTextureDescriptor *textureDescriptor = [MTLTextureDescriptor new];
+    textureDescriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsagePixelFormatView;
+    textureDescriptor.textureType = MTLTextureType2D;
+    textureDescriptor.width = source.width;
+    textureDescriptor.height = source.height;
+    textureDescriptor.pixelFormat = destinationFormat;
+    textureDescriptor.mipmapLevelCount = 1;
+    textureDescriptor.sampleCount = 1;
+    textureDescriptor.storageMode = MTLStorageModePrivate;
+
+    id<MTLTexture> destination = [m_device newTextureWithDescriptor:textureDescriptor];
+    if (!destination)
+        return nil;
+    setOwnerWithIdentity(destination);
+
+    if (sourceSwizzle)
+        source = [source newTextureViewWithPixelFormat:source.pixelFormat textureType:source.textureType levels:NSMakeRange(0, source.mipmapLevelCount) slices:NSMakeRange(0, source.arrayLength) swizzle:*sourceSwizzle];
+
+    // The pass goes on the default queue, so the commands the page submits afterwards see the result
+    // without any further synchronization.
+    Ref queue = m_defaultQueue;
+    id<MTLCommandBuffer> commandBuffer = queue->commandBufferWithDescriptor([MTLCommandBufferDescriptor new]);
+    if (!commandBuffer)
+        return nil;
+
+    MTLComputePassDescriptor *computePassDescriptor = [MTLComputePassDescriptor new];
+    computePassDescriptor.dispatchType = MTLDispatchTypeSerial;
+    id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoderWithDescriptor:computePassDescriptor];
+    queue->setEncoderForBuffer(commandBuffer, computeEncoder);
+    [computeEncoder setComputePipelineState:pipeline];
+    [computeEncoder setTexture:source atIndex:0];
+    [computeEncoder setTexture:destination atIndex:1];
+    auto threadgroupSize = MTLSizeMake(16, 16, 1);
+    auto threadgroupCount = MTLSizeMake((source.width + threadgroupSize.width - 1) / threadgroupSize.width, (source.height + threadgroupSize.height - 1) / threadgroupSize.height, 1);
+    [computeEncoder dispatchThreadgroups:threadgroupCount threadsPerThreadgroup:threadgroupSize];
+    queue->endEncoding(computeEncoder, commandBuffer);
+    queue->commitMTLCommandBuffer(commandBuffer);
+
+    return destination;
+}
+
+// A single-plane frame has no chroma plane, so it gets a view of its own texture holding the two
+// channels the shader expects to find in a second plane, plus the frame's alpha in the channel a
+// real chroma plane leaves at 1. That gives the shader one way to reach a frame's alpha whether
+// the frame was decoded or came from a canvas. The blue channel, which a real chroma plane samples
+// as 0, tells the shader whether plane 0 already holds premultiplied color.
+static id<MTLTexture> gbTextureFromRGB(id<MTLTexture> texture, bool alphaFirst, bool premultiplied)
+{
+    MTLTextureSwizzle premultipliedChannel = premultiplied ? MTLTextureSwizzleOne : MTLTextureSwizzleZero;
+    auto swizzle = alphaFirst ? MTLTextureSwizzleChannelsMake(MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha, premultipliedChannel, MTLTextureSwizzleRed) : MTLTextureSwizzleChannelsMake(MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, premultipliedChannel, MTLTextureSwizzleAlpha);
+    return [texture newTextureViewWithPixelFormat:texture.pixelFormat textureType:texture.textureType levels:NSMakeRange(0, texture.mipmapLevelCount) slices:NSMakeRange(0, texture.arrayLength) swizzle:swizzle];
+}
+
+Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixelBufferRef pixelBuffer, WGPUColorSpace colorSpace, PremultiplyAlpha premultiplyAlpha) const
 {
 #if HAVE(COREVIDEO_METAL_SUPPORT)
-    UNUSED_PARAM(colorSpace);
+    // colorMatrixBetweenPrimaries() is row-major, and Metal indexes a float3x3 by column.
+    simd::float3x3 primariesConversionMatrix = simd::float3x3(0.f);
+    if (auto matrix = primariesConversionMatrixForPixelBuffer(pixelBuffer, colorSpace)) {
+        auto& m = *matrix;
+        primariesConversionMatrix = simd::float3x3(simd::make_float3(m[0], m[3], m[6]), simd::make_float3(m[1], m[4], m[7]), simd::make_float3(m[2], m[5], m[8]));
+    }
+
+    auto premultiplyParameters = premultiplyAlpha == PremultiplyAlpha::Yes ? premultiplyAlphaParameters(pixelBuffer) : PremultiplyAlphaParameters { };
 
     std::optional<MTLTextureSwizzleChannels> firstPlaneSwizzle, secondPlaneSwizzle;
-    auto gbTextureFromRGB = ^(id<MTLTexture> texture, bool alphaFirst) {
-        return [texture newTextureViewWithPixelFormat:texture.pixelFormat textureType:texture.textureType levels:NSMakeRange(0, texture.mipmapLevelCount) slices:NSMakeRange(0, texture.arrayLength) swizzle:alphaFirst ? MTLTextureSwizzleChannelsMake(MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha, MTLTextureSwizzleZero, MTLTextureSwizzleZero) : MTLTextureSwizzleChannelsMake(MTLTextureSwizzleGreen, MTLTextureSwizzleBlue, MTLTextureSwizzleZero, MTLTextureSwizzleZero)];
-    };
 
     CVMetalTextureCacheFlush(m_coreVideoTextureCache.get(), 0);
     const bool supportsExtendedFormats = [m_device supportsFamily:MTLGPUFamilyApple4];
@@ -514,10 +647,14 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
             colorSpaceConversionMatrix = colorSpaceConversionMatrixForPixelBuffer(pixelBuffer);
         else {
             colorSpaceConversionMatrix = simd::float4x3(1.f);
-            mtlTextures[1] = gbTextureFromRGB(mtlTextures[0], firstPlaneSwizzle.has_value());
+            id<MTLTexture> premultipliedTexture = premultiplyParameters.destinationFormat == MTLPixelFormatInvalid ? nil : premultipliedAlphaTexture(mtlTextures[0], premultiplyParameters.destinationFormat, premultiplyParameters.sourceSwizzle);
+            if (premultipliedTexture)
+                mtlTextures[0] = premultipliedTexture;
+            // The premultiplied copy is in natural RGBA order, whatever order the frame arrived in.
+            mtlTextures[1] = gbTextureFromRGB(mtlTextures[0], !premultipliedTexture && firstPlaneSwizzle.has_value(), !!premultipliedTexture);
         }
 
-        return { mtlTextures[0], mtlTextures[1], simd::float3x2(1.f), colorSpaceConversionMatrix };
+        return { mtlTextures[0], mtlTextures[1], simd::float3x2(1.f), colorSpaceConversionMatrix, primariesConversionMatrix };
     }
 
     if (auto optionalWebProcessID = webProcessID()) {
@@ -583,13 +720,19 @@ Device::ExternalTextureData Device::createExternalTextureFromPixelBuffer(CVPixel
     float By = -Ay * upperLeft[1];
     simd::float3x2 uvRemappingMatrix = simd::float3x2(simd::make_float2(Ax, 0.f), simd::make_float2(0.f, Ay), simd::make_float2(Bx, By));
     simd::float4x3 colorSpaceConversionMatrix = mtlTexture1 ? colorSpaceConversionMatrixForPixelBuffer(pixelBuffer) : simd::float4x3(1.f);
-    if (!mtlTexture1)
-        mtlTexture1 = gbTextureFromRGB(baseTexture, firstPlaneSwizzle.has_value());
+    if (!mtlTexture1) {
+        id<MTLTexture> premultipliedTexture = premultiplyParameters.destinationFormat == MTLPixelFormatInvalid ? nil : premultipliedAlphaTexture(baseTexture, premultiplyParameters.destinationFormat, premultiplyParameters.sourceSwizzle);
+        if (premultipliedTexture)
+            mtlTexture0 = baseTexture = premultipliedTexture;
+        // The premultiplied copy is in natural RGBA order, whatever order the frame arrived in.
+        mtlTexture1 = gbTextureFromRGB(baseTexture, !premultipliedTexture && firstPlaneSwizzle.has_value(), !!premultipliedTexture);
+    }
 
-    return { mtlTexture0, mtlTexture1, uvRemappingMatrix, colorSpaceConversionMatrix };
+    return { mtlTexture0, mtlTexture1, uvRemappingMatrix, colorSpaceConversionMatrix, primariesConversionMatrix };
 #else
     UNUSED_PARAM(pixelBuffer);
     UNUSED_PARAM(colorSpace);
+    UNUSED_PARAM(premultiplyAlpha);
     return { };
 #endif
 }
@@ -1071,15 +1214,58 @@ static std::optional<Ref<BindGroup>> validateTextureOrBindGroup(WebGPU::Device &
         argumentBuffer[stage] = { };
     }
 
-    if (stage != ShaderStage::Undefined) {
-        argumentIndices[stage].remove(index);
-        [argumentEncoder[stage] setTexture:texture atIndex:index];
-    }
-    if (texture) {
-        stageResources[metalRenderStage(stage)][resourceUsage - 1].append(texture);
-        // ASSERT(apiTextureView->isDestroyed() || texture.parentRelativeLevel == apiTextureView->baseMipLevel());
-        // ASSERT(apiTextureView->isDestroyed() || texture.parentRelativeSlice == apiTextureView->baseArrayLayer());
-        stageResourceUsages[metalRenderStage(stage)][resourceUsage - 1].append(makeBindGroupEntryUsageData(textureEntry ? usageForTexture(*textureEntry) : (storageTextureEntry ? usageForStorageTexture(*storageTextureEntry) : BindGroupEntryUsage::ConstantTexture), entry.binding, apiTextureView));
+    // An external texture slot is six argument buffer entries wide, and every one of them has to be
+    // written: an entry the encoder never reaches leaves an argument index unconsumed and makes the
+    // whole bind group invalid. A plain texture view is a single plane already in the color space it
+    // was written in, so the two conversion matrices are the identity and the primaries matrix is the
+    // all-zero one that tells the shader there is no color space to travel to. Its texels are taken as
+    // they are found, which for alpha means as premultiplied.
+    if (externalTextureEntry) {
+        id<MTLTexture> secondPlane = gbTextureFromRGB(texture, false, true);
+
+        if (stage != ShaderStage::Undefined) {
+            auto externalIndex = index;
+            argumentIndices[stage].remove(externalIndex);
+            [argumentEncoder[stage] setTexture:texture atIndex:externalIndex++];
+
+            argumentIndices[stage].remove(externalIndex);
+            [argumentEncoder[stage] setTexture:secondPlane atIndex:externalIndex++];
+
+            argumentIndices[stage].remove(externalIndex);
+            if (auto* uvRemapAddress = static_cast<simd::float3x2*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *uvRemapAddress = simd::float3x2(1.f);
+
+            argumentIndices[stage].remove(externalIndex);
+            if (auto* cscMatrixAddress = static_cast<simd::float4x3*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *cscMatrixAddress = simd::float4x3(1.f);
+
+            argumentIndices[stage].remove(externalIndex);
+            if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *primariesMatrixAddress = simd::float3x3(0.f);
+
+            argumentIndices[stage].remove(externalIndex);
+            if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder[stage] constantDataAtIndex:externalIndex++]))
+                *visibleSizeAddress = simd::uint2 { static_cast<uint32_t>(texture.width), static_cast<uint32_t>(texture.height) };
+        }
+
+        auto metalStage = metalRenderStage(stage);
+        for (id<MTLTexture> plane : std::array<id<MTLTexture>, 2> { texture, secondPlane }) {
+            if (!plane)
+                continue;
+            stageResources[metalStage][resourceUsage - 1].append(plane);
+            stageResourceUsages[metalStage][resourceUsage - 1].append(makeBindGroupEntryUsageData(BindGroupEntryUsage::ConstantTexture, entry.binding, apiTextureView));
+        }
+    } else {
+        if (stage != ShaderStage::Undefined) {
+            argumentIndices[stage].remove(index);
+            [argumentEncoder[stage] setTexture:texture atIndex:index];
+        }
+        if (texture) {
+            stageResources[metalRenderStage(stage)][resourceUsage - 1].append(texture);
+            // ASSERT(apiTextureView->isDestroyed() || texture.parentRelativeLevel == apiTextureView->baseMipLevel());
+            // ASSERT(apiTextureView->isDestroyed() || texture.parentRelativeSlice == apiTextureView->baseArrayLayer());
+            stageResourceUsages[metalRenderStage(stage)][resourceUsage - 1].append(makeBindGroupEntryUsageData(textureEntry ? usageForTexture(*textureEntry) : (storageTextureEntry ? usageForStorageTexture(*storageTextureEntry) : BindGroupEntryUsage::ConstantTexture), entry.binding, apiTextureView));
+        }
     }
 #undef VALIDATION_ERROR
 #undef INTERNAL_ERROR_STRING
@@ -1276,7 +1462,7 @@ Ref<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor
                     return BindGroup::createInvalid(*this);
                 }
                 Ref externalTexture = WebGPU::fromAPI(wgpuExternalTexture);
-                auto textureData = createExternalTextureFromPixelBuffer(externalTexture->pixelBuffer(), externalTexture->colorSpace());
+                auto textureData = createExternalTextureFromPixelBuffer(externalTexture->pixelBuffer(), externalTexture->colorSpace(), PremultiplyAlpha::Yes);
                 id<MTLTexture> texture0 = textureData.texture0 ?: placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
                 auto metalStage = metalRenderStage(stage);
                 if (stage != ShaderStage::Undefined) {
@@ -1308,6 +1494,14 @@ Ref<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor
                     argumentIndices[stage].remove(index);
                     if (auto* cscMatrixAddress = static_cast<simd::float4x3*>([argumentEncoder[stage] constantDataAtIndex:index++]))
                         *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
+
+                    argumentIndices[stage].remove(index);
+                    if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder[stage] constantDataAtIndex:index++]))
+                        *primariesMatrixAddress = textureData.primariesConversionMatrix;
+
+                    argumentIndices[stage].remove(index);
+                    if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder[stage] constantDataAtIndex:index++]))
+                        *visibleSizeAddress = externalTexture->visibleSize();
                 }
             }
         }
@@ -1502,7 +1696,7 @@ bool BindGroup::updateExternalTextures(ExternalTexture& externalTexture)
         return false;
 
     Ref device = m_device;
-    auto textureData = device->createExternalTextureFromPixelBuffer(externalTexture.pixelBuffer(), externalTexture.colorSpace());
+    auto textureData = device->createExternalTextureFromPixelBuffer(externalTexture.pixelBuffer(), externalTexture.colorSpace(), Device::PremultiplyAlpha::Yes);
     id<MTLTexture> texture0 = textureData.texture0 ?: device->placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
     id<MTLTexture> texture1 = textureData.texture1 ?: device->placeholderTexture(WGPUTextureFormat_BGRA8Unorm);
     externalTexture.updateExternalTextures(texture0, texture1);
@@ -1534,6 +1728,12 @@ bool BindGroup::updateExternalTextures(ExternalTexture& externalTexture)
 
         if (auto* cscMatrixAddress = static_cast<simd::float4x3*>([argumentEncoder constantDataAtIndex:index++]))
             *cscMatrixAddress = textureData.colorSpaceConversionMatrix;
+
+        if (auto* primariesMatrixAddress = static_cast<simd::float3x3*>([argumentEncoder constantDataAtIndex:index++]))
+            *primariesMatrixAddress = textureData.primariesConversionMatrix;
+
+        if (auto* visibleSizeAddress = static_cast<simd::uint2*>([argumentEncoder constantDataAtIndex:index++]))
+            *visibleSizeAddress = externalTexture.visibleSize();
     }
 
     return true;

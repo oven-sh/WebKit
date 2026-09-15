@@ -413,13 +413,13 @@ static constexpr GCGLErrorCode NODELETE glEnumToErrorCode(GCGLenum error)
 }
 
 // Conversion function converting GraphicsContextGL member function results that are directly
-// CStrings. The returned values might be null on implementation error or context loss during
+// UTF8CStrings. The returned values might be null on implementation error or context loss during
 // that function.
-static String ensureNotNull(const CString& text)
+static String toNonNullString(const UTF8CString& text)
 {
     if (text.isNull())
         return emptyString();
-    return String::fromUTF8(text.span());
+    return text;
 }
 
 static GraphicsContextGL::SurfaceBuffer NODELETE toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
@@ -2303,7 +2303,7 @@ String WebGLRenderingContextBase::getProgramInfoLog(WebGLProgram& program)
         return { };
     if (!validateWebGLObject("getProgramInfoLog"_s, program))
         return { };
-    return ensureNotNull(protect(graphicsContextGL())->getProgramInfoLog(program.object()));
+    return toNonNullString(protect(graphicsContextGL())->getProgramInfoLog(program.object()));
 }
 
 WebGLAny WebGLRenderingContextBase::getRenderbufferParameter(GCGLenum target, GCGLenum pname)
@@ -2411,7 +2411,7 @@ String WebGLRenderingContextBase::getShaderInfoLog(WebGLShader& shader)
         return { };
     if (!validateWebGLObject("getShaderInfoLog"_s, shader))
         return { };
-    return ensureNotNull(protect(graphicsContextGL())->getShaderInfoLog(shader.object()));
+    return toNonNullString(protect(graphicsContextGL())->getShaderInfoLog(shader.object()));
 }
 
 RefPtr<WebGLShaderPrecisionFormat> WebGLRenderingContextBase::getShaderPrecisionFormat(GCGLenum shaderType, GCGLenum precisionType)
@@ -5693,7 +5693,7 @@ static ASCIILiteral debugMessageSeverityToString(GCGLenum severity)
     }
 }
 
-void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, const CString& message)
+void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, std::span<const char8_t> message)
 {
     if (!shouldPrintToConsole())
         return;
@@ -5707,9 +5707,9 @@ void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGL
 
     if (type == GraphicsContextGL::DEBUG_TYPE_ERROR) {
         level = MessageLevel::Error;
-        formattedMessage = makeString("WebGL: "_s, errorCodeToString(glEnumToErrorCode(id)), ": "_s, String::fromUTF8(message.span()));
+        formattedMessage = makeString("WebGL: "_s, errorCodeToString(glEnumToErrorCode(id)), ": "_s, message);
     } else
-        formattedMessage = makeString("WebGL debug message: type:"_s, debugMessageTypeToString(type), ", id:"_s, id, " severity: "_s, debugMessageSeverityToString(severity), ": "_s, String::fromUTF8(message.span()));
+        formattedMessage = makeString("WebGL debug message: type:"_s, debugMessageTypeToString(type), ", id:"_s, id, " severity: "_s, debugMessageSeverityToString(severity), ": "_s, message);
 
     auto consoleMessage = makeUnique<Inspector::ConsoleMessage>(MessageSource::Rendering, MessageType::Log, level, WTF::move(formattedMessage));
     scriptExecutionContext->addConsoleMessage(WTF::move(consoleMessage));

@@ -1924,15 +1924,15 @@ TEST(WTF_Vector, MoveConstructor)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -1946,15 +1946,15 @@ TEST(WTF_Vector, MoveConstructor)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -1968,15 +1968,15 @@ TEST(WTF_Vector, MoveConstructor)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 }
 
@@ -1994,15 +1994,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2016,15 +2016,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2039,15 +2039,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2062,15 +2062,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 10U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2085,15 +2085,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2108,15 +2108,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2131,15 +2131,15 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 5U);
         EXPECT_EQ(strings2.capacity(), 5U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
-        EXPECT_STREQ(strings2[3].utf8().data(), "d");
-        EXPECT_STREQ(strings2[4].utf8().data(), "e");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
+        EXPECT_EQ(strings2[2], "c"_s);
+        EXPECT_EQ(strings2[3], "d"_s);
+        EXPECT_EQ(strings2[4], "e"_s);
         strings2.append("f"_str);
         EXPECT_EQ(strings2.size(), 6U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[5].utf8().data(), "f");
+        EXPECT_EQ(strings2[5], "f"_s);
     }
 
     {
@@ -2154,12 +2154,12 @@ TEST(WTF_Vector, MoveAssignmentOperator)
         }
         EXPECT_EQ(strings2.size(), 2U);
         EXPECT_EQ(strings2.capacity(), 2U);
-        EXPECT_STREQ(strings2[0].utf8().data(), "a");
-        EXPECT_STREQ(strings2[1].utf8().data(), "b");
+        EXPECT_EQ(strings2[0], "a"_s);
+        EXPECT_EQ(strings2[1], "b"_s);
         strings2.append("c"_str);
         EXPECT_EQ(strings2.size(), 3U);
         EXPECT_EQ(strings2.capacity(), 16U);
-        EXPECT_STREQ(strings2[2].utf8().data(), "c");
+        EXPECT_EQ(strings2[2], "c"_s);
     }
 }
 

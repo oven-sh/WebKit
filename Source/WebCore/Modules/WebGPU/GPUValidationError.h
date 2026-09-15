@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "GPUError.h"
 #include "WebGPUValidationError.h"
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -32,7 +33,7 @@
 
 namespace WebCore {
 
-class GPUValidationError : public RefCounted<GPUValidationError> {
+class GPUValidationError final : public GPUError {
 public:
     static Ref<GPUValidationError> create(String&& message)
     {
@@ -44,7 +45,8 @@ public:
         return adoptRef(*new GPUValidationError(WTF::move(backing)));
     }
 
-    const String& NODELETE message() const LIFETIME_BOUND;
+    Type type() const final { return Type::Validation; }
+    const String& NODELETE message() const LIFETIME_BOUND final;
 
     WebGPU::ValidationError* backing() { return m_backing.get(); }
     const WebGPU::ValidationError* backing() const { return m_backing.get(); }

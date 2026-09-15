@@ -23,7 +23,6 @@
 #pragma once
 
 #include <WebCore/RenderBoxModelObject.h>
-#include <WebCore/RenderLineBoxList.h>
 #include <wtf/Platform.h>
 
 namespace WebCore {
@@ -69,14 +68,6 @@ public:
     WEBCORE_EXPORT IntRect linesBoundingBox() const;
     LayoutRect linesVisualOverflowBoundingBox() const;
 
-    LegacyInlineFlowBox* createAndAppendInlineFlowBox();
-
-    RenderLineBoxList& legacyLineBoxes() LIFETIME_BOUND { return m_legacyLineBoxes; }
-    const RenderLineBoxList& legacyLineBoxes() const LIFETIME_BOUND { return m_legacyLineBoxes; }
-    void deleteLegacyLineBoxes();
-    LegacyInlineFlowBox* firstLegacyInlineBox() const LIFETIME_BOUND { return m_legacyLineBoxes.firstLegacyLineBox(); }
-    LegacyInlineFlowBox* lastLegacyInlineBox() const LIFETIME_BOUND { return m_legacyLineBoxes.lastLegacyLineBox(); }
-
     LayoutSize offsetForInFlowPositionedInline(const RenderBox* child) const;
 
     void collectLineBoxRects(Vector<LayoutRect>&, const LayoutPoint& additionalOffset) const;
@@ -87,8 +78,6 @@ public:
     LayoutPoint firstInlineBoxTopLeft() const;
 
 protected:
-    void willBeDestroyed() override;
-
     void styleWillChange(Style::Difference, const Style::ComputedStyle& newStyle) override;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
 
@@ -114,8 +103,7 @@ private:
     LayoutUnit offsetHeight() const final { return linesBoundingBox().height(); }
 
 protected:
-    LayoutRect clippedOverflowRect(const RenderLayerModelObject* repaintContainer, const VisibleRectContext&) const override;
-    RepaintRects rectsForRepaintingAfterLayout(const RenderLayerModelObject* repaintContainer, RepaintOutlineBounds) const override;
+    RepaintRects localRectsForRepaint(RepaintOutlineBounds) const override;
     LayoutRect rectWithOutlineForRepaint(const RenderLayerModelObject* repaintContainer, LayoutUnit outlineWidth) const final;
 
     std::optional<RepaintRects> computeVisibleRectsInContainer(const RepaintRects&, const RenderLayerModelObject* container, const VisibleRectContext&, VisibleRectState) const final;
@@ -129,14 +117,7 @@ private:
 
     LayoutRect frameRectForStickyPositioning() const final { return linesBoundingBox(); }
 
-    virtual std::unique_ptr<LegacyInlineFlowBox> createInlineFlowBox(); // Subclassed by RenderSVGInline
-
-    void dirtyLineFromChangedChild() final { m_legacyLineBoxes.dirtyLineFromChangedChild(*this); }
-
     void imageChanged(WrappedImagePtr, const IntRect* = 0) final;
-
-    // All of the line boxes created for this svg inline.
-    RenderLineBoxList m_legacyLineBoxes;
 };
 
 bool isEmptyInline(const RenderInline&);
@@ -144,4 +125,4 @@ RenderObject* firstContentfulChild(RenderInline&);
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderInline, isRenderInline())
+SPECIALIZE_TYPE_TRAITS_RENDER_OBJECT(RenderInline, isInlineBox())

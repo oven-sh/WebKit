@@ -3537,14 +3537,14 @@ private:
             fail();
             return JSValue();
         }
-        auto uuid = WTF::UUID(m_data.first(uuidSize));
+        auto uuid = WTF::UUID::tryCreate(m_data.first(uuidSize));
         skip(m_data, uuidSize);
         if (!uuid) {
             SERIALIZE_TRACE("FAIL readFileSystemHandle: invalid UUID");
             fail();
             return JSValue();
         }
-        auto globalIdentifier = FileSystemHandleGlobalIdentifier(uuid);
+        auto globalIdentifier = FileSystemHandleGlobalIdentifier(*uuid);
 
         CachedStringRef origin;
         if (!readStringData(origin)) {

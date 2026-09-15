@@ -28,6 +28,7 @@
 #include "GPUPowerPreference.h"
 #include "WebGPURequestAdapterOptions.h"
 #include <optional>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
@@ -41,6 +42,7 @@ struct GPURequestAdapterOptions {
         };
     }
 
+    String featureLevel;
     std::optional<GPUPowerPreference> powerPreference;
     bool forceFallbackAdapter { false };
     bool xrCompatible { false };

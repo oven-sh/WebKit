@@ -3722,9 +3722,24 @@ webkit.org/b/250767 imported/w3c/web-platform-tests/html/user-activation/activat
 
 # :hover simulation not working on iOS
 imported/w3c/web-platform-tests/css/selectors/hover-002.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/hover-boundary-events.html [ Skip ]
 imported/w3c/web-platform-tests/css/selectors/hover-toplayer-001.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18a.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18b.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18c.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-63.xml [ Skip ]
 imported/w3c/web-platform-tests/css/css-text-decor/invalidation/text-decoration-thickness.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-view-transitions/hit-test-unrelated-element.html [ Skip ]
+
+# :active simulation not working on iOS
+imported/w3c/web-platform-tests/css/selectors/active-after-relayouts.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-display-none-001.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-inside-link.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-observable.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-19.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-19b.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-64.xml [ Skip ]
 
 # Certain versions of iOS use different text security characters.
 webkit.org/b/209692 platform/ios/fast/text/text-security-disc-bullet-pua-ios-new.html [ Pass ]
@@ -6927,6 +6942,7 @@ imported/w3c/web-platform-tests/html/editing/focus/sequential-focus-navigation-a
 
 # Drag-and-drop testdriver automation is not supported on iOS.
 webkit.org/b/66547 imported/w3c/web-platform-tests/html/editing/dnd/events/dragenter-dragleave-related-target.html [ Skip ]
+imported/w3c/web-platform-tests/html/editing/dnd/datastore/datatransferitemlist-clear-read-only.html [ Skip ]
 
 ######################################################
 # Test failures from turning GPU Process on by default
@@ -10263,3 +10279,5 @@ http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-wit
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter-2.html [ ImageOnlyFailure ]
 
 webkit.org/b/322305 fast/visual-viewport/ios/interactive-widget/resizes-content-orientation-rotations.html [ Failure ]
+
+imported/w3c/web-platform-tests/input-events/select-event-drag-remove.html [ Skip ] # timeout

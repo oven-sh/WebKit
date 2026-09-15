@@ -416,7 +416,7 @@ TEST_F(MediaSessionCoordinatorTest, JoinAndLeave)
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "leave"_s;
     });
-    EXPECT_STREQ("leave", lastMethodCalled.utf8().data());
+    EXPECT_EQ("leave"_s, lastMethodCalled);
 
     state = [webView() stringByEvaluatingJavaScript:@"navigator.mediaSession.coordinator.state"];
     EXPECT_STREQ("closed", [state UTF8String]);
@@ -451,7 +451,7 @@ TEST_F(MediaSessionCoordinatorTest, StateChanges)
         lastStateChange = coordinator().lastStateChange;
         return lastStateChange == "positionStateChanged"_s;
     });
-    EXPECT_STREQ("positionStateChanged", lastStateChange.utf8().data());
+    EXPECT_EQ("positionStateChanged"_s, lastStateChange);
 
     for (NSString *state in @[ @"havemetadata", @"havecurrentdata", @"havefuturedata", @"haveenoughdata", @"havenothing" ]) {
         [webView() objectByEvaluatingJavaScript:[NSString stringWithFormat:@"navigator.mediaSession.readyState = '%@'", state]];
@@ -459,7 +459,7 @@ TEST_F(MediaSessionCoordinatorTest, StateChanges)
             lastStateChange = coordinator().lastStateChange;
             return lastStateChange == "readyStateChanged"_s;
         });
-        EXPECT_STREQ("readyStateChanged", lastStateChange.utf8().data());
+        EXPECT_EQ("readyStateChanged"_s, lastStateChange);
 
         RetainPtr<NSString> currentState = [webView() stringByEvaluatingJavaScript:@"navigator.mediaSession.readyState"];
         EXPECT_STREQ(state.UTF8String, currentState.get().UTF8String);
@@ -471,7 +471,7 @@ TEST_F(MediaSessionCoordinatorTest, StateChanges)
             lastStateChange = coordinator().lastStateChange;
             return lastStateChange == "playbackStateChanged"_s;
         });
-        EXPECT_STREQ("playbackStateChanged", lastStateChange.utf8().data());
+        EXPECT_EQ("playbackStateChanged"_s, lastStateChange);
 
         RetainPtr<NSString> currentState = [webView() stringByEvaluatingJavaScript:@"navigator.mediaSession.playbackState"];
         EXPECT_STREQ(state.UTF8String, currentState.get().UTF8String);
@@ -483,7 +483,7 @@ TEST_F(MediaSessionCoordinatorTest, StateChanges)
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "leave"_s;
     });
-    EXPECT_STREQ("leave", lastMethodCalled.utf8().data());
+    EXPECT_EQ("leave"_s, lastMethodCalled);
 
     RetainPtr<NSString> state = [webView() stringByEvaluatingJavaScript:@"navigator.mediaSession.coordinator.state"];
     EXPECT_STREQ("closed", [state UTF8String]);
@@ -550,28 +550,28 @@ TEST_F(MediaSessionCoordinatorTest, CallSessionMethods)
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "seekSessionToTime"_s;
     });
-    EXPECT_STREQ("seekSessionToTime", lastMethodCalled.utf8().data());
+    EXPECT_EQ("seekSessionToTime"_s, lastMethodCalled);
 
     [coordinator() playSession];
     executeUntil([&] {
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "playSession"_s;
     });
-    EXPECT_STREQ("playSession", lastMethodCalled.utf8().data());
+    EXPECT_EQ("playSession"_s, lastMethodCalled);
 
     [coordinator() pauseSession];
     executeUntil([&] {
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "pauseSession"_s;
     });
-    EXPECT_STREQ("pauseSession", lastMethodCalled.utf8().data());
+    EXPECT_EQ("pauseSession"_s, lastMethodCalled);
 
     [coordinator() setSessionTrack:@"Track 0"];
     executeUntil([&] {
         lastMethodCalled = coordinator().lastMethodCalled;
         return lastMethodCalled == "setSessionTrack"_s;
     });
-    EXPECT_STREQ("setSessionTrack", lastMethodCalled.utf8().data());
+    EXPECT_EQ("setSessionTrack"_s, lastMethodCalled);
 }
 
 // rdar://136550811

@@ -94,7 +94,7 @@ void HTTPHeaderMap::set(CFStringRef name, const String& value)
         if (findHTTPHeaderName(StringView(asciiCharacters), headerName))
             set(headerName, value);
         else
-            setUncommonHeader(String(asciiCharacters), value);
+            setUncommonHeader(String::fromLatin1(asciiCharacters), value);
 
         return;
     }

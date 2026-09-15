@@ -199,13 +199,13 @@ static inline void* NODELETE signpostId(JITPlan& plan)
     return std::bit_cast<void*>(id);
 }
 
-CString JITPlan::signpostMessage()
+UTF8CString JITPlan::signpostMessage()
 {
     if (!Options::useCompilerSignpost()) [[likely]]
-        return CString();
+        return { };
     StringPrintStream stream;
     stream.print(m_mode, " ", *m_codeBlock);
-    return stream.toCString();
+    return stream.toUTF8CString();
 }
 
 void JITPlan::beginSignpostImpl()
@@ -216,15 +216,15 @@ void JITPlan::beginSignpostImpl()
     String detalString;
     switch (m_stage) {
     case JITPlanStage::Preparing:
-        WTFBeginSignpost(id, JSCJITPlanQueued, "%" PUBLIC_LOG_STRING, m_signpostMessage.data());
+        WTFBeginSignpost(id, JSCJITPlanQueued, "%" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer());
         detalString = makeString("JSCJITPlanQueued:"_s, m_signpostMessage);
         break;
     case JITPlanStage::Compiling:
-        WTFBeginSignpost(id, JSCJITCompiler, "%" PUBLIC_LOG_STRING, m_signpostMessage.data());
+        WTFBeginSignpost(id, JSCJITCompiler, "%" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer());
         detalString = makeString("JSCJITCompiler:"_s, m_signpostMessage);
         break;
     case JITPlanStage::Ready:
-        WTFBeginSignpost(id, JSCJITPlanReady, "%" PUBLIC_LOG_STRING, m_signpostMessage.data());
+        WTFBeginSignpost(id, JSCJITPlanReady, "%" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer());
         detalString = makeString("JSCJITPlanReady:"_s, m_signpostMessage);
         break;
     case JITPlanStage::Canceled:
@@ -245,15 +245,15 @@ void JITPlan::endSignpostImpl(JITPlan::SignpostDetail detail)
     String detalString;
     switch (m_stage) {
     case JITPlanStage::Preparing:
-        WTFEndSignpost(id, JSCJITPlanQueued, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.data(), detailStr.characters());
+        WTFEndSignpost(id, JSCJITPlanQueued, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer(), detailStr.characters());
         detalString = makeString("JSCJITPlanQueued:"_s, m_signpostMessage, " "_s, detailStr);
         break;
     case JITPlanStage::Compiling:
-        WTFEndSignpost(id, JSCJITCompiler, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.data(), detailStr.characters());
+        WTFEndSignpost(id, JSCJITCompiler, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer(), detailStr.characters());
         detalString = makeString("JSCJITCompiler:"_s, m_signpostMessage, " "_s, detailStr);
         break;
     case JITPlanStage::Ready:
-        WTFEndSignpost(id, JSCJITPlanReady, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.data(), detailStr.characters());
+        WTFEndSignpost(id, JSCJITPlanReady, "%" PUBLIC_LOG_STRING " %" PUBLIC_LOG_STRING, m_signpostMessage.legacyCStringPointer(), detailStr.characters());
         detalString = makeString("JSCJITPlanReady:"_s, m_signpostMessage, " "_s, detailStr);
         break;
     case JITPlanStage::Canceled:
@@ -267,13 +267,13 @@ void JITPlan::compileInThread(JITWorklistThread* thread)
     SetForScope threadScope(m_thread, thread);
 
     MonotonicTime before;
-    CString codeBlockName;
+    UTF8CString codeBlockName;
 
     bool computeCompileTimes = this->computeCompileTimes();
     if (computeCompileTimes) [[unlikely]] {
         before = MonotonicTime::now();
         if (reportCompileTimes())
-            codeBlockName = toCString(*m_codeBlock);
+            codeBlockName = toUTF8CString(*m_codeBlock);
     }
 
     CompilationScope compilationScope;

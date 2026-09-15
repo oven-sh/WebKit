@@ -10,24 +10,28 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/META.yml
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/WEB_FEATURES.yml
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/active-after-relayouts.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/active-display-none-001.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/active-inside-link.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/active-observable.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/active-toplayer-001.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/attribute-selector-escape.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/backdrop-input-crash.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/caret-color-visited-inheritance-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/caret-color-visited-inheritance-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/caret-color-visited-inheritance.html
-/LayoutTests/imported/w3c/web-platform-tests/css/selectors/case-insensitive-parent-expected.html
-/LayoutTests/imported/w3c/web-platform-tests/css/selectors/case-insensitive-parent-ref.html
-/LayoutTests/imported/w3c/web-platform-tests/css/selectors/case-insensitive-parent.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/child-indexed-during-parse.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/child-indexed-no-parent-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/child-indexed-no-parent-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/child-indexed-no-parent.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/child-indexed-pseudo-class.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/chrome-40257746-crash.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/class-selector-change.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/class-selector-escape-exclamation.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/dir-pseudo-in-has-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/dir-pseudo-in-has.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/dir-pseudo-on-bdi-element.html
@@ -209,6 +213,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/focus-within-shadow-006-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/focus-within-shadow-006.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/focus-within-toplayer-001.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/focus-within.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-argument-with-explicit-scope.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-basic.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-display-none-checked-expected.html
@@ -268,12 +273,15 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-visited-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-visited-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-visited.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/has-where-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/hash-collision-cssom.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/hash-collision.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/heading-prefixed.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/heading.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/historical-xmlid-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/historical-xmlid.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/hover-002.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/hover-boundary-events.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/hover-toplayer-001.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/is-default-ns-001-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/is-default-ns-001.html
@@ -315,6 +323,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-and-nth-last-child-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-and-nth-last-child-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-and-nth-last-child.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-large-anplusb-clamp.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-of-attribute-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-of-attribute.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-child-of-classname-002-expected.xht
@@ -404,6 +413,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-last-child-specificity-4.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-of-invalid-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-of-invalid.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-of-selector-before-expected.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-of-selector-before.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/nth-of-type-namespace.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/of-type-selectors-expected.xhtml
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/of-type-selectors-ref.xhtml
@@ -457,6 +468,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-required-type-change-002-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-required-type-change-002.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-required.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-specificity.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-structural-pseudo-root-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-structural-pseudo-root-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/selector-structural-pseudo-root.html
@@ -496,6 +508,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/user-valid-user-invalid-multifield-inputs.tentative.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/user-valid.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/valid-invalid-form-fieldset.html
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/valid-invalid-pseudo.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/visited-in-visited-compound-expected.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/visited-in-visited-compound-ref.html
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/visited-in-visited-compound.html

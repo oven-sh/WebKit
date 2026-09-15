@@ -30,6 +30,7 @@
 #include "GPUTextureDimension.h"
 #include "GPUTextureFormat.h"
 #include "WebGPUTexture.h"
+#include <JavaScriptCore/JSCJSValue.h>
 #include <optional>
 #include <wtf/Ref.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -75,6 +76,7 @@ public:
     GPUSize32Out NODELETE sampleCount() const;
     GPUTextureDimension NODELETE dimension() const;
     GPUFlagsConstant NODELETE usage() const;
+    JSC::JSValue NODELETE textureBindingViewDimension() const;
     size_t NODELETE memoryCost() const;
 
     static GPUTextureFormat NODELETE aspectSpecificFormat(GPUTextureFormat, GPUTextureAspect);

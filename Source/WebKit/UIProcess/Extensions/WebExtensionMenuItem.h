@@ -47,6 +47,8 @@ using CocoaMenuItem = UIMenuElement;
 #endif
 
 #if defined(__OBJC__) && USE(APPKIT)
+#import <AppKit/NSMenuItem.h>
+
 using WebExtensionMenuItemHandlerBlock = void (^)(id);
 
 @interface _WKWebExtensionMenuItem : NSMenuItem

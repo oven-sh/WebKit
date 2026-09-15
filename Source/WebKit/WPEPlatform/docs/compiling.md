@@ -1,8 +1,6 @@
 Title: Compiling against WPEPlatform
 Slug: compiling
 
-# Compiling against WPEPlatform
-
 This page lists the `pkg-config` modules and headers an application or
 browser needs to build against WPEPlatform, plus minimal
 [CMake](https://cmake.org) and [Meson](https://mesonbuild.com/)

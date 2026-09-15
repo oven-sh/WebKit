@@ -222,7 +222,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Missing { after '", keyword, "' clause start delimiter:\n", line, "\n"));
 
     size_t delimiterLength = delimiterEnd - delimiterStart;
-    String delimiter(unsafeMakeSpan(delimiterStart, delimiterLength));
+    String delimiter = String::fromLatin1(unsafeMakeSpan(delimiterStart, delimiterLength));
 
     if (hasDisallowedCharacters(delimiterStart, delimiterLength))
         FAIL_WITH_ERROR(SYNTAX_ERROR, ("Delimiter '", delimiter, "' cannot have '{', '}', or whitespace:\n", line, "\n"));

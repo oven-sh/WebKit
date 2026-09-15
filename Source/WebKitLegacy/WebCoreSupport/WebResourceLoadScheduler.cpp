@@ -397,10 +397,10 @@ bool WebResourceLoadScheduler::HostInformation::limitRequests(ResourceLoadPriori
     return m_requestsLoading.size() >= (webResourceLoadScheduler().isSerialLoadingEnabled() ? 1 : m_maxRequestsInFlight);
 }
 
-void WebResourceLoadScheduler::startPingLoad(LocalFrame& frame, ResourceRequest& request, const HTTPHeaderMap&, const FetchOptions& options, ContentSecurityPolicyImposition, PingLoadCompletionHandler&& completionHandler)
+bool WebResourceLoadScheduler::startKeepAliveLoadForWebKitLegacy(FrameLoader& frameLoader, const ResourceRequest& request, const ResourceLoaderOptions& options, CompletionHandler<void(const ResourceError&, const ResourceResponse&)>&& completionHandler)
 {
-    // PingHandle manages its own lifetime, deleting itself when its purpose has been fulfilled.
-    PingHandle::start(frame.loader().networkingContext(), request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTF::move(completionHandler));
+    PingHandle::start(frameLoader.networkingContext(), request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTF::move(completionHandler));
+    return true;
 }
 
 bool WebResourceLoadScheduler::isOnLine() const

@@ -35,7 +35,7 @@ namespace WebCore {
 
 class GCGLUniformActiveInfo {
 public:
-    CString name;
+    UTF8CString name;
     GCGLenum type { 0 };
     int size { -1 };
     // WebGL2 properties.
@@ -50,14 +50,14 @@ public:
 
 class GCGLAttribActiveInfo {
 public:
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int location;
 };
 
 class GCGLTransformFeedbackActiveInfo {
 public:
-    CString name;
+    UTF8CString name;
     GCGLenum type;
     int size { 0 };
 };

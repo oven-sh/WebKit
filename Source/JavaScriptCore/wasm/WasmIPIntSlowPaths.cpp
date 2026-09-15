@@ -1506,10 +1506,8 @@ static UNUSED_FUNCTION void displayWasmDebugState(JSWebAssemblyInstance* instanc
 
 WASM_IPINT_EXTERN_CPP_DECL(handle_debugger_trap_if_needed, CallFrame* callFrame, Register* sp)
 {
-    // By default, the trap is a fatal Wasm trap and must propagate (shouldThrow = true).
-    // If the debugger is connected and determines this was solely a debugger trap (e.g. a
-    // breakpoint on unreachable), it sets shouldThrow = false and execution resumes.
-    bool shouldThrow = true;
+    // Unreachable propagates the trap; otherwise resumes with the displaced opcode.
+    Wasm::OpType resumeOpcode = Wasm::OpType::Unreachable;
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
     if (Options::enableWasmDebugger()) [[unlikely]] {
         Wasm::DebugServer& debugServer = Wasm::DebugServer::singleton();
@@ -1521,8 +1519,7 @@ WASM_IPINT_EXTERN_CPP_DECL(handle_debugger_trap_if_needed, CallFrame* callFrame,
             auto exceptionType = static_cast<Wasm::ExceptionType>(callFrame->argumentCountIncludingThis());
             if (Options::verboseWasmDebugger() && exceptionType == Wasm::ExceptionType::Unreachable)
                 displayWasmDebugState(instance, callee, callFrame, stack);
-            auto trapStatus = debugServer.execution().handleDebuggerTrapIfNeeded(callFrame, instance, callee, pc, mc, stack, exceptionType);
-            shouldThrow = trapStatus == Wasm::DebuggerTrapStatus::NotResolvedByDebugger;
+            resumeOpcode = debugServer.execution().handleDebuggerTrapIfNeeded(callFrame, instance, callee, pc, mc, stack, exceptionType);
         }
     }
 #else
@@ -1530,7 +1527,7 @@ WASM_IPINT_EXTERN_CPP_DECL(handle_debugger_trap_if_needed, CallFrame* callFrame,
     UNUSED_PARAM(callFrame);
     UNUSED_PARAM(sp);
 #endif
-    IPINT_RETURN(static_cast<EncodedJSValue>(static_cast<int32_t>(shouldThrow)));
+    IPINT_RETURN(static_cast<EncodedJSValue>(static_cast<uint32_t>(resumeOpcode)));
 }
 
 } } // namespace JSC::IPInt

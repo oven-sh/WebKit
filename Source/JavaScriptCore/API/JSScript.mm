@@ -101,7 +101,7 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    if (rootless_check_datavault_flag(FileSystem::fileSystemRepresentation(directory).data(), nullptr)) {
+    if (rootless_check_datavault_flag(FileSystem::fileSystemRepresentation(directory).legacyCStringPointer(), nullptr)) {
         createError([NSString stringWithFormat:@"Cache directory `%@` is not a data vault", directory.createNSString().get()], error);
         return false;
     }

@@ -3422,8 +3422,6 @@ class GenerateCSSPropertyInitialValues:
 
             initial_value_to_property_list = {}
             for property in self.properties_and_descriptors.style_properties.all_non_shorthands:
-                if property.codegen_properties.internal_only:
-                    continue
                 if property.initial is None:
                     if self.generation_context.verbose:
                         to.write(f"// Skipping {property.id_without_scope}, initial is None")

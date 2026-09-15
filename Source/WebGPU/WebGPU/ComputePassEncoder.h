@@ -63,6 +63,12 @@ public:
     {
         return adoptRef(*new ComputePassEncoder(parentEncoder, device, errorString));
     }
+    static Ref<ComputePassEncoder> createInvalidWithEncoderStateNotOpen(CommandEncoder& parentEncoder, Device& device, NSString* errorString)
+    {
+        Ref computePassEncoder = createInvalid(parentEncoder, device, errorString);
+        computePassEncoder->markEncoderStateWasNotOpen();
+        return computePassEncoder;
+    }
 
     ~ComputePassEncoder();
 
@@ -81,6 +87,10 @@ public:
 
     bool NODELETE isValid() const;
     id<MTLComputeCommandEncoder> NODELETE computeCommandEncoder() const;
+
+    // A pass begun while its command encoder was not open never took the encoder over, so it can
+    // never be ended. https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-end
+    void markEncoderStateWasNotOpen() { m_encoderStateWasNotOpen = true; }
 
 private:
     ComputePassEncoder(id<MTLComputeCommandEncoder>, const WGPUComputePassDescriptor&, CommandEncoder&, Device&);
@@ -108,6 +118,7 @@ private:
     std::array<uint32_t, 32> m_maxDynamicOffsetAtIndex;
     NSString *m_lastErrorString { nil };
     bool m_passEnded { false };
+    bool m_encoderStateWasNotOpen { false };
 } SWIFT_SHARED_REFERENCE(refComputePassEncoder, derefComputePassEncoder) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
 
 

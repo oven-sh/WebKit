@@ -35,9 +35,7 @@
 #include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/text/CStringView.h>
 
-#if USE(GSTREAMER_GL)
-#include "GraphicsTypesGL.h"
-#endif
+typedef struct _GstGLMemory GstGLMemory;
 
 namespace WebCore {
 
@@ -242,16 +240,27 @@ public:
     bool operator!() const { return !m_frame.buffer; }
 
 #if USE(GSTREAMER_GL)
-    GLuint textureID(int) const;
+    unsigned textureID(uint32_t) const;
+    IntSize textureSize(uint32_t) const;
+    unsigned textureFormat(uint32_t) const;
+    void setNeedsCPUSync(bool needsCPUSync) { m_needsCPUSync = needsCPUSync; }
+    void waitForCPUSyncIfNeeded() const;
 #endif
 
     unsigned componentPlane(int) const;
     unsigned componentPlaneOffset(int) const;
 
 private:
+#if USE(GSTREAMER_GL)
+    GstGLMemory* glMemory(uint32_t) const;
+#endif
+
     GstVideoFrame m_frame;
     GstVideoAlignment m_alignment;
     std::array<size_t, GST_VIDEO_MAX_PLANES> m_planeSizes { };
+#if USE(GSTREAMER_GL)
+    bool m_needsCPUSync { false };
+#endif
 };
 
 class GstMappedAudioBuffer {

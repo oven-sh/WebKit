@@ -25,12 +25,32 @@
 
 #pragma once
 
+#include <JavaScriptCore/CollectionScope.h>
+#include <wtf/SentinelLinkedList.h>
+
 namespace JSC {
 
-class WeakGCHashTable {
+class VM;
+
+// A hash table holding weak references to JSCells, reconciled against the marking results at the
+// end of every collection. The sentinel node links it into Heap's list of tables that gained an
+// entry since the last collection; only those tables can have an entry die in an eden collection,
+// so an eden collection visits just them.
+class WeakGCHashTable : public BasicRawSentinelNode<WeakGCHashTable> {
 public:
-    virtual ~WeakGCHashTable() { }
-    virtual void pruneStaleEntries() = 0;
+    virtual ~WeakGCHashTable() = default;
+    virtual void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) = 0;
+
+protected:
+    void markDirty(VM& vm)
+    {
+        if (!isOnList())
+            addToDirtyList(vm);
+    }
+
+private:
+    // Out of line because this header is reached through VM.h, so Heap is not complete here.
+    JS_EXPORT_PRIVATE void addToDirtyList(VM&);
 };
 
 }

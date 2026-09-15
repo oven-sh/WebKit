@@ -162,7 +162,7 @@ BlobStorage::Blob BlobStorage::add(const String& path, const Data& data, bool ad
             auto existingData = mapFile(blobPath);
             if (bytesEqual(existingData, data)) {
                 if (!FileSystem::hardLink(blobPath, path))
-                    WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().data(), path.utf8().data());
+                    WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().legacyCStringPointer(), path.utf8().legacyCStringPointer());
                 BlobStorage::Blob result { existingData, hash };
 #if ENABLE(NETWORK_CACHE_BLOB_STORAGE_MEMORY_CACHE)
                 if (addToMemoryCache && m_memoryCache)
@@ -179,7 +179,7 @@ BlobStorage::Blob BlobStorage::add(const String& path, const Data& data, bool ad
         return { };
 
     if (!FileSystem::hardLink(blobPath, path))
-        WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().data(), path.utf8().data());
+        WTFLogAlways("Failed to create hard link from %s to %s", blobPath.utf8().legacyCStringPointer(), path.utf8().legacyCStringPointer());
 
     m_approximateSize += mappedData.size();
 

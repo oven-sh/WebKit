@@ -97,39 +97,46 @@ private:
     BitField m_event { NoEvent };
 };
 
-struct Breakpoint {
+class Breakpoint final : public ThreadSafeRefCounted<Breakpoint> {
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(Breakpoint, JS_EXPORT_PRIVATE);
+public:
+    // Why a stop happened, which is a property of the hit rather than of the patched byte: one
+    // byte can carry both an LLDB site and a step at once.
     enum class Type : uint8_t {
-        // User-set breakpoint (persistent, tracked by virtual address)
-        Regular = 0,
-
-        // One-time breakpoint (auto-removed after each stop)
-        Step = 1,
+        Regular = 0, // A site LLDB installed (Z0), reported as reason:breakpoint.
+        Step = 1, // A one-time breakpoint serving a step, reported as reason:trace.
     };
 
-    Breakpoint() = default;
-    Breakpoint(uint8_t* pc, Type type)
-        : type(type)
-        , pc(pc)
-        , originalBytecode(*pc)
+    static Ref<Breakpoint> create(const ModuleInformation& owner, uint8_t* pc)
     {
+        return adoptRef(*new Breakpoint(owner, pc));
     }
 
     void patchBreakpoint() { *pc = 0x00; }
     void restorePatch() { *pc = originalBytecode; }
 
-    bool isOneTimeBreakpoint() { return type != Type::Regular; }
-
     void dump(PrintStream& out) const
     {
-        out.print("Breakpoint(type:", type);
-        out.print(", pc:", RawPointer(pc));
+        out.print("Breakpoint(pc:", RawPointer(pc));
         out.print(", *pc:", (int)*pc);
-        out.print(", originalBytecode:", originalBytecode, ")");
+        out.print(", originalBytecode:", originalBytecode);
+        out.print(", siteCount:", siteCount, ")");
     }
 
-    Type type { Type::Regular };
+    // Keeps the bytecode buffer alive.
+    RefPtr<const ModuleInformation> owner;
     uint8_t* pc { nullptr };
     uint8_t originalBytecode { 0 };
+    // LLDB sites referring to this byte, one per instance. The patch outlives all of them.
+    unsigned siteCount { 0 };
+
+private:
+    Breakpoint(const ModuleInformation& owner, uint8_t* pc)
+        : owner(&owner)
+        , pc(pc)
+        , originalBytecode(*pc)
+    {
+    }
 };
 
 // WASM execution context snapshot captured when stopped at a debugging event.
@@ -303,7 +310,15 @@ uint32_t parseDecimal(StringView, uint32_t defaultValue = 0);
 
 Vector<StringView> splitWithDelimiters(StringView packet, StringView delimiters);
 
-bool getWasmReturnPC(CallFrame* currentFrame, uint8_t*& returnPC, VirtualAddress& virtualReturnPC);
+// Caller resume location and enclosing instance.
+struct WasmReturnSite {
+    uint8_t* pc { nullptr };
+    JSWebAssemblyInstance* instance { nullptr };
+
+    explicit operator bool() const { return pc && instance; }
+};
+
+WasmReturnSite getWasmReturnPC(CallFrame* currentFrame);
 
 struct FrameInfo {
     VirtualAddress address;
@@ -333,11 +348,6 @@ inline StringView getErrorReply(ProtocolError error)
         return "E00"_s;
     }
 }
-
-enum class DebuggerTrapStatus : uint8_t {
-    ResolvedByDebugger,
-    NotResolvedByDebugger,
-};
 
 } // namespace Wasm
 } // namespace JSC

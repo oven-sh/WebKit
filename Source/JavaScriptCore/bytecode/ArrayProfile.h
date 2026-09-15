@@ -261,8 +261,8 @@ public:
 
     bool mayBeRegExpMatchesArray() const { return m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeRegExpMatchesArray); }
 
-    CString briefDescription(CodeBlock*);
-    CString briefDescriptionWithoutUpdating();
+    UTF8CString briefDescription(CodeBlock*);
+    UTF8CString briefDescriptionWithoutUpdating();
     
 private:
     friend class LLIntOffsetsExtractor;

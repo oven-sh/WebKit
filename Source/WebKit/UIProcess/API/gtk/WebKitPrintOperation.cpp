@@ -359,8 +359,8 @@ static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, GUn
 
 static void webkitPrintOperationFailed(WebKitPrintOperation* printOperation, WebCore::ResourceError&& error)
 {
-    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(g_quark_from_string(error.domain().utf8().data()),
-        toWebKitError(error.errorCode()), error.localizedDescription().utf8().data()) });
+    webkitPrintOperationFailed(printOperation, GUniquePtr<GError> { g_error_new_literal(g_quark_from_string(error.domain().utf8().legacyCStringPointer()),
+        toWebKitError(error.errorCode()), error.localizedDescription().utf8().legacyCStringPointer()) });
     webkitPrintOperationFinished(printOperation);
 }
 

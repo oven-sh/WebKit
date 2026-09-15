@@ -32,6 +32,7 @@
 #include "Logging.h"
 #include "SQLiteDatabase.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -47,7 +48,7 @@ SQLiteMemoryIDBBackingStore::~SQLiteMemoryIDBBackingStore() = default;
 
 IDBError SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo(IDBDatabaseInfo& info)
 {
-    LOG(IndexedDB, "SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo - database %s (in-memory)", identifier().databaseName().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "SQLiteMemoryIDBBackingStore::getOrEstablishDatabaseInfo - database "_s << identifier().databaseName() << " (in-memory)"_s);
 
     if (databaseInfo()) {
         info = *databaseInfo();

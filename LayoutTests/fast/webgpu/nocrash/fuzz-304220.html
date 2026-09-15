@@ -15,7 +15,7 @@ try {var fuzzvar00040 = fuzzvar00014.createBindGroup() } catch(e) {}
 var fuzzvar00086 = await navigator.gpu.requestAdapter()
 var fuzzvar00085 = await fuzzvar00086.requestDevice()
 SetVariable(fuzzervars, fuzzvar00085, 'GPUDevice');
-var fuzzvar00123 = await fuzzvar00086.requestDevice()
+var fuzzvar00123; try { fuzzvar00123 = await fuzzvar00086.requestDevice() } catch(e) {} // An adapter only hands out one device, so this rejects.
 fuzzvar00123 = GetVariable(fuzzervars, 'GPUDevice');
 var fuzzvar00169 = fuzzvar00123.createCommandEncoder() 
 var fuzzvar00192 = fuzzvar00169.beginComputePass()

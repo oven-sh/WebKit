@@ -13,6 +13,7 @@ PASS Expected HTML element to match :nth-of-type(1) with matches, querySelector(
 PASS Expected HTML element to match :nth-of-type(n) with matches, querySelector(), and querySelectorAll()
 PASS Expected HTML element to match :nth-last-of-type(1) with matches, querySelector(), and querySelectorAll()
 PASS Expected HTML element to match :nth-last-of-type(n) with matches, querySelector(), and querySelectorAll()
+PASS Expected HTML element to not match :nth-child(0) with matches, querySelector(), and querySelectorAll()
 PASS Expected HTML element to not match :nth-child(2) with matches, querySelector(), and querySelectorAll()
 PASS Expected HTML element to not match :nth-last-child(2) with matches, querySelector(), and querySelectorAll()
 PASS Expected HTML element to not match :nth-of-type(2) with matches, querySelector(), and querySelectorAll()
@@ -31,6 +32,7 @@ PASS Expected DIV element to match :nth-of-type(1) with matches
 PASS Expected DIV element to match :nth-of-type(n) with matches
 PASS Expected DIV element to match :nth-last-of-type(1) with matches
 PASS Expected DIV element to match :nth-last-of-type(n) with matches
+PASS Expected DIV element to not match :nth-child(0) with matches
 PASS Expected DIV element to not match :nth-child(2) with matches
 PASS Expected DIV element to not match :nth-last-child(2) with matches
 PASS Expected DIV element to not match :nth-of-type(2) with matches
@@ -49,6 +51,7 @@ PASS Expected DIV element to match :nth-of-type(1) with matches, querySelector()
 PASS Expected DIV element to match :nth-of-type(n) with matches, querySelector(), and querySelectorAll()
 PASS Expected DIV element to match :nth-last-of-type(1) with matches, querySelector(), and querySelectorAll()
 PASS Expected DIV element to match :nth-last-of-type(n) with matches, querySelector(), and querySelectorAll()
+PASS Expected DIV element to not match :nth-child(0) with matches, querySelector(), and querySelectorAll()
 PASS Expected DIV element to not match :nth-child(2) with matches, querySelector(), and querySelectorAll()
 PASS Expected DIV element to not match :nth-last-child(2) with matches, querySelector(), and querySelectorAll()
 PASS Expected DIV element to not match :nth-of-type(2) with matches, querySelector(), and querySelectorAll()

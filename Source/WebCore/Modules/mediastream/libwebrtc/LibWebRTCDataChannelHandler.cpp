@@ -53,7 +53,7 @@ webrtc::DataChannelInit LibWebRTCDataChannelHandler::fromRTCDataChannelInit(cons
         init.maxRetransmitTime = *options.maxPacketLifeTime;
     if (options.maxRetransmits)
         init.maxRetransmits = *options.maxRetransmits;
-    init.protocol = options.protocol.utf8().data();
+    init.protocol = options.protocol.utf8().legacyCStringPointer();
     init.negotiated = options.negotiated;
     if (options.id)
         init.id = *options.id;

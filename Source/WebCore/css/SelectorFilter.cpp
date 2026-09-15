@@ -158,6 +158,10 @@ void SelectorFilter::collectSimpleSelectorHash(CollectedSelectorHashes& collecte
     case CSSSelector::Match::Contain:
     case CSSSelector::Match::Begin:
     case CSSSelector::Match::End: {
+        if (selector.isEquivalentToClassSelector()) {
+            collectedHashes.classes.append(selector.value().impl()->existingHash() * ClassSalt);
+            break;
+        }
         auto attributeName = selector.attribute().localNameLowercase();
         if (!isExcludedAttribute(attributeName))
             collectedHashes.attributes.append(attributeName.impl()->existingHash() * AttributeSalt);

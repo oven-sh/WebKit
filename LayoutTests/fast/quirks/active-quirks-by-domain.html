@@ -58,6 +58,12 @@ const urls = [
     "https://gizmodo.com/",
     "https://play.geforcenow.com/",
     "https://www.google.com/",
+    // pathIs("/search") is exact, so the results page picks up the panel-anchor quirk and a
+    // deeper path under /search does not. webkit.org/b/323851
+    "https://www.google.com/search",
+    "https://www.google.com/search/howsearchworks",
+    // anyTopLevelDomain, so the ccTLD results pages match too.
+    "https://www.google.co.jp/search",
     "https://www.google.com/maps/",
     "https://maps.google.com/maps/",
     "https://docs.google.com/",

@@ -310,7 +310,7 @@ Style::Difference RenderElement::adjustStyleDifference(Style::Difference diff) c
         if (isRenderTextControl())
             return false;
         // Let's still trigger layout on content with legacy line layout.
-        if (is<RenderInline>(*this) && !LayoutIntegration::LineLayout::containing(*this))
+        if (isInlineBox() && !LayoutIntegration::LineLayout::containing(*this))
             return false;
         return true;
     };
@@ -1226,7 +1226,7 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     }
 
     // FIXME: First line change on the block comes in as equal on inline boxes.
-    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (is<RenderInline>(*this) && &style() != &firstLineStyle())) && layoutBox();
+    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (isInlineBox() && &style() != &firstLineStyle())) && layoutBox();
     if (needsLayoutBoxStyleUpdate)
         LayoutIntegration::LineLayout::updateStyle(*this);
 }

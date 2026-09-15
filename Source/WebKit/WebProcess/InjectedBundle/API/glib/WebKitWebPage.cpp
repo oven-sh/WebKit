@@ -469,8 +469,8 @@ private:
         GRefPtr<GPtrArray> textFieldNames = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         GRefPtr<GPtrArray> textFieldValues = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         for (auto& pair : values) {
-            g_ptr_array_add(textFieldNames.get(), g_strdup(pair.first.utf8().data()));
-            g_ptr_array_add(textFieldValues.get(), g_strdup(pair.second.utf8().data()));
+            g_ptr_array_add(textFieldNames.get(), g_strdup(pair.first.utf8().legacyCStringPointer()));
+            g_ptr_array_add(textFieldValues.get(), g_strdup(pair.second.utf8().legacyCStringPointer()));
         }
 
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN

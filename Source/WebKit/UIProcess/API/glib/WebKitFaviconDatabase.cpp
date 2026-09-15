@@ -145,7 +145,7 @@ void webkitFaviconDatabaseGetLoadDecisionForIcon(WebKitFaviconDatabase* database
 
 #if PLATFORM(GTK)
             if (found && changed)
-                g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().data(), url.utf8().data());
+                g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().legacyCStringPointer(), url.utf8().legacyCStringPointer());
 #else
             UNUSED_PARAM(changed);
 #endif
@@ -166,7 +166,7 @@ void webkitFaviconDatabaseSetIconForPageURL(WebKitFaviconDatabase* database, con
                 return;
 
 #if PLATFORM(GTK)
-            g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().data(), url.utf8().data());
+            g_signal_emit(database.get(), signals[FAVICON_CHANGED], 0, pageURL.utf8().legacyCStringPointer(), url.utf8().legacyCStringPointer());
 #endif
         });
 }
@@ -261,7 +261,7 @@ gchar* webkit_favicon_database_get_favicon_uri(WebKitFaviconDatabase* database, 
     if (iconURLsForPageURL.isEmpty())
         return nullptr;
 
-    return g_strdup(iconURLsForPageURL.last().utf8().data());
+    return g_strdup(iconURLsForPageURL.last().utf8().legacyCStringPointer());
 }
 #endif // PLATFORM(GTK)
 

@@ -48,7 +48,7 @@ JSRetainPtr<JSStringRef> TestRunner::pathToLocalResource(JSStringRef url)
         return JSStringRetain(url);
 
     const gchar* layoutTestsSuffix = urlString.get() + strlen("file:///tmp/");
-    GUniquePtr<gchar> testPath(g_build_filename(FileSystem::webkitTopLevelDirectory().data(), layoutTestsSuffix, nullptr));
+    GUniquePtr<gchar> testPath(g_build_filename(FileSystem::webkitTopLevelDirectory().legacyCStringPointer(), layoutTestsSuffix, nullptr));
     GUniquePtr<gchar> testURI(g_filename_to_uri(testPath.get(), 0, 0));
     return JSStringCreateWithUTF8CString(testURI.get());
 }

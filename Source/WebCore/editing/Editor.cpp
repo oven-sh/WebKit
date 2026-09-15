@@ -157,6 +157,7 @@
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(MAC)
@@ -397,7 +398,7 @@ void Editor::didDispatchInputMethodKeydown(KeyboardEvent& event)
 
 bool Editor::handleTextEvent(TextEvent& event)
 {
-    LOG(Editing, "Editor %p handleTextEvent (data %s)", this, event.data().utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "Editor "_s << this << " handleTextEvent (data "_s << event.data() << ")"_s);
 
     // Default event handling for Drag and Drop will be handled by DragController
     // so we leave the event for it.
@@ -4571,7 +4572,7 @@ void Editor::selectionStartSetMarkerForTesting(DocumentMarkerType markerType, in
 
     switch (markerType) {
     case DocumentMarkerType::TransparentContent:
-        markers->addMarker(*text, unsignedFrom, unsignedLength, markerType, DocumentMarker::TransparentContentData { node, WTF::UUID { 0 } });
+        markers->addMarker(*text, unsignedFrom, unsignedLength, markerType, DocumentMarker::TransparentContentData { node, std::nullopt });
         return;
 
     case DocumentMarkerType::DraggedContent:

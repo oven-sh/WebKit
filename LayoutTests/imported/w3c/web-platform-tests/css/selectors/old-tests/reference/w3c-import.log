@@ -10,11 +10,13 @@ Do NOT modify or remove this file.
 ------------------------------------------------------------------------
 Properties requiring vendor prefixes:
 None
-Property values requiring vendor prefixes:
-None
 ------------------------------------------------------------------------
 List of files:
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/bq-u-u-u-green.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/br-this-line-green-color.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/br4em-this-line-green-color.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/first-letter-lime-background.xht
+/LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/first-line-lime-background.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/lime-bg-paras-g-u-g-g-u.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/lime-bg-paras-g-u-g-u-u.xht
 /LayoutTests/imported/w3c/web-platform-tests/css/selectors/old-tests/reference/lime-bg-paras-g-u-g-u.xht

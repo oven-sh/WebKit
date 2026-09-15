@@ -1963,7 +1963,7 @@ GVariant* webkitWebViewBaseContentsOfUserInterfaceItem(WebKitWebViewBase* webVie
 
     GVariantBuilder subBuilder;
     g_variant_builder_init(&subBuilder, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&subBuilder, "{sv}", "message", g_variant_new_string(message.utf8().data()));
+    g_variant_builder_add(&subBuilder, "{sv}", "message", g_variant_new_string(message.utf8().legacyCStringPointer()));
     g_variant_builder_add(&subBuilder, "{sv}", "fontSize", g_variant_new_double(fontSize));
 
     GVariantBuilder builder;
@@ -3515,13 +3515,13 @@ void webkitWebViewBaseSetPlugID(WebKitWebViewBase* webViewBase, const String& pl
     GUniqueOutPtr<GError> error;
 
     auto plugBusName = tokens[0].utf8();
-    RELEASE_ASSERT(g_dbus_is_name(plugBusName.data()));
+    RELEASE_ASSERT(g_dbus_is_name(plugBusName.legacyCStringPointer()));
 
-    auto* busNamePrefix = !g_dbus_is_unique_name(plugBusName.data()) ? "" : ":";
+    auto* busNamePrefix = !g_dbus_is_unique_name(plugBusName.legacyCStringPointer()) ? "" : ":";
 
-    GUniquePtr<char> busName(g_strdup_printf("%s%s", busNamePrefix, plugBusName.data()));
+    GUniquePtr<char> busName(g_strdup_printf("%s%s", busNamePrefix, plugBusName.legacyCStringPointer()));
 
-    priv->socketAccessible = adoptGRef(gtk_at_spi_socket_new(busName.get(), tokens[1].utf8().data(), &error.outPtr()));
+    priv->socketAccessible = adoptGRef(gtk_at_spi_socket_new(busName.get(), tokens[1].utf8().legacyCStringPointer(), &error.outPtr()));
 
     if (priv->socketAccessible) {
         auto* widget = gtk_widget_get_first_child(GTK_WIDGET(webViewBase));

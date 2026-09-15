@@ -44,23 +44,22 @@ class JSWebAssemblyInstance;
 namespace Wasm {
 
 enum class ProtocolError : uint8_t;
-class ModuleManager;
 class FunctionCodeIndex;
 
 /**
  * VirtualAddress - WebAssembly virtual address encoding for LLDB debugging
  *
  * Encodes 64-bit virtual addresses for WebAssembly debugging with LLDB.
- * Separates module code addresses from instance memory addresses.
+ * Separates module image addresses from linear memory addresses.
  *
  * Address Format (64-bit):
  * - Bits 63-62: Address Type (2 bits)
- * - Bits 61-32: ID (30 bits) - ModuleID for code, InstanceID for memory
+ * - Bits 61-32: InstanceId (30 bits)
  * - Bits 31-0:  Offset (32 bits)
  *
  * Address Types:
- * - 0x00 (Memory): Instance linear memory - uses InstanceID
- * - 0x01 (Module): Module code/bytecode - uses ModuleID
+ * - 0x00 (Memory): The instance's linear memory
+ * - 0x01 (Module): The instance's view of its module image (bytecode)
  * - 0x02 (Invalid): Invalid/unmapped regions
  * - 0x03 (Invalid2): Invalid/unmapped regions
  *
@@ -69,19 +68,28 @@ class FunctionCodeIndex;
  * - 0x4000000000000000 - 0x7FFFFFFFFFFFFFFF: Module regions
  * - 0x8000000000000000 - 0xFFFFFFFFFFFFFFFF: Invalid regions
  *
+ * Wasm scopes linear memory, globals, tables and data segments to an instance rather than to a
+ * module, so both halves of the address space are keyed by instance ID. Every live instance gets
+ * its own module image, which is what lets LLDB tell two instances of one module apart.
+ *
+ * The protocol only requires an ID to be unique among instances that are currently live, but IDs
+ * are handed out monotonically and are never reused. Reusing a dead instance's ID would silently
+ * alias the addresses LLDB still holds for it: a breakpoint or memory read aimed at the dead
+ * instance would resolve against an unrelated live one. MAX_ID is the resulting bound.
+ *
  * Example:
  *
- *     Module A (ID=0): Code at 0x4000000000000000
- *     ├── Instance 1 (ID=0): Memory at 0x0000000000000000
- *     ├── Instance 2 (ID=1): Memory at 0x0000000100000000
- *     └── Instance 3 (ID=2): Memory at 0x0000000200000000
+ *     Module A
+ *     ├── Instance 0: Memory at 0x0000000000000000, image at 0x4000000000000000
+ *     ├── Instance 1: Memory at 0x0000000100000000, image at 0x4000000100000000
+ *     └── Instance 2: Memory at 0x0000000200000000, image at 0x4000000200000000
  *
- *     Module B (ID=1): Code at 0x4000000100000000
- *     └── Instance 4 (ID=3): Memory at 0x0000000300000000
+ *     Module B
+ *     └── Instance 3: Memory at 0x0000000300000000, image at 0x4000000300000000
  *
  * Memory Region Example:
  *
- *     [0x0000000000000000-0x0000000001010000) rw- wasm_memory_0_0
+ *     [0x0000000000000000-0x0000000001010000) rw- wasm_memory_0
  *     [0x0000000001010000-0x4000000000000000) ---
  *     [0x4000000000000000-0x40000000000013f1) r-x wasm_module_0
  *     [0x40000000000013f1-0xffffffffffffffff) ---
@@ -89,8 +97,8 @@ class FunctionCodeIndex;
 class VirtualAddress {
 public:
     enum class Type : uint8_t {
-        Memory = 0x00, // Instance linear memory (uses InstanceID)
-        Module = 0x01, // Module code/bytecode (uses ModuleID)
+        Memory = 0x00, // Instance linear memory
+        Module = 0x01, // Module image (bytecode) as seen by one instance
         Invalid = 0x02, // Invalid/unmapped regions
         Invalid2 = 0x03 // Invalid/unmapped regions
     };
@@ -102,6 +110,8 @@ public:
     static constexpr uint64_t INVALID_BASE = 0x8000000000000000ULL; // System call: interrupted mid-native, position unknown
     static constexpr uint64_t JS_FRAME_BASE = 0xC000000000000000ULL; // JS frame boundary in the WASM call stack (Invalid2 type)
     static constexpr uint64_t INVALID_END = 0xFFFFFFFFFFFFFFFFULL;
+
+    static constexpr uint32_t MAX_ID = 0x3FFFFFFF; // Bits 61-32. IDs are never reused, so this also bounds how many instances one session may create.
 
     VirtualAddress()
         : m_value(0)
@@ -117,13 +127,13 @@ public:
         return VirtualAddress(encode(Type::Memory, instanceId, offset));
     }
 
-    static VirtualAddress createModule(uint32_t moduleId, uint32_t offset = 0)
+    static VirtualAddress createModule(uint32_t instanceId, uint32_t offset = 0)
     {
-        return VirtualAddress(encode(Type::Module, moduleId, offset));
+        return VirtualAddress(encode(Type::Module, instanceId, offset));
     }
 
     Type type() const { return static_cast<Type>((m_value & 0xC000000000000000ULL) >> 62); }
-    uint32_t id() const { return static_cast<uint32_t>((m_value & 0x3FFFFFFF00000000ULL) >> 32); }
+    uint32_t instanceId() const { return static_cast<uint32_t>((m_value & 0x3FFFFFFF00000000ULL) >> 32); }
     uint32_t offset() const { return static_cast<uint32_t>(m_value & 0x00000000FFFFFFFFULL); }
     String hex() const { return makeString(WTF::hex(m_value, WTF::Lowercase)); }
     uint64_t value() const { return m_value; }
@@ -135,16 +145,20 @@ public:
     }
 
     JS_EXPORT_PRIVATE static VirtualAddress toVirtual(JSWebAssemblyInstance*, FunctionCodeIndex, const uint8_t* pc);
-    JS_EXPORT_PRIVATE uint8_t* toPhysicalPC(const ModuleManager&);
+    JS_EXPORT_PRIVATE uint8_t* toPhysicalPC(JSWebAssemblyInstance&);
 
     operator uint64_t() const { return m_value; }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
 private:
-    static uint64_t encode(Type type, uint32_t id, uint32_t offset)
+    static uint64_t encode(Type type, uint32_t instanceId, uint32_t offset)
     {
-        return (((uint64_t)type << 62) | ((uint64_t)id << 32) | ((uint64_t)offset << 0));
+        // An ID wider than 30 bits spills into the type field, so the address would decode back
+        // to a different type and a different instance, and toPhysicalPC() would resolve it
+        // against the wrong module's bytecode.
+        RELEASE_ASSERT(instanceId <= MAX_ID);
+        return (((uint64_t)type << 62) | ((uint64_t)instanceId << 32) | ((uint64_t)offset << 0));
     }
 
     uint64_t m_value;

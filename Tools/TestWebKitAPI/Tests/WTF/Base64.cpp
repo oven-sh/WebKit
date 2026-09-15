@@ -29,108 +29,111 @@
 
 namespace TestWebKitAPI {
 
-#define EXPECT_ENCODE(expected, input) EXPECT_STREQ(expected, base64EncodeToString(input, options).utf8().data())
-#define EXPECT_DECODE(expected, input) EXPECT_STREQ(expected, base64DecodeToString(input, options).utf8().data())
+#define EXPECT_ENCODE(expected, input) EXPECT_EQ(expected, base64EncodeToString(input, options))
+#define EXPECT_DECODE(expected, input) EXPECT_EQ(expected, base64DecodeToString(input, options))
+// base64DecodeToString() returns a null String when the input cannot be decoded, and a null
+// String does not compare equal to the empty String, so check emptiness rather than equality.
+#define EXPECT_DECODE_EMPTY(input) EXPECT_TRUE(base64DecodeToString(input, options).isEmpty())
 
 TEST(Base64, Encode)
 {
     static constexpr OptionSet<Base64EncodeOption> options;
 
-    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
-    EXPECT_ENCODE("Zg==", byteCast<uint8_t>("f"_span));
-    EXPECT_ENCODE("Zm8=", byteCast<uint8_t>("fo"_span));
-    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
-    EXPECT_ENCODE("Zm9vYg==", byteCast<uint8_t>("foob"_span));
-    EXPECT_ENCODE("Zm9vYmE=", byteCast<uint8_t>("fooba"_span));
-    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
+    EXPECT_ENCODE(""_s, byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg=="_s, byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8="_s, byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v"_s, byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg=="_s, byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE="_s, byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy"_s, byteCast<uint8_t>("foobar"_span));
 
-    EXPECT_ENCODE("AA==", Vector<uint8_t>({ 0 }));
-    EXPECT_ENCODE("AQ==", Vector<uint8_t>({ 1 }));
-    EXPECT_ENCODE("gA==", Vector<uint8_t>({ 128 }));
-    EXPECT_ENCODE("/g==", Vector<uint8_t>({ 254 }));
-    EXPECT_ENCODE("/w==", Vector<uint8_t>({ 255 }));
-    EXPECT_ENCODE("AAE=", Vector<uint8_t>({ 0, 1 }));
-    EXPECT_ENCODE("/v8=", Vector<uint8_t>({ 254, 255 }));
-    EXPECT_ENCODE("AAGA/v8=", Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
+    EXPECT_ENCODE("AA=="_s, Vector<uint8_t>({ 0 }));
+    EXPECT_ENCODE("AQ=="_s, Vector<uint8_t>({ 1 }));
+    EXPECT_ENCODE("gA=="_s, Vector<uint8_t>({ 128 }));
+    EXPECT_ENCODE("/g=="_s, Vector<uint8_t>({ 254 }));
+    EXPECT_ENCODE("/w=="_s, Vector<uint8_t>({ 255 }));
+    EXPECT_ENCODE("AAE="_s, Vector<uint8_t>({ 0, 1 }));
+    EXPECT_ENCODE("/v8="_s, Vector<uint8_t>({ 254, 255 }));
+    EXPECT_ENCODE("AAGA/v8="_s, Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
 }
 
 TEST(Base64, EncodeOmitPadding)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::OmitPadding };
 
-    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
-    EXPECT_ENCODE("Zg", byteCast<uint8_t>("f"_span));
-    EXPECT_ENCODE("Zm8", byteCast<uint8_t>("fo"_span));
-    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
-    EXPECT_ENCODE("Zm9vYg", byteCast<uint8_t>("foob"_span));
-    EXPECT_ENCODE("Zm9vYmE", byteCast<uint8_t>("fooba"_span));
-    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
+    EXPECT_ENCODE(""_s, byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg"_s, byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8"_s, byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v"_s, byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg"_s, byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE"_s, byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy"_s, byteCast<uint8_t>("foobar"_span));
 
-    EXPECT_ENCODE("AA", Vector<uint8_t>({ 0 }));
-    EXPECT_ENCODE("AQ", Vector<uint8_t>({ 1 }));
-    EXPECT_ENCODE("gA", Vector<uint8_t>({ 128 }));
-    EXPECT_ENCODE("/g", Vector<uint8_t>({ 254 }));
-    EXPECT_ENCODE("/w", Vector<uint8_t>({ 255 }));
-    EXPECT_ENCODE("AAE", Vector<uint8_t>({ 0, 1 }));
-    EXPECT_ENCODE("/v8", Vector<uint8_t>({ 254, 255 }));
-    EXPECT_ENCODE("AAGA/v8", Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
+    EXPECT_ENCODE("AA"_s, Vector<uint8_t>({ 0 }));
+    EXPECT_ENCODE("AQ"_s, Vector<uint8_t>({ 1 }));
+    EXPECT_ENCODE("gA"_s, Vector<uint8_t>({ 128 }));
+    EXPECT_ENCODE("/g"_s, Vector<uint8_t>({ 254 }));
+    EXPECT_ENCODE("/w"_s, Vector<uint8_t>({ 255 }));
+    EXPECT_ENCODE("AAE"_s, Vector<uint8_t>({ 0, 1 }));
+    EXPECT_ENCODE("/v8"_s, Vector<uint8_t>({ 254, 255 }));
+    EXPECT_ENCODE("AAGA/v8"_s, Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
 }
 
 TEST(Base64, EncodeURL)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::URL };
 
-    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
-    EXPECT_ENCODE("Zg==", byteCast<uint8_t>("f"_span));
-    EXPECT_ENCODE("Zm8=", byteCast<uint8_t>("fo"_span));
-    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
-    EXPECT_ENCODE("Zm9vYg==", byteCast<uint8_t>("foob"_span));
-    EXPECT_ENCODE("Zm9vYmE=", byteCast<uint8_t>("fooba"_span));
-    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
+    EXPECT_ENCODE(""_s, byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg=="_s, byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8="_s, byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v"_s, byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg=="_s, byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE="_s, byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy"_s, byteCast<uint8_t>("foobar"_span));
 
-    EXPECT_ENCODE("AA==", Vector<uint8_t>({ 0 }));
-    EXPECT_ENCODE("AQ==", Vector<uint8_t>({ 1 }));
-    EXPECT_ENCODE("gA==", Vector<uint8_t>({ 128 }));
-    EXPECT_ENCODE("_g==", Vector<uint8_t>({ 254 }));
-    EXPECT_ENCODE("_w==", Vector<uint8_t>({ 255 }));
-    EXPECT_ENCODE("AAE=", Vector<uint8_t>({ 0, 1 }));
-    EXPECT_ENCODE("_v8=", Vector<uint8_t>({ 254, 255 }));
-    EXPECT_ENCODE("AAGA_v8=", Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
+    EXPECT_ENCODE("AA=="_s, Vector<uint8_t>({ 0 }));
+    EXPECT_ENCODE("AQ=="_s, Vector<uint8_t>({ 1 }));
+    EXPECT_ENCODE("gA=="_s, Vector<uint8_t>({ 128 }));
+    EXPECT_ENCODE("_g=="_s, Vector<uint8_t>({ 254 }));
+    EXPECT_ENCODE("_w=="_s, Vector<uint8_t>({ 255 }));
+    EXPECT_ENCODE("AAE="_s, Vector<uint8_t>({ 0, 1 }));
+    EXPECT_ENCODE("_v8="_s, Vector<uint8_t>({ 254, 255 }));
+    EXPECT_ENCODE("AAGA_v8="_s, Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
 }
 
 TEST(Base64, EncodeURLOmitPadding)
 {
     static constexpr OptionSet<Base64EncodeOption> options = { Base64EncodeOption::URL, Base64EncodeOption::OmitPadding };
 
-    EXPECT_ENCODE("", byteCast<uint8_t>(""_span));
-    EXPECT_ENCODE("Zg", byteCast<uint8_t>("f"_span));
-    EXPECT_ENCODE("Zm8", byteCast<uint8_t>("fo"_span));
-    EXPECT_ENCODE("Zm9v", byteCast<uint8_t>("foo"_span));
-    EXPECT_ENCODE("Zm9vYg", byteCast<uint8_t>("foob"_span));
-    EXPECT_ENCODE("Zm9vYmE", byteCast<uint8_t>("fooba"_span));
-    EXPECT_ENCODE("Zm9vYmFy", byteCast<uint8_t>("foobar"_span));
+    EXPECT_ENCODE(""_s, byteCast<uint8_t>(""_span));
+    EXPECT_ENCODE("Zg"_s, byteCast<uint8_t>("f"_span));
+    EXPECT_ENCODE("Zm8"_s, byteCast<uint8_t>("fo"_span));
+    EXPECT_ENCODE("Zm9v"_s, byteCast<uint8_t>("foo"_span));
+    EXPECT_ENCODE("Zm9vYg"_s, byteCast<uint8_t>("foob"_span));
+    EXPECT_ENCODE("Zm9vYmE"_s, byteCast<uint8_t>("fooba"_span));
+    EXPECT_ENCODE("Zm9vYmFy"_s, byteCast<uint8_t>("foobar"_span));
 
-    EXPECT_ENCODE("AA", Vector<uint8_t>({ 0 }));
-    EXPECT_ENCODE("AQ", Vector<uint8_t>({ 1 }));
-    EXPECT_ENCODE("gA", Vector<uint8_t>({ 128 }));
-    EXPECT_ENCODE("_g", Vector<uint8_t>({ 254 }));
-    EXPECT_ENCODE("_w", Vector<uint8_t>({ 255 }));
-    EXPECT_ENCODE("AAE", Vector<uint8_t>({ 0, 1 }));
-    EXPECT_ENCODE("_v8", Vector<uint8_t>({ 254, 255 }));
-    EXPECT_ENCODE("AAGA_v8", Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
+    EXPECT_ENCODE("AA"_s, Vector<uint8_t>({ 0 }));
+    EXPECT_ENCODE("AQ"_s, Vector<uint8_t>({ 1 }));
+    EXPECT_ENCODE("gA"_s, Vector<uint8_t>({ 128 }));
+    EXPECT_ENCODE("_g"_s, Vector<uint8_t>({ 254 }));
+    EXPECT_ENCODE("_w"_s, Vector<uint8_t>({ 255 }));
+    EXPECT_ENCODE("AAE"_s, Vector<uint8_t>({ 0, 1 }));
+    EXPECT_ENCODE("_v8"_s, Vector<uint8_t>({ 254, 255 }));
+    EXPECT_ENCODE("AAGA_v8"_s, Vector<uint8_t>({ 0, 1, 128, 254, 255 }));
 }
 
 TEST(Base64, Decode)
 {
     static constexpr OptionSet<Base64DecodeOption> options;
 
-    EXPECT_DECODE("", "==="_s);
-    EXPECT_DECODE("f", "Zg==="_s);
-    EXPECT_DECODE("fo", "Zm8==="_s);
-    EXPECT_DECODE("foo", "Zm9v==="_s);
-    EXPECT_DECODE("foob", "Zm9vYg==="_s);
-    EXPECT_DECODE("fooba", "Zm9vYmE==="_s);
-    EXPECT_DECODE("foobar", "Zm9vYmFy==="_s);
+    EXPECT_DECODE_EMPTY("==="_s);
+    EXPECT_DECODE("f"_s, "Zg==="_s);
+    EXPECT_DECODE("fo"_s, "Zm8==="_s);
+    EXPECT_DECODE("foo"_s, "Zm9v==="_s);
+    EXPECT_DECODE("foob"_s, "Zm9vYg==="_s);
+    EXPECT_DECODE("fooba"_s, "Zm9vYmE==="_s);
+    EXPECT_DECODE("foobar"_s, "Zm9vYmFy==="_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode("AA==="_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode("AQ==="_s, options));
@@ -146,13 +149,13 @@ TEST(Base64, DecodeValidatePadding)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::ValidatePadding };
 
-    EXPECT_DECODE("", ""_s);
-    EXPECT_DECODE("f", "Zg=="_s);
-    EXPECT_DECODE("fo", "Zm8="_s);
-    EXPECT_DECODE("foo", "Zm9v"_s);
-    EXPECT_DECODE("foob", "Zm9vYg=="_s);
-    EXPECT_DECODE("fooba", "Zm9vYmE="_s);
-    EXPECT_DECODE("foobar", "Zm9vYmFy"_s);
+    EXPECT_DECODE_EMPTY(""_s);
+    EXPECT_DECODE("f"_s, "Zg=="_s);
+    EXPECT_DECODE("fo"_s, "Zm8="_s);
+    EXPECT_DECODE("foo"_s, "Zm9v"_s);
+    EXPECT_DECODE("foob"_s, "Zm9vYg=="_s);
+    EXPECT_DECODE("fooba"_s, "Zm9vYmE="_s);
+    EXPECT_DECODE("foobar"_s, "Zm9vYmFy"_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode("AA=="_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode("AQ=="_s, options));
@@ -168,13 +171,13 @@ TEST(Base64, DecodeIgnoreWhitespace)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::IgnoreWhitespace };
 
-    EXPECT_DECODE("", " = = = "_s);
-    EXPECT_DECODE("f", " Z g = = = "_s);
-    EXPECT_DECODE("fo", " Z m 8 = = = "_s);
-    EXPECT_DECODE("foo", " Z m 9 v = = = "_s);
-    EXPECT_DECODE("foob", " Z m 9 v Y g = = = "_s);
-    EXPECT_DECODE("fooba", " Z m 9 v Y m E = = = "_s);
-    EXPECT_DECODE("foobar", " Z m 9 v Y m F y = = = "_s);
+    EXPECT_DECODE_EMPTY(" = = = "_s);
+    EXPECT_DECODE("f"_s, " Z g = = = "_s);
+    EXPECT_DECODE("fo"_s, " Z m 8 = = = "_s);
+    EXPECT_DECODE("foo"_s, " Z m 9 v = = = "_s);
+    EXPECT_DECODE("foob"_s, " Z m 9 v Y g = = = "_s);
+    EXPECT_DECODE("fooba"_s, " Z m 9 v Y m E = = = "_s);
+    EXPECT_DECODE("foobar"_s, " Z m 9 v Y m F y = = = "_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode(" A A = = = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode(" A Q = = = "_s, options));
@@ -190,13 +193,13 @@ TEST(Base64, DecodeValidatePaddingIgnoreWhitespace)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::ValidatePadding, Base64DecodeOption::IgnoreWhitespace };
 
-    EXPECT_DECODE("", " "_s);
-    EXPECT_DECODE("f", " Z g = = "_s);
-    EXPECT_DECODE("fo", " Z m 8 = "_s);
-    EXPECT_DECODE("foo", " Z m 9 v "_s);
-    EXPECT_DECODE("foob", " Z m 9 v Y g = = "_s);
-    EXPECT_DECODE("fooba", " Z m 9 v Y m E = "_s);
-    EXPECT_DECODE("foobar", " Z m 9 v Y m F y "_s);
+    EXPECT_DECODE_EMPTY(" "_s);
+    EXPECT_DECODE("f"_s, " Z g = = "_s);
+    EXPECT_DECODE("fo"_s, " Z m 8 = "_s);
+    EXPECT_DECODE("foo"_s, " Z m 9 v "_s);
+    EXPECT_DECODE("foob"_s, " Z m 9 v Y g = = "_s);
+    EXPECT_DECODE("fooba"_s, " Z m 9 v Y m E = "_s);
+    EXPECT_DECODE("foobar"_s, " Z m 9 v Y m F y "_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode(" A A = = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode(" A Q = = "_s, options));
@@ -212,13 +215,13 @@ TEST(Base64, DecodeURL)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::URL };
 
-    EXPECT_DECODE("", "==="_s);
-    EXPECT_DECODE("f", "Zg==="_s);
-    EXPECT_DECODE("fo", "Zm8==="_s);
-    EXPECT_DECODE("foo", "Zm9v==="_s);
-    EXPECT_DECODE("foob", "Zm9vYg==="_s);
-    EXPECT_DECODE("fooba", "Zm9vYmE==="_s);
-    EXPECT_DECODE("foobar", "Zm9vYmFy==="_s);
+    EXPECT_DECODE_EMPTY("==="_s);
+    EXPECT_DECODE("f"_s, "Zg==="_s);
+    EXPECT_DECODE("fo"_s, "Zm8==="_s);
+    EXPECT_DECODE("foo"_s, "Zm9v==="_s);
+    EXPECT_DECODE("foob"_s, "Zm9vYg==="_s);
+    EXPECT_DECODE("fooba"_s, "Zm9vYmE==="_s);
+    EXPECT_DECODE("foobar"_s, "Zm9vYmFy==="_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode("AA==="_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode("AQ==="_s, options));
@@ -234,13 +237,13 @@ TEST(Base64, DecodeURLValidatePadding)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::URL, Base64DecodeOption::ValidatePadding };
 
-    EXPECT_DECODE("", ""_s);
-    EXPECT_DECODE("f", "Zg=="_s);
-    EXPECT_DECODE("fo", "Zm8="_s);
-    EXPECT_DECODE("foo", "Zm9v"_s);
-    EXPECT_DECODE("foob", "Zm9vYg=="_s);
-    EXPECT_DECODE("fooba", "Zm9vYmE="_s);
-    EXPECT_DECODE("foobar", "Zm9vYmFy"_s);
+    EXPECT_DECODE_EMPTY(""_s);
+    EXPECT_DECODE("f"_s, "Zg=="_s);
+    EXPECT_DECODE("fo"_s, "Zm8="_s);
+    EXPECT_DECODE("foo"_s, "Zm9v"_s);
+    EXPECT_DECODE("foob"_s, "Zm9vYg=="_s);
+    EXPECT_DECODE("fooba"_s, "Zm9vYmE="_s);
+    EXPECT_DECODE("foobar"_s, "Zm9vYmFy"_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode("AA=="_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode("AQ=="_s, options));
@@ -256,13 +259,13 @@ TEST(Base64, DecodeURLIgnoreWhitespace)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::URL, Base64DecodeOption::IgnoreWhitespace };
 
-    EXPECT_DECODE("", " = = = "_s);
-    EXPECT_DECODE("f", " Z g = = = "_s);
-    EXPECT_DECODE("fo", " Z m 8 = = = "_s);
-    EXPECT_DECODE("foo", " Z m 9 v = = = "_s);
-    EXPECT_DECODE("foob", " Z m 9 v Y g = = = "_s);
-    EXPECT_DECODE("fooba", " Z m 9 v Y m E = = = "_s);
-    EXPECT_DECODE("foobar", " Z m 9 v Y m F y = = = "_s);
+    EXPECT_DECODE_EMPTY(" = = = "_s);
+    EXPECT_DECODE("f"_s, " Z g = = = "_s);
+    EXPECT_DECODE("fo"_s, " Z m 8 = = = "_s);
+    EXPECT_DECODE("foo"_s, " Z m 9 v = = = "_s);
+    EXPECT_DECODE("foob"_s, " Z m 9 v Y g = = = "_s);
+    EXPECT_DECODE("fooba"_s, " Z m 9 v Y m E = = = "_s);
+    EXPECT_DECODE("foobar"_s, " Z m 9 v Y m F y = = = "_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode(" A A = = = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode(" A Q = = = "_s, options));
@@ -278,13 +281,13 @@ TEST(Base64, DecodeURLValidatePaddingIgnoreWhitespace)
 {
     static constexpr OptionSet<Base64DecodeOption> options = { Base64DecodeOption::URL, Base64DecodeOption::ValidatePadding, Base64DecodeOption::IgnoreWhitespace };
 
-    EXPECT_DECODE("", " "_s);
-    EXPECT_DECODE("f", " Z g = = "_s);
-    EXPECT_DECODE("fo", " Z m 8 = "_s);
-    EXPECT_DECODE("foo", " Z m 9 v "_s);
-    EXPECT_DECODE("foob", " Z m 9 v Y g = = "_s);
-    EXPECT_DECODE("fooba", " Z m 9 v Y m E = "_s);
-    EXPECT_DECODE("foobar", " Z m 9 v Y m F y "_s);
+    EXPECT_DECODE_EMPTY(" "_s);
+    EXPECT_DECODE("f"_s, " Z g = = "_s);
+    EXPECT_DECODE("fo"_s, " Z m 8 = "_s);
+    EXPECT_DECODE("foo"_s, " Z m 9 v "_s);
+    EXPECT_DECODE("foob"_s, " Z m 9 v Y g = = "_s);
+    EXPECT_DECODE("fooba"_s, " Z m 9 v Y m E = "_s);
+    EXPECT_DECODE("foobar"_s, " Z m 9 v Y m F y "_s);
 
     EXPECT_TRUE(Vector<uint8_t>({ 0 }) == base64Decode(" A A = = "_s, options));
     EXPECT_TRUE(Vector<uint8_t>({ 1 }) == base64Decode(" A Q = = "_s, options));

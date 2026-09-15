@@ -97,7 +97,7 @@ public:
     const Type* matrixType(uint8_t columns, uint8_t rows, const Type*);
     const Type* textureType(Types::Texture::Kind, const Type*);
     const Type* textureStorageType(Types::TextureStorage::Kind, TexelFormat, AccessMode);
-    const Type* functionType(Vector<const Type*>&&, const Type*, bool mustUse);
+    const Type* functionType(Vector<const Type*>&&, const Type*, bool mustUse, bool isEntryPoint);
     const Type* referenceType(AddressSpace, const Type*, AccessMode, bool isVectorComponent = false);
     const Type* pointerType(AddressSpace, const Type*, AccessMode);
     const Type* NODELETE atomicType(const Type*);
