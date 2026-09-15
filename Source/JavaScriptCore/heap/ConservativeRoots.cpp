@@ -210,6 +210,25 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         tryPointer(alignedPointer - candidate->cellSize());
 }
 
+#if ASAN_ENABLED
+extern "C" int __asan_address_is_poisoned(void const volatile*);
+#endif
+
+// AddressSanitizer puts redzones between the locals of a frame and poisons a local once it is out of
+// scope. Instrumented code traps before it reads or writes such a word, so the word cannot hold a
+// live reference: what is in it is whatever an earlier, deeper call left at that address. A frame
+// that stays on the stack for a long time (runInternalMicrotask under an async function that polls
+// for a collection, say) would otherwise keep that stale cell alive for as long as it does.
+static ALWAYS_INLINE bool isPoisonedForConservativeScan(char** slot)
+{
+#if ASAN_ENABLED
+    return __asan_address_is_poisoned(slot);
+#else
+    UNUSED_PARAM(slot);
+    return false;
+#endif
+}
+
 template<typename MarkHook>
 SUPPRESS_ASAN
 void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHook)
@@ -232,15 +251,21 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
 #if ENABLE(WEBASSEMBLY)
     if (boxedWasmCalleeFilter.bits()) {
         constexpr bool lookForWasmCallees = true;
-        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it))
+                continue;
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
     } else {
 #else
     {
 #endif
         constexpr bool lookForWasmCallees = false;
-        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it))
+                continue;
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
     }
 }
 
