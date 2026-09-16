@@ -229,6 +229,10 @@ public:
     DECLARE_VISIT_AGGREGATE;
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    // No CI configuration has the memory for the test of this, microtask-queue-more-than-2-25-tasks.js.
+    static_assert(WTF::isValidCapacityForVector<QueuedTask>(1 << 26), "The specialization of isValidCapacityForVector for QueuedTask has to come before MarkedMicrotaskDeque");
+#endif
     Deque<QueuedTask> m_queue;
     size_t m_markedBefore { 0 };
 };
