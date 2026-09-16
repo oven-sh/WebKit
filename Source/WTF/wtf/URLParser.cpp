@@ -3290,8 +3290,6 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         }
         if (piecePointer == 6 || (compressPointer && piecePointer < 6)) {
             if (std::optional<IPv4Address> ipv4Address = parseIPv4AddressInsideIPv6(std::span(p, end))) {
-                if (compressPointer && piecePointer == 5)
-                    return std::nullopt;
                 syntaxViolation(hostBegin);
                 address[piecePointer++] = ipv4Address.value() >> 16;
                 address[piecePointer++] = ipv4Address.value() & 0xFFFF;
