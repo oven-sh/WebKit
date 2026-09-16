@@ -26,10 +26,15 @@
 #pragma once
 
 #include "GlobalExecutable.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "PrelinkedModuleGraph.h"
+#endif
+#include "Weak.h"
 
 namespace JSC {
 
 class FunctionExecutable;
+class JSModuleRecord;
 class SymbolTable;
 class UnlinkedFunctionExecutable;
 class UnlinkedModuleProgramCodeBlock;
@@ -49,20 +54,22 @@ public:
     // What an imported binding read by this executable's code resolves to: the
     // exporting module's source (whose text fixes the binding's ScopeOffset) and the
     // binding's name there, or for exporters that are not source text modules the
-    // ScopeOffset itself.
+    // ScopeOffset itself; and the import slot the code reads the exporter from.
     struct ImportedBinding {
         RefPtr<UniquedStringImpl> localName;
         RefPtr<SourceProvider> exporterSource;
         RefPtr<UniquedStringImpl> exporterLocalName;
         unsigned offset { 0 };
+        unsigned importSlot { 0 };
         bool operator==(const ImportedBinding&) const;
     };
     using ImportedBindings = Vector<ImportedBinding>;
 
+    // linker: the record the executable is made for, if other records may come to share it (JSModuleRecord::getOrMakeExecutable).
     // moduleScopeSymbolTables: the symbol tables of the lexical environments between
     // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
     // linked code embeds their variables' offsets too.
-    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&& = std::nullopt, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
+    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker = nullptr, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
 
     static void destroy(JSCell*);
 
@@ -106,7 +113,19 @@ public:
     // linkedFunctionDeclaration() first, and linkFunctionDeclaration() with the module's own functionDecl(index) if that is null.
     FunctionExecutable* linkedFunctionDeclaration(unsigned index) const { return index < m_functionDeclarations.size() ? m_functionDeclarations[index].get() : nullptr; }
     FunctionExecutable* linkFunctionDeclaration(VM&, unsigned index, UnlinkedFunctionExecutable*);
-    const std::optional<ImportedBindings>& importedBindings() const { return m_importedBindings; }
+    // What another record's import bindings are compared with before it shares this executable: the linker's
+    // (JSModuleRecord::importedBindings), which nothing resolves until there is such a record. The linker, to ask, until
+    // they have been asked for; with neither, there is nothing to compare with.
+    JSModuleRecord* linker() const;
+    const std::optional<ImportedBindings>& linkerImportedBindings() const { return m_linkerImportedBindings; }
+    void setLinkerImportedBindings(std::optional<ImportedBindings>&&);
+#if USE(BUN_JSC_ADDITIONS)
+    // The linker was module `moduleIndex` of `graph` (JSModuleRecord::createPrelinked), or with null was not such a record.
+    bool wasLinkedFor(PrelinkedModuleGraph* graph, uint32_t moduleIndex) const { return m_linkerPrelinkedGraph.get() == graph && m_linkerPrelinkedIndex == moduleIndex; }
+#endif
+    // A second record has taken this executable: its code now runs against more than one module environment.
+    bool isShared() const { return m_isShared; }
+    void didShare() { m_isShared = true; }
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
     bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
@@ -134,16 +153,22 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, std::optional<ImportedBindings>&&, const Vector<SymbolTable*>& moduleScopeSymbolTables);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
-    std::optional<ImportedBindings> m_importedBindings;
+    Weak<JSModuleRecord> m_linker;
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<PrelinkedModuleGraph> m_linkerPrelinkedGraph;
+    uint32_t m_linkerPrelinkedIndex { PrelinkedModuleGraph::noModule };
+#endif
+    std::optional<ImportedBindings> m_linkerImportedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
     unsigned m_recordsYetToFinishEvaluation { 0 };
     bool m_hasBeenEvaluated { false };
     bool m_hasReleasedUnlinkedCode { false };
+    bool m_isShared { false };
     OptionSet<CodeGenerationMode> m_codeGenerationMode;
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
 };
