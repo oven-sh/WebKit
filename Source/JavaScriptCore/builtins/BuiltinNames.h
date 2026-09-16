@@ -134,6 +134,7 @@ namespace JSC {
     macro(toIntegerOrInfinity) \
     macro(toLength) \
     macro(importInRealm) \
+    macro(crossRealmThrow) \
     macro(evalFunction) \
     macro(evalInRealm) \
     macro(moveFunctionToRealm) \

@@ -85,6 +85,19 @@ JSC_DEFINE_HOST_FUNCTION(importInRealm, (JSGlobalObject* globalObject, CallFrame
     return JSValue::encode(promise);
 }
 
+// The rejection handler of importInRealm. A module graph of the shadow realm
+// rejects with a value of that realm, so a rejection reason gets the same copy
+// that evalInRealm makes for a thrown value.
+JSC_DEFINE_HOST_FUNCTION(crossRealmThrow, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* typeError = createTypeErrorCopy(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return throwVMError(globalObject, scope, typeError);
+}
+
 JSC_DEFINE_HOST_FUNCTION(evalInRealm, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

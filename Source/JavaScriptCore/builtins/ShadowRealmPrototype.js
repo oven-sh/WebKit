@@ -53,15 +53,6 @@ function evaluate(sourceText)
     return @wrapRemoteValue(true, this, @evalInRealm(this, sourceText));
 }
 
-@linkTimeConstant
-function crossRealmThrow(error)
-{
-    "use strict";
-
-    // re-throw because import issues raise errors using the realm's global object
-    @throwTypeError(@toString(error));
-}
-
 function importValue(specifier, exportName)
 {
     "use strict";

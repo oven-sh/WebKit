@@ -95,6 +95,7 @@ class JSGlobalObject;
     v(Set, nullptr) \
     v(Map, nullptr) \
     v(importInRealm, nullptr) \
+    v(crossRealmThrow, nullptr) \
     v(evalFunction, nullptr) \
     v(evalInRealm, nullptr) \
     v(moveFunctionToRealm, nullptr) \
