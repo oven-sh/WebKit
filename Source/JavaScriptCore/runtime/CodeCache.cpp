@@ -48,7 +48,9 @@ void CodeCacheMap::pruneSlowCase()
         m_capacity = m_minCapacity;
 
     while (m_size > m_capacity || !canPruneQuickly()) {
-        MapType::iterator it = m_map.begin();
+        // Not begin(): it walks past every empty bucket in front of the first entry, and evicting that entry each
+        // time empties the front of the table, so one eviction costs a walk over a large part of the table.
+        MapType::iterator it = m_map.random();
 
         writeCodeBlock(it->key, it->value);
 
