@@ -567,7 +567,10 @@ public:
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
-    void addReference(JSCell*, ArrayBuffer*);
+    // bytesAlreadyReported is the part of the buffer that this heap has already counted as allocated, because the
+    // buffer adopted storage that reportExtraMemoryAllocated() had reported. The first reference counts only the rest
+    // as allocated. The size of the heap (extraMemorySize()) gets the whole buffer either way.
+    void addReference(JSCell*, ArrayBuffer*, size_t bytesAlreadyReported = 0);
     
     bool isDeferred() const { return !!m_deferralDepth; }
 
