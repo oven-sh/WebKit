@@ -104,10 +104,11 @@ public:
     JSPromise* loadedPromise(JSGlobalObject*);
     // The host's fetch promise that pipeFrom() connects to the fetch promise. The connection is a microtask, so the
     // host can have delivered while the fetch promise is still pending. A synchronous load (loadModuleSync) that
-    // cannot wait for that microtask takes the result with takeSettledFetchSource(), and does not fetch again.
+    // cannot wait for that microtask uses the delivered result, and does not fetch again.
     void setFetchSource(VM&, JSPromise*);
-    // Returns false when there is nothing to take: no source, a source that is still pending, or a fetch promise
-    // that is already settled.
+    // The fetch source, when it is settled and the fetch promise is still pending. Null otherwise.
+    JSPromise* deliveredFetch() const;
+    // Settles the fetch promise from deliveredFetch(). Returns false when there is none.
     bool takeSettledFetchSource(VM&);
 #endif
 

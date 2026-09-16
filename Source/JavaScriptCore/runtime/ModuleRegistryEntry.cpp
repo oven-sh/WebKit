@@ -275,10 +275,18 @@ void ModuleRegistryEntry::setFetchSource(VM& vm, JSPromise* source)
     m_fetchSource.set(vm, this, source);
 }
 
-bool ModuleRegistryEntry::takeSettledFetchSource(VM& vm)
+JSPromise* ModuleRegistryEntry::deliveredFetch() const
 {
     JSPromise* source = m_fetchSource.get();
     if (!source || source->status() == JSPromise::Status::Pending || !m_fetchPromise || m_fetchPromise->status() != JSPromise::Status::Pending)
+        return nullptr;
+    return source;
+}
+
+bool ModuleRegistryEntry::takeSettledFetchSource(VM& vm)
+{
+    JSPromise* source = deliveredFetch();
+    if (!source)
         return false;
     // m_fetchPromise was pipeFrom()'d, so only the unguarded forms settle it. The pipe's job finds it settled later
     // and does nothing.

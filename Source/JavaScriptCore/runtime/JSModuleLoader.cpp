@@ -390,9 +390,12 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
             // Beneath a synchronous load (loadModuleSync), the job that hands a delivered fetch to this promise
             // can be parked in a queue that does not drain before this load has to complete (Bun: a macro's
-            // import() of a module that the require(esm) above it requested).
-            if (vm.m_synchronousModuleQueue)
-                entry->takeSettledFetchSource(vm);
+            // import() of a module that the require(esm) above it requested). Continue from the host's promise.
+            // hostLoadImportedModule() then settles the entry from it, as it does for a static request.
+            if (vm.m_synchronousModuleQueue) {
+                if (JSPromise* delivered = entry->deliveredFetch())
+                    promise = delivered;
+            }
 #endif
         }
     }
