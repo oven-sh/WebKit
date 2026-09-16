@@ -56,7 +56,8 @@ RUN set -eux; \
       *) echo "unsupported FREEBSD_ARCH ${FREEBSD_ARCH}" >&2; exit 1 ;; \
     esac; \
     mkdir -p /opt/freebsd-sysroot; \
-    wget -q "https://download.freebsd.org/releases/${FBSD_DL_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -O /tmp/base.txz; \
+    wget -q "https://download.freebsd.org/releases/${FBSD_DL_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -O /tmp/base.txz || \
+      wget -q "https://archive.freebsd.org/old-releases/${FBSD_DL_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -O /tmp/base.txz; \
     tar -C /opt/freebsd-sysroot -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib; \
     rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
