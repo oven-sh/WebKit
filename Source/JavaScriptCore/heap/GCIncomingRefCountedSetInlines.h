@@ -70,6 +70,7 @@ void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
             preciseBytes += size;
             return false;
         }
+        object->willBeRemovedFromIncomingReferenceSet();
         return true;
     });
     // Update m_bytes to the precise value when Full-GC happens since Eden-GC only expects that Eden region is collected.
