@@ -387,6 +387,13 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 
             if (entry->status() != ModuleRegistryEntry::Status::New)
                 promise = entry->ensureFetchPromise(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+            // Beneath a synchronous load (loadModuleSync), the job that hands a delivered fetch to this promise
+            // can be parked in a queue that does not drain before this load has to complete (Bun: a macro's
+            // import() of a module that the require(esm) above it requested).
+            if (vm.m_synchronousModuleQueue)
+                entry->takeSettledFetchSource(vm);
+#endif
         }
     }
 
@@ -810,19 +817,24 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
-                    // Transpilation still in flight — re-issue through the
-                    // embedder's synchronous fetch. fetchPromise was already
-                    // pipeFrom()'d by the async path which set
-                    // isFirstResolvingFunctionCalledFlag, so use the unguarded
-                    // fulfill/reject. The ModuleRegistryFetchSettled reaction on
-                    // fetchPromise lands on the sync queue and drives the rest of
-                    // the chain (including loadPromise).
-                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
-                    RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (promise->status() == JSPromise::Status::Fulfilled)
-                        fetchPromise->fulfillPromise(vm, promise->result());
-                    else if (promise->status() == JSPromise::Status::Rejected)
-                        fetchPromise->rejectPromise(vm, promise->result());
+                    // The host has often delivered this fetch already: beneath a synchronous load it
+                    // fetches synchronously, and only the pipeFrom() job that hands the result to
+                    // fetchPromise is parked in a queue. Fetch a second time only if it has not.
+                    if (!mapEntry->takeSettledFetchSource(vm)) {
+                        // Transpilation still in flight — re-issue through the
+                        // embedder's synchronous fetch. fetchPromise was already
+                        // pipeFrom()'d by the async path which set
+                        // isFirstResolvingFunctionCalledFlag, so use the unguarded
+                        // fulfill/reject. The ModuleRegistryFetchSettled reaction on
+                        // fetchPromise lands on the sync queue and drives the rest of
+                        // the chain (including loadPromise).
+                        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                        if (promise->status() == JSPromise::Status::Fulfilled)
+                            fetchPromise->fulfillPromise(vm, promise->result());
+                        else if (promise->status() == JSPromise::Status::Rejected)
+                            fetchPromise->rejectPromise(vm, promise->result());
+                    }
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -881,6 +893,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
+#if USE(BUN_JSC_ADDITIONS)
+        mapEntry->setFetchSource(vm, promise);
+#endif
     }
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
