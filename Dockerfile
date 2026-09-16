@@ -2,7 +2,7 @@ ARG MARCH_FLAG=""
 ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG="-flto=thin -fno-split-lto-unit -fwhole-program-vtables -fforce-emit-vtables "
 ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
-ARG LLVM_VERSION="21"
+ARG LLVM_VERSION="23"
 # The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
@@ -105,8 +105,8 @@ RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
 # GitHub release so the image doesn't depend on apt.llvm.org at build time.
 # Ubuntu-archive dependencies still come from apt. Regenerate via
 # scripts/mirror-llvm-debs.sh (or the mirror-llvm-debs workflow).
-ARG LLVM_DEBS_SHA256_amd64=759ea9d6d50de9b6062cf40161a24a3a9d70aaf11aa1a544074d126590eb55f7
-ARG LLVM_DEBS_SHA256_arm64=4d4923baa663cb2e1be67e8e7097220604489b0da8b7a4ab5911ac2baf1e0ba6
+ARG LLVM_DEBS_SHA256_amd64=6a6abdf5237c8905c44423cb7ee25e687a2c9715b5133258f6dad65ff6e6bc53
+ARG LLVM_DEBS_SHA256_arm64=57e82d805bc3214fb7170715a01a5a207112fabbdef564c8153d89b10f9ff853
 RUN curl -fsSL --retry 5 --retry-connrefused \
         "https://github.com/oven-sh/WebKit/releases/download/llvm-${LLVM_VERSION}-debs/llvm-${LLVM_VERSION}-focal-amd64.tar.gz" \
         -o /tmp/llvm.tar.gz \

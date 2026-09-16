@@ -13,16 +13,23 @@ ARG LINUX_ARCH="x86_64"
 # Without that, it is built here like any other stage. Lane settings belong in `lane` below.
 FROM alpine:3.23 as base
 
+# LLVM 23 is in Alpine edge only. `@edge` is a tagged repository: apk takes a package from it only when the package is
+# asked for with that tag, or when a tagged package needs something 3.23 does not have. So musl, libstdc++ and gcc stay
+# 3.23's, here and in the aarch64 sysroot below (which copies /etc/apk/repositories). The one thing that does follow
+# clang from edge is libgcc-static (libgcc.a and the crt files of this container's architecture; 3.23 has no such
+# package): the sysroot step checks that it is still the GCC version of the sysroot's.
+# Edge is a rolling repository: a rebuild of this stage takes the 23.x that is there on that day.
+RUN echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/repositories
 RUN apk update
-RUN apk add --no-cache cmake make clang21 clang21-static clang21-dev llvm21-dev llvm21-static musl-dev git lld libgcc gcc g++ libstdc++ build-base lld-dev llvm21-libs libc-dev xz zlib zlib-dev libxml2 libxml2-dev
+RUN apk add --no-cache cmake make clang23@edge llvm23@edge lld23@edge musl-dev git libgcc gcc g++ libstdc++ build-base libc-dev xz zlib zlib-dev libxml2 libxml2-dev
 # What the ICU and WebKit stages need on top of that.
 RUN apk add --no-cache cpio curl tar nodejs patch file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
-ENV CXX=clang++-21
-ENV CC=clang-21
-ENV LDFLAGS='-L/usr/include -L/usr/include/llvm21'
-ENV CXXFLAGS="-I/usr/include -I/usr/include/llvm21"
-ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:/usr/lib/llvm21/bin:$PATH"
+ENV CXX=clang++-23
+ENV CC=clang-23
+ENV LDFLAGS='-L/usr/include -L/usr/include/llvm23'
+ENV CXXFLAGS="-I/usr/include -I/usr/include/llvm23"
+ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:/usr/lib/llvm23/bin:$PATH"
 ENV WEBKIT_OUT_DIR=/webkitbuild
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
@@ -55,12 +62,13 @@ RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSI
 # <sysroot>/usr/include/fortify. This container has them as a dependency of clang; a sysroot has no clang, and without
 # them the define does nothing (musl has no fortify of its own) and the aarch64 lanes lose the checks the x86_64 ones have.
 #
-# The clang configuration file: Alpine gives clang its default flags in /etc/clang21/<triple>.cfg, which clang reads for
+# The clang configuration file: Alpine gives clang its default flags in /etc/clang23/<triple>.cfg, which clang reads for
 # the triple it compiles for. The clang package installs the container's own (-fstack-clash-protection); the aarch64
 # package installs the same file under the aarch64 triple, and here nothing does, so it is copied: the aarch64 lanes
 # then get every default the x86_64 ones get, whatever Alpine puts there.
 #
-# The musl and the fortify-headers an artifact is built against must be the container's own: checked here.
+# The musl and the fortify-headers an artifact is built against must be the container's own, and its libgcc and crt
+# files the same GCC version as the container's: checked here.
 # ───────────────────────────────────────────────────────────────────────────
 ENV SYSROOT_AARCH64=/opt/sysroot-aarch64
 RUN set -eu; \
@@ -78,9 +86,14 @@ RUN set -eu; \
     echo "fortify-headers: container $container, aarch64 sysroot $sysroot"; \
     [ -n "$container" ] || { echo "error: this container has no fortify-headers" >&2; exit 1; }; \
     [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's fortify-headers is not the container's" >&2; exit 1; }; \
+    container=$(env -u CFLAGS -u CXXFLAGS -u LDFLAGS ${CC} -v 2>&1 | sed -n 's|^Selected GCC installation: .*/||p'); \
+    sysroot=$(env -u CFLAGS -u CXXFLAGS -u LDFLAGS ${CC} --target=aarch64-alpine-linux-musl --sysroot="$SYSROOT_AARCH64" -v 2>&1 | sed -n 's|^Selected GCC installation: .*/||p'); \
+    echo "GCC installation clang selects: container $container, aarch64 sysroot $sysroot"; \
+    [ -n "$container" ] || { echo "error: clang selects no GCC installation in this container" >&2; exit 1; }; \
+    [ "$container" = "$sysroot" ] || { echo "error: the aarch64 sysroot's GCC is not the version of the container's (libgcc-static from edge has moved on)" >&2; exit 1; }; \
     test -f "$SYSROOT_AARCH64/usr/include/fortify/string.h"; \
-    test -s /etc/clang21/x86_64-alpine-linux-musl.cfg; \
-    cp /etc/clang21/x86_64-alpine-linux-musl.cfg /etc/clang21/aarch64-alpine-linux-musl.cfg; \
+    test -s /etc/clang23/x86_64-alpine-linux-musl.cfg; \
+    cp /etc/clang23/x86_64-alpine-linux-musl.cfg /etc/clang23/aarch64-alpine-linux-musl.cfg; \
     test -f "$SYSROOT_AARCH64/usr/lib/libc.so"; \
     test -f "$SYSROOT_AARCH64/usr/lib/libstdc++.a"; \
     ls -d "$SYSROOT_AARCH64"/usr/lib/gcc/aarch64-alpine-linux-musl/*/crtbegin.o
