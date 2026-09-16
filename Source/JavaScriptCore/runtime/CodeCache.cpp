@@ -50,7 +50,13 @@ void CodeCacheMap::pruneSlowCase()
     while (m_size > m_capacity || !canPruneQuickly()) {
         // Not begin(): it walks past every empty bucket in front of the first entry, and evicting that entry each
         // time empties the front of the table, so one eviction costs a walk over a large part of the table.
+        // The least recently used of a few random entries instead, so a source that is used again and again stays.
         MapType::iterator it = m_map.random();
+        for (unsigned i = 1; i < evictionSampleSize; ++i) {
+            MapType::iterator other = m_map.random();
+            if (other->value.age < it->value.age)
+                it = other;
+        }
 
         writeCodeBlock(it->key, it->value);
 
