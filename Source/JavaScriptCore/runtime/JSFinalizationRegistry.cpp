@@ -106,12 +106,13 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
         RELEASE_ASSERT(iter.value.size());
 #endif
 
+    // Nothing can throw at the end of a collection, and registerTarget() can leave a list full. What does not fit
+    // in its list is dropped: that cleanup callback never runs, which the specification allows.
     bool readiedCell = false;
     m_noUnregistrationLive.removeAllMatching([&] (const Registration& reg) {
         ASSERT(!reg.holdings.get().isCell() || vm.heap.isMarked(reg.holdings.get().asCell()));
         if (!vm.heap.isMarked(reg.target)) {
-            m_noUnregistrationDead.append(reg.holdings);
-            readiedCell = true;
+            readiedCell |= m_noUnregistrationDead.tryAppend(reg.holdings);
             return true;
         }
         return false;
@@ -122,27 +123,27 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
 
         bool keyIsDead = !vm.heap.isMarked(bucket.key);
         DeadRegistrations* deadList = nullptr;
-        auto getDeadList = [&] () -> DeadRegistrations& {
+        auto tryAppendToDeadList = [&] (const WriteBarrier<Unknown>& holdings) -> bool {
             if (!deadList) [[unlikely]]
                 deadList = &m_deadRegistrations.add(bucket.key, DeadRegistrations()).iterator->value;
-            return *deadList;
+            if (deadList->tryAppend(holdings)) [[likely]]
+                return true;
+            // takeDeadHoldingsValue() expects every bucket to hold a value.
+            if (deadList->isEmpty()) {
+                m_deadRegistrations.remove(bucket.key);
+                deadList = nullptr;
+            }
+            return false;
         };
 
         bucket.value.removeAllMatching([&] (const Registration& reg) {
             ASSERT(!reg.holdings.get().isCell() || vm.heap.isMarked(reg.holdings.get().asCell()));
             if (!vm.heap.isMarked(reg.target)) {
-                if (keyIsDead)
-                    m_noUnregistrationDead.append(reg.holdings);
-                else
-                    getDeadList().append(reg.holdings);
-                readiedCell = true;
+                readiedCell |= keyIsDead ? m_noUnregistrationDead.tryAppend(reg.holdings) : tryAppendToDeadList(reg.holdings);
                 return true;
             }
 
             if (keyIsDead) {
-                // registerTarget() can leave this list full, and nothing can throw at the end of a collection.
-                // A registration that does not fit is dropped: its cleanup callback never runs, which the
-                // specification allows.
                 bool appended = m_noUnregistrationLive.tryAppend(reg);
                 UNUSED_VARIABLE(appended);
                 return true;

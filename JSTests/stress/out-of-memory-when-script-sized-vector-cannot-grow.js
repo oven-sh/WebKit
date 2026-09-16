@@ -85,6 +85,46 @@ shouldBe(JSON.stringify(JSON.parse("[1,[2,3]]", (key, value) => value)), "[1,[2,
     shouldBe(registry.unregister(token), true);
 }
 
+// The end of a collection also moves the held values of the registrations whose target died to a second
+// list. What does not fit there is dropped too. One list of registrations stops below the size that this
+// second list stops at, so the registrations are spread over many tokens, each with its own target. The
+// second list overflows even when the last few of them are still reachable at the collection.
+{
+    const registry = new FinalizationRegistry(() => { });
+    (function () {
+        for (let t = 0; t < 30; ++t) {
+            const target = { };
+            const token = { };
+            for (let i = 0; i < 5000; ++i)
+                registry.register(target, 1, token);
+        }
+    })();
+    fullGC();
+    const target = { };
+    const token = { };
+    registry.register(target, 1, token);
+    shouldBe(registry.unregister(token), true);
+}
+
+// While a token is alive, the held values move to a list of that token, so that unregister() still finds
+// them. No cleanup callback runs before this script ends, so that list fills up over several collections.
+{
+    const registry = new FinalizationRegistry(() => { });
+    const token = { };
+    for (let round = 0; round < 7; ++round) {
+        (function () {
+            for (let t = 0; t < 6; ++t) {
+                const target = { };
+                for (let i = 0; i < 5000; ++i)
+                    registry.register(target, 1, token);
+            }
+        })();
+        fullGC();
+    }
+    shouldBe(registry.unregister(token), true);
+    shouldBe(registry.unregister(token), false);
+}
+
 // Intl.ListFormat: every string of the iterable.
 {
     const listFormat = new Intl.ListFormat("en");
