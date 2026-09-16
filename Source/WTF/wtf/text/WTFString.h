@@ -300,7 +300,8 @@ public:
     WTF_EXPORT_PRIVATE static String make8Bit(std::span<const char16_t>);
     WTF_EXPORT_PRIVATE void convertTo16Bit();
 
-    // String::fromUTF8 will return a null string if the input data contains invalid UTF-8 sequences.
+    // String::fromUTF8 will return a null string if the input data contains invalid UTF-8 sequences,
+    // or if the buffer for the conversion cannot be allocated.
     // FIXME: Deprecated: Use constructor that takes span<const char8_t>.
     WTF_EXPORT_PRIVATE static String fromUTF8(std::span<const char8_t>);
     static String fromUTF8(std::span<const Latin1Character> characters) { return byteCast<char8_t>(characters); }
@@ -308,6 +309,7 @@ public:
     static String fromUTF8(const char* string) { return byteCast<char8_t>(unsafeSpan(string)); }
 
     // Convert each invalid UTF-8 sequence into a replacement character.
+    // Returns a null string if the buffer for the conversion cannot be allocated.
     WTF_EXPORT_PRIVATE static String fromUTF8ReplacingInvalidSequences(std::span<const char8_t>);
     static String fromUTF8ReplacingInvalidSequences(std::span<const Latin1Character> characters) { return fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(characters)); }
 
