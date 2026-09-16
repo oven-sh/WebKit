@@ -19,6 +19,7 @@ function assert(condition, message) {
 const options = jscOptions();
 const staysInterpreted = options.useLLInt && options.thresholdForJITAfterWarmUp >= 100 && options.thresholdForJITSoon >= 100;
 const releasesLinkedCode = staysInterpreted && options.useRunOnceCodeRelease;
+const keepsLinkedCodeForAWhile = !options.useEagerCodeBlockJettisonTiming && !options.forceCodeBlockToJettisonDueToOldAge;
 const releasesUnlinkedCode = releasesLinkedCode && options.useCodeRecoveryFromBytecodeCache && options.useLeanBytecodeCacheDecoder
     && options.useBorrowedBytecodeFromCache && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
 // What the executables hold, not how many code blocks are alive: the collector scans the stack conservatively, and a word
@@ -37,6 +38,18 @@ const expectKeptOrReleased = (now, modules, what) => {
         assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked + modules, what + " (unlinked): " + JSON.stringify(now));
     keptLinked = now.moduleExecutablesWithLinkedCode;
     keptUnlinked = now.moduleExecutablesWithUnlinkedCode;
+};
+// A shared executable keeps its code whatever its count of records yet to finish says, so that count shows only in what
+// can be taken from it on request: the unlinked code goes when the footprint is shrunk, unless a record is still to run it.
+const expectAllReleasedWhenShrunk = async (what) => {
+    $vm.shrinkFootprintWhenIdle();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const now = census();
+    assert(now.moduleExecutablesWithLinkedCode === 0, what + ": no linked code after shrinking: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode === 0, what + ": no record is left that has yet to run its module: " + JSON.stringify(now));
+    keptLinked = 0;
+    keptUnlinked = 0;
 };
 const load = (path) => $vm.moduleLoaderImport($vm.createModuleLoader(), path);
 
@@ -58,7 +71,7 @@ async function test() {
     now = census();
     ++keptLinked;
     ++keptUnlinked;
-    if (releasesLinkedCode)
+    if (releasesLinkedCode && keepsLinkedCodeForAWhile)
         assert(now.moduleExecutablesWithLinkedCode === keptLinked, "the shared executable keeps its code after b: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
         assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked, "and the unlinked code: " + JSON.stringify(now));
@@ -81,7 +94,7 @@ async function test() {
     const d = await load(tla);
     assert(globalThis.moduleLoadersReleasedCodeStarted === 2 && d.stage === "done" && d.describe() === "done:later", "the second loader ran the body to its end");
     now = census();
-    if (releasesLinkedCode && !options.useEagerCodeBlockJettisonTiming && !options.forceCodeBlockToJettisonDueToOldAge)
+    if (releasesLinkedCode && keepsLinkedCodeForAWhile)
         assert(now.moduleExecutablesWithLinkedCode === keptLinked + 1, "the suspended loader keeps the module's code: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
         assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked + 1, "linked and unlinked: " + JSON.stringify(now));
@@ -91,7 +104,7 @@ async function test() {
     now = census();
     ++keptLinked;
     ++keptUnlinked;
-    if (releasesLinkedCode)
+    if (releasesLinkedCode && keepsLinkedCodeForAWhile)
         assert(now.moduleExecutablesWithLinkedCode === keptLinked, "two loaders had it, so it stays: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
         assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
@@ -117,6 +130,7 @@ async function test() {
     const t = await load(throws);
     assert(t.done === true && t.late() === "late" && globalThis.moduleLoadersReleasedCodeThrowsStarted === 2, "the second loader ran it to the end");
     expectKeptOrReleased(census(), 1, "after a loader whose body threw and one that ran it");
+    await expectAllReleasedWhenShrunk("after a loader whose body threw and one that ran it");
 
     // So is a loader's record that never runs because a module it depends on threw,
     const parent = "./resources/module-loaders-released-code/parent-of-throwing.js";
@@ -138,6 +152,7 @@ async function test() {
     const p = await load(parent);
     assert(p.late() === "late:7" && globalThis.moduleLoadersReleasedCodeParentStarted === 1, "the second loader ran the importer");
     expectKeptOrReleased(census(), 2, "after a loader whose dependency threw and one that ran both");
+    await expectAllReleasedWhenShrunk("after a loader whose dependency threw and one that ran both");
 
     // and one that is suspended at a top-level await when a sibling of it throws: it is never resumed.
     const cycleRoot = "./resources/module-loaders-released-code/cycle-root.js";
@@ -157,11 +172,14 @@ async function test() {
     now = census();
     if (releasesLinkedCode)
         assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released although a record was left suspended: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
     globalThis.moduleLoadersReleasedCodeShouldThrow = false;
     globalThis.moduleLoadersReleasedCodeNextGate = undefined;
     const r = await load(cycleRoot);
     assert(r.describe() === "awaited:sibling" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 1, "the second loader ran the cycle");
     expectKeptOrReleased(census(), 3, "after a loader that left a record suspended and one that ran the cycle");
+    await expectAllReleasedWhenShrunk("after a loader that left a record suspended and one that ran the cycle");
 
     // All code is deleted between two loaders: the second one's environment is made from another symbol table than the
     // first one's, so what the second links (and the optimizing tiers specialize on its one environment) must not become
