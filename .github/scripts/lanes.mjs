@@ -156,7 +156,7 @@ const platforms = [
       // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
       // thunk, DLL) comes from the compiler-rt-windows-* release tag.
       amd64: ["release", "lto", "debug", "asan"],
-      // No arm64 lto: LLVM 21's CodeView emitter has no register mapping for ARM64 NEON quad-register tuples
+      // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
       // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
       arm64: ["release", "debug"],
     },
