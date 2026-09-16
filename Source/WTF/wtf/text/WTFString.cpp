@@ -501,7 +501,10 @@ String String::fromUTF8ReplacingInvalidSequences(std::span<const char8_t> string
     if (charactersAreAllASCII(string))
         return StringImpl::create(byteCast<Latin1Character>(string));
 
-    Vector<char16_t, 1024> buffer(string.size());
+    // One code unit for each byte is the most the conversion can write. That can be past what a Vector holds.
+    Vector<char16_t, 1024> buffer;
+    if (!buffer.tryGrow(string.size())) [[unlikely]]
+        return { };
 
     auto result = Unicode::convertReplacingInvalidSequences(string, buffer.mutableSpan());
     if (result.code != Unicode::ConversionResultCode::Success)
@@ -517,6 +520,10 @@ String String::fromUTF8WithLatin1Fallback(std::span<const char8_t> string)
     if (!utf8) {
         // Do this assertion before chopping the size_t down to unsigned.
         RELEASE_ASSERT(string.size() <= String::MaxLength);
+        // The fallback is for bytes that are not UTF-8. A null string for valid UTF-8 means that the
+        // buffer for the conversion could not be allocated.
+        if (Unicode::checkUTF8WithoutUTF16Length(string).size() == string.size()) [[unlikely]]
+            return { };
         return byteCast<Latin1Character>(string);
     }
     return utf8;
