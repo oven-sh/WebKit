@@ -206,6 +206,11 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
     m_hasBeenEvaluated = true;
     if (m_recordsYetToFinishEvaluation && --m_recordsYetToFinishEvaluation)
         return; // Another record has yet to run the code, or is suspended in it.
+    // Code that a second record has taken is going to be run again by the records of loaders still to come: they link
+    // nothing of their own while it is there, and the function expressions and classes of the top-level code keep their
+    // executables (and so their CodeBlocks and JIT code) only as long as the linked code they belong to does.
+    if (m_isShared)
+        return;
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
