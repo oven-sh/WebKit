@@ -130,7 +130,7 @@ static_assert(fixedExecutableMemoryPoolSize < 4 * GB, "ExecutableMemoryHandle as
 
 #if HAVE(KDEBUG_H)
 // 325696c8-e7cc-11ee-9f4e-325096b39f47
-static constexpr WTF::UUID jscJITNamespace { static_cast<UInt128>(0x325696c8e7cc11eeULL) << 64 | (0x9f4e325096b39f47ULL) };
+static constexpr WTF::UUID jscJITNamespace = WTF::UUID::createConstant(0x325696c8e7cc11eeULL, 0x9f4e325096b39f47ULL);
 #endif
 
 static bool NODELETE isJITEnabled()
@@ -1570,7 +1570,7 @@ void dumpJITMemory(const void* dst, const void* src, size_t size)
             if (fd == -1) {
                 auto path = String::fromLatin1(Options::dumpJITMemoryPath());
                 path = makeStringByReplacingAll(path, "%pid"_s, String::number(getCurrentProcessID()));
-                fd = open(FileSystem::fileSystemRepresentation(path).data(), O_CREAT | O_TRUNC | O_APPEND | O_WRONLY | O_EXLOCK | O_NONBLOCK, 0666);
+                fd = open(FileSystem::fileSystemRepresentation(path).legacyCStringPointer(), O_CREAT | O_TRUNC | O_APPEND | O_WRONLY | O_EXLOCK | O_NONBLOCK, 0666);
                 RELEASE_ASSERT(fd != -1);
             }
             auto writeSpan = buffer->mutableSpan().first(offset);

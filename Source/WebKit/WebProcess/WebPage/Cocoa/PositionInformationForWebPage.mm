@@ -69,6 +69,7 @@
 #import <WebCore/RenderBlockFlow.h>
 #import <WebCore/RenderBoxInlines.h>
 #import <WebCore/RenderImage.h>
+#import <WebCore/RenderLayer.h>
 #import <WebCore/RenderObjectDocument.h>
 #import <WebCore/RenderObjectStyle.h>
 #import <WebCore/RenderVideo.h>
@@ -400,6 +401,7 @@ static void selectionPositionInformation(WebPage& page, const InteractionInforma
         return InteractionInformationAtPosition::Selectability::Selectable;
     })();
     info.isSelected = result.isSelected();
+    info.isOverEditableContent = hitNode->isContentEditable();
 
     info.isOverSelectableText = info.isSelectable() && renderer->isRenderText() && hitNode->canStartSelection();
 
@@ -445,6 +447,20 @@ static void selectionPositionInformation(WebPage& page, const InteractionInforma
     }
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
+    switch (renderer->style().cursorType()) {
+    case WebCore::CursorType::EWResize:
+    case WebCore::CursorType::NSResize:
+    case WebCore::CursorType::ColumnResize:
+    case WebCore::CursorType::RowResize:
+        info.hasDirectionalResizeCursor = true;
+        break;
+    default:
+        break;
+    }
+
+    if (CheckedPtr layerRenderer = dynamicDowncast<WebCore::RenderLayerModelObject>(renderer); layerRenderer && layerRenderer->hasLayer())
+        info.isInResizeControl = layerRenderer->layer()->isPointInResizeControl(WebCore::roundedIntPoint(result.localPoint()));
+
     if (!info.isRangeInput) {
         constexpr auto sliderHitType = hitType | OptionSet {
             WebCore::HitTestRequest::Type::CollectMultipleElements,
@@ -739,12 +755,17 @@ InteractionInformationAtPosition positionInformationForWebPage(WebPage& page, co
 #if ENABLE(MODEL_PROCESS)
     if (RefPtr modelElement = dynamicDowncast<WebCore::HTMLModelElement>(hitTestNode))
         info.isInteractiveModel = modelElement->model() && modelElement->supportsStageModeInteraction();
+#elif ENABLE(MODEL_ELEMENT_STAGE_MODE)
+    // There is no stage mode session in this configuration. Instead, the orbit is driven by mouse events
+    // forwarded by HTMLModelElement to the model player. This behavior is gated behind `isInteractive`.
+    if (RefPtr modelElement = dynamicDowncast<WebCore::HTMLModelElement>(hitTestNode))
+        info.isInteractiveModel = modelElement->model() && modelElement->isInteractive();
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
     if (!info.isInteractiveModel) {
         RefPtr element = dynamicDowncast<WebCore::Element>(hitTestNode);
-        info.isInteractiveModel = !!WebCore::SpatialPortalController::interactiveControllerForHitTestedElement(element.get());
+        info.isInteractiveModel = !!WebCore::SpatialPortalController::interactiveControllerForHitTestedElement(element);
     }
 #endif
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008, 2009, 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright 2010, The Android Open Source Project
  *
  * Redistribution and use in source and binary forms, with or without
@@ -39,7 +39,6 @@
 #include <WebCore/ScriptWrappable.h>
 #include <WebCore/Timer.h>
 #include <wtf/CheckedRef.h>
-#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashMap.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -116,9 +115,7 @@ private:
         void getNotifiersVector(GeoNotifierVector&) const;
     private:
         typedef OrderedHashMap<int, Ref<GeoNotifier>> IdToNotifierMap;
-        typedef HashMap<Ref<GeoNotifier>, int> NotifierToIdMap;
         IdToNotifierMap m_idToNotifierMap;
-        NotifierToIdMap m_notifierToIdMap;
     };
 
     bool hasListeners() const { return !m_oneShots.isEmpty() || !m_watchers.isEmpty(); }

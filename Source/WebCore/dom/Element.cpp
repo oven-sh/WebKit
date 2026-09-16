@@ -1965,6 +1965,13 @@ IntRect Element::boundingBoxInRootViewCoordinates() const
     return IntRect();
 }
 
+IntRect Element::boundingBoxInMainFrameViewCoordinates() const
+{
+    if (CheckedPtr renderer = this->renderer())
+        return protect(document().view())->contentsToMainFrameView(renderer->absoluteBoundingBoxRect());
+    return IntRect();
+}
+
 static bool layoutOverflowRectContainsAllDescendants(const RenderBox& renderBox)
 {
     if (renderBox.isRenderView())
@@ -2347,7 +2354,7 @@ bool Element::isElementReflectionAttribute(const Settings& settings, const Quali
 {
     return name == HTMLNames::aria_activedescendantAttr
         || (settings.popoverAttributeEnabled() && name == HTMLNames::popovertargetAttr)
-        || (settings.commandAttributesEnabled() && name == HTMLNames::commandforAttr);
+        || name == HTMLNames::commandforAttr;
 }
 
 bool Element::isElementsArrayReflectionAttribute(const QualifiedName& name)
@@ -2830,8 +2837,10 @@ void Element::invalidateStyleForAnimation()
     Node::invalidateStyle(Style::Validity::AnimationInvalid);
 }
 
-void Element::invalidateForQueryContainerSizeChange()
+void Element::invalidateForQueryContainerChange()
 {
+    // Called when a query container's evaluated state (size or scroll-state) changes, so that
+    // container-query-dependent style in the subtree is recomputed.
     // FIXME: Ideally we would just recompute things that are actually affected by containers queries within the subtree.
     Node::invalidateStyle(Style::Validity::SubtreeInvalid);
     setStateFlag(StateFlag::NeedsUpdateQueryContainerDependentStyle);
@@ -6672,7 +6681,7 @@ RefPtr<HTMLElement> Element::topmostPopoverAncestor(TopLayerElementType topLayer
     HashMap<Ref<const Element>, size_t> topLayerPositions;
     size_t i = 0;
     for (auto& element : document().topLayerElements()) {
-        if (auto* htmlElement = dynamicDowncast<HTMLElement>(element.get())) {
+        if (RefPtr htmlElement = dynamicDowncast<HTMLElement>(element.get())) {
             if (htmlElement->popoverData() && htmlElement->popoverData()->visibilityState() == PopoverVisibilityState::Showing
                 && (htmlElement->popoverState() == PopoverState::Auto || (considerHints && htmlElement->popoverState() == PopoverState::Hint)))
                 topLayerPositions.add(element, i++);

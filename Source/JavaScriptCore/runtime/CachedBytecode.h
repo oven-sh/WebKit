@@ -144,7 +144,7 @@ public:
         return m_childExecutables.isEmpty() ? FixedVector<Weak<UnlinkedFunctionExecutable>>() : m_childExecutables.take(key(index, recordOffset));
     }
     // After each full collection: forget the parents none of whose children are alive any more.
-    void pruneStaleEntries() final;
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
     // Before the heap's last finalization takes the weak references' storage.
     void clearChildExecutables() { m_childExecutables.clear(); }
 

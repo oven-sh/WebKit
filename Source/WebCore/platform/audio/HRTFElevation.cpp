@@ -84,7 +84,7 @@ static RefPtr<AudioBus> getConcatenatedImpulseResponsesForSubject(const String& 
         auto& cache = concatenatedImpulseResponsesMap();
         bus = cache.get(subjectName);
         if (!bus) {
-            bus = AudioBus::loadPlatformResource(subjectName.utf8().data(), ResponseSampleRate);
+            bus = AudioBus::loadPlatformResource(subjectName, ResponseSampleRate);
             ASSERT(bus);
             if (!bus)
                 return nullptr;
@@ -182,9 +182,9 @@ bool HRTFElevation::calculateKernelsForAzimuthElevation(int azimuth, int elevati
     AudioChannel* leftEarImpulseResponse = response->channel(AudioBus::ChannelLeft);
     AudioChannel* rightEarImpulseResponse = response->channel(AudioBus::ChannelRight);
 #else
-    auto resourceName = makeString("IRC_"_s, subjectName, "_C_R0195_T"_s, pad('0', 3, azimuth), "_P"_s, pad('0', 3, positiveElevation)).utf8();
+    auto resourceName = makeString("IRC_"_s, subjectName, "_C_R0195_T"_s, pad('0', 3, azimuth), "_P"_s, pad('0', 3, positiveElevation));
 
-    RefPtr<AudioBus> impulseResponse(AudioBus::loadPlatformResource(resourceName.data(), sampleRate));
+    RefPtr<AudioBus> impulseResponse(AudioBus::loadPlatformResource(resourceName, sampleRate));
 
     ASSERT(impulseResponse.get());
     if (!impulseResponse.get())

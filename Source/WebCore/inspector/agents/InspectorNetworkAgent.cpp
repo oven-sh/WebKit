@@ -202,7 +202,7 @@ Ref<Inspector::Protocol::Network::Metrics> InspectorNetworkAgent::buildObjectFor
 
     if (!networkLoadMetrics.protocol.isNull())
         metrics->setProtocol(networkLoadMetrics.protocol);
-    if (auto* additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector.get()) {
+    if (RefPtr additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector) {
         if (additionalMetrics->priority != NetworkLoadPriority::Unknown)
             metrics->setPriority(toProtocol(additionalMetrics->priority));
         if (!additionalMetrics->remoteAddress.isNull())
@@ -228,7 +228,7 @@ Ref<Inspector::Protocol::Network::Metrics> InspectorNetworkAgent::buildObjectFor
     auto connectionPayload = Inspector::Protocol::Security::Connection::create()
         .release();
 
-    if (auto* additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector.get()) {
+    if (RefPtr additionalMetrics = networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector) {
         if (!additionalMetrics->tlsProtocol.isEmpty())
             connectionPayload->setProtocol(additionalMetrics->tlsProtocol);
         if (!additionalMetrics->tlsCipher.isEmpty())
@@ -860,7 +860,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::disable()
     std::ignore = setResourceCachingDisabled(false);
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    setEmulatedConditions(std::nullopt);
+    setEmulatedConditions(std::nullopt, std::nullopt);
 #endif
 
     return { };
@@ -1349,12 +1349,19 @@ Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::interceptRequest
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
-Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::setEmulatedConditions(std::optional<int>&& bytesPerSecondLimit)
+Inspector::Protocol::ErrorStringOr<void> InspectorNetworkAgent::setEmulatedConditions(std::optional<int>&& bandwidth, std::optional<int>&& latency)
 {
-    if (bytesPerSecondLimit && *bytesPerSecondLimit < 0)
-        return makeUnexpected("bytesPerSecond cannot be negative"_s);
+    if (bandwidth && *bandwidth < 0)
+        return makeUnexpected("bandwidth cannot be negative"_s);
 
-    if (setEmulatedConditionsInternal(WTF::move(bytesPerSecondLimit)))
+    if (latency && *latency < 0)
+        return makeUnexpected("latency cannot be negative"_s);
+
+    std::optional<uint64_t> bandwidthBytesPerSecond;
+    if (bandwidth)
+        bandwidthBytesPerSecond = *bandwidth;
+
+    if (setEmulatedConditionsInternal(bandwidthBytesPerSecond, Seconds::fromMilliseconds(latency.value_or(0))))
         return { };
 
     return makeUnexpected("Not supported"_s);

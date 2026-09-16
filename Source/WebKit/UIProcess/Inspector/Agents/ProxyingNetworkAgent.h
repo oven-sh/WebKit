@@ -58,6 +58,8 @@ class ProxyingNetworkAgent : public RefCounted<ProxyingNetworkAgent>, public Web
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ProxyingNetworkAgent);
     WTF_MAKE_NONCOPYABLE(ProxyingNetworkAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     ProxyingNetworkAgent(WebKit::WebPageAgentContext&);
     ~ProxyingNetworkAgent() override;
 
@@ -92,7 +94,7 @@ public:
     CommandResult<void> interceptRequestWithResponse(const Protocol::Network::RequestId&, const String& content, bool base64Encoded, const String& mimeType, int status, const String& statusText, Ref<JSON::Object>&& headers) final;
     CommandResult<void> interceptRequestWithError(const Protocol::Network::RequestId&, Protocol::Network::ResourceErrorType) final;
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    CommandResult<void> setEmulatedConditions(std::optional<int>&& bytesPerSecondLimit) final;
+    CommandResult<void> setEmulatedConditions(std::optional<int>&& bandwidth, std::optional<int>&& latency) final;
 #endif
 
 private:

@@ -53,7 +53,7 @@ using namespace WebKit;
  *
  * You can use WebKitWebsiteDataManager to configure the local directories
  * where website data will be stored. Use #WebKitWebsiteDataManager:base-data-directory
- * and #WebKitWebsiteDataManager:base-cache-directory set a common base directory for all
+ * and #WebKitWebsiteDataManager:base-cache-directory to set a common base directory for all
  * website data and caches.
  *
  * A WebKitWebsiteDataManager can be ephemeral, in which case all the directory configuration
@@ -318,7 +318,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.10
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-data-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-data-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -336,7 +336,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.10
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-cache-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-cache-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -354,7 +354,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.10
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-cache-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-cache-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -372,7 +372,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.10
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-data-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-data-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -390,7 +390,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.10
      *
-     * Deprecated: 2.24. WebSQL is no longer supported. Use IndexedDB instead.
+     * Deprecated: 2.24: WebSQL is no longer supported. Use IndexedDB instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -408,7 +408,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.26
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-cache-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-cache-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -426,7 +426,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.30
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-data-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-data-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -440,11 +440,11 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
     /**
      * WebKitWebsiteDataManager:service-worker-registrations-directory:
      *
-     * The directory where service workers registrations will be stored.
+     * The directory where service worker registrations will be stored.
      *
      * Since: 2.30
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-data-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-data-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -462,7 +462,7 @@ static void webkit_website_data_manager_class_init(WebKitWebsiteDataManagerClass
      *
      * Since: 2.30
      *
-     * Deprecated: 2.40. Use WebKitWebsiteDataManager:base-cache-directory instead.
+     * Deprecated: 2.40: Use WebKitWebsiteDataManager:base-cache-directory instead.
      */
     g_object_class_install_property(
         gObjectClass,
@@ -689,7 +689,7 @@ const gchar* webkit_website_data_manager_get_base_cache_directory(WebKitWebsiteD
  *
  * Since: 2.10
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_data_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_data_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_local_storage_directory(WebKitWebsiteDataManager* manager)
 {
@@ -700,7 +700,7 @@ const gchar* webkit_website_data_manager_get_local_storage_directory(WebKitWebsi
         return nullptr;
 
     if (!priv->localStorageDirectory)
-        priv->localStorageDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultLocalStorageDirectory().utf8().data()));
+        priv->localStorageDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultLocalStorageDirectory().utf8().legacyCStringPointer()));
     return priv->localStorageDirectory.get();
 }
 
@@ -714,7 +714,7 @@ const gchar* webkit_website_data_manager_get_local_storage_directory(WebKitWebsi
  *
  * Since: 2.10
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_cache_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_cache_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_disk_cache_directory(WebKitWebsiteDataManager* manager)
 {
@@ -737,7 +737,7 @@ const gchar* webkit_website_data_manager_get_disk_cache_directory(WebKitWebsiteD
  *
  * Since: 2.10
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_cache_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_cache_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_offline_application_cache_directory(WebKitWebsiteDataManager* manager)
 {
@@ -760,7 +760,7 @@ const gchar* webkit_website_data_manager_get_offline_application_cache_directory
  *
  * Since: 2.10
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_data_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_data_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_indexeddb_directory(WebKitWebsiteDataManager* manager)
 {
@@ -771,7 +771,7 @@ const gchar* webkit_website_data_manager_get_indexeddb_directory(WebKitWebsiteDa
         return nullptr;
 
     if (!priv->indexedDBDirectory)
-        priv->indexedDBDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultIndexedDBDatabaseDirectory().utf8().data()));
+        priv->indexedDBDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultIndexedDBDatabaseDirectory().utf8().legacyCStringPointer()));
     return priv->indexedDBDirectory.get();
 }
 
@@ -785,7 +785,7 @@ const gchar* webkit_website_data_manager_get_indexeddb_directory(WebKitWebsiteDa
  *
  * Since: 2.10
  *
- * Deprecated: 2.24. WebSQL is no longer supported. Use IndexedDB instead.
+ * Deprecated: 2.24: WebSQL is no longer supported. Use IndexedDB instead.
  */
 const gchar* webkit_website_data_manager_get_websql_directory(WebKitWebsiteDataManager* manager)
 {
@@ -796,7 +796,7 @@ const gchar* webkit_website_data_manager_get_websql_directory(WebKitWebsiteDataM
         return nullptr;
 
     if (!priv->webSQLDirectory)
-        priv->webSQLDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultWebSQLDatabaseDirectory().utf8().data()));
+        priv->webSQLDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultWebSQLDatabaseDirectory().utf8().legacyCStringPointer()));
     return priv->webSQLDirectory.get();
 }
 
@@ -810,7 +810,7 @@ const gchar* webkit_website_data_manager_get_websql_directory(WebKitWebsiteDataM
  *
  * Since: 2.26
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_cache_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_cache_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_hsts_cache_directory(WebKitWebsiteDataManager* manager)
 {
@@ -821,7 +821,7 @@ const gchar* webkit_website_data_manager_get_hsts_cache_directory(WebKitWebsiteD
         return nullptr;
 
     if (!priv->hstsCacheDirectory)
-        priv->hstsCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultHSTSStorageDirectory().utf8().data()));
+        priv->hstsCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultHSTSStorageDirectory().utf8().legacyCStringPointer()));
     return priv->hstsCacheDirectory.get();
 }
 
@@ -835,7 +835,7 @@ const gchar* webkit_website_data_manager_get_hsts_cache_directory(WebKitWebsiteD
  *
  * Since: 2.30
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_data_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_data_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_itp_directory(WebKitWebsiteDataManager* manager)
 {
@@ -846,7 +846,7 @@ const gchar* webkit_website_data_manager_get_itp_directory(WebKitWebsiteDataMana
         return nullptr;
 
     if (!priv->itpDirectory)
-        priv->itpDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultResourceLoadStatisticsDirectory().utf8().data()));
+        priv->itpDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultResourceLoadStatisticsDirectory().utf8().legacyCStringPointer()));
     return priv->itpDirectory.get();
 }
 
@@ -860,7 +860,7 @@ const gchar* webkit_website_data_manager_get_itp_directory(WebKitWebsiteDataMana
  *
  * Since: 2.30
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_data_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_data_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_service_worker_registrations_directory(WebKitWebsiteDataManager* manager)
 {
@@ -871,7 +871,7 @@ const gchar* webkit_website_data_manager_get_service_worker_registrations_direct
         return nullptr;
 
     if (!priv->swRegistrationsDirectory)
-        priv->swRegistrationsDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultServiceWorkerRegistrationDirectory().utf8().data()));
+        priv->swRegistrationsDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultServiceWorkerRegistrationDirectory().utf8().legacyCStringPointer()));
     return priv->swRegistrationsDirectory.get();
 }
 
@@ -885,7 +885,7 @@ const gchar* webkit_website_data_manager_get_service_worker_registrations_direct
  *
  * Since: 2.30
  *
- * Deprecated: 2.40, use webkit_website_data_manager_get_base_cache_directory() instead.
+ * Deprecated: 2.40: Use webkit_website_data_manager_get_base_cache_directory() instead.
  */
 const gchar* webkit_website_data_manager_get_dom_cache_directory(WebKitWebsiteDataManager* manager)
 {
@@ -896,7 +896,7 @@ const gchar* webkit_website_data_manager_get_dom_cache_directory(WebKitWebsiteDa
         return nullptr;
 
     if (!priv->domCacheDirectory)
-        priv->domCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultCacheStorageDirectory().utf8().data()));
+        priv->domCacheDirectory.reset(g_strdup(WebKit::WebsiteDataStore::defaultCacheStorageDirectory().utf8().legacyCStringPointer()));
     return priv->domCacheDirectory.get();
 }
 
@@ -966,7 +966,7 @@ gboolean webkit_website_data_manager_get_itp_enabled(WebKitWebsiteDataManager* m
  * Enable or disable persistent credential storage.
  *
  * When enabled, which is the default for
- * non-ephemeral sessions, the network process will try to read and write HTTP authentiacation
+ * non-ephemeral sessions, the network process will try to read and write HTTP authentication
  * credentials from persistent storage.
  *
  * Since: 2.30
@@ -1228,7 +1228,7 @@ void webkit_website_data_manager_fetch(WebKitWebsiteDataManager* manager, WebKit
  * Finish an asynchronous operation started with webkit_website_data_manager_fetch().
  *
  * Returns: (element-type WebKitWebsiteData) (transfer full): a #GList of #WebKitWebsiteData. You must free the #GList with
- *    g_list_free() and unref the #WebKitWebsiteData<!-- -->s with webkit_website_data_unref() when you're done with them.
+ *    g_list_free() and unref the #WebKitWebsiteData objects with webkit_website_data_unref() when you're done with them.
  *
  * Since: 2.16
  */
@@ -1484,7 +1484,7 @@ const char* webkit_itp_first_party_get_domain(WebKitITPFirstParty* firstParty)
  *
  * Get whether @itp_first_party has granted website data access to its #WebKitITPThirdParty.
  *
- * Each @WebKitITPFirstParty is created by webkit_itp_third_party_get_first_parties() and
+ * Each #WebKitITPFirstParty is created by webkit_itp_third_party_get_first_parties() and
  * therefore corresponds to exactly one #WebKitITPThirdParty.
  *
  * Returns: %TRUE if website data access has been granted, or %FALSE otherwise
@@ -1504,7 +1504,7 @@ gboolean webkit_itp_first_party_get_website_data_access_allowed(WebKitITPFirstPa
  *
  * Get the last time a #WebKitITPThirdParty has been seen under @itp_first_party.
  *
- * Each @WebKitITPFirstParty is created by webkit_itp_third_party_get_first_parties() and
+ * Each #WebKitITPFirstParty is created by webkit_itp_third_party_get_first_parties() and
  * therefore corresponds to exactly one #WebKitITPThirdParty.
  *
  * Returns: (transfer none): the last update time as a #GDateTime
@@ -1519,7 +1519,7 @@ GDateTime* webkit_itp_first_party_get_last_update_time(WebKitITPFirstParty* firs
 }
 
 /**
- * WebKitITPThirdParty: (ref-func webkit_itp_first_party_ref) (unref-func webkit_itp_first_party_unref)
+ * WebKitITPThirdParty: (ref-func webkit_itp_third_party_ref) (unref-func webkit_itp_third_party_unref)
  *
  * Describes a third party origin.
  *
@@ -1670,7 +1670,7 @@ void webkit_website_data_manager_get_itp_summary(WebKitWebsiteDataManager* manag
  * Finish an asynchronous operation started with webkit_website_data_manager_get_itp_summary().
  *
  * Returns: (transfer full) (element-type WebKitITPThirdParty): a #GList of #WebKitITPThirdParty.
- *    You must free the #GList with g_list_free() and unref the #WebKitITPThirdParty<!-- -->s with
+ *    You must free the #GList with g_list_free() and unref the #WebKitITPThirdParty objects with
  *    webkit_itp_third_party_unref() when you're done with them.
  *
  * Since: 2.30

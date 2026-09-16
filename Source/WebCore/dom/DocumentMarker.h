@@ -23,6 +23,7 @@
 #include <WebCore/DictationContext.h>
 #include <WebCore/SimpleRange.h>
 #include <wtf/Forward.h>
+#include <wtf/Markable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Platform.h>
 #include <wtf/UUID.h>
@@ -142,7 +143,7 @@ public:
 
     struct TransparentContentData {
         RefPtr<Node> node;
-        WTF::UUID uuid;
+        Markable<WTF::UUID> uuid;
     };
 
     struct DictationStreamingOpacityData {

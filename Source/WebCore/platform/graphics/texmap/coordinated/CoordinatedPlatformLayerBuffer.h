@@ -53,8 +53,10 @@ class CoordinatedPlatformLayerBuffer
 public:
     enum class Type : uint8_t {
         RGB,
+#if USE(TEXTURE_MAPPER)
         YUV,
         ExternalOES,
+#endif
         HolePunch,
         Video,
         DMABuf,

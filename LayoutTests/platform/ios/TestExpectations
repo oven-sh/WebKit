@@ -1077,7 +1077,7 @@ svg/text/foreignObject-repaint.xml [ Skip ]
 svg/text/select-text-svgfont.html [ Skip ]
 svg/text/selection-doubleclick.svg [ Skip ]
 svg/text/selection-tripleclick.svg [ Skip ]
-imported/w3c/web-platform-tests/css/css-shadow-parts/invalidation-part-pseudo.html [ Skip ]
+imported/w3c/web-platform-tests/css/css-shadow/part/invalidation-part-pseudo.html [ Skip ]
 
 # iOS has a different copy image behavior.
 http/tests/pasteboard/copy-image-from-context-menu.html [ Skip ]
@@ -3722,9 +3722,24 @@ webkit.org/b/250767 imported/w3c/web-platform-tests/html/user-activation/activat
 
 # :hover simulation not working on iOS
 imported/w3c/web-platform-tests/css/selectors/hover-002.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/hover-boundary-events.html [ Skip ]
 imported/w3c/web-platform-tests/css/selectors/hover-toplayer-001.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18a.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18b.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-18c.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-63.xml [ Skip ]
 imported/w3c/web-platform-tests/css/css-text-decor/invalidation/text-decoration-thickness.html [ Skip ]
 imported/w3c/web-platform-tests/css/css-view-transitions/hit-test-unrelated-element.html [ Skip ]
+
+# :active simulation not working on iOS
+imported/w3c/web-platform-tests/css/selectors/active-after-relayouts.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-display-none-001.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-inside-link.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/active-observable.html [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-19.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-19b.xml [ Skip ]
+imported/w3c/web-platform-tests/css/selectors/old-tests/css3-modsel-64.xml [ Skip ]
 
 # Certain versions of iOS use different text security characters.
 webkit.org/b/209692 platform/ios/fast/text/text-security-disc-bullet-pua-ios-new.html [ Pass ]
@@ -5513,7 +5528,6 @@ fast/events/page-visibility-iframe-delete-test.html
 fast/events/page-visibility-iframe-propagation-test.html
 fast/events/page-visibility-transition-test.html
 
-fast/filter-image/filter-image-animation.html
 fast/forms/formmethod-attribute-input-2.html
 fast/forms/formtarget-attribute-input-2.html
 fast/forms/interactive-validation-formnovalidate-2.html
@@ -6927,6 +6941,7 @@ imported/w3c/web-platform-tests/html/editing/focus/sequential-focus-navigation-a
 
 # Drag-and-drop testdriver automation is not supported on iOS.
 webkit.org/b/66547 imported/w3c/web-platform-tests/html/editing/dnd/events/dragenter-dragleave-related-target.html [ Skip ]
+imported/w3c/web-platform-tests/html/editing/dnd/datastore/datatransferitemlist-clear-read-only.html [ Skip ]
 
 ######################################################
 # Test failures from turning GPU Process on by default
@@ -8721,7 +8736,7 @@ imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-co
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss-touch-scroll.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-self-invoke.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/popovers/popover-shadowhost-focus-navigation.html [ Skip ]
-imported/w3c/web-platform-tests/css/css-scoping/hover-invalidates-slotted-descendant.html [ Skip ]
+imported/w3c/web-platform-tests/css/css-shadow/hover-invalidates-slotted-descendant.html [ Skip ]
 
 # rdar://168334716 (MTLCompilerService crashes when Metal Shader Validation is enabled on iOS Simulator)
 webgl/webgl2-provoking-vertex-primitive-restart-uint16-nocrash.html [ Skip ]
@@ -9923,7 +9938,7 @@ compositing/animation/animation-backing.html [ Pass Failure ] # rdar://178546584
 
 http/wpt/mediastream/transfer-videotrackgenerator-track.html [ Pass Failure ] # rdar://178546599
 
-imported/w3c/web-platform-tests/css/css-shadow-parts/interaction-with-nested-pseudo-class.html [ Pass ImageOnlyFailure ] # rdar://178546619
+imported/w3c/web-platform-tests/css/css-shadow/part/interaction-with-nested-pseudo-class.html [ Pass ImageOnlyFailure ] # rdar://178546619
 
 imported/w3c/web-platform-tests/html/semantics/interactive-elements/the-dialog-element/modal-dialog-display-contents.html [ Pass ImageOnlyFailure ] # rdar://178546827
 
@@ -10263,3 +10278,9 @@ http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-wit
 imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter-2.html [ ImageOnlyFailure ]
 
 webkit.org/b/322305 fast/visual-viewport/ios/interactive-widget/resizes-content-orientation-rotations.html [ Failure ]
+
+imported/w3c/web-platform-tests/input-events/select-event-drag-remove.html [ Skip ] # timeout
+
+# webkit.org/b/301546 [iOS26-iOS27] Two tests in imported/w3c/web-platform-tests/uievents/mouse are constant failures
+imported/w3c/web-platform-tests/uievents/mouse/mouseover-at-removing-mousedown-target.html?duration=16 [ Failure ]
+imported/w3c/web-platform-tests/uievents/mouse/mouseover-at-removing-mousedown-target.html?duration=42 [ Failure ]

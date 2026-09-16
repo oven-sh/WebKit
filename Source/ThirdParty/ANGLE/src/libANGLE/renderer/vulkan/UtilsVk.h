@@ -27,6 +27,8 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_UTILSVK_H_
 #define LIBANGLE_RENDERER_VULKAN_UTILSVK_H_
 
+#include <array>
+
 #include "libANGLE/renderer/vulkan/BufferVk.h"
 #include "libANGLE/renderer/vulkan/vk_cache_utils.h"
 #include "libANGLE/renderer/vulkan/vk_helpers.h"
@@ -41,6 +43,22 @@ class UtilsVk : angle::NonCopyable
     ~UtilsVk();
 
     void destroy(ContextVk *contextVk);
+
+    struct ConvertIndexParameters
+    {
+        uint32_t srcOffset = 0;
+        uint32_t dstOffset = 0;
+        uint32_t maxIndex  = 0;
+    };
+
+    struct ConvertIndexIndirectParameters
+    {
+        uint32_t srcIndirectBufOffset = 0;
+        uint32_t srcIndexBufOffset    = 0;
+        uint32_t dstIndexBufOffset    = 0;
+        uint32_t maxIndex             = 0;
+        uint32_t dstIndirectBufOffset = 0;
+    };
 
     struct ConvertLineLoopIndexIndirectParameters
     {
@@ -208,12 +226,23 @@ class UtilsVk : angle::NonCopyable
         uint32_t attachmentBlockWidth;
         uint32_t attachmentBlockHeight;
         uint32_t numFocalPoints;
-        gl::FocalPoint focalPoints[gl::IMPLEMENTATION_MAX_FOCAL_POINTS];
+        std::array<gl::FocalPoint, gl::IMPLEMENTATION_MAX_FOCAL_POINTS> focalPoints;
     };
 
     // Based on the maximum number of levels in GenerateMipmap.comp.
     static constexpr uint32_t kGenerateMipmapMaxLevels = 6;
     static uint32_t GetGenerateMipmapMaxLevels(ContextVk *contextVk);
+
+    angle::Result convertIndexBuffer(ContextVk *contextVk,
+                                     vk::BufferHelper *dst,
+                                     vk::BufferHelper *src,
+                                     const ConvertIndexParameters &params);
+    angle::Result convertIndexIndirectBuffer(ContextVk *contextVk,
+                                             vk::BufferHelper *srcIndirectBuf,
+                                             vk::BufferHelper *srcIndexBuf,
+                                             vk::BufferHelper *dstIndirectBuf,
+                                             vk::BufferHelper *dstIndexBuf,
+                                             const ConvertIndexIndirectParameters &params);
 
     angle::Result convertLineLoopIndexIndirectBuffer(
         ContextVk *contextVk,
@@ -341,6 +370,23 @@ class UtilsVk : angle::NonCopyable
 
   private:
     ANGLE_ENABLE_STRUCT_PADDING_WARNINGS
+
+    struct ConvertIndexShaderParams
+    {
+        uint32_t srcOffset     = 0;
+        uint32_t dstOffsetDiv4 = 0;
+        uint32_t maxIndex      = 0;
+        uint32_t _padding      = 0;
+    };
+
+    struct ConvertIndexIndirectShaderParams
+    {
+        uint32_t srcIndirectOffsetDiv4 = 0;
+        uint32_t srcOffset             = 0;
+        uint32_t dstOffsetDiv4         = 0;
+        uint32_t maxIndex              = 0;
+        uint32_t dstIndirectOffsetDiv4 = 0;
+    };
 
     struct ConvertIndexIndirectLineLoopShaderParams
     {
@@ -511,9 +557,11 @@ class UtilsVk : angle::NonCopyable
 
         // Functions implemented in compute
         ComputeStartIndex,  // Special value to separate draw and dispatch functions.
-        ConvertVertexBuffer = ComputeStartIndex,
+        ConvertIndexBuffer = ComputeStartIndex,
+        ConvertVertexBuffer,
         ClearTexture,
         BlitResolveStencilNoExport,
+        ConvertIndexIndirectBuffer,
         ConvertIndexIndirectLineLoopBuffer,
         ConvertIndirectLineLoopBuffer,
         GenerateMipmap,
@@ -582,6 +630,8 @@ class UtilsVk : angle::NonCopyable
 
     // Initializers corresponding to functions, calling into ensureResourcesInitialized with the
     // appropriate parameters.
+    angle::Result ensureConvertIndexResourcesInitialized(ContextVk *contextVk);
+    angle::Result ensureConvertIndexIndirectResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureConvertIndexIndirectLineLoopResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureConvertIndirectLineLoopResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureConvertVertexResourcesInitialized(ContextVk *contextVk);
@@ -667,27 +717,38 @@ class UtilsVk : angle::NonCopyable
     std::unordered_map<vk::SamplerDesc, vk::DynamicDescriptorPool>
         mImageCopyWithSamplerDescriptorPools;
 
-    ComputeShaderProgramAndPipelines mConvertIndexIndirectLineLoop
-        [vk::InternalShader::ConvertIndexIndirectLineLoop_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mConvertIndirectLineLoop[vk::InternalShader::ConvertIndirectLineLoop_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mConvertVertex[vk::InternalShader::ConvertVertex_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::ConvertIndex_comp::kArrayLen>
+        mConvertIndex;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::ConvertIndexIndirectLineLoop_comp::kArrayLen>
+        mConvertIndexIndirectLineLoop;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::ConvertIndirectLineLoop_comp::kArrayLen>
+        mConvertIndirectLineLoop;
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::ConvertVertex_comp::kArrayLen>
+        mConvertVertex;
     GraphicsShaderProgramAndPipelines mImageClearVSOnly;
-    GraphicsShaderProgramAndPipelines mImageClear[vk::InternalShader::ImageClear_frag::kArrayLen];
-    GraphicsShaderProgramAndPipelines mImageCopy[vk::InternalShader::ImageCopy_frag::kArrayLen];
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::ImageClear_frag::kArrayLen>
+        mImageClear;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::ImageCopy_frag::kArrayLen>
+        mImageCopy;
     GraphicsShaderProgramAndPipelines mImageCopyFloat;
     std::unordered_map<vk::SamplerDesc, GraphicsShaderProgramAndPipelines> mImageCopyWithSampler;
-    ComputeShaderProgramAndPipelines
-        mCopyImageToBuffer[vk::InternalShader::CopyImageToBuffer_comp::kArrayLen];
-    GraphicsShaderProgramAndPipelines mBlitResolve[vk::InternalShader::BlitResolve_frag::kArrayLen];
-    GraphicsShaderProgramAndPipelines mBlit3DSrc[vk::InternalShader::Blit3DSrc_frag::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mBlitResolveStencilNoExport[vk::InternalShader::BlitResolveStencilNoExport_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::CopyImageToBuffer_comp::kArrayLen>
+        mCopyImageToBuffer;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::BlitResolve_frag::kArrayLen>
+        mBlitResolve;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::Blit3DSrc_frag::kArrayLen>
+        mBlit3DSrc;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::BlitResolveStencilNoExport_comp::kArrayLen>
+        mBlitResolveStencilNoExport;
     GraphicsShaderProgramAndPipelines mExportStencil;
-    ComputeShaderProgramAndPipelines
-        mGenerateMipmap[vk::InternalShader::GenerateMipmap_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines mEtcToBc[vk::InternalShader::EtcToBc_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::GenerateMipmap_comp::kArrayLen>
+        mGenerateMipmap;
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::EtcToBc_comp::kArrayLen>
+        mEtcToBc;
 
     // Unresolve shaders are special as they are generated on the fly due to the large number of
     // combinations.

@@ -109,12 +109,14 @@ void SkiaGPUAtlas::uploadImages()
 #if USE(GBM)
     if (auto* gpuBuffer = m_atlasTexture->memoryMappedGPUBuffer()) {
         RELEASE_ASSERT(gpuBuffer->isLinear() || gpuBuffer->isVivanteSuperTiled());
-        auto writeScope = makeGPUBufferWriteScope(*gpuBuffer);
-        RELEASE_ASSERT_WITH_MESSAGE(writeScope, "Failed to map GPU buffer for atlas upload");
+        {
+            auto writeScope = makeGPUBufferWriteScope(*gpuBuffer);
+            RELEASE_ASSERT_WITH_MESSAGE(writeScope, "Failed to map GPU buffer for atlas upload");
 
-        for (const auto& entry : m_layout->entries()) {
-            if (auto pixels = pixelDataInSRGB(entry.rasterImage))
-                gpuBuffer->updateContents(*writeScope, pixels->first, entry.atlasRect, pixels->second);
+            for (const auto& entry : m_layout->entries()) {
+                if (auto pixels = pixelDataInSRGB(entry.rasterImage))
+                    gpuBuffer->updateContents(*writeScope, pixels->first, entry.atlasRect, pixels->second);
+            }
         }
 
         m_uploadCondition->signal();

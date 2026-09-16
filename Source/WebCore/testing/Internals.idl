@@ -560,6 +560,8 @@ enum ContentsFormat {
 
     float usedOutlineOffset(Element element);
 
+    DOMString computedAppleColorFilter(Element element);
+
     Node ensureUserAgentShadowRoot(Element host);
     Node? shadowRoot(Element host);
 
@@ -1186,6 +1188,8 @@ enum ContentsFormat {
     File? createFile(DOMString url);
     Promise<File> asyncCreateFile(DOMString url);
     DOMString createTemporaryFile(DOMString name, DOMString contents);
+
+    DOMString documentIPAddressSpace();
 
     undefined queueMicroTask(long testNumber);
     boolean testPreloaderSettingViewport();

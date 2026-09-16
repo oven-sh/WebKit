@@ -344,7 +344,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
     if (compilation) [[unlikely]] {
         compilation->addDescription(
             Profiler::OriginStack(),
-            toCString("Generated FTL DFG IR for ", CodeBlockWithJITType(codeBlock, JITType::FTLJIT), ", instructions size = ", graph.m_codeBlock->instructionsSize(), ":\n"));
+            toUTF8CString("Generated FTL DFG IR for ", CodeBlockWithJITType(codeBlock, JITType::FTLJIT), ", instructions size = ", graph.m_codeBlock->instructionsSize(), ":\n"));
 
         graph.ensureSSADominators();
         graph.ensureSSANaturalLoops();
@@ -360,7 +360,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
                 continue;
 
             graph.dumpBlockHeader(out, prefix, block, Graph::DumpLivePhisOnly, &dumpContext);
-            compilation->addDescription(Profiler::OriginStack(), out.toCString());
+            compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
             out.reset();
 
             for (size_t nodeIndex = 0; nodeIndex < block->size(); ++nodeIndex) {
@@ -374,12 +374,12 @@ void compile(State& state, Safepoint::Result& safepointResult)
                 }
 
                 if (graph.dumpCodeOrigin(out, prefix, lastNode, node, &dumpContext)) {
-                    compilation->addDescription(stack, out.toCString());
+                    compilation->addDescription(stack, out.toUTF8CString());
                     out.reset();
                 }
 
                 graph.dump(out, prefix, node, &dumpContext);
-                compilation->addDescription(stack, out.toCString());
+                compilation->addDescription(stack, out.toUTF8CString());
                 out.reset();
 
                 if (node->origin.semantic.isSet())
@@ -388,18 +388,18 @@ void compile(State& state, Safepoint::Result& safepointResult)
         }
 
         dumpContext.dump(out, prefix);
-        compilation->addDescription(Profiler::OriginStack(), out.toCString());
+        compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
         out.reset();
 
         out.print("\n\n\n    FTL B3/Air Disassembly:\n");
-        compilation->addDescription(Profiler::OriginStack(), out.toCString());
+        compilation->addDescription(Profiler::OriginStack(), out.toUTF8CString());
         out.reset();
 
         state.dumpDisassembly(out, *state.b3CodeLinkBuffer, [&] (DFG::Node*) {
-            compilation->addDescription({ }, out.toCString());
+            compilation->addDescription({ }, out.toUTF8CString());
             out.reset();
         });
-        compilation->addDescription({ }, out.toCString());
+        compilation->addDescription({ }, out.toUTF8CString());
         out.reset();
 
         state.jitCode->common.compilation = compilation;

@@ -364,7 +364,7 @@ const char* CallFrame::describeFrame()
 
     dump(stringStream);
 
-    strncpy(buffer, stringStream.toCString().data(), bufferSize);
+    strncpy(buffer, stringStream.toUTF8CString().legacyCStringPointer(), bufferSize);
     buffer[bufferSize] = '\0';
 
     return buffer;

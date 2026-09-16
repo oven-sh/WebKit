@@ -35,6 +35,7 @@
 #include <wtf/EnumTraits.h>
 
 namespace WTF {
+class String;
 class TextStream;
 }
 
@@ -297,6 +298,11 @@ enum class PortalActionType : bool {
     Orbit
 };
 
+enum class PositionContextType : bool {
+    Container,
+    Anchor
+};
+
 enum class TextCombine : bool {
     None,
     All
@@ -554,6 +560,13 @@ enum class QuoteType : uint8_t {
     NoOpenQuote,
     NoCloseQuote
 };
+
+enum class SynthesizedGlyph : uint8_t {
+    PickerUp,
+    PickerDown
+};
+
+WTF::String fallbackText(SynthesizedGlyph);
 
 enum class AnimationFillMode : uint8_t {
     None,
@@ -1213,10 +1226,12 @@ WTF::TextStream& operator<<(WTF::TextStream&, OverflowAlignment);
 WTF::TextStream& operator<<(WTF::TextStream&, OverflowWrap);
 WTF::TextStream& operator<<(WTF::TextStream&, PointerEvents);
 WTF::TextStream& operator<<(WTF::TextStream&, PortalActionType);
+WTF::TextStream& operator<<(WTF::TextStream&, PositionContextType);
 WTF::TextStream& operator<<(WTF::TextStream&, PositionType);
 WTF::TextStream& operator<<(WTF::TextStream&, PrintColorAdjust);
 WTF::TextStream& operator<<(WTF::TextStream&, PseudoElementType);
 WTF::TextStream& operator<<(WTF::TextStream&, QuoteType);
+WTF::TextStream& operator<<(WTF::TextStream&, SynthesizedGlyph);
 WTF::TextStream& operator<<(WTF::TextStream&, ReflectionDirection);
 WTF::TextStream& operator<<(WTF::TextStream&, RubyPosition);
 WTF::TextStream& operator<<(WTF::TextStream&, RubyAlign);

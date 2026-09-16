@@ -41,6 +41,7 @@
 #include "TransactionOperation.h"
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBClient {
@@ -74,7 +75,7 @@ void IDBConnectionToServer::callResultFunctionWithErrorLater(ResultFunction func
 
 void IDBConnectionToServer::deleteDatabase(const IDBOpenRequestData& request)
 {
-    LOG(IndexedDB, "IDBConnectionToServer::deleteDatabase - %s", request.databaseIdentifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBConnectionToServer::deleteDatabase - "_s << request.databaseIdentifier().loggingString());
     
     if (m_serverConnectionIsValid)
         protect(m_delegate)->deleteDatabase(request);
@@ -90,7 +91,7 @@ void IDBConnectionToServer::didDeleteDatabase(const IDBResultData& resultData)
 
 void IDBConnectionToServer::openDatabase(const IDBOpenRequestData& request)
 {
-    LOG(IndexedDB, "IDBConnectionToServer::openDatabase - %s (%s) (%" PRIu64 ")", request.databaseIdentifier().loggingString().utf8().data(), request.requestIdentifier().loggingString().utf8().data(), request.requestedVersion());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBConnectionToServer::openDatabase - "_s << request.databaseIdentifier().loggingString() << " ("_s << request.requestIdentifier().loggingString() << ") ("_s << request.requestedVersion() << ")"_s);
 
     if (m_serverConnectionIsValid)
         protect(m_delegate)->openDatabase(request);

@@ -331,6 +331,7 @@ activebuttontext
 -webkit-link
 -webkit-focus-ring-color
 -internal-document-text-color
+-internal-current-background-color
 
 //
 // CSS_PROP_BACKGROUND_REPEAT:
@@ -663,6 +664,10 @@ no-open-quote
 nowrap
 open-quote
 overline
+// UA stylesheet restricted 'content' keywords for glyphs the UA draws itself.
+// See https://github.com/w3c/csswg-drafts/issues/14317 and https://github.com/w3c/csswg-drafts/issues/14003
+picker-down
+picker-up
 portrait
 pre
 pre-line
@@ -1790,6 +1795,11 @@ additive
 -internal-simplified-chinese-formal
 -internal-traditional-chinese-informal
 -internal-traditional-chinese-formal
+-internal-japanese-informal
+-internal-japanese-formal
+-internal-korean-hangul-formal
+-internal-korean-hanja-informal
+-internal-korean-hanja-formal
 -internal-ethiopic-numeric
 extends
 
@@ -1968,6 +1978,9 @@ self-inline-start
 self-inline-end
 span-self-inline-start
 span-self-inline-end
+// position-context
+container
+// anchor
 // position-visibility
 // always
 anchors-valid
@@ -2009,6 +2022,7 @@ orbit enable-if=ENABLE_SPATIAL_PORTAL
 
 // CSS Linked Parameters
 param
+accent-color
 
 // continue
 -webkit-legacy

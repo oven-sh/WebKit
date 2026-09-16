@@ -50,6 +50,7 @@
 #include "SVGLayerTransformUpdater.h"
 #include "SVGSVGElement.h"
 #include "SVGViewSpec.h"
+#include "ScrollbarUpdateScope.h"
 #include "TransformState.h"
 #include "VisibleRectContext.h"
 #include <wtf/SetForScope.h>
@@ -271,6 +272,11 @@ void RenderSVGRoot::layout()
 
     invalidateBackgroundObscurationStatus();
     svgSVGElement().invalidateCachedViewportSizes();
+
+    if (!isDocumentElementRenderer()) {
+        if (CheckedPtr layer = this->layer(); layer && layer->scrollableArea())
+            layer->updateScrollInfoAfterLayout();
+    }
 
     repainter.repaintAfterLayout();
     clearNeedsLayout();
@@ -652,11 +658,6 @@ LayoutRect RenderSVGRoot::overflowClipRect(const LayoutPoint& location, OverlayS
     clipRect.setLocation(location + clipRect.location() + toLayoutSize(contentBoxLocation()));
     clipRect.setSize(clipRect.size() - LayoutSize(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent()));
     return clipRect;
-}
-
-void RenderSVGRoot::boundingRects(Vector<LayoutRect>& rects, const LayoutPoint& accumulatedOffset) const
-{
-    rects.append({ accumulatedOffset, borderBoxSize() });
 }
 
 void RenderSVGRoot::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) const

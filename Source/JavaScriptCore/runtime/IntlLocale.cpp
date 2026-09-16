@@ -665,7 +665,7 @@ const String& IntlLocale::language()
         if (!buffer.size())
             m_language = "und"_s;
         else
-            m_language = buffer.span();
+            m_language = String::fromLatin1(buffer.span());
     }
     return m_language;
 }
@@ -677,7 +677,7 @@ const String& IntlLocale::script()
         Vector<char, 4> buffer;
         auto status = callBufferProducingFunction(uloc_getScript, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        m_script = buffer.span();
+        m_script = String::fromLatin1(buffer.span());
     }
     return m_script;
 }
@@ -689,7 +689,7 @@ const String& IntlLocale::region()
         Vector<char, 3> buffer;
         auto status = callBufferProducingFunction(uloc_getCountry, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        m_region = buffer.span();
+        m_region = String::fromLatin1(buffer.span());
     }
     return m_region;
 }
@@ -805,7 +805,7 @@ JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
     const char* pointer;
     int32_t length = 0;
     while ((pointer = uenum_next(calendars.get(), &length, &status)) && U_SUCCESS(status)) {
-        String calendar(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+        String calendar = String::fromLatin1(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
         if (auto mapped = mapICUCalendarKeywordToBCP47(calendar))
             calendar = WTF::move(mapped.value());
 
@@ -847,7 +847,7 @@ JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
     const char* pointer;
     int32_t length = 0;
     while ((pointer = uenum_next(enumeration.get(), &length, &status)) && U_SUCCESS(status)) {
-        String collation(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
+        String collation = String::fromLatin1(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
         // 1.1.3 step 4, The values "standard" and "search" must be excluded from list.
         if (collation == "standard"_s || collation == "search"_s)
             continue;
@@ -960,7 +960,7 @@ JSValue IntlLocale::timeZones(JSGlobalObject* globalObject)
         return jsUndefined();
 
     UErrorCode status = U_ZERO_ERROR;
-    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_openTimeZoneIDEnumeration(UCAL_ZONE_TYPE_CANONICAL, region.utf8().data(), nullptr, &status));
+    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_openTimeZoneIDEnumeration(UCAL_ZONE_TYPE_CANONICAL, region.utf8().legacyCStringPointer(), nullptr, &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return { };
@@ -969,7 +969,7 @@ JSValue IntlLocale::timeZones(JSGlobalObject* globalObject)
     int32_t length;
     const char* collation;
     while ((collation = uenum_next(enumeration.get(), &length, &status)) && U_SUCCESS(status))
-        elements.constructAndAppend(std::span { collation, static_cast<size_t>(length) });
+        elements.append(String::fromLatin1(unsafeMakeSpan(collation, static_cast<size_t>(length))));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return { };

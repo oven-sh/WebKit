@@ -113,8 +113,8 @@ JSValueRef toWebAPI(JSContextRef context, const WebExtensionMessageSenderParamet
         JSObjectSetProperty(context, result, toJSString(originKey).get(), toJSValueRef(context, WebCore::SecurityOrigin::create(parameters.url)->toString()), 0, nullptr);
     }
 
-    if (parameters.documentIdentifier.isValid())
-        JSObjectSetProperty(context, result, toJSString(documentIdKey).get(), toJSValueRef(context, parameters.documentIdentifier.toString()), 0, nullptr);
+    if (parameters.documentIdentifier)
+        JSObjectSetProperty(context, result, toJSString(documentIdKey).get(), toJSValueRef(context, parameters.documentIdentifier->toString()), 0, nullptr);
 
     return result;
 }

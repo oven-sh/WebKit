@@ -74,6 +74,7 @@
 #import <wtf/RefCounted.h>
 #import <wtf/RefPtr.h>
 #import <wtf/RetainPtr.h>
+#import <wtf/Scope.h>
 #import <wtf/UUID.h>
 #import <wtf/WeakObjCPtr.h>
 
@@ -762,6 +763,25 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "%@", gestureLogDescription(gesture));
 
+    auto resetCaughtDeceleratingScrollIfNeeded = makeScopeExit([state = gesture.state, weakSelf = WeakObjCPtr<WKAppKitGestureController>(self)] {
+        RetainPtr strongSelf = weakSelf.get();
+        if (!strongSelf)
+            return;
+
+        if (strongSelf->_caughtDeceleratingScroll) {
+            switch (state) {
+            case NSGestureRecognizerStateEnded:
+            case NSGestureRecognizerStateCancelled:
+            case NSGestureRecognizerStateFailed:
+                [strongSelf _resetCaughtDeceleratingScroll];
+                break;
+            default:
+                break;
+            }
+            return;
+        }
+    });
+
     if (_dragGestureHasSentMouseDown) {
         WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "Exiting early because _dragGestureHasSentMouseDown is true");
         return;
@@ -1082,14 +1102,17 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 
             if (strongDeferring == strongSelf->_dragDeferringGestureRecognizer) {
                 const auto isDraggable = representsDraggableElement(info);
+
                 WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "deferral resolved: isDraggable=%d (link=%d image=%d attachment=%d dhtml=%d color=%d prefersDrag=%d)", isDraggable, info.isLink, info.isImage, info.isAttachment, info.isDHTMLDraggable, info.isColorInput, info.prefersDraggingOverTextSelection);
+
                 return isDraggable && !overLiveTextImage;
             }
 
             if (strongDeferring == strongSelf->_secondaryClickDeferringGestureRecognizer) {
-                const auto isEditableWithoutText = info.selectability == WebKit::InteractionInformationAtPosition::Selectability::UnselectableDueToFocusableElement && info.isContentEditable;
-                const auto isSelectable = info.isSelectable() || isEditableWithoutText;
-                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "Resolved deferral: isSelectable=%d (selectability=%hhu contentEditable=%d)", isSelectable, static_cast<uint8_t>(info.selectability), info.isContentEditable);
+                const auto isSelectable = info.isSelectable() || info.isFocusableWithSelectableText();
+
+                WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "Resolved deferral: isSelectable=%d (selectability=%hhu overEditableContent=%d)", isSelectable, static_cast<uint8_t>(info.selectability), info.isOverEditableContent);
+
                 return !isSelectable && !overLiveTextImage;
             }
 
@@ -1150,9 +1173,11 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 {
     WebKit::InteractionInformationRequest request { WebCore::IntPoint { locationInViewCoordinates } };
 
+    const auto& information = _positionInformationManager->currentInformation();
+
     bool requestIsValid = _positionInformationManager->currentIsValid(request);
-    bool isSelectable = _positionInformationManager->currentInformation().isSelectable();
-    bool isOverSelectableText = _positionInformationManager->currentInformation().isOverSelectableText;
+    bool isSelectable = information.isSelectable() || information.isFocusableWithSelectableText();
+    bool isOverSelectableText = information.isOverSelectableText;
 
     // The secondary click owns selectable points that are not over actual text (e.g. the page
     // background). Over a run of selectable text, the text selection manager should win so that a
@@ -1219,7 +1244,10 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     const auto& information = _positionInformationManager->currentInformation();
 
     // FIXME: (rdar://181964604) Because of this logic, vertically scrolling over these elements likely will not work.
-    bool prefersInteraction = information.isRangeInput || information.isARIASlider;
+    bool prefersInteraction = information.isRangeInput || information.isARIASlider || information.hasDirectionalResizeCursor || information.isInResizeControl;
+#if ENABLE(MODEL_ELEMENT_STAGE_MODE)
+    prefersInteraction = prefersInteraction || information.isInteractiveModel;
+#endif
     bool yieldToContent = requestIsValid && prefersInteraction;
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG(
@@ -1363,7 +1391,8 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
         return;
     }
 
-    [webView _protectedPage]->commitPotentialClick(std::nullopt, { }, *_layerTreeTransactionIdAtLastInteractionStart, WebCore::mousePointerID);
+    auto modifiers = WebKit::WebEventFactory::toWebEventModifierFlags([gesture modifierFlags]);
+    [webView _protectedPage]->commitPotentialClick(std::nullopt, modifiers, *_layerTreeTransactionIdAtLastInteractionStart, WebCore::mousePointerID);
 }
 
 - (void)_handleClickCancelled
@@ -1652,7 +1681,14 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
 - (void)didEndSyntheticMomentumScrolling
 {
     _isMomentumActive = false;
-    [self _resetCaughtDeceleratingScroll];
+
+    // Only the delta suppression is tied to momentum: once it has stopped, continuing to
+    // zero deltas stops top scroll stretching from engaging.
+    //
+    // Whether the interaction caught a decelerating scroll is a property of the gesture
+    // (and not the momentum). Clearing it here lets the scroll interrupt click through.
+    // Instead, we should let the gesture end paths own/reset it instead.
+    _suppressNextPanScrollDelta = false;
 }
 
 - (void)_resetCaughtDeceleratingScroll
@@ -1971,11 +2007,15 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
     WK_APPKIT_GESTURE_CONTROLLER_RELEASE_LOG_DEBUG([webView _protectedPage]->logIdentifier(), "Gesture: %@", gestureLogDescription(gestureRecognizer));
 
+    NSPoint locationInViewCoordinates = [gestureRecognizer locationInView:webView];
+
     // While catching a decelerating scroll, only select gestures are allowed to begin:
     // - single click, so it can reset the interruption state
-    // - pan, so it can continue with successive scrolls
+    // - mouse tracking or pan, so they can continue with successive scrolls (scrollbar drag for the former)
     if (_caughtDeceleratingScroll) {
         if (gestureRecognizer == _singleClickGestureRecognizer)
+            return YES;
+        if ([self _isMouseTrackingGestureRecognizer:gestureRecognizer] && [self _isPointInScrollbar:locationInViewCoordinates])
             return YES;
         if (gestureRecognizer != _panGestureRecognizer)
             return NO;
@@ -1983,8 +2023,6 @@ static inline bool isSamePair(NSGestureRecognizer *a, NSGestureRecognizer *b, NS
 
     if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
         return YES;
-
-    NSPoint locationInViewCoordinates = [gestureRecognizer locationInView:webView.get()];
 
     // An event over a scrollbar is a scrollbar interaction; only a mouse-tracking gesture (which drives
     // `Scrollbar::mouseDown` -> thumb drag) should handle it. The AppKit text-selection/context-menu gestures

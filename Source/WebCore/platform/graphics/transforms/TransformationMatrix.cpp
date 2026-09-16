@@ -719,8 +719,8 @@ TransformationMatrix TransformationMatrix::fromProjection(double fovUp, double f
 
 TransformationMatrix TransformationMatrix::fromProjection(double fovy, double aspect, double depthNear, double depthFar)
 {
-    double f = 1.0f / tanf(fovy / 2);
-    double invDepth = 1.0f / (depthNear - depthFar);
+    double f = 1.0 / tan(fovy / 2);
+    double invDepth = 1.0 / (depthNear - depthFar);
 
     return TransformationMatrix(f / aspect, 0.0f, 0.0f, 0.0f,
         0.0f, f, 0.0f, 0.0f,
@@ -853,9 +853,9 @@ LayoutRect TransformationMatrix::clampedBoundsOfProjectedQuad(const FloatQuad& q
 void TransformationMatrix::map4ComponentPoint(double& x, double& y, double& z, double& w) const
 {
     if (isIdentityOrTranslation()) {
-        x += m_matrix[3][0];
-        y += m_matrix[3][1];
-        z += m_matrix[3][2];
+        x += w * m_matrix[3][0];
+        y += w * m_matrix[3][1];
+        z += w * m_matrix[3][2];
         return;
     }
 

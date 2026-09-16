@@ -51,7 +51,7 @@ void BytecodeDumperBase<InstructionStreamType>::printLocationAndOp(typename Inst
 template<typename InstructionStreamType>
 void BytecodeDumperBase<InstructionStreamType>::dumpValue(VirtualRegister reg)
 {
-    m_out.printf("%s", registerName(reg).data());
+    m_out.printf("%s", registerName(reg).legacyCStringPointer());
 }
 
 template<typename InstructionStreamType>
@@ -68,12 +68,12 @@ void BytecodeDumperBase<InstructionStreamType>::dumpValue(GenericBoundLabel<Trai
 template void BytecodeDumperBase<JSInstructionStream>::dumpValue(GenericBoundLabel<JSGeneratorTraits>);
 
 template<class Block>
-CString BytecodeDumper<Block>::registerName(VirtualRegister r) const
+UTF8CString BytecodeDumper<Block>::registerName(VirtualRegister r) const
 {
     if (r.isConstant())
         return constantName(r);
 
-    return toCString(r);
+    return toUTF8CString(r);
 }
 
 template <class Block>
@@ -83,12 +83,12 @@ int BytecodeDumper<Block>::outOfLineJumpOffset(JSInstructionStream::Offset offse
 }
 
 template<class Block>
-CString BytecodeDumper<Block>::constantName(VirtualRegister reg) const
+UTF8CString BytecodeDumper<Block>::constantName(VirtualRegister reg) const
 {
     if (reg.toConstantIndex() >= (int) block()->constantRegisters().size())
-        return toCString("INVALID_CONSTANT(", reg, ")");
+        return toUTF8CString("INVALID_CONSTANT(", reg, ")");
     auto value = block()->getConstant(reg);
-    return toCString(value, "(", reg, ")");
+    return toUTF8CString(value, "(", reg, ")");
 }
 
 template<class Block>
@@ -152,7 +152,7 @@ void CodeBlockBytecodeDumper<Block>::dumpConstants()
                 sourceCodeRepresentationDescription = ": in source as link-time-constant";
                 break;
             }
-            this->m_out.printf("   k%u = %s%s\n", static_cast<unsigned>(i), toCString(constant.get()).data(), sourceCodeRepresentationDescription);
+            this->m_out.printf("   k%u = %s%s\n", static_cast<unsigned>(i), toUTF8CString(constant.get()).legacyCStringPointer(), sourceCodeRepresentationDescription);
             ++i;
         }
     }
@@ -213,7 +213,7 @@ void CodeBlockBytecodeDumper<Block>::dumpStringSwitchJumpTables()
             this->m_out.printf("  %1d = {\n", i);
             auto& unlinkedTable = this->block()->unlinkedStringSwitchJumpTable(i);
             for (const auto& entry : unlinkedTable.m_offsetTable)
-                this->m_out.printf("\t\t\"%s\" => %04d\n", entry.key->utf8().data(), entry.value.m_branchOffset);
+                this->m_out.printf("\t\t\"%s\" => %04d\n", entry.key->utf8().legacyCStringPointer(), entry.value.m_branchOffset);
             this->m_out.printf("\t\tdefault => %04d\n", unlinkedTable.m_defaultOffset);
             this->m_out.printf("      }\n");
             ++i;

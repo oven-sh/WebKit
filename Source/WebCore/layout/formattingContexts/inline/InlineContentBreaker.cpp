@@ -458,9 +458,14 @@ static size_t NODELETE limitAfterValue(const Style::ComputedStyle& style)
     return style.hyphenateLimitAfter().tryValue().value_or(0).value;
 }
 
+static size_t NODELETE limitWordValue(const Style::ComputedStyle& style)
+{
+    return style.internalHyphenateLimitCharsWord().tryValue().value_or(0).value;
+}
+
 static inline bool NODELETE hasEnoughContentForHyphenation(size_t contentLength, const Style::ComputedStyle& style)
 {
-    return limitBeforeValue(style) + limitAfterValue(style) <= contentLength;
+    return limitBeforeValue(style) + limitAfterValue(style) <= contentLength && limitWordValue(style) <= contentLength;
 }
 
 static std::optional<size_t> firstHyphenPosition(StringView content, const Style::ComputedStyle& style)

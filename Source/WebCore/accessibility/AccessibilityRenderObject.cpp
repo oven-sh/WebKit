@@ -108,6 +108,7 @@
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderFileUploadControl.h"
+#include "RenderGlyph.h"
 #include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
@@ -421,6 +422,16 @@ Element* AccessibilityRenderObject::anchorElement() const
     return nullptr;
 }
 
+// Null is distinct from empty: empty asks for the content to be ignored.
+static const String& generatedContentAltText(const RenderText* renderText)
+{
+    if (auto* renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText))
+        return renderTextFragment->altText();
+    if (auto* renderGlyph = dynamicDowncast<RenderGlyph>(renderText))
+        return renderGlyph->altText();
+    return nullString();
+}
+
 String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) const
 {
     // If we are within a hidden context, we don't want to add any text for this object, instead
@@ -506,12 +517,10 @@ String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) co
 
         // Sometimes text fragments don't have Nodes associated with them (like when
         // CSS content is used to insert text or when a RenderCounter is used.)
-        if (WeakPtr renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText.get())) {
-            // The alt attribute may be set on a text fragment through CSS, which should be honored.
-            if (auto& altText = renderTextFragment->altText(); !altText.isNull())
-                return altText;
+        if (auto& altText = generatedContentAltText(renderText.get()); !altText.isNull())
+            return altText;
+        if (WeakPtr renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText.get()))
             return renderTextFragment->contentString();
-        }
         if (renderText)
             return renderText->text();
     }
@@ -1144,14 +1153,12 @@ bool AccessibilityRenderObject::computeIsIgnored() const
         if (renderText->text().containsOnly<isASCIIWhitespace>())
             return true;
 
-        // The alt attribute may be set on a text fragment through CSS, which should be honored.
-        if (auto* renderTextFragment = dynamicDowncast<RenderTextFragment>(renderText.get())) {
-            auto altTextInclusion = objectInclusionFromAltText(renderTextFragment->altText());
-            if (altTextInclusion == AccessibilityObjectInclusion::IgnoreObject)
-                return true;
-            if (altTextInclusion == AccessibilityObjectInclusion::IncludeObject)
-                return false;
-        }
+        // The alt text may be set on generated content through CSS, which should be honored.
+        auto altTextInclusion = objectInclusionFromAltText(generatedContentAltText(renderText.get()));
+        if (altTextInclusion == AccessibilityObjectInclusion::IgnoreObject)
+            return true;
+        if (altTextInclusion == AccessibilityObjectInclusion::IncludeObject)
+            return false;
 
         bool checkForIgnored = true;
         for (RefPtr ancestor = parentObject(); ancestor; ancestor = ancestor->parentObject()) {
@@ -2583,7 +2590,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
     if (m_renderer->isRenderTableSection())
         return AccessibilityRole::Ignored;
 
-    auto treatStyleFormatGroupAsInline = is<RenderInline>(*m_renderer) ? TreatStyleFormatGroupAsInline::Yes : TreatStyleFormatGroupAsInline::No;
+    auto treatStyleFormatGroupAsInline = m_renderer->isInlineBox() ? TreatStyleFormatGroupAsInline::Yes : TreatStyleFormatGroupAsInline::No;
     auto roleFromNode = determineAccessibilityRoleFromNode(treatStyleFormatGroupAsInline);
 
     // Table cells (by default) return a TextGroup role from determineAccessibilityRoleFromNode.
@@ -2606,7 +2613,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
     // InlineRole is the final fallback before assigning AccessibilityRole::Unknown to an object. It makes it
     // possible to distinguish truly unknown objects from non-focusable inline text elements
     // which have an event handler or attribute suggesting possible inclusion by the platform.
-    if (is<RenderInline>(*m_renderer)
+    if (m_renderer->isInlineBox()
         && (hasAttributesRequiredForInclusion()
             || (node && node->hasEventListeners())
             || (supportsDatetimeAttribute() && !getAttribute(datetimeAttr).isEmpty())))

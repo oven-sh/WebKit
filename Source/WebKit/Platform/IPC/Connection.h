@@ -568,6 +568,9 @@ public:
     template<typename T, typename C> static void cancelReply(C&&);
 
     void markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral error);
+    void markCurrentlyDispatchedMessageAsInvalid(const String& error);
+
+    static void logFailedMessageCheck(const String& reason, const String& function, const String& file, unsigned line);
 
 #if ENABLE(CORE_IPC_SIGNPOSTS)
     static bool signpostsEnabled();
@@ -583,12 +586,12 @@ public:
 
 #if ENABLE(IPC_TESTING_API)
     bool hasErrorString() const { return !m_errorString.isNull(); }
-    void setErrorString(ASCIILiteral error)
+    void setErrorString(const String& error)
     {
         if (!hasErrorString())
             m_errorString = error;
     }
-    ASCIILiteral takeErrorString() { return std::exchange(m_errorString, { }); }
+    String takeErrorString() { return std::exchange(m_errorString, { }); }
 #endif
 
 private:
@@ -857,7 +860,7 @@ private:
 #endif
 
 #if ENABLE(IPC_TESTING_API)
-    ASCIILiteral m_errorString;
+    String m_errorString;
 #endif
 
     friend class StreamClientConnection;
@@ -1130,6 +1133,22 @@ inline void Connection::markCurrentlyDispatchedMessageAsInvalid(ASCIILiteral err
 #if ENABLE(IPC_TESTING_API)
     if (!error.isNull())
         setErrorString(error);
+#else
+    UNUSED_PARAM(error);
+#endif
+}
+
+inline void Connection::markCurrentlyDispatchedMessageAsInvalid(const String& error)
+{
+    // This should only be called while processing a message.
+    ASSERT(m_inDispatchMessageCount > 0);
+    m_didReceiveInvalidMessage = true;
+
+#if ENABLE(IPC_TESTING_API)
+    if (!error.isNull())
+        setErrorString(error);
+#else
+    UNUSED_PARAM(error);
 #endif
 }
 

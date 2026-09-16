@@ -63,8 +63,14 @@ extern Slot g_config[];
 #define PAS_RUNTIME_CONFIG_RESERVED_SLOTS 2
 #define PAS_RUNTIME_CONFIG_RESERVED_BYTES (PAS_RUNTIME_CONFIG_RESERVED_SLOTS * sizeof(Slot))
 
+typedef enum {
+    pas_mte_state_undetermined = 0,
+    pas_mte_state_disabled = 1,
+    pas_mte_state_enabled = 2
+} pas_mte_state;
+
 typedef struct {
-    uint8_t enabled;
+    uint8_t mte_state; /* One of pas_mte_state. */
 
     struct {
         uint8_t retag_on_scavenge : 1;

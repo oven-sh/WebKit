@@ -103,7 +103,7 @@ public:
             return false;
         if (size_t fragmentInHeader = url.string().reverseFind('#', headerEnd); fragmentInHeader != notFound)
             return false;
-        size_t encodedDataStart = headerEnd == notFound ? headerEnd : headerEnd + 1;
+        size_t encodedDataStart = headerEnd + 1;
 
         auto header = StringView(url.string()).substring(headerStart, headerEnd - headerStart);
         

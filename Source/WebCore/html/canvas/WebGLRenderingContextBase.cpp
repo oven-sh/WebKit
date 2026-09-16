@@ -413,13 +413,13 @@ static constexpr GCGLErrorCode NODELETE glEnumToErrorCode(GCGLenum error)
 }
 
 // Conversion function converting GraphicsContextGL member function results that are directly
-// CStrings. The returned values might be null on implementation error or context loss during
+// UTF8CStrings. The returned values might be null on implementation error or context loss during
 // that function.
-static String ensureNotNull(const CString& text)
+static String toNonNullString(const UTF8CString& text)
 {
     if (text.isNull())
         return emptyString();
-    return String::fromUTF8(text.span());
+    return text;
 }
 
 static GraphicsContextGL::SurfaceBuffer NODELETE toGCGLSurfaceBuffer(CanvasRenderingContext::SurfaceBuffer buffer)
@@ -2303,7 +2303,7 @@ String WebGLRenderingContextBase::getProgramInfoLog(WebGLProgram& program)
         return { };
     if (!validateWebGLObject("getProgramInfoLog"_s, program))
         return { };
-    return ensureNotNull(protect(graphicsContextGL())->getProgramInfoLog(program.object()));
+    return toNonNullString(protect(graphicsContextGL())->getProgramInfoLog(program.object()));
 }
 
 WebGLAny WebGLRenderingContextBase::getRenderbufferParameter(GCGLenum target, GCGLenum pname)
@@ -2411,7 +2411,7 @@ String WebGLRenderingContextBase::getShaderInfoLog(WebGLShader& shader)
         return { };
     if (!validateWebGLObject("getShaderInfoLog"_s, shader))
         return { };
-    return ensureNotNull(protect(graphicsContextGL())->getShaderInfoLog(shader.object()));
+    return toNonNullString(protect(graphicsContextGL())->getShaderInfoLog(shader.object()));
 }
 
 RefPtr<WebGLShaderPrecisionFormat> WebGLRenderingContextBase::getShaderPrecisionFormat(GCGLenum shaderType, GCGLenum precisionType)
@@ -3246,10 +3246,12 @@ static bool NODELETE isVideoFrameFormatEligibleToCopy(WebCodecsVideoFrame& frame
 #endif // ENABLE(WEB_CODECS)
 
 namespace {
-// The image contents to upload, together with the premultiplication of the contents.
+// The image contents to upload, together with the premultiplication of the contents. std::nullopt
+// means the contents were decoded for this upload, in which case the image itself states the
+// premultiplication, as image decoders do not necessarily honor the requested one.
 struct TexImageSourceImage {
     RefPtr<NativeImage> image;
-    AlphaPremultiplication alphaPremultiplication { AlphaPremultiplication::Premultiplied };
+    std::optional<AlphaPremultiplication> alphaPremultiplication;
 };
 }
 
@@ -3258,17 +3260,19 @@ struct TexImageSourceImage {
 // In such cases decode the encoded data again with the properties the upload needs.
 static TexImageSourceImage nativeImageForTexImageSource(Image& image, bool premultiplyAlpha, bool ignoreGammaAndColorProfile)
 {
+    // Images without encoded data are backed by image buffers, which hold premultiplied alpha.
+    RefPtr data = image.data();
+    if (!data)
+        return { image.currentNativeImage(), AlphaPremultiplication::Premultiplied };
     bool hasAlpha = !image.currentFrameKnownToBeOpaque();
-    if ((ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) && image.data()) {
+    if (ignoreGammaAndColorProfile || (hasAlpha && !premultiplyAlpha)) {
         auto decodedImage = BitmapImage::create(nullptr, premultiplyAlpha ? AlphaOption::Premultiplied : AlphaOption::NotPremultiplied, ignoreGammaAndColorProfile ? GammaAndColorProfileOption::Ignored : GammaAndColorProfileOption::Applied);
-        decodedImage->setData(image.data(), true);
+        decodedImage->setData(WTF::move(data), true);
         if (!decodedImage->frameCount())
             return { };
-        // The decode above produced the premultiplication the upload asked for.
-        return { decodedImage->currentNativeImage(), premultiplyAlpha ? AlphaPremultiplication::Premultiplied : AlphaPremultiplication::Unpremultiplied };
+        return { decodedImage->currentNativeImage(), std::nullopt };
     }
-    // Decoded frames hold premultiplied alpha.
-    return { image.currentNativeImage(), AlphaPremultiplication::Premultiplied };
+    return { image.currentNativeImage(), std::nullopt };
 }
 
 ExceptionOr<void> WebGLRenderingContextBase::texImageSourceHelper(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLint internalformat, GCGLint border, GCGLenum format, GCGLenum type, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, const IntRect& inputSourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight, TexImageSource&& source)
@@ -3618,7 +3622,7 @@ void WebGLRenderingContextBase::texImageArrayBufferViewHelper(TexImageFunctionID
     }
 }
 
-void WebGLRenderingContextBase::texImageImpl(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLenum format, GCGLenum type, NativeImage& image, AlphaPremultiplication sourceAlphaPremultiplication, bool flipY, bool premultiplyAlpha, const IntRect& sourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight)
+void WebGLRenderingContextBase::texImageImpl(TexImageFunctionID functionID, GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLenum format, GCGLenum type, NativeImage& image, std::optional<AlphaPremultiplication> sourceAlphaPremultiplication, bool flipY, bool premultiplyAlpha, const IntRect& sourceImageRect, GCGLsizei depth, GCGLint unpackImageHeight)
 {
     auto functionName = texImageFunctionName(functionID);
     // All calling functions check isContextLost, so a duplicate check is not
@@ -5693,7 +5697,7 @@ static ASCIILiteral debugMessageSeverityToString(GCGLenum severity)
     }
 }
 
-void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, const CString& message)
+void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGLenum severity, std::span<const char8_t> message)
 {
     if (!shouldPrintToConsole())
         return;
@@ -5707,9 +5711,9 @@ void WebGLRenderingContextBase::addDebugMessage(GCGLenum type, GCGLenum id, GCGL
 
     if (type == GraphicsContextGL::DEBUG_TYPE_ERROR) {
         level = MessageLevel::Error;
-        formattedMessage = makeString("WebGL: "_s, errorCodeToString(glEnumToErrorCode(id)), ": "_s, String::fromUTF8(message.span()));
+        formattedMessage = makeString("WebGL: "_s, errorCodeToString(glEnumToErrorCode(id)), ": "_s, message);
     } else
-        formattedMessage = makeString("WebGL debug message: type:"_s, debugMessageTypeToString(type), ", id:"_s, id, " severity: "_s, debugMessageSeverityToString(severity), ": "_s, String::fromUTF8(message.span()));
+        formattedMessage = makeString("WebGL debug message: type:"_s, debugMessageTypeToString(type), ", id:"_s, id, " severity: "_s, debugMessageSeverityToString(severity), ": "_s, message);
 
     auto consoleMessage = makeUnique<Inspector::ConsoleMessage>(MessageSource::Rendering, MessageType::Log, level, WTF::move(formattedMessage));
     scriptExecutionContext->addConsoleMessage(WTF::move(consoleMessage));

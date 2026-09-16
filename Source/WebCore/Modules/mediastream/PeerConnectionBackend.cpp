@@ -146,7 +146,7 @@ private:
         assertIsHeld(m_clientsLock);
         ASSERT(!m_logFile);
 
-        m_logFile = FilePrintStream::open(m_path.utf8().data(), overwrite ? "w" : "a");
+        m_logFile = FilePrintStream::open(m_path.utf8().legacyCStringPointer(), overwrite ? "w" : "a");
 
         // Prefer unbuffered output, so that we get a full log upon crash or deadlock.
         setvbuf(m_logFile->file(), nullptr, _IONBF, 0);

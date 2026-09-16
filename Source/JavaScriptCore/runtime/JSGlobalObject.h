@@ -729,8 +729,8 @@ public:
 
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
-        static unsigned hash(const Weak<T>&);
-        static bool equal(const Weak<T>&, const Weak<T>&);
+        static unsigned hash(T*);
+        static bool equal(T*, T*);
         // Templated on U=T so T::CustomFunctionPointer is a dependent name and lookup is
         // deferred to call time; otherwise instantiating this struct (as a HashSet trait)
         // requires JSCustomGetterFunction/JSCustomSetterFunction to be complete in every
@@ -738,6 +738,8 @@ public:
         template<typename U = T>
         static unsigned hash(const PropertyName&, typename U::CustomFunctionPointer, const ClassInfo*);
 
+        // HashTable gates WeakCustomGetterOrSetterHashTranslator::equal() on this flag too, and that
+        // one dereferences the bucket it is handed.
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
     };
 

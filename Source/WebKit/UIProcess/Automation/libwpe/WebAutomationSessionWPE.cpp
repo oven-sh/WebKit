@@ -48,15 +48,6 @@
 
 namespace WebKit {
 
-#if ENABLE(WEBDRIVER) && (ENABLE(WEBDRIVER_MOUSE_INTERACTIONS) || ENABLE(WEBDRIVER_TOUCH_INTERACTIONS) || ENABLE(WEBDRIVER_WHEEL_INTERACTIONS))
-static WebCore::IntPoint deviceScaleLocationInView(WebPageProxy& page, const WebCore::IntPoint& locationInView)
-{
-    WebCore::IntPoint deviceScaleLocationInView(locationInView);
-    deviceScaleLocationInView.scale(page.deviceScaleFactor());
-    return deviceScaleLocationInView;
-}
-#endif
-
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 // Called by platform-indendent code to convert the current platform-dependent raw modifiers into generic WebEventModifiers,
@@ -183,10 +174,10 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
 {
     UNUSED_PARAM(pointerType);
 
-    auto location = deviceScaleLocationInView(page, locationInView);
-
 #if USE(LIBWPE)
     if (page.viewBackend()) {
+        auto location = locationInView;
+        location.scale(page.deviceScaleFactor());
         platformSimulateMouseInteractionLibWPE(page, interaction, button, location, keyModifiers, pointerType, m_currentModifiers);
         return;
     }
@@ -199,25 +190,25 @@ void WebAutomationSession::platformSimulateMouseInteraction(WebPageProxy& page, 
 
     switch (interaction) {
     case MouseInteraction::Move:
-        doMotionEvent(page, location, state);
+        doMotionEvent(page, locationInView, state);
         break;
     case MouseInteraction::Down:
         m_currentModifiers |= modifier;
-        doMouseEvent(page, location, wpeButton, true, state | modifier);
+        doMouseEvent(page, locationInView, wpeButton, true, state | modifier);
         break;
     case MouseInteraction::Up:
         m_currentModifiers &= ~modifier;
-        doMouseEvent(page, location, wpeButton, false, state & ~modifier);
+        doMouseEvent(page, locationInView, wpeButton, false, state & ~modifier);
         break;
     case MouseInteraction::SingleClick:
-        doMouseEvent(page, location, wpeButton, true, state | modifier);
-        doMouseEvent(page, location, wpeButton, false, state);
+        doMouseEvent(page, locationInView, wpeButton, true, state | modifier);
+        doMouseEvent(page, locationInView, wpeButton, false, state);
         break;
     case MouseInteraction::DoubleClick:
-        doMouseEvent(page, location, wpeButton, true, state | modifier);
-        doMouseEvent(page, location, wpeButton, false, state);
-        doMouseEvent(page, location, wpeButton, true, state | modifier);
-        doMouseEvent(page, location, wpeButton, false, state);
+        doMouseEvent(page, locationInView, wpeButton, true, state | modifier);
+        doMouseEvent(page, locationInView, wpeButton, false, state);
+        doMouseEvent(page, locationInView, wpeButton, true, state | modifier);
+        doMouseEvent(page, locationInView, wpeButton, false, state);
         break;
     }
 #endif // ENABLE(WPE_PLATFORM)
@@ -234,21 +225,24 @@ static void doKeyStrokeEvent(WebPageProxy &page, bool pressed, uint32_t keyVal, 
     GUniqueOutPtr<GError> error;
     auto* keymap = WPE_KEYMAP(wpe_display_get_keymap(display));
 
+    unsigned keyCode = 0;
+    auto remainingModifiers = static_cast<WPEModifiers>(modifiers);
+
     GUniqueOutPtr<WPEKeymapEntry> entries;
     guint entriesCount;
-    if (!wpe_keymap_get_entries_for_keyval(keymap, keyVal, &entries.outPtr(), &entriesCount)) {
-        LOG(Automation, "WebAutomationSession::doKeyStrokeEvent: Failed to get keymap entries for keyval %u. Ignoring event.", keyVal);
-        return;
-    }
-    unsigned keyCode = entries.get()[0].keycode;
+    if (wpe_keymap_get_entries_for_keyval(keymap, keyVal, &entries.outPtr(), &entriesCount) && entriesCount) {
+        keyCode = entries.get()[0].keycode;
 
-    WPEModifiers consumedModifiers;
-    if (!wpe_keymap_translate_keyboard_state(keymap, keyCode, static_cast<WPEModifiers>(modifiers), entries.get()[0].group, &keyVal, nullptr, nullptr, &consumedModifiers)) {
-        LOG(Automation, "WebAutomationSession::doKeyStrokeEvent: Failed to translate keyboard state for keycode %u. Ignoring event.", keyCode);
-        return;
-    }
+        if (entries.get()[0].level > 0)
+            modifiers |= WPE_MODIFIER_KEYBOARD_SHIFT;
 
-    auto remainingModifiers = static_cast<WPEModifiers>(modifiers & ~consumedModifiers);
+        WPEModifiers consumedModifiers;
+        if (wpe_keymap_translate_keyboard_state(keymap, keyCode, static_cast<WPEModifiers>(modifiers), entries.get()[0].group, &keyVal, nullptr, nullptr, &consumedModifiers))
+            remainingModifiers = static_cast<WPEModifiers>(modifiers & ~consumedModifiers);
+        else
+            LOG(Automation, "WebAutomationSession::doKeyStrokeEvent: Failed to translate keyboard state for keycode %u. Sending the keyval as requested.", keyCode);
+    } else
+        LOG(Automation, "WebAutomationSession::doKeyStrokeEvent: No keymap entry for keyval %u. Sending it without a keycode.", keyVal);
 
     GRefPtr<WPEEvent> event = adoptGRef(wpe_event_keyboard_new(pressed ? WPE_EVENT_KEYBOARD_KEY_DOWN : WPE_EVENT_KEYBOARD_KEY_UP, view, WPE_INPUT_SOURCE_KEYBOARD, 0,
     remainingModifiers, keyCode, keyVal));
@@ -483,10 +477,10 @@ void WebAutomationSession::platformSimulateKeySequence(WebPageProxy& page, const
 #if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
 void WebAutomationSession::platformSimulateWheelInteraction(WebPageProxy& page, const WebCore::IntPoint& locationInView, const WebCore::IntSize& delta)
 {
-    auto location = deviceScaleLocationInView(page, locationInView);
-
 #if USE(LIBWPE)
     if (page.viewBackend()) {
+        auto location = locationInView;
+        location.scale(page.deviceScaleFactor());
         platformSimulateWheelInteractionLibWPE(page, location, delta);
         return;
     }
@@ -494,7 +488,7 @@ void WebAutomationSession::platformSimulateWheelInteraction(WebPageProxy& page, 
 
 #if ENABLE(WPE_PLATFORM)
     auto* view = page.wpeView();
-    GRefPtr<WPEEvent> event = adoptGRef(wpe_event_scroll_new(view, WPE_INPUT_SOURCE_MOUSE, 0, static_cast<WPEModifiers>(0), delta.width(), delta.height(), false, false, location.x(), location.y()));
+    GRefPtr<WPEEvent> event = adoptGRef(wpe_event_scroll_new(view, WPE_INPUT_SOURCE_MOUSE, 0, static_cast<WPEModifiers>(0), delta.width(), delta.height(), false, false, locationInView.x(), locationInView.y()));
     wpe_view_event(view, event.get());
 #endif
 }
@@ -512,25 +506,23 @@ void WebAutomationSession::platformSimulateTouchInteraction(WebPageProxy&page, T
     }
 #endif
 
-    auto location = deviceScaleLocationInView(page, locationInView);
-
 #if ENABLE(WPE_PLATFORM)
     GRefPtr<WPEEvent> event;
 
     switch (interaction) {
     case TouchInteraction::TouchDown:
         event = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_DOWN, page.wpeView(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0,
-            static_cast<WPEModifiers>(m_currentModifiers), 0, location.x(), location.y()));
+            static_cast<WPEModifiers>(m_currentModifiers), 0, locationInView.x(), locationInView.y()));
         break;
     case TouchInteraction::LiftUp:
         event = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_UP, page.wpeView(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0,
-            static_cast<WPEModifiers>(m_currentModifiers), 0, location.x(), location.y()));
+            static_cast<WPEModifiers>(m_currentModifiers), 0, locationInView.x(), locationInView.y()));
         break;
     case TouchInteraction::MoveTo:
         // TODO: Spread over intermediate points based on the duration, like iOS's WKTouchEventGenerator::moveToPoints
         // See https://bugs.webkit.org/show_bug.cgi?id=275031
         event = adoptGRef(wpe_event_touch_new(WPE_EVENT_TOUCH_MOVE, page.wpeView(), WPE_INPUT_SOURCE_TOUCHSCREEN, 0,
-            static_cast<WPEModifiers>(m_currentModifiers), 0, location.x(), location.y()));
+            static_cast<WPEModifiers>(m_currentModifiers), 0, locationInView.x(), locationInView.y()));
         break;
     }
 

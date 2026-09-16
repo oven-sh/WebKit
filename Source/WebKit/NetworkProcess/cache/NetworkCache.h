@@ -215,7 +215,7 @@ public:
     struct TraversalRecord {
         const Storage::Record& record;
         const Storage::RecordInfo& recordInfo;
-        RecordType type() const;
+        std::optional<RecordType> type() const;
         std::optional<URL> url() const;
     };
     void traverseRecords(Function<void(const TraversalRecord*)>&&);

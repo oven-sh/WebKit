@@ -29,7 +29,6 @@
 #include "NetworkLoadParameters.h"
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/NetworkLoadMetrics.h>
-#include <WebCore/PageIdentifier.h>
 #include <WebCore/ProtectionSpace.h>
 #include <WebCore/ResourceResponse.h>
 #include <wtf/RunLoop.h>
@@ -150,7 +149,7 @@ private:
     WebCore::AdditionalNetworkLoadMetricsForWebInspector& additionalNetworkLoadMetricsForWebInspector();
 
     Markable<WebCore::FrameIdentifier> m_frameID;
-    Markable<WebCore::PageIdentifier> m_pageID;
+    Markable<WebPageProxyIdentifier> m_webPageProxyID;
     State m_state { State::Suspended };
     WebCore::ContentSniffingPolicy m_shouldContentSniff;
     PreconnectOnly m_shouldPreconnectOnly { PreconnectOnly::No };

@@ -11,7 +11,7 @@ layer at (0,0) size 785x665
         RenderText {#text} at (0,0) size 0x0
         RenderText {#text} at (0,0) size 0x0
         RenderText {#text} at (0,0) size 0x0
-layer at (12,72) size 576x576 scrollWidth 480 scrollHeight 480
+layer at (12,72) size 576x576
   RenderSVGRoot {svg} at (0,0) size 576x576
     RenderSVGViewportContainer at (0,0) size 576x576
       RenderSVGRect {rect} at (0,0) size 400x400 [fill={[type=SOLID] [color=#0000FF]}] [x=0.00] [y=0.00] [width=400.00] [height=400.00]

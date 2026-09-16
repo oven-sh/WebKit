@@ -156,13 +156,9 @@ TEST(WTF_EnumTraits, ZeroBasedContiguousEnum)
     EXPECT_FALSE(isZeroBasedContiguousEnum<TestNonZeroBasedEnum>());
 }
 
-static bool isExpectedEnumString(const ASCIILiteral& expected, const std::span<const char>& result)
+static bool isExpectedEnumString(ASCIILiteral expected, ASCIILiteral result)
 {
-    // result won't have a null terminator.
-    bool equal = true;
-    for (size_t i = 0; i < result.size(); ++i)
-        equal &= expected[i] == result[i];
-    return equal;
+    return expected == result;
 }
 
 enum NonClassMultiWord {
@@ -250,14 +246,15 @@ TEST(WTF_EnumTraits, EnumNameValid)
 
 TEST(WTF_EnumTraits, EnumNameMediumEnumGaps)
 {
-    EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<MediumEnum>(50))));
-    EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<MediumEnum>(200))));
+    // Values within [min, max] but without an enumerator have no name.
+    EXPECT_TRUE(enumName(static_cast<MediumEnum>(50)).isEmpty());
+    EXPECT_TRUE(enumName(static_cast<MediumEnum>(200)).isEmpty());
 }
 
 TEST(WTF_EnumTraits, EnumNameOutOfRange)
 {
-    EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<EmptyEnum>(0))));
-    EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<SmallEnum>(300))));
+    EXPECT_TRUE(enumName(static_cast<EmptyEnum>(0)).isEmpty());
+    EXPECT_TRUE(enumName(static_cast<SmallEnum>(300)).isEmpty());
     EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<MediumEnum>(600))));
     EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<LargeEnum>(5000))));
     EXPECT_TRUE(isExpectedEnumString("enum out of range"_s, enumName(static_cast<SignedSmallEnum>(-5))));

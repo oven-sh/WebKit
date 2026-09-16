@@ -28,11 +28,18 @@
 #include <cstdint>
 #include <wtf/ExportMacros.h>
 
+#if OS(DARWIN)
+#include <mach/port.h>
+#endif
+
 namespace WTF {
 
 WTF_EXPORT_PRIVATE size_t memoryFootprint();
 
+#if OS(DARWIN)
+WTF_EXPORT_PRIVATE size_t memoryFootprint(mach_port_t);
+#endif
+
 }
 
 using WTF::memoryFootprint;
-

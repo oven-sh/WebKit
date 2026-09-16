@@ -186,7 +186,7 @@ BOOL canAuthenticateServerTrustAgainstProtectionSpace(NSString *host)
             replace(blockedURL, JSC::Yarr::RegularExpression("&key=[^&]+&"_s), "&key=GENERATED_KEY&"_s);
             replace(blockedURL, JSC::Yarr::RegularExpression("reportID=[-0123456789abcdefABCDEF]+"_s), "reportID=GENERATED_REPORT_ID"_s);
             auto script = makeString("console.log('Blocked access to external URL "_s, blockedURL, "');"_s);
-            auto scriptRef = adopt(JSStringCreateWithUTF8CString(script.utf8().data()));
+            auto scriptRef = adopt(JSStringCreateWithUTF8CString(script.utf8().legacyCStringPointer()));
             JSGlobalContextRef jsContext = [mainFrame globalContext];
             JSEvaluateScript(jsContext, scriptRef.get(), 0, 0, 0, 0);
             return nil;

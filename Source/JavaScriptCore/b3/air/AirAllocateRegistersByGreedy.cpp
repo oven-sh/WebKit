@@ -210,34 +210,56 @@ static constexpr unsigned spillCostSizeBias = 25000 * PointOffsets::PointsPerIns
 
 class LiveRange {
 public:
+    // Nearly every Tmp gets a live range and nearly every range is a handful of intervals, so an
+    // out-of-line buffer here would be one malloc per Tmp. A contiguous buffer also suits the
+    // conflict queries, which iterate the intervals and are by far the hottest reader.
+    using Intervals = Vector<Interval, 4>;
+
     LiveRange() = default;
 
-    inline void NODELETE validate()
+    inline void NODELETE validate(bool isDescending = false)
     {
 #if ASSERT_ENABLED
         size_t size = 0;
         Interval* prevInterval = nullptr;
         for (auto& interval : m_intervals) {
             ASSERT(interval.begin() < interval.end());
-            ASSERT(!prevInterval || prevInterval->end() < interval.begin());
+            if (prevInterval)
+                ASSERT(isDescending ? interval.end() < prevInterval->begin() : prevInterval->end() < interval.begin());
             size += interval.distance();
             prevInterval = &interval;
         }
         ASSERT(size == m_size);
+#else
+        UNUSED_PARAM(isDescending);
 #endif
     }
 
-    // interval must come before all the intervals already in this LiveRange.
-    void prepend(Interval interval)
+    // Adds an interval to a range being built by a backwards walk over the code. The intervals are
+    // held in descending order until finishDescendingBuild() puts them the right way round, so that
+    // what would be a front insertion is an append. Only lowestSoFar() may read the range while it
+    // is in this state.
+    void prependDescending(Interval interval)
     {
         ASSERT(interval);
-        if (m_intervals.isEmpty() || interval.end() < m_intervals.first().begin())
-            m_intervals.prepend(interval);
+        if (m_intervals.isEmpty() || interval.end() < m_intervals.last().begin())
+            m_intervals.append(interval);
         else {
-            ASSERT(interval.end() == m_intervals.first().begin());
-            m_intervals.first() |= interval;
+            ASSERT(interval.end() == m_intervals.last().begin());
+            m_intervals.last() |= interval;
         }
         m_size += interval.distance();
+        validate(true);
+    }
+
+    const Interval& NODELETE lowestSoFar() const
+    {
+        return m_intervals.last();
+    }
+
+    void finishDescendingBuild()
+    {
+        m_intervals.reverse();
         validate();
     }
 
@@ -255,7 +277,7 @@ public:
         validate();
     }
 
-    const Deque<Interval>& NODELETE intervals() const
+    const Intervals& NODELETE intervals() const
     {
         return m_intervals;
     }
@@ -381,7 +403,7 @@ public:
     }
 
 private:
-    Deque<Interval> m_intervals;
+    Intervals m_intervals;
     size_t m_size { 0 }; // Sum of the distances over m_intervals
 };
 
@@ -687,7 +709,9 @@ private:
         }
     };
 
-    Vector<Entry> m_entries;
+    // Most Tmps that are coalescable at all have just one or two partners, and this list lives in
+    // the per-Tmp map, so an out-of-line buffer here is another malloc per Tmp.
+    Vector<Entry, 2> m_entries;
 #if ASSERT_ENABLED
     bool m_isSorted { false };
 #endif
@@ -1351,10 +1375,10 @@ private:
             if (activeEnds[tmp])
                 return true;
             // Tmp may have had a dead def at point (e.g. clobber).
-            auto& intervals = m_map[tmp].liveRange.intervals();
-            if (intervals.isEmpty())
+            const LiveRange& liveRange = m_map[tmp].liveRange;
+            if (liveRange.intervals().isEmpty())
                 return false;
-            return intervals.first().contains(point);
+            return liveRange.lowestSoFar().contains(point);
         };
 
         auto assertPinnedRegsAreLive = [&]() {
@@ -1396,7 +1420,7 @@ private:
             Point end = activeEnds[tmp];
             if (!end) [[unlikely]]
                 end = point + 1; // Dead def / clobber
-            m_map[tmp].liveRange.prepend({ point, end });
+            m_map[tmp].liveRange.prependDescending({ point, end });
             activeEnds[tmp] = 0;
         };
 
@@ -1565,7 +1589,11 @@ private:
         m_code.pinnedRegisters().forEachReg([&](Reg reg) {
             Tmp tmp = Tmp(reg);
             ASSERT(activeEnds[tmp] == funcEndPoint + 1 && !m_map[tmp].liveRange.size());
-            m_map[tmp].liveRange.prepend({ 0, activeEnds[tmp] });
+            m_map[tmp].liveRange.prependDescending({ 0, activeEnds[tmp] });
+        });
+
+        m_map.forEachValue([](TmpData& data) {
+            data.liveRange.finishDescendingBuild();
         });
 
 #if ASSERT_ENABLED
@@ -2227,7 +2255,7 @@ private:
         m_map.append(tmp, TmpData());
         TmpData& tmpData = m_map[tmp];
         if (interval)
-            tmpData.liveRange.prepend(interval);
+            tmpData.liveRange.append(interval);
         tmpData.useDefCost = useDefCost;
         tmpData.validate();
         return tmp;
@@ -2319,7 +2347,7 @@ private:
                     StringPrintStream out;
                     out.println("Pop: ", entry, " tmp: ", tmpData);
                     dumpRegRanges<bank>(out);
-                    dataLog(out.toCString());
+                    dataLog(out.toUTF8CString());
                 }
                 switch (tmpData.stage) {
                 case Stage::Unspillable:
@@ -2443,7 +2471,7 @@ private:
             }
             out.println("Code:", m_code);
             out.println("Register Allocator State:\n", pointerDump(this));
-            dataLogLn(out.toCString());
+            dataLogLn(out.toUTF8CString());
             RELEASE_ASSERT_NOT_REACHED();
         };
 

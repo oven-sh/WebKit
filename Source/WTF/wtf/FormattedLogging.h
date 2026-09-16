@@ -29,6 +29,7 @@
 #include <format>
 #include <type_traits>
 #include <wtf/Assertions.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/TextStream.h>
 
 namespace WTF {
@@ -48,7 +49,7 @@ struct std::formatter<T> : std::formatter<std::string_view> {
         WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine);
         stream << value;
         auto utf8 = stream.release().utf8();
-        return std::formatter<std::string_view>::format(std::string_view(utf8.data(), utf8.length()), ctx);
+        return std::formatter<std::string_view>::format(std::string_view(byteCast<char>(utf8.span())), ctx);
     }
 };
 

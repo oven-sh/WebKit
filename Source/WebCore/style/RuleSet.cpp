@@ -206,6 +206,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
 #if ENABLE(VIDEO)
     const CSSSelector* cuePseudoElementSelector = nullptr;
 #endif
+    bool hasHostOrScopePseudoClassSubject = false;
     Vector<const CSSSelector*, 4> nestedSelectors;
     // We only process the subject (rightmost) compound.
     for (const CSSSelector* selector = &ruleData.selector(); selector; selector = selector->followingInCompound()) {
@@ -216,6 +217,13 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
             case CSSSelector::Match::Id:
                 idSelector = current;
                 break;
+            case CSSSelector::Match::List:
+                if (!current->isEquivalentToClassSelector()) {
+                    if (shouldHaveBucketForAttributeName(*current))
+                        attributeSelector = current;
+                    break;
+                }
+                [[fallthrough]];
             case CSSSelector::Match::Class: {
                 auto& className = current->value();
                 if (!classSelector) {
@@ -232,7 +240,6 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
             }
             case CSSSelector::Match::Exact:
             case CSSSelector::Match::Set:
-            case CSSSelector::Match::List:
             case CSSSelector::Match::Hyphen:
             case CSSSelector::Match::Contain:
             case CSSSelector::Match::Begin:
@@ -268,7 +275,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
                 case CSSSelector::PseudoElement::ViewTransitionImagePair:
                 case CSSSelector::PseudoElement::ViewTransitionOld:
                 case CSSSelector::PseudoElement::ViewTransitionNew:
-                    if (current->stringList()->first() != starAtom())
+                    if (current->stringList()->first() != universalPseudoElementNameAtom())
                         namedPseudoElementSelector = current;
                     break;
                 default:
@@ -304,7 +311,7 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
                     break;
 #endif
                 case CSSSelector::PseudoClass::Scope:
-                    m_hasHostOrScopePseudoClassRulesInUniversalBucket = true;
+                    hasHostOrScopePseudoClassSubject = true;
                     break;
                 case CSSSelector::PseudoClass::Heading:
                     headingPseudoClassSelector = current;
@@ -317,12 +324,12 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
                             nestedSelectors.append(inner);
                     }
                     if (hasHostOrScopePseudoClassSubjectInSelectorList(selectorList))
-                        m_hasHostOrScopePseudoClassRulesInUniversalBucket = true;
+                        hasHostOrScopePseudoClassSubject = true;
                     break;
                 }
                 default:
                     if (hasHostOrScopePseudoClassSubjectInSelectorList(current->selectorList()))
-                        m_hasHostOrScopePseudoClassRulesInUniversalBucket = true;
+                        hasHostOrScopePseudoClassSubject = true;
                     break;
                 }
                 break;
@@ -538,6 +545,8 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
 
     // If we didn't find a specialized map to stick it in, file under universal rules.
     m_universalRules.append(ruleData);
+    if (hasHostOrScopePseudoClassSubject)
+        m_hostOrScopePseudoClassRulesInUniversalBucket.append(ruleData);
 }
 
 void RuleSet::addPageRule(StyleRulePage& rule)
@@ -581,6 +590,7 @@ void RuleSet::traverseRuleDatas(Function&& function)
     traverseVector(m_cuePseudoRules);
 #endif
     traverseVector(m_hostPseudoClassRules);
+    traverseVector(m_hostOrScopePseudoClassRulesInUniversalBucket);
     traverseVector(m_slottedPseudoElementRules);
     traverseVector(m_partPseudoElementRules);
     traverseVector(m_focusPseudoClassRules);
@@ -686,6 +696,7 @@ void RuleSet::shrinkToFit()
     m_cuePseudoRules.shrinkToFit();
 #endif
     m_hostPseudoClassRules.shrinkToFit();
+    m_hostOrScopePseudoClassRulesInUniversalBucket.shrinkToFit();
     m_slottedPseudoElementRules.shrinkToFit();
     m_partPseudoElementRules.shrinkToFit();
     m_focusPseudoClassRules.shrinkToFit();

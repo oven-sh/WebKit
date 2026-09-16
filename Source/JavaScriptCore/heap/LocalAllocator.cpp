@@ -26,10 +26,12 @@
 #include "config.h"
 #include "LocalAllocator.h"
 
+#include "AlignedMemoryAllocator.h"
 #include "AllocatingScope.h"
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
 #include "SuperSampler.h"
@@ -220,11 +222,17 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
     }
     
     if (Options::stealEmptyBlocksFromOtherAllocators()) {
-        if (MarkedBlock::Handle* block = m_directory->m_subspace->findEmptyBlockToSteal()) {
-            RELEASE_ASSERT(block->alignedMemoryAllocator() == m_directory->m_subspace->alignedMemoryAllocator());
-            
+        AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
+        if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
+
             block->sweep(nullptr);
-            
+
+            // findEmptyBlockToSteal only hands over blocks that have no WeakBlocks left, so there is
+            // no weak capacity to reclaim here. What this does is take the now-empty WeakSet off
+            // MarkedSpace's list of active ones before the block changes owner.
+            block->shrink();
+
             block->removeFromDirectory();
             m_directory->addBlock(block);
             return allocateIn(block, cellSize);

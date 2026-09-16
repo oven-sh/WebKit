@@ -50,6 +50,8 @@ Usage: $programName [options]
   --lto-mode=<mode>                  Set LTO mode: full, thin, or none
   --debug                            Set the default configuration to debug
   --release                          Set the default configuration to release
+  --cmake                            Build with CMake, into WebKitBuild/cmake-<platform>/<configuration>
+  --xcode                            Build with Xcode, into WebKitBuild/<configuration>
   --workspace=<workspace>            Set the default Xcode workspace to build from
   --reset                            Reset configurations
   -h, --help                         Show this message and exit
@@ -60,6 +62,8 @@ sub printUsage();
 sub updateOrDeleteConfigurationFile($$$);
 
 my $configuration = passedConfiguration();
+# Read before the isCMakeBuild() call below, which consumes --cmake and --xcode.
+my $buildSystem = passedBuildSystem();
 my $enableASAN = checkForArgumentAndRemoveFromARGV("--asan");
 my $disableASAN = checkForArgumentAndRemoveFromARGV("--no-asan");
 my $enableTSAN = checkForArgumentAndRemoveFromARGV("--tsan");
@@ -77,11 +81,7 @@ my $ltoMode;
 if (!checkForArgumentAndRemoveFromARGVGettingValue("--lto-mode", \$ltoMode)) {
     $ltoMode="";
 }
-my $forceOptimizationLevel;
-if (!checkForArgumentAndRemoveFromARGVGettingValue("--force-optimization-level", \$forceOptimizationLevel)
-    && !checkForArgumentAndRemoveFromARGVGettingValue("--force-opt", \$forceOptimizationLevel)) {
-    $forceOptimizationLevel="";
-}
+my $forceOptimizationLevel = passedForceOptimizationLevel();
 my $workspace;
 if (!checkForArgumentAndRemoveFromARGVGettingValue("--workspace", \$workspace)) {
     $workspace="";
@@ -93,6 +93,17 @@ if (checkForArgumentAndRemoveFromARGV("-h") || checkForArgumentAndRemoveFromARGV
 }
 
 my $baseProductDir = baseProductDir();
+
+# Reset before anything reads a marker file, so that printCurrentSettings()
+# below reports the defaults rather than the settings just deleted.
+if (checkForArgumentAndRemoveFromARGV("--reset")) {
+    for my $fileName (qw(ASan BuildSystem Configuration Coverage ForceOptimizationLevel Fuzzilli LibFuzzer LTO TSan UBSan Workspace)) {
+        unlink File::Spec->catfile($baseProductDir, $fileName);
+    }
+    printCurrentSettings();
+    exit 0;
+}
+
 if (isAppleCocoaWebKit() && !isCMakeBuild()) {
     markBaseProductDirectoryAsCreatedByXcodeBuildSystem();
     if ($workspace) {
@@ -102,14 +113,6 @@ if (isAppleCocoaWebKit() && !isCMakeBuild()) {
     }
 } else {
     make_path($baseProductDir);
-}
-
-if (checkForArgumentAndRemoveFromARGV("--reset")) {
-    for my $fileName (qw(ASan Configuration Coverage ForceOptimizationLevel Fuzzilli LibFuzzer LTO TSan UBSan Workspace)) {
-        unlink File::Spec->catfile($baseProductDir, $fileName);
-    }
-    printCurrentSettings();
-    exit 0;
 }
 
 if ($enableASAN && $enableTSAN) {
@@ -123,23 +126,18 @@ if ($ltoMode && $ltoMode ne "full" && $ltoMode ne "thin" && $ltoMode ne "none") 
     exit 1;
 }
 
-if ($forceOptimizationLevel
-    && $forceOptimizationLevel ne "none"
-    && $forceOptimizationLevel ne "O0"
-    && $forceOptimizationLevel ne "O1"
-    && $forceOptimizationLevel ne "O2"
-    && $forceOptimizationLevel ne "O3"
-    && $forceOptimizationLevel ne "Os"
-    && $forceOptimizationLevel ne "Ofast"
-    && $forceOptimizationLevel ne "Og") {
+if ($forceOptimizationLevel && !isValidForceOptimizationLevel($forceOptimizationLevel)) {
     printUsage();
     exit 1;
 }
 
 if ($configuration) {
-    open CONFIGURATION, ">", "$baseProductDir/Configuration" or die;
-    print CONFIGURATION $configuration;
-    close CONFIGURATION;
+    writeBuildSetting("Configuration", $configuration);
+}
+
+# Only Apple's Cocoa ports have a choice of build system.
+if ($buildSystem && isAppleCocoaWebKit()) {
+    writeBuildSetting("BuildSystem", $buildSystem);
 }
 
 updateOrDeleteConfigurationFile("ASan", $enableASAN, $disableASAN);
@@ -149,12 +147,8 @@ updateOrDeleteConfigurationFile("TSan", $enableTSAN, $disableTSAN);
 updateOrDeleteConfigurationFile("UBSan", $enableUBSAN, $disableUBSAN);
 updateOrDeleteConfigurationFile("LibFuzzer", $enableLibFuzzer, $disableLibFuzzer);
 
-if ($forceOptimizationLevel && $forceOptimizationLevel eq "none") {
-    unlink "$baseProductDir/ForceOptimizationLevel";
-} elsif ($forceOptimizationLevel) {
-    open ForceOptimizationLevel, ">", "$baseProductDir/ForceOptimizationLevel" or die;
-    print ForceOptimizationLevel substr($forceOptimizationLevel, 1) . "\n";
-    close ForceOptimizationLevel;
+if ($forceOptimizationLevel) {
+    recordForceOptimizationLevel($forceOptimizationLevel);
 }
 
 if ($ltoMode) {
@@ -171,6 +165,7 @@ sub printCurrentSettings()
 {
     my $result = "Current settings:";
     $result .= " Configuration:" . configuration();
+    $result .= " BuildSystem:" . buildSystem() if isAppleCocoaWebKit();
     $result .= " ASan" if asanIsEnabled();
     $result .= " TSan" if tsanIsEnabled();
     $result .= " UBSan" if ubsanIsEnabled();

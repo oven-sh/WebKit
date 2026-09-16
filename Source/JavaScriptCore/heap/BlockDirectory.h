@@ -31,6 +31,7 @@
 #include <JavaScriptCore/JSExportMacros.h>
 #include <JavaScriptCore/LocalAllocator.h>
 #include <JavaScriptCore/MarkedBlock.h>
+#include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
 #include <wtf/DebugHeap.h>
 #include <wtf/Lock.h>
@@ -112,6 +113,12 @@ public:
     FOR_EACH_BLOCK_DIRECTORY_BIT(BLOCK_DIRECTORY_BIT_ACCESSORS)
 #undef BLOCK_DIRECTORY_BIT_ACCESSORS
 
+    // A destructible block still owes its old owner a destructor pass over every one of its cells,
+    // and whoever took it would have to pay that inline, so it stays with the sweeper until the bit
+    // says the destructors have run.
+    auto stealableBits() const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return emptyBitsView() & ~destructibleBitsView() & ~inUseBitsView(); }
+    bool isStealable(size_t index) const WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock) { return stealableBits()[index]; }
+
     template<typename Func>
     void forEachBitVector(const Func& func) WTF_REQUIRES_LOCK(m_bitvectorLock)
     {
@@ -132,14 +139,15 @@ public:
     
     BlockDirectory* nextDirectory() const { return m_nextDirectory; }
     BlockDirectory* nextDirectoryInSubspace() const { return m_nextDirectoryInSubspace; }
-    BlockDirectory* nextDirectoryInAlignedMemoryAllocator() const { return m_nextDirectoryInAlignedMemoryAllocator; }
-    
+
     void setNextDirectory(BlockDirectory* directory) { m_nextDirectory = directory; }
     void setNextDirectoryInSubspace(BlockDirectory* directory) { m_nextDirectoryInSubspace = directory; }
-    void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { m_nextDirectoryInAlignedMemoryAllocator = directory; }
-    
+
     MarkedBlock::Handle* findEmptyBlockToSteal();
-    
+
+    // Callers must already have cleared the block's in-use bit.
+    void noteBlockMayBeStealable(unsigned index) WTF_REQUIRES_LOCK(m_bitvectorLock);
+
     inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
 
@@ -156,6 +164,7 @@ public:
     void dumpBits(PrintStream& = WTF::dataFile()) WTF_REQUIRES_SHARED_LOCK(m_bitvectorLock);
 
 private:
+    friend class AlignedMemoryAllocator;
     friend class IsoCellSet;
     friend class LocalAllocator;
     friend class LocalSideAllocator;
@@ -182,13 +191,14 @@ private:
     // this number is bound by capacity of Vector m_blocks, which must be within unsigned.
     unsigned m_emptyCursor { 0 };
     unsigned m_unsweptCursor { 0 }; // Points to the next block that is a candidate for incremental sweeping.
-    
+
     // FIXME: All of these should probably be references.
     // https://bugs.webkit.org/show_bug.cgi?id=166988
     Subspace* m_subspace { nullptr };
     BlockDirectory* m_nextDirectory { nullptr };
     BlockDirectory* m_nextDirectoryInSubspace { nullptr };
-    BlockDirectory* m_nextDirectoryInAlignedMemoryAllocator { nullptr };
+    BlockDirectory* m_nextDirectoryWithEmptyBlocks { nullptr };
+    Atomic<bool> m_isOnEmptyBlocksList { false };
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

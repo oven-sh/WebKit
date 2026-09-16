@@ -1475,7 +1475,7 @@ static constexpr std::array<float, 9> displayP3ToSRGBColorMatrix {
     -0.0196376f, -0.0786361f, 1.0982735f
 };
 
-// Video is tagged with primaries of its own, which are usually neither of the two colour spaces
+// Video is tagged with primaries of its own, which are usually neither of the two color spaces
 // copyExternalImageToTexture names. Derived from each set of primaries against the same D65 white
 // point the two matrices above use, so that a video which really is BT.709 still yields the identity.
 static constexpr std::array<float, 9> smpteCToSRGBColorMatrix {
@@ -1603,6 +1603,15 @@ static std::array<float, 9> colorMatrixBetweenPrimaries(CopyExternalImageSourceP
 
     ASSERT_NOT_REACHED();
     return identityColorMatrix;
+}
+
+std::optional<std::array<float, 9>> primariesConversionMatrixForPixelBuffer(CVPixelBufferRef pixelBuffer, WGPUColorSpace destination)
+{
+    bool destinationIsDisplayP3 = destination == DisplayP3 || destination == DisplayP3Linear;
+    auto matrix = colorMatrixBetweenPrimaries(sourcePrimariesForPixelBuffer(pixelBuffer), destinationIsDisplayP3);
+    if (matrix == identityColorMatrix)
+        return std::nullopt;
+    return matrix;
 }
 
 // simd matrix columns are padded, so the arguments buffer carries them as plain floats instead.
@@ -1758,7 +1767,7 @@ struct WebKitCopyExternalImageVertexOut {
     return pipelineState;
 }
 
-// https://gpuweb.github.io/gpuweb/#dom-gpuqueue-copyexternalimagetotexture asks for a colour format
+// https://gpuweb.github.io/gpuweb/#dom-gpuqueue-copyexternalimagetotexture asks for a color format
 // which is renderable, because the copy below is performed by rendering into the destination, and whose
 // channels are normalized or floating point, because the fragment stage writes floats. Which formats
 // are renderable depends on the features the device enabled - texture-formats-tier1 and
@@ -1907,7 +1916,7 @@ void Queue::copyExternalImageToTexture(const WGPUImageCopyExternalImage& source,
     if (RetainPtr pixelBuffer = source.pixelBuffer) {
         // The frame's planes are wrapped in MTLTextures exactly the way importExternalTexture() wraps
         // them, so a video reaches the destination without its pixels ever leaving the GPU.
-        auto frame = device->createExternalTextureFromPixelBuffer(pixelBuffer.get(), source.colorSpace);
+        auto frame = device->createExternalTextureFromPixelBuffer(pixelBuffer.get(), source.colorSpace, Device::PremultiplyAlpha::No);
         sourceTexture = frame.texture0;
         sourceSecondPlaneTexture = frame.texture1;
         if (!sourceTexture || !sourceSecondPlaneTexture)
@@ -1985,7 +1994,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             flags |= CopyExternalImageEncodeDestinationTransferFunction;
     }
 
-    // Only unpremultiply when something downstream needs unpremultiplied values: a colour conversion,
+    // Only unpremultiply when something downstream needs unpremultiplied values: a color conversion,
     // or an unpremultiplied destination. Two premultiplied ends with no conversion is a passthrough.
     if (source.premultipliedAlpha && (convertsColor || !destination.premultipliedAlpha))
         flags |= CopyExternalImageUnpremultiplySource;

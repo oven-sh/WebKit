@@ -136,7 +136,7 @@ String DebuggerCallFrame::functionName(VM& vm) const
     if (isTailDeleted()) {
         if (JSFunction* func = dynamicDowncast<JSFunction>(m_shadowChickenFrame.callee))
             return func->calculatedDisplayName(vm);
-        return String::fromLatin1(m_shadowChickenFrame.codeBlock->inferredName().data());
+        return String::fromUTF8(m_shadowChickenFrame.codeBlock->inferredName().span());
     }
 
     return m_validMachineFrame->friendlyFunctionName();

@@ -183,12 +183,12 @@ public:
 
     UnlinkedCodeBlock* unlinkedCodeBlock() const LIFETIME_BOUND { return m_unlinkedCode.get(); }
 
-    CString inferredName() const;
+    UTF8CString inferredName() const;
     String inferredNameWithHash() const;
     CodeBlockHash hash() const;
     bool NODELETE hasHash() const;
-    CString sourceCodeForTools() const;
-    CString sourceCodeOnOneLine() const; // As sourceCodeForTools(), but replaces all whitespace runs with a single space.
+    UTF8CString sourceCodeForTools() const;
+    UTF8CString sourceCodeOnOneLine() const; // As sourceCodeForTools(), but replaces all whitespace runs with a single space.
     void dumpAssumingJITType(PrintStream&, JITType) const;
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -794,6 +794,7 @@ public:
     void updateAllArrayProfilePredictions();
     void updateAllArrayAllocationProfilePredictions();
     void updateAllPredictions(ValueProfileSamples = ValueProfileSamples::Record);
+    void updatePredictionsConcurrently(ValueProfileSamples = ValueProfileSamples::Record);
 
     unsigned frameRegisterCount();
     int stackPointerOffset();
@@ -1147,7 +1148,7 @@ void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope
 #define CODEBLOCK_LOG_EVENT(codeBlock, summary, details) \
     do { \
         if (codeBlock) \
-            (codeBlock->vm().logEvent(codeBlock, summary, [&] () { return toCString details; })); \
+            (codeBlock->vm().logEvent(codeBlock, summary, [&] () { return toUTF8CString details; })); \
     } while (0)
 
 

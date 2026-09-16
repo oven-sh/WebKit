@@ -3182,10 +3182,8 @@ std::optional<WebCore::JSHandleIdentifier> WebKit::jsHandleIdentifierInFrame(con
 
 - (void)_didEndPartialIntelligenceTextAnimation
 {
-    if (!_partialIntelligenceTextAnimationCount) {
-        ASSERT_NOT_REACHED();
+    if (!_partialIntelligenceTextAnimationCount)
         return;
-    }
 
     _partialIntelligenceTextAnimationCount -= 1;
 

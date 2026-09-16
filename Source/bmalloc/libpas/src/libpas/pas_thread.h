@@ -22,6 +22,10 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifndef PAS_THREAD_H
+#define PAS_THREAD_H
+
+#include "pas_config.h"
 #include "pas_platform.h"
 
 #if !PAS_OS(WINDOWS)
@@ -29,16 +33,21 @@
 #else
 
 /* Implement the subset of pthread that libpas requires to run on Windows */
-#pragma once
+
+/* pas_utils.h includes this header before it defines the PAS_ macros, so the __PAS_ spellings from
+   the prefix are the only ones available here. */
+#include "pas_utils_prefix.h"
+
 #include <process.h>
 #include <time.h>
 #include <windows.h>
 
-#define pthread_t uintptr_t
-
 /* Threads */
 
+#define pthread_t uintptr_t
+
 typedef INIT_ONCE pthread_once_t;
+#define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
 
 struct pthread_attr_t_internal { };
 typedef struct pthread_attr_t_internal * pthread_attr_t;
@@ -46,30 +55,37 @@ typedef struct pthread_attr_t_internal * pthread_attr_t;
 struct pas_thread_t_internal { };
 typedef struct pas_thread_t_internal pas_thread_t;
 
-int pthread_create(pthread_t *thread, const pthread_attr_t *attr, unsigned (*start_routine)(void*), void *arg);
-int pthread_detach(pthread_t thread);
-
-int pthread_getname_np(pthread_t thread, const char *name, size_t len);
-pthread_t pthread_self(void);
-int sched_yield();
-
-#define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
-int pthread_once(pthread_once_t *once_control, void (*init_routine)(void));
-
 /* Mutexes, conditions */
 
 typedef SRWLOCK pthread_mutex_t;
 typedef CONDITION_VARIABLE pthread_cond_t;
+#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
+#define PTHREAD_COND_INITIALIZER CONDITION_VARIABLE_INIT
 
-int pthread_mutex_init(pthread_mutex_t *mutex, const void *unused_attr);
-int pthread_cond_init(pthread_cond_t *cond, const void *unused_attr);
+__PAS_BEGIN_EXTERN_C;
 
-int pthread_cond_broadcast(pthread_cond_t *cond);
+__PAS_API int pthread_create(pthread_t *thread, const pthread_attr_t *attr, unsigned (*start_routine)(void*), void *arg);
+__PAS_API int pthread_detach(pthread_t thread);
 
-int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
-int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime);
+__PAS_API int pthread_getname_np(pthread_t thread, const char *name, size_t len);
+__PAS_API pthread_t pthread_self(void);
+__PAS_API int sched_yield();
 
-int pthread_mutex_lock(pthread_mutex_t *mutex);
-int pthread_mutex_unlock(pthread_mutex_t *mutex);
+__PAS_API int pthread_once(pthread_once_t *once_control, void (*init_routine)(void));
+
+__PAS_API int pthread_mutex_init(pthread_mutex_t *mutex, const void *unused_attr);
+__PAS_API int pthread_cond_init(pthread_cond_t *cond, const void *unused_attr);
+
+__PAS_API int pthread_cond_broadcast(pthread_cond_t *cond);
+
+__PAS_API int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
+__PAS_API int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime);
+
+__PAS_API int pthread_mutex_lock(pthread_mutex_t *mutex);
+__PAS_API int pthread_mutex_unlock(pthread_mutex_t *mutex);
+
+__PAS_END_EXTERN_C;
 
 #endif /* PAS_OS(WINDOWS) */
+
+#endif /* PAS_THREAD_H */

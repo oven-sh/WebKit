@@ -350,6 +350,7 @@ public:
     WEBCORE_EXPORT IntRect boundsInRootViewSpace();
     // This does not update layout, and uses absoluteBoundingBoxRect().
     WEBCORE_EXPORT IntRect boundingBoxInRootViewCoordinates() const;
+    WEBCORE_EXPORT IntRect boundingBoxInMainFrameViewCoordinates() const;
 
     WEBCORE_EXPORT std::optional<std::pair<CheckedPtr<RenderElement>, FloatRect>> boundingAbsoluteRectWithoutLayout() const;
 
@@ -849,7 +850,7 @@ public:
     void invalidateRenderer();
 
     void invalidateStyleForAnimation();
-    void invalidateForQueryContainerSizeChange();
+    void invalidateForQueryContainerChange();
     void invalidateForAnchorRectChange();
     void invalidateForResumingQueryContainerResolution();
     void invalidateForResumingAnchorPositionedElementResolution();

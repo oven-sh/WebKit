@@ -59,4 +59,9 @@ Vector<NetworkTransactionInformation> LoaderStrategy::intermediateLoadInformatio
     return { };
 }
 
+bool LoaderStrategy::startKeepAliveLoadForWebKitLegacy(FrameLoader&, const ResourceRequest&, const ResourceLoaderOptions&, CompletionHandler<void(const ResourceError&, const ResourceResponse&)>&&)
+{
+    return false;
+}
+
 } // namespace WebCore

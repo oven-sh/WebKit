@@ -163,9 +163,9 @@ void PersistentBytecodePayloads::rememberChildExecutables(UnlinkedCodeBlock& cod
     m_childExecutables.set(key(codeBlock.cachedPayloadIndex(), codeBlock.cachedRecordOffset()), WTF::move(children));
 }
 
-void PersistentBytecodePayloads::pruneStaleEntries()
+void PersistentBytecodePayloads::reconcileWeakReferencesAtGCEnd(VM&, CollectionScope collectionScope)
 {
-    if (m_childExecutables.isEmpty())
+    if (collectionScope != CollectionScope::Full || m_childExecutables.isEmpty())
         return;
     m_childExecutables.removeIf([](auto& entry) {
         bool anyAlive = false;

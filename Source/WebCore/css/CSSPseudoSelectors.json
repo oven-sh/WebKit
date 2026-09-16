@@ -422,6 +422,9 @@
             "status": "non-standard",
             "user-agent-part": true
         },
+        "-internal-optgroup-label": {
+            "user-agent-part": true
+        },
         "-webkit-progress-bar": {
             "status": "non-standard",
             "user-agent-part": true
@@ -546,6 +549,10 @@
             "user-agent-part-string": true
         },
         "details-content": {
+            "user-agent-part": true
+        },
+        "field-content": {
+            "settings-flag": "htmlEnhancedSelectEnabled || cssAppearanceBaseEnabled",
             "user-agent-part": true
         },
         "-internal-cue-background": {

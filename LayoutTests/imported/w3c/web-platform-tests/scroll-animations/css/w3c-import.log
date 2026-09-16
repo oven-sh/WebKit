@@ -124,6 +124,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-name-computed.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-name-parsing.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-name-shadow.html
+/LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-on-pseudo.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-paused-animations.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-pseudo-on-scroller-002-expected.xht
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-pseudo-on-scroller-002.html
@@ -131,6 +132,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-animation.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-update-reversed-animation.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-range-update.html
+/LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-scroll-range-source-content-resize.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-shorthand.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-subject-bounds-update.html
 /LayoutTests/imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-subject-in-shadow-root-with-timeline-scope.html

@@ -34,6 +34,7 @@
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/Document.h>
 #include <WebCore/Exception.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/ScriptExecutionContext.h>
 #include <WebCore/WebTransportConnectionInfo.h>
 #include <WebCore/WebTransportConnectionStats.h>
@@ -139,6 +140,8 @@ Ref<WebCore::WebTransportSessionInitializationPromise> WebTransportSession::init
     if (RefPtr document = dynamicDowncast<WebCore::Document>(context))
         sourcePosition = document->currentParserSourcePosition();
     if (CheckedPtr csp = context.contentSecurityPolicy(); !csp || !csp->allowConnectToSource(url, WTF::move(sourcePosition)))
+        return WebCore::WebTransportSessionInitializationPromise::createAndReject();
+    if (!context.networkLoadPolicy().allowsLoadFromURL(url, WebCore::MainFrameMainResource::No))
         return WebCore::WebTransportSessionInitializationPromise::createAndReject();
     return sendWithPromisedReply(Messages::NetworkConnectionToWebProcess::InitializeWebTransportSession(m_identifier, url, options, additionalHeaders, m_pageID, origin))->whenSettled(RunLoop::mainSingleton(), [] (auto&& result) {
         if (result && *result)

@@ -53,6 +53,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 
 #if PLATFORM(COCOA)
 #include <notify.h>
@@ -143,8 +144,8 @@ Cache::Cache(NetworkProcess& networkProcess, const String& storageDirectory, Ref
 #endif
 #if PLATFORM(GTK) || PLATFORM(WPE)
         // Triggers with "touch $cachePath/dump".
-        CString dumpFilePath = fileSystemRepresentation(pathByAppendingComponent(m_storage->basePathIsolatedCopy(), "dump"_s));
-        GRefPtr<GFile> dumpFile = adoptGRef(g_file_new_for_path(dumpFilePath.data()));
+        auto dumpFilePath = fileSystemRepresentation(pathByAppendingComponent(m_storage->basePathIsolatedCopy(), "dump"_s));
+        GRefPtr<GFile> dumpFile = adoptGRef(g_file_new_for_path(dumpFilePath.legacyCStringPointer()));
         GFileMonitor* monitor = g_file_monitor_file(dumpFile.get(), G_FILE_MONITOR_NONE, nullptr, nullptr);
         g_signal_connect_swapped(monitor, "changed", G_CALLBACK(dumpFileChanged), this);
 #endif
@@ -402,7 +403,7 @@ void Cache::startAsyncRevalidationIfNeeded(const WebCore::ResourceRequest& reque
                 return;
             ASSERT(protectedThis->m_pendingAsyncRevalidations.contains(key));
             protectedThis->m_pendingAsyncRevalidations.remove(key);
-            LOG(NetworkCache, "(NetworkProcess) revalidation completed for '%s' with result %d", key.identifier().utf8().data(), static_cast<int>(result));
+            LOG_WITH_STREAM(NetworkCache, stream << "(NetworkProcess) revalidation completed for '"_s << key.identifier() << "' with result "_s << static_cast<int>(result));
         });
         addResult.iterator->value.add(revalidation.get());
         return revalidation;
@@ -544,7 +545,7 @@ std::unique_ptr<Entry> Cache::store(const WebCore::ResourceRequest& request, con
 {
     ASSERT(responseData);
 
-    LOG(NetworkCache, "(NetworkProcess) storing %s, partition %s", request.url().stringWithoutFragmentIdentifier().utf8().data(), makeCacheKey(RecordType::Resource, request).partition().utf8().data());
+    LOG_WITH_STREAM(NetworkCache, stream << "(NetworkProcess) storing "_s << request.url().stringWithoutFragmentIdentifier() << ", partition "_s << (makeCacheKey(RecordType::Resource, request).partition()));
 
     StoreDecision storeDecision = makeStoreDecision(request, response, responseData ? responseData->size() : 0);
     if (storeDecision != StoreDecision::Yes) {
@@ -588,7 +589,7 @@ std::unique_ptr<Entry> Cache::store(const WebCore::ResourceRequest& request, con
 
 std::unique_ptr<Entry> Cache::storeRedirect(const WebCore::ResourceRequest& request, const WebCore::ResourceResponse& response, const WebCore::ResourceRequest& redirectRequest, std::optional<Seconds> maxAgeCap)
 {
-    LOG(NetworkCache, "(NetworkProcess) storing redirect %s -> %s", request.url().string().utf8().data(), redirectRequest.url().string().utf8().data());
+    LOG_WITH_STREAM(NetworkCache, stream << "(NetworkProcess) storing redirect "_s << request.url().string() << " -> "_s << redirectRequest.url().string());
 
     StoreDecision storeDecision = makeStoreDecision(request, response, 0);
     if (storeDecision != StoreDecision::Yes) {
@@ -599,7 +600,7 @@ std::unique_ptr<Entry> Cache::storeRedirect(const WebCore::ResourceRequest& requ
     auto cacheEntry = makeRedirectEntry(request, response, redirectRequest);
 
     if (maxAgeCap) {
-        LOG(NetworkCache, "(NetworkProcess) capping max age for redirect %s -> %s", request.url().string().utf8().data(), redirectRequest.url().string().utf8().data());
+        LOG_WITH_STREAM(NetworkCache, stream << "(NetworkProcess) capping max age for redirect "_s << request.url().string() << " -> "_s << redirectRequest.url().string());
         cacheEntry->capMaxAge(maxAgeCap.value());
     }
 
@@ -632,23 +633,37 @@ void Cache::storeCompressionDictionary(const WebCore::ResourceRequest& request, 
     m_storage->store(record, nullptr);
 }
 
-RecordType Cache::TraversalRecord::type() const
+std::optional<RecordType> Cache::TraversalRecord::type() const
 {
-    if (record.key.type() == recordTypeName(RecordType::CompressionDictionary))
+    auto& typeName = record.key.type();
+    if (typeName == recordTypeName(RecordType::Resource))
+        return RecordType::Resource;
+    if (typeName == recordTypeName(RecordType::CompressionDictionary))
         return RecordType::CompressionDictionary;
-    return RecordType::Resource;
+    return std::nullopt;
 }
 
 std::optional<URL> Cache::TraversalRecord::url() const
 {
-    if (type() == RecordType::CompressionDictionary)
-        return URL { record.key.identifier() };
-    return Entry::decodeStorageRecordResponseURL(record);
+    auto recordType = type();
+    if (!recordType)
+        return std::nullopt;
+
+    std::optional<URL> url;
+    if (*recordType == RecordType::CompressionDictionary)
+        url = URL { record.key.identifier() };
+    else
+        url = Entry::decodeStorageRecordResponseURL(record);
+
+    if (url && !url->isValid())
+        return std::nullopt;
+
+    return url;
 }
 
 std::unique_ptr<Entry> Cache::update(const WebCore::ResourceRequest& originalRequest, const Entry& existingEntry, const WebCore::ResourceResponse& validatingResponse, PrivateRelayed privateRelayed)
 {
-    LOG(NetworkCache, "(NetworkProcess) updating %s", originalRequest.url().string().utf8().data());
+    LOG_WITH_STREAM(NetworkCache, stream << "(NetworkProcess) updating "_s << originalRequest.url().string());
 
     WebCore::ResourceResponse response = existingEntry.response();
     WebCore::updateResponseHeadersAfterRevalidation(response, validatingResponse);
@@ -722,7 +737,8 @@ void Cache::traverseRecordsOfTypes(OptionSet<RecordType> types, const std::optio
         }
 
         TraversalRecord traversalRecord { *record, recordInfo };
-        if (types.contains(traversalRecord.type()))
+        auto recordType = traversalRecord.type();
+        if (recordType && types.contains(*recordType))
             traverseHandler(&traversalRecord);
     };
 
@@ -832,7 +848,11 @@ void Cache::fetchData(bool shouldComputeSize, CompletionHandler<void(Vector<Webs
             if (!url)
                 return;
 
-            auto result = originsAndSizes.add({ url->protocol().toString(), url->host().toString(), url->port() }, 0);
+            auto origin = WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(*url);
+            if (origin.isNull() || origin.isOpaque())
+                return;
+
+            auto result = originsAndSizes.add(WTF::move(origin), 0);
             if (shouldComputeSize)
                 result.iterator->value += traversalRecord->record.header.size() + traversalRecord->recordInfo.bodySize;
             return;

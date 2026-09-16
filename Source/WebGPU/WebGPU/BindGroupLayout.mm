@@ -55,6 +55,12 @@ static MTLArgumentDescriptor *createArgumentDescriptor(const WGPUBufferBindingLa
     } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float4x3)) {
         descriptor.dataType = MTLDataTypeFloat4x3;
         bufferType = WGPUBufferBindingType_Uniform;
+    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_Float3x3)) {
+        descriptor.dataType = MTLDataTypeFloat3x3;
+        bufferType = WGPUBufferBindingType_Uniform;
+    } else if (bufferType == static_cast<uint32_t>(WGPUBufferBindingType_UInt2)) {
+        descriptor.dataType = MTLDataTypeUInt2;
+        bufferType = WGPUBufferBindingType_Uniform;
     } else
         descriptor.dataType = MTLDataTypePointer;
 
@@ -223,7 +229,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
         }
 
         bool isExternalTexture = false;
-        constexpr int maxGeneratedDescriptors = 4;
+        constexpr int maxGeneratedDescriptors = 6;
         std::array<RetainPtr<MTLArgumentDescriptor>, maxGeneratedDescriptors> descriptors { };
         BindGroupLayout::Entry::BindingLayout bindingLayout;
         Ref protectedThis = *this;
@@ -252,6 +258,10 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
             descriptors[2] = createArgumentDescriptor(bufferLayout, *this, entry);
             bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float4x3);
             descriptors[3] = createArgumentDescriptor(bufferLayout, *this, entry);
+            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_Float3x3);
+            descriptors[4] = createArgumentDescriptor(bufferLayout, *this, entry);
+            bufferLayout.type = static_cast<WGPUBufferBindingType>(WGPUBufferBindingType_UInt2);
+            descriptors[5] = createArgumentDescriptor(bufferLayout, *this, entry);
             bindingLayout = WGPUExternalTextureBindingLayout();
         } else if (isArrayLength(entry)) {
             for (uint32_t stage = 0; stage < stageCount; ++stage) {

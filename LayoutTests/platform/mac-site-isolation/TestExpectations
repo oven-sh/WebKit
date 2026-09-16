@@ -36,7 +36,6 @@ imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across
 fast/loader/stateobjects/pushstate-in-iframe.html [ Timeout ]
 http/tests/navigation/cross-site-iframe-nav-with-bfcache.html [ Timeout ]
 http/tests/navigation-api/different-origin-entries-removed-after-bfcache.html [ Failure Timeout ]
-inspector/dom-debugger/url-breakpoints-dom-text-and-regex.html [ Skip ]
 
 ########################
 # Tests that Text fail #
@@ -57,8 +56,6 @@ http/tests/site-isolation/inspector/debugger/setBreakpoint-cross-origin-iframe.h
 http/tests/site-isolation/inspector/page/override-setting-cross-origin-iframe.html [ Pass Failure ]
 webkit.org/b/311836 http/tests/site-isolation/inspector/page/set-emulated-media-cross-origin-iframe.html [ Pass Failure ]
 http/tests/site-isolation/inspector/worker/worker-in-cross-origin-iframe.html [ Pass ]
-http/tests/storageAccess/grant-storage-access-under-opener-at-popup-user-gesture-ephemeral.https.html [ Failure ]
-http/tests/storageAccess/grant-storage-access-under-opener-at-popup-user-gesture.https.html [ Failure ]
 http/wpt/webrtc/third-party-frame-ice-candidate-filtering.html [ Failure ]
 http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 imported/w3c/web-platform-tests/cookies/partitioned-cookies/partitioned-cookies.tentative.https.html [ Failure ]
@@ -108,7 +105,6 @@ imported/w3c/web-platform-tests/navigation-api/navigate-event/navigate-history-t
 inspector/dom/inspect-template-node.html [ Failure ]
 inspector/dom/inspect.html [ Failure ]
 inspector/dom/willDestroyDOMNode.html [ Failure ]
-inspector/dom-debugger/attribute-modified-style.html [ Failure ]
 inspector/runtime/executionContextCreated-onEnable.html [ Failure ]
 svg/webarchive/svg-cursor-subresources.svg [ Failure ]
 

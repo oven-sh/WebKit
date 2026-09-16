@@ -85,7 +85,7 @@ private:
 
     struct DumpedOp {
         unsigned index;
-        CString disassembly;
+        UTF8CString disassembly;
     };
 
     const char* indentString(unsigned);

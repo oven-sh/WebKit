@@ -229,7 +229,7 @@ void SystemSettingsManagerProxy::updateFontProperties(const String& fontName, We
     if (fontName.isEmpty())
         return;
 
-    PangoFontDescription* pangoDescription = pango_font_description_from_string(fontName.utf8().data());
+    PangoFontDescription* pangoDescription = pango_font_description_from_string(fontName.utf8().legacyCStringPointer());
     if (!pangoDescription)
         return;
 

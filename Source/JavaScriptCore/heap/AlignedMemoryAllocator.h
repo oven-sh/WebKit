@@ -25,14 +25,13 @@
 
 #pragma once
 
+#include <JavaScriptCore/MarkedBlock.h>
+#include <wtf/Lock.h>
 #include <wtf/PrintStream.h>
-#include <wtf/SinglyLinkedListWithTail.h>
 
 namespace JSC {
 
 class BlockDirectory;
-class Heap;
-class Subspace;
 
 class AlignedMemoryAllocator {
     WTF_MAKE_NONCOPYABLE(AlignedMemoryAllocator);
@@ -48,10 +47,9 @@ public:
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.
     virtual void dump(PrintStream&) const { }
 
-    void registerDirectory(Heap&, BlockDirectory*);
-    BlockDirectory* firstDirectory() const LIFETIME_BOUND { return m_directories.first(); }
+    void addDirectoryWithEmptyBlocks(BlockDirectory*);
 
-    void registerSubspace(Subspace*);
+    MarkedBlock::Handle* findEmptyBlockToSteal();
 
     // Some of derived memory allocators do not have these features because they do not use them.
     // For example, IsoAlignedMemoryAllocator does not have "realloc" feature since it never extends / shrinks the allocated memory region.
@@ -60,9 +58,11 @@ public:
     virtual void* tryReallocateMemory(void*, size_t) = 0;
 
 private:
-    SinglyLinkedListWithTail<BlockDirectory> m_directories;
-    SinglyLinkedListWithTail<Subspace> m_subspaces;
+    BlockDirectory* takeDirectoryWithEmptyBlocks();
+
+    Lock m_directoriesWithEmptyBlocksLock;
+    BlockDirectory* m_firstDirectoryWithEmptyBlocks WTF_GUARDED_BY_LOCK(m_directoriesWithEmptyBlocksLock) { nullptr };
 };
 
-} // namespace WTF
+} // namespace JSC
 

@@ -101,6 +101,8 @@
 
 #import "AppKitSoftLink.h"
 
+#if HAVE(UIKIT_PRINTING)
+
 @interface _WKPrintFormattingAttributes : NSObject
 @property (nonatomic, readonly) size_t pageCount;
 @property (nonatomic, readonly) Markable<WebCore::FrameIdentifier> frameID;
@@ -127,6 +129,8 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     _WKPrintRenderingCallbackTypePreview,
     _WKPrintRenderingCallbackTypePrint,
 };
+
+#endif // HAVE(UIKIT_PRINTING)
 
 @interface WKInspectorIndicationView : UIView
 @end
@@ -239,10 +243,12 @@ typedef NS_ENUM(NSInteger, _WKPrintRenderingCallbackType) {
     RetainPtr<WKNSUndoManager> _undoManager;
     RetainPtr<WKNSKeyEventSimulatorUndoManager> _undoManagerForSimulatingKeyEvents;
 
+#if HAVE(UIKIT_PRINTING)
     Lock _pendingBackgroundPrintFormattersLock;
     RetainPtr<NSMutableSet> _pendingBackgroundPrintFormatters;
     Markable<IPC::Connection::AsyncReplyID> _printRenderingCallbackID;
     _WKPrintRenderingCallbackType _printRenderingCallbackType;
+#endif
 
     Vector<RetainPtr<NSURL>> _temporaryURLsToDeleteWhenDeallocated;
 }
@@ -835,6 +841,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     _webView = nil;
 }
 
+#if HAVE(UIKIT_PRINTING)
 - (void)_resetPrintingState
 {
     _printRenderingCallbackID = std::nullopt;
@@ -844,6 +851,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
         [printFormatter _invalidatePrintRenderingState];
     [_pendingBackgroundPrintFormatters removeAllObjects];
 }
+#endif
 
 #pragma mark PageClientImpl methods
 
@@ -864,7 +872,9 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     [self _removeVisibilityPropagationViewForWebProcess];
 #endif
 
+#if HAVE(UIKIT_PRINTING)
     [self _resetPrintingState];
+#endif
 }
 
 #if ENABLE(GPU_PROCESS)
@@ -1168,6 +1178,8 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
 #pragma mark Printing
 
+#if HAVE(UIKIT_PRINTING)
+
 @interface WKContentView (_WKWebViewPrintFormatter) <_WKWebViewPrintProvider>
 @end
 
@@ -1438,5 +1450,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 }
 
 @end
+
+#endif // HAVE(UIKIT_PRINTING)
 
 #endif // PLATFORM(IOS_FAMILY)

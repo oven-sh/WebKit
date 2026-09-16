@@ -473,8 +473,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #endif
     , m_corsDisablingPatterns(WTF::move(pageConfiguration.corsDisablingPatterns))
     , m_maskedURLSchemes(WTF::move(pageConfiguration.maskedURLSchemes))
-    , m_allowedNetworkHosts(WTF::move(pageConfiguration.allowedNetworkHosts))
-    , m_loadsSubresources(pageConfiguration.loadsSubresources)
+    , m_networkLoadPolicy { pageConfiguration.loadsSubresources, WTF::move(pageConfiguration.allowedNetworkHosts) }
     , m_shouldRelaxThirdPartyCookieBlocking(pageConfiguration.shouldRelaxThirdPartyCookieBlocking)
     , m_fixedContainerEdgesAndElements(std::make_pair(makeUniqueRef<FixedContainerEdges>(), WeakElementEdges { }))
     , m_httpsUpgradeEnabled(pageConfiguration.httpsUpgradeEnabled)
@@ -497,7 +496,6 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #if ENABLE(WRITING_TOOLS_TEXT_EFFECTS)
     , m_textEffectController(makeUniqueRef<TextEffectController>(*this))
 #endif
-    , m_activeNowPlayingSessionUpdateTimer(*this, &Page::updateActiveNowPlayingSessionNow)
     , m_topDocumentSyncData(DocumentSyncData::create())
 #if HAVE(AUDIT_TOKEN)
     , m_presentingApplicationAuditToken(WTF::move(pageConfiguration.presentingApplicationAuditToken))
@@ -2261,28 +2259,11 @@ unsigned NODELETE Page::renderingUpdateCount() const
     return m_renderingUpdateCount;
 }
 
-bool Page::hasRemoteFrames() const
-{
-    ASSERT_IMPLIES(mainFrame().tree().containsRemoteFrame(), m_remoteFrameCount);
-    return !!m_remoteFrameCount;
-}
-
 void Page::syncLocalFrameInfoToRemote()
 {
-    ASSERT(hasRemoteFrames());
+    ASSERT(mainFrame().tree().containsRemoteFrame());
 
-    // Memoize FrameTree::containsRemoteFrame for the entire frame tree.
-    HashSet<FrameIdentifier> subtreeContainsRemoteFrame;
-    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        if (!is<RemoteFrame>(*frame))
-            continue;
-        for (RefPtr ancestor = frame; ancestor; ancestor = ancestor->tree().parent()) {
-            if (!subtreeContainsRemoteFrame.add(ancestor->frameID()).isNewEntry)
-                break;
-        }
-    }
-
-    forEachLocalFrame([&] (LocalFrame& frame) {
+    forEachLocalFrame([] (LocalFrame& frame) {
         RefPtr<LocalFrameView> frameView = frame.view();
 
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
@@ -2300,11 +2281,8 @@ void Page::syncLocalFrameInfoToRemote()
 #endif
 
         for (RefPtr child = frame.tree().firstChild(); child; child = child->tree().nextSibling()) {
-            if (!subtreeContainsRemoteFrame.contains(child->frameID())) {
-                ASSERT(!child->tree().containsRemoteFrame());
+            if (!child->tree().containsRemoteFrame())
                 continue;
-            }
-            ASSERT(child->tree().containsRemoteFrame());
 
             auto absoluteToChildFrameOwnerLocalTransform = frameView->absoluteToChildFrameOwnerLocalTransform(*child);
             auto contentBoxLocation = frameView->childFrameOwnerContentBoxLocation(*child);
@@ -2526,6 +2504,7 @@ void Page::updateRendering()
     runProcessingStep(RenderingUpdateStep::SnapshottedScrollOffsets, [&] (Document& document) {
         if (CheckedPtr renderView = document.renderView())
             Style::AnchorPositionEvaluator::updateScrollAdjustments(*renderView);
+        document.styleScope().updateScrollStateSnapshots();
     });
 
     for (auto& document : initialDocuments) {
@@ -2671,7 +2650,7 @@ void Page::doAfterUpdateRendering()
 
     computeSampledPageTopColorIfNecessary();
 
-    if (hasRemoteFrames())
+    if (mainFrame().tree().containsRemoteFrame())
         syncLocalFrameInfoToRemote();
 }
 
@@ -4698,8 +4677,6 @@ void Page::didChangeMainDocument(Document* newDocument)
 #endif
 
     m_elementTargetingController->didChangeMainDocument(newDocument);
-
-    updateActiveNowPlayingSessionNow();
 }
 
 RenderingUpdateScheduler& Page::renderingUpdateScheduler()
@@ -4846,13 +4823,7 @@ void Page::forEachWindowEventLoop(NOESCAPE const Function<void(WindowEventLoop&)
 
 bool Page::allowsLoadFromURL(const URL& url, MainFrameMainResource mainFrameMainResource) const
 {
-    if (mainFrameMainResource == MainFrameMainResource::No && !m_loadsSubresources)
-        return false;
-    if (!m_allowedNetworkHosts)
-        return true;
-    if (!url.protocolIsInHTTPFamily() && !url.protocolIs("ws"_s) && !url.protocolIs("wss"_s))
-        return true;
-    return m_allowedNetworkHosts->contains<StringViewHashTranslator>(url.host());
+    return m_networkLoadPolicy.allowsLoadFromURL(url, mainFrameMainResource);
 }
 
 bool Page::hasLocalDataForURL(const URL& url)
@@ -5958,29 +5929,6 @@ void Page::intelligenceTextAnimationsDidComplete()
     m_writingToolsController->intelligenceTextAnimationsDidComplete();
 }
 #endif
-
-void Page::hasActiveNowPlayingSessionChanged()
-{
-    if (!m_activeNowPlayingSessionUpdateTimer.isActive())
-        m_activeNowPlayingSessionUpdateTimer.startOneShot(0_s);
-}
-
-void Page::updateActiveNowPlayingSessionNow()
-{
-    if (m_activeNowPlayingSessionUpdateTimer.isActive())
-        m_activeNowPlayingSessionUpdateTimer.stop();
-
-    RefPtr manager = mediaSessionManagerIfExists();
-    if (!manager)
-        return;
-
-    bool hasActiveNowPlayingSession = manager->hasActiveNowPlayingSessionInGroup(mediaSessionGroupIdentifier());
-    if (hasActiveNowPlayingSession == m_hasActiveNowPlayingSession)
-        return;
-
-    m_hasActiveNowPlayingSession = hasActiveNowPlayingSession;
-    chrome().client().hasActiveNowPlayingSessionChanged(hasActiveNowPlayingSession);
-}
 
 void Page::setLastAuthentication(LoginStatus::AuthenticationType authType)
 {

@@ -28,6 +28,7 @@
 
 #include "StyleKeyword+Mappings.h"
 #include <wtf/text/TextStream.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 
@@ -53,6 +54,17 @@ CSSBoxType transformBoxToCSSBoxType(TransformBox transformBox)
         ASSERT_NOT_REACHED();
         return CSSBoxType::BorderBox;
     }
+}
+
+String fallbackText(SynthesizedGlyph glyph)
+{
+    switch (glyph) {
+    case SynthesizedGlyph::PickerUp:
+        return String::fromCodePoint(upArrowhead);
+    case SynthesizedGlyph::PickerDown:
+        return String::fromCodePoint(downArrowhead);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 TextStream& operator<<(TextStream& ts, AnimationDirection direction)
@@ -939,6 +951,15 @@ TextStream& operator<<(TextStream& ts, QuoteType quoteType)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, SynthesizedGlyph glyph)
+{
+    switch (glyph) {
+    case SynthesizedGlyph::PickerUp: ts << "picker-up"_s; break;
+    case SynthesizedGlyph::PickerDown: ts << "picker-down"_s; break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, ReflectionDirection direction)
 {
     switch (direction) {
@@ -1055,6 +1076,15 @@ TextStream& operator<<(TextStream& ts, PortalActionType portalAction)
     switch (portalAction) {
     case PortalActionType::None: ts << "None"_s; break;
     case PortalActionType::Orbit: ts << "Orbit"_s; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, PositionContextType positionContext)
+{
+    switch (positionContext) {
+    case PositionContextType::Container: ts << "Container"_s; break;
+    case PositionContextType::Anchor: ts << "Anchor"_s; break;
     }
     return ts;
 }

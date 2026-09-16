@@ -145,7 +145,12 @@ void QueryHandler::handleRegisterInfo(StringView packet)
     // WebAssembly Context: WASM only exposes PC register for debugging
     // Other registers are internal to the WASM runtime and not accessible
     StringView regNumStr = packet.substring(strlen("qRegisterInfo"));
-    int regNum = static_cast<int>(parseHex(regNumStr));
+    auto parsedRegNum = parseHexStrict(regNumStr);
+    if (!parsedRegNum) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidRegister);
+        return;
+    }
+    int regNum = static_cast<int>(*parsedRegNum);
 
     if (!regNum) {
         // PC register definition for WebAssembly debugging
@@ -178,8 +183,13 @@ bool QueryHandler::parseLibrariesReadPacket(StringView packet, size_t& offset, s
     if (parts.size() != 2)
         return false;
 
-    offset = parseHex(parts[0]);
-    maxSize = parseHex(parts[1]);
+    auto parsedOffset = parseHexStrict(parts[0]);
+    auto parsedMaxSize = parseHexStrict(parts[1]);
+    if (!parsedOffset || !parsedMaxSize)
+        return false;
+
+    offset = *parsedOffset;
+    maxSize = *parsedMaxSize;
     return true;
 }
 
@@ -288,9 +298,9 @@ void QueryHandler::handleLibrariesRead(StringView packet)
     if (handleChunkedLibrariesResponse(offset, maxSize, response)) {
         dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] Sending library list chunk: offset=", offset, ", maxSize=", maxSize);
         m_debugServer.sendReply(response);
-        // Only mark modules notified and signal debugger-ready on the final chunk ('l' prefix).
+        // The list is only complete on the final chunk ('l' prefix); mark it sent there.
         if (response[0] == 'l') {
-            m_debugServer.m_isDebuggerReady.store(true, std::memory_order_release);
+            m_debugServer.m_hasSentLibraryList.store(true, std::memory_order_release);
             m_debugServer.moduleManager().notifyLibraryRequeryComplete();
         }
     } else {
@@ -314,10 +324,14 @@ void QueryHandler::handleWasmCallStack(StringView packet)
     }
 
     StringView threadIdStr = strings[1];
-    uint64_t requestedThreadId = parseHex(threadIdStr);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack thread ID: ", requestedThreadId);
+    auto requestedThreadId = parseHexStrict(threadIdStr);
+    if (!requestedThreadId) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack thread ID: ", *requestedThreadId);
 
-    String response = m_debugServer.execution().callStackStringFor(requestedThreadId);
+    String response = m_debugServer.execution().callStackStringFor(*requestedThreadId);
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmCallStack response: ", response);
 
     if (response.isEmpty()) {
@@ -395,7 +409,7 @@ void QueryHandler::handleWasmLocal(StringView packet)
 
     auto functionIndex = localCallee->functionIndex();
     const auto& moduleInfo = instance->module().moduleInformation();
-    const Vector<Type>& localTypes = moduleInfo.debugInfo->ensureFunctionDebugInfo(functionIndex).locals;
+    const Vector<Type>& localTypes = moduleInfo.ensureFunctionDebugInfo(functionIndex).locals;
 
     if (localIndex >= localTypes.size()) {
         m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
@@ -428,19 +442,6 @@ void QueryHandler::handleWasmLocal(StringView packet)
         break;
     }
     m_debugServer.sendReply(response);
-}
-
-// LLDB identifies an instance by the module id encoded in bits 61:32 of a Wasm address, so an
-// `instance:<id>` field names a module here.
-// FIXME: A module with several live instances has several sets of globals. Only a module the
-// debuggee is stopped in, or one with a single live instance, resolves to one of them.
-JSWebAssemblyInstance* QueryHandler::instanceForModule(uint32_t moduleId)
-{
-    auto& stopData = m_debugServer.execution().debuggeeStateForTest()->stopData;
-    if (stopData && stopData->instance->module().debugId() == moduleId)
-        return stopData->instance;
-
-    return m_debugServer.moduleManager().soleInstanceOfModule(moduleId);
 }
 
 JSWebAssemblyInstance* QueryHandler::instanceForFrame(uint32_t frameIndex)
@@ -495,7 +496,7 @@ void QueryHandler::handleWasmGlobal(StringView packet)
 
     dataLogLnIf(Options::verboseWasmDebugger(), "[Debugger] qWasmGlobal ", namesInstance ? "instance="_s : "frame="_s, *instanceOrFrameIndex, ", global=", *globalIndex);
 
-    auto* instance = namesInstance ? instanceForModule(*instanceOrFrameIndex) : instanceForFrame(*instanceOrFrameIndex);
+    auto* instance = namesInstance ? m_debugServer.moduleManager().jsInstance(*instanceOrFrameIndex) : instanceForFrame(*instanceOrFrameIndex);
     if (!instance) {
         m_debugServer.sendErrorReply(ProtocolError::UnknownCommand);
         return;

@@ -42,8 +42,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "WasmOps.h"
 #include "WasmVirtualAddress.h"
 #include <cstring>
+#include <wtf/ASCIICType.h>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
+#include <wtf/RawHex.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Vector.h>
@@ -52,15 +54,16 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 namespace Wasm {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Breakpoint);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(DebugState);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(StopData);
 
 String stringToHex(StringView str)
 {
     StringBuilder result;
-    CString utf8 = str.utf8();
-    for (size_t i = 0; i < utf8.length(); ++i)
-        result.append(hex(static_cast<uint8_t>(utf8.data()[i]), 2, Lowercase));
+    auto utf8 = str.utf8();
+    for (auto c : utf8.span())
+        result.append(hex(byteCast<uint8_t>(c), 2, Lowercase));
     return result.toString();
 }
 
@@ -94,12 +97,13 @@ void logWasmLocalValue(size_t index, const JSC::IPInt::IPIntLocal& local, const 
     }
 }
 
-uint64_t parseHex(StringView str, uint64_t defaultValue)
+std::optional<uint64_t> parseHexStrict(StringView str)
 {
-    if (str.isEmpty())
-        return defaultValue;
-    auto result = parseInteger<uint64_t>(str, 16);
-    return result.value_or(defaultValue);
+    // An RSP hex field is hex digits only; parseInteger() would also take whitespace and a
+    // leading '+', which is the ack character.
+    if (str.isEmpty() || !str.containsOnly<isASCIIHexDigit>())
+        return std::nullopt;
+    return parseInteger<uint64_t>(str, 16);
 }
 
 uint32_t parseDecimal(StringView str, uint32_t defaultValue)
@@ -153,7 +157,7 @@ static const uint8_t* savedWasmToJSPC(CallFrame* wasmToJSFrame)
     return WTF::unalignedLoad<const uint8_t*>(reinterpret_cast<const uint8_t*>(wasmToJSFrame) + Wasm::WasmToJSIPIntReturnPCSlot);
 }
 
-bool getWasmReturnPC(CallFrame* currentFrame, uint8_t*& returnPC, VirtualAddress& virtualReturnPC)
+WasmReturnSite getWasmReturnPC(CallFrame* currentFrame)
 {
     // Safe to use the non-EntryFrame overload: IPInt WASM frames are always entered via a
     // JSToWasm trampoline (a normal CallFrame), never directly from C++, so no EntryFrame
@@ -161,20 +165,17 @@ bool getWasmReturnPC(CallFrame* currentFrame, uint8_t*& returnPC, VirtualAddress
     CallFrame* callerFrame = currentFrame->callerFrame();
 
     if (!callerFrame->callee().isNativeCallee())
-        return false;
+        return { };
 
     RefPtr caller = callerFrame->callee().asNativeCallee();
     if (caller->category() != NativeCallee::Category::Wasm)
-        return false;
+        return { };
 
     RefPtr wasmCaller = uncheckedDowncast<const Wasm::Callee>(caller.get());
     if (wasmCaller->compilationMode() != Wasm::CompilationMode::IPIntMode)
-        return false;
+        return { };
 
-    RefPtr ipintCaller = uncheckedDowncast<const Wasm::IPIntCallee>(wasmCaller.get());
-    returnPC = const_cast<uint8_t*>(savedWasmToWasmPC(currentFrame));
-    virtualReturnPC = VirtualAddress::toVirtual(callerFrame->wasmInstance(), ipintCaller->functionIndex(), returnPC);
-    return true;
+    return { const_cast<uint8_t*>(savedWasmToWasmPC(currentFrame)), callerFrame->wasmInstance() };
 }
 
 
@@ -339,7 +340,7 @@ StopData::StopData(IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFra
 {
 }
 
-StopData::StopData(VirtualAddress address, uint8_t originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack, IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame)
+StopData::StopData(VirtualAddress address, OpType originalBytecode, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack, IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame)
     : address(address)
     , originalBytecode(originalBytecode)
     , pc(pc)
@@ -352,7 +353,7 @@ StopData::StopData(VirtualAddress address, uint8_t originalBytecode, uint8_t* pc
 }
 
 StopData::StopData(IPIntCallee* callee, JSWebAssemblyInstance* instance, CallFrame* callFrame, uint8_t* pc, uint8_t* mc, IPInt::IPIntStackEntry* stack, Wasm::ExceptionType type)
-    : StopData(VirtualAddress::toVirtual(instance, callee->functionIndex(), pc), 0, pc, mc, stack, callee, instance, callFrame)
+    : StopData(VirtualAddress::toVirtual(instance, callee->functionIndex(), pc), OpType::Unreachable, pc, mc, stack, callee, instance, callFrame)
 {
     wasmTrapType = type;
 }
@@ -362,7 +363,7 @@ StopData::~StopData() = default;
 void StopData::dump(PrintStream& out) const
 {
     out.print("StopData(address:", address);
-    out.print(", originalBytecode:", originalBytecode);
+    out.print(", originalBytecode:", RawHex(static_cast<unsigned>(originalBytecode)));
     out.print(", pc:", RawPointer(pc));
     out.print(", mc:", RawPointer(mc));
     out.print(", stack:", RawPointer(stack));

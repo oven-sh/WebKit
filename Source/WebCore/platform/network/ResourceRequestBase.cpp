@@ -213,7 +213,8 @@ bool ResourceRequestBase::upgradeInsecureRequestIfNeeded(URL& url, ShouldUpgrade
         return false;
 
     // Do not automatically upgrade localhost or IP address connections unless the CSP policy requires it.
-    bool isHostLocalhostOrIPaddress = SecurityOrigin::isLocalhostAddress(url.host()) || URL::hostIsIPAddress(url.host());
+    auto host = url.host();
+    bool isHostLocalhostOrIPaddress = SecurityOrigin::isLocalhostAddress(host) || URL::hostIsIPAddress(host);
     if (isHostLocalhostOrIPaddress && shouldUpgradeLocalhostAndIPAddress == ShouldUpgradeLocalhostAndIPAddress::No)
         return false;
 

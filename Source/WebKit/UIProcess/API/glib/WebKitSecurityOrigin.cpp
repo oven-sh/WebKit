@@ -98,7 +98,7 @@ WebKitSecurityOrigin* webkit_security_origin_new(const gchar* protocol, const gc
  * webkit_security_origin_new_for_uri:
  * @uri: The URI for the new origin
  *
- * Create a new security origin from the provided.
+ * Create a new security origin from the provided URI.
  *
  * Create a new security origin from the provided URI. Components of
  * @uri other than protocol, host, and port do not affect the created
@@ -270,6 +270,6 @@ gchar* webkit_security_origin_to_string(WebKitSecurityOrigin* origin)
 {
     g_return_val_if_fail(origin, nullptr);
 
-    CString cstring = origin->securityOriginData.toString().utf8();
-    return cstring == "null"_s || cstring == ""_s ? nullptr : g_strdup (cstring.data());
+    auto cstring = origin->securityOriginData.toString().utf8();
+    return cstring == "null"_s || cstring == ""_s ? nullptr : g_strdup (cstring.legacyCStringPointer());
 }

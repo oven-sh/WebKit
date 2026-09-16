@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CompleteSubspace.h"
 
-#include "AlignedMemoryAllocator.h"
 #include "AllocatorInlines.h"
 #include "JSCellInlines.h"
 #include "LocalAllocatorInlines.h"
@@ -70,7 +69,7 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
         return allocator;
 
     if (false)
-        dataLog("Creating BlockDirectory/LocalAllocator for ", m_name, ", ", attributes(), ", ", sizeClass, ".\n");
+        dataLog("Creating BlockDirectory/LocalAllocator for ", name(), ", ", attributes(), ", ", sizeClass, ".\n");
     
     std::unique_ptr<BlockDirectory> uniqueDirectory = makeUnique<BlockDirectory>(sizeClass);
     BlockDirectory* directory = uniqueDirectory.get();
@@ -98,7 +97,6 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
     }
     
     directory->setNextDirectoryInSubspace(m_firstDirectory);
-    m_alignedMemoryAllocator->registerDirectory(m_space.heap(), directory);
     WTF::storeStoreFence();
     m_firstDirectory = directory;
     return allocator;

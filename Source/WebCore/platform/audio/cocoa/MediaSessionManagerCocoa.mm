@@ -33,7 +33,6 @@
 #import "ImageAdapter.h"
 #import "Logging.h"
 #import "MediaPlayer.h"
-#import "MediaSessionManagerClient.h"
 #import "MediaStrategy.h"
 #import "NowPlayingInfo.h"
 #import "Page.h"
@@ -303,10 +302,8 @@ void MediaSessionManagerCocoa::removeSession(PlatformMediaSessionInterface& sess
 {
     PlatformMediaSessionManager::removeSession(session);
 
-    if (session.isActiveNowPlayingSession()) {
+    if (session.isActiveNowPlayingSession())
         session.setActiveNowPlayingSession(false);
-        client().hasActiveNowPlayingSessionChanged(&session);
-    }
 
     if (hasNoSession()) {
         if (m_nowPlayingManager)
@@ -415,7 +412,7 @@ void MediaSessionManagerCocoa::clearNowPlayingInfo()
 #endif
         });
     } @catch (NSException *exception) {
-        WTFLogAlways("MediaSessionManagerCocoa::clearNowPlayingInfo swallowed exception: %s", [[exception description] UTF8String]);
+        SAFE_WTFLOGALWAYS("MediaSessionManagerCocoa::clearNowPlayingInfo swallowed exception: %@", [exception description]);
     }
 
 #if USE(NOW_PLAYING_ACTIVITY_SUPPRESSION)
@@ -496,7 +493,7 @@ void MediaSessionManagerCocoa::setNowPlayingInfo(bool setAsNowPlayingApplication
         MRMediaRemoteSetNowPlayingVisibility(MRMediaRemoteGetLocalOrigin(), visibility);
     }
     } @catch (NSException *exception) {
-        WTFLogAlways("MediaSessionManagerCocoa::setNowPlayingInfo swallowed exception: %s", [[exception description] UTF8String]);
+        SAFE_WTFLOGALWAYS("MediaSessionManagerCocoa::setNowPlayingInfo swallowed exception: %@", [exception description]);
     }
 }
 
@@ -524,9 +521,8 @@ void MediaSessionManagerCocoa::updateActiveNowPlayingSession(RefPtr<PlatformMedi
     }
 }
 
-void MediaSessionManagerCocoa::activeNowPlayingSessionChanged(PlatformMediaSessionInterface* session)
+void MediaSessionManagerCocoa::activeNowPlayingSessionChanged(PlatformMediaSessionInterface*)
 {
-    client().hasActiveNowPlayingSessionChanged(session);
 }
 
 bool MediaSessionManagerCocoa::shouldUpdateNowPlaying(const NowPlayingInfo& nowPlayingInfo)
@@ -761,9 +757,10 @@ void MediaSessionManagerCocoa::updateNowPlayingInfo()
 
 void MediaSessionManagerCocoa::audioOutputDeviceChanged()
 {
-    if (!m_audioHardwareListener)
+    RefPtr audioHardwareListener = m_audioHardwareListener;
+    if (!audioHardwareListener)
         return;
-    m_supportedAudioHardwareBufferSizes = m_audioHardwareListener->supportedBufferSizes();
+    m_supportedAudioHardwareBufferSizes = audioHardwareListener->supportedBufferSizes();
     m_defaultBufferSize = AudioSession::singleton().preferredBufferSize();
     AudioSession::singleton().audioOutputDeviceChanged();
     updateSessionState();

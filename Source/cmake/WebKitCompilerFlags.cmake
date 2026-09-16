@@ -163,13 +163,8 @@ option(ENABLE_UNSAFE_BUFFER_USAGE_WARNING "Build with -Wunsafe-buffer-usage" OFF
 
 option(ENABLE_THREAD_SAFETY_WARNING "Build with -Wthread-safety" OFF)
 
-option(DEVELOPER_MODE_FATAL_WARNINGS "Build with warnings as errors if DEVELOPER_MODE is also enabled" ON)
-if (DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
-    if (MSVC)
-        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(/WX)
-    elseif (COMPILER_IS_GCC_OR_CLANG)
-        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Werror)
-    endif ()
+if (DEVELOPER_MODE AND NOT DEFINED CMAKE_COMPILE_WARNING_AS_ERROR AND NOT CMAKE_SYSTEM_NAME MATCHES "Windows")
+    set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
 endif ()
 
 if (DEVELOPER_MODE OR ARM)
@@ -196,6 +191,9 @@ if (COMPILER_IS_GCC_OR_CLANG)
     # -Wstrict-aliasing warnings when building with GCC.
     # https://webkit.org/b/317542
     WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-fno-strict-aliasing)
+
+    # Make signed integer overflow two's compliment rather than UB.
+    WEBKIT_APPEND_GLOBAL_COMPILER_FLAGS(-fwrapv)
 
     # clang-cl.exe impersonates cl.exe so some clang arguments like -fno-rtti are
     # represented using cl.exe's options and should not be passed as flags, so
@@ -448,6 +446,11 @@ if (COMPILER_IS_GCC_OR_CLANG)
                 elseif (CMAKE_COMPILER_IS_GNUCXX)
                     add_compile_options(--param=asan-use-after-return=0)
                 endif ()
+                # C++ compilers already predefine __SANITIZE_ADDRESS__ under
+                # -fsanitize=address; define it explicitly so it also reaches
+                # Swift's clang importer.
+                # FIXME: Consider passing -sanitize=address to swift.
+                webkit_add_compile_definitions(__SANITIZE_ADDRESS__)
             elseif (${SANITIZER} MATCHES "undefined")
                 # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
@@ -462,6 +465,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
                 add_compile_options("${_cc_sanitize}=thread")
                 add_link_options("${_ld_sanitize}=thread")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=thread")
+                webkit_add_compile_definitions(__SANITIZE_THREAD__)
 
             elseif (${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC)
                 add_compile_options("${_cc_sanitize}=memory")

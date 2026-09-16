@@ -78,7 +78,7 @@ webrtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::create
     networkManager->setEnumeratingAllNetworkInterfacesEnabled(isEnumeratingAllNetworkInterfacesEnabled());
     networkManager->setEnumeratingVisibleNetworkInterfacesEnabled(isEnumeratingVisibleNetworkInterfacesEnabled());
 
-    return WebCore::LibWebRTCProvider::createPeerConnection(observer, *networkManager, *socketFactory, WTF::move(configuration), makeUnique<LibWebRTCDnsResolverFactory>());
+    return WebCore::LibWebRTCProvider::createPeerConnection(observer, *networkManager, *socketFactory, WTF::move(configuration), makeUnique<LibWebRTCDnsResolverFactory>(identifier));
 }
 
 void LibWebRTCProvider::disableNonLocalhostConnections()
@@ -158,7 +158,7 @@ std::unique_ptr<webrtc::AsyncPacketSocket> RTCSocketFactory::CreateClientTcpSock
 
 std::unique_ptr<webrtc::AsyncDnsResolverInterface> RTCSocketFactory::CreateAsyncDnsResolver()
 {
-    return protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver();
+    return protect(WebProcess::singleton().libWebRTCNetwork().socketFactory())->createAsyncDnsResolver(m_contextIdentifier);
 }
 
 void RTCSocketFactory::suspend()

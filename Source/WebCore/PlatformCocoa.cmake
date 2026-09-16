@@ -150,9 +150,7 @@ if (ACCESSIBILITYSUPPORT_LIBRARY)
     list(APPEND WebCore_LIBRARIES ${ACCESSIBILITYSUPPORT_LIBRARY})
 endif ()
 
-if (USE_LIBWEBRTC)
-    list(APPEND WebCore_PRIVATE_LIBRARIES webrtc opus vpx webm yuv libsrtp webrtc_objc_categories)
-else ()
+if (NOT USE_LIBWEBRTC)
     set(_webm_parser_dir "${CMAKE_SOURCE_DIR}/Source/ThirdParty/libwebrtc/Source/third_party/libwebm/webm_parser")
     file(GLOB _webm_parser_srcs "${_webm_parser_dir}/src/*.cc")
     add_library(WebMParser OBJECT ${_webm_parser_srcs})
@@ -1674,6 +1672,12 @@ WEBKIT_COPY_FILES(WebCore_CopyBundleResources
     FILES ${WebCore_BUNDLE_RESOURCES}
     FLATTENED NO_SYMLINK)
 add_dependencies(WebCore WebCore_CopyBundleResources)
+
+WEBKIT_COPY_FILES(WebCore_CopyAudioResources
+    DESTINATION "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/Versions/A/Resources/audio"
+    FILES ${WEBCORE_DIR}/platform/audio/resources/Composite.wav
+    FLATTENED NO_SYMLINK)
+add_dependencies(WebCore WebCore_CopyAudioResources)
 
 # Stage the in-tree WebCore_Private module map into the framework bundle so the
 # Swift Clang importer finds it as a real module via -F (as JavaScriptCore does,

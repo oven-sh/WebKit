@@ -37,4 +37,11 @@ if (ENABLE_WEBKIT_TEST_RUNNER AND ENABLE_WEBKIT)
     )
 endif ()
 
+# Exercises the lldb summary providers and dump_class_layout (Tools/Scripts/test-lldb-webkit).
+# Only needs WTF, so it is not gated on ENABLE_WEBKIT.
+option(ENABLE_LLDB_WEBKIT_TESTER "Build lldbWebKitTester for the Tools/lldb tests" ON)
+if (ENABLE_LLDB_WEBKIT_TESTER)
+    add_subdirectory(lldb/lldbWebKitTester)
+endif ()
+
 endif ()

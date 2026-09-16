@@ -302,7 +302,7 @@ std::unique_ptr<AcceleratedSurface::RenderTarget> AcceleratedSurface::RenderTarg
     }
 
     if (!bo) {
-        WTFLogAlways("Failed to create GBM buffer of size %dx%d: %s", size.width(), size.height(), safeStrerror(errno).data());
+        SAFE_WTFLOGALWAYS("Failed to create GBM buffer of size %dx%d: %s", size.width(), size.height(), safeStrerror(errno));
         return nullptr;
     }
 

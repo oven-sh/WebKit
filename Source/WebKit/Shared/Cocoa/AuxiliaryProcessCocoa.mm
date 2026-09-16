@@ -167,7 +167,7 @@ static void registerLogClient(bool isDebugLoggingEnabled, std::unique_ptr<LogCli
             auto logString = spanConstCast<char>(unsafeSpan(messageString.get()));
             if (logString.size() >= logStringMaxSize)
                 logString = logString.first(logStringMaxSize - 1);
-            WebCore::logClient()->log(byteCast<uint8_t>(logChannel), byteCast<uint8_t>(logCategory), byteCast<uint8_t>(logString), type);
+            WebCore::logClient()->log(byteCast<char8_t>(logChannel), byteCast<char8_t>(logCategory), byteCast<char8_t>(logString), type);
         }
     }).get());
 
@@ -264,7 +264,7 @@ void AuxiliaryProcess::platformInitialize(const AuxiliaryProcessInitializationPa
 void AuxiliaryProcess::didReceiveInvalidMessage(IPC::Connection&, IPC::MessageName messageName, const Vector<uint32_t>& indicesOfObjectsFailingDecoding)
 {
     auto errorMessage = makeString("Received invalid message: '"_s, description(messageName), "' ("_s, messageName, ')');
-    logAndSetCrashLogMessage(errorMessage.utf8().data());
+    logAndSetCrashLogMessage(errorMessage.utf8().legacyCStringPointer());
 
     ASSERT(indicesOfObjectsFailingDecoding.size() <= 6);
     auto index = [&](size_t i) -> int32_t {

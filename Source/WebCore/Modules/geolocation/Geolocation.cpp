@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008, 2009, 2010, 2011 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile, Inc.
  * Copyright 2010, The Android Open Source Project
  *
@@ -88,11 +88,7 @@ static Ref<GeolocationPositionError> createGeolocationPositionError(GeolocationE
 bool Geolocation::Watchers::add(int id, Ref<GeoNotifier>&& notifier)
 {
     ASSERT(id > 0);
-
-    if (!m_idToNotifierMap.add(id, notifier).isNewEntry)
-        return false;
-    m_notifierToIdMap.set(WTF::move(notifier), id);
-    return true;
+    return m_idToNotifierMap.add(id, WTF::move(notifier)).isNewEntry;
 }
 
 GeoNotifier* Geolocation::Watchers::find(int id)
@@ -104,25 +100,28 @@ GeoNotifier* Geolocation::Watchers::find(int id)
 void Geolocation::Watchers::remove(int id)
 {
     ASSERT(id > 0);
-    if (RefPtr notifier = m_idToNotifierMap.take(id))
-        m_notifierToIdMap.remove(notifier.get());
+    m_idToNotifierMap.remove(id);
 }
 
 void Geolocation::Watchers::remove(GeoNotifier* notifier)
 {
-    if (auto identifier = m_notifierToIdMap.take(notifier))
-        m_idToNotifierMap.remove(identifier);
+    m_idToNotifierMap.removeIf([&](auto& entry) {
+        return entry.value.ptr() == notifier;
+    });
 }
 
 bool Geolocation::Watchers::contains(GeoNotifier* notifier) const
 {
-    return m_notifierToIdMap.contains(notifier);
+    for (auto& candidate : m_idToNotifierMap.values()) {
+        if (candidate.ptr() == notifier)
+            return true;
+    }
+    return false;
 }
 
 void Geolocation::Watchers::clear()
 {
     m_idToNotifierMap.clear();
-    m_notifierToIdMap.clear();
 }
 
 bool Geolocation::Watchers::isEmpty() const

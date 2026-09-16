@@ -33,7 +33,7 @@ bool HTTPServer::listen(const std::optional<String>& host, unsigned port)
 {
     auto& endpoint = RemoteInspectorSocketEndpoint::singleton();
 
-    if (auto id = endpoint.listenInet(host ? host.value().utf8().data() : "", port, *this)) {
+    if (auto id = endpoint.listenInet(host ? host.value().utf8().legacyCStringPointer() : "", port, *this)) {
         m_server = id;
         return true;
     }

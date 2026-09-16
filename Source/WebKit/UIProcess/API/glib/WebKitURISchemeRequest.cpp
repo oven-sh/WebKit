@@ -180,7 +180,7 @@ const gchar* webkit_uri_scheme_request_get_http_method(WebKitURISchemeRequest* r
     g_return_val_if_fail(WEBKIT_IS_URI_SCHEME_REQUEST(request), nullptr);
 
     if (!request->priv->httpMethod)
-        request->priv->httpMethod = g_intern_string(request->priv->task->request().httpMethod().utf8().data());
+        request->priv->httpMethod = g_intern_string(request->priv->task->request().httpMethod().utf8().legacyCStringPointer());
 
     return request->priv->httpMethod;
 }
@@ -213,7 +213,7 @@ SoupMessageHeaders* webkit_uri_scheme_request_get_http_headers(WebKitURISchemeRe
  *
  * Get the request body.
  *
- * Returns: (transfer full): (nullable): the body of the @request.
+ * Returns: (transfer full) (nullable): the body of the @request.
  *
  * Since: 2.40
  */

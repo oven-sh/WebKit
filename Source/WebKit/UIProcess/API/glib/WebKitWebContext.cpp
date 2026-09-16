@@ -93,15 +93,15 @@ using namespace WebKit;
 /**
  * WebKitWebContext:
  *
- * Manages aspects common to all #WebKitWebView<!-- -->s
+ * Manages aspects common to all #WebKitWebView objects
  *
  * The #WebKitWebContext manages all aspects common to all
- * #WebKitWebView<!-- -->s.
+ * #WebKitWebView objects.
  *
  * You can define the #WebKitCacheModel with
  * webkit_web_context_set_cache_model(), depending on the needs of
  * your application. You can access the #WebKitSecurityManager to specify
- * the behaviour of your application regarding security using
+ * the behavior of your application regarding security using
  * webkit_web_context_get_security_manager().
  *
  * It is also possible to change your preferred language or enable
@@ -319,7 +319,7 @@ void WebKitAutomationClient::requestAutomationSession(const String& sessionIdent
 {
     if (m_webContext->priv->automationSession)
         g_critical("WebKitWebContext already has an active automation session.");
-    m_webContext->priv->automationSession = adoptGRef(webkitAutomationSessionCreate(m_webContext, sessionIdentifier.utf8().data(), capabilities));
+    m_webContext->priv->automationSession = adoptGRef(webkitAutomationSessionCreate(m_webContext, sessionIdentifier.utf8().legacyCStringPointer(), capabilities));
     g_signal_emit(m_webContext, signals[AUTOMATION_STARTED], 0, m_webContext->priv->automationSession.get());
     m_webContext->priv->processPool->setAutomationSession(&webkitAutomationSessionGetSession(m_webContext->priv->automationSession.get()));
 }
@@ -530,7 +530,7 @@ static void webkit_web_context_class_init(WebKitWebContextClass* webContextClass
      *
      * Since: 2.8
      *
-     * Deprecated: 2.10. Use #WebKitWebsiteDataManager:local-storage-directory instead.
+     * Deprecated: 2.10: Use #WebKitWebsiteDataManager:local-storage-directory instead.
      */
     sObjProperties[PROP_LOCAL_STORAGE_DIRECTORY] =
         g_param_spec_string(
@@ -560,7 +560,7 @@ static void webkit_web_context_class_init(WebKitWebContextClass* webContextClass
     /**
      * WebKitWebContext:process-swap-on-cross-site-navigation-enabled:
      *
-     * Whether swap Web processes on cross-site navigations is enabled.
+     * Whether swapping Web processes on cross-site navigations is enabled.
      *
      * When enabled, pages from each security origin will be handled by
      * their own separate Web processes, which are started (and
@@ -583,7 +583,7 @@ static void webkit_web_context_class_init(WebKitWebContextClass* webContextClass
      * Whether to use system appearance for rendering scrollbars.
      *
      * This is enabled by default for backwards compatibility, but it's only
-     * recommened to use when the application includes other widgets to ensure
+     * recommended to use when the application includes other widgets to ensure
      * consistency, or when consistency with other applications is required too.
      *
      * Since: 2.30
@@ -798,7 +798,7 @@ WebKitWebContext* webkit_web_context_new(void)
  * An ephemeral #WebKitWebContext is a context
  * created with an ephemeral #WebKitWebsiteDataManager. This is just a convenient method
  * to create ephemeral contexts without having to create your own #WebKitWebsiteDataManager.
- * All #WebKitWebView<!-- -->s associated with this context will also be ephemeral. Websites will
+ * All #WebKitWebView objects associated with this context will also be ephemeral. Websites will
  * not store any data in the client storage.
  * This is normally used to implement private instances.
  *
@@ -957,7 +957,7 @@ WebKitNetworkSession* webkit_web_context_get_network_session_for_automation(WebK
  * Specifies a usage model for WebViews, which WebKit will use to
  * determine its caching behavior. All web views follow the cache
  * model. This cache model determines the RAM and disk space to use
- * for caching previously viewed content .
+ * for caching previously viewed content.
  *
  * Research indicates that users tend to browse within clusters of
  * documents that hold resources in common, and to revisit previously
@@ -1063,7 +1063,7 @@ void webkit_web_context_clear_cache(WebKitWebContext* context)
  *
  * Since: 2.16
  *
- * Deprecated: 2.32. Use webkit_website_data_manager_set_network_proxy_settings() instead.
+ * Deprecated: 2.32: Use webkit_website_data_manager_set_network_proxy_settings() instead.
  */
 void webkit_web_context_set_network_proxy_settings(WebKitWebContext* context, WebKitNetworkProxyMode proxyMode, WebKitNetworkProxySettings* proxySettings)
 {
@@ -1079,7 +1079,7 @@ void webkit_web_context_set_network_proxy_settings(WebKitWebContext* context, We
  *
  * Requests downloading of the specified URI string.
  *
- * The download operation will not be associated to any #WebKitWebView,
+ * The download operation will not be associated with any #WebKitWebView,
  * if you are interested in starting a download from a particular #WebKitWebView use
  * webkit_web_view_download_uri() instead.
  *
@@ -1273,7 +1273,7 @@ WebKitSecurityManager* webkit_web_context_get_security_manager(WebKitWebContext*
  */
 void webkit_web_context_set_additional_plugins_directory(WebKitWebContext*, const char*)
 {
-    g_warning("webkit_web_context_set_additional_plugins_directory is deprecated and does nothing. Netscape plugins are no longer supported.");
+    g_warning("webkit_web_context_set_additional_plugins_directory() is deprecated and does nothing. Netscape plugins are no longer supported.");
 }
 
 /**
@@ -1294,7 +1294,7 @@ void webkit_web_context_get_plugins(WebKitWebContext* context, GCancellable* can
 {
     g_return_if_fail(WEBKIT_IS_WEB_CONTEXT(context));
 
-    g_warning("webkit_web_context_get_plugins is deprecated and always returns an empty list. Netscape plugins are no longer supported.");
+    g_warning("webkit_web_context_get_plugins() is deprecated and always returns an empty list. Netscape plugins are no longer supported.");
 
     GRefPtr<GTask> task = adoptGRef(g_task_new(context, cancellable, callback, userData));
     g_task_return_pointer(task.get(), nullptr, nullptr);
@@ -1309,7 +1309,7 @@ void webkit_web_context_get_plugins(WebKitWebContext* context, GCancellable* can
  * Finish an asynchronous operation started with webkit_web_context_get_plugins.
  *
  * Returns: (element-type WebKitPlugin) (transfer full): a #GList of #WebKitPlugin. You must free the #GList with
- *    g_list_free() and unref the #WebKitPlugin<!-- -->s with g_object_unref() when you're done with them.
+ *    g_list_free() and unref the #WebKitPlugin objects with g_object_unref() when you're done with them.
  *
  * Deprecated: 2.32
  */
@@ -1332,7 +1332,7 @@ GList* webkit_web_context_get_plugins_finish(WebKitWebContext* context, GAsyncRe
  *
  * Register @scheme in @context.
  *
- * Register @scheme in @context, so that when an URI request with @scheme is made in the
+ * Register @scheme in @context, so that when a URI request with @scheme is made in the
  * #WebKitWebContext, the #WebKitURISchemeRequestCallback registered will be called with a
  * #WebKitURISchemeRequest.
  * It is possible to handle URI scheme requests asynchronously, by calling g_object_ref() on the
@@ -1558,9 +1558,9 @@ void webkit_web_context_set_spell_checking_enabled(WebKitWebContext* context, gb
  * webkit_web_context_get_spell_checking_languages:
  * @context: a #WebKitWebContext
  *
- * Get the the list of spell checking languages.
+ * Get the list of spell checking languages.
  *
- * Get the the list of spell checking languages associated with
+ * Get the list of spell checking languages associated with
  * @context, or %NULL if no languages have been previously set.
  *
  * See webkit_web_context_set_spell_checking_languages() for more
@@ -1581,7 +1581,7 @@ const gchar* const* webkit_web_context_get_spell_checking_languages(WebKitWebCon
     static GRefPtr<GPtrArray> languagesToReturn;
     languagesToReturn = adoptGRef(g_ptr_array_new_with_free_func(g_free));
     for (const auto& language : spellCheckingLanguages)
-        g_ptr_array_add(languagesToReturn.get(), g_strdup(language.utf8().data()));
+        g_ptr_array_add(languagesToReturn.get(), g_strdup(language.utf8().legacyCStringPointer()));
     g_ptr_array_add(languagesToReturn.get(), nullptr);
 
     return reinterpret_cast<char**>(languagesToReturn->pdata);
@@ -1664,7 +1664,7 @@ void webkit_web_context_set_preferred_languages(WebKitWebContext* context, const
  *
  * Set the TLS errors policy of @context as @policy.
  *
- * Deprecated: 2.32. Use webkit_website_data_manager_set_tls_errors_policy() instead.
+ * Deprecated: 2.32: Use webkit_website_data_manager_set_tls_errors_policy() instead.
  */
 void webkit_web_context_set_tls_errors_policy(WebKitWebContext* context, WebKitTLSErrorsPolicy policy)
 {
@@ -1681,7 +1681,7 @@ void webkit_web_context_set_tls_errors_policy(WebKitWebContext* context, WebKitT
  *
  * Returns: a #WebKitTLSErrorsPolicy
  *
- * Deprecated: 2.32. Use webkit_website_data_manager_get_tls_errors_policy() instead.
+ * Deprecated: 2.32: Use webkit_website_data_manager_get_tls_errors_policy() instead.
  */
 WebKitTLSErrorsPolicy webkit_web_context_get_tls_errors_policy(WebKitWebContext* context)
 {
@@ -1731,11 +1731,11 @@ void webkit_web_context_set_web_extensions_initialization_user_data(WebKitWebCon
  * but it doesn't change the value returned by webkit_website_data_manager_get_disk_cache_directory()
  * since the #WebKitWebsiteDataManager is immutable.
  *
- * Deprecated: 2.10. Use webkit_web_context_new_with_website_data_manager() instead.
+ * Deprecated: 2.10: Use webkit_web_context_new_with_website_data_manager() instead.
  */
 void webkit_web_context_set_disk_cache_directory(WebKitWebContext*, const char*)
 {
-    g_warning("webkit_web_context_set_disk_cache_directory is deprecated and does nothing, use WebKitWebsiteDataManager instead");
+    g_warning("webkit_web_context_set_disk_cache_directory() is deprecated and does nothing, use WebKitWebsiteDataManager instead");
 }
 #endif
 
@@ -1768,7 +1768,7 @@ void webkit_web_context_prefetch_dns(WebKitWebContext* context, const char* host
  * @certificate: a #GTlsCertificate
  * @host: the host for which a certificate is to be allowed
  *
- * Ignore further TLS errors on the @host for the certificate present in @info.
+ * Ignore further TLS errors on the @host for @certificate.
  *
  * If @host is an IPv6 address, it should not be surrounded by brackets. This
  * expectation matches g_uri_get_host().
@@ -1852,7 +1852,7 @@ void webkit_web_context_set_web_process_count_limit(WebKitWebContext* context, g
 {
     g_return_if_fail(WEBKIT_IS_WEB_CONTEXT(context));
 
-    g_warning("webkit_web_context_set_web_process_count_limit is deprecated and does nothing. Limiting the number of web processes is no longer possible for security reasons");
+    g_warning("webkit_web_context_set_web_process_count_limit() is deprecated and does nothing. Limiting the number of web processes is no longer possible for security reasons");
 }
 
 /**
@@ -1926,7 +1926,7 @@ void webkit_web_context_initialize_notification_permissions(WebKitWebContext* co
  * @context: the #WebKitWebContext
  * @message: a #WebKitUserMessage
  *
- * Send @message to all web process extensions associated to @context.
+ * Send @message to all web process extensions associated with @context.
  *
  * If @message is floating, it's consumed.
  *
@@ -1971,7 +1971,7 @@ void webkit_web_context_set_use_system_appearance_for_scrollbars(WebKitWebContex
  *
  * Get the #WebKitWebContext:use-system-appearance-for-scrollbars property.
  *
- * Returns: %TRUE if scrollbars are rendering using the system appearance, or %FALSE otherwise
+ * Returns: %TRUE if scrollbars are rendered using the system appearance, or %FALSE otherwise
  *
  * Since: 2.30
  *
@@ -1990,6 +1990,8 @@ gboolean webkit_web_context_get_use_system_appearance_for_scrollbars(WebKitWebCo
  * @context: a #WebKitWebContext
  *
  * Get the #WebKitWebContext:time-zone-override property.
+ *
+ * Returns: (nullable): the time zone override, or %NULL if none was set.
  *
  * Since: 2.38
  */

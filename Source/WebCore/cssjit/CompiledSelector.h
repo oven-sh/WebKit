@@ -55,7 +55,7 @@ struct CompiledSelector {
     ~CompiledSelector()
     {
         if (codeRef.code().taggedPtr())
-            dataLogF("CompiledSelector %d \"%s\"\n", useCount, selector->selectorText().utf8().data());
+            dataLogLn("CompiledSelector "_s, useCount, " \""_s, selector->selectorText(), '"');
     }
 #else
     void wasUsed() { }

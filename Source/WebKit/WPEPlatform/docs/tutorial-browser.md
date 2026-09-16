@@ -1,8 +1,6 @@
 Title: How to Use WPE Platform to Create a WPE WebKit Browser
 Slug: tutorial-browser
 
-# How to Use WPE Platform to Create a WPE WebKit Browser
-
 This tutorial walks through writing the smallest useful WPE WebKit
 browser: a single window that loads a URL and runs a GLib main loop.
 It is aimed at application developers who are starting a new project
@@ -113,15 +111,17 @@ Build and run:
 ```sh
 cmake -B build -S .
 cmake --build build
-./build/hello-wpe https://webkit.org
+./build/my-browser https://webkit.org
 ```
 
-If [func@Display.get_default] cannot find any registered platform
-module, set `WPE_DISPLAY` to nudge it
-(`WPE_DISPLAY=wpe-display-wayland`, `WPE_DISPLAY=wpe-display-drm`, or
-`WPE_DISPLAY=wpe-display-headless`) and re-check that WPE WebKit was
-built with the relevant `ENABLE_WPE_PLATFORM_*` flag — see the
-Environment variables and Backend model documentation.
+If [func@Display.get_default] returns `NULL`, none of the registered platforms
+could connect; re-check that WPE WebKit was built with the relevant
+`ENABLE_WPE_PLATFORM_*` flag. To force a specific platform instead of trying
+them in priority order, set `WPE_PLATFORM` (`WPE_PLATFORM=wayland`,
+`WPE_PLATFORM=drm`, or `WPE_PLATFORM=headless`). Note that the process aborts if
+the requested platform is not found or fails to connect — see the Environment
+variables and Backend model documentation.
+
 <!-- FIXME: link environment-variables.html and backend-model.html once those pages land -->
 
 ## Pinning to a specific platform
@@ -187,9 +187,9 @@ The browser above renders pages but does little else. From here:
   [class@Toplevel], [class@View], and [class@Screen], including who
   owns whom and when each is created.
 - Backend model — how WPEPlatform discovers module-installed
-  implementations, how priority is resolved, and how to subclass a
-  built-in or write a new one from scratch.
+  implementations, how priority is resolved, and how to write a new
+  one from scratch.
 
 For platform implementers — as opposed to application developers —
-see the Writing a platform tutorial instead.
-<!-- FIXME: link tutorial-platform.html once the platform tutorial has content -->
+see [Writing a WPE platform implementation](tutorial-platform.html)
+instead.

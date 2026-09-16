@@ -234,7 +234,7 @@ bool HTMLTokenizer::processToken(SegmentedString& source)
             return true;
     }
 
-    if (!m_preprocessor.peek(source, isNullCharacterSkippingState(m_state) && !m_forceNullCharacterReplacement))
+    if (!m_preprocessor.peek(source, shouldSkipNullCharacters(m_state)))
         return haveBufferedCharacterToken();
     char16_t character = m_preprocessor.nextInputCharacter();
 

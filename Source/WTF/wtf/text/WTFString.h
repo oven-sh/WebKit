@@ -71,11 +71,16 @@ public:
 
     // Construct a string with Latin-1 data.
     WTF_EXPORT_PRIVATE String(std::span<const Latin1Character> characters);
-    WTF_EXPORT_PRIVATE String(std::span<const char> characters);
     ALWAYS_INLINE static String fromLatin1(const char* characters) { return String { characters }; }
+    ALWAYS_INLINE static String fromLatin1(std::span<const char> characters) { return String { characters }; }
 
     // Construct a string with UTF-8 data, null string if it contains invalid UTF-8 sequences.
     WTF_EXPORT_PRIVATE String(std::span<const char8_t>);
+
+    // Construct a string from a CString that knows its encoding, decoding it as that encoding.
+    // Unlike CString, which would have to be decoded by the caller, and unlike fromUTF8(), which
+    // will happily reinterpret Latin-1 bytes as UTF-8, the character type picks the decoding.
+    template<OneByteCharacterType CharacterType> String(const CStringWithEncoding<CharacterType>&);
 
     // Construct a string referencing an existing StringImpl.
     String(StringImpl&);
@@ -131,9 +136,7 @@ public:
     WTF_EXPORT_PRIVATE ASCIICString ascii() const;
     WTF_EXPORT_PRIVATE Latin1CString latin1() const;
 
-    // FIXME: Should return a UTF8CString, like tryGetUTF8() below already does. Blocked on the
-    // ~2900 call sites, most of which pass utf8().data() to a %s and would need characters().
-    WTF_EXPORT_PRIVATE CString utf8(ConversionMode = LenientConversion) const;
+    WTF_EXPORT_PRIVATE UTF8CString utf8(ConversionMode = LenientConversion) const;
 
     template<typename Func>
     std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
@@ -348,8 +351,10 @@ private:
     template<bool allowEmptyEntries> Vector<String> splitInternal(char16_t separator) const;
     template<bool allowEmptyEntries> Vector<String> splitInternal(StringView separator) const;
 
-    // This is intentionally private. Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
+    // These are intentionally private, because `char` carries no encoding.
+    // Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
     WTF_EXPORT_PRIVATE explicit String(const char* characters);
+    WTF_EXPORT_PRIVATE explicit String(std::span<const char> characters);
 
     RefPtr<StringImpl> m_impl;
 } SWIFT_ESCAPABLE;
@@ -466,6 +471,11 @@ inline String::String(StaticStringImpl& string)
 
 inline String::String(StaticStringImpl* string)
     : m_impl(reinterpret_cast<StringImpl*>(string))
+{
+}
+
+template<OneByteCharacterType CharacterType> inline String::String(const CStringWithEncoding<CharacterType>& string)
+    : String(string.span())
 {
 }
 

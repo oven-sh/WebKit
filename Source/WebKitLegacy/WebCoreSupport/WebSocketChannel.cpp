@@ -59,6 +59,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -149,12 +150,12 @@ String WebSocketChannel::extensions()
     return extensions;
 }
 
-void WebSocketChannel::send(CString&& message)
+void WebSocketChannel::send(UTF8CString&& message)
 {
     if (m_outgoingFrameQueueStatus != OutgoingFrameQueueOpen)
         return;
 
-    LOG(Network, "WebSocketChannel %p send() Sending String '%s'", this, message.data());
+    LOG_WITH_STREAM(Network, stream << "WebSocketChannel " << this << " send() Sending String '" << message << "'");
     enqueueTextFrame(WTF::move(message));
     processOutgoingFrameQueue();
 }
@@ -174,7 +175,7 @@ void WebSocketChannel::send(Blob& binaryData)
     if (m_outgoingFrameQueueStatus != OutgoingFrameQueueOpen)
         return;
 
-    LOG(Network, "WebSocketChannel %p send() Sending Blob '%s'", this, binaryData.url().string().utf8().data());
+    LOG_WITH_STREAM(Network, stream << "WebSocketChannel "_s << this << " send() Sending Blob '"_s << binaryData.url().string() << "'"_s);
     enqueueBlobFrame(WebSocketFrame::OpCodeBinary, binaryData);
     processOutgoingFrameQueue();
 }
@@ -191,7 +192,7 @@ void WebSocketChannel::send(std::span<const uint8_t> data)
 
 void WebSocketChannel::close(int code, const String& reason)
 {
-    LOG(Network, "WebSocketChannel %p close() code=%d reason='%s'", this, code, reason.utf8().data());
+    LOG_WITH_STREAM(Network, stream << "WebSocketChannel "_s << this << " close() code="_s << code << " reason='"_s << reason << "'"_s);
     ASSERT(!m_suspended);
     if (!m_handle)
         return;
@@ -203,7 +204,7 @@ void WebSocketChannel::close(int code, const String& reason)
 
 void WebSocketChannel::fail(String&& reason)
 {
-    RELEASE_LOG(Network, "WebSocketChannel %p fail() reason='%s'", this, reason.utf8().data());
+    RELEASE_LOG(Network, "WebSocketChannel %p fail() reason='%s'", this, reason.utf8());
     ASSERT(!m_suspended);
     if (m_document) {
         LegacyWebSocketInspectorInstrumentation::didReceiveWebSocketFrameError(m_document.get(), m_progressIdentifier, reason);
@@ -367,7 +368,7 @@ void WebSocketChannel::didFailSocketStream(SocketStreamHandle& handle, const Soc
     if (m_document) {
         LegacyWebSocketInspectorInstrumentation::didReceiveWebSocketFrameError(m_document.get(), m_progressIdentifier, message);
         m_document->addConsoleMessage(MessageSource::Network, MessageLevel::Error, message);
-        LOG_ERROR("%s", message.utf8().data());
+        LOG_ERROR("%s", message.utf8());
     }
     m_shouldDiscardReceivedData = true;
     if (RefPtr client = m_client)
@@ -708,7 +709,7 @@ bool WebSocketChannel::processFrame()
     return true;
 }
 
-void WebSocketChannel::enqueueTextFrame(CString&& string)
+void WebSocketChannel::enqueueTextFrame(UTF8CString&& string)
 {
     ASSERT(m_outgoingFrameQueueStatus == OutgoingFrameQueueOpen);
     auto frame = makeUnique<QueuedFrame>();
@@ -749,7 +750,7 @@ void WebSocketChannel::processOutgoingFrameQueue()
         auto frame = m_outgoingFrameQueue.takeFirst();
         switch (frame->frameType) {
         case QueuedFrameTypeString: {
-            sendFrame(frame->opCode, byteCast<uint8_t>(frame->stringData.span()), [this, protectedThis = Ref { *this }] (bool success) {
+            sendFrame(frame->opCode, asByteSpan(frame->stringData.span()), [this, protectedThis = Ref { *this }] (bool success) {
                 if (!success)
                     fail("Failed to send WebSocket frame."_s);
             });

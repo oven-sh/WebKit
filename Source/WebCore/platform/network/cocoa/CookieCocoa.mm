@@ -26,6 +26,7 @@
 #import "config.h"
 #import "Cookie.h"
 #import <pal/spi/cf/CFNetworkSPI.h>
+#import <wtf/Hasher.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
 // FIXME: Remove NS_ASSUME_NONNULL_BEGIN/END and all _Nullable annotations once we remove the NSHTTPCookie forward declaration below.
@@ -188,18 +189,28 @@ RetainPtr<NSHTTPCookie> Cookie::createNSHTTPCookie() const
 bool Cookie::operator==(const Cookie& other) const
 {
     ASSERT(!name.isHashTableDeletedValue());
-    bool thisNull = isNull();
-    bool otherNull = other.isNull();
-    if (thisNull || otherNull)
-        return thisNull == otherNull;
-    return [createNSHTTPCookie() isEqual:other.createNSHTTPCookie().get()];
+    return name == other.name
+        && value == other.value
+        && domain == other.domain
+        && path == other.path
+        && partitionKey == other.partitionKey
+        && created == other.created
+        && expires == other.expires
+        && httpOnly == other.httpOnly
+        && secure == other.secure
+        && session == other.session
+        && comment == other.comment
+        && commentURL == other.commentURL
+        && ports == other.ports
+        && sameSite == other.sameSite;
 }
-    
+
 unsigned Cookie::hash() const
 {
     ASSERT(!name.isHashTableDeletedValue());
     ASSERT(!isNull());
-    return createNSHTTPCookie().get().hash;
+    return computeHash(name, value, domain, path, partitionKey, created, expires,
+        httpOnly, secure, session, comment, commentURL, ports, sameSite);
 }
 
 NS_ASSUME_NONNULL_END

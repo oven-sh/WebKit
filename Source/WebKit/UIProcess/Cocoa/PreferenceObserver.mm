@@ -162,7 +162,7 @@
     for (RetainPtr domain : domains) {
         auto userDefaults = adoptNS([[WKUserDefaults alloc] initWithSuiteName:domain.get()]);
         if (!userDefaults) {
-            WTFLogAlways("Could not init user defaults instance for domain %s", String(domain.get()).utf8().data());
+            SAFE_WTFLOGALWAYS("Could not init user defaults instance for domain %s", String(domain.get()).utf8());
             continue;
         }
         userDefaults->m_observer = self;

@@ -184,6 +184,7 @@ PASS grid-template-rows
 PASS hanging-punctuation
 PASS height
 PASS hyphenate-character
+PASS hyphenate-limit-lines
 PASS hyphens
 PASS image-orientation
 PASS image-rendering
@@ -423,7 +424,6 @@ PASS -webkit-cursor-visibility
 PASS -webkit-font-smoothing
 PASS -webkit-hyphenate-limit-after
 PASS -webkit-hyphenate-limit-before
-PASS -webkit-hyphenate-limit-lines
 PASS -webkit-initial-letter
 PASS -webkit-line-align
 PASS -webkit-line-box-contain

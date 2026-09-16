@@ -100,7 +100,9 @@ uint32_t TextureView::depthOrArrayLayers() const
 
 WGPUTextureUsageFlags TextureView::usage() const
 {
-    return m_parentTexture->usage();
+    // The descriptor's usage was resolved to the parent texture's usage when the view was created
+    // if the view did not narrow it, so this is the set of usages the view itself allows.
+    return m_descriptor.usage;
 }
 
 id<MTLTexture> TextureView::texture() const
