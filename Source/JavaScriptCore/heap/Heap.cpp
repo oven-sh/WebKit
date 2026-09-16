@@ -777,11 +777,13 @@ bool Heap::unprotect(JSValue k)
     return m_protectedValues.remove(k.asCell());
 }
 
-void Heap::addReference(JSCell* cell, ArrayBuffer* buffer)
+void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
         collectIfNecessaryOrDefer();
-        didAllocate(buffer->gcSizeEstimateInBytes());
+        size_t size = buffer->gcSizeEstimateInBytes();
+        ASSERT(bytesAlreadyReported <= size);
+        didAllocate(size - std::min(size, bytesAlreadyReported));
     }
 }
 
