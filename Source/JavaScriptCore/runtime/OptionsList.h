@@ -259,6 +259,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseFTLFailure, false, Normal, nullptr) \
     v(Bool, testTheFTL, false, Normal, nullptr) \
     v(Bool, verboseSanitizeStack, false, Normal, nullptr) \
+    v(Bool, clearStackForMicrotaskCheckpoint, true, Normal, "A microtask checkpoint that has jobs to run first clears the part of the stack that the frames of the drain, of runInternalMicrotask() and of the job are going to occupy, so that what ran at that depth before is not in reach of the conservative scan of a collection made from under them."_s) \
     v(Bool, useGenerationalGC, true, Normal, nullptr) \
     v(Bool, useConcurrentGC, true, Normal, nullptr) \
     v(Bool, collectContinuously, false, Normal, nullptr) \

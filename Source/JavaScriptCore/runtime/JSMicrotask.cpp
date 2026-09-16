@@ -57,6 +57,7 @@
 #include "JSSentinel.h"
 #include "LLIntThunks.h"
 #include "Microtask.h"
+#include "MicrotaskQueue.h"
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoaderPayload.h"
 #include "ModuleLoadingContext.h"
@@ -75,6 +76,7 @@ extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObj
 #include "WebAssemblyCompileOptions.h"
 #endif
 #include <wtf/NoTailCalls.h>
+#include <wtf/StackPointer.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -87,6 +89,20 @@ static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
     return nullptr;
 }
 
+#if ASSERT_ENABLED
+// A checkpoint's cache is a local of MicrotaskQueue::drainImpl(), so it is at the top of the stack that the checkpoint cleared:
+// see MicrotaskQueue::stackBytesClearedForCheckpoint. From the cache to here is most of what has to fit in that window. An eighth
+// of the window is left for the rest: what drainImpl()'s frame has above the cache, and the callees of callMicrotask() on the way
+// into JS. VM::syncResumeCallCache() is not on the stack: its users run under JS, at any depth.
+static void assertJobOfCheckpointRunsInClearedStack(MicrotaskCallCache* microtaskCallCache)
+{
+    if (!microtaskCallCache || !Thread::currentSingleton().stack().contains(microtaskCallCache))
+        return;
+    auto used = std::bit_cast<uintptr_t>(microtaskCallCache) + sizeof(MicrotaskCallCache) - std::bit_cast<uintptr_t>(currentStackPointer());
+    ASSERT(used <= MicrotaskQueue::stackBytesClearedForCheckpoint - MicrotaskQueue::stackBytesClearedForCheckpoint / 8);
+}
+#endif
+
 template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
 static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
 {
@@ -95,6 +111,9 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
+#if ASSERT_ENABLED
+    assertJobOfCheckpointRunsInClearedStack(microtaskCallCache);
+#endif
 
     if (microtaskCallCache) [[likely]] {
         if (auto* microtaskCall = microtaskCallCache->find(functionObject)) [[likely]] {

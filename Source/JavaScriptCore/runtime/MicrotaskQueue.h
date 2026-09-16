@@ -261,6 +261,20 @@ public:
 
     bool isPerformingMicrotaskCheckpoint() const { return m_isPerformingMicrotaskCheckpoint; }
 
+    // A checkpoint is where an event loop turn resumes an async function, so its frames (drain()'s, runInternalMicrotask()'s,
+    // the job's, the entry to JS) are at the same addresses in every turn, stay for as long as the turn's JS runs, and lie over
+    // whatever ran at that depth since the last checkpoint: that checkpoint's own frames, or the embedder's. What they do not
+    // write (spill slots and locals that this job's path through runInternalMicrotask()'s switch does not use, padding) is what
+    // the conservative scan of every collection made from under them reads, and sanitizeStackForVM() from there clears only
+    // what is below them. So a checkpoint that has jobs to run clears this much of the stack before the first of those frames
+    // exists: room for them (1.5 KB from performMicrotaskCheckpoint() to the JS frame in a release build for x86_64, 12 KB
+    // with ASan and without optimization; callMicrotask() asserts that it runs inside the window).
+#if ASSERT_ENABLED || ASAN_ENABLED
+    static constexpr size_t stackBytesClearedForCheckpoint = 32 * KB;
+#else
+    static constexpr size_t stackBytesClearedForCheckpoint = 2 * KB;
+#endif
+
 protected:
     JS_EXPORT_PRIVATE MicrotaskQueue(VM&);
     virtual void scheduleToRunIfNeeded()
@@ -271,6 +285,8 @@ protected:
     bool m_isPerformingMicrotaskCheckpoint { false };
 
 private:
+    JS_EXPORT_PRIVATE static void clearStackForCheckpoint(VM&);
+
     JS_EXPORT_PRIVATE std::pair<JSGlobalObject*, bool> drainWithUseCallOnEachMicrotask(JSGlobalObject* currentGlobalObject, VM&, TopExceptionScope&);
     JS_EXPORT_PRIVATE std::pair<JSGlobalObject*, bool> drainWithoutUseCallOnEachMicrotask(JSGlobalObject* currentGlobalObject, VM&, TopExceptionScope&);
 

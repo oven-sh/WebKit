@@ -38,6 +38,7 @@
 #include "MicrotaskQueueInlines.h"
 #include "ScriptProfilingScope.h"
 #include "SlotVisitorInlines.h"
+#include <wtf/StackPointer.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -53,6 +54,26 @@ bool QueuedTask::isRunnable() const
     if (isJSMicrotaskDispatcher()) [[unlikely]]
         return uncheckedDowncast<JSMicrotaskDispatcher>(dispatcher())->dispatcher()->isRunnable();
     return uncheckedDowncast<JSGlobalObject>(dispatcher())->microtaskRunnability() == QueuedTaskResult::Executed;
+}
+
+// Its frame is the window: it lies right below its caller's, which is where the caller's next callee has its own.
+template<size_t size>
+static NEVER_INLINE void clearStackBelowCaller()
+{
+    std::array<uint8_t, size> window;
+    zeroBytes(window);
+    // Nothing reads the array again, so the stores are dead to the compiler unless something it cannot see into gets the address.
+    __asm__ volatile("" : : "r"(window.data()) : "memory");
+}
+
+void MicrotaskQueue::clearStackForCheckpoint(VM& vm)
+{
+    if (!Options::clearStackForMicrotaskCheckpoint()) [[unlikely]]
+        return;
+    // Not out of the reserved zone: a checkpoint that close to the end of the stack runs no JS.
+    if (std::bit_cast<uintptr_t>(currentStackPointer()) - stackBytesClearedForCheckpoint < std::bit_cast<uintptr_t>(vm.softStackLimit())) [[unlikely]]
+        return;
+    clearStackBelowCaller<stackBytesClearedForCheckpoint>();
 }
 
 static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, QueuedTask& task, MicrotaskCallCache* microtaskCallCache)
