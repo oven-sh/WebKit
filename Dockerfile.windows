@@ -33,8 +33,8 @@ ARG ICU_MARCH_FLAG="-march=nehalem"
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
-ARG LLVM_VERSION="21"
-ARG LLVM_DEBS_SHA256="4a79b0eae89af72b082997d361198f16aaefce3fa8ad3c56c8e97311ff31dd5f"
+ARG LLVM_VERSION="23"
+ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b351011"
 ARG XWIN_VERSION="0.9.0"
 ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd"
 # Pinned MSVC CRT + Windows SDK versions. Bump deliberately; the manifest on
@@ -161,10 +161,10 @@ RUN set -e; \
 # 2.0 with LLVM exceptions; redistribution is permitted.
 # OptionsMSVC.cmake's find_library(CLANG_BUILTINS_LIBRARY) searches
 # WebKitLibraries/windows, which is symlinked to /winsdk in the build stage.
-ADD --checksum=sha256:9cff03d2c5218693b1f91efc0074957c710eeddd932d57a681c8f558b81fbe8e \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.builtins-x86_64.lib /winsdk/clang_rt.builtins-x86_64.lib
-ADD --checksum=sha256:b1bfec6276dde6166aa038de10c378ec17996779786fe1747c40b833cb826e16 \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.builtins-aarch64.lib /winsdk/clang_rt.builtins-aarch64.lib
+ADD --checksum=sha256:a4bd318f1337b876bfe97ac8a512708b586ad1a881d92e574233e19f8f25879c \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.builtins-x86_64.lib /winsdk/clang_rt.builtins-x86_64.lib
+ADD --checksum=sha256:b4105785d8b0f39bbcd958fd2fbafeb11b5441a0b85fe55b5cf51a48a520ca38 \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.builtins-aarch64.lib /winsdk/clang_rt.builtins-aarch64.lib
 
 # Windows ASAN/UBSan runtime for the -asan variant, mirrored from the same
 # LLVM release as the builtins above (x64 only: LLVM ships no Windows ARM64
@@ -175,14 +175,14 @@ ADD --checksum=sha256:b1bfec6276dde6166aa038de10c378ec17996779786fe1747c40b833cb
 # UBSan handlers, so -fsanitize=address,undefined needs no separate
 # ubsan_standalone libraries. A Linux LLVM install doesn't ship any of these;
 # WebKitCompilerFlags.cmake locates them via CLANG_LIB_PATH (set below).
-ADD --checksum=sha256:3dff47943143ab2c1a786a7c90c88f897bfa34e8b5a4c9382eadf8373fd19ec0 \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.asan_dynamic-x86_64.lib /winsdk/clang_rt.asan_dynamic-x86_64.lib
-ADD --checksum=sha256:d4a0398ed7d2e1361674fbb2cfceec4df502052cfe17b51718b061e9fe523719 \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.asan_static_runtime_thunk-x86_64.lib /winsdk/clang_rt.asan_static_runtime_thunk-x86_64.lib
-ADD --checksum=sha256:b3c1d6c988792651cc0b0b61b4114cbe513a5e2f6beb067fd54a96b98be9b328 \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib /winsdk/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib
-ADD --checksum=sha256:14025e779d3c67c53027312d7542aea8f814e5237e59f41cfc6165666189f886 \
-    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-21.1.8/clang_rt.asan_dynamic-x86_64.dll /winsdk/clang_rt.asan_dynamic-x86_64.dll
+ADD --checksum=sha256:d7b1528432b69fe4fc924b29bf17729ec1eac1e2a9f6ff3384059ae71743d00c \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.asan_dynamic-x86_64.lib /winsdk/clang_rt.asan_dynamic-x86_64.lib
+ADD --checksum=sha256:2687c8aa22884f4defb160ad8368e715390c72f6b6f1f7f5d632a0cf37ab879d \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.asan_static_runtime_thunk-x86_64.lib /winsdk/clang_rt.asan_static_runtime_thunk-x86_64.lib
+ADD --checksum=sha256:bcd9f8c2c8041ba8e4ad0f3cb642bbf9a173d757fc864ffcc097da8661047379 \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib /winsdk/clang_rt.asan_dynamic_runtime_thunk-x86_64.lib
+ADD --checksum=sha256:4fc14438122d1c397698099fcb0e1bdbca4af1a2524f3426c6815dcfaa639369 \
+    https://github.com/oven-sh/WebKit/releases/download/compiler-rt-windows-23.1.1/clang_rt.asan_dynamic-x86_64.dll /winsdk/clang_rt.asan_dynamic-x86_64.dll
 
 # Sanity check: compile + link a PE executable for both arches.
 RUN for pair in "x86_64 x64" "aarch64 arm64"; do \

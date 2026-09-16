@@ -16,7 +16,7 @@
 set -euo pipefail
 
 REPO="${REPO:-oven-sh/WebKit}"
-LLVM_VERSION="${LLVM_VERSION:-21}"
+LLVM_VERSION="${LLVM_VERSION:-23}"
 TAG="${TAG:-llvm-${LLVM_VERSION}-debs}"
 OUT="${OUT:-/tmp/llvm-debs}"
 V="$LLVM_VERSION"
