@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Burst: many foreign-thread invocations queue up (each on its own OS thread) BEFORE a single
 // drain. Records must all survive queuing (refcounted C data), and one drain must deliver every
 // one, in some order, with exact values. Also multiple distinct threadsafe callbacks interleaved.

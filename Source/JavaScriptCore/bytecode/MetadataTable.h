@@ -37,11 +37,58 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 class CodeBlock;
+class MetadataTable;
+
+// One of the value profiles of a MetadataTable. LLInt and Baseline code only ever store to its bucket, which sits right in front
+// of the table. Its prediction is in an array that the table allocates the first time one of its profiles has something to predict,
+// which for most code is never; until then every prediction is SpecNone.
+class ValueProfileRef {
+public:
+    static constexpr unsigned numberOfBuckets = 1;
+    static constexpr unsigned totalNumberOfBuckets = 1;
+
+    ValueProfileRef() = default;
+    ValueProfileRef(MetadataTable&, unsigned profileOffset);
+    // For whoever visits all the profiles of a table: the table's predictions as they are now, null if it has none yet.
+    ValueProfileRef(MetadataTable&, unsigned profileOffset, SpeculatedType* predictions);
+
+    explicit operator bool() const { return !!m_table; }
+
+    inline SpeculatedType prediction() const;
+    inline void mergePrediction(SpeculatedType) const;
+    inline SpeculatedType computeUpdatedPrediction() const;
+    inline void computeUpdatedPredictionForExtraValue(JSValue&) const;
+
+    unsigned numberOfSamples() const { return !!JSValue::decodeConcurrent(m_buckets); }
+    bool isSampledBefore() const { return prediction() != SpecNone; }
+    unsigned totalNumberOfSamples() const { return numberOfSamples() + isSampledBefore(); }
+
+    CString briefDescription() const
+    {
+        StringPrintStream out;
+        out.print("predicting ", SpeculationDump(computeUpdatedPrediction()));
+        return out.toCString();
+    }
+
+    void dump(PrintStream& out) const
+    {
+        out.print("sampled before = ", isSampledBefore(), " live samples = ", numberOfSamples(), " prediction = ", SpeculationDump(prediction()));
+        if (JSValue value = JSValue::decodeConcurrent(m_buckets))
+            out.print(": ", value);
+    }
+
+    EncodedJSValue* m_buckets { nullptr };
+
+private:
+    MetadataTable* m_table { nullptr };
+    SpeculatedType* m_predictions { nullptr };
+    unsigned m_profileOffset { 0 };
+};
 
 // MetadataTable has a bit strange memory layout for LLInt optimization.
-// [ValueProfile][UnlinkedMetadataTable::LinkingData][MetadataTableOffsets][MetadataContent]
-//                                                   ^
-//                 The pointer of MetadataTable points at this address.
+// [ValueProfile buckets][UnlinkedMetadataTable::LinkingData][MetadataTableOffsets][MetadataContent]
+//                                                           ^
+//                         The pointer of MetadataTable points at this address.
 class MetadataTable {
     WTF_MAKE_TZONE_ALLOCATED(MetadataTable);
     WTF_MAKE_NONCOPYABLE(MetadataTable);
@@ -72,24 +119,43 @@ public:
     template<typename Functor>
     ALWAYS_INLINE void forEachValueProfile(const Functor& func)
     {
-        // We could do a checked multiply here but if it overflows we'd just not look at any value profiles so it's probably not worth it.
-        int lastValueProfileOffset = -unlinkedMetadata()->m_numValueProfiles;
-        for (int i = -1; i >= lastValueProfileOffset; --i)
-            func(valueProfilesEnd()[i]);
+        unsigned numValueProfiles = unlinkedMetadata()->m_numValueProfiles;
+        // One look at the predictions for all of them. A profile that gives the table its predictions in the meantime finds
+        // them through the table, and so do the ones after it.
+        SpeculatedType* predictions = valueProfilePredictions();
+        for (unsigned profileOffset = 1; profileOffset <= numValueProfiles; ++profileOffset)
+            func(ValueProfileRef(*this, profileOffset, predictions));
     }
 
-    ValueProfile* valueProfilesEnd()
+    EncodedJSValue* valueProfileBucketsEnd()
     {
-        return reinterpret_cast_ptr<ValueProfile*>(&linkingData());
+        return reinterpret_cast_ptr<EncodedJSValue*>(&linkingData());
     }
 
-    ValueProfile& valueProfileForOffset(unsigned profileOffset)
+    ValueProfileRef valueProfileForOffset(unsigned profileOffset)
     {
-        ASSERT(profileOffset <= unlinkedMetadata()->m_numValueProfiles);
-        return valueProfilesEnd()[-static_cast<ptrdiff_t>(profileOffset)];
+        ASSERT(profileOffset && profileOffset <= unlinkedMetadata()->m_numValueProfiles);
+        return ValueProfileRef(*this, profileOffset);
     }
+
+    // Indexed by profile offset - 1. Both are safe to call from a compiler thread.
+    SpeculatedType* valueProfilePredictions() const { return linkingData().valueProfilePredictions.load(std::memory_order_acquire); }
+    SpeculatedType* ensureValueProfilePredictions();
 
     size_t sizeInBytesForGC();
+    // The CallSiteDatas that the table's call sites own are reported to the collector by the CodeBlock the table was linked
+    // for, not by the optimized CodeBlocks that share the table with it: see CodeBlock::visitChildren(). One is too small for
+    // Heap::reportExtraMemoryAllocated() to take note of, so the mutator reports them this many at a time.
+    static constexpr unsigned callSiteDatasPerReport = 32;
+    unsigned didAllocateCallSiteData()
+    {
+        auto& count = linkingData().numberOfOwnCallSiteDatas;
+        unsigned newCount = count.load(std::memory_order_relaxed) + 1;
+        count.store(newCount, std::memory_order_relaxed);
+        return newCount;
+    }
+    unsigned numberOfOwnCallSiteDatas() const { return linkingData().numberOfOwnCallSiteDatas.load(std::memory_order_relaxed); }
+    size_t sizeOfOwnCallSiteDatas() const;
 
     void ref()
     {
@@ -145,7 +211,7 @@ private:
 
     size_t totalSize() const
     {
-        return unlinkedMetadata()->m_numValueProfiles * sizeof(ValueProfile) + sizeof(UnlinkedMetadataTable::LinkingData) + getOffset(UnlinkedMetadataTable::s_offsetTableEntries - 1);
+        return unlinkedMetadata()->m_numValueProfiles * sizeof(EncodedJSValue) + sizeof(UnlinkedMetadataTable::LinkingData) + getOffset(UnlinkedMetadataTable::s_offsetTableEntries - 1);
     }
 
     UnlinkedMetadataTable::LinkingData& linkingData() const
@@ -173,6 +239,61 @@ private:
 
     static void destroy(MetadataTable*);
 };
+
+inline ValueProfileRef::ValueProfileRef(MetadataTable& table, unsigned profileOffset)
+    : m_buckets(table.valueProfileBucketsEnd() - profileOffset)
+    , m_table(&table)
+    , m_profileOffset(profileOffset)
+{
+}
+
+inline ValueProfileRef::ValueProfileRef(MetadataTable& table, unsigned profileOffset, SpeculatedType* predictions)
+    : m_buckets(table.valueProfileBucketsEnd() - profileOffset)
+    , m_table(&table)
+    , m_predictions(predictions)
+    , m_profileOffset(profileOffset)
+{
+}
+
+inline SpeculatedType ValueProfileRef::prediction() const
+{
+    if (m_predictions)
+        return m_predictions[m_profileOffset - 1];
+    if (SpeculatedType* predictions = m_table->valueProfilePredictions())
+        return predictions[m_profileOffset - 1];
+    return SpecNone;
+}
+
+inline void ValueProfileRef::mergePrediction(SpeculatedType prediction) const
+{
+    if (prediction == SpecNone)
+        return;
+    SpeculatedType* predictions = m_predictions ? m_predictions : m_table->ensureValueProfilePredictions();
+    mergeSpeculation(predictions[m_profileOffset - 1], prediction);
+}
+
+inline SpeculatedType ValueProfileRef::computeUpdatedPrediction() const
+{
+    if (JSValue value = JSValue::decodeConcurrent(m_buckets)) {
+        mergePrediction(speculationFromValueForProfiling(value));
+        updateEncodedJSValueConcurrent(*m_buckets, JSValue::encode(JSValue()));
+    }
+    return prediction();
+}
+
+inline void ValueProfileRef::computeUpdatedPredictionForExtraValue(JSValue& value) const
+{
+    if (value)
+        mergePrediction(speculationFromValueForProfiling(value));
+    value = JSValue();
+}
+
+inline void UnlinkedValueProfile::update(ValueProfileRef& profile)
+{
+    SpeculatedType newType = profile.prediction() | m_prediction;
+    profile.mergePrediction(newType);
+    m_prediction = newType;
+}
 
 } // namespace JSC
 

@@ -5,11 +5,11 @@ shouldBe(Drink, "Cocoa");
 shouldBe(SubDrink, "Cappuccino");
 shouldThrow(() => {
     Cocoa
-}, `ReferenceError: Can't find variable: Cocoa`);
+}, `ReferenceError: Cocoa is not defined`);
 
 shouldThrow(() => {
     Cappuccino
-}, `ReferenceError: Can't find variable: Cappuccino`);
+}, `ReferenceError: Cappuccino is not defined`);
 
 changeCocoa("Mocha");
 shouldBe(Drink, "Mocha");

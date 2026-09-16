@@ -1100,6 +1100,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             break;
         case ResolvedClosureVar:
         case ModuleVar:
+        case LazyClosureVar:
+        case ResolvedLazyClosureVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();
@@ -1215,6 +1217,13 @@ void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
         emitGetVirtualRegister(scope, scopeGPR);
         loadPtrFromMetadata(bytecode, Metadata::offsetOfOperand(), scratch1GPR);
         loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
+    } else if (profiledResolveType == LazyClosureVar) {
+        // No resolve type check, as for ClosureVar: the other CodeBlocks of this UnlinkedCodeBlock link this
+        // instruction as LazyClosureVar or ClosureVar (see CodeBlock::finishCreation), and this is right for both.
+        emitGetVirtualRegister(scope, scopeGPR);
+        loadPtrFromMetadata(bytecode, Metadata::offsetOfOperand(), scratch1GPR);
+        loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
+        addSlowCase(branchIfEmpty(returnValueGPR));
     } else {
         // Inlined fast path for common types.
         constexpr size_t metadataMinAlignment = 4;
@@ -1409,9 +1418,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
             jit.loadValue(BaseIndex(scopeGPR, scratch1GPR, TimesEight, JSLexicalEnvironment::offsetOfVariables()), returnValueGPR);
             break;
         case Dynamic:
+        case LazyClosureVar:
             slowCase.append(jit.jump());
             break;
         case ResolvedClosureVar:
+        case ResolvedLazyClosureVar:
         case ModuleVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
@@ -1609,6 +1620,8 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
         case Dynamic:
             addSlowCase(jump());
             break;
+        case LazyClosureVar:
+        case ResolvedLazyClosureVar:
         case UnresolvedProperty:
         case UnresolvedPropertyWithVarInjectionChecks:
             RELEASE_ASSERT_NOT_REACHED();

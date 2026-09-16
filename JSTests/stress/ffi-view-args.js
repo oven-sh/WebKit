@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Pointer-family FFI arguments accept typed-array / DataView VIEWS directly, resolved inline in the
 // DFG and (now) the FTL to the view's data pointer. This is a per-call tier-differential test: every
 // hot (FTL-bound) function has a noDFG-pinned twin as the interpreter/baseline oracle, and the two

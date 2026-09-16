@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // TypedArray storage modes vs. the ptr/buffer argument fast paths (SPEC
 // sections 5 and 8.3): a JSArrayBufferView's vector lives in different

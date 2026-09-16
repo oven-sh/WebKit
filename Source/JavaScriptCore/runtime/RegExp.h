@@ -166,6 +166,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+    // Whether this has matched since the last full collection began.
+    bool wasUsedInCurrentFullCollectionCycle(VM&) const;
+
     bool hasCode()
     {
         return m_state == JITCode || m_state == ByteCode;
@@ -247,6 +250,9 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
+    static uint8_t currentUseEpoch(VM&);
+    template<Yarr::MatchFrom> void noteUse(VM&);
+
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(StringView, int startOffset, int* offsetVector, int jitResult);
 #endif
@@ -273,6 +279,7 @@ private:
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
+    uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;

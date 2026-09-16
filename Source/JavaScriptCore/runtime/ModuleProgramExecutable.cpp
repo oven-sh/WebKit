@@ -28,21 +28,30 @@
 
 #include "CodeCache.h"
 #include "Debugger.h"
+#include "Error.h"
 #include "FunctionExecutable.h"
+#include "JSModuleRecord.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include "WeakInlines.h"
 
 namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
-    , m_importedBindings(WTF::move(importedBindings))
+    , m_linker(linker)
     , m_moduleScopeSymbolTables(moduleScopeSymbolTables.size())
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
+#if USE(BUN_JSC_ADDITIONS)
+    if (linker && linker->isPrelinked()) {
+        m_linkerPrelinkedGraph = linker->prelinkedGraph();
+        m_linkerPrelinkedIndex = linker->prelinkedIndex();
+    }
+#endif
     SourceProviderSourceType sourceType = source.provider()->sourceType();
     ASSERT(sourceType == SourceProviderSourceType::Module
     #if USE(BUN_JSC_ADDITIONS)
@@ -65,7 +74,10 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
         RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
 
     ParserError error;
-    OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+    // Once there is a symbol table for the module environment, code fetched again has to lay the environment out as the
+    // code the table came from did: same source, same mode (BytecodeGenerator captures every variable for the debugger).
+    // The same goes for the registers of a module that is suspended at a top-level await, which are in a generator frame.
+    OptionSet<CodeGenerationMode> codeGenerationMode = m_moduleEnvironmentSymbolTable ? m_codeGenerationMode : globalObject->defaultCodeGenerationMode();
     unlinkedModuleProgramCode = vm.codeCache()->getUnlinkedModuleProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
 
     if (globalObject->hasDebugger())
@@ -76,15 +88,50 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
         return nullptr;
     }
 
+    // After releaseUnlinkedCodeIfRecoverable() this has to be the very same code again, decoded from the same payload:
+    // the module's environment and the symbol table kept for it were made for that code's layout.
+    if (m_hasReleasedUnlinkedCode && !unlinkedModuleProgramCode->cachedPayloadIndex()) [[unlikely]] {
+        throwVMError(globalObject, throwScope, createError(globalObject, "The module's code is no longer available from its bytecode cache"_s));
+        return nullptr;
+    }
+
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
+    // The symbol table and the function declarations' executables are made once and stay for as long as the executable
+    // does, whatever happens to its code (ScriptExecutable::clearCode, releaseUnlinkedCodeIfRecoverable). The
+    // declarations' code is shared by every record of the executable and the optimizing tiers treat the scope of a symbol
+    // table that has only seen one environment as a constant (SymbolTable::singleton()), so every environment this code
+    // can run in has to come from the one table: the second one made from it invalidates that inference. A record that
+    // leaves its declarations uninstantiated reads m_functionDeclarations long after it made its environment.
     VirtualRegister symbolTableReg = VirtualRegister(unlinkedModuleProgramCode->moduleEnvironmentSymbolTableConstantRegisterOffset());
     SymbolTable* symbolTable = uncheckedDowncast<SymbolTable>(unlinkedModuleProgramCode->getConstant(symbolTableReg));
-    m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
-    {
+    if (SymbolTable* clone = m_moduleEnvironmentSymbolTable.get()) {
+        // It is the clone of the constant of the code that was fetched again from now on (as for the other scopes of a
+        // body that can be suspended, CodeBlock::setConstantRegisters). The environment is laid out by it either way.
+        if (clone->clonedFrom() != symbolTable) {
+            if (clone->isCloneOfScopePartOf(*symbolTable))
+                clone->adoptOriginal(vm, *symbolTable);
+            else
+                clone->invalidateInferencesOfAbandonedClone(vm);
+        }
+    } else {
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
     }
+    ASSERT(m_functionDeclarations.size() == unlinkedModuleProgramCode->numberOfFunctionDecls());
     RELEASE_AND_RETURN(throwScope, unlinkedModuleProgramCode);
+}
+
+JSModuleRecord* ModuleProgramExecutable::linker() const
+{
+    return m_linker.get();
+}
+
+void ModuleProgramExecutable::setLinkerImportedBindings(std::optional<ImportedBindings>&& bindings)
+{
+    m_linkerImportedBindings = WTF::move(bindings);
+    m_linker.clear();
 }
 
 bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
@@ -100,7 +147,7 @@ bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTabl
 
 bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const
 {
-    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || !exporterSource != !other.exporterSource)
+    if (localName != other.localName || exporterLocalName != other.exporterLocalName || offset != other.offset || importSlot != other.importSlot || !exporterSource != !other.exporterSource)
         return false;
     if (!exporterSource || exporterSource == other.exporterSource)
         return true;
@@ -111,23 +158,74 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
         return executable;
-    FunctionExecutable* executable = unlinkedCodeBlock()->functionDecl(index)->link(vm, this, source());
-    Locker locker { cellLock() };
-    m_functionDeclarations[index].set(vm, this, executable);
+    return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
+}
+
+FunctionExecutable* ModuleProgramExecutable::linkFunctionDeclaration(VM& vm, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    ASSERT(!linkedFunctionDeclaration(index));
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, this, source());
+    if (index < m_functionDeclarations.size()) {
+        Locker locker { cellLock() };
+        m_functionDeclarations[index].set(vm, this, executable);
+    }
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, std::optional<ImportedBindings>&& importedBindings, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, WTF::move(importedBindings), moduleScopeSymbolTables);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
     if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
         return nullptr;
     RETURN_IF_EXCEPTION(scope, nullptr);
     return executable;
+}
+
+FunctionExecutable* ModuleProgramExecutable::functionExpression(VM& vm, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    if (m_functionExpressions.size() != numberOfFunctionExpressions) {
+        RELEASE_ASSERT(m_functionExpressions.isEmpty());
+        FixedVector<WriteBarrier<FunctionExecutable>> functionExpressions(numberOfFunctionExpressions);
+        Locker locker { cellLock() };
+        m_functionExpressions = WTF::move(functionExpressions);
+    }
+    if (FunctionExecutable* executable = m_functionExpressions[index].get())
+        return executable;
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, this, source());
+    m_functionExpressions[index].set(vm, this, executable);
+    return executable;
+}
+
+void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
+{
+    ASSERT(m_recordsYetToFinishEvaluation);
+    m_hasBeenEvaluated = true;
+    if (m_recordsYetToFinishEvaluation && --m_recordsYetToFinishEvaluation)
+        return; // Another record has yet to run the code, or is suspended in it.
+    // Code that a second record has taken is going to be run again by the records of loaders still to come: they link
+    // nothing of their own while it is there, and the function expressions and classes of the top-level code keep their
+    // executables (and so their CodeBlocks and JIT code) only as long as the linked code they belong to does.
+    if (m_isShared)
+        return;
+    if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
+        return;
+    clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
+}
+
+void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
+{
+    // The environment's symbol table stays: environments already made from it and any code linked later must agree on
+    // the one table.
+    UnlinkedModuleProgramCodeBlock* unlinkedCode = unlinkedCodeBlock();
+    if (!hasFinishedEvaluation() || !unlinkedCode || !unlinkedCode->cachedPayloadIndex() || !Options::useCodeRecoveryFromBytecodeCache())
+        return;
+    vm.codeCache()->forgetUnlinkedModuleProgramCodeBlock(this, source(), unlinkedCode);
+    m_hasReleasedUnlinkedCode = true;
+    m_unlinkedCodeBlock.clear();
 }
 
 void ModuleProgramExecutable::destroy(JSCell* cell)
@@ -152,6 +250,8 @@ void ModuleProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         Locker locker { thisObject->cellLock() };
         for (auto& functionDeclaration : thisObject->m_functionDeclarations)
             visitor.append(functionDeclaration);
+        for (auto& functionExpression : thisObject->m_functionExpressions)
+            visitor.append(functionExpression);
     }
     if (TemplateObjectMap* map = thisObject->m_templateObjectMap.get()) {
         Locker locker { thisObject->cellLock() };

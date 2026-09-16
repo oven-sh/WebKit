@@ -9,7 +9,7 @@ on:
       llvm_version:
         description: 'LLVM major version to mirror'
         type: string
-        default: '21'
+        default: '23'
 
 permissions:
   contents: write

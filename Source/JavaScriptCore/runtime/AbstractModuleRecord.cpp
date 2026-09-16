@@ -452,11 +452,16 @@ auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, Pre
 // names variables, not import indices); the binding is computed once per import and reused by every use site.
 auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const Identifier& localName) -> std::optional<Resolution>
 {
-    const auto& module = prelinkedModule();
-    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(module, localName.impl());
+    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(prelinkedModule(), localName.impl());
     if (!import)
         return Resolution::notFound();
-    auto imports = m_prelinked->imports(module);
+    return tryResolveImportPrelinked(globalObject, *import);
+}
+
+auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Import& entry) -> std::optional<Resolution>
+{
+    const PrelinkedModuleGraph::Import* import = &entry;
+    auto imports = m_prelinked->imports(prelinkedModule());
     if (m_prelinkedImportResolutions.size() != imports.size()) [[unlikely]]
         m_prelinkedImportResolutions = FixedVector<Resolution>(imports.size());
     Resolution& memo = m_prelinkedImportResolutions[import - imports.data()];

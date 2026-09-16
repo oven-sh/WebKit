@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // The "jsvalue" type is a raw EncodedJSValue pass-through in both directions: every JS value
 // kind (objects, functions, symbols, -0, BigInt) must round-trip with identity intact.

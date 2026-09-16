@@ -9,7 +9,7 @@ function f() {
             error = e;
         }
 
-        if (!error || error.message != "Can't find variable: d")
+        if (!error || error.message != "d is not defined")
             throw new Error("Test should have thrown a reference error");
     }
 
