@@ -1583,6 +1583,23 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
         maximumOccupancy = 0;
     maximumOccupancy = std::min(maximumOccupancy, 1.0);
 
+    // The registers and the stack of this thread are read first, while this function has had no cell and no block in a
+    // register or a frame. The span includes this function's frame and what its callees leave below it, so a word read
+    // later can be one of its own: the sort of the table of precise allocations below left the address of one of them
+    // under the frame, and that pinned the object's storage in every call (a build with ASan and optimization).
+    Vector<uintptr_t> wordsOfThisThread;
+    auto readThreadState = [&](CurrentThreadState& state) {
+        auto readSpan = [&](void* begin, void* end) {
+            forEachWordInSpanConservatively(begin, end, [&](uintptr_t value) {
+                if (value >= 2 * MarkedBlock::blockSize)
+                    wordsOfThisThread.append(value);
+            });
+        };
+        readSpan(state.registerState, state.registerState + 1);
+        readSpan(state.stackTop, state.stackOrigin);
+    };
+    callWithCurrentThreadState(readThreadState);
+
     PreventCollectionScope preventCollection(*this);
     DeferGCForAWhile deferGC(vm);
 
@@ -1681,21 +1698,21 @@ Heap::AuxiliaryEvacuationResult Heap::evacuateSparseAuxiliaryBlocks(double maxim
             if (isJSCellKind(handle.cellKind()) && handle.contains(std::bit_cast<void*>(address)))
                 cellsOnStack.add(static_cast<HeapCell*>(handle.cellAlign(std::bit_cast<void*>(address))));
         };
+        auto scanWord = [&](uintptr_t value) {
+            if (value < 2 * MarkedBlock::blockSize)
+                return;
+            // Into the allocation; or at its end or up to sizeof(IndexingHeader) past it.
+            pinIfInCandidate(value);
+            pinIfInCandidate(value - sizeof(IndexingHeader) - 1);
+            noteCellOnStack(value);
+        };
+        for (uintptr_t word : wordsOfThisThread)
+            scanWord(word);
+#if ENABLE(DFG_JIT) || ENABLE(WEBASSEMBLY)
         auto scanSpan = [&](void* begin, void* end) {
-            forEachWordInSpanConservatively(begin, end, [&](uintptr_t value) {
-                if (value < 2 * MarkedBlock::blockSize)
-                    return;
-                // Into the allocation; or at its end or up to sizeof(IndexingHeader) past it.
-                pinIfInCandidate(value);
-                pinIfInCandidate(value - sizeof(IndexingHeader) - 1);
-                noteCellOnStack(value);
-            });
+            forEachWordInSpanConservatively(begin, end, scanWord);
         };
-        auto scanThreadState = [&](CurrentThreadState& state) {
-            scanSpan(state.registerState, state.registerState + 1);
-            scanSpan(state.stackTop, state.stackOrigin);
-        };
-        callWithCurrentThreadState(scanThreadState);
+#endif
 #if ENABLE(DFG_JIT)
         vm.forEachConservativelyScannedBuffer(scanSpan);
 #endif
