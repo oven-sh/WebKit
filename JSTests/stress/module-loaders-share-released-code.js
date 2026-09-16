@@ -5,9 +5,11 @@
 //@ runBytecodeCache
 
 // Module code that has run is released (useRunOnceCodeRelease; the unlinked code too if it can be decoded again from a
-// persistent bytecode cache payload). Records of several module loaders share one ModuleProgramExecutable: the code goes
-// when the last of them has finished, a loader that comes later adopts the executable and has the code decoded again, and
-// the function declarations' executables stay shared throughout.
+// persistent bytecode cache payload). Records of several module loaders share one ModuleProgramExecutable: while only one
+// record has ever had it, the code goes when that record has finished, and a loader that comes later adopts the executable
+// and has the code decoded again. From then on the executable is shared and keeps its code: the loaders after that link
+// nothing of their own, and the function expressions and classes of the top-level code, whose executables belong to the
+// linked code, stay the same for all of them. The function declarations' executables stay shared throughout.
 
 function assert(condition, message) {
     if (!condition)
@@ -22,6 +24,20 @@ const releasesUnlinkedCode = releasesLinkedCode && options.useCodeRecoveryFromBy
 // What the executables hold, not how many code blocks are alive: the collector scans the stack conservatively, and a word
 // left behind in a frame of the run loop can keep a code block that nothing refers to any more for a while.
 const census = () => { fullGC(); return $vm.codeBlockCensus(); };
+// Executables that keep their code from one part of this test to the next: every one that was shared.
+let keptLinked = 0;
+let keptUnlinked = 0;
+// After a loader that failed and one that ran the same `modules` modules to the end: whether the second shared the first one's
+// executables, and so keeps their code, depends on whether the collector had already taken the first loader's records. (And an
+// executable no function refers to, a module that declares none, goes altogether once its records are done with it.)
+const expectKeptOrReleased = (now, modules, what) => {
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode <= keptLinked + modules, what + ": " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked + modules, what + " (unlinked): " + JSON.stringify(now));
+    keptLinked = now.moduleExecutablesWithLinkedCode;
+    keptUnlinked = now.moduleExecutablesWithUnlinkedCode;
+};
 const load = (path) => $vm.moduleLoaderImport($vm.createModuleLoader(), path);
 
 async function test() {
@@ -30,26 +46,28 @@ async function test() {
     assert(a.marker === 11, "a ran");
     let now = census();
     if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "a's module code was released: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithLinkedCode === keptLinked, "a's module code was released: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.moduleExecutablesWithUnlinkedCode === 0, "and its unlinked code: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked, "and its unlinked code: " + JSON.stringify(now));
     assert(a.late(2) === 4, "a.late");
 
-    // The second loader adopts the executable, released code and all.
+    // The second loader adopts the executable, released code and all, and the code stays once it has run it.
     const b = await load(lib);
     assert(b !== a && b.marker === 11 && b.callCount() === 1 && a.callCount() === 2, "b has its own state");
     assert(typeof $vm.codeBlockFor(b.late) === "string" && $vm.codeBlockFor(b.late) === $vm.codeBlockFor(a.late), "b.late has the code a.late was given");
     now = census();
+    ++keptLinked;
+    ++keptUnlinked;
     if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "the module code was released again after b: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithLinkedCode === keptLinked, "the shared executable keeps its code after b: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.moduleExecutablesWithUnlinkedCode === 0, "and the unlinked code: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked, "and the unlinked code: " + JSON.stringify(now));
     // A declaration whose executable b links first is a's as well.
     assert(b.neverReadByTheFirstLoader(2) === 6, "b.neverReadByTheFirstLoader");
     assert($vm.codeBlockFor(a.neverReadByTheFirstLoader) === $vm.codeBlockFor(b.neverReadByTheFirstLoader), "one executable for both loaders");
     assert(a.neverReadByTheFirstLoader(3) === 9 && a.callCount() === 3 && b.callCount() === 2, "each counts its own calls");
     if (releasesUnlinkedCode)
-        assert(census().moduleExecutablesWithUnlinkedCode === 0, "reading declarations did not bring the unlinked code back");
+        assert(census().moduleExecutablesWithUnlinkedCode === keptUnlinked, "reading declarations did not bring any unlinked code back");
 
     // One loader is suspended in the module's body while another runs it to the end: the code stays until both are done.
     const tla = "./resources/module-loaders-released-code/tla.js";
@@ -64,20 +82,22 @@ async function test() {
     assert(globalThis.moduleLoadersReleasedCodeStarted === 2 && d.stage === "done" && d.describe() === "done:later", "the second loader ran the body to its end");
     now = census();
     if (releasesLinkedCode && !options.useEagerCodeBlockJettisonTiming && !options.forceCodeBlockToJettisonDueToOldAge)
-        assert(now.moduleExecutablesWithLinkedCode === 1, "the suspended loader keeps the module's code: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithLinkedCode === keptLinked + 1, "the suspended loader keeps the module's code: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.moduleExecutablesWithUnlinkedCode === 1, "linked and unlinked: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked + 1, "linked and unlinked: " + JSON.stringify(now));
     openGate();
     const c = await pending;
     assert(c !== d && c.stage === "done" && c.describe() === "done:later", "the first loader resumed and finished");
     now = census();
+    ++keptLinked;
+    ++keptUnlinked;
     if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "now it is released: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithLinkedCode === keptLinked, "two loaders had it, so it stays: " + JSON.stringify(now));
     if (releasesUnlinkedCode)
-        assert(now.moduleExecutablesWithUnlinkedCode === 0, "linked and unlinked: " + JSON.stringify(now));
+        assert(now.moduleExecutablesWithUnlinkedCode === keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
     assert($vm.codeBlockFor(c.describe) === $vm.codeBlockFor(d.describe), "shared declarations");
 
-    // A loader whose body throws is done with the code too: a later loader that runs the body to its end releases it.
+    // A loader whose body throws is done with the code too: the code goes although the body never reached its end.
     const throws = "./resources/module-loaders-released-code/throws.js";
     globalThis.moduleLoadersReleasedCodeThrowsStarted = 0;
     globalThis.moduleLoadersReleasedCodeShouldThrow = true;
@@ -88,14 +108,15 @@ async function test() {
         thrown = error;
     }
     assert(thrown instanceof Error && thrown.message === "the body throws" && globalThis.moduleLoadersReleasedCodeThrowsStarted === 1, "the first loader's body threw");
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released although the body threw: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
     globalThis.moduleLoadersReleasedCodeShouldThrow = false;
     const t = await load(throws);
     assert(t.done === true && t.late() === "late" && globalThis.moduleLoadersReleasedCodeThrowsStarted === 2, "the second loader ran it to the end");
-    now = census();
-    if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader's body threw: " + JSON.stringify(now));
-    if (releasesUnlinkedCode)
-        assert(now.moduleExecutablesWithUnlinkedCode === 0, "linked and unlinked: " + JSON.stringify(now));
+    expectKeptOrReleased(census(), 1, "after a loader whose body threw and one that ran it");
 
     // So is a loader's record that never runs because a module it depends on threw,
     const parent = "./resources/module-loaders-released-code/parent-of-throwing.js";
@@ -108,12 +129,15 @@ async function test() {
         thrown = error;
     }
     assert(thrown instanceof Error && thrown.message === "the dependency throws" && globalThis.moduleLoadersReleasedCodeParentStarted === 0, "the importer never ran");
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released although the importer's record never ran: " + JSON.stringify(now));
+    if (releasesUnlinkedCode)
+        assert(now.moduleExecutablesWithUnlinkedCode <= keptUnlinked, "linked and unlinked: " + JSON.stringify(now));
     globalThis.moduleLoadersReleasedCodeShouldThrow = false;
     const p = await load(parent);
     assert(p.late() === "late:7" && globalThis.moduleLoadersReleasedCodeParentStarted === 1, "the second loader ran the importer");
-    now = census();
-    if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader's record of it never ran: " + JSON.stringify(now));
+    expectKeptOrReleased(census(), 2, "after a loader whose dependency threw and one that ran both");
 
     // and one that is suspended at a top-level await when a sibling of it throws: it is never resumed.
     const cycleRoot = "./resources/module-loaders-released-code/cycle-root.js";
@@ -130,13 +154,14 @@ async function test() {
     assert(thrown instanceof Error && thrown.message === "the sibling throws" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 0, "the root of the cycle never ran");
     openSecondGate();
     await new Promise((resolve) => setTimeout(resolve, 1));
+    now = census();
+    if (releasesLinkedCode)
+        assert(now.moduleExecutablesWithLinkedCode <= keptLinked, "released although a record was left suspended: " + JSON.stringify(now));
     globalThis.moduleLoadersReleasedCodeShouldThrow = false;
     globalThis.moduleLoadersReleasedCodeNextGate = undefined;
     const r = await load(cycleRoot);
     assert(r.describe() === "awaited:sibling" && globalThis.moduleLoadersReleasedCodeCycleRootStarted === 1, "the second loader ran the cycle");
-    now = census();
-    if (releasesLinkedCode)
-        assert(now.moduleExecutablesWithLinkedCode === 0, "released although an earlier loader left a record suspended: " + JSON.stringify(now));
+    expectKeptOrReleased(census(), 3, "after a loader that left a record suspended and one that ran the cycle");
 
     // All code is deleted between two loaders: the second one's environment is made from another symbol table than the
     // first one's, so what the second links (and the optimizing tiers specialize on its one environment) must not become
