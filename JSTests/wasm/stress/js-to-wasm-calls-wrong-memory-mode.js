@@ -27,4 +27,5 @@ let boundsCheckedInstance = new WebAssembly.Instance(wasmModule, { foo: { mem: b
 for (let i = 0; i < 1e5; ++i)
     signalingInstance.exports.test(1);
 
-assert.throws(boundsCheckedInstance.exports.test, WebAssembly.RuntimeError, "Out of bounds memory access (evaluating 'func(...args)')", 0);
+// Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+assert.throws(boundsCheckedInstance.exports.test, WebAssembly.RuntimeError, "Out of bounds memory access", 0);

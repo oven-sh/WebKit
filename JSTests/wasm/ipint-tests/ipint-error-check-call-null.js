@@ -21,7 +21,8 @@ let wat = `
 async function test() {
     const instance = await instantiate(wat, {});
     const { table, read, write_null, write_inc, call, inc } = instance.exports
-    assert.throws(() => {call(5)}, WebAssembly.RuntimeError, "call_indirect to a signature that does not match (evaluating 'call(5)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'call(5)')".
+    assert.throws(() => {call(5)}, WebAssembly.RuntimeError, "call_indirect to a signature that does not match");
 }
 
 await assert.asyncTest(test())
