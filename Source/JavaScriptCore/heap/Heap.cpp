@@ -3587,6 +3587,13 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
     }
 }
 
+void Heap::performPendingDeferredGCWork()
+{
+    ASSERT(hasPendingDeferredGCWork());
+    m_didDeferGCWork = false;
+    collectIfNecessaryOrDefer();
+}
+
 void Heap::decrementDeferralDepthAndGCIfNeededSlow()
 {
     // Can't do anything if we're still deferred.
