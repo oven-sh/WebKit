@@ -69,6 +69,9 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_modulePromise);
     visitor.append(thisObject->m_loadPromise);
     visitor.append(thisObject->m_error);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_fetchSource);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleRegistryEntry);
@@ -224,6 +227,10 @@ void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSVal
 void ModuleRegistryEntry::setStatus(Status status)
 {
     m_status = status;
+#if USE(BUN_JSC_ADDITIONS)
+    if (status != Status::New && status != Status::Fetching)
+        m_fetchSource.clear();
+#endif
 }
 
 void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&& sourceCode)
@@ -253,6 +260,7 @@ void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
     ASSERT(m_status == Status::New || m_status == Status::Fetching);
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
+    m_fetchSource.clear();
     // Promises some in-flight load already created for this entry are settled now (with the record standing in for
     // the source: moduleLoadTopSettled has nothing to provide for it); their pending reactions see the settled module
     // promise and bail.
@@ -265,6 +273,34 @@ void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
 bool ModuleRegistryEntry::isLoaded() const
 {
     return m_isLoaded || (m_loadPromise && m_loadPromise->status() == JSPromise::Status::Fulfilled);
+}
+
+void ModuleRegistryEntry::setFetchSource(VM& vm, JSPromise* source)
+{
+    m_fetchSource.set(vm, this, source);
+}
+
+JSPromise* ModuleRegistryEntry::deliveredFetch() const
+{
+    JSPromise* source = m_fetchSource.get();
+    if (!source || source->status() == JSPromise::Status::Pending || !m_fetchPromise || m_fetchPromise->status() != JSPromise::Status::Pending)
+        return nullptr;
+    return source;
+}
+
+bool ModuleRegistryEntry::takeSettledFetchSource(VM& vm)
+{
+    JSPromise* source = deliveredFetch();
+    if (!source)
+        return false;
+    m_fetchSource.clear();
+    // m_fetchPromise was pipeFrom()'d, so only the unguarded forms settle it. The pipe's job finds it settled later
+    // and does nothing.
+    if (source->status() == JSPromise::Status::Fulfilled)
+        m_fetchPromise->fulfillPromise(vm, source->result());
+    else
+        m_fetchPromise->rejectPromise(vm, source->result());
+    return true;
 }
 
 JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
@@ -290,6 +326,9 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
     ASSERT(m_status == Status::Fetching);
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
+#if USE(BUN_JSC_ADDITIONS)
+    m_fetchSource.clear();
+#endif
 }
 
 } // namespace JSC

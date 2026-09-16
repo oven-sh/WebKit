@@ -387,6 +387,16 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
 
             if (entry->status() != ModuleRegistryEntry::Status::New)
                 promise = entry->ensureFetchPromise(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+            // Beneath a synchronous load (loadModuleSync), the job that hands a delivered fetch to this promise
+            // can be parked in a queue that does not drain before this load has to complete (Bun: a macro's
+            // import() of a module that the require(esm) above it requested). Continue from the host's promise.
+            // hostLoadImportedModule() then settles the entry from it, as it does for a static request.
+            if (vm.m_synchronousModuleQueue) {
+                if (JSPromise* delivered = entry->deliveredFetch())
+                    promise = delivered;
+            }
+#endif
         }
     }
 
@@ -706,6 +716,24 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // An entry that has its record gets FinishLoadingImportedModule at once, and the caller gets the entry's
+    // load promise, which only the load that created the entry fulfills. Beneath a synchronous load
+    // (loadModuleSync), the reactions that do so can be parked in a queue that does not drain before this
+    // caller's load has to complete (Bun: a macro on the main thread waits for its import() inside
+    // require(esm)). A dynamic import does not need that promise: ContinueDynamicImport runs
+    // LoadRequestedModules on the record, then links and evaluates it. A top-level graph load (loadModule with
+    // a ModuleGraphLoadingState) links when that promise is fulfilled, so it keeps it.
+    auto loadPromiseAfterFinish = [&](JSPromise* entryLoadPromise, AbstractModuleRecord* loaded) -> JSPromise* {
+        if (!vm.m_synchronousModuleQueue || entryLoadPromise->status() != JSPromise::Status::Pending || !payload->inherits<ModuleLoaderPayload>())
+            return entryLoadPromise;
+        JSPromise* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
+        fulfilled->markAsHandled();
+        fulfilled->fulfill(vm, loaded);
+        return fulfilled;
+    };
+#endif
+
     // HostLoadImportedModule is required to be idempotent for the same
     // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
     // FinishLoadingImportedModule populates it, and innerModuleLoading consults it,
@@ -726,7 +754,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             ASSERT(loadedPromise);
             finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
             RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+            return loadPromiseAfterFinish(loadedPromise, loaded);
+#else
             return loadedPromise;
+#endif
         }
     }
 
@@ -810,19 +842,24 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
-                    // Transpilation still in flight — re-issue through the
-                    // embedder's synchronous fetch. fetchPromise was already
-                    // pipeFrom()'d by the async path which set
-                    // isFirstResolvingFunctionCalledFlag, so use the unguarded
-                    // fulfill/reject. The ModuleRegistryFetchSettled reaction on
-                    // fetchPromise lands on the sync queue and drives the rest of
-                    // the chain (including loadPromise).
-                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
-                    RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (promise->status() == JSPromise::Status::Fulfilled)
-                        fetchPromise->fulfillPromise(vm, promise->result());
-                    else if (promise->status() == JSPromise::Status::Rejected)
-                        fetchPromise->rejectPromise(vm, promise->result());
+                    // The host has often delivered this fetch already: beneath a synchronous load it
+                    // fetches synchronously, and only the pipeFrom() job that hands the result to
+                    // fetchPromise is parked in a queue. Fetch a second time only if it has not.
+                    if (!mapEntry->takeSettledFetchSource(vm)) {
+                        // Transpilation still in flight — re-issue through the
+                        // embedder's synchronous fetch. fetchPromise was already
+                        // pipeFrom()'d by the async path which set
+                        // isFirstResolvingFunctionCalledFlag, so use the unguarded
+                        // fulfill/reject. The ModuleRegistryFetchSettled reaction on
+                        // fetchPromise lands on the sync queue and drives the rest of
+                        // the chain (including loadPromise).
+                        JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
+                        RETURN_IF_EXCEPTION(scope, nullptr);
+                        if (promise->status() == JSPromise::Status::Fulfilled)
+                            fetchPromise->fulfillPromise(vm, promise->result());
+                        else if (promise->status() == JSPromise::Status::Rejected)
+                            fetchPromise->rejectPromise(vm, promise->result());
+                    }
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -854,9 +891,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         JSPromise* promise = mapEntry->loadPromise();
 #endif
         if (promise) {
-            if (mapEntry->record()) {
-                finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);
+            if (AbstractModuleRecord* loaded = mapEntry->record()) {
+                finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
                 RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+                promise = loadPromiseAfterFinish(promise, loaded);
+#endif
             } else {
                 auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
                 JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -881,6 +921,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
         mapEntry->setStatus(ModuleRegistryEntry::Status::Fetching);
         mapEntry->ensureFetchPromise(globalObject)->pipeFrom(vm, promise);
+#if USE(BUN_JSC_ADDITIONS)
+        mapEntry->setFetchSource(vm, promise);
+#endif
     }
     JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -981,7 +1024,6 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
-                    unsigned loadedModulesCountBefore = module->loadedModules().size();
                     JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), true);
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
@@ -989,12 +1031,18 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     }
                     // 2.d.iii.2. NOTE: HostLoadImportedModule will call FinishLoadingImportedModule, which re-enters the graph loading process through ContinueModuleLoading.
                     //
-                    // If module.[[LoadedModules]] grew across the HostLoadImportedModule call, the requested
-                    // module was loaded synchronously, which means it was already loaded before. In that case
-                    // there is no need to attach a ModuleGraphLoadingError reaction, so we skip it.
-                    bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
-                    ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
-                    ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
+                    // If the requested module is in module.[[LoadedModules]] after the
+                    // HostLoadImportedModule call, it was loaded synchronously and
+                    // FinishLoadingImportedModule already continued this state, so no
+                    // ModuleGraphLoadingError reaction is needed. Membership — not a
+                    // loadedModules size delta — is the test: a require(esm) nested
+                    // inside the host hook (a CommonJS module evaluated during
+                    // makeModule requiring a sibling of this graph) drains the
+                    // synchronous module queue, which can run this module's pending
+                    // ModuleLoadStep reactions for OTHER requests during the call, so
+                    // the size can grow without THIS request having completed — and
+                    // grow by more than one.
+                    bool needsErrorReaction = !module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() });
                     if (needsErrorReaction)
                         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.

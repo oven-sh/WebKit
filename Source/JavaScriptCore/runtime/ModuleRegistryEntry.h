@@ -102,6 +102,14 @@ public:
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
+    // The host's fetch promise that pipeFrom() connects to the fetch promise. The connection is a microtask, so the
+    // host can have delivered while the fetch promise is still pending. A synchronous load (loadModuleSync) that
+    // cannot wait for that microtask uses the delivered result, and does not fetch again.
+    void setFetchSource(VM&, JSPromise*);
+    // The fetch source, when it is settled and the fetch promise is still pending. Null otherwise.
+    JSPromise* deliveredFetch() const;
+    // Settles the fetch promise from deliveredFetch(). Returns false when there is none.
+    bool takeSettledFetchSource(VM&);
 #endif
 
 private:
@@ -123,6 +131,7 @@ private:
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
+    WriteBarrier<JSPromise> m_fetchSource;
 #endif
 };
 
