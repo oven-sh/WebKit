@@ -713,6 +713,24 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // An entry that has its record gets FinishLoadingImportedModule at once, and the caller gets the entry's
+    // load promise, which only the load that created the entry fulfills. Beneath a synchronous load
+    // (loadModuleSync), the reactions that do so can be parked in a queue that does not drain before this
+    // caller's load has to complete (Bun: a macro on the main thread waits for its import() inside
+    // require(esm)). A dynamic import does not need that promise: ContinueDynamicImport runs
+    // LoadRequestedModules on the record, then links and evaluates it. A top-level graph load (loadModule with
+    // a ModuleGraphLoadingState) links when that promise is fulfilled, so it keeps it.
+    auto loadPromiseAfterFinish = [&](JSPromise* entryLoadPromise, AbstractModuleRecord* loaded) -> JSPromise* {
+        if (!vm.m_synchronousModuleQueue || entryLoadPromise->status() != JSPromise::Status::Pending || !payload->inherits<ModuleLoaderPayload>())
+            return entryLoadPromise;
+        JSPromise* fulfilled = JSPromise::create(vm, globalObject->promiseStructure());
+        fulfilled->markAsHandled();
+        fulfilled->fulfill(vm, loaded);
+        return fulfilled;
+    };
+#endif
+
     // HostLoadImportedModule is required to be idempotent for the same
     // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
     // FinishLoadingImportedModule populates it, and innerModuleLoading consults it,
@@ -733,7 +751,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             ASSERT(loadedPromise);
             finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
             RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+            return loadPromiseAfterFinish(loadedPromise, loaded);
+#else
             return loadedPromise;
+#endif
         }
     }
 
@@ -866,9 +888,12 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         JSPromise* promise = mapEntry->loadPromise();
 #endif
         if (promise) {
-            if (mapEntry->record()) {
-                finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);
+            if (AbstractModuleRecord* loaded = mapEntry->record()) {
+                finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
                 RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+                promise = loadPromiseAfterFinish(promise, loaded);
+#endif
             } else {
                 auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
                 JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
