@@ -118,7 +118,14 @@ public:
         , m_end(end)
     {
     }
-    uint32_t u32()
+    ALWAYS_INLINE uint32_t u32()
+    {
+        // Nearly every scalar fits one byte, and an unbounded reader (a record already known to lie inside the payload) has nothing to check for it.
+        if (!m_end && !(*m_p & 0x80)) [[likely]]
+            return *m_p++;
+        return u32Slow();
+    }
+    NEVER_INLINE uint32_t u32Slow()
     {
         uint32_t v = 0;
         for (unsigned shift = 0;; shift += 7) {
@@ -3924,7 +3931,7 @@ public:
             return false;
         auto payload = decoder.payloadSpan();
         const uint8_t* end = payload.data() + payload.size();
-        tail = readTail(end);
+        tail = readTail(decoder.payloadIsTrusted() ? nullptr : end);
         if (!tail.intact)
             return false;
         const Layout& layout = tail.layout;
