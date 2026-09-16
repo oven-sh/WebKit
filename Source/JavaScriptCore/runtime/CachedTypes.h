@@ -231,6 +231,7 @@ public:
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
     bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool payloadIsTrusted() const; // the embedder vouches for the bytes (CachePayload::isTrusted), so records are used without the damage checks
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }

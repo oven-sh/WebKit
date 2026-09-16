@@ -84,6 +84,11 @@ bool Decoder::canBorrowPayload() const
 #endif
 }
 
+bool Decoder::payloadIsTrusted() const
+{
+    return Options::useTrustedBytecodePayloads() && m_cachedBytecode->payloadIsTrusted();
+}
+
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
 class VarintWriter {
@@ -113,7 +118,14 @@ public:
         , m_end(end)
     {
     }
-    uint32_t u32()
+    ALWAYS_INLINE uint32_t u32()
+    {
+        // Nearly every scalar fits one byte, and an unbounded reader (a record already known to lie inside the payload) has nothing to check for it.
+        if (!m_end && !(*m_p & 0x80)) [[likely]]
+            return *m_p++;
+        return u32Slow();
+    }
+    NEVER_INLINE uint32_t u32Slow()
     {
         uint32_t v = 0;
         for (unsigned shift = 0;; shift += 7) {
@@ -3919,7 +3931,7 @@ public:
             return false;
         auto payload = decoder.payloadSpan();
         const uint8_t* end = payload.data() + payload.size();
-        tail = readTail(end);
+        tail = readTail(decoder.payloadIsTrusted() ? nullptr : end);
         if (!tail.intact)
             return false;
         const Layout& layout = tail.layout;
@@ -3955,6 +3967,9 @@ public:
         if ((layout.flags & LayoutHasExtras) && (layout.extrasAt < 0 || begin + layout.extrasAt + sizeof(CachedCodeBlockExtras) > end))
             return false;
 
+        // Parsing every child record is the one part of this that grows with the block; a trusted payload skips it.
+        if (decoder.payloadIsTrusted())
+            return true;
         for (const Array* children : { &layout.functionDecls, &layout.functionExprs }) {
             auto* slots = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, *children);
             for (unsigned i = 0; i < children->count; ++i) {

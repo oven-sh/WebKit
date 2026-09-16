@@ -43,6 +43,10 @@ public:
     void setIsPersistent() { m_isPersistent = true; } // embedder promises the bytes outlive every VM use (e.g. a section of the running executable)
     // The bytes stay valid for as long as this object does. Only a bare span handed in without a destructor is a borrow of unknown duration.
     bool isOwnedOrPersistent() const { return m_isPersistent || !!m_destructor || !std::holds_alternative<std::span<uint8_t>>(m_data); }
+    // The embedder vouches for the bytes as it does for its own code (they are part of the running executable), so the
+    // decoder does not look for a truncated or misassembled payload before using a record.
+    bool isTrusted() const { return m_isTrusted; }
+    void setIsTrusted() { m_isTrusted = true; }
 
     JS_EXPORT_PRIVATE CachePayload(CachePayload&&);
     JS_EXPORT_PRIVATE ~CachePayload();
@@ -56,6 +60,7 @@ public:
 
     DataType m_data;
     bool m_isPersistent { false };
+    bool m_isTrusted { false };
     Destructor m_destructor { nullptr };
 };
 
