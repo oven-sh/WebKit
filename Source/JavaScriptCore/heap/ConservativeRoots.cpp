@@ -232,15 +232,21 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
 #if ENABLE(WEBASSEMBLY)
     if (boxedWasmCalleeFilter.bits()) {
         constexpr bool lookForWasmCallees = true;
-        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it))
+                continue;
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
     } else {
 #else
     {
 #endif
         constexpr bool lookForWasmCallees = false;
-        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it)
+        for (char** it = static_cast<char**>(begin); it != static_cast<char**>(end); ++it) {
+            if (isPoisonedForConservativeScan(it))
+                continue;
             genericAddPointer<lookForWasmCallees>(*it, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
+        }
     }
 }
 
