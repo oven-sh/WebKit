@@ -1,3 +1,4 @@
+//@ slow!
 //@ if $buildType == "debug" then runDefault("--maxSingleAllocationSize=1048576") else skip end
 
 // Each builtin below keeps one entry per script-controlled item in a WTF::Vector. When that Vector
@@ -58,19 +59,30 @@ shouldThrowOutOfMemory(() => JSON.parse("[" + "1,".repeat(50000) + "1]", (key, v
 shouldBe(JSON.stringify(JSON.parse("[1,[2,3]]", (key, value) => value)), "[1,[2,3]]");
 
 // FinalizationRegistry.prototype.register: every registration, in one list per unregister token.
-for (const token of [undefined, { }]) {
+{
     const registry = new FinalizationRegistry(() => { });
     const target = { };
+    const token = { };
     shouldThrowOutOfMemory(() => {
         for (;;)
             registry.register(target, 1, token);
     });
-    if (token) {
-        shouldBe(registry.unregister(token), true);
-        shouldBe(registry.unregister(token), false);
-        registry.register(target, 1, token);
-        shouldBe(registry.unregister(token), true);
-    }
+    shouldBe(registry.unregister(token), true);
+    shouldBe(registry.unregister(token), false);
+
+    shouldThrowOutOfMemory(() => {
+        for (;;)
+            registry.register(target, 1);
+    });
+    // The list of the registrations without a token is full now. When a token dies before its target, the
+    // end of the collection moves the registration to that list. Nothing can throw there, so it is dropped.
+    (function () {
+        for (let i = 0; i < 100; ++i)
+            registry.register(target, 2, { });
+    })();
+    fullGC();
+    registry.register(target, 3, token);
+    shouldBe(registry.unregister(token), true);
 }
 
 // Intl.ListFormat: every string of the iterable.

@@ -140,7 +140,11 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
             }
 
             if (keyIsDead) {
-                m_noUnregistrationLive.append(reg);
+                // registerTarget() can leave this list full, and nothing can throw at the end of a collection.
+                // A registration that does not fit is dropped: its cleanup callback never runs, which the
+                // specification allows.
+                bool appended = m_noUnregistrationLive.tryAppend(reg);
+                UNUSED_VARIABLE(appended);
                 return true;
             }
 

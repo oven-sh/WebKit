@@ -1081,6 +1081,12 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
 
     auto& result = vm.stringSplitIndice;
     result.shrink(0);
+    // result keeps its capacity for the next call. A buffer that could not grow is not worth keeping.
+    auto throwOutOfMemory = [&]() -> JSCell* {
+        result.clear();
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    };
     constexpr unsigned atomStringsArrayLimit = 100;
     const bool subjectIsAtom = input->impl()->isAtom();
 
@@ -1216,10 +1222,8 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
         SplitStatus status = stringImpl->is8Bit()
             ? splitStringByOneCharacterImpl<Latin1Character>(result, stringImpl, separatorCharacter, limit)
             : splitStringByOneCharacterImpl<char16_t>(result, stringImpl, separatorCharacter, limit);
-        if (status == SplitStatus::OutOfMemory) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return { };
-        }
+        if (status == SplitStatus::OutOfMemory) [[unlikely]]
+            return throwOutOfMemory();
         if (status == SplitStatus::ReachedLimit)
             RELEASE_AND_RETURN(scope, cacheAndCreateArray());
     } else {
@@ -1234,10 +1238,8 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
             // 1. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
             //    through q (exclusive).
             // 2. Call CreateDataProperty(A, ToString(lengthA), T).
-            if (!result.tryAppend(matchPosition)) [[unlikely]] {
-                throwOutOfMemoryError(globalObject, scope);
-                return { };
-            }
+            if (!result.tryAppend(matchPosition)) [[unlikely]]
+                return throwOutOfMemory();
             // 3. Increment lengthA by 1.
             // 4. If lengthA == lim, return A.
             if (result.size() == limit)
@@ -1252,10 +1254,8 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     // 15. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
     //     through s (exclusive).
     // 16. Call CreateDataProperty(A, ToString(lengthA), T).
-    if (!result.tryAppend(input->length())) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return { };
-    }
+    if (!result.tryAppend(input->length())) [[unlikely]]
+        return throwOutOfMemory();
     RELEASE_AND_RETURN(scope, cacheAndCreateArray());
 }
 
