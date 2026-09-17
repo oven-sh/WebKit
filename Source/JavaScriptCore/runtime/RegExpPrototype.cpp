@@ -1708,7 +1708,27 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncReplace, (JSGlobalObject* globalObject, 
     JSString* string = callFrame->argument(0).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(regExpReplaceGeneric(globalObject, thisObject, string, callFrame->argument(1))));
+    // Fast path: receiver is a primordial RegExpObject with no observable side effects. A RegExp of another realm
+    // takes the generic path: its "exec" updates the legacy static properties of that realm, not of this one.
+    JSValue replaceValue = callFrame->argument(1);
+    auto* regExpObject = dynamicDowncast<RegExpObject>(thisObject);
+    if (regExpObject && regExpObject->realm() == globalObject && regExpObject->isSymbolReplaceFastAndNonObservable()) [[likely]] {
+        // ToString(replaceValue) is the last step that can run user code before the RegExp is used.
+        auto callData = JSC::getCallData(replaceValue);
+        String replacementString;
+        if (callData.type == CallData::Type::None) {
+            replacementString = replaceValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (regExpObject->isSymbolReplaceFastAndNonObservable()) [[likely]]
+            RELEASE_AND_RETURN(scope, JSValue::encode(replaceUsingRegExpSearch(vm, globalObject, string, regExpObject, callData, replacementString, replaceValue)));
+
+        // The generic path converts replaceValue again. Hand it the string, so that a user toString runs once.
+        if (callData.type == CallData::Type::None)
+            replaceValue = jsString(vm, WTF::move(replacementString));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(regExpReplaceGeneric(globalObject, thisObject, string, replaceValue)));
 }
 
 // https://tc39.es/ecma262/#sec-regexp.prototype-%symbol.matchall%
