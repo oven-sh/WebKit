@@ -1501,12 +1501,13 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
         RETURN_IF_EXCEPTION(scope, void());
     }
 #endif
-    scope.release();
-    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this))
-        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher)); // can throw
-    else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
+        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
+        RETURN_IF_EXCEPTION(scope, void());
+    } else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
         moduleRecord->link(globalObject, WTF::move(scriptFetcher));
-    else
+        RETURN_IF_EXCEPTION(scope, void());
+    } else
         RELEASE_ASSERT_NOT_REACHED();
 }
 
