@@ -102,7 +102,7 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ProgramExecutable(JSGlobalObject*, const SourceCode&);
+    ProgramExecutable(JSGlobalObject*, const SourceCode&, const Vector<SymbolTable*>& scopeSymbolTables = { });
 
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
     // The symbol tables of the lexical environments between the scope the program runs in and the

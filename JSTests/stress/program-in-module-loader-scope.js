@@ -1,5 +1,6 @@
 //@ requireOptions("--useDollarVM=1")
-//@ defaultRun
+// (Not the bytecode cache modes: what $vm.evaluateInModuleLoaderScope() evaluates is a string, which has no cache.)
+//@ runDefault
 //@ runDefault("--useRunOnceCodeRelease=0")
 //@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100")
 

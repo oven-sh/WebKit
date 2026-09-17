@@ -42,9 +42,12 @@ namespace JSC {
 
 const ClassInfo ProgramExecutable::s_info = { "ProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ProgramExecutable) };
 
-ProgramExecutable::ProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source)
+ProgramExecutable::ProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, const Vector<SymbolTable*>& scopeSymbolTables)
     : Base(globalObject->vm().programExecutableStructure.get(), globalObject->vm(), source, NoLexicallyScopedFeatures, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
+    , m_scopeSymbolTables(scopeSymbolTables.size())
 {
+    for (unsigned i = 0; i < scopeSymbolTables.size(); ++i)
+        m_scopeSymbolTables[i].setWithoutWriteBarrier(scopeSymbolTables[i]);
     ASSERT(source.provider()->sourceType() == SourceProviderSourceType::Program);
     VM& vm = globalObject->vm();
     if (vm.typeProfiler() || vm.controlFlowProfiler())
@@ -60,8 +63,10 @@ ProgramExecutable* ProgramExecutable::getOrCreateForScope(JSGlobalObject* global
 {
     VM& vm = globalObject->vm();
     Vector<SymbolTable*> scopeSymbolTables;
-    for (; scope != globalObject->globalLexicalEnvironment(); scope = scope->next())
+    for (; scope != globalObject->globalLexicalEnvironment(); scope = scope->next()) {
+        RELEASE_ASSERT(scope && scope->type() == LexicalEnvironmentType); // as JSModuleLoader::finishCreation requires of a module scope
         scopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(scope)->symbolTable());
+    }
     if (scopeSymbolTables.isEmpty())
         return create(globalObject, source);
 
@@ -89,10 +94,8 @@ ProgramExecutable* ProgramExecutable::getOrCreateForScope(JSGlobalObject* global
             return shared;
     }
 
-    ProgramExecutable* executable = create(globalObject, source);
-    executable->m_scopeSymbolTables = FixedVector<WriteBarrier<SymbolTable>>(scopeSymbolTables.size());
-    for (unsigned i = 0; i < scopeSymbolTables.size(); ++i)
-        executable->m_scopeSymbolTables[i].set(vm, executable, scopeSymbolTables[i]);
+    ProgramExecutable* executable = new (NotNull, allocateCell<ProgramExecutable>(vm)) ProgramExecutable(globalObject, source, scopeSymbolTables);
+    executable->finishCreation(vm);
     executables.set(key, Weak<ProgramExecutable>(executable));
     return executable;
 }

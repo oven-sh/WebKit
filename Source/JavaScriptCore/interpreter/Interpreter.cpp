@@ -1307,6 +1307,10 @@ JSValue Interpreter::executeProgramInScope(const SourceCode& source, JSGlobalObj
     if (error) [[unlikely]]
         return throwException(globalObject, throwScope, error);
 
+    // (As executeProgram does for the global scope, which is the end of this one.)
+    if (globalObject->globalScope()->structure()->isUncacheableDictionary())
+        globalObject->globalScope()->flattenDictionaryObject(vm);
+
     // The program's scope register is its callee's scope.
     JSCallee* callee = JSCallee::create(vm, globalObject, scope);
     RefPtr<JSC::JITCode> jitCode;

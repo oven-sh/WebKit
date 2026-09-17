@@ -138,6 +138,8 @@ public:
     // (or not yet) the current ones.
     static ALWAYS_INLINE JSValue captured(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext, JSValue scriptExecutionOwner)
     {
+        if (asyncContext.isEmpty())
+            asyncContext = jsUndefined();
         if (scriptExecutionOwner.isUndefined())
             return asyncContext;
         return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);

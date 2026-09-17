@@ -181,10 +181,12 @@ const check = (expected, count) => {
         }
     }
     noInline(thenInLoop);
-    for (let round = 0; round < 20; round++) {
-        thenInLoop("-/-", 2000);
-        inside(undefined, O, () => thenInLoop("-/O", 2000));
-        inside(A, undefined, () => thenInLoop("A/-", 2000));
+    // (In rounds, so that no more than a round's worth of jobs is ever queued.)
+    const rounds = 10, iterations = Math.ceil(2 * testLoopCount / rounds);
+    for (let round = 0; round < rounds; round++) {
+        thenInLoop("-/-", iterations);
+        inside(undefined, O, () => thenInLoop("-/O", iterations));
+        inside(A, undefined, () => thenInLoop("A/-", iterations));
         drainMicrotasks();
     }
     async function awaitInLoop(tag, iterations) {
@@ -194,10 +196,10 @@ const check = (expected, count) => {
                 failure = new Error("await: expected " + tag + " but got " + current());
         }
     }
-    for (let round = 0; round < 20; round++) {
-        awaitInLoop("-/-", 500);
-        inside(undefined, P, () => awaitInLoop("-/P", 500));
-        inside(B, O, () => awaitInLoop("B/O", 500));
+    for (let round = 0; round < rounds; round++) {
+        awaitInLoop("-/-", iterations);
+        inside(undefined, P, () => awaitInLoop("-/P", iterations));
+        inside(B, O, () => awaitInLoop("B/O", iterations));
         drainMicrotasks();
     }
     if (failure)
