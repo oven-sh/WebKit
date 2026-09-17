@@ -98,6 +98,11 @@ void BBQPlan::work()
 
     Ref<BBQCallee> callee = BBQCallee::create(functionIndexSpace, m_moduleInformation->nameSection().get(functionIndexSpace), Ref { m_profiledCallee });
     std::unique_ptr<InternalFunction> function = compileFunction(m_functionIndex, callee.get(), context, unlinkedWasmToWasmCalls);
+    if (!function) [[unlikely]] {
+        // compileFunction already called fail(), which completed the plan.
+        // The function keeps running in the interpreter tier.
+        return;
+    }
 
     // The finished code is patched further (wasm call-site linking in installOptimizedCallee) and
     // flushed once afterward, so skip LinkBuffer's finalize instruction-cache flush.
