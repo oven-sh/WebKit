@@ -33,6 +33,7 @@
 #include "AccessCase.h"
 #include "AggregateError.h"
 #include "ArgList.h"
+#include "AsyncContextSwapScope.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeIntrinsicRegistry.h"
 #include "CachedBytecode.h"
@@ -1312,6 +1313,13 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     }
 
     interpreter.notifyDebuggerOfExceptionToBeThrown(*this, globalObject, throwOriginFrame, exceptionToThrow);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // An embedder reports an exception nobody caught after the async context it was thrown in has
+    // been restored. Rethrowing keeps the context of the first throw.
+    if (isAsyncContextTrackingEnabled() && !exceptionToThrow->asyncContext())
+        exceptionToThrow->setAsyncContext(*this, AsyncContextSwapScope::current(*this, globalObject));
+#endif
 
     setException(exceptionToThrow);
 
