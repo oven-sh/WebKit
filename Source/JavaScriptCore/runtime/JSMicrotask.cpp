@@ -2170,7 +2170,8 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (callData.type == CallData::Type::None)
             return;
 
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[1]);
+        JSValue asyncContext = arguments[1];
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
 
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -2197,7 +2198,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                     return;
                 }
                 if (Bun__reportUnhandledError)
-                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception), JSValue::encode(arguments[1]));
+                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception), JSValue::encode(asyncContext));
             }
         }
         return;
