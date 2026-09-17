@@ -132,20 +132,59 @@ static LazyNeverDestroyed<Semaphore> globalSemaphoreForSuspendResume;
 
 static std::atomic<Thread*> targetThread { nullptr };
 
+// Thread::suspend() and Thread::resume() publish what they ask of which thread before they send
+// sigThreadSuspendResume, and the signal handler acts only on a request that names its own thread.
+// The signal can also come from kill(2), raise() or another process, and siginfo cannot tell those
+// from our pthread_kill(): the kernel drops it once RLIMIT_SIGPENDING is exhausted, and a sender in
+// a parent PID namespace looks the same. ThreadSuspendLocker serializes the publishers, so one slot
+// is enough. The generation makes the two-word read in the handler consistent.
+enum class SuspendResumeRequest : uint8_t { None, Suspend, Resume };
+static constexpr uintptr_t suspendResumeRequestMask = 3;
+static std::atomic<pthread_t> requestedThreadHandle { };
+static std::atomic<uintptr_t> pendingSuspendResumeRequest { 0 }; // generation << 2 | SuspendResumeRequest
+
+static void publishSuspendResumeRequest(pthread_t handle, SuspendResumeRequest request)
+{
+    requestedThreadHandle.store(handle);
+    uintptr_t generation = (pendingSuspendResumeRequest.load() >> 2) + 1;
+    pendingSuspendResumeRequest.store(generation << 2 | static_cast<uintptr_t>(request));
+}
+
+static void clearSuspendResumeRequest()
+{
+    pendingSuspendResumeRequest.store(pendingSuspendResumeRequest.load() & ~suspendResumeRequestMask);
+}
+
+// Only uses pthread_self() to identify the thread: the TLS slot of WTF::Thread is empty while a
+// thread runs its TLS destructors, and it can still be suspended then.
+static SuspendResumeRequest pendingSuspendResumeRequestForCurrentThread()
+{
+    while (true) {
+        uintptr_t snapshot = pendingSuspendResumeRequest.load();
+        auto request = static_cast<SuspendResumeRequest>(snapshot & suspendResumeRequestMask);
+        if (request == SuspendResumeRequest::None)
+            return request;
+        pthread_t handle = requestedThreadHandle.load();
+        if (pendingSuspendResumeRequest.load() != snapshot)
+            continue;
+        return pthread_equal(pthread_self(), handle) ? request : SuspendResumeRequest::None;
+    }
+}
+
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
     // Touching a global variable atomic types from signal handlers is allowed.
-    Thread* thread = targetThread.load();
-
-    if (thread->m_suspendCount) {
-        // This is signal handler invocation that is intended to be used to resume sigsuspend.
-        // So this handler invocation itself should not process.
-        //
-        // When signal comes, first, the system calls signal handler. And later, sigsuspend will be resumed. Signal handler invocation always precedes.
-        // So, the problem never happens that suspended.store(true, ...) will be executed before the handler is called.
-        // http://pubs.opengroup.org/onlinepubs/009695399/functions/sigsuspend.html
+    //
+    // Anything but a suspend request for this thread is not for this invocation: either nobody
+    // asked (the signal came from outside of suspend() and resume()), or it is the resume request,
+    // which the sigsuspend() loop of the suspended invocation below consumes.
+    if (pendingSuspendResumeRequestForCurrentThread() != SuspendResumeRequest::Suspend)
         return;
-    }
+
+    // The request names this thread, so targetThread is this thread's own, live Thread. suspend()
+    // waits for the post() below before it publishes anything else.
+    Thread* thread = targetThread.load();
+    clearSuspendResumeRequest();
 
     void* approximateStackPointer = currentStackPointer();
     if (!thread->m_stack.contains(approximateStackPointer)) {
@@ -182,7 +221,11 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
     sigset_t blockedSignalSet;
     sigfillset(&blockedSignalSet);
     sigdelset(&blockedSignalSet, g_wtfConfig.sigThreadSuspendResume);
-    sigsuspend(&blockedSignalSet);
+    // sigsuspend() returns after any handler ran, so only the resume request ends the suspension.
+    // sigThreadSuspendResume stays blocked between the check and sigsuspend(), so the request cannot be missed.
+    while (pendingSuspendResumeRequestForCurrentThread() != SuspendResumeRequest::Resume)
+        sigsuspend(&blockedSignalSet);
+    clearSuspendResumeRequest();
 
     thread->m_platformRegisters = nullptr;
 
@@ -611,10 +654,13 @@ auto Thread::suspend(const ThreadSuspendLocker&) -> std::expected<void, Platform
         targetThread.store(this);
 
         while (true) {
+            publishSuspendResumeRequest(m_handle, SuspendResumeRequest::Suspend);
             // We must use pthread_kill to avoid queue-overflow problem with real-time signals.
             int result = pthread_kill(m_handle, g_wtfConfig.sigThreadSuspendResume);
-            if (result)
+            if (result) {
+                clearSuspendResumeRequest();
                 return makeUnexpected(result);
+            }
             globalSemaphoreForSuspendResume->wait();
             if (m_platformRegisters)
                 break;
@@ -636,15 +682,14 @@ void Thread::resume(const ThreadSuspendLocker&)
     if (m_suspendCount == 1) {
         // When allowing sigThreadSuspendResume interrupt in the signal handler by sigsuspend and SigThreadSuspendResume is actually issued,
         // the signal handler itself will be called once again.
-        // There are several ways to distinguish the handler invocation for suspend and resume.
-        // 1. Use different signal numbers. And check the signal number in the handler.
-        // 2. Use some arguments to distinguish suspend and resume in the handler.
-        // 3. Use thread's flag.
-        // In this implementaiton, we take (3). m_suspendCount is used to distinguish it.
+        // The published request tells that invocation, and the suspended one that waits in sigsuspend, that this is the resume.
         // Note that we must use pthread_kill to avoid queue-overflow problem with real-time signals.
         targetThread.store(this);
-        if (pthread_kill(m_handle, g_wtfConfig.sigThreadSuspendResume) == ESRCH)
+        publishSuspendResumeRequest(m_handle, SuspendResumeRequest::Resume);
+        if (pthread_kill(m_handle, g_wtfConfig.sigThreadSuspendResume) == ESRCH) {
+            clearSuspendResumeRequest();
             return;
+        }
         globalSemaphoreForSuspendResume->wait();
     }
     --m_suspendCount;
