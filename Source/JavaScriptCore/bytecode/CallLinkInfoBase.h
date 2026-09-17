@@ -29,6 +29,7 @@
 #include "CallMode.h"
 #include "JSCPtrTag.h"
 #include <wtf/CodePtr.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/SentinelLinkedList.h>
 
 namespace JSC {
@@ -54,6 +55,9 @@ public:
 static_assert(sizeof(CallSlot) <= 32, "This should be small enough to keep iteration of vector in polymorphic call fast");
 
 class CallLinkInfoBase : public BasicRawSentinelNode<CallLinkInfoBase> {
+    // A node is chained into its callee CodeBlock's m_incomingCalls by address. A copy would carry the
+    // link words of the original and look linked without being reachable from any list.
+    WTF_MAKE_NONCOPYABLE(CallLinkInfoBase);
 public:
     enum class CallSiteType : uint8_t {
         CallLinkInfo,
