@@ -57,9 +57,10 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
         Base::internalField(index).setWithoutWriteBarrier(values[index]);
     internalField(Field::Callback).setWithoutWriteBarrier(callback);
 
-    // Init the DOM wrapper for our document now: reconciliation runs during the GC flip, where no
-    // JS objects can be allocated. This only works because we no longer weakly hold DOM wrappers.
-    globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
+    // Asked now rather than when there is something to clean up: reconciliation runs during the GC
+    // flip, where no JS objects (the DOM wrapper for our document) can be allocated and where
+    // whoever is current has nothing to do with this registry.
+    internalField(Field::ScriptExecutionOwner).setWithoutWriteBarrier(globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject));
 }
 
 template<typename Visitor>
@@ -151,7 +152,7 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
     });
 
     if (!m_hasAlreadyScheduledWork && (readiedCell || deadCount(locker))) {
-        auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+        auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { }, scriptExecutionOwner());
         bool queued = vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [this](DeferredWorkTimer::Ticket&) {
             JSGlobalObject* globalObject = this->realm();
             this->m_hasAlreadyScheduledWork = false;

@@ -85,7 +85,10 @@ public:
 
     // Tickets are strongly held by the timer and should be weakly held by the caller and global object.
     // This allows detached global objects, most commonly iframes / Workers, to cancel tickets without leaking memory.
+    // The work is the current script execution owner's.
     JS_EXPORT_PRIVATE WeakTicket addPendingWork(WorkType, VM&, JSObject* target, Vector<JSCell*>&& dependencies);
+    // For work that is asked for when nobody relevant is current (from the collector): the owner was noted earlier.
+    JS_EXPORT_PRIVATE WeakTicket addPendingWork(WorkType, VM&, JSObject* target, Vector<JSCell*>&& dependencies, JSObject* scriptExecutionOwner);
     void cancelPendingWork(VM&);
 
     JS_EXPORT_PRIVATE bool NODELETE hasAnyPendingWork() const;
