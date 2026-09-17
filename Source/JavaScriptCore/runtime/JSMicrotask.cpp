@@ -68,7 +68,9 @@
 #include "VMTrapsInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
-extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+// asyncContext: the async context the exception was thrown in. It is reported after that context
+// has been restored, so the embedder cannot read it from the global object any more.
+extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue exception, JSC::EncodedJSValue asyncContext);
 #endif
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyStreamingContext.h"
@@ -2182,10 +2184,18 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             else
                 callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
 
+            // The async context an exception was thrown in is the one the callback leaves behind
+            // (it may have moved on from the one it was entered with: AsyncLocalStorage.enterWith()).
+            auto* exception = catchScope.exception();
+            JSValue asyncContext;
+            if (exception) [[unlikely]] {
+                asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+            }
+
             // Restore async context before error reporting
             asyncContextScope.restoreEarly();
 
-            if (auto* exception = catchScope.exception()) [[unlikely]] {
+            if (exception) [[unlikely]] {
                 // A TerminationException is not an error to report. It stays pending so that
                 // runMicrotask() stops the checkpoint, as it does for every other job kind. Clearing
                 // it here would consume the one exception the NeedTermination trap produced, and a
@@ -2195,7 +2205,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                     return;
                 }
                 if (Bun__reportUnhandledError)
-                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception), JSValue::encode(asyncContext));
             }
         }
         return;
