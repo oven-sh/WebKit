@@ -526,7 +526,11 @@ public:
     String m_name;
 
 #if USE(BUN_JSC_ADDITIONS)
+    // [async context, script execution owner]: what async code continues with (AsyncContextSwapScope).
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+    // The last value captured while there was an owner, which the next capture of the same two values
+    // reuses. Weak: what keeps an owner alive is the jobs that captured it, not that it was captured.
+    Weak<InternalFieldTuple> m_capturedAsyncContextWithScriptExecutionOwner;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
@@ -788,6 +792,9 @@ public:
             vm().setAsyncContextTrackingEnabled();
     }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
+    // AsyncContextSwapScope::current() while there is a script execution owner: an
+    // InternalFieldTuple of the two fields of m_asyncContextData, never written again.
+    JS_EXPORT_PRIVATE JSValue currentAsyncContextWithScriptExecutionOwner(VM&);
 #endif
 
     bool hasDebugger() const { return m_debugger; }

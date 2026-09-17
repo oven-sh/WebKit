@@ -35,15 +35,22 @@
 
 namespace JSC {
 
-// RAII helper for Bun's AsyncLocalStorage. A job (microtask, timer, ...)
-// captures the value of JSGlobalObject::m_asyncContextData field 0 when it is
-// scheduled; constructing this scope with that captured value installs it for
-// the lifetime of the scope and restores the previous value on destruction.
+// RAII helper for Bun's AsyncLocalStorage. JSGlobalObject::m_asyncContextData holds
+// what async code continues with: field 0 is the async context (AsyncLocalStorage's
+// data), field 1 the script execution owner the running script belongs to, for an
+// embedder that has more than one per global object (undefined: the global object's
+// own). A job (microtask, timer, ...) captures both when it is scheduled, with
+// current(); constructing this scope with the captured value installs both for the
+// lifetime of the scope and restores the previous values on destruction.
+//
+// A captured value is one JSValue, because one slot is what reactions and microtasks
+// have for it: field 0's value while there is no owner, otherwise an InternalFieldTuple
+// [async context, owner] (asyncContextOf() / scriptExecutionOwnerOf() take it apart).
 //
 // A job that captured "no context" (undefined, or an empty JSValue for callers
-// that never capture) runs with no context: whatever an earlier job left in the
-// slot via AsyncLocalStorage.enterWith() is not inherited, and whatever the job
-// itself leaves there does not outlive it. Until the VM has enabled tracking
+// that never capture) runs with no context and no owner: whatever an earlier job
+// left in the slots via AsyncLocalStorage.enterWith() is not inherited, and whatever
+// the job itself leaves there does not outlive it. Until the VM has enabled tracking
 // (VM::isAsyncContextTrackingEnabled) nothing can have been captured, so every
 // entry point here reduces to that flag test.
 class AsyncContextSwapScope {
@@ -89,6 +96,8 @@ public:
     {
         if (m_asyncContextData) {
             m_asyncContextData->putInternalField(m_vm, 0, m_restoreAsyncContext);
+            if (m_asyncContextData->getInternalField(1) != m_restoreScriptExecutionOwner) [[unlikely]]
+                m_asyncContextData->putInternalField(m_vm, 1, m_restoreScriptExecutionOwner);
             m_asyncContextData = nullptr;
         }
     }
@@ -113,14 +122,36 @@ public:
         return tuple->getInternalField(1);
     }
 
-    // The async context to capture for a job being scheduled now: field 0 of
-    // m_asyncContextData, or jsUndefined() when there is none.
+    // What to capture for a job being scheduled now: the async context and the script
+    // execution owner in m_asyncContextData, or jsUndefined() when there is neither.
     static ALWAYS_INLINE JSValue current(VM& vm, JSGlobalObject* globalObject)
     {
         if (!vm.isAsyncContextTrackingEnabled())
             return jsUndefined();
         ASSERT(globalObject->m_asyncContextData);
-        return globalObject->m_asyncContextData->getInternalField(0);
+        if (globalObject->m_asyncContextData->getInternalField(1).isUndefined()) [[likely]]
+            return globalObject->m_asyncContextData->getInternalField(0);
+        return globalObject->currentAsyncContextWithScriptExecutionOwner(vm);
+    }
+
+    // The captured value of an async context and a script execution owner that are not
+    // (or not yet) the current ones.
+    static ALWAYS_INLINE JSValue captured(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext, JSValue scriptExecutionOwner)
+    {
+        if (scriptExecutionOwner.isUndefined())
+            return asyncContext;
+        return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);
+    }
+
+    // The two parts of a captured value.
+    static ALWAYS_INLINE JSValue asyncContextOf(JSValue captured)
+    {
+        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(0) : captured;
+    }
+
+    static ALWAYS_INLINE JSValue scriptExecutionOwnerOf(JSValue captured)
+    {
+        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(1) : jsUndefined();
     }
 
     // Pair userContext with asyncContext in an InternalFieldTuple
@@ -143,21 +174,30 @@ private:
     // The previous value is put back on exit even when nothing had to be
     // installed, so whatever the job itself leaves in the slot (enterWith())
     // ends with the job.
-    ALWAYS_INLINE void enter(JSGlobalObject* globalObject, JSValue asyncContext)
+    ALWAYS_INLINE void enter(JSGlobalObject* globalObject, JSValue captured)
     {
         ASSERT(m_vm.isAsyncContextTrackingEnabled());
         ASSERT(globalObject->m_asyncContextData);
-        if (asyncContext.isEmpty())
-            asyncContext = jsUndefined();
+        JSValue asyncContext = captured.isEmpty() ? jsUndefined() : captured;
+        JSValue scriptExecutionOwner = jsUndefined();
+        if (isContextTuple(captured)) [[unlikely]] {
+            auto* tuple = uncheckedDowncast<InternalFieldTuple>(captured.asCell());
+            asyncContext = tuple->getInternalField(0);
+            scriptExecutionOwner = tuple->getInternalField(1);
+        }
         m_asyncContextData = globalObject->m_asyncContextData.get();
         m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
+        m_restoreScriptExecutionOwner = m_asyncContextData->getInternalField(1);
         if (m_restoreAsyncContext != asyncContext)
             m_asyncContextData->putInternalField(m_vm, 0, asyncContext);
+        if (m_restoreScriptExecutionOwner != scriptExecutionOwner) [[unlikely]]
+            m_asyncContextData->putInternalField(m_vm, 1, scriptExecutionOwner);
     }
 
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
+    JSValue m_restoreScriptExecutionOwner;
 };
 
 } // namespace JSC
