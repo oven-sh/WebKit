@@ -68,7 +68,9 @@
 #include "VMTrapsInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
-extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+// asyncContext: the async context the failed job ran in. It is reported after that context has
+// been restored, so the embedder cannot read it from the global object any more.
+extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue exception, JSC::EncodedJSValue asyncContext);
 #endif
 #if ENABLE(WEBASSEMBLY)
 #include "JSWebAssemblyStreamingContext.h"
@@ -2195,7 +2197,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                     return;
                 }
                 if (Bun__reportUnhandledError)
-                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+                    Bun__reportUnhandledError(globalObject, JSValue::encode(exception), JSValue::encode(arguments[1]));
             }
         }
         return;
