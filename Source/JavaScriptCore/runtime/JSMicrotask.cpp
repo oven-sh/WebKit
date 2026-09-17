@@ -2187,7 +2187,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             // The async context an exception was thrown in is the one the callback leaves behind
             // (it may have moved on from the one it was entered with: AsyncLocalStorage.enterWith()).
             auto* exception = catchScope.exception();
-            JSValue asyncContext = exception ? AsyncContextSwapScope::current(vm, globalObject) : JSValue();
+            JSValue asyncContext;
+            if (exception) [[unlikely]] {
+                asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+            }
 
             // Restore async context before error reporting
             asyncContextScope.restoreEarly();
