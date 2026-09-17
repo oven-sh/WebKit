@@ -1602,6 +1602,398 @@ bumps (after the publish on every GIL-off arm), the new
 `symbolTablePutTouchWatchpointSet` fire sites (the lock is dropped before
 the fire).
 
+## 9. The tenth round's rebase range
+
+The branch was rebased onto `cf1b36ec8703` (the commit Bun pins). The range
+`dfd696443b9b..cf1b36ec8703` is one upstream merge (#614, up to upstream
+`ccdcb8a026c0`) and one fork commit (#522, additional module loaders); 69 of
+its commits touch Source/JavaScriptCore, Source/WTF or Source/bmalloc. This
+section is the reading of those 69, against the merged tree (the branch's
+delta taken over the new base); every site listed was re-read in the merged
+tree. What the round then built and measured for each row is at the end
+(Outcome). The merge commit's own hand
+resolutions under Source/JavaScriptCore (`JSBigInt`'s `InterruptCheck`
+plumbing, include spelling) predate the range and were not re-audited.
+
+One commit changes the cost model under every wait loop the branch added
+(R10-1 to R10-4). Two add code that is memory-unsafe with the GIL off
+(R10-5, R10-6). #522 is **not** behind an option in its final form - the
+long squash message describes an earlier design (`useModuleGraphInstances`)
+that the later fix-up commits replaced - so its import slots, shared
+`ModuleProgramExecutable`s and `@moduleLoader` global run in every
+configuration (R10-12).
+
+| Row | Site (merged tree) | Upstream | Affects | Risk | Ruling |
+|---|---|---|---|---|---|
+| R10-1 | 20 branch wait loops that poll with `Thread::yield()` (list below) | 249ede976fcc (`Thread::yield()` on Linux is `nanosleep(1 ns)`, about 50 us with the default timer slack; upstream's own loops moved to `WTF::SpinBackoff`) | GIL off (two sites GIL on) | performance and stop latency, not safety: a wait that used to cost a `sched_yield` (about 1 us) now sleeps a timer-slack period per iteration | needs a fix: `SpinBackoff::spinOnce()` at every tryLock/poll site (x86-64 Linux: 1+2+4+8+16+32 `pause`, then the yield), per the table below |
+| R10-2 | `jsThreadGILHandoffYield` (LockObject.cpp): `GILDroppedSection` + `Thread::yield()`, called by every `Condition.prototype.notify/notifyAll` and by `jsThreadYieldForPendingParkResumptions` | 249ede976fcc | GIL on and GIL off | performance: every `notify()` by a thread that holds the API lock (or its GIL-off token) now sleeps about 50 us with the lock dropped | needs a measurement and a decision (keep the sleeping yield: a surer handoff; or a bare `sched_yield`: the old cost). Not a `SpinBackoff` site - the yield is the point |
+| R10-3 | `RaceAmplifier` (RaceAmplifier.cpp): three perturbations in four are "a bare yield" | 249ede976fcc | tooling (amplifier, 500-run and 2 h campaigns) | the bare yield became a 50 us sleep: fewer perturbations per second, coarser interleavings than the option text (`randomYieldPeriod`: "sched_yield/short sleep") promises | needs a fix in tooling: call `sched_yield()` directly on Linux for the bare leg; keep the randomized sleep leg |
+| R10-4 | `WTF::Lock` / cell-lock `lockSlow` (LockAlgorithmInlines.h), `WordLock`, `bmalloc::Mutex`, `JSLock::grabAllLocks`, `Heap::resumeThePeriphery` | 249ede976fcc | all (base behaviour) | x86-64 Linux: a contended `Lock` now spins 63 `pause`s (1-3 us) and parks, where it made 40 `sched_yield` calls (20-40 us) first; more park/unpark traffic on the GIL-off contended locks (cell locks, MSPL, structure locks), and every lock-free-then-yield loop upstream kept sleeps | documentation only: `main` changes the same way, so ratios against `main` hold, but numbers against earlier rounds' trees (scaling at 4 threads, string-heavy's bimodality) are not comparable across this base |
+| R10-5 | `objectValues` fast path (ObjectConstructor.cpp) | f37e63364972 (fills the result array directly: one pass counts, `JSArray::tryCreate`, a second pass stores through `values.at(result, index++)`) | GIL off | confirmed by reading, memory-unsafe: the second pass re-reads `target->structure()` and re-walks the indexed storage; a thread that adds a property or pushes between the passes makes it store past the butterfly (`ContiguousData::at` checks the index only in Debug). Fewer properties leave holes and trip `ASSERT(index == result->length())` | needs a fix (below) |
+| R10-6 | `operationArray{Includes,IndexOf}Double`, `operationArray{Includes,IndexOf}NonStringIdentityValueContiguous` (DFGOperations.cpp), reached from the new `vectorized` leg of `compileArrayIndexOfOrArrayIncludes` in DFG and FTL | 0d6cf47c3b12 (vectorized `indexOf`/`includes` from 32 elements up) | GIL off | likely, memory-unsafe (out-of-bounds read): the FTL clamps the length it scans inline to the storage's own vectorLength (`publicLengthForBounds`, SPEC-jit history §39), but the new leg passes the raw storage to an operation that re-reads `butterfly->publicLength()` unclamped; on a hoisted flat butterfly that a foreign thread converted to segmented storage and grew, that length is the segmented array's and runs past the flat allocation | needs a fix (below) |
+| R10-7 | `JSArray::fastCopyWithin` | ae97aa471a12 (no hole check; `RELEASE_ASSERT(vectorLength >= length)`) | flag on | none: the merge takes the butterfly from `jsThreadsFlatSnapshot(InPlaceWrite)` and refuses `length > snapshot->vectorLength()` before the assert; moving holes is legal in all three shapes | covered |
+| R10-8 | `JSArray::setLength`, `shiftCountWithAnyIndexingType`, `JSObject::increaseVectorLength` | ccdcb8a026c0 (Contiguous slots cleared with `gcSafeZeroMemory`; Int32/Undecided keep a `clear()` loop the compiler may turn into `memset`) | GIL off, musl only | hardening: the marker does not scan Int32 lanes, but with the GIL off other mutators read them; a libc `memset` with sub-8-byte edge stores (musl) can show a reader a half-cleared lane. The in-place `increaseVectorLength` arm is refused flag on (AS-COPY) | documentation only (candidate: `gcSafeZeroMemory` for every shape flag on); the merge keeps the snapshot's `clearFrom` bound in both arms |
+| R10-9 | `RegExp::m_minimumSize`: written by the compile paths, read by `matchInline` and by DFG/FTL `RegExpTest` (`emitRegExpMinimumLengthFilterGuards`, `Graph::tryGetConstantRegExpTestMinimumSize`) | 34141654c7a5, fea77037ca1f | GIL on and off | none: a per-pattern constant, zero until the first compile and after `reset()`/`deleteCode()`; zero and the final value are both correct to read. The merge writes it under the cell lock with a relaxed atomic (`setMinimumSize`) and reads it through `minimumSize()`; the JIT reads the aligned word plainly; the compiler thread reads it under the cell lock together with `hasCode()` (same shape as `matchConcurrently`) and a baked constant never goes stale | covered by the merge |
+| R10-10 | `RegExpTestInline` for unicode patterns and patterns with a Yarr frame; `getRegExpJITCodeBlockConcurrently`; `ensureRegExpJITCode`'s fence; validity check in strength reduction | 83683abb036d, 111d7edcecd1, eb64f293d84c, d5531cc083bc | GIL on (as `main`) | none new: GIL off `DFGStrengthReductionPhase` still refuses `convertTestToTestInline()` and both emitters keep their fail-stop; the inline frame now lives in the caller's outgoing-argument area, so the stack check the branch had re-pointed per thread (`branchPtrAgainstSoftStackLimit`) is gone with the block upstream deleted; `isValid()` goes through the branch's atomic `constructionErrorCode()` | covered |
+| R10-11 | `YarrPattern::sharedCharacterClass<>` (ten process-wide built-in classes) | 6279ebe3bd2d | GIL off (concurrent pattern construction) | none: `std::call_once` into a `LazyNeverDestroyed`, handed out as `const CharacterClass*`; `m_characterWidths` and `m_table` are only assigned by the creators; no `const_cast` or `mutable` in yarr/ | covered |
+| R10-12 | module loaders: `JSModuleEnvironment` import slots (`fillImportSlot`), `op_resolve_scope` `ModuleVar` metadata (`m_moduleImportSlot`), `ModuleProgramExecutable` shared between records (`functionDeclaration`, `JSGlobalObject::moduleProgramExecutables()`), `@moduleLoader` static global | cf1b36ec8703 (#522; always on) | GIL off | traced, no unsafe race found; two hygiene points (below) | covered, with a TSAN note and one rule to keep |
+| R10-13 | `CodeBlock::finishCreation` invalidates the put_to_scope watchpoint set of `ResolvedClosureVar` writes in generator and async bodies at link time | e6507c8f6aa8 | GIL off | none: the fire goes through `WatchpointSet::fireAllSlow`'s central Class-A protocol (SPEC-jit §5.6) like the `ClosureVar` invalidate two cases below it, and upstream moved it outside the symbol table's lock (PRE-15's rule) | covered |
+| R10-14 | `SlotVisitor::drainFromShared`: `m_numberOfWaitingParallelMarkers` decremented by a scope exit on every path | 366915db5c7a | flag on (marker pause) | none: the merged function is balanced - the scope exit replaces the old end-of-block decrement (removed by the merge), the pause loop's `waiting--`/`waiting++` pair sits inside the scope, and all four returns still decrement `m_numberOfParallelMarkersInDrainFromShared` | covered; two comments are now wrong (Heap.cpp `runEndPhase` "deliberately not asserted ... stays incremented across returns", Heap.h "Balanced on every return, unlike m_numberOfWaitingParallelMarkers") |
+| R10-15 | `Heap::isPagedOut`, `MarkedSpace::isPagedOut`, `BlockDirectory::updatePercentageOfPagedOutPages` | 4577b17ad891 (removed) | none | none: no reference left in Source/; the branch's shared-heap gate in `FullGCActivityCallback::doCollection` went with it | covered; AUDIT-heapcontainers rows that name `isPagedOut` (S-01) are moot |
+| R10-16 | `WTF_DECLARE_OWNER_THREAD_ASSERTIONS`, `WTF_GUARDED_BY_LOCK` annotations, `assertIsCurrent(const RunLoop&)` as a release assertion | 0f3121279944, b982ebd3147d, 6f1389789211, f2535d35a033, 19cfe1ed983a | none new | not reachable: no JSC or WTF class adopts the owner-thread macros (WebCore only); the annotations are compile-time (the merged Release build has no `-Wthread-safety` diagnostic); the only `assertIsCurrent(RunLoop)` callers in this port are `RunLoop::TimerBase::stop`/`~TimerBase` on an active timer, which were already release assertions in the old base | covered |
+| R10-17 | `tryCacheGetBy`/`tryCachePutBy` give up on customs of once-flattened dictionaries; `PropertySlot` carries the custom's offset | db10a0f61674 | none | caches less, shares nothing new | covered |
+| R10-18 | `EvalFunctionCallNode::emitBytecode` emits a tail call when the callee is not the built-in `eval` | 4fa7b55ae4c6 | none | bytecode generator only; existing opcodes (`tail_call`, the not-eval-function jump); no new call-link shape | covered |
+| R10-19 | `JSBigInt` Karatsuba multiplication, explicit `RELEASE_ASSERT` bounds hints | cbd15fc88bde, f52d0e486a0e | none | scratch is a function-local `Vector`; BigInts are immutable; the branch's GIL-off bypass of `VM::m_cachedBigIntDivisor` in `remainderImpl` is intact | covered |
+| R10-20 | `JSModuleLoader::importModule` rejects disallowed module types | 64168e4d90c4 | GIL off | none: the branch's refusal of `import()` on a spawned thread still runs first | covered |
+| R10-21 | `slow_path_resolve_scope` reads `metadata.m_resolveType == ModuleVar` plainly before the branch's atomic load of the same byte | cf1b36ec8703 | hygiene | none: flag on the metadata is frozen after link, flag off there is one mutator; `operationResolveScopeForBaseline` and the LOL twin load it once atomically in the merge | documentation only (make the three alike) |
+
+Not relevant, read and dismissed together: WebCore, WebKit and CSS changes
+that touch WTF only through preference plumbing (da79705ade01, ab7189f839e9,
+edc74c3eeb03, fcef99916e4a, 6f6d92eda135, 2391a5cb885b, 194d557d4fa6,
+3e12766ced21, 4b78955e0ded, 3821585ac8da, dfc530cd33ad); Swift and
+lifetime annotations (7e1a50ea0894, d0088e0c11f0); `CStringWithEncoding`
+(5f14e32e5760); ARM64-only code generation (a0042af34845, 54c30c45bed4,
+0ddad2a1c101); Windows (3856a285807d); Wasm, which is off with the GIL off
+(1b46b208061c, ca158eb19b75, 6ae2e2fec95a, 10d4d20f5b6c, ce4906cf9bde); the
+allocator unification and its reverts, net zero (fe81aba19836, 03c6c9504495,
+ce29fcc8c7cb, 10f4e9581e88); pure arithmetic and parsing (566279d48d56,
+8e7f96f9a5db, d5ba0ecec9c4, 41294576aca9, c8c37314ee17, b44e00d2f037,
+1a29b8cfcf8d, 549955d9979c, 956f6fb49678, b6afe0d39e0a); mechanical
+(b091600bcaa7 register enums, e2f1a867ae69 `CodeOrigin` moves, 72ec90eba341,
+79282f6ac8df, 67c93bbc4bcd, c0121e11c12f).
+
+### R10-1. The branch's wait loops after `Thread::yield()` became a sleep
+
+Every site is a stop-participating poll: `while (!tryLock()) { park for a
+pending stop; Thread::yield(); }` or a spin on a word another thread is about
+to publish. None is wrong now; each costs a timer-slack period per iteration
+where it cost a `sched_yield`.
+
+| Site | Waits for | Expected wait | Replacement |
+|---|---|---|---|
+| `JSObject::getDirectConcurrently`-style readers: JSObject.cpp (nuked `StructureID`, and the hole under an unchanged structure), JSObject.h (the same, inline) | a publication between its nuke and its new ID (M5); a pinned-table edit | nanoseconds | `spinOnce()` - the six pause steps cover it; first priority, these are on GIL-off property read paths |
+| `tryReadLockFreeGILOff` (JSOrderedHashTableHelper.h), four attempts | a `Map`/`Set` writer's odd version (one `set`/`delete`; a rehash at worst) | 100 ns to microseconds | `spinOnce()`: four attempts are 1+2+4+8 pauses and never reach the yield; today a reader that meets a writer sleeps up to 200 us before taking the locked path |
+| `Heap.cpp` stop walk: `while (client.hasHeapAccess())` flicker wait | a client's CAS and notify inside a stop window | nanoseconds to a few microseconds, and it is stop latency | `spinOnce()` |
+| `ErrorInstance::materializeErrorInfoIfNeeded` GIL off | another thread building the stack string | microseconds | `spinOnce()` |
+| `FunctionRareData` (three loops), `JSFunction` lazy `prototype`, `ClonedArguments` and `DirectArguments` lockers, `JSObject.cpp` prototype-cycle lock, `GILOffFirstUseLocker` (JSThreadsSafepoint.h; every first-use site shares it) | a short first-use section that may allocate | microseconds | `spinOnce()` |
+| `lockGILOffCompilationLockContended` (ScriptExecutable.cpp), `osrExitGenerationLock` (DFGOSRExitCompilerCommon.cpp), `HeapProfiler::acquireBuilderGILOff`, `Heap` collect-continuously lock, `PerEventStopClaim` (ConcurrentButterfly.cpp) | a real hold: parse and link, an exit ramp compile, a snapshot, another thread's stop window | tens of microseconds to milliseconds | `spinOnce()` (it degrades to the same sleeping yield, which suits a long hold; the pause steps win the short ones) |
+| `JSThreadsSafepoint.cpp` watchdog dump: 100 bounded attempts on the registry lock | fail-stop diagnostics | - | leave (5 ms worst case before the crash it already is) |
+| `SharedHeapTestHarness.cpp` (six) | test harness | - | leave |
+
+Test idea (JSTests/threads/sync or objectmodel, `//@ threadsNoAmplify`): N
+readers `get` from a shared `Map` while one writer `set`s in a loop; count
+reads per second and the `mapReadLockFreeGILOff` fallbacks before and after;
+the same shape for a constructor's first `new` on N threads
+(`FunctionRareData`). These are timing ratios, so report medians, not a
+pass/fail bound.
+
+### R10-5. `Object.values` stores past its result array, GIL off
+
+Flag off and GIL on the two passes agree: nothing between them runs JS or
+hands the GIL over (`JSArray::tryCreate` can collect, not call out). GIL off
+another thread can add a named property (a new structure, or an in-place add
+on a dictionary), `push` onto the target, or delete. Then:
+
+- more properties in the second pass: `values.at(result, index++)` has only
+  a Debug bound, so Release writes past `result`'s butterfly (the vector may
+  have a few slots of rounding slack, no more);
+- fewer: trailing holes and the Debug `ASSERT(index == result->length())`;
+- a value read by `getDirect(entry.offset())` from a slot a racing delete
+  emptied is an empty value in a Contiguous array (a hole; the R9-19 class,
+  benign here).
+
+Fix, in the fast path only: take `Structure* targetStructure` once and use
+it for both named passes (so the named count is fixed by construction for a
+non-dictionary; refuse the fast path for dictionaries GIL off, whose tables
+change in place); bound the indexed second pass by `indexedPropertyCount`
+(stop the walk when `index` reaches it); after the fill, GIL off, re-check
+`target->structure() == targetStructure` and that no stored value is empty,
+and fall to the generic path otherwise. Or, as a first step, skip the fast
+path when `vm.gilOff()`. Test: `shared-objects/object-values-vs-add-gil-off.js`
+- one thread calls `Object.values(o)` in a loop and checks
+`values.length === Object.keys(o).length` is never exceeded by garbage, while
+another adds and deletes named properties and pushes and pops indexed ones;
+Debug asserts on the unfixed tree, Release with `GIGACAGE_ENABLED=0` or ASan
+faults.
+
+### R10-6. The vectorized `indexOf`/`includes` leg re-reads the length
+
+SPEC-jit history §39: GIL off the FTL may hold a `GetButterfly` result across
+polls, a flat butterfly that a foreign thread has since converted keeps
+serving the lanes below its frozen vectorLength, and its publicLength slot is
+the segmented array's and can grow past that. So every bound the FTL takes
+through a storage edge is `min(publicLength, vectorLength)` of the same
+storage, and `compileArrayIndexOfOrArrayIncludes` does that for its inline
+loop. The new leg (taken when 32 or more elements remain) calls
+`operationArray{Includes,IndexOf}Double` or
+`...NonStringIdentityValueContiguous` with `(storage, searchElement, index)`,
+and each reads `butterfly->publicLength()` again and hands `length - index` to
+`WTF::findDouble` / `WTF::find64`. The DFG's leg is the same call with a
+storage loaded in the same block. The older sibling operations
+(`operationArrayIndexOfString`, `...ValueInt32OrContiguous`, `...ValueDouble`,
+reached from the String/Object/Other use kinds and from the FTL's slow cases)
+read the length the same way; they predate the range and are the same fix.
+
+Fix: one helper next to these operations - flag on, `std::min(publicLength,
+vectorLength)` of the butterfly it was given (the form `JSObject.cpp`'s
+`usedLength` already uses) - and every operation in the family takes its
+length from it; flag off it is `publicLength()` as today. Alternatively pass
+the clamped length from the JIT as a fourth argument. Test:
+`jit/array-indexof-vectorized-stale-storage-gil-off.js` - an FTL loop calls
+`a.indexOf(x)` / `a.includes(x)` on a shared Double array of 64 elements (so
+the storage is hoisted and the vectorized leg runs), a second thread makes
+the first foreign hole store (flat to segmented) and pushes until the length
+passes the old vectorLength; assert every result is -1/false or an index
+whose element equals `x`; run under ASan (the read past the flat allocation
+is what faults).
+
+### R10-12. #522, module loaders
+
+What runs in every configuration now: a `ModuleVar` `op_resolve_scope` loads
+the exporting environment from the importing module environment's import
+slot (`m_moduleImportSlot` in the metadata, set at link and never rewritten;
+a constant resolve type); LLInt, Baseline and LOL branch to the slow path on
+an empty slot and the DFG emits `GetClosureVar` + `CheckNotEmpty` (or folds a
+filled slot through the symbol table's singleton, watched).
+`JSModuleRecord::evaluate` fills the slots before the body runs; the slow path
+(`JSModuleEnvironment::fillImportSlot`) fills one on first use for code that
+runs before its module is evaluated (a hoisted function across a cycle).
+
+- Two threads can fill one slot at once GIL off. Both resolve the same
+  import of the same record and store the same environment, published long
+  before; the racing plain `WriteBarrier::set` and the plain `get` are
+  benign on every target but are a TSAN report waiting for a test that does
+  it. If it shows up: a relaxed atomic store/load pair GIL off in
+  `fillImportSlot`/`importSlot().get()`.
+- `importSlotNames()` builds `m_importSlotNames` lazily without a lock, but
+  its first call is `JSModuleEnvironment::create` at link time, before any
+  code of the module can run; later calls only read.
+- `ModuleProgramExecutable::functionDeclaration` is check, link, then store
+  under the cell lock (two callers could link two executables); it is called
+  from `CyclicModuleRecord::initializeEnvironment` and from the eager arm of
+  `CodeBlock::finishCreation` for module code, both on the loading thread.
+  Lazily materialized declarations still go through the ninth round's
+  compare-and-swap (`CodeBlock::materializeFunctionExecutable`), now shared by
+  every record that shares the executable.
+- `JSGlobalObject::moduleProgramExecutables()` (a `WeakGCMap`) is read and
+  written only by `getOrMakeExecutable` on the loading thread and pruned at
+  the end of a collection, world stopped.
+- The rule all of the above rests on: with the GIL off only the main thread
+  loads modules, because `JSModuleLoader::importModule` refuses a spawned
+  thread before anything else (still first in the merged function, ahead of
+  64168e4d90c4's module-type check). Additional loaders (`JSModuleLoader::create`
+  with a module scope, `$vm.createModuleLoader`, whatever Bun builds on it)
+  must keep entering through `importModule`; an embedder entry point that
+  calls `loadModule`/`requestImportModule` on another loader from a spawned
+  thread would bypass the refusal.
+- The branch's R9-15 compare-and-swap in `getModuleNamespace` still publishes
+  the right field: namespaces stayed per record (`m_moduleNamespaceObject`,
+  `m_deferredNamespaceObject`); the per-(record, instance) namespaces of the
+  squash message's first design did not ship.
+
+### Textual merges that need a second look
+
+- `FTLLowerDFGToB3.cpp` `compileArrayIndexOfOrArrayIncludes`: the branch's
+  `publicLengthForBounds(storage)` and upstream's new `vectorized` block
+  merged side by side without conflict; the combination is R10-6.
+- `SlotVisitor.cpp`/`Heap.cpp`/`Heap.h`: correct code, stale comments
+  (R10-14).
+- `CommonSlowPaths.cpp` `slow_path_resolve_scope`: upstream's early
+  `ModuleVar` test reads the byte plainly above the branch's atomic load
+  (R10-21).
+- `RegExp::updateMetadataFromPattern` (hand-merged): first-set-wins atom,
+  relaxed `m_specificPattern`, conditional `m_numSubpatterns` store, the
+  fork's early return when `m_rareData` exists - consistent with the compile
+  paths holding the cell lock; nothing to change.
+- `JSArray.cpp` `shiftCountWithAnyIndexingType` and `setLength`: upstream's
+  shape split sits inside the branch's single-snapshot arms and uses the
+  `indexingType` local read once; consistent.
+
+### Priorities
+
+Needs a code fix before the round-start ledger's GIL-off lanes can be
+trusted for these paths:
+1. R10-5 `Object.values` two-pass fill (GIL off, heap overflow).
+2. R10-6 vectorized `indexOf`/`includes` operations re-read an unclamped
+   length (GIL off, out-of-bounds read; FTL §39).
+
+Needs a code change for performance, measured before and after (none is a
+safety issue; the ledger's behaviour lanes stand without them, its GIL-off
+timings and scaling numbers do not):
+3. R10-1 `SpinBackoff::spinOnce()` at the branch's 20 poll sites, the
+   nuked-ID readers, the `Map` version retry and the stop-walk flicker wait
+   first.
+4. R10-2 `Condition.notify`'s handoff yield: measure GIL on and GIL off, then
+   decide between the sleeping yield and a bare `sched_yield`.
+5. R10-3 the amplifier's bare-yield leg (tooling; affects campaign
+   throughput and what "500 amplified runs" exercises).
+
+Needs only a test (or a TSAN run that exercises it):
+6. R10-12 two threads first-touching one import slot (a cycle with a hoisted
+   function), GIL off under TSanJIT.
+7. R10-9 one thread `test()`ing a lazily constructed RegExp while another
+   compiles it (the existing RegExp corpus arms should cover it; confirm no
+   TSAN report on `m_minimumSize`).
+
+Documentation only: R10-4 (numbers across this base are not comparable with
+earlier rounds'), R10-8 (musl `memset` note), R10-14 and R10-15 (stale
+comments and AUDIT-heapcontainers rows), R10-16, R10-21, and the corrected
+description of #522 (always on; the option in the squash message does not
+exist).
+
+### Outcome (what the tenth round did with the rows)
+
+- R10-5: fixed as described (`tryObjectValuesFastGILOff`, SPEC-objectmodel I42 / history §35). Test
+  `shared-objects/object-values-vs-add-gil-off.js`: Debug GIL off 3 of 3 runs assert on the round's first build
+  (`index == result->length()` twice, the contiguous storage's `index < m_length` once); 0 of 3 after; Release passes on
+  both (the out-of-bounds store is silent there).
+- R10-6: the clamp shipped (`searchableLengthOfStorageFromJIT`, SPEC-jit history §47) with a counter
+  (`searchOperationClampedStaleStorageGILOff`) and the test `jit/array-indexof-vectorized-stale-storage-gil-off.js`
+  (200 arrays, each searched by its own DFG-compiled function while a second thread converts it by a store past its
+  capacity). The stale length was NOT observed: the test passes on the round's first build too, and the counter reads
+  0 after the fix in every run tried. The reading of why: the DFG re-loads the storage in the same block as the
+  operation call (GIL off `ArrayIndexOf` clobbers the heap, so no earlier butterfly load is reused), which leaves a
+  window of a few instructions per search, and the conversion of a flat array another thread owns publishes its
+  grown length through a fresh spine when the aliased spine has a partial tail fragment (mode (b), a copy), so the old
+  header is raised only in the full-coverage case. The clamp costs one predicted branch flag on and nothing flag off;
+  it stays as the operations' statement of §39's rule. Kept open as "not reproduced".
+- R10-1, R10-2, R10-3: every listed poll loop uses `WTF::SpinBackoff::spinOnce()` (the watchdog dump and the C++ test
+  harness excepted); the GIL/token handoff yield and the amplifier's bare yield call `sched_yield()` on Linux
+  (`jsThreadsYieldToScheduler`). Measurements in PERF-RESULTS (tenth round).
+- R10-12: no code change; the rule (only the main thread loads modules GIL off, every loader enters through
+  `importModule`'s refusal) is restated in LANDING-PLAN Open items for Bun's additional loaders.
+- R10-14: the stale comments were rewritten and `runEndPhase` now asserts `m_numberOfWaitingParallelMarkers` is zero
+  with the other two counters.
+- R10-21: `slow_path_resolve_scope` loads the resolve type once, atomically, like the two operations.
+- The other rows needed nothing.
+
+Two rows added by measurement later in the round (neither was found by reading the range):
+
+- R10-22. **Inline allocation sites that bake `allocatorForConcurrently`** (SPEC-jit §5.5 "Inline allocation GIL
+  off", history §54). Affects GIL off, performance only (the baked allocator is empty there, so the site is an
+  unconditional slow-path call; nothing is unsafe). Found as `operationStringSubstr` in a GIL-off profile of
+  `str.slice(a, b)`: 292 instructions per call against 140 GIL on. Sites, all upstream-written and none carrying the
+  lite-relative arm the earlier rounds gave MakeRope / NewObject / NewArray / MaterializeNewObject: FTL
+  `compileStringSliceOrSubstring` (the substring rope; came with the ninth round's range), FTL BigInt-from-Int64
+  and `AssemblyHelpers::emitAllocateJSBigInt64`, DFG `compileRegExpStringIteratorNext`'s result object. Fixed:
+  each resolves its allocator through the thread's table (`tlcAllocatorOrLegacy` / `tlcSlotForConcurrently[WithIso]`
+  + `emitLoadTLCAllocatorForSlot`); slice 156 instructions per call after. How to find the next one: grep the three
+  JIT directories for `allocatorForConcurrently<` and check that each hit sits in the non-GIL-off arm of a
+  `vm().gilOff()` test (the list at the end of the round: AssemblyHelpers.h two, DFGSpeculativeJIT.cpp five,
+  DFGSpeculativeJIT64.cpp one, FTLLowerDFGToB3.cpp eight - all paired).
+- R10-23. **ThreadSanitizer and upstream's own benign races, GIL on.** Once a GIL-on process runs `main`'s object-model
+  and interpreter paths (SPEC-objectmodel G1), the TSan lane runs `main`'s code, which was never TSan-clean: two
+  reports surfaced in the corpus. `GetByIdModeMetadata::setProtoLoadMode` stored the ProtoLoad cache word plainly
+  while a Baseline compiler thread read the mode byte it overlaps (now a relaxed atomic store: the same instruction);
+  IPInt's `BaselineData` tier-up counter against the BBQ compiler thread (upstream, flag off too; suppressed by name
+  in `Tools/tsan/suppressions.txt` with its reason). TSan builds also keep polling traps forced (SPEC-jit history
+  §53). Nothing else in `main`'s paths was reported by the corpus GIL on.
+
+- R10-24. **The multi-slot readers R9-19 did not reach** (SPEC-objectmodel history §41). Found by the end-of-round
+  amplifier campaign: `cve/mc-val-multislot-clone.js` GIL off, signal 11, in `Stringifier::appendStringifiedValue` on
+  an empty value read from a slot of a cacheable dictionary between a writer's in-place table edit and its value
+  store. Present on the round's first build at the same rate (about 0.8 % of amplified runs on a loaded machine; the
+  window is a few instructions wide and opens only when the scheduler takes the writer off its core inside it), so
+  not introduced by the rebase or the round. Same read, same fix (re-check the structure ID and non-emptiness after
+  the read, GIL off, else the generic path) in: the general JSON stringifier (both arms), `FastStringifier`'s object
+  arm, the `Object.entries` fast path, the `Object.defineProperties` fast path. How to find the next one: grep
+  `runtime/` for `getDirect(entry.offset())` and `getDirect(offset)` next to a `forEachProperty`; every hit that can
+  see an object another thread writes must be followed by `dataPropertyReadsStillValid` or an equivalent per-value
+  check under `vm.gilOff()` (at the end of the round: ObjectConstructorInlines.h, ObjectConstructor.cpp five,
+  JSGlobalObjectFunctions.cpp two, JSONObject.cpp three; `toPropertyDescriptor` treats empty as absent;
+  `renumberPropertyOffsets` runs under a stop; `analyzeHeap` tests the value). The window itself was closed at its
+  source afterwards: the dictionary leg of `putDirectInternal` stored the value after `Structure::
+  addOrReplacePropertyWithoutTransition` had published the entry (every other flag-on add stores inside the add
+  callback, before publication); on a reused slot the window showed a residue value under the new name to every
+  reader, generic ones included. How to find the next one: every flag-on caller of `addPropertyWithoutTransition` /
+  `addOrReplacePropertyWithoutTransition` must store its value inside the callback.
+
+- R10-25. **Destroying a VM after join** (SPEC-api §4.6 item 4, history r10.2). Found by the mirror harness once it
+  ran memory-hog tests with their own options (`--destroy-vm`): the native thread of a joined Thread drops its
+  closure's `Ref<VM>` only after its exit tail, so the embedder's release was not always the last and `~VM` ran
+  off-lock on the exiting thread (MC-TDWN S1's fail-stop; a silent SIGABRT in Release). Present on the round's first
+  build. ThreadManager counts, per VM, native threads that have published completion and not yet released;
+  `waitForCompletedThreadsToReleaseVM` is the embedder's barrier; the shell calls it. For the next rebase: any new
+  path that destroys a VM which ran Threads (Bun's Worker termination) needs the call.
+- R10-26. **The taint hint was sticky GIL off** (SPEC-ungil history, K4.II.15): one VM byte written by every thread's
+  prologues and never cleared GIL off, so every thread answered IndirectlyTaintedByHistory once any tainted code had
+  run (`taintedness-tracking.js`, sixteen configurations). Per lite now, in the three tiers and the C++ accessors.
+  How to find the next one: `SPEC-ungil-audit-K4.md` rows ruled "per lite" whose implementation note says "sticky",
+  "shared" or "VM-wide GIL off".
+- R10-27. **Deferred watchpoint claims and the thread that comes second** (SPEC-jit §5.6 "Deferred claims in flight",
+  history §55). Found by the mirror harness (two threads released together): a mutator that finds a structure's
+  transition set already claimed by another thread's deferred fire publishes its own transition with nothing to fire
+  and returns into optimized code nobody has invalidated yet; with a relabel out of Double that code stores raw
+  doubles into boxed lanes, with a kind change it reads a GetterSetter as data. Present on the round's first build.
+  Relabels out of Double, conversions to ArrayStorage and kind changes wait out other threads' claims in flight,
+  then publish and fire in one stop. How to find the next one: a new flag-on transition that changes the
+  representation of a slot or lane, or moves storage to another layout, under an unchanged butterfly-word protocol,
+  must follow SPEC-jit §5.6's four steps (`WatchpointSet::awaitDeferredClaimsInFlight` before deriving the target,
+  the re-plan check after, `DeferredStructureTransitionWatchpointFire::fireNow` inside the publishing stop).
+- R10-28. **GIL off, a requested synchronous JIT and the sampling profiler were refusals where the specs asked for
+  behaviour** (SPEC-jit history §56; SPEC-ungil §A.1.7 form (i), history "the sampling profiler samples the
+  carrier's lite"). `--forceEagerCompilation` (and `--useConcurrentJIT=0`) exited with a FATAL line GIL off, 234
+  results of the JSC suite; the sampling profiler never sampled, some 170 results and Bun's `bun:jsc` `profile()`.
+  The requesting thread now waits, parked, for its plan on the concurrent JIT and completes it; the profiler reads
+  the bound carrier's lite through the registry (tryLock, target suspended) and turns raw frames into traces under a
+  stop of the other clients. `--useProfiler` stays refused. How to find the next one: a GIL-off branch that logs
+  and returns, or logs and crashes, where GIL on does work - grep the GIL-off predicates next to `dataLogLn`.
+- R10-29. **A GIL-off-only function that leaves the exception-check validator's need-check bit set** (N.1 Map and
+  Set). `fillTableGILOff` hashes each copied key with `jsMapHashForAlreadyHashedValue`, whose throw scope simulates
+  a throw on the way out like every throw scope; `main`'s copy loop checks after each hash, the GIL-off one did not
+  (it cannot return early: it runs under the table's cell lock). Nothing is wrong in a build without the validator;
+  with it (`validateExceptionChecks`, Debug) the second hashed key aborts, which is what two of Bun's tests that
+  run fixtures under the validator reported GIL off. The loop asserts "no exception" after each hash. How to find
+  the next one: run the Debug corpus with `JSC_validateExceptionChecks=1` in the environment (the tenth round did, in
+  both modes; results in LANDING-PLAN); every function the branch added that calls into a throw-scoped helper must
+  check or assert before the next scope is entered.
+- R10-30. **The sampling profiler's bound thread can be a dead Thread** (GIL on; SPEC-ungil history, tenth round,
+  "The binding and a Thread's death"). With the GIL on every spawned Thread binds as the sampled thread when it takes
+  the API lock, and nothing unbound it when it exited: the next sample waits forever for a terminated thread's
+  acknowledgement, holding the machine-threads lock, and the main thread hangs taking the API lock back. Present
+  since the flag existed (the ninth round's final tree hangs the same way); found by the amplifier on the GIL-off
+  profiler's new test. An exiting Thread unbinds itself. How to find the next one: anything that remembers a
+  `WTF::Thread` to signal or suspend later (not through `ThreadGroup`, which forgets a thread when it exits) needs a
+  hook at Thread exit.
+- R10-31. **Profiling the threaded forms withhold, read as "never ran" or reset at every tier-up** (performance, not
+  safety; SPEC-jit history §57, §58). Two places where a flag-on restriction fed the DFG a profile that could not
+  converge: the LLInt's disabled `put_by_id` transition cache, which `PutByStatus::computeFromLLInt` reads as
+  NoInformation and the parser turns into `ForceOSRExit` (open: the parser rule that was tried regressed
+  `scaling/richards-like.js` and was withdrawn, §57); and the refused in-place upgrade of a polymorphic call stub's
+  slot GIL off, whose fallback reset the call site's variant list and counts at every callee tier-up (fixed, §58).
+  Exit counts per JetStream test GIL off against GIL on found both (they do not depend on machine load). How to find the
+  next one: `--printEachOSRExit=1`, group by function, bytecode index and exit kind, and diff the two modes; a site
+  whose count is a large multiple of a hundred GIL off only is a profile that is not learning. For the next rebase:
+  any new upstream use of LLInt metadata as DFG profiling (`*Status::computeFromLLInt`) has to be checked against the
+  §4.3 table's disabled rows.
+
+**Sites keyed on `useTaggedButterflies` instead of `useJSThreads` (G1; SPEC-objectmodel history §39, SPEC-jit
+history §52).** For the next rebase: a conflict in one of these is resolved towards "flag-off body when untagged".
+Runtime (every `Options::useJSThreads()` test except the thread-restriction checks, the concurrent helpers' own
+assertions and the explicit GIL-off pairs): `JSObject.{h,cpp}`, `JSObjectInlines.h`, `JSArray.cpp`,
+`JSArrayInlines.h`, `ArrayPrototype.cpp`, `ArrayPrototypeInlines.h`, `Structure.{h,cpp}`, `StructureInlines.h`,
+`StructureInlinesLight.h`, `StructureRareData.{h,cpp}`, `PropertyTable.h`, `SparseArrayValueMap.h`,
+`JSCellInlines.h`, `ButterflyInlines.h`, `MegamorphicCache.h` (`initAsTransition`), `VMLite.h`
+(`currentButterflyTID`), `ConcurrentButterfly.cpp` (`ensureSharedWriteBit`, `convertToSegmentedButterfly`).
+JIT: `AssemblyHelpers.{h,cpp}` (allocation stamp, TID tag loads, typed-array buffer load, megamorphic load and
+store probes, nuked-ID decode), `CCallHelpers.cpp` (the four choke points, `maskButterflyTag`),
+`ConcurrentButterflyOperations.cpp` (`updateButterflyTIDTag`), `JITPropertyAccess.cpp` (enumerator put),
+`JITOperations.cpp` (the two reallocating-transition operations), `DFGSpeculativeJIT.cpp` / `DFGSpeculativeJIT64.cpp`
+(GetButterfly, PutByOffset, CheckTransitionOwner, the threaded load helpers, the element-write lint),
+`DFGByteCodeParser.cpp` (transition, delete and private-brand admission; the segmented-exit backstop),
+`DFGConstantFoldingPhase.cpp` (folded transitions), `DFGClobberize.h` (GetButterfly, PutByOffset,
+Multi{Get,Put,Delete}ByOffset, ArraySort{Compact,Commit}), `DFGOperations.cpp` (ArrayStorage get, pop recovery,
+shift, join), `FTLLowerDFGToB3.cpp` (the same nodes, `maskedButterfly`, `isSegmentedButterfly`, property storage
+allocation, MultiDeleteByOffset's assertion), `InlineCacheCompiler.cpp` (Replace, Transition, Delete,
+SetPrivateBrand, ArrayLength per-case stubs; the shared transition, delete, put_by_val replace/setter and brand
+handlers), `Repatch.cpp` (transition admission, delete and brand caching). Interpreter:
+`LowLevelInterpreter64.asm` (`ifTaggedButterfliesBranch` on the eleven property fast paths),
+`LLIntSlowPaths.cpp` (which cache form is published), `GetByIdMetadata.h` (two assertions). Two gates went the
+other way, from the flag to GIL off only: `usePollingTraps` forcing (Options.cpp) and the MakeAtomString inline cache
+probe (DFG, FTL). One new flag-on rule that G1 needs: SlowPutArrayStorage sites are generic in the DFG and
+`trySetIndexQuickly`'s SlowPut arm is closed whenever the flag is on (Thread.restrict, api §5.8).
+
+
 ## What this audit did not check
 
 - Nothing was built or run. No test was written. TSAN was not run.

@@ -498,6 +498,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseSharedGCHeap, false, Normal, nullptr) \
     v(Bool, useConcurrentSharedGCMarking, false, Normal, "C1: concurrent marking between shared-GC stop windows (SPEC-congc sec 7.1)"_s) \
     v(Bool, useSharedGCCollectorThread, false, Normal, "C2: collector-thread conductor for the shared GC (SPEC-congc sec 7.2)"_s) \
+    v(Bool, useSharedGCWindowLivenessRetention, false, Normal, "shared heap with two or more clients: root and trace what parked clients allocated since the last marking (SPEC-heap I12, history sec 37: off since the tenth round, kept as a fallback)"_s) \
     v(Bool, useSharedGCIncrementalSweep, false, Normal, "C3: incremental + mutator-concurrent sweeping under the shared GC (SPEC-congc sec 7.3)"_s) \
     v(Bool, useSharedGCMutatorAssist, false, Normal, "C4: incremental mutator assist under the shared GC (SPEC-congc sec 7.4)"_s) \
     v(Unsigned, sharedGCMutatorMarkStackDonationThreshold, 510, Normal, "CMS donation threshold in cells (SPEC-congc sec 5.2(ii)); default = one MarkStackArray segment, (4KB - segment header) / sizeof(const JSCell*) (GCSegmentedArray.h CapacityFromSize, release shape)"_s) \
@@ -762,6 +763,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useThreadedFTL, true, Normal, "kill switch: false disables the FTL tier under useJSThreads"_s) \
     v(Bool, validateButterflyTagDiscipline, false, Normal, "validate that every generated butterfly access masks or proves the tag (SPEC-jit I14)"_s) \
     v(Bool, useJSThreadsUnlockHandlerICInFTL, false, Normal, "unlock the FTL handler-IC force-disable for bring-up (SPEC-jit M2a)"_s) \
+    v(Bool, useJSThreadsPollVisibilityAnalysis, true, Normal, "GIL off, FTL: a loop's polls keep only the reads that decide its control flow from being hoisted (SPEC-jit I21); off = every poll re-reads every user-visible heap"_s) \
+    v(Bool, useJSThreadsWaitForJITPlans, false, Normal, "Derived, GIL off: set when a synchronous JIT was requested (useConcurrentJIT=0, forceEagerCompilation). The concurrent JIT stays on; the thread that requests a compilation waits, parked, until it is done and completes it before returning (SPEC-jit history 56)."_s) \
+    v(Bool, useJSThreadsSingleOwnerWithGIL, true, Normal, "GIL on: every thread's butterfly TID is 0, so butterfly words carry no tags and generated code accesses them as flag off does (SPEC-objectmodel G1); false restores per-thread tags"_s) \
+    v(Bool, useTaggedButterflies, false, Normal, "derived, do not set: butterfly words may carry TID/SW tags (useJSThreads and not the single-owner GIL-on case; SPEC-objectmodel G1)"_s) \
     v(Bool, forceSegmentedButterflies, false, Normal, "stress: every butterfly allocation/transition publishes a segmented butterfly (SPEC-objectmodel sec 9.6)"_s) \
     v(Bool, forceButterflySWBit, false, Normal, "stress: treat every butterfly write as a foreign shared write (SW DCAS + writeThreadLocal fire; SPEC-objectmodel sec 9.6)"_s) \
     v(Bool, verifyConcurrentButterfly, false, Normal, "debug-assert every concurrent-butterfly tag decode (I2/I3), the butterfly() flatness contract, and run the ConcurrentButterfly self-tests"_s) \

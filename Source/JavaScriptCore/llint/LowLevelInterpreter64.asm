@@ -1838,6 +1838,16 @@ macro ifJSThreadsBranch(scratch, label)
     bbneq JSCConfigOffset + JSC::Config::options + OptionsStorage::useJSThreads[scratch], 0, label
 end
 
+# SPEC-jit sec.5.5 "Untagged words" (tenth round; OM G1): the gate of every
+# property fast path below. A process whose butterfly words carry no tags -
+# flag off, or the GIL on with one owner - runs main's fast paths on main's
+# metadata caches (LLIntSlowPaths.cpp publishes the matching form); the
+# threaded blocks serve tagged words (GIL off, or GIL on with per-thread tags).
+macro ifTaggedButterfliesBranch(scratch, label)
+    leap _g_config, scratch
+    bbneq JSCConfigOffset + JSC::Config::options + OptionsStorage::useTaggedButterflies[scratch], 0, label
+end
+
 # ===========================================================================
 # SPEC-jit sec.5.5 (Task 8): TID/SW butterfly choke points for the LLInt.
 #
@@ -2013,7 +2023,7 @@ llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, disp
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetByIdDirectSlow)
     loadi JSCell::m_structureID[t3], t1
-    ifJSThreadsBranch(t0, .opGetByIdDirectThreaded)
+    ifTaggedButterfliesBranch(t0, .opGetByIdDirectThreaded)
     loadi OpGetByIdDirect::Metadata::m_cache.structureID[t2], t0
     bineq t0, t1, .opGetByIdDirectSlow
     loadi OpGetByIdDirect::Metadata::m_cache.offset[t2], t1
@@ -2047,7 +2057,7 @@ end)
 # metadata needs to be loaded in t2
 macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slowLabel, size, return)
     # SPEC-jit sec.5.4 (Task 6): one gate branch per fast path; threaded readers below.
-    ifJSThreadsBranch(t1, .opGetByIdThreaded)
+    ifTaggedButterfliesBranch(t1, .opGetByIdThreaded)
     loadb %opcodeStruct%::Metadata::%modeMetadataName%.mode[t2], t1
 
 .opGetByIdDefault:
@@ -2190,7 +2200,7 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opPutByIdSlow)
     metadata(t5, t2)
-    ifJSThreadsBranch(t2, .opPutByIdThreaded)
+    ifTaggedButterfliesBranch(t2, .opPutByIdThreaded)
     loadi OpPutById::Metadata::m_oldStructureID[t5], t2
     bineq t2, JSCell::m_structureID[t0], .opPutByIdSlow
 
@@ -2330,7 +2340,7 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
 
     # SPEC-jit sec.5.4/sec.5.5 (Task 8): one gate branch; the threaded block applies
     # the READ choke point and rejoins below.
-    ifJSThreadsBranch(t3, .opGetByValThreaded)
+    ifTaggedButterfliesBranch(t3, .opGetByValThreaded)
     loadCagedJSValue(JSObjectWithButterfly::m_butterfly[t0], t3, numberTag)
 .opGetByValContinue:
     move TagNumber, numberTag
@@ -2440,7 +2450,7 @@ llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dis
     # and the paths below store a StructureID and write through a raw
     # butterfly, which only flag-off code may do. Do not rely on the empty
     # cache alone: take the slow path.
-    ifJSThreadsBranch(t2, .opPutPrivateNameSlow)
+    ifTaggedButterfliesBranch(t2, .opPutPrivateNameSlow)
     loadi OpPutPrivateName::Metadata::m_oldStructureID[t5], t2
     bineq t2, JSCell::m_structureID[t0], .opPutPrivateNameSlow
 
@@ -2486,7 +2496,7 @@ llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, d
     metadata(t5, t2)
     # SPEC-jit sec.4.3: never filled flag-on; the transition below is a raw
     # StructureID store. Same local check as op_put_private_name.
-    ifJSThreadsBranch(t2, .opSetPrivateBrandSlow)
+    ifTaggedButterfliesBranch(t2, .opSetPrivateBrandSlow)
     loadi OpSetPrivateBrand::Metadata::m_oldStructureID[t5], t2
     bineq t2, JSCell::m_structureID[t0], .opSetPrivateBrandSlow
 
@@ -2568,7 +2578,7 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
         sxi2q t3, t3
         # SPEC-jit sec.5.4/sec.5.5 (Task 8): one gate branch; the threaded block
         # applies the WRITE choke point and rejoins below.
-        ifJSThreadsBranch(t0, .opPutByValThreaded)
+        ifTaggedButterfliesBranch(t0, .opPutByValThreaded)
         loadCagedJSValue(JSObjectWithButterfly::m_butterfly[t1], t0, numberTag)
     .opPutByValContinue:
         move TagNumber, numberTag
@@ -3679,7 +3689,7 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
         # operand pairing is observable, and this threaded block is in practice
         # unreachable (the structure check above never passes) - kept as
         # defense in depth for any future re-arming.
-        ifJSThreadsBranch(t2, .getPropertyThreaded)
+        ifTaggedButterfliesBranch(t2, .getPropertyThreaded)
         loadp OpGetFromScope::Metadata::m_operand[t5], t1
         loadPropertyAtVariableOffset(t1, t0, t2)
         valueProfile(size, OpGetFromScope, m_valueProfile, t2, t5)
@@ -3771,7 +3781,7 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
         # for the threaded butterfly load. Flag-on the GlobalProperty structure
         # cache is never armed, so the threaded arm is defense in depth; see
         # getProperty() in op_get_from_scope above.
-        ifJSThreadsBranch(t3, .putPropertyThreaded)
+        ifTaggedButterfliesBranch(t3, .putPropertyThreaded)
         get(m_value, t1)
         loadConstantOrVariable(size, t1, t2)
         loadp OpPutToScope::Metadata::m_operand[t5], t1
@@ -4356,7 +4366,7 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
 .outOfLine:
     # Flag-on the out-of-line load goes through the READ choke point; flag-off
     # differs from the pre-threads engine by this one not-taken branch.
-    ifJSThreadsBranch(t7, .outOfLineThreaded)
+    ifTaggedButterfliesBranch(t7, .outOfLineThreaded)
     loadp JSObjectWithButterfly::m_butterfly[t0], t0
 .outOfLineContinue:
     subi t1, t2
@@ -4433,7 +4443,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     # flag-off differs from the pre-threads engine by this one not-taken
     # branch.
     subi t1, t2
-    ifJSThreadsBranch(t1, .outOfLineThreaded)
+    ifTaggedButterfliesBranch(t1, .outOfLineThreaded)
     loadp JSObjectWithButterfly::m_butterfly[t0], t1
 .outOfLineContinue:
     negi t2

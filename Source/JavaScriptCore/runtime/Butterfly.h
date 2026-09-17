@@ -28,6 +28,7 @@
 #include "GCMemoryOperations.h"
 #include "IndexingHeader.h"
 #include "IndexingType.h"
+#include "JSCConfig.h"
 #include "PropertyStorage.h"
 #include "Options.h"
 #include <wtf/Assertions.h>
@@ -433,11 +434,12 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
     for (size_t i = 0; i < bytes / sizeof(uint64_t); ++i)
         WTF::atomicStore(&to[i], WTF::atomicLoad(const_cast<uint64_t*>(&from[i]), std::memory_order_relaxed), std::memory_order_relaxed);
 #else
-    // Flag-on: 64-bit-unit copy (never byte-granular) - the SOURCE may be
+    // GIL off: 64-bit-unit copy (never byte-granular) - the SOURCE may be
     // receiving a racing 8-byte store from another thread (its first store
     // lands before the SW publication), and a torn lane would be a torn
-    // JSValue. Flag-off: today's memcpy.
-    if (Options::useJSThreads()) [[unlikely]]
+    // JSValue. Flag off, and GIL on (no other mutator stores while this thread
+    // copies; SPEC-objectmodel history §37): today's memcpy.
+    if (g_jscConfig.gilOffProcess) [[unlikely]]
         butterflyConcurrentCopyWordsSlow(dst, src, bytes);
     else
         memcpy(dst, src, bytes);

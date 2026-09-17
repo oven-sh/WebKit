@@ -3776,7 +3776,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                     base,
                     JSObject::offsetOfInlineStorage() +
                     offsetInInlineStorage(accessCase.m_offset) * sizeof(JSValue)));
-        } else if (Options::useJSThreads()) [[unlikely]] {
+        } else if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (SPEC-jit §5.5; OM G1): the flag-off store below
             // The out-of-line store takes the butterfly write predicate. base may
             // be scratchGPR (the unwrapped global-proxy target) and must survive
             // for the barrier below, so the storage and TID scratches come from a
@@ -3858,7 +3858,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
 
         auto allocator = makeDefaultScratchAllocator(scratchGPR);
 
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (OM E4-C, r17): the claim-first
             // non-reallocating form with its runtime owner predicate; a
             // predicate failure takes the generic put (m_failAndIgnore). An
@@ -4058,7 +4058,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
         // SPEC-jit section 5.5 (Task 8): deletes are transitions; flag-on
         // they require the locked/quarantined OM path. Repatch's
         // tryCacheDeleteBy gates creation under useJSThreads.
-        RELEASE_ASSERT(!Options::useJSThreads());
+        RELEASE_ASSERT(!Options::useTaggedButterflies());
         ASSERT(accessCase.structure()->transitionWatchpointSetHasBeenInvalidated());
         ASSERT(accessCase.newStructure()->transitionKind() == TransitionKind::PropertyDeletion);
         ASSERT(baseGPR != scratchGPR);
@@ -4085,7 +4085,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
         // SPEC-jit section 5.5 (Task 8): structure-only transition (OM N2);
         // flag-on it requires the locked header-CAS path. Repatch gates
         // creation under useJSThreads.
-        RELEASE_ASSERT(!Options::useJSThreads());
+        RELEASE_ASSERT(!Options::useTaggedButterflies());
         ASSERT(accessCase.structure()->transitionWatchpointSetHasBeenInvalidated());
         ASSERT(accessCase.newStructure()->transitionKind() == TransitionKind::SetBrand);
 
@@ -4111,7 +4111,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     }
 
     case AccessCase::ArrayLength: {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // failAndIgnore bumps the countdown that the slow path's repatch
             // attempt decrements, so a state the stub never handles keeps the
             // site at the Optimize operation forever. Both a segmented word
@@ -6021,7 +6021,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler()
 template<bool allocating, bool reallocating>
 static void transitionHandlerImpl(VM& vm, CCallHelpers& jit, CCallHelpers::JumpList& allocationFailure, GPRReg baseGPR, GPRReg valueGPR, GPRReg scratch1GPR, GPRReg scratch2GPR, GPRReg scratch3GPR, GPRReg scratch4GPR, CCallHelpers::JumpList* concurrentSlow = nullptr)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         if constexpr (!allocating) {
             // Only scratch1GPR/scratch2GPR are touched before the transition
             // commits, so a predicate failure can still fall through to the
@@ -6548,7 +6548,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> deleteByIdDeleteHandler()
 
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // SPEC-jit section 5.5 (Task 8): deletes are structure transitions
         // with slot clearing; flag-on they require the locked/quarantined OM
         // path. Repatch gates delete-handler creation; defend in depth here.
@@ -6869,7 +6869,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValNonStringPrimitiveKeyReplac
     fallThrough.append(emitNonStringPrimitiveKeyCheck<keyType>(jit, propertyGPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // SPEC-jit section 5.5 (Task 8): no spare GPR in the PutByVal
         // register file for the owner-tag compare; flag-on defer to the
         // generic path (Task 8 inventory).
@@ -7116,7 +7116,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValReplaceHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // SPEC-jit section 5.5 (Task 8): no spare GPR in the PutByVal
         // register file for the owner-tag compare; flag-on defer to the
         // generic path (Task 8 inventory).
@@ -7379,7 +7379,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> putByValSetterHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // SPEC-jit section 5.5 (Task 8): the PutByVal register file has no
         // spare GPR for the read-choke storage scratch (profileGPR must stay
         // intact on the next-handler path), so flag-on this shared setter
@@ -7502,7 +7502,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> deleteByValDeleteHandlerImpl()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // SPEC-jit section 5.5 (Task 8): deletes require the locked /
         // quarantined OM path flag-on; Repatch gates creation, defend here.
         fallThrough.append(jit.jump());
@@ -7637,7 +7637,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> setPrivateBrandHandler()
     fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
     fallThrough.append(InlineCacheCompiler::emitDataICCheckUid(jit, isSymbol, propertyGPR, scratch1GPR));
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // A private brand is a structure transition. Repatch does not create
         // this case with threads, as for the delete handlers above.
         fallThrough.append(jit.jump());

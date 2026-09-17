@@ -455,6 +455,9 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
 
                     return true;
                 });
+                // I42 (SPEC-objectmodel history §41): GIL off, the generic loop below reads property by property.
+                if (vm.gilOff() && !dataPropertyReadsStillValid(target, targetStructure->id(), values.data(), values.size())) [[unlikely]]
+                    canUseFastPath = false;
             }
         }
 
@@ -572,6 +575,96 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
     return JSValue::encode(entries);
 }
 
+// AUDIT R10-5 (tenth round; SPEC-objectmodel I42, history §35): the fast path below counts the target's enumerable
+// properties, allocates the result for that count, then walks the target again and stores each value at the next
+// index. GIL off another thread can add or delete properties and elements between the two walks, so this version
+// walks one Structure snapshot both times, refuses dictionaries (their table changes in place), bounds every store by
+// the count it allocated for, and re-validates afterwards. Returns null with no exception pending when the caller
+// should take the generic path; the partly filled array is dropped (no other thread has seen it).
+static NEVER_INLINE JSArray* tryObjectValuesFastGILOff(VM& vm, JSGlobalObject* globalObject, JSObject* target, Structure* targetStructure, unsigned namedPropertyCount)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(vm.gilOff());
+
+    if (targetStructure->isDictionary())
+        return nullptr;
+    StructureID targetStructureID = targetStructure->id();
+
+    // The indexed walks go through the flag-on accessors, which are safe for any storage word, rather than
+    // forEachOwnIndexedProperty, whose ArrayStorage arm iterates the sparse map unlocked. An ArrayStorage shape is
+    // left to the generic path; a shape that becomes one during the walks only makes them slower.
+    bool hasIndexed = target->canHaveExistingOwnIndexedProperties();
+    if (hasIndexed && hasAnyArrayStorage(target->indexingType()))
+        return nullptr;
+    auto forEachIndexedValue = [&](auto&& functor) {
+        unsigned usedLength = target->getArrayLength();
+        for (unsigned i = 0; i < usedLength; ++i) {
+            JSValue value = target->getDirectIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (value && functor(value) == IterationStatus::Done)
+                return;
+        }
+    };
+
+    unsigned indexedPropertyCount = 0;
+    if (hasIndexed) {
+        forEachIndexedValue([&](JSValue) {
+            ++indexedPropertyCount;
+            return IterationStatus::Continue;
+        });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    unsigned total = indexedPropertyCount + namedPropertyCount;
+    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), total);
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
+    auto values = result->butterfly()->contiguous();
+    unsigned index = 0;
+    bool sawMoreThanCounted = false;
+    if (indexedPropertyCount) {
+        forEachIndexedValue([&](JSValue value) {
+            if (index == indexedPropertyCount) {
+                sawMoreThanCounted = true;
+                return IterationStatus::Done;
+            }
+            values.at(result, index++).setWithoutWriteBarrier(value);
+            return IterationStatus::Continue;
+        });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if (sawMoreThanCounted || index != indexedPropertyCount)
+        return nullptr;
+
+    targetStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if (entry.attributes() & PropertyAttribute::DontEnum)
+            return true;
+
+        if (entry.key()->isSymbol())
+            return true;
+
+        if (index == total) {
+            sawMoreThanCounted = true;
+            return false;
+        }
+        values.at(result, index++).setWithoutWriteBarrier(target->getDirect(entry.offset()));
+        return true;
+    });
+
+    WTF::loadLoadFence();
+    if (sawMoreThanCounted || index != total || target->structureID() != targetStructureID)
+        return nullptr;
+    for (unsigned i = indexedPropertyCount; i < total; ++i) {
+        if (!values.at(result, i).get())
+            return nullptr;
+    }
+    vm.writeBarrier(result);
+    return result;
+}
+
 JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -587,8 +680,9 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
     {
         bool canUseFastPath = false;
         unsigned namedPropertyCount = 0;
+        Structure* targetStructure = nullptr;
         if (!target->canHaveExistingOwnIndexedGetterSetterProperties() && !target->hasNonReifiedStaticProperties() && !globalObject->isHavingABadTime()) {
-            Structure* targetStructure = target->structure();
+            targetStructure = target->structure();
             if (targetStructure->canPerformFastPropertyEnumerationCommon()) {
                 canUseFastPath = true;
                 targetStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -602,6 +696,14 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     return true;
                 });
             }
+        }
+
+        if (canUseFastPath && vm.gilOff()) [[unlikely]] {
+            JSArray* result = tryObjectValuesFastGILOff(vm, globalObject, target, targetStructure, namedPropertyCount);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result)
+                return result;
+            canUseFastPath = false;
         }
 
         if (canUseFastPath) {
@@ -958,6 +1060,9 @@ static JSValue defineProperties(JSGlobalObject* globalObject, JSObject* object, 
                     return true;
                 });
             }
+            // I42 (SPEC-objectmodel history §41): GIL off, an empty value must not reach toPropertyDescriptor.
+            if (vm.gilOff() && !dataPropertyReadsStillValid(properties, propertiesStructure->id(), values.data(), values.size())) [[unlikely]]
+                canUseFastPath = false;
         }
     }
     if (!canUseFastPath) [[unlikely]]

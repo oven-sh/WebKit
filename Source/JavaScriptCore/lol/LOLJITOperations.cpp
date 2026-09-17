@@ -88,8 +88,9 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     auto bytecode = pc->as<OpResolveScope>();
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     auto& metadata = bytecode.metadata(codeBlock);
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
-    if (metadata.m_resolveType == ModuleVar) {
+    if (resolveType == ModuleVar) {
         JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
@@ -98,9 +99,6 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    auto& metadata = bytecode.metadata(codeBlock);
-    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     switch (resolveType) {
     case GlobalProperty:

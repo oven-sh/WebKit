@@ -300,7 +300,7 @@ public:
     iterator notFound() { return m_set.end(); }
     bool isEmpty() const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // AB18-G: serialize the probe against a racing add()/remove() rehash.
             HeldCellLock locker { *this };
             tsanAcquireCtorPublication();
@@ -310,7 +310,7 @@ public:
     }
     bool contains(unsigned i) const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             HeldCellLock locker { *this };
             tsanAcquireCtorPublication();
             return m_set.contains<SparseArrayEntryTranslator>(i);
@@ -319,7 +319,7 @@ public:
     }
     size_t size() const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             HeldCellLock locker { *this };
             tsanAcquireCtorPublication();
             return m_set.size();
@@ -349,7 +349,7 @@ private:
 
     ALWAYS_INLINE void orFlags(unsigned bits)
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             WTF::atomicExchangeOr(&m_flags, bits, std::memory_order_relaxed);
             return;
         }

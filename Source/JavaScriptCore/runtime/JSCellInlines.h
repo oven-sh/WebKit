@@ -387,11 +387,11 @@ ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, P
     // structure's getter/setter flag is set IN PLACE by a racing defineProperty
     // kind change (SPEC-objectmodel §6 L4-K); the re-validation below is what
     // keeps the answer right, so the entry assertion is single-thread-only.
-    ASSERT(canUseFastGetOwnProperty(structure) || Options::useJSThreads());
+    ASSERT(canUseFastGetOwnProperty(structure) || Options::useTaggedButterflies());
     PropertyOffset offset = structure.get(vm, name);
     if (offset != invalidOffset) {
         JSValue value = asObject(this)->locationForOffset(offset)->get();
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // I34/M7(c): structure.get() can materialize a property table,
             // which allocates and so can park this thread in another thread's
             // stop; a defineProperty that changes this property's kind
@@ -495,7 +495,7 @@ inline void JSCell::setPerCellBit(bool value)
     // side CAS-merges this lane from the freshest read (taxonomy (a)), and our
     // CAS retries across any concurrent flags-byte movement. Flag-off the
     // plain RMW below is byte-identical to today (I22).
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         auto* flagsByte = std::bit_cast<Atomic<TypeInfo::InlineTypeFlags>*>(&m_flags);
         while (true) {
             TypeInfo::InlineTypeFlags oldFlags = flagsByte->load(std::memory_order_relaxed);

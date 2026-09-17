@@ -88,12 +88,16 @@ for (let round = 0; round < ROUNDS; ++round) {
             if (v1[0] !== SENTINEL)
                 throw new Error("sibling reader: SAB sentinel lost");
             // Main transfers `ab` while these readers run. A view made after
-            // that throws TypeError; a view made before it reads undefined.
+            // that throws TypeError; a view made before it reads undefined; and
+            // a view whose construction straddles the detach reads the length,
+            // then finds it no longer fits the (now empty) buffer and throws
+            // RangeError "Length out of range of buffer" (one amplified run in
+            // 430, tenth round) - refused either way, never built over a short base.
             let x;
             try {
                 x = new Int32Array(ab)[0];
             } catch (e) {
-                if (!(e instanceof TypeError))
+                if (!(e instanceof TypeError) && !(e instanceof RangeError))
                     throw e;
                 x = undefined;
             }

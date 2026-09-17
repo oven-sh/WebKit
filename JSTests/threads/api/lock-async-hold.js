@@ -83,8 +83,18 @@ const cond = new Condition();
     // still be granted afterwards. ----
     {
         let ticket;
-        const t = new Thread(() => lock.asyncHold()); // registered on the spawned thread
+        // The spawned thread registers only once this thread holds the lock. Without the gate a
+        // spawned thread that gets to asyncHold() first is GRANTED the lock at registration and
+        // exits; the sync hold below then parks for a release only this thread could make - a
+        // hang by construction (GIL off one run in about a thousand under load, tenth round; with
+        // a 50 ms delay before the hold, every run in both modes).
+        const gate = { held: 0 };
+        const t = new Thread(() => {
+            waitUntil(() => Atomics.load(gate, "held") === 1);
+            return lock.asyncHold(); // registered on the spawned thread
+        });
         lock.hold(() => {
+            Atomics.store(gate, "held", 1);
             ticket = t.join(); // thread queues its ticket against our hold
             shouldBeTrue(ticket instanceof Promise);
         });

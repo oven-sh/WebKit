@@ -269,6 +269,41 @@ struct PendingClassAFire {
 } // anonymous namespace
 
 static Lock s_classAFireQueueLock;
+static std::atomic<unsigned> s_deferredClaimsInFlight { 0 }; // SPEC-jit §5.6 "Deferred claims in flight"; GIL-off processes only.
+// This thread's own share of the count: a claim is made and fired by one thread (the deferred object is a stack
+// object), and a thread that waited for its own claim, from a transition nested inside the claimant's scope, would
+// wait for ever.
+static thread_local unsigned t_ownDeferredClaimsInFlight { 0 };
+
+bool WatchpointSet::deferredClaimsInFlight()
+{
+    return s_deferredClaimsInFlight.load(std::memory_order_seq_cst) > t_ownDeferredClaimsInFlight;
+}
+
+bool WatchpointSet::shouldAwaitDeferredClaimsInFlight(VM& vm)
+{
+    return deferredClaimsInFlight() && !JSThreadsSafepoint::worldIsStopped(vm);
+}
+
+void WatchpointSet::noteDeferredClaimFired()
+{
+    RELEASE_ASSERT(t_ownDeferredClaimsInFlight);
+    --t_ownDeferredClaimsInFlight;
+    unsigned before = s_deferredClaimsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    RELEASE_ASSERT(before);
+}
+
+void WatchpointSet::awaitDeferredClaimsInFlight(VM& vm)
+{
+    SpinBackoff backoff;
+    while (deferredClaimsInFlight()) {
+        // The claimant fires under a stop; this thread has to park for it.
+        if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            continue;
+        backoff.spinOnce();
+    }
+}
+
 static PendingClassAFire* s_classAFireQueueHead WTF_GUARDED_BY_LOCK(s_classAFireQueueLock) { nullptr };
 
 void WatchpointSet::drainClassAFireQueue(VM& vm)
@@ -489,6 +524,11 @@ void WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints
     // set explicitly — the state the source held when the claim succeeded.
     // Flag-off: single mutator, today's exact sequence, unchanged.
     if (Options::useJSThreads()) [[unlikely]] {
+        // §5.6 "Deferred claims in flight": counted BEFORE the CAS, so that whoever observes IsInvalidated from this
+        // claim also observes the count; dropped by DeferredStructureTransitionWatchpointFire after its scope-exit fire.
+        const bool countClaim = g_jscConfig.gilOffProcess;
+        if (countClaim) [[unlikely]]
+            s_deferredClaimsInFlight.fetch_add(1, std::memory_order_seq_cst);
         WTF::storeStoreFence();
         if (WatchpointState prior = m_state.compareExchangeStrong(IsWatched, IsInvalidated); prior != IsWatched) {
             // The only legitimate loser entry is the lost race documented
@@ -497,8 +537,12 @@ void WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints
             // mean a caller bypassed the IsWatched precheck — trap it, as the
             // pre-claim ASSERT(state() == IsWatched) did.
             ASSERT_UNUSED(prior, prior == IsInvalidated);
+            if (countClaim) [[unlikely]]
+                s_deferredClaimsInFlight.fetch_sub(1, std::memory_order_seq_cst); // Not ours after all.
             return;
         }
+        if (countClaim) [[unlikely]]
+            ++t_ownDeferredClaimsInFlight;
         deferredWatchpoints->takeWatchpointsToFire(this);
         WTF::storeStoreFence();
         return;

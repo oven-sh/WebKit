@@ -68,6 +68,17 @@ void PolymorphicCallNode::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, C
         remove();
 
     if (!m_cleared) {
+        // Every install republishes - a tier-up, and a jettison's reinstall of the alternative (exit storms jettison
+        // callees all the time; their callers' sites must keep their history too) - except from the collector: its End
+        // phase jettisons dead code block edges through the same drain, where a new routine may neither be allocated
+        // nor run write barriers, and where callers it has just found dead are still listed. That keeps the full unlink.
+        if (newCodeBlock && vm.gilOff() && !vm.heap.currentThreadIsDoingGCWork()) [[unlikely]] {
+            // Publishes a copy of the routine with this slot upgraded; the displaced routine (and this node in it)
+            // is unlinked by that and stays alive for threads inside it. Nothing of |this| is touched afterwards.
+            Locker locker { CallLinkInfo::s_callLinkSerializationLock };
+            if (owner()->republishWithUpgradedSlot(vm, oldCodeBlock, newCodeBlock, m_index))
+                return;
+        }
         if (!newCodeBlock || !owner()->upgradeIfPossible(vm, oldCodeBlock, newCodeBlock, m_index)) {
             m_cleared = true;
             CallLinkInfo* callLinkInfo = owner()->callLinkInfo();
@@ -179,6 +190,45 @@ bool PolymorphicCallStubRoutine::upgradeIfPossible(VM& vm, CodeBlock* oldCodeBlo
     slot.m_codeBlock = newCodeBlock;
     slot.m_target = target;
     newCodeBlock->linkIncomingCall(nullptr, &callNode); // This is just relinking. So owner and caller frame can be nullptr.
+    return true;
+}
+
+bool PolymorphicCallStubRoutine::republishWithUpgradedSlot(VM& vm, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock, uint8_t index)
+{
+    ASSERT(vm.gilOff());
+    CallLinkInfo* callLinkInfo = m_callLinkInfo;
+    // A displaced routine's nodes are unlinked by clearStub, so a node that reaches here normally belongs to the
+    // site's current routine; anything else keeps the full unlink.
+    if (callLinkInfo->stub() != this || callLinkInfo->mode() != CallLinkInfo::Mode::Polymorphic)
+        return false;
+    // A caller that died in the last collection stays on its callees' incoming-call lists until it is swept. main's
+    // in-place rewrite is harmless for it; a new routine is not (its write barriers and incoming-call notices read the
+    // owner). The last collection's End phase set the flag for every routine whose owner it found dead.
+    if (m_ownerIsDead.load(std::memory_order_relaxed))
+        return false;
+    auto slots = trailingSpan();
+    unsigned numberOfSlots = std::size(slots) - 1; // The last one is the sentinel.
+    if (index >= numberOfSlots || slots[index].m_codeBlock != oldCodeBlock)
+        return false;
+
+    Vector<CallSlot, 16> callSlots;
+    callSlots.reserveInitialCapacity(numberOfSlots);
+    for (unsigned i = 0; i < numberOfSlots; ++i) {
+        CallSlot slot = slots[i]; // The count with it: the site's profile survives the tier-up (it is advisory; a racing increment may be lost).
+        if (!slot.m_calleeOrExecutable)
+            return false; // A collection cleared a dead variant; the site is about to be unlinked anyway.
+        // Two function objects of one executable are two variants with one CodeBlock: upgrade every slot that names it.
+        if (slot.m_codeBlock == oldCodeBlock) {
+            slot.m_codeBlock = newCodeBlock;
+            slot.m_target = newCodeBlock->jitCodeRawPtr()->addressForCall(slot.m_arityCheckMode);
+        }
+        callSlots.append(slot);
+    }
+
+    Ref protectedThis { *this };
+    CallFrame* callerFrame = nullptr; // Used for logging only.
+    auto newRoutine = PolymorphicCallStubRoutine::create(code(), vm, owner(), callerFrame, *callLinkInfo, callSlots, m_notUsingCounting, m_isClosureCall);
+    callLinkInfo->setStub(vm, WTF::move(newRoutine));
     return true;
 }
 

@@ -109,7 +109,7 @@ void CommonData::installVMTrapBreakpoints(CodeBlock* owner)
     // usePollingTraps, so no SignalSender is ever started and this path is
     // unreachable; the assert guards against option storage written directly
     // after finalization.
-    RELEASE_ASSERT(!Options::useJSThreads() || Options::usePollingTraps());
+    RELEASE_ASSERT(!Options::useJSThreads() || Options::useThreadGIL() || Options::usePollingTraps()); // GIL on: SPEC-jit I21, history §53
     ASSERT(!m_isUnlinked);
     Locker locker { pcCodeBlockMapLock };
     if (!m_isStillValid.load(std::memory_order_relaxed) || m_hasVMTrapsBreakpointsInstalled.load(std::memory_order_relaxed))

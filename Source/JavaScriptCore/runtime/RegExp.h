@@ -81,7 +81,9 @@ public:
     static constexpr uint16_t globalOrStickyFlagsMask = OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::Sticky }.toRaw();
 
     OptionSet<Yarr::Flags> flags() const { return m_flags; }
-    unsigned minimumSize() const { return m_minimumSize; }
+    // m_minimumSize is written under cellLock() by the compile paths and read lock-free (the match
+    // fast-fail here and in JIT code): zero and the pattern's one final value are both correct to read.
+    unsigned minimumSize() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_minimumSize), std::memory_order_relaxed); }
 #define JSC_DEFINE_REGEXP_FLAG_ACCESSOR(key, name, lowerCaseName, index) bool lowerCaseName() const { return m_flags.contains(Yarr::Flags::name); }
     JSC_REGEXP_FLAGS(JSC_DEFINE_REGEXP_FLAG_ACCESSOR)
 #undef JSC_DEFINE_REGEXP_FLAG_ACCESSOR
@@ -247,6 +249,7 @@ private:
     void finishCreation(VM&);
 
     void updateMetadataFromPattern(Yarr::YarrPattern&);
+    void setMinimumSize(unsigned minimumSize) { WTF::atomicStore(&m_minimumSize, minimumSize, std::memory_order_relaxed); }
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);

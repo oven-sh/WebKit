@@ -1920,3 +1920,42 @@ matches the protocol implementers build. Gate citation updated to the heap Dev-7
 ### r4.4 Editorial (size cap)
 §8 test-corpus conventions relocated verbatim to annex §T2 (FROZEN NORMATIVE); minor cite
 compressions (heap §9, vmstate 6.4.4, DWT one-shot rationale → hist). No semantic change.
+
+
+### r10.1 Thread.restrict against untagged words (tenth landing round)
+SPEC-objectmodel G1 gives every thread butterfly TID 0 with the GIL on, so generated code and `main`'s C++ fast paths
+no longer tell threads apart. `api/thread-restrict.js` then failed GIL on ("indexed set (array): did not throw"):
+after `Thread.restrict(arr)` on the main thread, `arr[0] = 99` on another thread stored through
+`JSObject::trySetIndexQuickly`'s SlowPutArrayStorage arm, which handles an existing in-vector element without
+reaching `putByIndex` and its `threadRestrictCheck`. The enforcement argument of §5.7 item 1 ("SlowPut is sticky, so
+every later indexed put stays on the hooked generic paths") was never true for that arm or for the DFG/FTL PutByVal
+compiled for a SlowPut array mode; with tagged words both were unreachable from a non-allocating thread because the
+butterfly write predicate sent it to the slow path first. Both are closed whenever the flag is on (SlowPut arrays
+are rare outside having-a-bad-time and restricted objects; flag off nothing changes). Tests: `api/thread-restrict.js`
+(the existing indexed cases) and `api/thread-restrict-hot-indexed-store.js` (the store site made hot on the writer's
+own restricted arrays in every tier, then handed an array another thread restricted: "no exception" on the first
+single-owner build, ConcurrentAccessError after).
+
+### r10.2 Destroying a VM after join: the exiting thread's own reference (tenth landing round)
+Found by the mirror harness once it ran memory-hog tests with their own options: `unlinked-code-block-destructor.js`
+(`--destroy-vm`), two threads, GIL off, exits with SIGABRT in 2-7 of every 16 runs, silently (a release assertion;
+Release builds abort without a message), on the round's first build too. It does not happen under ptrace, and a signal
+handler or an `abort` interposer that does any work loses the race with the main thread's `exit`, which is why three
+attempts to take a stack recorded nothing; a handler with the unwinder loaded in advance plus an exit handler that
+makes `main` linger took it on the first try: `WTF::Thread::entryPoint` destroying the Thread entry closure ->
+`VM::~VM` -> MC-TDWN S1's assertion. The shell had joined the Thread (at the JS level) and released its reference
+under the API lock, as the contract in `~VM`'s comment asks; but `join()` returns when completion is published, and
+the native thread drops its closure's `Ref<VM>` only after its exit tail, so the shell's release was not the last and
+the last was made off-lock by the exiting thread. The window is the length of the exit tail (longer the more the
+thread's allocators hold: 3 of 40 runs for a Thread that kept 180,000 objects, 0 of 40 for light ones; GIL on 0 of 40,
+because there the tail runs under the API lock the embedder must take, and what remains after it is a few
+instructions). SPEC-ungil §B.2's fence (`~VM` waits for foreign lites) was meant to make join-then-destroy safe and
+cannot engage while the exiting thread itself holds a reference: `~VM` does not start.
+Two ways out were weighed. Dropping the thread's references before publication, so that the embedder's release is
+the last and the fence covers the tail, needs the tail (joiner settlement, Strong clears, unregistration, client
+teardown) to run without a VM reference and without a lock holder that takes one - a rewrite of the completion block
+in both modes. Chosen instead: keep the protocol, count per VM the native threads that have published completion and
+not yet released, and give the embedder a barrier to wait on (§4.6 item 4). Destroying under a Thread that is still
+running remains a violation with the fail-stop. Tests: `api/destroy-vm-after-join.js` (`--destroy-vm`; a Thread that
+leaves its exit path much to release: SIGABRT in 3 of 40 runs GIL off before, 0 after), and the mirror pass.
+

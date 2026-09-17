@@ -117,6 +117,8 @@ public:
     static void destroy(PolymorphicCallStubRoutine*);
 
     bool upgradeIfPossible(VM&, CodeBlock*, CodeBlock*, uint8_t);
+    // GIL off (SPEC-jit history §58): the upgrade as a publication. The caller holds the call-link lock.
+    bool republishWithUpgradedSlot(VM&, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock, uint8_t index);
 
     bool isClosureCall() const { return m_isClosureCall; }
 

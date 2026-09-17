@@ -32,6 +32,7 @@
 #include "StackFrame.h"
 #include "VM.h"
 #include <wtf/Threading.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -446,6 +447,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 // the flag stays clear then in the other modes.
 bool ErrorInstance::materializeErrorInfoIfNeededGILOff(VM& vm)
 {
+    SpinBackoff backoff;
     while (true) {
         uint8_t state = m_errorInfoMaterializationGILOff.load(std::memory_order_acquire);
         if (state == ErrorInfoMaterialized)
@@ -453,7 +455,7 @@ bool ErrorInstance::materializeErrorInfoIfNeededGILOff(VM& vm)
         if (state == ErrorInfoNotMaterialized && m_errorInfoMaterializationGILOff.compareExchangeStrong(ErrorInfoNotMaterialized, ErrorInfoMaterializing) == ErrorInfoNotMaterialized)
             break;
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-            Thread::yield();
+            backoff.spinOnce();
     }
     bool result = materializeErrorInfoIfNeededImpl(vm);
     m_errorInfoMaterializationGILOff.store(m_errorInfoMaterialized ? ErrorInfoMaterialized : ErrorInfoNotMaterialized, std::memory_order_release);

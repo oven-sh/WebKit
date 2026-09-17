@@ -1224,6 +1224,31 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     if (g_jscConfig.gilOffProcess) [[unlikely]] {
         if (!array)
             return SortResult::Failed;
+        // main's radix path starts by returning an already sorted input untouched, before any allocation; keep that
+        // guarantee here (SPEC-ungil §N.6, tenth round): one read-only scan with relaxed lane loads, for views long
+        // enough to take that path on main. A NaN counts as an inversion, as in isNonDescending().
+        if constexpr (elementSize > 1) {
+            constexpr size_t radixSortThreshold = elementSize == 2 ? 128 : (elementSize == 4 ? 512 : 8192);
+            if (length >= radixSortThreshold) {
+                auto isNaNLane = [](ElementType value) ALWAYS_INLINE_LAMBDA {
+                    if constexpr (Adaptor::isFloat) {
+                        constexpr SortKeyType infinityBits = elementSize == 2 ? static_cast<SortKeyType>(0x7c00U)
+                            : (elementSize == 4 ? static_cast<SortKeyType>(0x7f800000U) : static_cast<SortKeyType>(0x7ff0000000000000ULL));
+                        return static_cast<SortKeyType>(std::bit_cast<SortKeyType>(value) & static_cast<SortKeyType>(~sortKeySignBit)) > infinityBits;
+                    }
+                    return false;
+                };
+                ElementType previous = typedArrayLaneLoadRelaxed(array);
+                bool nonDescending = !isNaNLane(previous);
+                for (size_t i = 1; nonDescending && i < length; ++i) {
+                    ElementType current = typedArrayLaneLoadRelaxed(array + i);
+                    nonDescending = !isNaNLane(current) && sortKey(previous) <= sortKey(current);
+                    previous = current;
+                }
+                if (nonDescending)
+                    return SortResult::Success;
+            }
+        }
         mustCopyOut = true;
     }
     if (mustCopyOut) {

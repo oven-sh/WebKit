@@ -766,3 +766,12 @@ race:functionSetRandomSeed
 # publication). 1 of 7 TSanJIT GIL-off runs of
 # objectmodel/typed-owner-relabel-no-stop.js.
 race:JSC::copyArrayElements
+
+# Tenth round: upstream's WebAssembly tier-up counter. IPInt bumps
+# BaselineData's total count with a plain store on the running thread and a
+# BBQ compiler thread reads it while merging profiles (a heuristic input, racy
+# by design on main, flag off too). Reached by
+# api/gil-on-wasm-warm-entry-before-first-spawn.js, the first corpus test that
+# runs an export often enough to tier up.
+race:JSC::Wasm::BaselineData::totalCount
+race:JSC::Wasm::BaselineData::incrementTotalCount

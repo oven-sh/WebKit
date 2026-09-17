@@ -29,6 +29,7 @@
 #include "CodeBlock.h"
 #include "GenericArgumentsImplInlines.h"
 #include <wtf/Lock.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -152,10 +153,11 @@ public:
     {
         if (!m_shouldLock) [[likely]]
             return;
+        SpinBackoff backoff;
         while (!s_gilOffOverrideThingsLock.tryLock()) {
             if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
                 continue;
-            Thread::yield();
+            backoff.spinOnce();
         }
     }
 

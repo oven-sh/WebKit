@@ -53,12 +53,14 @@ namespace JSC {
 class VM;
 class ExecutableBase;
 
-// takeSample suspends m_jscExecutionThread and reads the VM's entryScope,
-// topCallFrame, topEntryFrame and m_executingRegExp, which are that thread's
-// state only while the VM runs under the GIL. On a gilOff VM those words live in
-// each thread's VMLite and cannot be resolved from the profiler thread, so such
-// a VM refuses to sample: createThreadIfNecessary never starts the timer thread
-// and the refusal is logged once at construction.
+// takeSample suspends m_jscExecutionThread and reads that thread's entry record,
+// top call frame, top entry frame and executing RegExp. Under the GIL they are
+// the VM's members; on a gilOff VM they live in the sampled thread's VMLite,
+// which the thread records when it binds (only carriers bind) and takeSample
+// resolves through the registry, registry lock held, target suspended
+// (SPEC-ungil §A.1.7 form (i), SD18: spawned threads are not sampled).
+
+class VMLite;
 
 class SamplingProfiler : public ThreadSafeRefCounted<SamplingProfiler> {
     WTF_MAKE_TZONE_ALLOCATED(SamplingProfiler);
@@ -210,6 +212,9 @@ public:
     JS_EXPORT_PRIVATE ~SamplingProfiler();
     void noticeJSLockAcquisition();
     void noticeVMEntry();
+    // A JS Thread on its way out, after its last release of the API lock: a dead thread must not stay bound (the
+    // next sample would wait forever for its acknowledgement). SPEC-ungil history, tenth round.
+    void noticeCurrentThreadIsExiting();
     void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
@@ -221,6 +226,12 @@ public:
     JS_EXPORT_PRIVATE void noticeCurrentThreadAsJSCExecutionThread();
     void noticeCurrentThreadAsJSCExecutionThreadWithLock() WTF_REQUIRES_LOCK(m_lock);
     void processUnverifiedStackTraces() WTF_REQUIRES_LOCK(m_lock);
+    // The heap iteration processUnverifiedStackTraces needs. On a shared heap that is a stop of every client, made
+    // with m_lock dropped (a thread blocked on it could not park) and taken again inside.
+    void processUnverifiedStackTracesWithHeapIteration() WTF_REQUIRES_LOCK(m_lock);
+    // Runs the functor inside a stop of the other clients and returns true when the VM is gilOff and the caller is
+    // not inside a stop already; otherwise returns false and the caller goes on as on main.
+    template<typename Functor> bool runAsStopConductorIfGILOff(const Functor&);
     void setStopWatch(Ref<Stopwatch>&& stopwatch) WTF_REQUIRES_LOCK(m_lock) { m_stopwatch = WTF::move(stopwatch); }
     void pause() WTF_REQUIRES_LOCK(m_lock);
     void clearData() WTF_REQUIRES_LOCK(m_lock);
@@ -254,6 +265,8 @@ private:
     // Bound by noticeCurrentThreadAsJSCExecutionThreadWithLock, subject to
     // shouldBindCurrentThreadAsJSCExecutionThread.
     RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
+    // gilOff only: the lite m_jscExecutionThread had installed when it bound. Checked against the registry before use.
+    VMLite* m_jscExecutionThreadLite WTF_GUARDED_BY_LOCK(m_lock) { nullptr };
     UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
     Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
 };

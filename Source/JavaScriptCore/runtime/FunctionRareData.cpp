@@ -33,6 +33,7 @@
 #include "UnlinkedFunctionExecutable.h"
 
 #include <wtf/Lock.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -147,11 +148,12 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
         // this lock. So that store is either visible to the read below, or its clear finds the
         // rare data and nulls the pair published here. No pair keyed to a superseded prototype
         // stays published.
+        SpinBackoff backoff;
         while (!m_allocationProfileLock.tryLock()) {
             if (isObjectAllocationProfileInitialized())
                 return;
             if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-                Thread::yield();
+                backoff.spinOnce();
         }
         {
             Locker locker { AdoptLock, m_allocationProfileLock };
@@ -181,11 +183,12 @@ Structure* FunctionRareData::createInternalFunctionAllocationStructureFromBaseGI
             return structure;
         return nullptr;
     };
+    SpinBackoff backoff;
     while (!m_allocationProfileLock.tryLock()) {
         if (Structure* structure = matchingStructure())
             return structure;
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-            Thread::yield();
+            backoff.spinOnce();
     }
     Locker locker { AdoptLock, m_allocationProfileLock };
     if (Structure* structure = matchingStructure())
@@ -223,9 +226,10 @@ void FunctionRareData::clearAfterPrototypeStore(VM& vm, const char* reason)
     // from it without validation. The wait is a tryLock poll that keeps cooperating with
     // stop-the-world requests, for the same reason initializeObjectAllocationProfile's is.
     ASSERT(vm.gilOff());
+    SpinBackoff backoff;
     while (!m_allocationProfileLock.tryLock()) {
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-            Thread::yield();
+            backoff.spinOnce();
     }
     {
         Locker locker { AdoptLock, m_allocationProfileLock };

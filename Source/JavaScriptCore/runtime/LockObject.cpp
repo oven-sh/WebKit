@@ -33,6 +33,7 @@
 #include "JITCode.h" // hold-vmEntry-trampoline fast path: jitCode()->addressForCall().
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "JSThreadsSafepoint.h"
 #include "LLIntThunks.h" // hold-vmEntry-trampoline fast path: vmEntryToJavaScriptWith0Arguments.
 #include "JSNativeStdFunction.h"
 #include "JSPromise.h"
@@ -439,7 +440,7 @@ void jsThreadGILHandoffYield(VM& vm)
     } else if (!vm.apiLock().currentThreadIsHoldingLock())
         return;
     GILDroppedSection droppedSection(vm);
-    Thread::yield();
+    jsThreadsYieldToScheduler(); // the point is to let a woken thread take the GIL/token now; WTF's yield sleeps a timer-slack period on Linux (AUDIT R10-2)
 }
 
 // See the declaration comment (LockObject.h). Every increment is paired

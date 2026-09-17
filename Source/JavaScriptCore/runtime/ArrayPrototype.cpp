@@ -454,7 +454,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncJoin, (JSGlobalObject* globalObject, Call
             // overrun (ArrayPrototypeInlines.h fastJoin).
             if (!separatorString->length() && !g_jscConfig.gilOffProcess && (array->indexingType() == ArrayWithContiguous || array->indexingType() == ArrayWithInt32) && flatButterflySnapshot(array, butterfly)) {
                 unsigned length = butterfly->publicLength();
-                if (Options::useJSThreads()) [[unlikely]]
+                if (Options::useTaggedButterflies()) [[unlikely]]
                     length = std::min(length, butterfly->vectorLength());
                 JSOnlyStringsAndInt32sJoiner joiner(StringView { });
                 auto* joined = joiner.tryJoin<ContiguousShape>(globalObject, butterfly->contiguous().data(), length);
@@ -641,7 +641,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     // conversion because the spine aliases the flat storage.
     IndexingType indexingType;
     Butterfly* butterfly;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         uint64_t word = thisObject->taggedButterflyWord();
         if ((word & butterflyPointerMask) && !isSegmentedButterfly(word)
             && !butterflySharedWrite(word) && butterflyWriterIsForeign(word)) {
@@ -664,7 +664,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     case ALL_INT32_INDEXING_TYPES: {
         if (length > butterfly->publicLength())
             break;
-        if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
+        if (Options::useTaggedButterflies() && length > butterfly->vectorLength()) [[unlikely]]
             break;
         auto data = butterfly->contiguous().data();
         if (containsHole(data, static_cast<uint32_t>(length)) && holesMustForwardToPrototype(thisObject))
@@ -677,7 +677,7 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     case ALL_DOUBLE_INDEXING_TYPES: {
         if (length > butterfly->publicLength())
             break;
-        if (Options::useJSThreads() && length > butterfly->vectorLength()) [[unlikely]]
+        if (Options::useTaggedButterflies() && length > butterfly->vectorLength()) [[unlikely]]
             break;
         auto data = butterfly->contiguousDouble().data();
         if (containsHole(data, static_cast<uint32_t>(length)) && holesMustForwardToPrototype(thisObject))
@@ -896,7 +896,7 @@ static ALWAYS_INLINE std::tuple<uint64_t, IndexingType, std::span<EncodedJSValue
         // exactly butterfly(), the [[unlikely]] arm is dead, and the three
         // case bodies are the unchanged byte-identical originals.
         Butterfly* snapshotButterfly;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             uint64_t snapshotWord = thisObject->taggedButterflyWord();
             if (isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)) [[unlikely]] {
                 indexingType = NonArray; // round-4: snapshot raced segmented/null — default arm → generic loop.
@@ -909,7 +909,7 @@ static ALWAYS_INLINE std::tuple<uint64_t, IndexingType, std::span<EncodedJSValue
         case ALL_INT32_INDEXING_TYPES: {
             auto& butterfly = *snapshotButterfly;
             unsigned butterflyLength = butterfly.publicLength();
-            if (Options::useJSThreads()) [[unlikely]]
+            if (Options::useTaggedButterflies()) [[unlikely]]
                 butterflyLength = std::min(butterflyLength, butterfly.vectorLength()); // round-4: aliased publicLength can race past this snapshot's storage.
             auto data = butterfly.contiguous().data();
             unsigned count = 0;
@@ -928,7 +928,7 @@ static ALWAYS_INLINE std::tuple<uint64_t, IndexingType, std::span<EncodedJSValue
         case ALL_CONTIGUOUS_INDEXING_TYPES: {
             auto& butterfly = *snapshotButterfly;
             unsigned butterflyLength = butterfly.publicLength();
-            if (Options::useJSThreads()) [[unlikely]]
+            if (Options::useTaggedButterflies()) [[unlikely]]
                 butterflyLength = std::min(butterflyLength, butterfly.vectorLength()); // round-4: aliased publicLength can race past this snapshot's storage.
             auto data = butterfly.contiguous().data();
             unsigned count = 0;
@@ -951,7 +951,7 @@ static ALWAYS_INLINE std::tuple<uint64_t, IndexingType, std::span<EncodedJSValue
         case ALL_DOUBLE_INDEXING_TYPES: {
             auto& butterfly = *snapshotButterfly;
             unsigned butterflyLength = butterfly.publicLength();
-            if (Options::useJSThreads()) [[unlikely]]
+            if (Options::useTaggedButterflies()) [[unlikely]]
                 butterflyLength = std::min(butterflyLength, butterfly.vectorLength()); // round-4: aliased publicLength can race past this snapshot's storage.
             auto data = butterfly.contiguousDouble().data();
             unsigned count = 0;
@@ -1388,7 +1388,7 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
     Butterfly* snapshotButterfly = nullptr;
     if (!flatButterflySnapshot(array, snapshotButterfly)) [[unlikely]]
         return JSValue();
-    if (Options::useJSThreads() && length > snapshotButterfly->vectorLength()) [[unlikely]]
+    if (Options::useTaggedButterflies() && length > snapshotButterfly->vectorLength()) [[unlikely]]
         return JSValue();
 
     switch (array->indexingType()) {
@@ -1690,7 +1690,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
 
     unsigned firstArraySize = firstButterfly->publicLength();
     unsigned secondArraySize = secondButterfly->publicLength();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         firstArraySize = std::min(firstArraySize, firstButterfly->vectorLength());
         secondArraySize = std::min(secondArraySize, secondButterfly->vectorLength());
     }
@@ -1711,7 +1711,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     // from firstType/secondType. GIL-off a source owned by another thread that is
     // not yet Double/Contiguous may be relabelled by its owner at any instant, so
     // it takes the generic concat.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         auto mayMove = [](JSArray* array, IndexingType observed) {
             return butterflyWordMayBeRelabelledConcurrently(array->taggedButterflyWord()) && !hasDouble(observed) && !hasContiguous(observed);
         };
@@ -1753,7 +1753,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
     // the allocation above is a park point during which a stop-the-world
     // relabel of either array rewrites its flat lanes in place without
     // touching the word, so re-read both shapes before copying.
-    if (Options::useJSThreads() && (firstArray->indexingType() != firstType || secondArray->indexingType() != secondType)) [[unlikely]]
+    if (Options::useTaggedButterflies() && (firstArray->indexingType() != firstType || secondArray->indexingType() != secondType)) [[unlikely]]
         return nullptr;
 
     // We can use memcpy / memset since butterfly is not connected to cells yet.
@@ -1902,7 +1902,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             return false;
         unsigned sourceSize = sourceButterfly->publicLength();
         IndexingType sourceType = array->indexingType();
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             sourceSize = std::min(sourceSize, sourceButterfly->vectorLength());
             if (sourceSize > resultSize - offset || (mergeIndexingTypesForCopying(type, sourceType, /* allowPromotion */ true) != type && !(boxDoubleLanes && sourceType == ArrayWithDouble)))
                 return false;
@@ -1949,7 +1949,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
                 return nullptr;
             continue;
         }
-        if (Options::useJSThreads() && offset >= resultSize) [[unlikely]]
+        if (Options::useTaggedButterflies() && offset >= resultSize) [[unlikely]]
             return nullptr;
         if (type == ArrayWithDouble)
             butterfly->contiguousDouble().data()[offset] = argumentValue.asNumber();
@@ -1957,7 +1957,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
             butterfly->contiguous().data()[offset].setWithoutWriteBarrier(argumentValue);
         ++offset;
     }
-    if (Options::useJSThreads() && offset != resultSize) [[unlikely]]
+    if (Options::useTaggedButterflies() && offset != resultSize) [[unlikely]]
         return nullptr;
     ASSERT(offset == resultSize);
 

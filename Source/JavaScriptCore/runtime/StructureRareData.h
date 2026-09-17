@@ -169,14 +169,14 @@ public:
     // ref and one deref on the cold IC paths that call it.
     Box<InlineWatchpointSet> copySharedPolyProtoWatchpoint() const
     {
-        if (!Options::useJSThreads()) [[likely]]
+        if (!Options::useTaggedButterflies()) [[likely]]
             return m_polyProtoWatchpoint;
         return copySharedPolyProtoWatchpointConcurrently();
     }
     Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return copySharedPolyProtoWatchpoint(); }
     void setSharedPolyProtoWatchpoint(Box<InlineWatchpointSet>&& sharedPolyProtoWatchpoint)
     {
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!Options::useTaggedButterflies()) [[likely]] {
             m_polyProtoWatchpoint = WTF::move(sharedPolyProtoWatchpoint);
             return;
         }
@@ -317,7 +317,7 @@ private:
     static constexpr unsigned replacementCountMask = ~toPrimitiveCacheMask;
     void updatePackedWord(unsigned bits, unsigned mask)
     {
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!Options::useTaggedButterflies()) [[likely]] {
             m_replacementCountAndToPrimitiveCache = (m_replacementCountAndToPrimitiveCache & ~mask) | bits;
             return;
         }
@@ -330,7 +330,7 @@ private:
     }
     unsigned addToReplacementCount(int delta)
     {
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!Options::useTaggedButterflies()) [[likely]] {
             unsigned count = ((m_replacementCountAndToPrimitiveCache & replacementCountMask) + delta) & replacementCountMask;
             m_replacementCountAndToPrimitiveCache = (m_replacementCountAndToPrimitiveCache & toPrimitiveCacheMask) | count;
             return count;

@@ -7542,7 +7542,7 @@ void ByteCodeParser::handleGetById(
         }
     }
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / SCALEBENCH.md §44
         // backstop: compileGetButterfly under useJSThreads routes the
         // segmented-butterfly check to speculationCheck(BadIndexingType)
@@ -7799,7 +7799,7 @@ void ByteCodeParser::handleDeleteById(
 
     // A hit is a structure transition, which the JIT tiers do not emit with
     // threads (SPEC-jit section 5.5). Repatch does not record one either.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         for (const DeleteByVariant& variant : deleteByStatus.variants()) {
             if (variant.newStructure()) {
                 set(destination, addToGraph(DeleteById, OpInfo(identifier), OpInfo(ecmaMode), base));
@@ -8055,7 +8055,7 @@ void ByteCodeParser::handlePutById(
         }
 
         Structure* transitionOwnerCheckStructure = nullptr;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (FTL MultiPutByOffset form): every
             // Transition variant must be inlinable on its own terms - non-
             // reallocating, non-ArrayStorage source, the four thread-local
@@ -8124,7 +8124,7 @@ void ByteCodeParser::handlePutById(
     
     case PutByVariant::Transition: {
         bool needsTransitionOwnerCheck = false;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (DFG form): inline only the
             // transition from a non-ArrayStorage, non-copy-on-write source
             // whose four thread-local sets this plan can watch (source and
@@ -8213,7 +8213,7 @@ void ByteCodeParser::handlePutById(
         // to PutStructure nothing polls, allocates or exits, so the install is
         // E4's plain order (nuke, tagged word, then PutStructure) and no
         // collection can observe the nuked header.
-        if (variant.reallocatesStorage() && Options::useJSThreads()) [[unlikely]]
+        if (variant.reallocatesStorage() && Options::useTaggedButterflies()) [[unlikely]]
             addToGraph(InvalidationPoint);
 
         if (variant.reallocatesStorage())
@@ -8305,7 +8305,7 @@ void ByteCodeParser::handlePutPrivateNameById(
             return;
         }
 
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
             // inlined transition sequences flag-on (see below).
             for (unsigned variantIndex = putByStatus.numVariants(); variantIndex--;) {
@@ -8351,7 +8351,7 @@ void ByteCodeParser::handlePutPrivateNameById(
     
     case PutByVariant::Transition: {
         ASSERT(privateFieldPutKind.isDefine());
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: no inlined
             // transition sequence flag-on (see handlePutById's Transition
             // case); the generic op performs the transition via the OM's C++
@@ -9744,7 +9744,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     // https://bugs.webkit.org/show_bug.cgi?id=221570
                     // A private brand is a structure transition, which the JIT
                     // tiers do not emit with threads (SPEC-jit section 5.5).
-                    if (setStatus.isSimple() && setStatus.variants().size() == 1 && Options::useAccessInlining() && !Options::useJSThreads()) {
+                    if (setStatus.isSimple() && setStatus.variants().size() == 1 && Options::useAccessInlining() && !Options::useTaggedButterflies()) {
                         SetPrivateBrandVariant variant = setStatus.variants()[0];
 
                         addToGraph(FilterSetPrivateBrandStatus, OpInfo(m_graph.m_plan.recordedStatuses().addSetPrivateBrandStatus(currentCodeOrigin(), setStatus)), base);

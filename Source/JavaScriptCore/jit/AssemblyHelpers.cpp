@@ -80,7 +80,7 @@ constexpr bool dumpVerbose = false;
 // loadButterflyForRead/ForWrite choke points.
 static void emitLegacyButterflyTagTrap(AssemblyHelpers& jit, GPRReg butterflyGPR)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         auto untagged = jit.branch64(AssemblyHelpers::Below, butterflyGPR, AssemblyHelpers::TrustedImm64(static_cast<int64_t>(butterflyTagFloor)));
         jit.breakpoint();
         untagged.link(&jit);
@@ -103,7 +103,7 @@ static void emitLegacyButterflyTagTrap(AssemblyHelpers& jit, GPRReg butterflyGPR
 static void emitLoadTypedArrayArrayBuffer(AssemblyHelpers& jit, GPRReg baseGPR, GPRReg resultGPR, [[maybe_unused]] GPRReg scratchGPR)
 {
     jit.loadPtr(AssemblyHelpers::Address(baseGPR, JSObject::butterflyOffset()), resultGPR);
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         ASSERT(scratchGPR != resultGPR && scratchGPR != baseGPR);
         // Segmented iff TID == notTTLTID (the all-ones TID, I3; payload != 0
         // is given by m_mode==Wasteful => the wastage install happened).
@@ -220,6 +220,11 @@ void loadVMLite(AssemblyHelpers& jit, GPRReg destGPR)
 // keeps compiling.
 void AssemblyHelpers::loadButterflyTIDTag(GPRReg destGPR)
 {
+    if (!Options::useTaggedButterflies()) {
+        // SPEC-jit §5.5 "Untagged words" (OM G1): the tag is 0 on every thread.
+        move(TrustedImm64(0), destGPR);
+        return;
+    }
 #if OS(LINUX) && (CPU(X86_64) || CPU(ARM64))
     loadFromELFTLS64(butterflyTIDTagELFTLSOffset(), destGPR);
 #elif OS(DARWIN) && ENABLE(FAST_TLS_JIT)
@@ -234,6 +239,8 @@ void AssemblyHelpers::loadButterflyTIDTag(GPRReg destGPR)
 
 void AssemblyHelpers::xorButterflyTIDTagInPlace(GPRReg destGPR)
 {
+    if (!Options::useTaggedButterflies())
+        return; // xor with the zero tag (OM G1)
 #if OS(LINUX) && CPU(X86_64)
     xorFromELFTLS64(butterflyTIDTagELFTLSOffset(), destGPR);
 #else
@@ -248,6 +255,10 @@ void AssemblyHelpers::emitTagInstalledButterflyWithTID(GPRReg resultGPR, GPRReg 
 {
     ASSERT(scratchGPR != resultGPR);
     ASSERT(scratchGPR != storageGPR);
+    if (!Options::useTaggedButterflies()) {
+        storePtr(storageGPR, Address(resultGPR, JSObject::butterflyOffset())); // untagged words (OM G1)
+        return;
+    }
     loadButterflyTIDTag(scratchGPR);
     // scratchGPR := (currentButterflyTID() << 48) | storageGPR — i.e.
     // encodeButterfly(storageGPR, currentButterflyTID(), false). storageGPR is
@@ -682,7 +693,7 @@ void AssemblyHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, 
 
 void AssemblyHelpers::loadPropertyTagged(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(Options::useTaggedButterflies());
     ASSERT(noOverlap(offset, result));
     ASSERT(storageScratch != object && storageScratch != offset);
     // `result` is written only by the final load: in the data-IC handlers it
@@ -888,7 +899,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicProperty(VM& vm, GPRRe
     auto missed = branchTestPtr(Zero, scratch2GPR);
     moveConditionally64(Equal, scratch2GPR, TrustedImm32(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects())), baseGPR, scratch2GPR, scratch1GPR);
     load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useTaggedButterflies()) [[unlikely]]
         loadPropertyTagged(scratch1GPR, scratch2GPR, resultGPR, scratch3GPR, slowCases); // scratch3 (the entry) is dead here; result may be handlerGPR
     else
         loadProperty(scratch1GPR, scratch2GPR, resultGPR);
@@ -913,7 +924,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadMegamorphicGetterSetter(VM& vm, G
     loadPtr(Address(scratch3GPR, Entry::offsetOfHolder()), scratch1GPR);
     moveConditionally64(Equal, scratch1GPR, TrustedImm32(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects())), baseGPR, scratch1GPR, scratch1GPR);
     load16(Address(scratch3GPR, Entry::offsetOfOffset()), scratch2GPR);
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useTaggedButterflies()) [[unlikely]]
         loadPropertyTagged(scratch1GPR, scratch2GPR, resultGPR, scratch3GPR, slowCases); // scratch3 (the entry) is dead here; result may be handlerGPR
     else
         loadProperty(scratch1GPR, scratch2GPR, resultGPR);
@@ -976,7 +987,7 @@ std::tuple<AssemblyHelpers::JumpList, AssemblyHelpers::JumpList> AssemblyHelpers
     reallocatingCases.append(branchTest8(NonZero, Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfReallocating())));
     load32(Address(scratch3GPR, MegamorphicCache::StoreEntry::offsetOfNewStructureID()), scratch2GPR);
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (SPEC-jit §5.5; OM G1): main's probe below
         // Flag-on (GIL-on; SPEC-jit §5.5 rows Write and Transition, OM E4-C).
         // Replace: the tagged write predicate. Transition: the claim-first
         // non-reallocating form - PreciseAllocation, copy-on-write and
@@ -1181,7 +1192,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::loadCacheableIdentifierImpl(GPRReg pr
 void AssemblyHelpers::emitNonNullDecodeZeroExtendedStructureID(RegisterID source, RegisterID dest)
 {
 #if CPU(ADDRESS64)
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] { // no concurrent mutator in an untagged process (OM G1)
         // A transition on another thread can nuke the ID (set its low bit)
         // while this thread reads it. A nuked ID still names the old
         // structure, so clear the bit, as StructureID::decode does.
@@ -2324,7 +2335,7 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfResizableOrGrowableSharedType
     // r48: segment-aware butterfly -> arrayBuffer load (clobbers scratchGPR
     // flag-on; mode is re-loaded for the isGrowableShared test below).
     AssemblyHelpersInternal::emitLoadTypedArrayArrayBuffer(*this, baseGPR, scratch2GPR, scratchGPR);
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useTaggedButterflies()) [[unlikely]]
         load8(Address(baseGPR, JSArrayBufferView::offsetOfMode()), scratchGPR);
 
     auto isGrowableShared = branchTest32(NonZero, scratchGPR, TrustedImm32(isGrowableSharedMode));
@@ -2402,7 +2413,7 @@ std::tuple<AssemblyHelpers::Jump, AssemblyHelpers::JumpList> AssemblyHelpers::lo
         // scratchGPR flag-on; mode is re-loaded for the isGrowableShared test
         // below).
         AssemblyHelpersInternal::emitLoadTypedArrayArrayBuffer(*this, baseGPR, scratch2GPR, scratchGPR);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             load8(Address(baseGPR, JSArrayBufferView::offsetOfMode()), scratchGPR);
     }
 

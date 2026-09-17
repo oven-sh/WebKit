@@ -2166,7 +2166,7 @@ void JIT::emit_op_enumerator_put_by_val(const JSInstruction* currentInstruction)
     // Otherwise it's out of line
     outOfLineAccess.link(this);
     JumpList threadedOutOfLineStore;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (SPEC-jit §5.5; OM G1): the flag-off inline store below
         // The out-of-line store needs the butterfly write predicate, but every
         // spare GPR here must survive onto the generic put_by_val IC, so the
         // store goes straight to that IC (which carries the predicate) with the

@@ -145,6 +145,8 @@ static std::atomic<uint32_t> s_butterflyTIDTagInitializedThreadCount { 0 };
 // Also the body run by initialize/clear below, so all writers agree.
 static void updateButterflyTIDTag(uint16_t tid)
 {
+    if (!Options::useTaggedButterflies())
+        tid = 0; // SPEC-objectmodel G1: one owner with the GIL (and flag off, where no lite is ever installed).
     uint64_t tag = static_cast<uint64_t>(tid) << 48;
     g_jscButterflyTIDTag = tag;
 #if defined(JSC_BUTTERFLY_TID_TAG_DARWIN_TSD)

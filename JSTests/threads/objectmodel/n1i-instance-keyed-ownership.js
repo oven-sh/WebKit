@@ -1,4 +1,7 @@
-//@ requireOptions("--useJSThreads=1", "--useDollarVM=1")
+//@ requireOptions("--useJSThreads=1", "--useDollarVM=1", "--useJSThreadsSingleOwnerWithGIL=0")
+// Tenth round (SPEC-objectmodel G1): with the GIL on every thread shares butterfly TID 0 by default, so nothing is
+// foreign there; this test observes per-thread ownership, so its runs restore per-thread tags
+// (--useJSThreadsSingleOwnerWithGIL=0; the option has no effect GIL off).
 // SPEC-objectmodel §2.1 N1-I (rev 16): a butterfly-less object's transition
 // owner is the thread that ALLOCATED it (its butterfly word carries that
 // thread's TID from birth), not the thread that created its structure.

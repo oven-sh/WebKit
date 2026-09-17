@@ -1200,3 +1200,209 @@ handler IC at catch sites), GIL off keeps the claimed transitions.
 
 map-heavy's times both improved (T(1) 1,707 -> 1,410 ms, T(4) 2,115 -> 1,915 ms); the ratio fell because one thread
 gained more. GIL on does not scale (the GIL serializes the threads), as designed.
+
+### 6.12 Tenth round: where the three gaps were, what moved them, and the quiet pass
+
+Linux x86-64 (64 hardware threads), Release. `main` is `cf1b36ec8703`. The round's first build (the rebased tree,
+"start" below) and its last ("final") were measured interleaved in one session on the otherwise idle machine; every
+other number in this section is an instruction count (`perf stat -e instructions:u`, or `perf record -c` samples
+summed per symbol), which does not depend on load, or is marked as taken under load.
+
+**Method added this round.** (1) Per-symbol sweeps: every one of the 36 JetStream tests run once per configuration
+under `perf record -e instructions:u -c 2000000`, samples summed per symbol and compared between two configurations
+over the whole suite; this finds costs that are spread thin (a helper out of line in every compiler phase, a gate in
+every RegExp match) and ranks tests by instruction ratio instead of by noisy scores. (2) Samples inside FTL code
+attributed to DFG nodes: one process run with both `perf record` and `--dumpFTLDisassembly`; the dump gives an address
+range per Air instruction under its DFG node, and the sampled addresses are binned into those ranges. This is what
+showed that delta-blue GIL off executes twice the FTL instructions of GIL on in statically equal code (below).
+
+**Instruction ratios over the 36 tests** (geometric mean of per-test totals):
+
+| | start of the round (first sweep, r10f) | final (r10p) |
+|---|---|---|
+| flag off / main | 1.027 | 1.025 (sum 1.018) |
+| GIL on / flag off | 1.114 | 1.015 (sum 1.015) |
+| GIL off / GIL on | 1.169 | 1.249 (sum 1.219); GIL off / flag off 1.30 -> 1.27: GIL on fell by more than GIL off did |
+
+**GIL on / flag off, per test, final** (one run per cell; tests whose own runs differ by 10 % or more are marked):
+above 1.05: WSL 1.15, Air 1.07, stanford-crypto-aes 1.07, ai-astar 1.06, and two that are run-to-run noise - Babylon
+1.18 (four runs each afterwards: flag off 5.80-6.79 G, GIL on 5.87-6.27 G) and navier-stokes 1.10 (3.95 G against
+3.98 G on repeated runs); 22 tests within 1.00 +- 0.02; FlightPlanner 0.79 (bimodal on `main` too: 5.8 G or 7.3 G
+instructions, run to run). What is left, from the symbol sums: generated code +2,135 samples of
+218,960 (WSL 1,035: handler inline caches in FTL code, which flag off compiles as patched stubs; measured flag off
+with handler inline caches forced on in the FTL: WSL +3.5 %, Air +1.4 %, typescript +1.4 %, delta-blue +2 %, Babylon
+-15 %, so not pursued as a rule); `operationMakeAtomString2WithCache` +255 (WSL; the flag-on body takes the cache's
+lock twice per miss); atomization through the shared atom table (+149 `addToStringTable`, +192
+`operationGetByValObjectString`, typescript and FlightPlanner).
+
+**What G1 removed** (GIL on over flag off, instructions, before -> after the single-owner change and its
+followers): WSL 1.16 -> 1.07, Air 1.12 -> 1.06, typescript 1.11 -> 0.98, delta-blue 1.04 -> 1.01,
+stanford-crypto-aes 1.02 -> 1.00, richards 1.14 -> 1.02, ai-astar 1.18 -> 1.06. Code size GIL on against
+flag off before: delta-blue FTL 95 KB against 79 KB, DFG 115 against 83; richards DFG 53 against 39; ai-astar DFG 87
+against 44. WSL's FTL node counts GIL on: PutById 652 -> 35 (flag off 36), PutStructure 0 -> 580 (311), PutByOffset
+51 -> 628 (615). Array microbenchmarks (G instructions for 2 M calls; main / flag off / GIL on / GIL off): append by
+index 0.83 / 0.84 / 0.85 / 1.28; push 0.77 / 0.78 / 0.79 / 1.12; first write to a literal 0.88 / 1.00 / 1.01 / 1.63;
+`slice` 0.32 / 0.32 / 0.33 / 0.50; `concat` 0.75 / 0.83 / 0.84 / 1.25.
+
+**Polling traps** (`main` with `--usePollingTraps=1` against `main`, medians of three, score / cycles): delta-blue
+1,107 / 1.50 G against 1,220 / 1.31 G; richards 886 / 1.82 G against 930 / 1.61 G; ai-astar 701 / 2.70 G against 744 /
+2.64 G; Air 582 against 587. GIL on no longer polls.
+
+**GIL off / GIL on, per test, final** (instructions): navier-stokes 2.45, delta-blue 1.95, ML 1.89,
+stanford-crypto-aes 1.64, hash-map 1.61, crypto 1.42, raytrace 1.34, async-fs 1.34, gbemu 1.33, Air 1.31, UniPoker
+1.30, stanford-crypto-pbkdf2 1.29, Basic 1.27, OfflineAssembler 1.27; ten tests within 1.07. Of the 49,814 extra
+samples over the suite, 34,044 (68 %) are in generated code; no C++ symbol holds more than 1,100. By mechanism:
+- *The Double family* (navier-stokes, ML): their arrays start as integers and meet doubles; GIL off that request is
+  executed as Int32->Contiguous (SPEC-objectmodel T4-O), so the kernels run on boxed doubles, and where arrays from
+  several sites meet (ML's `mmul`) the accesses are MultiGetByVal over three shapes with unboxing: 15,687 FTL samples
+  against 7,054 in `mmul`, of which MultiGetByVal 943, CheckInBounds +834, the polls 1,020, DoubleRep 183, and the
+  loop's own bookkeeping the rest. The allocation-profile promotion cannot reach either test (history §40).
+- *What a poll costs a loop whose condition reads the heap* (delta-blue and the object-heavy tests): statically
+  the FTL code of the two modes is the same size (6,236 against 6,203 Air instructions); dynamically GIL off executes
+  7,282 samples in it against 4,571. By node: CheckStructure +790, CheckInBounds +585, the polls +559, Upsilon +541,
+  ArrayPush +267 (the length compare-and-swap), GetButterfly +233. The loops are `for (i = 0; i < this.size(); i++)
+  this.constraintAt(i).execute()` with everything inlined: GIL on and flag off hoist the length, the butterfly and
+  the structure checks out of the loop; GIL off every read that can decide the loop's exit is performed again after
+  each poll (SPEC-jit I21), and what is loaded from a re-read field is a new value whose checks cannot be hoisted.
+  This is the visibility rule, not a missing optimization; narrowing it further is a memory-model decision (Open
+  items).
+- *Array growth that copies* (stanford-crypto-aes): `ensureLengthSlowConcurrent`, `trySetIndexQuicklyConcurrent`,
+  `casButterfly`, the CopyOnWrite materializer, `putIndexConcurrent` and `fastSlice` are 2,250 of its 4,422 extra
+  samples.
+- *RegExp and strings* (OfflineAssembler, regexp, UniPoker): per call on a microbenchmark that defeats constant
+  folding, GIL off over GIL on: `exec` 1.15, `test` 1.27, `replace` 1.29, regexp `split` 1.52 (1.63 before the split
+  paths reused a per-thread vector), string `split` 1.15. `RegExpTest`/`RegExpExec` are not inlined as calls into
+  Yarr code GIL off, the legacy-statics stream and the match scratch are per thread and looked up per match, constant
+  folding of a match against a constant string is off, the split caches are off.
+- *Collection latency on the main thread* (splay, gbemu, ML Worst Case): unchanged; the service-conductor experiment
+  is in LANDING-PLAN.
+
+**Poll visibility** (r10f): float-mm.c GIL off 174.3 G -> 116.6 G instructions (GIL on 105 G), score 10.07 -> 11.99;
+ML 55.96 G -> 54.42 G. **Inline allocation**: `new Array(n)` 355 -> 109 instructions per call GIL off, `slice`
+of a constant array 440 -> 225, `str.slice(a, b)` 292 -> 156 (flag off 136). **Window liveness retention off**:
+JetStream GIL off with an idle second thread, resident set 2.4-2.8 GB -> 1.2-1.35 GB, Full collections 57-62 -> 19-25.
+
+**Flag off / main** (the per-symbol sweep on the final tree's predecessor, 220,329 samples on `main`): +4,006
+(+1.8 %). Largest sums: generated code +455; `SlotVisitor::drain` +404 and `setMarkedAndAppendToMarkStack` +213
+(splay, pdfjs, hash-map: the same number of collections, about 5 % more instructions each); the DFG clobberize helper
++336 (fixed); the RegExp operations +487 net; `JSArray::tryCreate` +174; `JSRopeString::resolveRope` +160;
+`jsSubstringOfResolved` +143; `JSValue::getPropertySlot` +114; `sanitizeStackForVMImpl` +85. Per test:
+OfflineAssembler 1.127, regexp 1.075, pdfjs 1.068, splay 1.063, UniPoker 1.063, Babylon 1.055, Air 1.053; eight
+tests at or below 1.001. RegExp and string entry points per call (main -> flag off): `exec` 1,473 -> 1,547, `test` 913
+-> 917, `replace` 2,173 -> 2,413, regexp `split` 2,327 -> 2,700, string `split` 1,263 -> 1,447, `search` 973 -> 1,000.
+
+**The quiet pass** (final tree; five rounds, each round `main`, then the round's first build and the final one in
+flag off / GIL on / GIL off, interleaved; medians; nothing else on the machine, load 1.2-1.6).
+
+| JetStream 2 total | `main` | flag off | GIL on | GIL off | flag off / main | GIL on / flag off | GIL off / GIL on |
+|---|---|---|---|---|---|---|---|
+| final | 347.3 (343.0-356.6) | 345.4 (343.0-348.1) | 330.9 (323.6-334.7) | 265.9 (260.5-269.7) | 0.994 | 0.958 | 0.804 |
+| start of the round, same session | - | 344.0 | 312.1 | 259.4 | 0.990 | 0.907 | 0.831 |
+| the pass an hour earlier (the tree before the last; differs GIL off only) | 355.2 | 344.3 | 327.4 | 264.7 | 0.970 | 0.951 | 0.808 |
+
+`main`'s own total moved by 2 % between the two passes, and that is one test: earley-boyer is bimodal on `main`
+(926 or 545; the five runs of this pass: 565, 542, 478, 910, 546; of the earlier one: 938, 977, 920, 909, 926), and
+flag off did not fall into the slow mode in either. Without earley-boyer (geometric mean of the other 35 medians) flag
+off / main is 0.981 in this pass and 0.966 in the earlier one; the round started at 0.959-0.975. So: flag off is 2-3 %
+below `main` (target 0.99 not met; the round gained about a point), GIL on is 0.95-0.96 of flag off (target 0.95 met;
+start 0.91), GIL off is 0.80-0.81 of GIL on (target 0.90 not met): GIL off itself gained 2.5 % (259.4 -> 265.9), GIL
+on gained 6 %. No test is below 0.80 flag off over `main` (lowest regexp 0.925) or GIL on over flag off (lowest
+FlightPlanner 0.838, bimodal); GIL off over GIL on thirteen are: stanford-crypto-sha256 0.40 (bimodal, the exit storm
+of LANDING-PLAN Open items), ML 0.56, splay 0.67, stanford-crypto-aes 0.67, delta-blue 0.71, Basic 0.71,
+OfflineAssembler 0.71, hash-map 0.74, FlightPlanner 0.77, json-parse-inspector 0.78, UniPoker 0.78, WSL 0.79, regexp
+0.79.
+
+| test | `main` | flag off | GIL on | GIL off | off / main | on / off | GIL off / on | start (r10m0): on / off | GIL off / on |
+|---|---|---|---|---|---|---|---|---|---|
+| stanford-crypto-sha256 | 846.9 | 866.7 | 828.7 | 330.9 | 1.023 | 0.956 | 0.399 | 0.817 | 0.469 |
+| ML | 146.9 | 140.5 | 140.1 | 78.1 | 0.956 | 0.998 | 0.558 | 0.799 | 0.648 |
+| splay | 472.8 | 458.3 | 445.4 | 298.0 | 0.969 | 0.972 | 0.669 | 0.998 | 0.658 |
+| stanford-crypto-aes | 468.2 | 452.2 | 442.8 | 296.6 | 0.966 | 0.979 | 0.670 | 0.830 | 0.726 |
+| delta-blue | 1227.1 | 1187.0 | 1149.8 | 812.4 | 0.967 | 0.969 | 0.707 | 0.816 | 0.829 |
+| Basic | 974.5 | 917.7 | 866.3 | 616.0 | 0.942 | 0.944 | 0.711 | 0.876 | 0.715 |
+| OfflineAssembler | 207.4 | 199.4 | 192.4 | 137.3 | 0.962 | 0.965 | 0.714 | 0.937 | 0.756 |
+| hash-map | 607.4 | 600.1 | 609.8 | 452.6 | 0.988 | 1.016 | 0.742 | 0.969 | 0.825 |
+| FlightPlanner | 911.1 | 943.5 | 790.5 | 609.0 | 1.035 | 0.838 | 0.770 | 0.959 | 0.657 |
+| json-parse-inspector | 434.8 | 415.5 | 412.4 | 322.0 | 0.956 | 0.993 | 0.781 | 0.903 | 0.866 |
+| UniPoker | 740.3 | 700.8 | 698.5 | 546.5 | 0.947 | 0.997 | 0.782 | 0.948 | 0.837 |
+| WSL | 3.6 | 3.5 | 3.3 | 2.6 | 0.976 | 0.928 | 0.791 | 0.854 | 0.854 |
+| regexp | 510.6 | 472.1 | 477.4 | 378.1 | 0.925 | 1.011 | 0.792 | 0.894 | 0.823 |
+| pdfjs | 210.2 | 202.9 | 198.9 | 160.1 | 0.965 | 0.980 | 0.805 | 0.921 | 0.819 |
+| async-fs | 589.3 | 620.0 | 571.7 | 460.8 | 1.052 | 0.922 | 0.806 | 0.996 | 0.730 |
+| crypto | 1617.6 | 1644.4 | 1620.1 | 1309.8 | 1.017 | 0.985 | 0.808 | 0.859 | 0.933 |
+| ai-astar | 746.1 | 714.8 | 681.5 | 554.5 | 0.958 | 0.953 | 0.814 | 0.869 | 0.857 |
+| stanford-crypto-pbkdf2 | 940.7 | 951.2 | 919.2 | 749.4 | 1.011 | 0.966 | 0.815 | 0.873 | 0.941 |
+| Babylon | 779.3 | 786.4 | 713.7 | 584.7 | 1.009 | 0.908 | 0.819 | 0.793 | 0.856 |
+| Air | 567.0 | 534.4 | 486.9 | 412.8 | 0.943 | 0.911 | 0.848 | 0.866 | 0.903 |
+| gbemu | 173.1 | 169.5 | 166.0 | 140.9 | 0.980 | 0.979 | 0.849 | 0.894 | 0.669 |
+| earley-boyer | 545.6 | 879.0 | 783.3 | 667.3 | 1.611 | 0.891 | 0.852 | 0.935 | 0.842 |
+| navier-stokes | 993.6 | 1011.7 | 855.5 | 737.3 | 1.018 | 0.846 | 0.862 | 0.886 | 0.837 |
+| json-stringify-inspector | 550.8 | 517.3 | 453.8 | 393.7 | 0.939 | 0.877 | 0.867 | 1.002 | 0.797 |
+| raytrace | 878.0 | 828.3 | 783.9 | 682.8 | 0.943 | 0.946 | 0.871 | 0.938 | 0.847 |
+| richards | 977.3 | 958.0 | 930.5 | 815.1 | 0.980 | 0.971 | 0.876 | 0.874 | 0.959 |
+| typescript | 22.2 | 22.2 | 20.7 | 18.2 | 1.002 | 0.932 | 0.876 | 0.847 | 0.899 |
+| Box2D | 488.6 | 490.6 | 466.8 | 412.2 | 1.004 | 0.952 | 0.883 | 0.896 | 0.907 |
+| cdjs | 300.8 | 297.5 | 285.6 | 257.8 | 0.989 | 0.960 | 0.903 | 0.925 | 0.931 |
+| mandreel | 159.4 | 158.7 | 157.9 | 143.3 | 0.995 | 0.995 | 0.907 | 0.941 | 0.964 |
+| float-mm.c | 12.7 | 12.6 | 12.7 | 12.1 | 0.990 | 1.006 | 0.950 | 0.941 | 0.836 |
+| multi-inspector-code-load | 446.0 | 435.9 | 433.2 | 416.9 | 0.977 | 0.994 | 0.962 | 1.031 | 0.946 |
+| octane-code-load | 896.6 | 911.8 | 842.3 | 819.5 | 1.017 | 0.924 | 0.973 | 0.983 | 0.962 |
+| octane-zlib | 28.3 | 27.7 | 27.2 | 26.8 | 0.977 | 0.983 | 0.985 | 0.971 | 0.991 |
+| gaussian-blur | 257.0 | 257.0 | 259.0 | 256.0 | 1.000 | 1.008 | 0.988 | 1.001 | 0.991 |
+| first-inspector-code-load | 276.7 | 264.5 | 262.6 | 259.9 | 0.956 | 0.993 | 0.990 | 0.995 | 0.995 |
+
+Micro set, final pass (ms, medians of five; GIL on and GIL off with the round's first build in parentheses):
+
+| benchmark | main | flag off | GIL on (start) | GIL off (start) | off/main | on/off | GIL off/on |
+|---|---|---|---|---|---|---|---|
+| add-props-escaped | 9.9 | 10.1 | 10.7 (10.9) | 11.9 (12.0) | 1.02 | 1.06 | 1.11 |
+| array-element-read | 54.1 | 54.2 | 54.2 (67.8) | 94.9 (94.9) | 1.00 | 1.00 | 1.75 |
+| array-element-write | 51.0 | 50.5 | 52.1 (54.3) | 54.8 (54.6) | 0.99 | 1.03 | 1.05 |
+| array-int32-to-double-relabel-200k | 6.1 | 7.2 | 6.8 (18.8) | 21.3 (22.2) | 1.18 | 0.94 | 3.13 |
+| array-push-pop-10M | 50.1 | 52.1 | 52.1 (54.7) | 52.6 (52.0) | 1.04 | 1.00 | 1.01 |
+| astar-like-nodes | 10.7 | 11.0 | 12.7 (24.5) | 38.7 (42.5) | 1.03 | 1.15 | 3.05 |
+| class-ctor-4 | 34.1 | 35.9 | 47.2 (54.5) | 125.8 (123.6) | 1.05 | 1.31 | 2.67 |
+| closure-calls-20M | 13.3 | 13.3 | 13.4 (16.3) | 18.9 (18.7) | 1.00 | 1.01 | 1.41 |
+| flat-butterfly-read | 13.7 | 13.6 | 13.5 (27.1) | 27.2 (27.1) | 0.99 | 0.99 | 2.01 |
+| flat-butterfly-write | 62.2 | 62.2 | 62.1 (63.2) | 63.4 (63.8) | 1.00 | 1.00 | 1.02 |
+| inline-property-read | 27.1 | 27.1 | 27.0 (54.1) | 54.1 (54.1) | 1.00 | 1.00 | 2.00 |
+| inline-property-write | 54.1 | 54.1 | 54.2 (59.1) | 59.2 (58.8) | 1.00 | 1.00 | 1.09 |
+| int-loop-3e8 | 96.6 | 96.7 | 96.5 (161.9) | 158.9 (158.6) | 1.00 | 1.00 | 1.65 |
+| json-parse-200k | 34.9 | 35.2 | 35.8 (40.4) | 49.8 (48.5) | 1.01 | 1.02 | 1.39 |
+| json-stringify-200k | 25.3 | 25.8 | 26.3 (27.7) | 36.6 (35.8) | 1.02 | 1.02 | 1.39 |
+| map-set-get-2M | 585.0 | 583.9 | 693.6 (708.6) | 753.2 (766.8) | 1.00 | 1.19 | 1.09 |
+| megamorphic-access | 1395.2 | 1168.9 | 1162.3 (1364.4) | 1521.5 (1535.6) | 0.84 | 0.99 | 1.31 |
+| megamorphic-put-transition-1M | 25.3 | 26.8 | 27.1 (38.8) | 61.4 (60.3) | 1.06 | 1.01 | 2.27 |
+| obj-literal-5 | 1.9 | 1.9 | 1.9 (2.1) | 2.1 (2.1) | 1.00 | 1.00 | 1.11 |
+| out-of-line-replace-poly-3M | 10.7 | 10.9 | 11.9 (13.3) | 14.3 (14.2) | 1.02 | 1.09 | 1.20 |
+| proto-method-calls-20M | 7.6 | 7.8 | 7.6 (13.6) | 12.9 (13.1) | 1.03 | 0.97 | 1.70 |
+| regexp-exec-1M | 105.2 | 110.9 | 125.4 (129.3) | 151.3 (152.8) | 1.05 | 1.13 | 1.21 |
+| string-concat-2M | 5.3 | 5.6 | 5.6 (5.6) | 6.3 (6.2) | 1.06 | 1.00 | 1.12 |
+| throw-catch-200k | 87.5 | 89.2 | 92.1 (96.5) | 107.2 (107.4) | 1.02 | 1.03 | 1.16 |
+| transition-heavy-constructor | 58.0 | 58.7 | 72.5 (70.6) | 72.2 (74.9) | 1.01 | 1.24 | 1.00 |
+| typed-array-sum-50M | 41.7 | 41.5 | 35.8 (42.6) | 43.0 (42.8) | 1.00 | 0.86 | 1.20 |
+
+Flag off over `main`: within 1.00-1.06 except `array-int32-to-double-relabel` 1.18 (6.1 -> 7.2 ms; the ninth round's
+1.07) and `megamorphic-access` 0.84. GIL on over flag off: the rows that were 1.3x-2.7x at the round's start are at
+1.00 now (the single-owner rule: `array-int32-to-double-relabel` 18.8 -> 6.8, `astar-like-nodes` 24.5 -> 12.7,
+`megamorphic-put-transition` 38.8 -> 27.1, the polling-trap rows `int-loop`, `inline-property-read`,
+`flat-butterfly-read`, `proto-method-calls` at flag off's times); what is left above 1.10 is `class-ctor-4` 1.31,
+`transition-heavy-constructor` 1.24, `map-set-get` 1.19, `astar-like-nodes` 1.15, `regexp-exec` 1.13. GIL off did not
+move: its rows are the round start's within noise, so every GIL off / GIL on ratio rose by what GIL on gained.
+
+Scaling gate (five runs per cell, medians; speedup at 2 / 4 / 8 threads), GIL off, final (start):
+
+| workload | T(1) ms | 2 | 4 | 8 |
+|---|---|---|---|---|
+| raytrace-like | 215 (216) | 1.63x (1.66x) | 3.33x (3.27x) | 4.84x (4.77x) |
+| splay-like | 1,102 (1,072) | 1.95x (1.86x) | 3.59x (3.47x) | 5.74x (5.57x) |
+| map-heavy | 1,203 (1,351) | 1.84x (1.71x) | 3.26x (2.93x) | 4.30x (4.00x) |
+| string-heavy | 1,466 (1,461) | 1.49x (1.53x) | 0.93x (2.36x) | 3.01x (3.11x) |
+| richards-like | 1,247 (1,235) | 0.54x (0.52x) | 1.15x (1.14x) | 1.71x (1.78x) |
+
+string-heavy at four threads is bimodal (the median of five landed on the slow mode this time, 6.3 s against 2.5 s;
+at eight threads it did not); richards-like does not scale (Open items: tier-up of one shared function under N
+threads). GIL on is serial by construction (1.00x-1.17x; richards-like 0.64x at four threads, the handoff cost), and
+its single-thread times fell with the round: richards-like 1,793 -> 1,339 ms, raytrace-like 177 -> 161, string-heavy
+1,579 -> 1,442. The pass on the tree before the last is what caught the generic-`PutById` rule: richards-like GIL off
+3,515 ms on one thread and 54.8 s on four (SPEC-jit history section 57).

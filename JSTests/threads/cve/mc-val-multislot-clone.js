@@ -71,6 +71,10 @@ const writers = spawnN(WRITERS, (id) => {
 });
 
 waitUntil(() => Atomics.load(gate, "started") === WRITERS);
+// The sweeps below are only a test while the storm is running: on an oversubscribed machine the writers can be
+// descheduled for longer than MIN_ITERS sweeps take (one amplified run in 1,000 at load 100 ended with churn still 0
+// and failed the progress check at the end), so wait for the first churn before sweeping.
+waitUntil(() => Atomics.load(gate, "churn") > 0);
 
 function checkPairs(obj) {
     let bad = 0;

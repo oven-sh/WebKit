@@ -48,6 +48,16 @@
 #                                  access faults instead of landing in
 #                                  the cage)
 #   //@ threadsNoAmplify        (timing-ratio checks: run plain under --amplify)
+#   //@ threadsRequireGILOn
+#                                  the test's subject exists with the GIL on
+#                                  only (for example compiling without the
+#                                  concurrent JIT, which the GIL-off option
+#                                  validation refuses). Under an EFFECTIVE
+#                                  GIL-off ambient configuration the file is
+#                                  SKIPped, before its own options are
+#                                  probed (they may fail-stop GIL off by
+#                                  design); GIL-on (or mode unknown) it runs
+#                                  normally.
 #   //@ threadsRequireGILOff
 #                                  the test waits for another thread by
 #                                  spinning on shared state. GIL-on, threads
@@ -534,6 +544,16 @@ file_no_amplify() { # $1 = file
     return 1
 }
 
+# ---- threadsRequireGILOn support ----
+file_requires_gilon() { # $1 = file
+    local line
+    while IFS= read -r line; do
+        [[ "$line" == "//@"* ]] || return 1
+        [[ "$line" == '//@ threadsRequireGILOn'* ]] && return 0
+    done < "$1"
+    return 1
+}
+
 # ---- threadsRequireGILOff support ----
 file_requires_giloff() { # $1 = file
     local line
@@ -642,6 +662,17 @@ for file in "${FILES[@]}"; do
     FILE_REQUIRES_GILOFF=0
     if file_requires_giloff "$file"; then
         FILE_REQUIRES_GILOFF=1
+    fi
+    # threadsRequireGILOn: decided from the AMBIENT mode (the corpus's base
+    # options), before the file's own options are probed - those may be refused
+    # GIL off by design, and the refusal is a fail-stop, not an option error.
+    if file_requires_gilon "$file"; then
+        probe_gil_mode "--useJSThreads=1 --useDollarVM=1"
+        if [[ "$GIL_MODE" == "off" ]]; then
+            SKIPPED=$((SKIPPED + 1))
+            echo "SKIP $rel (threadsRequireGILOn: the ambient configuration is GIL off)"
+            continue
+        fi
     fi
 
     runindex=0

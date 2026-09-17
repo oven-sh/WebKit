@@ -1081,8 +1081,20 @@ void Options::notifyOptionsChanged()
     // SPEC-jit M2b.
     if (Options::useJSThreads()) {
         Options::useHandlerICInFTL() = true;   // §5.2/D1: FTL must not patch property-IC code in place.
-        Options::usePollingTraps() = true;     // I21: cooperative polls only; async breakpoint patching = I2 violation.
-        Options::useConcurrentJIT() = true;    // Task 12: sync-compile bypasses the JITWorklist dedup backstop (§5.7.3).
+        // I21: GIL off, cooperative polls only (async breakpoint patching = I2 violation). GIL on the SignalSender
+        // patches only while it holds the API lock's owner suspended and has re-verified it, so no mutator executes
+        // (SPEC-jit history §53), and traps are delivered as flag off.
+        if (!Options::useThreadGIL())
+            Options::usePollingTraps() = true;
+#if TSAN_ENABLED
+        // ThreadSanitizer holds an asynchronous signal back until the thread's next intercepted call, which a
+        // call-free loop never makes: only polls reach it there.
+        Options::usePollingTraps() = true;
+#endif
+        if (!Options::useThreadGIL() && !Options::useConcurrentJIT())
+            Options::useJSThreadsWaitForJITPlans() = true; // What the request promised - compiled when the tier-up call returns - is kept by waiting (history §56).
+        if (!Options::useThreadGIL())
+            Options::useConcurrentJIT() = true; // GIL off: a synchronous compile on a mutator holds heap access with no poll for the whole compilation (§5.7.3, history §49); GIL on the synchronous path is admitted.
         // SCALEBENCH §33 RUN-3.8 / v38: REVERSES the campaign-4 §27.S2
         // C1-congc-no-default decision (see comment above the §13.2 block).
         // That ruling was correct on v33 data (STW-GC 5.4% of wall, congc A/B
@@ -1269,15 +1281,29 @@ void Options::notifyOptionsChanged()
     if (Options::useProfiler())
         Options::useConcurrentJIT() = false;
 
-    // useJSThreads forces useConcurrentJIT on above, because a synchronous
-    // JITWorklist::enqueue bypasses the dedup of same-key plans racing from
-    // N mutators; forceEagerCompilation and useProfiler clear it again, so
-    // the invariant is re-checked here, after the last reset. A JIT-less
-    // process has no worklist and is exempt.
-    if (Options::useJSThreads() && Options::useJIT() && !Options::useConcurrentJIT()) {
-        dataLogLn("FATAL: useJSThreads requires useConcurrentJIT; useProfiler and forceEagerCompilation disable it.");
-        CRASH();
+    // GIL off, useJSThreads forces useConcurrentJIT on above: a synchronous
+    // compilation runs on a mutator that holds heap access and reaches no poll
+    // until it is done, so every other thread's stop waits for it, and a lock
+    // it blocks on inside the compiler is not a safepoint. forceEagerCompilation
+    // and useProfiler clear the option again, so the invariant is re-checked
+    // here, after the last reset. GIL on the synchronous path is supported
+    // (JITWorklist::enqueue claims the key like the concurrent path; SPEC-jit
+    // §5.7.3, history §49). A JIT-less process has no worklist and is exempt.
+    if (Options::useJSThreads() && !Options::useThreadGIL() && Options::useJIT() && !Options::useConcurrentJIT()) {
+        if (Options::useProfiler()) {
+            // The bytecode profiler's database is written by whichever thread compiles; nothing serializes N compiler threads on it.
+            dataLogLn("FATAL: useProfiler is not supported with useJSThreads and the GIL off.");
+            CRASH();
+        }
+        // forceEagerCompilation (above) turned it off after the GIL-off block forced it on: same treatment (history §56).
+        Options::useConcurrentJIT() = true;
+        Options::useJSThreadsWaitForJITPlans() = true;
     }
+
+    // SPEC-objectmodel G1: derived once useThreadGIL is final (the U0 validation above may have forced it back on).
+    // False flag off and in a GIL-on process with one owner, where every butterfly word is its untagged payload.
+    Options::useTaggedButterflies() = Options::useJSThreads()
+        && (!Options::useThreadGIL() || !Options::useJSThreadsSingleOwnerWithGIL() || Options::forceSegmentedButterflies() || Options::forceButterflySWBit());
 
     if (Options::alwaysUseShadowChicken())
         Options::maximumInliningDepth() = 1;

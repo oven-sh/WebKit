@@ -31,6 +31,7 @@
 #include "Options.h"
 #include <wtf/Atomics.h>
 #include <wtf/Lock.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -318,10 +319,11 @@ public:
     {
         if (!m_shouldLock) [[likely]]
             return;
+        SpinBackoff backoff;
         while (!s_gilOffMaterializeSpecialsLock.tryLock()) {
             if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
                 continue;
-            Thread::yield();
+            backoff.spinOnce();
         }
     }
 

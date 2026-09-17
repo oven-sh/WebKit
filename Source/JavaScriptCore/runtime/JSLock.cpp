@@ -39,6 +39,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/StackPointer.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSpecific.h>

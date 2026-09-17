@@ -188,10 +188,26 @@ void RegExp::finishCreation(VM& vm)
         return;
     }
 
-    publishAtom(WTF::move(pattern.m_atom));
-    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
+    updateMetadataFromPattern(pattern);
 
-    m_numSubpatterns = pattern.m_numSubpatterns;
+    unsigned offsetVectorSize = offsetVectorBaseForNamedCaptures();
+    if (hasNamedCaptures())
+        offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
+    m_ovector = FixedVector<int>(offsetVectorSize);
+}
+
+void RegExp::updateMetadataFromPattern(Yarr::YarrPattern& pattern)
+{
+    // THREADS: finishCreation calls this before the cell is published; the compile paths call it again under
+    // the cellLock while other threads read these fields lock-free. The atom is first-set-wins (publishAtom),
+    // m_specificPattern is a relaxed atomic (see specificPattern()), and m_numSubpatterns is only written when
+    // it changes - the compile paths RELEASE_ASSERT it already matches, so they never store to it.
+    if (!atomImplConcurrently())
+        publishAtom(WTF::move(pattern.m_atom));
+    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed);
+
+    if (m_numSubpatterns != pattern.m_numSubpatterns)
+        m_numSubpatterns = pattern.m_numSubpatterns;
 #if USE(BUN_JSC_ADDITIONS)
     // The compile paths call this again for a RegExp whose RareData finishCreation already built (the callers
     // RELEASE_ASSERT that the pattern parsed to the same subpattern count). Replacing it would free a RareData
@@ -335,10 +351,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    if (!atomImplConcurrently())
-        publishAtom(WTF::move(pattern.m_atom));
-    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
+    updateMetadataFromPattern(pattern);
 
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, constructionErrorCode);
     WTF::atomicStore(&m_constructionErrorCode, constructionErrorCode, std::memory_order_relaxed);
@@ -354,6 +367,7 @@ void RegExp::reset()
     if (m_state != ParseError)
         return;
     m_state = NotCompiled;
+    setMinimumSize(0);
     WTF::atomicStore(&m_constructionErrorCode, Yarr::ErrorCode::NoError, std::memory_order_relaxed);
 }
 
@@ -381,10 +395,7 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    if (!atomImplConcurrently())
-        publishAtom(WTF::move(pattern.m_atom));
-    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
+    updateMetadataFromPattern(pattern);
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -409,6 +420,7 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            setMinimumSize(pattern.m_body->m_minimumSize);
             publishCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8 : PublishedJIT16);
             return;
         }
@@ -434,6 +446,7 @@ void RegExp::compileHoldingCellLock(const AbstractLocker&, VM* vm, Yarr::CharSiz
     }
     WTF::storeStoreFence();
     m_state = ByteCode;
+    setMinimumSize(pattern.m_body->m_minimumSize);
     publishCodeGILOff(PublishedInterpretAll);
 }
 
@@ -605,10 +618,7 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
         return;
     }
     RELEASE_ASSERT(m_numSubpatterns == pattern.m_numSubpatterns); // came from the bytecode cache or Yarr::checkSyntax, not from a YarrPattern
-
-    if (!atomImplConcurrently())
-        publishAtom(WTF::move(pattern.m_atom));
-    WTF::atomicStore(&m_specificPattern, pattern.m_specificPattern, std::memory_order_relaxed); // THREADS: see specificPattern().
+    updateMetadataFromPattern(pattern);
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
@@ -633,6 +643,7 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
         Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
+            setMinimumSize(pattern.m_body->m_minimumSize);
             publishCodeGILOff(charSize == Yarr::CharSize::Char8 ? PublishedJIT8MatchOnly : PublishedJIT16MatchOnly);
             return;
         }
@@ -646,6 +657,7 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
 
     // Bytecode before m_state, publish-once GIL-off: same contract as
     // compileHoldingCellLock above.
+    unsigned minimumSize = pattern.m_body->m_minimumSize;
     if (!(vm->gilOff() && m_regExpBytecode)) [[likely]] {
         // m_regExpBytecode is shared with capture-observing operations (exec/match) and the Yarr
         // interpreter has no StringList fast path, so compile it from a capture-complete pattern rather
@@ -663,9 +675,11 @@ void RegExp::compileMatchOnlyHoldingCellLock(const AbstractLocker&, VM* vm, Yarr
             m_state = ParseError;
             return;
         }
+        minimumSize = bytecodePattern.m_body->m_minimumSize;
     }
     WTF::storeStoreFence();
     m_state = ByteCode;
+    setMinimumSize(minimumSize);
     publishCodeGILOff(PublishedInterpretAll);
 }
 
@@ -695,6 +709,7 @@ void RegExp::deleteCode()
         return;
     m_state = NotCompiled;
     m_publishedCodeGILOff.store(0); // deleteAllCode only: world-stopped GIL off.
+    setMinimumSize(0);
     WTF::atomicStore(&m_specificPattern, Yarr::SpecificPattern::None, std::memory_order_relaxed); // THREADS: see specificPattern().
 #if ENABLE(YARR_JIT)
     if (m_regExpJITCode)
@@ -1022,3 +1037,16 @@ String RegExp::toSourceString() const
 }
 
 } // namespace JSC
+
+namespace JSC { namespace Yarr {
+
+// UNGIL AUD1.K2: GIL off, "the executing RegExp" is per-thread state in the current lite's Group-4 slot; see
+// MatchingContextHolder's constructor. A thread without a lite of this VM keeps the VM member.
+RegExp** MatchingContextHolder::executingRegExpSlotGILOff(VM& vm)
+{
+    if (VMLite* lite = VMLite::currentIfExists(); lite && lite->vm == &vm)
+        return &lite->executingRegExp;
+    return &vm.m_executingRegExp;
+}
+
+} } // namespace JSC::Yarr

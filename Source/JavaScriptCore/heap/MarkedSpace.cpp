@@ -456,26 +456,6 @@ void MarkedSpace::resumeAllocating()
     // Nothing to do for PreciseAllocations.
 }
 
-bool MarkedSpace::isPagedOut()
-{
-    // Walks every directory's m_blocks lock-free, so a sibling client's addBlock
-    // (under the mutator slow-path lock) could reallocate the vector spine
-    // underneath it. The only caller, FullGCActivityCallback::doCollection, skips
-    // this walk once the heap is shared; a shared-mode caller must stop the world.
-    ASSERT(!heap().isSharedServer() || heap().worldIsStoppedForAllClients());
-    SimpleStats pagedOutPagesStats;
-
-    forEachDirectory(
-        [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.updatePercentageOfPagedOutPages(pagedOutPagesStats);
-            return IterationStatus::Continue;
-        });
-    // FIXME: Consider taking PreciseAllocations into account here.
-    double maxHeapGrowthFactor = VM::isInMiniMode() ? Options::miniVMHeapGrowthFactor() : Options::largeHeapGrowthFactor();
-    double bailoutPercentage = Options::customFullGCCallbackBailThreshold() == -1.0 ? maxHeapGrowthFactor - 1 : Options::customFullGCCallbackBailThreshold();
-    return pagedOutPagesStats.mean() > pagedOutPagesStats.count() * bailoutPercentage;
-}
-
 // FIXME: rdar://139998916
 MarkedBlock::Handle* MarkedSpace::findMarkedBlockHandleDebug(MarkedBlock* block)
 {

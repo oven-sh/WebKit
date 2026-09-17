@@ -9303,3 +9303,74 @@ instead: with the flag on, VMManager records its last 128 counter transitions (t
 counts, whether the VM was entered) and prints them with every VM's state when the invariant breaks, so the next
 occurrence names its escape.
 
+## Tenth landing round: the taint hint is per lite GIL off (K4.II.15)
+
+`VM::m_mightBeExecutingTaintedCode` is a filter in front of a stack walk: it is set on entry to any code block that
+could be tainted and cleared when a synchronous execution ends (`finalizeSynchronousJSExecution`, at the end of a
+microtask drain); while it is clear, `sourceTaintedOriginFromStack` answers Untainted without walking, and while it is
+set the least it answers is IndirectlyTaintedByHistory. The K4 inventory ruled it an execution-context flag of the
+current thread (row II.15: per lite). The implementation kept one VM byte, because Baseline, DFG and FTL code store
+to it through an absolute address baked into code every thread runs, and made it sticky GIL off (V7: one thread's
+boundary must not erase another thread's mark; over-tainting is the safe direction). Sticky means that once any
+tainted code has run, every later execution in the process reports IndirectlyTaintedByHistory for good:
+`taintedness-tracking.js` fails in all sixteen configurations of the GIL-off stress suite, and LANDING-PLAN carried it
+as a known class until the ninth round's review said it is a side effect, not a decision.
+
+GIL off the byte now lives in the lite, as the row said: the three tiers store through the current lite
+(`loadVMLite` + the field's offset; FTL through its lite pointer patchpoint), only for code blocks that could be
+tainted, which are rare; the C++ accessors route to the current lite behind the process gate; and the end of a
+synchronous execution clears the ending thread's byte only. Each thread's answer is then what `main`'s would be for
+that thread's own stack and history. Flag off and GIL on: the VM byte and the baked address, unchanged. Test:
+`vmstate/taint-hint-is-per-thread-gil-off.js`.
+
+## Tenth landing round: the sampling profiler samples the carrier's lite GIL off (§A.1.7 form (i); AUD1.K1, SD18)
+
+§A.1.7 ruled the sampling profiler a form-(i) reader - resolve the target's lite through the registry, registry lock
+held, target suspended - for carrier lites only (SD18: profiles omit spawned threads' samples). The implementation
+took form (ii) instead: a GIL-off VM never started the timer thread and logged the refusal once. With nothing sampled,
+every test of the profiler fails GIL off (eleven stress files in all seventeen configurations, some 170 results of the
+GIL-off JSC suite, and Bun's two `bun:jsc` `profile()` tests), and a program that profiles itself gets empty traces.
+
+Form (i), as ruled. The thread that binds as the sampled thread (GIL off only a carrier binds) records its installed
+lite with the binding. `takeSample` takes the registry lock with `tryLock` before it suspends the target (a contended
+lock costs one sample, never a wait: the registry lock is not leaf-ranked any more, and the locks the profiler already
+holds at that point have no recorded order against it), checks that the recorded lite is still registered to this VM,
+and reads the entry record, the top call frame, the top entry frame and the executing RegExp from that lite where it
+read them from the VM; the frame walkers take the entry frame as an argument. While the target is suspended nothing
+is allocated and no further lock is taken (the SUSPEND RULE). Turning raw frames into traces needs a heap iteration,
+which on a shared heap needs every client stopped: the four report entry points run it through
+`Heap::runWithOtherClientsStopped`, and drop the profiler's own lock around the stop (a thread entering the VM takes
+that lock to re-bind; blocked on it, it could not park) and take it again inside. Spawned threads stay unsampled
+(SD18). GIL on and flag off: unchanged. Test: `vmstate/sampling-profiler-samples-the-carrier-gil-off.js`.
+
+The profiler's lock and park sites (found by the mirror harness, two threads reading the traces at once: a stop that
+never ended). The report entry points hold the profiler's lock while they turn frames into names, and a name lookup
+(`JSFunction::getOwnPropertySlot`) polls traps and can reify a lazy property. GIL off the reader parked there, for
+another thread's stop, with the lock held, and that stop's conductor - the other reader, about to process its frames
+- needed the lock; the collector's profiler constraint takes the same lock with the world stopped, so a parked
+holder would hang a collection as well. Deferring the holder's traps is not enough GIL off: the reification is a
+concurrent put, which has park sites of its own (tried; two hangs in five runs). Rule GIL off: a JS thread holds the
+profiler's lock across a park site only as the conductor of a stop - the three report entry points
+(`stackTracesAsJSON`, `reportTopFunctions`, `reportTopBytecodes`) run their whole body inside
+`Heap::runWithOtherClientsStopped` and take the lock there (nothing parks inside one's own stop; the only other
+holder at that point can be the sampling timer, which is not a JS thread and lets go after one sample); the short
+holders (`start`, `pause`, the binding notices) reach no park site; the inspector's path, which takes the lock itself
+before `releaseStackTraces`, drops it around the stop and tries it inside, with a bounded retry. With the GIL on the
+same poll can hand the API lock over, and its next owner either runs a collection (the constraint again) or blocks in
+the acquisition notice, in both cases on the lock of a thread that is waiting for the API lock back: the two-readers
+test hung GIL on in 2 of 5 runs on the tree before any of this round's profiler work. Rule with the GIL on: a holder
+that reaches polls defers its traps (`DeferTraps`) until it lets go; GIL on a put has no park site. Flag off: `main`'s
+code (neither scope is entered). Test: `vmstate/sampling-profiler-two-readers-gil-off.js`, which runs in both modes.
+
+The binding and a Thread's death (GIL on; found by the amplifier on that test). With the GIL on the sampled thread
+is whoever took the API lock last, so every spawned Thread binds. Nothing unbound a thread that exits: the timer's
+next sample signalled a thread that no longer exists (`pthread_kill` on a terminated, not yet reclaimed thread
+reports success and delivers nothing) and waited for its acknowledgement forever, holding the profiler's lock and the
+machine-threads lock - which the main thread needs to take the API lock back. Rule: a spawned Thread unbinds itself
+on its way out, after its last release of the API lock and while it still holds its reference to the VM
+(`SamplingProfiler::noticeCurrentThreadIsExiting`, under the profiler's lock, which `takeSample` holds across
+suspend and resume - so no suspend can be in flight against it once that returns). The profiler samples nothing
+until the next thread that takes the lock binds. GIL off spawned threads never bind. Flag off nothing calls it (an
+embedder thread that exits while bound has the same exposure on `main`). Test:
+`vmstate/sampling-profiler-bound-thread-exits.js`.
+

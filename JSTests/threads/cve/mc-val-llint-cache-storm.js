@@ -1,4 +1,4 @@
-//@ requireOptions("--useJSThreads=1", "--useJIT=0")
+//@ requireOptions("--useJSThreads=1", "--useDollarVM=1", "--useJIT=0")
 // MC-VAL susceptibility test (docs/threads/cve/map-MC-VAL.md, surface V1):
 // LLInt metadata-cache validator/consumer disagreement under N mutators.
 //
@@ -25,7 +25,9 @@ load("../harness.js", "caller relative");
 
 const READERS = 4;
 const SLOTS = 8;
-const ITERS = 30000;
+// An assertion-enabled build runs this interpreter storm some twenty times slower (72-87 s alone, past the 120 s
+// limit on a loaded machine: the one Debug timeout of the tenth round's batteries); a third of the churn is plenty there.
+const ITERS = ($vm.assertEnabled && $vm.assertEnabled()) ? 10000 : 30000;
 
 // Shared pool: pre-created own props so Atomics.load/store apply (api §4.5).
 const pool = {};

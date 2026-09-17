@@ -99,7 +99,7 @@ private:
     size_t queueLength(const AbstractLocker&) const;
     size_t NODELETE totalOngoingCompilations(const AbstractLocker&) const;
 
-    void waitUntilAllPlansForVMAreReady(VM&);
+    void waitUntilAllPlansForVMAreReady(VM&, JITCompilationKey keyNotBeingFinalized = { });
 
     template<typename MatchFunction>
     void removeMatchingPlansForVM(VM&, const MatchFunction&);

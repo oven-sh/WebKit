@@ -363,7 +363,7 @@ double DateCache::localTimeToMS(double milliseconds, TimeType inputTimeType)
 
 ALWAYS_INLINE double DateCache::localTimeToMSImpl(double milliseconds, TimeType inputTimeType)
 {
-    if (inputTimeType == TimeType::LocalTime && std::isfinite(milliseconds))
+    if (inputTimeType == TimeType::LocalTime && JSDateMathInternal::canNarrowToInt64Milliseconds(milliseconds))
         return milliseconds - localTimeOffset(static_cast<int64_t>(milliseconds), inputTimeType).offset;
     return milliseconds;
 }
@@ -486,7 +486,7 @@ ALWAYS_INLINE double DateCache::parseDateImpl(JSGlobalObject* globalObject, VM& 
         if (std::isnan(value))
             value = WTF::parseDate(dateString, isLocalTime);
 
-        if (isLocalTime && std::isfinite(value))
+        if (isLocalTime && JSDateMathInternal::canNarrowToInt64Milliseconds(value))
             value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
 
         return value;

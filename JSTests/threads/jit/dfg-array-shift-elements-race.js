@@ -1,6 +1,9 @@
-//@ requireOptions("--useJSThreads=1", "--useDollarVM=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=50")
+//@ requireOptions("--useJSThreads=1", "--useDollarVM=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=50", "--useJSThreadsSingleOwnerWithGIL=0")
 //@ runDefault()
 //@ runDefault("--useFTLJIT=0")
+// Tenth round (SPEC-objectmodel G1): with the GIL on every thread shares butterfly TID 0 by default, so nothing is
+// foreign there; this test observes per-thread ownership, so its runs restore per-thread tags
+// (--useJSThreadsSingleOwnerWithGIL=0; the option has no effect GIL off).
 // The optimized a.shift() checks 2 <= length in JIT code, then calls an
 // operation that moves the elements in place. That move is only safe on a flat
 // butterfly that this thread owns and that no other thread has written. For

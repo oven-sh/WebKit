@@ -913,7 +913,7 @@ ALWAYS_INLINE EncodedJSValue getByValCellInt(JSGlobalObject* globalObject, VM& v
 ALWAYS_INLINE EncodedJSValue getByValArrayStorageInt(JSGlobalObject* globalObject, VM& vm, JSObject* base, int32_t index)
 {
     ASSERT(hasAnyArrayStorage(base->indexingType()));
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // Another thread can replace the butterfly under the object's cell
         // lock, and can rehash the sparse map under the map's own cell lock.
         // So re-load the word under the first, and read the map through
@@ -1382,7 +1382,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPopAndRecoverLength, EncodedJSValue, (JSG
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // The fast path decremented publicLength through the flat butterfly it
         // loaded. A foreign flat->segmented conversion since then aliases that
         // header slot in fragment 0, so the recovery goes through whichever
@@ -1456,7 +1456,7 @@ static ALWAYS_INLINE void assertArrayShiftElementsPreconditions(JSArray* array, 
 // for a flat butterfly that this thread owns and that no other thread has written.
 static ALWAYS_INLINE bool butterflyForArrayShiftElements(JSArray* array, IndexingType expectedType, Butterfly*& butterfly, unsigned& length)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         uint64_t word = array->taggedButterflyWord();
         if (isSegmentedButterfly(word)
             || !(word & butterflyPointerMask)
@@ -1859,7 +1859,7 @@ static ALWAYS_INLINE JSString* arrayJoinWithStringSeparator(JSGlobalObject* glob
         Butterfly* butterfly = nullptr;
         unsigned joinLength = length;
         bool isFlat = true;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             isFlat = flatButterflySnapshot(array, butterfly);
             if (isFlat)
                 joinLength = std::min(joinLength, butterfly->vectorLength());
@@ -3067,6 +3067,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSize, char*, (JSGlobalObject* glob
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSTHREADS_COUNT(newArrayWithSizeOperation); // what generated code's inline allocation fell back to (SPEC-heap history §38)
 
     if (size < 0) [[unlikely]] {
         throwException(globalObject, scope, createRangeError(globalObject, ArrayInvalidLengthError));
@@ -5484,12 +5485,29 @@ JSC_DEFINE_JIT_OPERATION(operationToLengthUntyped, EncodedJSValue, (JSGlobalObje
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(value.toLength(globalObject))));
 }
 
+// SPEC-jit history §39 and §47 (AUDIT R10-6): GIL off, generated code may hand these operations a flat butterfly it
+// loaded before a foreign thread converted the array to segmented storage and grew it; the publicLength slot then
+// holds the segmented array's length, which can exceed this allocation. The storage's own vectorLength never changes
+// in place GIL off, so the smaller of the two is what this storage holds. Flag off and GIL on: publicLength as is.
+static ALWAYS_INLINE int32_t searchableLengthOfStorageFromJIT(Butterfly* butterfly)
+{
+    uint32_t length = butterfly->publicLength();
+    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        uint32_t vectorLength = butterfly->vectorLength();
+        if (length > vectorLength) {
+            JSTHREADS_COUNT(searchOperationClampedStaleStorageGILOff);
+            length = vectorLength;
+        }
+    }
+    return length;
+}
+
 static ALWAYS_INLINE UCPUStrictInt32 arrayIncludesString(JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
     for (; index < length; ++index) {
         JSValue value = data[index].get();
@@ -5529,7 +5547,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIncludesValueInt32OrContiguous, UCPUStric
     if (searchElement.isString())
         OPERATION_RETURN(scope, arrayIncludesString(globalObject, butterfly, asString(searchElement), index));
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)
@@ -5576,7 +5594,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIncludesValueInt32, UCPUStrictInt32, (JSG
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)
@@ -5622,7 +5640,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIncludesValueDouble, UCPUStrictI
     // We do not cause any exceptions, thus we do not need FrameTracers.
     JSValue searchElement = JSValue::decode(encodedValue);
     const double* data = butterfly->contiguousDouble().data();
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
 
     if (index >= length)
         return toUCPUStrictInt32(0);
@@ -5637,13 +5655,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIncludesValueDouble, UCPUStrictI
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIncludesDouble, UCPUStrictInt32, (Butterfly* butterfly, double searchElement, int32_t index))
 {
-    return arrayIncludesDouble(butterfly->contiguousDouble().data(), butterfly->publicLength(), searchElement, index);
+    return arrayIncludesDouble(butterfly->contiguousDouble().data(), searchableLengthOfStorageFromJIT(butterfly), searchElement, index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIncludesNonStringIdentityValueContiguous, UCPUStrictInt32, (Butterfly* butterfly, EncodedJSValue searchElement, int32_t index))
 {
     // We do not cause any exceptions, thus we do not need FrameTracers.
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)
@@ -5664,7 +5682,7 @@ static ALWAYS_INLINE UCPUStrictInt32 arrayIndexOfString(JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
     for (; index < length; ++index) {
         JSValue value = data[index].get();
@@ -5706,7 +5724,7 @@ JSC_DEFINE_JIT_OPERATION(operationCopyOnWriteArrayIndexOfString, UCPUStrictInt32
         UCPUStrictInt32 result = toUCPUStrictInt32(-1);
         bool mayContainSearch = (search.data->length() == 1 && search.data->at(0) <= maxSingleCharacterString) || vm.atomStringToJSStringMap.contains(search.data);
         if (mayContainSearch) {
-            int32_t length = butterfly->publicLength();
+            int32_t length = searchableLengthOfStorageFromJIT(butterfly);
             auto data = butterfly->contiguous().data();
             for (int32_t i = index; i < length; ++i) {
                 JSValue value = data[i].get();
@@ -5739,7 +5757,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrict
     if (searchElement.isString())
         OPERATION_RETURN(scope, arrayIndexOfString(globalObject, butterfly, asString(searchElement), index));
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)
@@ -5782,7 +5800,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32, UCPUStrictInt32, (JSGl
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)
@@ -5811,18 +5829,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIndexOfValueDouble, UCPUStrictIn
     if (!searchElement.isNumber())
         return toUCPUStrictInt32(-1);
 
-    return arrayIndexOfDouble(butterfly->contiguousDouble().data(), butterfly->publicLength(), searchElement.asNumber(), index);
+    return arrayIndexOfDouble(butterfly->contiguousDouble().data(), searchableLengthOfStorageFromJIT(butterfly), searchElement.asNumber(), index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIndexOfDouble, UCPUStrictInt32, (Butterfly* butterfly, double searchElement, int32_t index))
 {
-    return arrayIndexOfDouble(butterfly->contiguousDouble().data(), butterfly->publicLength(), searchElement, index);
+    return arrayIndexOfDouble(butterfly->contiguousDouble().data(), searchableLengthOfStorageFromJIT(butterfly), searchElement, index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArrayIndexOfNonStringIdentityValueContiguous, UCPUStrictInt32, (Butterfly* butterfly, EncodedJSValue searchElement, int32_t index))
 {
     // We do not cause any exceptions, thus we do not need FrameTracers.
-    int32_t length = butterfly->publicLength();
+    int32_t length = searchableLengthOfStorageFromJIT(butterfly);
     auto data = butterfly->contiguous().data();
 
     if (index >= length)

@@ -32,6 +32,7 @@
 
 #include "JSCellInlines.h"
 #include <algorithm>
+#include <atomic>
 
 namespace JSC {
 
@@ -42,6 +43,31 @@ namespace JSC {
 // holds nothing but numbers, and at least one that is not an int32, the site
 // is a numeric one and its arrays should be born Double instead: no
 // conversion then ever happens to them.
+static constexpr unsigned substitutedDoubleRequestTableSize = 256;
+static std::atomic<uintptr_t> s_substitutedDoubleRequests[substitutedDoubleRequestTableSize];
+
+static ALWAYS_INLINE std::atomic<uintptr_t>& substitutedDoubleRequestSlot(const JSCell* cell)
+{
+    // Cells are 16-byte aligned and arrays of one size class are handed out in address order.
+    return s_substitutedDoubleRequests[(std::bit_cast<uintptr_t>(cell) >> 4) % substitutedDoubleRequestTableSize];
+}
+
+void ArrayAllocationProfile::noteSubstitutedDoubleRequestGILOff(const JSCell* cell)
+{
+    substitutedDoubleRequestSlot(cell).store(std::bit_cast<uintptr_t>(cell), std::memory_order_relaxed);
+}
+
+bool ArrayAllocationProfile::wasSubstitutedDoubleRequestGILOff(const JSCell* cell)
+{
+    return substitutedDoubleRequestSlot(cell).load(std::memory_order_relaxed) == std::bit_cast<uintptr_t>(cell);
+}
+
+void ArrayAllocationProfile::clearSubstitutedDoubleRequestsGILOff()
+{
+    for (auto& slot : s_substitutedDoubleRequests)
+        slot.store(0, std::memory_order_relaxed);
+}
+
 static bool lastArrayLooksLikeDoubles(JSArray* array)
 {
     // Sample only an array this thread owns (its butterfly carries this
@@ -113,7 +139,7 @@ void ArrayAllocationProfile::updateProfile()
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
         IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
         if (g_jscConfig.gilOffProcess && hasContiguous(indexingType) && !hasContiguous(current.indexingType()) && !hasDouble(current.indexingType())
-            && m_gilOffDoubleDemotionSet.isStillValid() && lastArrayLooksLikeDoubles(lastArray)) [[unlikely]] {
+            && m_gilOffDoubleDemotionSet.isStillValid() && (wasSubstitutedDoubleRequestGILOff(lastArray) || lastArrayLooksLikeDoubles(lastArray))) [[unlikely]] {
             // Once only per site: if Double turns out wrong, the demotion below
             // fires the set and this branch is never taken again.
             JSTHREADS_COUNT(arrayAllocationProfilePromotedToDoubleGILOff);

@@ -32,6 +32,7 @@
 #include "ArityCheckMode.h"
 #include "MacroAssemblerCodeRef.h"
 #include "Options.h"
+#include "VMLite.h"
 #include "WasmCallee.h"
 #include "WebAssemblyFunctionBase.h"
 #include <wtf/Noncopyable.h>
@@ -88,7 +89,10 @@ public:
         // premise (b)) against the spawned thread's stack pointer — silent
         // missed-overflow corruption instead of fail-stop. Flag-off cost:
         // zero (one option load on an IC-miss-only path).
-        if (Options::useJSThreads()) [[unlikely]]
+        // Tenth round (SPEC-ungil §I): with the GIL on the warm entry is handed out while no Thread has ever been
+        // spawned in the process; its prologue tests the same byte and takes the cold path from the first spawn
+        // on, so a call site linked before it cannot warm-call from a spawned thread either.
+        if (Options::useJSThreads() && (!Options::useThreadGIL() || anyJSThreadEverSpawned())) [[unlikely]]
             return nullptr;
 
         if (m_taintedness >= SourceTaintedOrigin::IndirectlyTainted)

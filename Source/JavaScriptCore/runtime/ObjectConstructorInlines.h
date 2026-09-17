@@ -174,6 +174,13 @@ ALWAYS_INLINE bool dataPropertyReadsStillValid(JSObject* source, StructureID che
     return true;
 }
 
+// I42 for a reader that interleaves its slot reads with calls (the JSON stringifiers): one value, checked as it is read.
+ALWAYS_INLINE bool dataPropertyReadStillValid(JSObject* source, StructureID checkedStructureID, JSValue value)
+{
+    EncodedJSValue encoded = JSValue::encode(value);
+    return dataPropertyReadsStillValid(source, checkedStructureID, &encoded, 1);
+}
+
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -341,8 +348,10 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
             return nullptr; // Segmented, or a racing transition: the generic path copies property by property.
     } else
         sourceButterfly = source->butterfly();
-    // memcpy is fine since newButterfly is not tied to any object yet.
-    memcpy(newButterfly->propertyStorage() - propertyCapacity, sourceButterfly->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));
+    // A bulk copy is fine since newButterfly is not tied to any object yet. GIL off the source's slots can be written by
+    // another thread during the copy (the clone is checked afterwards, I42), so they are read a word at a time; flag
+    // off and GIL on this is the memcpy it was.
+    butterflyConcurrentCopyWords(newButterfly->propertyStorage() - propertyCapacity, sourceButterfly->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));
     return validClone(JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, newButterfly, source->inlineStorage()));
 }
 

@@ -1048,6 +1048,12 @@ static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringIm
     return false;
 }
 
+Vector<unsigned>& stringSplitIndicesForCurrentThreadGILOff()
+{
+    static thread_local Vector<unsigned> indices;
+    return indices;
+}
+
 JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSString* separatorString, unsigned limit)
 {
     VM& vm = globalObject->vm();
@@ -1077,8 +1083,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
         }
     }
 
-    Vector<unsigned> threadLocalIndices;
-    auto& result = gilOff ? threadLocalIndices : vm.stringSplitIndice;
+    auto& result = gilOff ? stringSplitIndicesForCurrentThreadGILOff() : vm.stringSplitIndice; // A vector of this call's own cost a malloc, a few regrows and a free per split.
     result.shrink(0);
     constexpr unsigned atomStringsArrayLimit = 100;
     const bool subjectIsAtom = input->impl()->isAtom();

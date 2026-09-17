@@ -48,6 +48,7 @@
 #include "StructureTransitionTable.h"
 #include <JavaScriptCore/JSCJSValueCell.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -270,7 +271,7 @@ public:
         // reordering can even satisfy the word load first). Dispatch on the
         // word: None reads as length 0 (the pre-install truth), never a
         // null-8 deref.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
             if (isSegmentedButterfly(word)) [[unlikely]]
                 return segmentedPublicLength(butterflySpine(word));
@@ -288,7 +289,7 @@ public:
         // SPEC-objectmodel C4: the loaded spine's vectorLength is authoritative.
         // E5 "None first" (round 4): see getArrayLength above - a racing N3
         // first install can pair word==0 with a fresh indexed type.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
             if (isSegmentedButterfly(word)) [[unlikely]]
                 return segmentedVectorLength(butterflySpine(word));
@@ -341,7 +342,7 @@ public:
                 // dispatch and reads the bound from the word it stores through;
                 // AS, segmented-miss and out-of-bounds words fall to the slow path
                 // from there.
-                if (Options::useJSThreads()) [[unlikely]]
+                if (Options::useTaggedButterflies()) [[unlikely]]
                     return true;
                 return propertyName < butterfly()->vectorLength();
             default:
@@ -353,7 +354,7 @@ public:
         };
         
         if (!attributes && canSetIndexQuicklyForPutDirect()) {
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useTaggedButterflies()) [[unlikely]] {
                 if (trySetIndexQuicklyConcurrent(getVM(globalObject), propertyName, value, nullptr))
                     return true;
                 return putDirectIndexSlowOrBeyondVectorLength(globalObject, propertyName, value, attributes, mode);
@@ -393,7 +394,7 @@ public:
     // butterfly. Flag-off => identity (I22).
     bool canGetIndexQuickly(unsigned i) const
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return canGetIndexQuicklyConcurrent(i);
         const Butterfly* butterfly = this->butterfly();
         switch (indexingType()) {
@@ -430,7 +431,7 @@ public:
         
     JSValue getIndexQuickly(unsigned i) const
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return getIndexQuicklyConcurrent(i);
         const Butterfly* butterfly = this->butterfly();
         switch (indexingType()) {
@@ -453,7 +454,7 @@ public:
     // Uses the (optional) array profile to set the m_mayBeLargeTypedArray bit when relevant
     JSValue tryGetIndexQuickly(unsigned i, ArrayProfile* arrayProfile = nullptr) const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // T2-segmented-accessors-inline: the Int32/Contiguous/Double arms
             // of tryGetIndexQuicklyConcurrent are inlined here (both the
             // segmented and flat regimes). perf showed
@@ -572,7 +573,7 @@ public:
     bool trySetIndexQuicklyForTypedArray(unsigned, JSValue, ArrayProfile*);
     bool trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayProfile* arrayProfile = nullptr)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return trySetIndexQuicklyConcurrent(vm, i, v, arrayProfile);
         Butterfly* butterfly = this->butterfly();
         switch (indexingMode()) {
@@ -633,6 +634,12 @@ public:
         }
         case NonArrayWithSlowPutArrayStorage:
         case ArrayWithSlowPutArrayStorage:
+            // api §5.8: a restricted object is pinned on an uncacheable-dictionary SlowPut shape so that every
+            // store reaches the hooked generic entry points (putByIndex runs threadRestrictCheck). This arm would
+            // store an existing in-vector element without passing them, so it is closed whenever the flag is on
+            // (the concurrent form above refuses every ArrayStorage shape).
+            if (Options::useJSThreads()) [[unlikely]]
+                return false;
             if (i >= butterfly->arrayStorage()->vectorLength() || !butterfly->arrayStorage()->m_vector[i])
                 return false;
             setIndexQuicklyForArrayStorageIndexingType(vm, i, v);
@@ -645,7 +652,7 @@ public:
 
     void setIndexQuickly(VM& vm, unsigned i, JSValue v)
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             setIndexQuicklyConcurrent(vm, i, v);
             return;
         }
@@ -799,7 +806,7 @@ public:
     // This get function only looks at the property map.
     JSValue getDirect(VM& vm, PropertyName propertyName) const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             unsigned unusedAttributes;
             return getDirectRevalidatingConcurrently(vm, propertyName, unusedAttributes);
         }
@@ -811,7 +818,7 @@ public:
     
     JSValue getDirect(VM& vm, PropertyName propertyName, unsigned& attributes) const
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return getDirectRevalidatingConcurrently(vm, propertyName, attributes);
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
@@ -887,7 +894,7 @@ public:
         // between the two loads. A segmented word (TID == notTTLTID, payload =
         // ButterflySpine*) must never be decoded through this accessor; with
         // verifyConcurrentButterfly on, it fails here.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
             ASSERT(!isSegmentedButterfly(word));
             if (verifyConcurrentButterflyEnabled()) [[unlikely]]
@@ -928,7 +935,7 @@ public:
 
     ALWAYS_INLINE bool mayBeSegmentedButterfly() const // one load + compare; constant false flag-off (I22)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return isSegmentedButterfly(taggedButterflyWord());
         return false;
     }
@@ -948,7 +955,7 @@ public:
     {
         if (isInlineOffset(offset))
             return &inlineStorage()[offsetInInlineStorage(offset)];
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return locationForOutOfLineOffsetConcurrent(offset);
         return &outOfLineStorage()[offsetInOutOfLineStorage(offset)];
     }
@@ -957,7 +964,7 @@ public:
     {
         if (isInlineOffset(offset))
             return &inlineStorage()[offsetInInlineStorage(offset)];
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return const_cast<WriteBarrierBase<Unknown>*>(locationForOutOfLineOffsetConcurrent(offset));
         return &outOfLineStorage()[offsetInOutOfLineStorage(offset)];
     }
@@ -1191,7 +1198,7 @@ public:
             // empty sentinel here, NOT fall to tryMakeWritableInt32Slow,
             // whose switch CRASH()es on ALL_INT32_INDEXING_TYPES.
             // Flat => mask + today's code. Flag-off bit-identical (I22).
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useTaggedButterflies()) [[unlikely]] {
                 uint64_t word = taggedButterflyWord();
                 if (isSegmentedButterfly(word)) [[unlikely]]
                     return ContiguousJSValues();
@@ -1212,7 +1219,7 @@ public:
     {
         if (hasDouble(indexingType()) && !isCopyOnWrite(indexingMode())) [[likely]] {
             // SPEC-objectmodel §Q/§9.5 + E5 "None first": see tryMakeWritableInt32.
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useTaggedButterflies()) [[unlikely]] {
                 uint64_t word = taggedButterflyWord();
                 if (isSegmentedButterfly(word)) [[unlikely]]
                     return ContiguousDoubles();
@@ -1231,7 +1238,7 @@ public:
     {
         if (hasContiguous(indexingType()) && !isCopyOnWrite(indexingMode())) [[likely]] {
             // SPEC-objectmodel §Q/§9.5 + E5 "None first": see tryMakeWritableInt32.
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useTaggedButterflies()) [[unlikely]] {
                 uint64_t word = taggedButterflyWord();
                 if (isSegmentedButterfly(word)) [[unlikely]]
                     return ContiguousJSValues();
@@ -1625,7 +1632,7 @@ public:
     const Butterfly* butterfly() const LIFETIME_BOUND { return const_cast<JSObjectWithButterfly*>(this)->butterfly(); }
     ALWAYS_INLINE Butterfly* butterfly() LIFETIME_BOUND
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             uint64_t word = taggedButterflyWord();
             ASSERT(!isSegmentedButterfly(word));
             if (verifyConcurrentButterflyEnabled()) [[unlikely]]
@@ -1684,7 +1691,7 @@ protected:
         // SPEC-objectmodel §2/§2.1 (r16 N1-I, I40): stamp the allocating
         // thread's TID at birth, butterfly or not - the tag of a butterfly-less
         // word names the instance owner. Pre-escape, so a plain store.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             m_butterfly.setWithoutBarrier(std::bit_cast<Butterfly*>(encodeButterfly(butterfly, currentButterflyTID(), false)));
     }
 
@@ -1692,7 +1699,7 @@ protected:
         : JSObject(CreatingWellDefinedBuiltinCell, structureID, blob)
         , m_butterfly(nullptr, WriteBarrierEarlyInit)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             m_butterfly.setWithoutBarrier(std::bit_cast<Butterfly*>(butterflyLessWordForCurrentThread())); // I40
     }
 
@@ -1719,7 +1726,7 @@ ALWAYS_INLINE bool JSObject::ensureLength(VM& vm, unsigned length)
     // (§2) - segmented words use the loaded spine's vectorLength (C4) and
     // the SHARED publicLength slot; growth (incl. a mid-call T2
     // conversion) goes through ensureLengthSlow's concurrent driver.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         uint64_t word = taggedButterflyWord();
         bool needsSlow = isCopyOnWrite(indexingMode());
         if (isSegmentedButterfly(word))
@@ -2037,7 +2044,8 @@ ALWAYS_INLINE bool JSObject::getOwnNonIndexPropertySlot(VM& vm, Structure* struc
     // structureID; the in-flight writer publishes its structureID promptly,
     // so the spin is bounded by the write's publication. Flag-off: branch
     // dead, behavior byte-identical.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
+        SpinBackoff backoff;
         for (;;) {
             // CVE-AUDIT A5 (MC-DF S4, mc-df-delete-reuse.CRASH.log) — I34/L6
             // ordering for the M7(c) probe itself: structure->get() above can
@@ -2105,7 +2113,7 @@ ALWAYS_INLINE bool JSObject::getOwnNonIndexPropertySlot(VM& vm, Structure* struc
             // fail-stop). Release/park/re-acquire across any pending window,
             // then re-sample.
             JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm);
-            Thread::yield();
+            backoff.spinOnce();
             structure = structureID().decode();
             offset = structure->get(vm, propertyName, attributes);
             if (!isValidOffset(offset)) {

@@ -174,6 +174,14 @@ public:
     // steady state the word shared by every allocating thread is then only read (SPEC-objectmodel history §32).
     static constexpr int32_t gilOffReportSampleMask = 31 << 4;
 
+    // GIL off (SPEC-objectmodel T4-P promotion, history §40): the objects on which T4-O executed an Int32->Double
+    // request as Int32->Contiguous since the last collection. A site whose last array is one of them is numeric.
+    // Addresses only: nothing dereferences an entry, and the end of every collection clears the table, so an address
+    // is never compared across a reuse of its cell.
+    JS_EXPORT_PRIVATE static void noteSubstitutedDoubleRequestGILOff(const JSCell*);
+    static bool wasSubstitutedDoubleRequestGILOff(const JSCell*);
+    JS_EXPORT_PRIVATE static void clearSubstitutedDoubleRequestsGILOff();
+
 private:
     using Storage = CompactPointerTuple<JSArray*, uint16_t>;
     Storage m_storage;

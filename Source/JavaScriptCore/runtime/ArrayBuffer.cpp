@@ -29,6 +29,7 @@
 #include "JSArrayBufferView.h"
 #include "JSArrayBufferViewInlines.h"
 #include "JSCellInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "JSWebAssemblyInstance.h"
 #include "WaiterListManager.h"
 #include "WeakInlines.h"
@@ -449,6 +450,11 @@ void arrayBufferQuarantineSafepointHook(JSC::Heap& heap)
         Locker locker { quarantine->lock };
         retired = std::exchange(quarantine->pending, { });
     }
+    // Optimized code may hold a view's {vector, length} across a poll (SPEC-jit I21, history §50), so a mutator
+    // parked in this stop must not go on using the pair once the mapping is gone: bump the heap-fact epoch before
+    // the world resumes; parked mutators jettison their on-stack optimized code and exit at the poll.
+    if (!retired.isEmpty())
+        JSThreadsSafepoint::noteConductorHeapFactRewrite();
     for (auto& entry : retired)
         retireArrayBufferQuarantineEntry(entry);
     // Destroying `retired` releases the quarantined mappings (contents

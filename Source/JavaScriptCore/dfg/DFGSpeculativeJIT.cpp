@@ -2412,8 +2412,9 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
         return;
     // Flag-off the butterfly tag is always zero; nothing to check
     // (byte-identical LAW: the lint never fires flag-off, so no flag-off
-    // codegen path can depend on it).
-    if (!Options::useJSThreads())
+    // codegen path can depend on it). The same holds for a GIL-on process
+    // with one owner (OM G1).
+    if (!Options::useTaggedButterflies())
         return;
 
     // (a) I14: tag-masking / tag-zero-by-construction producer set.
@@ -2581,7 +2582,7 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
 void SpeculativeJIT::compileBody()
 {
     validateButterflyTagDisciplineForGraph(m_graph);
-    if (Options::useJSThreads()) [[unlikely]]
+    if (Options::useTaggedButterflies()) [[unlikely]]
         m_graph.markButterflyLoadsThatFeedElementWrites();
 
     checkArgumentTypes();
@@ -11411,6 +11412,11 @@ auto SpeculativeJIT::emitThreadedButterflyLoadForRead(GPRReg baseGPR, GPRReg des
     ASSERT(Options::useJSThreads());
     ASSERT(destGPR != baseGPR && scratchGPR != InvalidGPRReg && scratchGPR != baseGPR && scratchGPR != destGPR);
     JumpList slowCases;
+    if (!Options::useTaggedButterflies()) {
+        // SPEC-jit §5.5 "Untagged words" (OM G1): the word is the pointer.
+        loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
+        return slowCases;
+    }
 
     emitButterflyLoadWithStructureDependency(baseGPR, destGPR, scratchGPR);
 
@@ -11450,6 +11456,11 @@ auto SpeculativeJIT::emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg de
     ASSERT(destGPR != baseGPR);
     ASSERT(tidScratchGPR != InvalidGPRReg && tidScratchGPR != baseGPR && tidScratchGPR != destGPR);
     JumpList slowCases;
+    if (!Options::useTaggedButterflies()) {
+        // SPEC-jit §5.5 "Untagged words" (OM G1): every thread is the owner and the word is the pointer.
+        loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
+        return slowCases;
+    }
 
     emitButterflyLoadWithStructureDependency(baseGPR, destGPR, tidScratchGPR);
 
@@ -11919,7 +11930,7 @@ void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
 
 void SpeculativeJIT::compileGetButterfly(Node* node)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, SPEC-jit §5.5): the raw load below
         // SPEC-jit section 5.5 / Task 9. This is the only flag-on arm: a
         // TID-tagged word cannot be read by the raw load below, so the
         // useThreadedDFG kill switch disables the tier in Options rather
@@ -15521,7 +15532,19 @@ void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg sizeG
 {
     RELEASE_ASSERT(RegisterSet(storageResultGPR, sizeGPR, scratch1, scratch2, scratch3).numberOfSetGPRs() == 5);
     ASSERT((1 << 3) == sizeof(JSValue));
-    lshift32(sizeGPR, TrustedImm32(3), scratch1);
+    // SPEC-jit §5.5 (history §51): with the shared heap the vector length is rounded as C++ rounds it (7 for 0,
+    // size | 3 otherwise), so that this path and the C++ slow path draw from the same size class; the header gets
+    // the rounded value and emitInitializeButterfly clears up to it.
+    bool roundsVectorLength = Options::useSharedGCHeap();
+    if (roundsVectorLength) [[unlikely]] {
+        static_assert(butterflyFragmentSlots == 4 && BASE_CONTIGUOUS_VECTOR_LEN <= 3 && (BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 3) == 7);
+        or32(TrustedImm32(3), sizeGPR, scratch1);
+        Jump nonZero = branchTest32(NonZero, sizeGPR);
+        move(TrustedImm32(7), scratch1);
+        nonZero.link(this);
+        lshift32(TrustedImm32(3), scratch1);
+    } else
+        lshift32(sizeGPR, TrustedImm32(3), scratch1);
     add32(TrustedImm32(sizeof(IndexingHeader)), scratch1, scratch2);
 #if ASSERT_ENABLED
     Jump didNotOverflow = branch32(AboveOrEqual, scratch2, sizeGPR);
@@ -15532,6 +15555,14 @@ void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg sizeG
         storageResultGPR, vm().auxiliarySpace(), scratch2, scratch1, scratch3, slowCases);
     addPtr(TrustedImm32(sizeof(IndexingHeader)), storageResultGPR);
     static_assert(Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == Butterfly::offsetOfVectorLength());
+    if (roundsVectorLength) [[unlikely]] {
+        // scratch2 still holds the allocation size in bytes (emitAllocateVariableSized leaves it alone).
+        move(scratch2, scratch1);
+        sub32(TrustedImm32(sizeof(IndexingHeader)), scratch1);
+        urshift32(TrustedImm32(3), scratch1);
+        storePair32(sizeGPR, scratch1, storageResultGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
+        return;
+    }
     storePair32(sizeGPR, sizeGPR, storageResultGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
 }
 
@@ -16101,7 +16132,7 @@ void SpeculativeJIT::compilePutByOffset(Node* node)
 {
     StorageAccessData& storageAccessData = node->storageAccessData();
 
-    if (Options::useJSThreads() && isOutOfLineOffset(storageAccessData.offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]] {
+    if (Options::useTaggedButterflies() && isOutOfLineOffset(storageAccessData.offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]] {
         // SPEC-jit section 5.5 / Task 9: out-of-line stores re-load the TAGGED
         // butterfly from the base and run the frozen WRITE predicate in the
         // same poll-free window as the store (I16). The storage child
@@ -17998,7 +18029,10 @@ void SpeculativeJIT::compileBitwiseStrictEq(Node* node)
 
 void SpeculativeJIT::emitInitializeButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg emptyValueGPR, GPRReg scratchGPR)
 {
-    zeroExtend32ToWord(sizeGPR, scratchGPR);
+    if (Options::useSharedGCHeap()) [[unlikely]]
+        load32(Address(storageGPR, Butterfly::offsetOfVectorLength()), scratchGPR); // emitAllocateButterfly rounded it up (history §51)
+    else
+        zeroExtend32ToWord(sizeGPR, scratchGPR);
     Jump done = branchTest32(Zero, scratchGPR);
     Label loop = label();
     sub32(TrustedImm32(1), scratchGPR);
@@ -18755,7 +18789,7 @@ void SpeculativeJIT::compileMakeAtomString(Node* node)
         }
 
         if (cache) {
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] { // GIL on no mutator races the probe (tenth round, SPEC-jit history §52)
                 // SPEC-jit section 5.5 (Task 8 pattern): the quick-cache words
                 // are mutated by racing mutators through the shared CodeBlock;
                 // a key-compare + separate value load can pair a key with a
@@ -18804,7 +18838,7 @@ void SpeculativeJIT::compileMakeAtomString(Node* node)
         }
 
         if (cache) {
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
                 // See the numOpGPRs==2 case above: flag-on, no inline
                 // quick-cache probes; defer to the locked generic operation.
                 move(TrustedImmPtr(cache), cachePtrGPR);

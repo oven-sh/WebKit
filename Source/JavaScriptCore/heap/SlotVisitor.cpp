@@ -689,13 +689,11 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             else
                 m_heap.m_numberOfParallelMarkersInDrainFromShared++; // isActive is false only on the first iteration.
             m_heap.m_numberOfWaitingParallelMarkers++;
+            auto stopWaiting = makeScopeExit([&] {
+                locker.assertIsHolding(m_heap.m_markingMutex);
+                m_heap.m_numberOfWaitingParallelMarkers--;
+            });
 
-            // m_numberOfWaitingParallelMarkers is only the stealSomeCellsFrom
-            // partitioning hint; it is never decremented on return, which
-            // keeps the pre-threads steal sizes. The marker-pause protocol and
-            // the end-of-marking asserts use
-            // m_numberOfParallelMarkersInDrainFromShared instead, which every
-            // return below decrements.
             if (sharedDrainMode == MainDrain) {
                 while (true) {
                     if (hasElapsed(timeout)) {

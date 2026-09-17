@@ -192,6 +192,9 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
+    if (s.length() - startOffset < minimumSize())
+        return -1;
+
     // AUD1.N2 residual (A): only the mutator compiles here. CompilerThread
     // entries come from matchConcurrently, which verified hasCodeFor UNDER
     // the cellLock it still holds — calling compileIfNecessary would
@@ -385,6 +388,9 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     m_rtMatchOnlyCallCount++;
     m_rtMatchOnlyTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
+
+    if (s.length() - startOffset < minimumSize())
+        return MatchResult::failed();
 
     // AUD1.N2 residual (A): mutator-only compile — same rationale as the
     // span-overload matchInline above (matchConcurrently holds the cellLock).

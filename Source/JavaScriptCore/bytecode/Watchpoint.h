@@ -368,6 +368,20 @@ public:
 
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const FireDetail&); // Call only if you've checked isWatched.
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints); // Ditto.
+
+public:
+    // SPEC-jit §5.6 "Deferred claims in flight" (history §55). GIL off, a deferred claim is counted process-wide from
+    // before its CAS until its scope-exit fire has completed: in between, the set reads IsInvalidated while code that
+    // elided checks on it still runs. awaitDeferredClaimsInFlight() parks for stops (that is how a claimant's fire
+    // gets to run) and returns once no claim is in flight; callers hold no lock.
+    JS_EXPORT_PRIVATE static bool deferredClaimsInFlight();
+    // The form the waiting transitions use: false while this thread runs inside a stop (its own closure, or one it is
+    // nested in - haveABadTime converts every array inside its stop). A claimant can be parked by that very stop, with
+    // its claim, until the world resumes; waiting for it there is a deadlock, and nothing else runs meanwhile anyway.
+    JS_EXPORT_PRIVATE static bool shouldAwaitDeferredClaimsInFlight(VM&);
+    JS_EXPORT_PRIVATE static void noteDeferredClaimFired();
+    JS_EXPORT_PRIVATE static void awaitDeferredClaimsInFlight(VM&);
+private:
     JS_EXPORT_PRIVATE void fireAllSlow(VM&, const char* reason); // Ditto.
 
 protected:
@@ -709,6 +723,11 @@ private:
             m_data.storeRelaxed(desired);
             return true;
         }
+        // The word already held the desired value when the caller read it: the store is a no-op that linearizes at
+        // that read, so skip the locked instruction (a Structure's transition set is fired again by every later
+        // transition from that Structure; OM history §38).
+        if (data == desired)
+            return true;
         uintptr_t prior = m_data.compareExchangeStrong(data, desired);
         if (prior == data)
             return true;

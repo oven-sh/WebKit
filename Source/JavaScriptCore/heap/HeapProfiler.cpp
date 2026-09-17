@@ -29,6 +29,7 @@
 #include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
 #include "JSThreadsSafepoint.h"
+#include <wtf/SpinBackoff.h>
 #include "SubspaceInlines.h"
 #include "SymbolTable.h"
 #include "VM.h"
@@ -85,10 +86,11 @@ void HeapProfiler::acquireBuilderGILOff()
 {
     if (!m_vm.gilOffWithProcessGate()) [[likely]]
         return;
+    SpinBackoff backoff;
     while (!m_builderLock.tryLock()) {
         if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(m_vm))
             continue;
-        Thread::yield();
+        backoff.spinOnce();
     }
 }
 
