@@ -107,7 +107,11 @@ String TypeProfiler::typeInformationForExpressionAtOffset(TypeProfilerSearchDesc
 
 TypeLocation* TypeProfiler::findLocation(unsigned divot, SourceID sourceID, TypeProfilerSearchDescriptor descriptor, VM& vm)
 {
+    // Runtime.getRuntimeTypesForVariablesAtOffsets passes what the inspector frontend sent, which can be a reserved key.
     QueryKey queryKey(sourceID, divot, descriptor);
+    if (!m_queryCache.isValidKey(queryKey))
+        return nullptr;
+
     auto iter = m_queryCache.find(queryKey);
     if (iter != m_queryCache.end())
         return iter->value;
