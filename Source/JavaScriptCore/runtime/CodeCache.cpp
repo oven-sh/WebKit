@@ -213,8 +213,9 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     // globals, so it cannot use the unlinked code those share (the baseline code cached
     // on it assumes one resolution: JIT::emit_op_resolve_scope); it gets its own, which
     // the records that share its executable then use.
+    // The same goes for a program that runs in a scope of its own (ProgramExecutable::getOrCreateForScope).
     bool privateToExecutable = false;
-    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
+    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable> || std::is_same_v<ExecutableType, ProgramExecutable>)
         privateToExecutable = !executable->resolvesInGlobalScope();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)

@@ -56,6 +56,47 @@ void ProgramExecutable::destroy(JSCell* cell)
     static_cast<ProgramExecutable*>(cell)->ProgramExecutable::~ProgramExecutable();
 }
 
+ProgramExecutable* ProgramExecutable::getOrCreateForScope(JSGlobalObject* globalObject, const SourceCode& source, JSScope* scope)
+{
+    VM& vm = globalObject->vm();
+    Vector<SymbolTable*> scopeSymbolTables;
+    for (; scope != globalObject->globalLexicalEnvironment(); scope = scope->next())
+        scopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(scope)->symbolTable());
+    if (scopeSymbolTables.isEmpty())
+        return create(globalObject, source);
+
+    // Keyed by the URL's impl and the scope's symbol table, as module executables are
+    // (JSModuleRecord::getOrMakeExecutable): a live entry whose key died and was reused for
+    // another URL fails the comparison and is replaced.
+    auto& executables = globalObject->scopedProgramExecutables();
+    AtomString url { source.provider()->sourceURL() };
+    JSGlobalObject::ScopedProgramExecutableKey key { url.impl(), scopeSymbolTables.first() };
+    if (ProgramExecutable* shared = executables.get(key)) {
+        auto hasScopeSymbolTables = [&] {
+            if (shared->m_scopeSymbolTables.size() != scopeSymbolTables.size())
+                return false;
+            for (unsigned i = 0; i < scopeSymbolTables.size(); ++i) {
+                if (shared->m_scopeSymbolTables[i].get() != scopeSymbolTables[i])
+                    return false;
+            }
+            return true;
+        };
+        // (Its code, if it still has it, has to be in the mode this run would ask for: the linked code of an
+        // earlier run may still be installed.)
+        UnlinkedProgramCodeBlock* sharedCode = shared->unlinkedCodeBlock();
+        if (hasScopeSymbolTables() && (!sharedCode || sharedCode->codeGenerationMode() == globalObject->defaultCodeGenerationMode())
+            && shared->source().provider()->sourceURL() == source.provider()->sourceURL() && shared->source().provider()->hash() == source.provider()->hash() && shared->source().view() == source.view())
+            return shared;
+    }
+
+    ProgramExecutable* executable = create(globalObject, source);
+    executable->m_scopeSymbolTables = FixedVector<WriteBarrier<SymbolTable>>(scopeSymbolTables.size());
+    for (unsigned i = 0; i < scopeSymbolTables.size(); ++i)
+        executable->m_scopeSymbolTables[i].set(vm, executable, scopeSymbolTables[i]);
+    executables.set(key, Weak<ProgramExecutable>(executable));
+    return executable;
+}
+
 // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-hasrestrictedglobalproperty
 enum class GlobalPropertyLookUpStatus {
     NotFound,
@@ -98,18 +139,18 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
 
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+    // (A program in a scope of its own may have run before, in another scope with the same symbol
+    // tables, and still have its code: getOrCreateForScope.)
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = resolvesInGlobalScope() ? nullptr : this->unlinkedCodeBlock();
 #if USE(BUN_JSC_ADDITIONS)
-    UnlinkedProgramCodeBlock* unlinkedCodeBlock = nullptr;
     if (precompiled && precompiled->codeGenerationMode() == codeGenerationMode) {
+        ASSERT(resolvesInGlobalScope()); // a precompiled block is code that programs in the global scope share
         unlinkedCodeBlock = precompiled;
         recordParseFromUnlinkedCodeBlock(this, source(), unlinkedCodeBlock);
-    } else {
-        unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
     }
-#else
-    UnlinkedProgramCodeBlock* unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(
-        vm, this, source(), codeGenerationMode, error);
 #endif
+    if (!unlinkedCodeBlock)
+        unlinkedCodeBlock = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, this, source(), codeGenerationMode, error);
 
     if (globalObject->hasDebugger())
         globalObject->debugger()->sourceParsed(globalObject, source().provider(), error.line(), error.message());
@@ -308,6 +349,7 @@ void ProgramExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ProgramExecutable* thisObject = uncheckedDowncast<ProgramExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_scopeSymbolTables.begin(), thisObject->m_scopeSymbolTables.end());
     if (TemplateObjectMap* map = thisObject->m_templateObjectMap.get()) {
         Locker locker { thisObject->cellLock() };
         for (auto& entry : *map)

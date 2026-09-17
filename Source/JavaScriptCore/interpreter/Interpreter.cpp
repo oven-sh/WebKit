@@ -1271,6 +1271,76 @@ failedJSONP:
     return result;
 }
 
+JSValue Interpreter::executeProgramInScope(const SourceCode& source, JSGlobalObject* globalObject, JSObject* thisObj, JSScope* scope)
+{
+    VM& vm = this->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(globalObject == scope->realm());
+
+    VMEntryScope entryScope(vm, globalObject);
+
+    auto clobberizeValidator = makeScopeExit([&] {
+        vm.didEnterVM = true;
+    });
+
+    if (SourceProfiler::g_profilerHook) [[unlikely]]
+        SourceProfiler::profile(SourceProfiler::Type::Program, source);
+
+    ProgramExecutable* program = ProgramExecutable::getOrCreateForScope(globalObject, source, scope);
+
+    if (globalObject->globalScopeExtension())
+        program->setTaintedByWithScope();
+
+    ASSERT(!vm.isCollectorBusyOnCurrentThread());
+    RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
+
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        return throwStackOverflowError(globalObject, throwScope);
+
+    if (vm.disallowVMEntryCount) [[unlikely]]
+        return VM::checkVMEntryPermission();
+
+    // (No JSONP fast path: it looks names up in the global scope.)
+    JSObject* error = program->initializeGlobalProperties(vm, globalObject, scope);
+    EXCEPTION_ASSERT(!throwScope.exception() || !error || vm.hasPendingTerminationException());
+    RETURN_IF_EXCEPTION(throwScope, throwScope.exception());
+    if (error) [[unlikely]]
+        return throwException(globalObject, throwScope, error);
+
+    // The program's scope register is its callee's scope.
+    JSCallee* callee = JSCallee::create(vm, globalObject, scope);
+    RefPtr<JSC::JITCode> jitCode;
+    ProtoCallFrame protoCallFrame;
+    {
+        DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
+
+        ProgramCodeBlock* codeBlock;
+        {
+            CodeBlock* tempCodeBlock;
+            program->prepareForExecution<ProgramExecutable>(vm, nullptr, scope, CodeSpecializationKind::CodeForCall, tempCodeBlock);
+            RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, throwScope.exception());
+            codeBlock = uncheckedDowncast<ProgramCodeBlock>(tempCodeBlock);
+            ASSERT(codeBlock && codeBlock->numParameters() == 1); // 1 parameter for 'this'.
+        }
+
+        {
+            AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
+            jitCode = program->generatedJITCode();
+            protoCallFrame.init(codeBlock, globalObject, callee, thisObj, nullptr, 1);
+        }
+    }
+
+    // Execute the code:
+    throwScope.release();
+    ASSERT(jitCode == program->generatedJITCode().ptr());
+    JSValue result = JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+    // The linked code is for this one run. The unlinked code stays for the next program of this
+    // source in a scope with the same symbol tables, unless it can be decoded again.
+    if (Options::useRunOnceCodeRelease() && program->canReleaseLinkedCodeNow(vm))
+        program->clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*program->subspace()), ScriptExecutable::ClearCode::KeepWhatNeedsParsing);
+    return result;
+}
+
 JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

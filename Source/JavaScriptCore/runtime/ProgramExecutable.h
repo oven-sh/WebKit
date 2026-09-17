@@ -51,6 +51,16 @@ public:
         return executable;
     }
 
+    // The executable of a program that runs in `scope` instead of the global scope: a chain of lexical
+    // environments over the global lexical environment (such as JSModuleLoader::moduleScope()). Its code
+    // resolves that scope's variables as closure variables where a program of the same source in the
+    // global scope resolves globals, so it does not use the unlinked code those share (the baseline code
+    // cached on it assumes one resolution: JIT::emit_op_resolve_scope); it has its own, as a module whose
+    // loader has a module scope does (CodeCache::getUnlinkedGlobalCodeBlock). Programs of the same URL and
+    // source text in scopes with the same symbol tables share the executable, and so that code.
+    JS_EXPORT_PRIVATE static ProgramExecutable* getOrCreateForScope(JSGlobalObject*, const SourceCode&, JSScope*);
+    bool resolvesInGlobalScope() const { return m_scopeSymbolTables.isEmpty(); }
+
 #if USE(BUN_JSC_ADDITIONS)
     // A precompiled block, generated from source() earlier (by any global object; like the CodeCache, this only
     // cares about the CodeGenerationMode), stands in for the CodeCache lookup of source(). If it was generated
@@ -95,6 +105,9 @@ private:
     ProgramExecutable(JSGlobalObject*, const SourceCode&);
 
     std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
+    // The symbol tables of the lexical environments between the scope the program runs in and the
+    // global lexical environment, innermost first. Empty: it runs in the global scope.
+    FixedVector<WriteBarrier<SymbolTable>> m_scopeSymbolTables;
 };
 
 } // namespace JSC

@@ -168,6 +168,29 @@ JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue
     return result;
 }
 
+JSValue evaluateInScope(JSGlobalObject* globalObject, const SourceCode& source, JSScope* scope, JSValue thisValue, NakedPtr<Exception>& returnedException)
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto throwScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    RELEASE_ASSERT(vm.atomStringTable() == Thread::currentSingleton().atomStringTable());
+    RELEASE_ASSERT(!vm.isCollectorBusyOnCurrentThread());
+
+    if (!thisValue || thisValue.isUndefinedOrNull())
+        thisValue = globalObject;
+    JSObject* thisObj = uncheckedDowncast<JSObject>(thisValue.toThis(globalObject, ECMAMode::sloppy()));
+    JSValue result = vm.interpreter.executeProgramInScope(source, globalObject, thisObj, scope);
+
+    if (throwScope.exception()) [[unlikely]] {
+        returnedException = throwScope.exception();
+        throwScope.clearException();
+        return jsUndefined();
+    }
+
+    RELEASE_ASSERT(result);
+    return result;
+}
+
 JSValue profiledEvaluate(JSGlobalObject* globalObject, ProfilingReason reason, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
 {
     ScriptProfilingScope profilingScope(globalObject, reason);

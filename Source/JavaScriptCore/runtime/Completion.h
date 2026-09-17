@@ -75,6 +75,10 @@ inline JSValue profiledEvaluate(JSGlobalObject* globalObject, ProfilingReason re
     return profiledEvaluate(globalObject, reason, sourceCode, thisValue, unused);
 }
 
+// evaluate() for a program that runs in `scope` instead of the global scope: a chain of lexical environments
+// over the global lexical environment, such as the module scope of a JSModuleLoader. The functions the program
+// makes close over it. See ProgramExecutable::getOrCreateForScope() for how its code is compiled and shared.
+JS_EXPORT_PRIVATE JSValue evaluateInScope(JSGlobalObject*, const SourceCode&, JSScope*, JSValue thisValue, NakedPtr<Exception>& returnedException);
 JS_EXPORT_PRIVATE JSValue evaluateWithScopeExtension(JSGlobalObject*, const SourceCode&, JSObject* scopeExtension, NakedPtr<Exception>& returnedException);
 
 // Load the module source and evaluate it.
