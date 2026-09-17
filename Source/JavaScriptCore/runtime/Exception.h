@@ -66,7 +66,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // The async context (JSGlobalObject::m_asyncContextData field 0) this was first thrown in.
-    // Empty: never thrown, or thrown before the embedder started tracking async contexts.
+    // Empty: it never went through VM::throwException (never thrown, the termination exception),
+    // or did before the embedder started tracking async contexts.
     JSValue asyncContext() const { return m_asyncContext.get(); }
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
