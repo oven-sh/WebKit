@@ -31,6 +31,7 @@
 #include "BasicBlockLocation.h"
 #include "CheckPrivateBrandStatus.h"
 #include "CodeBlock.h"
+#include "DFGAbstractHeap.h"
 #include "DFGAdjacencyList.h"
 #include "DFGArithMode.h"
 #include "DFGArrayMode.h"
@@ -100,6 +101,12 @@ class PromotedLocationDescriptor;
 struct StorageAccessData {
     PropertyOffset offset;
     unsigned identifierNumber;
+};
+
+// What a GIL-off CheckTraps writes instead of the interim value-heap set (SPEC-jit I21, history §50): the heaps
+// read by the control-flow slices of the loop the poll is in. Owned by the Graph, attached by DFGPollVisibilityPhase.
+struct PollVisibilityData {
+    Vector<AbstractHeap, 8> heaps;
 };
 
 struct MultiPutByOffsetData {
@@ -2477,6 +2484,20 @@ public:
     {
         ASSERT(hasTypeInfoOperand() && m_opInfo.as<uint32_t>() <= static_cast<uint32_t>(UCHAR_MAX));
         return m_opInfo.as<uint32_t>();
+    }
+
+    // SPEC-jit I21 (history §50): what this GIL-off poll keeps from being hoisted across it, attached by
+    // DFGPollVisibilityPhase in FTL plans; null means the interim set (DFGClobberize.h).
+    PollVisibilityData* pollVisibilityData()
+    {
+        ASSERT(op() == CheckTraps);
+        return m_opInfo.as<PollVisibilityData*>();
+    }
+
+    void setPollVisibilityData(PollVisibilityData* data)
+    {
+        ASSERT(op() == CheckTraps);
+        m_opInfo = data;
     }
 
     bool hasTransition()

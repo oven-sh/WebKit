@@ -603,10 +603,16 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
         JSValue value;
         if (m_hasFastObjectProperties) {
             propertyName = std::get<0>(m_propertiesAndOffsets[index]);
-            if (m_object->structureID() == m_structure->id()) {
+            bool readBySlot = m_object->structureID() == m_structure->id();
+            if (readBySlot) {
                 unsigned offset = std::get<1>(m_propertiesAndOffsets[index]);
                 value = m_object->getDirect(offset);
-            } else {
+                // I42 (SPEC-objectmodel history §41): GIL off, a dictionary's in-place add lists the property before its
+                // value is stored, so a listed slot can read empty; get() takes the cell lock there.
+                if (vm.gilOffWithProcessGate() && !dataPropertyReadStillValid(m_object, m_structure->id(), value)) [[unlikely]]
+                    readBySlot = false;
+            }
+            if (!readBySlot) {
                 value = m_object->get(globalObject, propertyName);
                 RETURN_IF_EXCEPTION(scope, false);
             }
@@ -617,17 +623,21 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                 RETURN_IF_EXCEPTION(scope, false);
             } else {
                 propertyName = std::get<0>(m_propertiesAndOffsets[index]);
-                if (m_object->structureID() == m_structure->id()) {
+                bool readBySlot = m_object->structureID() == m_structure->id();
+                if (readBySlot) {
                     unsigned offset = std::get<1>(m_propertiesAndOffsets[index]);
                     value = m_object->getDirect(offset);
-                    if (value.isGetterSetter()) {
+                    if (vm.gilOffWithProcessGate() && !dataPropertyReadStillValid(m_object, m_structure->id(), value)) [[unlikely]]
+                        readBySlot = false; // I42, as above.
+                    else if (value.isGetterSetter()) {
                         value = uncheckedDowncast<GetterSetter>(value)->callGetter(globalObject, m_object);
                         RETURN_IF_EXCEPTION(scope, false);
                     } else if (value.isCustomGetterSetter()) {
                         value = m_object->get(globalObject, propertyName);
                         RETURN_IF_EXCEPTION(scope, false);
                     }
-                } else {
+                }
+                if (!readBySlot) {
                     value = m_object->get(globalObject, propertyName);
                     RETURN_IF_EXCEPTION(scope, false);
                 }
@@ -1572,6 +1582,11 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 ASSERT(object.structure() == &structure);
 
             JSValue value = object.getDirect(entry.offset());
+            // I42 (SPEC-objectmodel history §41): the check above precedes the read and cannot see a dictionary's in-place add.
+            if (m_vm.gilOffWithProcessGate() && !dataPropertyReadStillValid(&object, structure.id(), value)) [[unlikely]] {
+                recordFailure("slot changed concurrently"_s);
+                return false;
+            }
             if (value.isUndefined())
                 return true;
 

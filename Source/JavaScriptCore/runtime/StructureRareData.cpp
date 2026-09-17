@@ -291,7 +291,7 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         // it summarizes; foreign fast-path readers load it single-word
         // (unlocked). Flag-off: single mutator, no lock.
         std::optional<GCSafeConcurrentJSLocker> locker;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             locker.emplace(ownStructure->lock(), vm);
         auto& cache = ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)];
         if (cache.m_value.get())

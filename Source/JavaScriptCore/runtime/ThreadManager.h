@@ -400,6 +400,11 @@ public:
     // thresholds, SPEC-ungil §5.7).
     static unsigned liveSpawnedThreadCountApproximate() { return s_liveSpawnedThreadCount.load(std::memory_order_relaxed); }
 
+    // Set before the first spawned Thread of the process can run and never cleared (SPEC-ungil §I, tenth round):
+    // while it is 0 every JS frame belongs to a carrier, so the warm JS->wasm entry cannot be reached from a spawned
+    // thread. Generated code tests the byte (JSToWasm.cpp); the writer holds the GIL of the spawning VM.
+    // The byte lives in VMLite.h (g_jscAnyJSThreadEverSpawned) so that its readers need not include this header.
+
     static constexpr uint16_t mainThreadTID = 0;
     static constexpr uint16_t notTTLTID = 0x7fff; // reserved
 
@@ -452,6 +457,15 @@ public:
     // real m_lock protocol for multi-embedder entry).
     RefPtr<ThreadState> allocateSpawnedThreadState(VM&);
     void unregisterThread(ThreadState&);
+
+    // SPEC-api 4.6 item 4 (tenth round; history r10.2). join() returns when completion is published, and the native
+    // thread drops the Ref<VM> of its entry closure only after its exit tail. An embedder that destroys the VM calls
+    // waitForCompletedThreadsToReleaseVM() first, WITHOUT the API lock, so that its own release is the last one and ~VM
+    // runs on its thread under the lock (MC-TDWN S1). Keyed by the VM's address: nothing here touches the VM. A thread
+    // that is still running is not waited for.
+    void noteThreadWillPublishCompletion(VM&); // immediately before the Phase release-store, both publication sites
+    void noteExitedThreadReleasedVM(const void* vmAddress); // end of the entry closure, after its Ref<VM> is gone
+    JS_EXPORT_PRIVATE void waitForCompletedThreadsToReleaseVM(VM&);
 
     // ========================================================================
     // UNGIL §D.1 TID rebias (ANNEXES D1 + D1R, BINDING; U-T12) — lifts Dev 10
@@ -613,6 +627,9 @@ private:
     void completeRebiasIfPendingLocked() WTF_REQUIRES_LOCK(m_lock);
 
     JS_EXPORT_PRIVATE static std::atomic<unsigned> s_liveSpawnedThreadCount;
+    Lock m_vmHoldersLock; // leaf: taken with no other lock held or under the JSLock only; never the other way round
+    Condition m_vmHoldersCondition;
+    UncheckedKeyHashMap<const void*, unsigned> m_completedThreadsHoldingVM WTF_GUARDED_BY_LOCK(m_vmHoldersLock); // by VM address
     Lock m_lock; // rank 1 (SPEC-api 5.9)
     UncheckedKeyHashMap<uint16_t, Ref<ThreadState>> m_threads WTF_GUARDED_BY_LOCK(m_lock); // spawned only
     Deque<uint16_t> m_freeTIDs WTF_GUARDED_BY_LOCK(m_lock); // spawned-range recycle list; fed ONLY by §D.1 rebias phase 3 (U-T12; empty GIL-on/flag-off — Dev 10)

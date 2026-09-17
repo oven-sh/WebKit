@@ -710,6 +710,18 @@ only; §N.6 rules wasm buffers. Wasm-GC: hasGCObjectTypes()
 precheck => LinkError, both GIL modes - SUPERSESSION (heap
 §5.5/manifest 11, both sides; FULL text: r9 F8 + r22 list; r33
 compressed). U17 positive arm. IU row.
+Tenth round, item (2) with the GIL on: the warm entry is handed out
+while no Thread has ever been spawned in the process (a process
+byte, set before the first spawned Thread exists, never cleared;
+`g_jscAnyJSThreadEverSpawned`), and its prologue tests the same
+byte and takes the cold entry - where the refusal lives - from the
+first spawn on, so a call site linked earlier cannot warm-call from
+a spawned thread. The discriminator is coarser than isSpawned (a
+carrier also goes cold after a spawn) and needs no per-thread load.
+GIL off the entry stays refused. A program that never spawns a
+Thread calls wasm as on `main` (5 M calls of an i32 add: 11 ms
+flag off, 338 ms GIL on before, the sampling profiler saw no
+wasm frames).
 
 ## J. GIL-machinery end state (GIL-on unchanged - oracle)
 
@@ -831,6 +843,24 @@ I20). Rulings (full args: history):
  QUARANTINED to a heap §10 stop; TRANSFER = COPY + source
  detach; SHRINK tail free deferred; GROW base IMMUTABLE -
  commit THEN release-publish length. U28 amplifier per annex.
+ Tenth round: a heap §10 stop that retires quarantine entries
+ bumps the conductor heap-fact rewrite epoch before the world
+ resumes (FTL code may hold a view's {vector, length} across a
+ poll, jit I21 / history §50; parked mutators jettison and exit
+ at the poll's invalidation point).
+ Tenth round, the in-place typed-array algorithms: GIL off
+ `sort` always works on a private copy moved in and out with
+ relaxed lane accesses (any view can be reached from another
+ mutator). Before the copy, a view long enough for `main`'s
+ radix path (2-byte lanes from 128, 4-byte from 512, 8-byte from
+ 8,192 elements) is scanned once with relaxed lane loads for
+ "already non-descending, no NaN" - `main`'s first step there -
+ and returned untouched if so: no scratch is allocated, which
+ `main` guarantees for sorted input of any size
+ (`typedarray-sort-out-of-memory.js`: a 4 GB zero-filled view
+ sorts without allocating; GIL off it threw OutOfMemory). A scan
+ that races a writer answers for the lanes as it read them, as
+ the copy would have.
 7. Audit U-T8c EXECUTED -> SPEC-ungil-audit-N7.md (BINDING
  annex N7; rows R1-R31). Implementation CONSUMES the N7 table
  verbatim (§IM: IU adds call sites); tier-inlined accesses

@@ -238,6 +238,16 @@ emits no IP. No assert was weakened anywhere in this change.
    allocation-free bodies — the regression the round-2 review noted the
    Atomics-based tests could not catch. Do not close the task on a green
    ladder alone until the ruling is recorded.
+   **Tenth round (SPEC-jit history §50): narrowed, not ruled.** FTL plans now
+   attach to each in-loop poll the value heaps read by the backward slices of
+   the loop's Branch/Switch conditions and the poll writes only those; every
+   read that can decide control flow stays poll-bounded (Part 4's spins, a
+   cancel flag under `if`, loop bounds), reads that only feed data may be
+   hoisted. DFG plans, polls outside loops and unanalysable loops keep the
+   interim set. The ruling still open is the remaining half: whether a
+   data-only plain read may be stale for the length of its loop (it may,
+   since this round, in FTL code). The typed-array {vector, length}
+   memory-safety leg is closed by the quarantine-retirement epoch bump.
 2. **Gate drift** (§1): four sites must stay in lockstep; no shared predicate
    helper exists yet (clobberize is included in contexts where a new shared
    header was not worth the churn this round). Candidate cleanup: a

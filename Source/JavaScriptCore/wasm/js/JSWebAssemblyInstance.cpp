@@ -346,7 +346,7 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     if (Options::useSharedGCHeap() && moduleInformation.hasGCObjectTypes())
         return exception(createJSWebAssemblyLinkError(globalObject, vm, "WebAssembly GC types are not supported when the GC heap is shared"_s));
 
-    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleKey, moduleInformation);
+    WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleLoader, moduleKey, moduleInformation);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     // FIXME: These objects could be pretty big we should try to throw OOM here.

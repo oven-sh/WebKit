@@ -35,6 +35,10 @@
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
 
+#if OS(LINUX)
+#include <sched.h>
+#endif
+
 namespace JSC {
 
 unsigned RaceAmplifier::s_period = 0;
@@ -126,7 +130,13 @@ void RaceAmplifier::perturbSlow()
     // 1/4 are a short sleep (parks the thread long enough for another thread
     // to run a whole slow path through the window we are sitting in).
     if (state.random.getUint32(4)) {
+        // A bare scheduler yield. WTF's Thread::yield() sleeps a timer-slack
+        // period on Linux (AUDIT R10-3), which is the other leg's job.
+#if OS(LINUX)
+        sched_yield();
+#else
         Thread::yield();
+#endif
         return;
     }
 

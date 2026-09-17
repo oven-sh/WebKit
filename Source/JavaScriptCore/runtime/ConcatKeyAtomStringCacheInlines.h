@@ -100,7 +100,7 @@ inline JSString* ConcatKeyAtomStringCache::getOrInsert(VM& vm, JSString* s0, JSS
     // The flag-on JIT no longer reads the quick entries (DFG/FTL defer to
     // operationMakeAtomString*WithCache, see compileMakeAtomString), so the
     // ordering is defensive. Flag-off: today's lock-free code, bit-identical.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] { // GIL on one mutator at a time runs main's body below, as its inline probe does (SPEC-jit history §52).
         {
             Locker locker { m_lock };
             if (auto* result = m_cache.get(atomStringImpl))

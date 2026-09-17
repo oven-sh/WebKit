@@ -234,7 +234,7 @@ GC-scanned via the registry walk (§A.1.3 GC-roots rule).
 | K4.II.12 | `m_stringSearcherTables` (`VM.h:1311`) | adaptive search scratch tables; creation = lazy-publish (LazyUniqueRef), contents per-lite |
 | K4.II.13 | `m_random` (`VM.h:469`) | WeakRandom state advanced on JS paths; per-lite stream (seeded per-lite) |
 | K4.II.14 | `m_integrityRandom` (`VM.h:471`) | Integrity audit sampling on allocation paths |
-| K4.II.15 | `m_mightBeExecutingTaintedCode` (`VM.h:547`) | execution-context flag of the CURRENT thread (Group-3-adjacent) |
+| K4.II.15 | `m_mightBeExecutingTaintedCode` (`VM.h:547`) | execution-context flag of the CURRENT thread (Group-3-adjacent). Implemented per lite in the tenth landing round (SPEC-ungil history); until then one sticky VM byte GIL off |
 | K4.II.16 | `m_deletePropertyMode` (`VM.h:1291`, scope RAII :746-758) | scoped mode around the current thread's host call |
 | K4.II.17 | `m_doesGC` (`VM.h:1383`) | ASSERT_ENABLED-only expectation state; per-thread by meaning |
 | K4.II.18 | `m_hasOwnPropertyCache` (`VM.h:956`) | entry = {structureID, impl, result} multi-word; interleaved writes can pair a key from A with a result from B => per-lite. Creation = K.3 (LazyUniqueRef). JIT path: A16 ext (§0 U4) |

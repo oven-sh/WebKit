@@ -34,6 +34,7 @@
 #include "HeapUtil.h"
 #include "InlineCallFrame.h"
 #include "JSCInlines.h"
+#include "JSThreadsSafepoint.h"
 #include "LLIntPCRanges.h"
 #include "MachineContext.h"
 #include "MarkedBlockInlines.h"
@@ -43,6 +44,8 @@
 #include "NativeExecutable.h"
 #include "TopExceptionScope.h"
 #include "VM.h"
+#include "VMLite.h"
+#include "VMLiteShared.h"
 #include "VMTrapsInlines.h"
 #include "WasmCallee.h"
 #include "WasmCapabilities.h"
@@ -81,12 +84,48 @@ ALWAYS_INLINE static void reportStats()
     }
 }
 
+// SPEC-ungil §A.1.7 form (i): the registry lock, taken with tryLock only (see takeSample) and held while a lite is read.
+class RegistryTryLocker {
+    WTF_MAKE_NONCOPYABLE(RegistryTryLocker);
+public:
+    RegistryTryLocker() = default;
+    ~RegistryTryLocker() { unlock(); }
+
+    bool tryLock() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!m_held);
+        m_held = VMLiteRegistry::singleton().lock.tryLock();
+        return m_held;
+    }
+
+    void unlock() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        if (!m_held)
+            return;
+        m_held = false;
+        VMLiteRegistry::singleton().lock.unlock();
+    }
+
+    bool isRegisteredTo(VMLite* lite, VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(m_held);
+        for (VMLite* candidate : VMLiteRegistry::singleton().lites) {
+            if (candidate == lite)
+                return candidate->vm == &vm;
+        }
+        return false;
+    }
+
+private:
+    bool m_held { false };
+};
+
 class FrameWalker {
 public:
-    FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+    FrameWalker(VM& vm, CallFrame* callFrame, EntryFrame* entryFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
-        , m_entryFrame(vm.topEntryFrame)
+        , m_entryFrame(entryFrame)
         , m_codeBlockSetLocker(codeBlockSetLocker)
         , m_machineThreadsLocker(machineThreadsLocker)
     {
@@ -239,8 +278,8 @@ class CFrameWalker : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, callFrame, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, EntryFrame* entryFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, callFrame, entryFrame, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -327,13 +366,6 @@ SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
         sNumFailedWalks = 0;
     }
 
-    // GIL-off the entry scope, top call frame and executing RegExp of the thread
-    // to sample live in its VMLite, which takeSample cannot resolve; refuse here
-    // rather than record nothing silently (createThreadIfNecessary never starts
-    // the timer thread for this VM).
-    if (vm.gilOff()) [[unlikely]]
-        dataLogLn("JSC: refusing to run the sampling profiler on a GIL-off VM (per-thread entry and frame state cannot be read off-thread); no samples will be taken.");
-
     m_currentFrames.grow(256);
     vm.heap.objectSpace().enablePreciseAllocationTracking();
 }
@@ -345,10 +377,6 @@ void SamplingProfiler::createThreadIfNecessary()
     ASSERT(m_lock.isLocked());
 
     if (m_thread)
-        return;
-
-    // Refused at construction: a gilOff VM is never sampled.
-    if (m_vm.gilOff()) [[unlikely]]
         return;
 
     RefPtr<SamplingProfiler> profiler = this;
@@ -383,11 +411,27 @@ void SamplingProfiler::timerLoop()
 void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
-    // The VM members read below (entryScope, topCallFrame, topEntryFrame,
-    // m_executingRegExp) are the sampled thread's state only under the GIL; a
-    // gilOff VM never creates the timer thread, so it never gets here.
-    ASSERT(!m_vm.gilOff());
-    if (m_vm.entryScope) {
+    // The sampled thread's entry record, top frames and executing RegExp: the VM's members under the GIL, the bound
+    // carrier's lite on a gilOff VM (SPEC-ungil §A.1.7 form (i)). The registry lock is taken before the target is
+    // suspended and only with tryLock: it has no recorded order against the locks taken below, and a contended
+    // registry costs this sample, never a wait. Nothing is allocated and no lock is taken while the target is suspended.
+    const bool gilOff = m_vm.gilOff();
+    VMLite* lite = nullptr;
+    RegistryTryLocker registryLocker;
+    if (gilOff) [[unlikely]] {
+        if (!m_jscExecutionThreadLite || !registryLocker.tryLock())
+            return;
+        if (!registryLocker.isRegisteredTo(m_jscExecutionThreadLite, m_vm)) {
+            m_jscExecutionThreadLite = nullptr; // The carrier is gone; the next thread that binds records its own.
+            return;
+        }
+        lite = m_jscExecutionThreadLite;
+    }
+    auto sampledEntryScope = [&] () -> bool { return gilOff ? !!lite->entryScope.load(std::memory_order_relaxed) : !!m_vm.entryScope; };
+    auto sampledTopCallFrame = [&] () -> CallFrame* { return gilOff ? lite->primitives.topCallFrame : m_vm.topCallFrame; };
+    auto sampledTopEntryFrame = [&] () -> EntryFrame* { return gilOff ? lite->primitives.topEntryFrame : m_vm.topEntryFrame; };
+    auto sampledExecutingRegExp = [&] () -> RegExp* { return gilOff ? lite->executingRegExp : m_vm.m_executingRegExp; };
+    if (sampledEntryScope()) {
         auto [ nowTime, timestamp ] = m_stopwatch->elapsedTimeAndTimestamp();
 
         Locker machineThreadsLocker { m_vm.heap.machineThreads().getLock() };
@@ -431,19 +475,19 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             // FIXME: Lets have a way of detecting when we're parsing code.
             // https://bugs.webkit.org/show_bug.cgi?id=152761
             if (Options::useJIT() && ExecutableAllocator::singleton().isValidExecutableMemory(*executableAllocatorLocker, machinePC)) {
-                regExp = m_vm.m_executingRegExp;
+                regExp = sampledExecutingRegExp();
                 if (regExp)
-                    callFrame = m_vm.topCallFrame; // We need to do this or else we'd fail our backtrace validation b/c this isn't a JS frame.
+                    callFrame = sampledTopCallFrame(); // We need to do this or else we'd fail our backtrace validation b/c this isn't a JS frame.
             } else if (LLInt::isLLIntPC(machinePC)) {
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
-                regExp = m_vm.m_executingRegExp;
+                regExp = sampledExecutingRegExp();
                 // We resort to topCallFrame to see if we can get anything
                 // useful. We usually get here when we're executing C code.
-                callFrame = m_vm.topCallFrame;
+                callFrame = sampledTopCallFrame();
                 if (Options::collectExtraSamplingProfilerData() && !Options::sampleCCode())
                     shouldAppendTopFrameAsCCode = true;
             }
@@ -452,16 +496,17 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, sampledTopEntryFrame(), codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, sampledTopEntryFrame(), codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }
 
             m_jscExecutionThread->resume(threadSuspendLocker);
+            registryLocker.unlock(); // The lite is not read past this point.
 
             auto startTime = MonotonicTime::now();
             // We can now use data structures that malloc, and do other interesting things, again.
@@ -499,6 +544,49 @@ static ALWAYS_INLINE BytecodeIndex NODELETE tryGetBytecodeIndex(unsigned llintPC
     if (bytecodeOffset < codeBlock->instructionsSize())
         return BytecodeIndex(bytecodeOffset);
     return BytecodeIndex();
+}
+
+void SamplingProfiler::processUnverifiedStackTracesWithHeapIteration() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    ASSERT(m_lock.isLocked());
+    // A heap iteration on a shared heap needs every client stopped. The report entry points are inside their own stop
+    // already when they get here (runAsStopConductorIfGILOff).
+    if (!m_vm.gilOff() || JSThreadsSafepoint::worldIsStopped(m_vm)) [[likely]] {
+        HeapIterationScope heapIterationScope(m_vm.heap);
+        processUnverifiedStackTraces();
+        return;
+    }
+    // The caller took the lock itself, outside a stop (the inspector's releaseStackTraces). The lock is dropped around
+    // the stop - a JS thread blocked on it holds heap access and could not park - and taken inside only if nobody
+    // holds it: a holder that is parked cannot let go before the stop ends.
+    for (unsigned attempt = 0; attempt < 8; ++attempt) {
+        bool processed = false;
+        m_lock.unlock();
+        m_vm.heap.runWithOtherClientsStopped([&] {
+            if (!m_lock.tryLock())
+                return;
+            HeapIterationScope heapIterationScope(m_vm.heap);
+            processUnverifiedStackTraces();
+            m_lock.unlock();
+            processed = true;
+        });
+        m_lock.lock();
+        if (processed)
+            return;
+    }
+}
+
+template<typename Functor>
+ALWAYS_INLINE bool SamplingProfiler::runAsStopConductorIfGILOff(const Functor& functor)
+{
+    // SPEC-ungil history, tenth round, "The profiler's lock and park sites": GIL off a JS thread holds m_lock across
+    // a park site only as the conductor of a stop. Naming a frame's function looks a property up, which polls traps
+    // and can reify a lazy property (a concurrent put, with park sites of its own); a holder parked there deadlocks
+    // the next reader's stop and the collector's profiler constraint.
+    if (!m_vm.gilOff() || JSThreadsSafepoint::worldIsStopped(m_vm)) [[likely]]
+        return false;
+    m_vm.heap.runWithOtherClientsStopped(functor);
+    return true;
 }
 
 void SamplingProfiler::processUnverifiedStackTraces()
@@ -785,12 +873,27 @@ void SamplingProfiler::noticeCurrentThreadAsJSCExecutionThreadWithLock()
     if (!shouldBindCurrentThreadAsJSCExecutionThread()) [[unlikely]]
         return;
     m_jscExecutionThread = &Thread::currentSingleton();
+    if (m_vm.gilOff()) [[unlikely]] {
+        // SPEC-ungil §A.1.7 form (i): the binding thread knows its own lite; takeSample checks it against the registry.
+        if (VMLite* installed = VMLite::currentIfExists(); installed && installed->vm == &m_vm)
+            m_jscExecutionThreadLite = installed;
+    }
 }
 
 void SamplingProfiler::noticeCurrentThreadAsJSCExecutionThread()
 {
     Locker locker { m_lock };
     noticeCurrentThreadAsJSCExecutionThreadWithLock();
+}
+
+void SamplingProfiler::noticeCurrentThreadIsExiting()
+{
+    // takeSample holds m_lock across suspend and resume, so once this returns no suspend is in flight against us.
+    Locker locker { m_lock };
+    if (m_jscExecutionThread.get() != &Thread::currentSingleton())
+        return;
+    m_jscExecutionThread = nullptr;
+    m_jscExecutionThreadLite = nullptr;
 }
 
 void SamplingProfiler::noticeJSLockAcquisition()
@@ -991,12 +1094,7 @@ String SamplingProfiler::StackFrame::url()
 Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces()
 {
     ASSERT(m_lock.isLocked());
-    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
-    // and a heap iteration on a shared heap needs the world stopped for every client.
-    if (!m_vm.gilOff()) {
-        HeapIterationScope heapIterationScope(m_vm.heap);
-        processUnverifiedStackTraces();
-    }
+    processUnverifiedStackTracesWithHeapIteration();
 
     Vector<StackTrace> result(WTF::move(m_stackTraces));
     clearData();
@@ -1111,15 +1209,22 @@ static String tierName(SamplingProfiler::StackFrame& frame)
 
 Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
 {
+    {
+        RefPtr<JSON::Value> result;
+        if (runAsStopConductorIfGILOff([&] { result = stackTracesAsJSON(); }))
+            return result.releaseNonNull();
+    }
     DeferGC deferGC(m_vm);
     Locker locker { m_lock };
 
-    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
-    // and a heap iteration on a shared heap needs the world stopped for every client.
-    if (!m_vm.gilOff()) {
-        HeapIterationScope heapIterationScope(m_vm.heap);
-        processUnverifiedStackTraces();
-    }
+    processUnverifiedStackTracesWithHeapIteration();
+    // SPEC-ungil history, tenth round, "The profiler's lock and park sites": naming a frame's function looks a
+    // property up, which polls traps. With the GIL on a poll can hand the API lock over, and its next owner's
+    // collection (the profiler constraint) or acquisition notice then waits for m_lock forever: the holder defers
+    // its traps. GIL off the whole body runs inside a stop (above), where nothing parks.
+    std::optional<DeferTraps> deferTraps;
+    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+        deferTraps.emplace(m_vm);
 
     UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
 
@@ -1258,15 +1363,17 @@ void SamplingProfiler::reportTopFunctions()
 
 void SamplingProfiler::reportTopFunctions(PrintStream& out)
 {
+    if (runAsStopConductorIfGILOff([&] { reportTopFunctions(out); }))
+        return;
     Locker locker { m_lock };
     DeferGCForAWhile deferGC(m_vm);
 
-    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
-    // and a heap iteration on a shared heap needs the world stopped for every client.
-    if (!m_vm.gilOff()) {
-        HeapIterationScope heapIterationScope(m_vm.heap);
-        processUnverifiedStackTraces();
-    }
+    processUnverifiedStackTracesWithHeapIteration();
+
+    // With the GIL on, holders of m_lock that reach polls defer their traps (see stackTracesAsJSON).
+    std::optional<DeferTraps> deferTraps;
+    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+        deferTraps.emplace(m_vm);
 
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> functionCounts;
@@ -1326,15 +1433,17 @@ void SamplingProfiler::reportTopBytecodes()
 
 void SamplingProfiler::reportTopBytecodes(PrintStream& out)
 {
+    if (runAsStopConductorIfGILOff([&] { reportTopBytecodes(out); }))
+        return;
     Locker locker { m_lock };
     DeferGCForAWhile deferGC(m_vm);
 
-    // A gilOff VM is never sampled (see the constructor), so there is nothing to process,
-    // and a heap iteration on a shared heap needs the world stopped for every client.
-    if (!m_vm.gilOff()) {
-        HeapIterationScope heapIterationScope(m_vm.heap);
-        processUnverifiedStackTraces();
-    }
+    processUnverifiedStackTracesWithHeapIteration();
+
+    // With the GIL on, holders of m_lock that reach polls defer their traps (see stackTracesAsJSON).
+    std::optional<DeferTraps> deferTraps;
+    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+        deferTraps.emplace(m_vm);
 
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> bytecodeCounts;

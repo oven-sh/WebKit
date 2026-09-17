@@ -1497,7 +1497,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* scope = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
-    if (metadata.m_resolveType == ModuleVar) {
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
+    if (resolveType == ModuleVar) {
         JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, scope, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
         CHECK_EXCEPTION();
         RETURN(result);
@@ -1506,8 +1507,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     JSObject* resolvedScope = JSScope::resolve(globalObject, scope, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     CHECK_EXCEPTION();
-
-    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     switch (resolveType) {
     case GlobalProperty:

@@ -1923,7 +1923,7 @@ public:
     void emitAllocateJSObject(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, StructureType structure, StorageType storage, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
     {
         emitAllocateJSCell(resultGPR, allocator, allocatorGPR, structure, scratchGPR, slowPath, slowAllocationResult);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, OM G1): the plain store below
             // SPEC-objectmodel §2 (r16 N1-I, I40): every object is born with
             // the allocating thread's TID in its butterfly word, butterfly or
             // not: word = g_jscButterflyTIDTag | storage (storage may be 0).
@@ -2017,8 +2017,16 @@ public:
         // can avoid allocating (and taking the slow path) entirely for it.
         auto isZero = branchTest64(Zero, valueGPR);
 
-        Allocator allocator = allocatorForConcurrently<JSBigInt>(vm, JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists);
-        emitAllocateJSCell(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, scratchGPR2, slowCases, SlowAllocationResult::UndefinedBehavior);
+        std::optional<unsigned> tlcSlot;
+        if (vm.gilOff()) [[unlikely]] // allocatorForConcurrently is empty GIL off (IT-9); see emitAllocateJSObjectWithKnownSize.
+            tlcSlot = tlcSlotForConcurrentlyWithIso<JSBigInt>(vm, JSBigInt::allocationSize(1));
+        if (tlcSlot) {
+            emitLoadTLCAllocatorForSlot(scratchGPR1, *tlcSlot, slowCases);
+            emitAllocateJSCell(resultGPR, JITAllocator::variable(), scratchGPR1, structure, scratchGPR2, slowCases, SlowAllocationResult::UndefinedBehavior);
+        } else {
+            Allocator allocator = allocatorForConcurrently<JSBigInt>(vm, JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists);
+            emitAllocateJSCell(resultGPR, JITAllocator::constant(allocator), scratchGPR1, structure, scratchGPR2, slowCases, SlowAllocationResult::UndefinedBehavior);
+        }
 
         store64(TrustedImm64(1), Address(resultGPR, JSBigInt::offsetOfLength()));
 

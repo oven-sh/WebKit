@@ -35,6 +35,7 @@
 #include "JIT.h"
 #include "JSCJSValueInlines.h"
 #include "JSThreadsSafepoint.h"
+#include <wtf/SpinBackoff.h>
 #include "LLIntData.h"
 #include "LLIntThunks.h"
 #include "PropertyInlineCache.h"
@@ -48,11 +49,12 @@ OSRExitGenerationLocker::OSRExitGenerationLocker(VM& vm, CallFrame* callFrame) W
 {
     ASSERT(vm.gilOff());
     NativeCallFrameTracer tracer(vm, callFrame);
+    SpinBackoff backoff;
     while (!osrExitGenerationLock.tryLock()) {
         if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
             continue; // Parked across a stop-the-world window: retry the tryLock.
         handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
-        Thread::yield();
+        backoff.spinOnce();
     }
 }
 

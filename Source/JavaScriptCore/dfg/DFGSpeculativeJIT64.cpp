@@ -1767,11 +1767,18 @@ void SpeculativeJIT::compileRegExpStringIteratorNext(Node* node)
     JumpList slowPath;
     size_t allocationSize = JSFinalObject::allocationSize(structure->inlineCapacity());
     Allocator allocatorValue = allocatorForConcurrently<JSFinalObject>(vm(), allocationSize, AllocatorForMode::AllocatorIfExists);
-    if (!allocatorValue)
+    std::optional<unsigned> tlcSlot;
+    if (vm().gilOff()) [[unlikely]] // allocatorForConcurrently is empty GIL off (IT-9); see compileNewObject.
+        tlcSlot = tlcSlotForConcurrently<JSFinalObject>(vm(), allocationSize);
+    if (!allocatorValue && !tlcSlot)
         slowPath.append(jump());
     else {
         auto butterfly = TrustedImmPtr(nullptr);
-        emitAllocateJSObject(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
+        if (tlcSlot) {
+            emitLoadTLCAllocatorForSlot(allocatorGPR, *tlcSlot, slowPath);
+            emitAllocateJSObject(resultGPR, JITAllocator::variable(), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
+        } else
+            emitAllocateJSObject(resultGPR, JITAllocator::constant(allocatorValue), allocatorGPR, TrustedImmPtr(structure), butterfly, scratchGPR, slowPath);
         store64(valueGPR, Address(resultGPR, JSFinalObject::offsetOfInlineStorage() + iteratorResultObjectValuePropertyOffset * sizeof(EncodedJSValue)));
         store64(doneGPR, Address(resultGPR, JSFinalObject::offsetOfInlineStorage() + iteratorResultObjectDonePropertyOffset * sizeof(EncodedJSValue)));
         mutatorFence(vm());
@@ -5525,6 +5532,12 @@ void SpeculativeJIT::compile(Node* node)
         GPRReg baseGPR = base.gpr();
         GPRReg t1 = temp1.gpr();
         GPRReg t2 = temp2.gpr();
+        if (!Options::useTaggedButterflies()) {
+            // SPEC-jit §5.5 "Untagged words" (OM G1): every thread owns every object, and the
+            // PreciseAllocation leg excludes a publication form nobody uses without foreign writers.
+            noResult(node);
+            break;
+        }
         speculationCheck(BadCache, JSValueSource(baseGPR), node->child1(),
             branchTestPtr(NonZero, baseGPR, TrustedImm32(PreciseAllocation::halfAlignment)));
         // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).

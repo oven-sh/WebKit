@@ -1025,3 +1025,53 @@ off, all in the new base's lazily created FunctionExecutables (first row). The r
 Later trees, the whole corpus under TSanJIT in both GIL modes: 0 reports on r9h and r9l (every test passing), and 0 so
 far on the trees that followed (the handler-IC, fresh-matches-array, allocation-report and unclaimed-transition
 changes). Final tree (r9t, the corpus in both lanes): 0 reports; GIL on 337 pass, 28 skip, GIL off 357 pass, 7 skip. The failures are timeouts at 2,700 s of the two continuous-collection objectmodel tests (`dictionary-delete-collects-outside-cell-lock.js` in both lanes, `sparse-define-collects-outside-cell-lock.js` in the GIL-off lane) under load 35-57; run alone with the lane's options, the test as it stood passes on r9t in 324 s and its edited copy (the deadline checked every 16 cycles) in 601 s, 0 reports each, while the r9r build, whose own TSAN pass had passed it, reaches the 2,700 s limit at the same time. That was not load: r9r already carried R9-18's cycle-end sweep of weak-bearing blocks, which back-to-back continuous cycles re-swept whole (SPEC-heap history §35); with the per-stop budget (r9u) the test passes alone in 32 s where r9t reaches 400 s beside it. Final tree (r9u): 0 reports; GIL on 339 pass, 0 fail; GIL off 359 pass, 1 fail - `vmstate/loop-entry-when-replacement-is-ftl-gil-off.js` (1,601 loop entries refused against its limit of 1,000 - a JIT counter whose count its own comment records as growing with load; the lane ran at load 60-130; alone, 10 of 10 pass on TSanJIT r9u and 10 of 10 on r9t); both continuous-collection tests pass in both lanes. Final tree (r9y, after R9-22's length-update rule, the corpus in both lanes): 0 reports; GIL on 340 pass, 28 skip, 0 fail; GIL off 361 pass, 7 skip, 0 fail - r9u's loop-entry threshold failure did not recur, and `jit/length-update-races-gil-off.js` (whose CAS-max loops are new in every tier) passes in both lanes. Final tree (r9za, after R9-23's conductor re-entry): 0 reports; GIL on 341 pass, GIL off 362 pass, 0 failures in either lane; `gc-stress/destructor-takes-api-lock-inside-stop-gil-off.js`, whose probes take the API lock inside the conductor's window, passes in both. No suppression added.
+
+### Tenth round (2026-09-14)
+
+The tree was rebased onto `cf1b36ec8703` first (LANDING-PLAN "Results, tenth round"). The corpus under the TSanJIT
+build on the rebased tree: 0 reports in both GIL modes (GIL on 341 pass, GIL off 362 pass), and 0 on every tree of the
+round up to the single-owner change. That change (SPEC-objectmodel G1) makes a GIL-on process run `main`'s
+object-model, inline-cache and interpreter paths, which the earlier rounds never had to make TSan-clean; the lane
+found what `main` has there:
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| `GetByIdModeMetadata::setProtoLoadMode` storing the ProtoLoad cache word (which overlaps the mode byte) vs `loadModeConcurrently` on a Baseline compiler thread (`JIT::emit_op_get_by_id`) | 10 GIL-on tests, 12 reports, one signature (the LLInt's prototype-load cache, enabled GIL on by G1) | fixed: the word is stored with a relaxed atomic store (the same instruction); the reader was already a relaxed one-byte load. Upstream's race, benign there too |
+| `Wasm::BaselineData::totalCount` read by a BBQ compiler thread vs `incrementTotalCount` from IPInt on the running thread | `api/gil-on-wasm-warm-entry-before-first-spawn.js`, 1 report (the first corpus test that runs an export often enough to tier up) | suppressed by name with its reason: upstream's tier-up heuristic counter, racy by design, flag off too |
+| three GIL-on tests spinning to the runner's timeout (`api/gil-on-trap-delivery-without-polls.js`, `api/trap-delivery-in-call-free-loop.js`, `api/lock-async-hold-termination.js`), no report | the first build that delivered traps by signal GIL on | not a race: ThreadSanitizer defers an asynchronous signal to the thread's next intercepted call, which a call-free JIT loop never makes. TSan builds keep polling traps forced with the flag on (SPEC-jit history §53); `main` has the same limitation flag off |
+
+One more signature appeared late in the round, GIL off, in 1 of 5 lane runs of
+`shared-objects/data-property-copies-vs-delete-gil-off.js`:
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| `memcpy` in `tryCreateObjectViaCloning` (the `{...o}` clone builtin's bulk copy of the source's out-of-line storage) vs the atomic slot store of `tryPutDirectTransitionConcurrent` on a writer thread | 1 report | fixed: the copy is raced by design GIL off and the clone is validated afterwards (SPEC-objectmodel I42), so the source is read a word at a time (`butterflyConcurrentCopyWords`, the treatment every other raced bulk copy has); flag off and GIL on it is the `memcpy` it was |
+
+An intermediate tree of the round (the candidate before the last) failed one GIL-off test that is not a report: the
+round's Double-promotion test as first written depended on tier-up timing (a long fill loop lets the lower tiers'
+tier-up checks consume the allocation profile's last-array word early) and failed the same way on the Debug build;
+rewritten, it passes on Release, Debug and TSanJIT in both modes.
+
+The round's last items (the parked wait for a requested synchronous JIT GIL off, the sampling profiler reading the
+carrier's lite and its reports running as a stop's conductor, the exiting Thread's unbind, the republished
+polymorphic call stub; LANDING-PLAN "Results, tenth round")
+added no signature: the profiler reads the sampled thread's words only while it is suspended, under the registry
+lock; the wait is the existing code-deletion wait; and a republished stub is published by `setStub`, the same
+release store and record publication a new variant uses (the four-thread test of it ran here with 0 reports).
+
+One signature did appear on the way, GIL off, in 5 of 6 runs of the profiler's two-readers test once three threads
+ran `JSON.parse` at the same moment (the shell's trace reader parses the profiler's JSON):
+
+| Signature (first frames) | Files | Disposition |
+|---|---|---|
+| `WTF::equalInternal` under `LiteralParser::equalIdentifier` reading a property name's characters vs the `malloc` of that `StringImpl` in another thread's `JSONAtomStringCache::makeIdentifier` | `vmstate/sampling-profiler-two-readers-gil-off.js`, 1 signature | fixed: the parser follows a structure's single transition without the structure's lock (`main`'s fast path) and reads the target's property name; `setSingleTransition` publishes with a release store under tagged words, and `trySingleTransition` was a relaxed load - an address dependency orders the reads on hardware, but it is an acquire load now (the same `mov` on x86-64). 0 of 6 after |
+
+And one hang that is the tool's: `vmstate/sampling-profiler-bound-thread-exits.js` timed out once in the final GIL-on
+lane (1 of about 250 runs under a hang detector). The sampling profiler's suspend signal interrupted the thread inside
+the sanitizer's own allocator (`__tsan_setjmp` under the `pthread_cond_wait` interceptor), and the handler's
+`sigsuspend` is intercepted too and allocates: the thread spins on the runtime's internal allocator mutex that its
+own interrupted frame holds. No engine lock is involved; the Release and Debug builds ran the test 500 times each
+under the amplifier, clean.
+
+Final tree: the corpus in both lanes, 0 reports, 0 failures; GIL off 391 pass, 10 skip; GIL on 364 pass, 37 skip
+(the tool hang above was on the tree before it, which had one more test; it did not recur).

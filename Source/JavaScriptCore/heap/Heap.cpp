@@ -22,6 +22,7 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "ArrayAllocationProfile.h"
 #include "JSThreadsCounters.h"
 
 #include "JSCJSValueInlines.h"
@@ -137,6 +138,7 @@
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SimpleStats.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -1188,9 +1190,10 @@ void Heap::gatherStackRoots(ConservativeRoots& roots)
             // needs no lock this walk holds (it is a CAS + GBL notify; GBL
             // is rank 4, this walk holds the rank-6 HCS lock only).
             MonotonicTime flickerDeadline = MonotonicTime::now() + Seconds(30);
+            SpinBackoff backoff;
             while (client.hasHeapAccess()) {
                 RELEASE_ASSERT(MonotonicTime::now() < flickerDeadline); // Real §10.4 admission violation: client kept in-window heap access.
-                Thread::yield();
+                backoff.spinOnce();
             }
         });
     }
@@ -3059,12 +3062,11 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
 #if ASSERT_ENABLED
     // After m_helperClient.finish() every helper has returned from
     // drainFromShared and no marker pause can be mid-flight on this heap's
-    // markers. m_numberOfWaitingParallelMarkers is deliberately not asserted:
-    // it is only the steal-partitioning hint and stays incremented across
-    // returns (see Heap.h).
+    // markers.
     {
         Locker locker { m_markingMutex };
         ASSERT(!m_numberOfParallelMarkersInDrainFromShared);
+        ASSERT(!m_numberOfWaitingParallelMarkers);
         ASSERT(!m_numberOfActiveParallelMarkers);
         ASSERT(!m_pausedParallelMarkers);
     }
@@ -4742,6 +4744,9 @@ void Heap::didFinishCollection()
     if (m_verifier) [[unlikely]]
         m_verifier->endGC();
 
+    if (g_jscConfig.gilOffProcess) [[unlikely]]
+        ArrayAllocationProfile::clearSubstitutedDoubleRequestsGILOff(); // Cells freed by this collection may be reused (SPEC-objectmodel history §40).
+
     RELEASE_ASSERT(m_collectionScope);
     m_lastCollectionScope = m_collectionScope;
     m_collectionScope = std::nullopt;
@@ -5662,6 +5667,10 @@ void Heap::addCoreConstraints()
                 // beat-or-explain run before attributing the headline.
                 if (clientSet().size() <= 1)
                     return;
+                // SPEC-heap history §37: off by default since the tenth round (the under-marking this
+                // stood in for no longer reproduces, and the GC verifier finds no lost edge without it).
+                if (!Options::useSharedGCWindowLivenessRetention()) [[likely]]
+                    return;
                 if (lastVersion == m_phaseVersion)
                     return;
                 lastVersion = m_phaseVersion;
@@ -6168,10 +6177,11 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     // held would wedge it (30 s watchdog). Wait for the lock the way every
     // other access-holding native wait does, polling for stops.
     if (g_jscConfig.gilOffProcess && isSharedServer()) [[unlikely]] {
+        SpinBackoff backoff;
         while (!m_collectContinuouslyLock.tryLock()) {
             if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm()))
                 continue;
-            Thread::yield();
+            backoff.spinOnce();
         }
     } else
         m_collectContinuouslyLock.lock();

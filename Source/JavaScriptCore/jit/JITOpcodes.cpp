@@ -1519,8 +1519,13 @@ void JIT::emit_op_enter(const JSInstruction*)
     using BaselineJITRegisters::Enter::scratch2GPR;
     using BaselineJITRegisters::Enter::scratch3GPR;
 
-    if (m_profiledCodeBlock->couldBeTainted())
-        store8(TrustedImm32(1), vm().addressOfMightBeExecutingTaintedCode());
+    if (m_profiledCodeBlock->couldBeTainted()) {
+        if (vm().gilOff()) [[unlikely]] { // K4.II.15: the running thread's hint, not the VM's.
+            loadVMLite(scratch1GPR);
+            store8(TrustedImm32(1), Address(scratch1GPR, VMLite::offsetOfMightBeExecutingTaintedCode()));
+        } else
+            store8(TrustedImm32(1), vm().addressOfMightBeExecutingTaintedCode());
+    }
 
     size_t startLocal = CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters();
     int startOffset = virtualRegisterForLocal(startLocal).offset();

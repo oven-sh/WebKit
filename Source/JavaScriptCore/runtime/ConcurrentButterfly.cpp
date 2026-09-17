@@ -89,6 +89,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
 
@@ -279,6 +280,7 @@ public:
         RELEASE_ASSERT(!t_cellLocksHeldByConcurrentButterfly); // O2/I20: the wait below parks; same contract as the veneer itself.
         uintptr_t keyBits = reinterpret_cast<uintptr_t>(key);
         ASSERT(keyBits); // 0 is the free marker.
+        SpinBackoff backoff;
         while (true) {
             if (m_stripe.compareExchangeWeak(static_cast<uintptr_t>(0), keyBits)) {
                 m_acquired = true;
@@ -291,7 +293,7 @@ public:
             JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm);
             if (shouldAbandon())
                 return; // m_acquired stays false: the caller re-dispatches without a stop.
-            Thread::yield();
+            backoff.spinOnce();
         }
     }
 
@@ -525,6 +527,7 @@ uint64_t lockedTransitionCount() { return s_lockedTransitionCount.load(std::memo
 
 ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* object, Structure* expectedSourceOrNull, Structure* newStructureOrNull, PropertyOffset offset, JSValue value)
 {
+    RELEASE_ASSERT(Options::useTaggedButterflies()); // SPEC-objectmodel G1: nothing is foreign in an untagged process, and generated code there cannot read a spine.
     RELEASE_ASSERT(Options::useJSThreads());
     s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -1880,6 +1883,20 @@ bool tryMaterializeCopyOnWriteButterflyForSharedWrite(VM& vm, JSObjectWithButter
 
     WTF::storeStoreFence(); // Contents before publication (M2-equivalent; today's convertFromCopyOnWrite fences here too).
 
+    // E4-G (SPEC-objectmodel history §38): GIL on, no other mutator can be between this function's first read and
+    // its last store (the GIL is handed over only inside blocking primitives), so the owner's materialization has
+    // nobody to serialize with and publishes as flag off does - nuked(S), fence, the tagged word, fence, S' - for the
+    // marker and the compiler threads. A writer that is not the word's owner keeps the locked route below (its F2
+    // fire ran above; the restart protocol is its own).
+    if (!g_jscConfig.gilOffProcess && !butterflyWriterIsForeign(expectedWord)) {
+        RELEASE_ASSERT(object->structureIDConcurrently().bits() == sourceID.bits());
+        RELEASE_ASSERT(butterflyWordAtomic(object)->load(std::memory_order_relaxed) == expectedWord);
+        object->nukeStructureAndSetButterfly(vm, sourceID, newButterfly);
+        object->setStructure(vm, newStructure);
+        vm.writeBarrier(object);
+        return true;
+    }
+
     const bool isPA = object->isPreciseAllocation(); // I36
     uint64_t desiredWord = encodeButterfly(newButterfly, currentButterflyTID(), false); // §4.8: private flat, (currentTID, 0).
     StructureID newStructureID = newStructure->id();
@@ -1961,6 +1978,8 @@ void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
 {
     RELEASE_ASSERT(Options::useJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
+    if (!Options::useTaggedButterflies()) [[unlikely]]
+        return; // SPEC-objectmodel G1: every thread is the owner; no word ever needs the SW bit.
 
     while (true) {
         uint64_t word = butterflyWordAtomic(object)->load(std::memory_order_seq_cst);

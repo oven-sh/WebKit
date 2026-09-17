@@ -30,6 +30,7 @@
 
 #include "JSCInlines.h"
 #include "JSWebAssemblyHelpers.h"
+#include "JSModuleLoader.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
 #include "WebAssemblyInstancePrototype.h"

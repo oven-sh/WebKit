@@ -67,6 +67,12 @@ ArrayMode ArrayMode::fromObserved(ArrayProfile profile, Array::Action action, bo
     };
 
     ArrayModes observed = profile.observedArrayModes();
+    // api §5.8: a restricted object is pinned on a SlowPutArrayStorage shape so that every indexed store reaches
+    // the hooked generic entry points. An inline SlowPut store (an existing in-vector element) would bypass them;
+    // the tagged write predicate used to send every other thread's store to the slow path, and with untagged words
+    // (OM G1) nothing in the inline path tells the threads apart. SlowPut sites are generic whenever the flag is on.
+    if (Options::useJSThreads() && (observed & (asArrayModesIgnoringTypedArrays(NonArrayWithSlowPutArrayStorage) | asArrayModesIgnoringTypedArrays(ArrayWithSlowPutArrayStorage)))) [[unlikely]]
+        return ArrayMode(Array::Generic, nonArray, Array::AsIs, action).withProfile(profile, makeSafe);
     switch (observed) {
     case 0:
         return ArrayMode(Array::Unprofiled);

@@ -706,14 +706,9 @@ private:
                 if (data.variants.size() != 1)
                     break;
 
-                // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Task 9: no
-                // inlined transition sequences flag-on (E4 is not emitted by
-                // the DFG/FTL); keep the MultiPutByOffset for the FTL's
-                // gated lowering instead of folding to the raw
-                // AllocatePropertyStorage/.../PutStructure sequence.
-                if (Options::useJSThreads() && data.variants[0].kind() == PutByVariant::Transition) [[unlikely]]
-                    break;
-
+                // Flag on (SPEC-jit §5.5 Transition, history §48): the parser admitted every Transition variant of this
+                // node under §5.5's rules (watched sets, source shape) and planted its CheckTransitionOwner, so the
+                // single-variant sequence emitPutByOffset produces is the parser's own.
                 emitPutByOffset(
                     indexInBlock, node, baseValue, data.variants[0], data.identifierNumber);
                 changed = true;
@@ -2406,6 +2401,11 @@ private:
 
         if (variant.kind() == PutByVariant::Transition) {
             if (didAllocateStorage) {
+                // Flag on (SPEC-jit §5.5 Transition, (re)allocating form; the parser's sequence): the PutByOffset above
+                // stored into fresh, unpublished storage and does not clobber exit state; an InvalidationPoint between it
+                // and the install retires this code if a watched set fired while the allocation parked.
+                if (Options::useTaggedButterflies()) [[unlikely]]
+                    m_insertionSet.insertNode(indexInBlock + 1, SpecNone, InvalidationPoint, origin);
                 m_insertionSet.insertNode(
                     indexInBlock + 1, SpecNone, NukeStructureAndSetButterfly,
                     origin.withInvalidExit(), childEdge, propertyStorage);
@@ -2644,13 +2644,26 @@ private:
         if (status.numVariants() > 1 && !m_graph.m_plan.isFTL())
             return;
 
-        if (Options::useJSThreads()) [[unlikely]] {
-            // THREADS-INTEGRATE(jit) SPEC-jit section 5.5 / Tasks 9/10: no
-            // inlined transition sequences flag-on - the generic PutById
-            // performs the transition through the OM's C++ paths (R3).
+        Structure* transitionOwnerCheckStructure = nullptr;
+        if (Options::useTaggedButterflies()) [[unlikely]] {
+            // SPEC-jit §5.5 Transition (history §48): the parser's admission rules, verbatim. Every Transition variant
+            // must be inlinable on its own terms - source not ArrayStorage or copy-on-write, its four thread-local sets
+            // watchable by this plan, and GIL off no (re)allocating variant inside a MultiPutByOffset (its allocation
+            // can park mid-node with no InvalidationPoint before the install) - else the put stays generic (R3). One
+            // CheckTransitionOwner guards them all.
             for (const PutByVariant& variant : status.variants()) {
-                if (variant.kind() == PutByVariant::Transition)
+                if (variant.kind() != PutByVariant::Transition)
+                    continue;
+                Structure* source = variant.oldStructureForTransition();
+                Structure* target = variant.newStructure();
+                if (hasAnyArrayStorage(source->indexingType()) || isCopyOnWrite(source->indexingMode())
+                    || (variant.reallocatesStorage() && !Options::useThreadGIL() && status.numVariants() > 1)
+                    || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(source)
+                    || !m_graph.watchpoints().considerButterflyWriteThreadLocal(source)
+                    || !m_graph.watchpoints().considerButterflyTransitionThreadLocal(target)
+                    || !m_graph.watchpoints().considerButterflyWriteThreadLocal(target))
                     return;
+                transitionOwnerCheckStructure = source;
             }
         }
 
@@ -2707,6 +2720,11 @@ private:
             indexInBlock, SpecNone, FilterPutByStatus, node->origin,
             OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(node->origin.semantic, status)),
             Edge(baseNode));
+        if (transitionOwnerCheckStructure) {
+            m_insertionSet.insertNode(
+                indexInBlock, SpecNone, CheckTransitionOwner, node->origin,
+                OpInfo(m_graph.registerStructure(transitionOwnerCheckStructure)), Edge(baseNode, CellUse));
+        }
 
         unsigned identifierNumber = m_graph.identifiers().ensure(uid);
         if (status.numVariants() == 1) {

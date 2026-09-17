@@ -133,7 +133,7 @@ static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
     // useThreadedLLIntICs is publication-side only: with it off, flag-on
     // single-word caches are never published, and the asm threaded readers
     // (gated on useJSThreads alone) always miss.
-    return Options::useJSThreads() && Options::useThreadedLLIntICs();
+    return Options::useTaggedButterflies() && Options::useThreadedLLIntICs(); // untagged (SPEC-jit §5.5; OM G1): main's caches below
 #else
     // D8: flag-on is unsupported on these platforms; never publish.
     return false;
@@ -142,7 +142,7 @@ static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
 
 static ALWAYS_INLINE bool useUnthreadedLLIntPropertyCaches()
 {
-    return !Options::useJSThreads();
+    return !Options::useTaggedButterflies();
 }
 
 // GIL-off, `slot` was resolved against whatever structure the cell had during
@@ -1080,7 +1080,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     // disabled wholesale under JS threads (I18) — those records cannot be
     // published as one word. Charter: proto caches return as immutable
     // single-pointer records (§5.8 pattern) if Task 13's budget is missed.
-    RELEASE_ASSERT(!Options::useJSThreads());
+    RELEASE_ASSERT(!Options::useTaggedButterflies());
 
     Structure* structure = baseCell->structure();
 

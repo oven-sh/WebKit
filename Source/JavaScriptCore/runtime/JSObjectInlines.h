@@ -155,6 +155,13 @@ inline void JSObject::storeTaggedButterflyWordConcurrent(VM& vm, Butterfly* butt
         // and the installer becomes the word's owner, as when the word was 0.
         RELEASE_ASSERT(!(old & butterflyPointerMask) || (!isSegmentedButterfly(old) && butterflyTID(old) == currentButterflyTID()));
         uint64_t desired = butterfly ? encodeButterfly(butterfly, currentButterflyTID(), butterflySharedWrite(old)) : butterflyLessWordForCurrentThread(); // r16: a cleared word keeps the owner TID (I40)
+        if (!g_jscConfig.gilOffProcess) {
+            // GIL on (E4-G extended, history §37): the CAS excludes a racing
+            // foreign SW flip, i.e. another mutator; none runs inside this
+            // window, and the marker only reads the word.
+            word->store(desired, std::memory_order_release);
+            break;
+        }
         uint64_t observed = word->compareExchangeStrong(old, desired, std::memory_order_seq_cst);
         if (observed == old)
             break;
@@ -375,7 +382,7 @@ inline void JSObject::growOutOfLineStorageForConcurrentLockedAdd(VM& vm, Structu
 
 inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         setButterflyConcurrent(vm, butterfly);
         return;
     }
@@ -391,7 +398,7 @@ inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 
 inline void JSObject::nukeStructureAndSetButterfly(VM& vm, StructureID oldStructureID, Butterfly* butterfly)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, butterfly);
         return;
     }
@@ -658,7 +665,7 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
 {
     ASSERT(!value.isGetterSetter() && !(attributes & PropertyAttribute::Accessor));
     ASSERT(!value.isCustomGetterSetter());
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // Review round 1: route through the cell-locked form (value stored in
         // the same critical section as the table edit - I9/L3/L4).
         putDirectWithoutTransitionConcurrent(vm, propertyName, value, attributes);
@@ -679,7 +686,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
     // Flag-on, "without transition" adds go through
     // putDirectWithoutTransitionConcurrent (cell-locked, value stored inside
     // the same window). This unlocked form is the flag-off path only (I22).
-    ASSERT(!Options::useJSThreads());
+    ASSERT(!Options::useTaggedButterflies());
     unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
     PropertyOffset result;
     structure->addPropertyWithoutTransition(
@@ -1002,7 +1009,15 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         && expectedSource->mayTransitionLockFreeFromThisStructure(this, word)) {
         AssertNoGC assertNoGC; // I29: fresh loads above (word) and below, no poll until the publish.
         auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
-        if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) == sourceID.bits()) {
+        bool claimed;
+        if (!g_jscConfig.gilOffProcess) {
+            // GIL on (E4-G, history §33/§37): no other mutator is inside a window on this object; a plain nuke.
+            claimed = structureID() == sourceID;
+            if (claimed)
+                idAtomic->store(sourceID.nuke().bits(), std::memory_order_relaxed);
+        } else
+            claimed = idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) == sourceID.bits();
+        if (claimed) {
             if (offset != invalidOffset)
                 reinterpret_cast<Atomic<uint64_t>*>(&inlineStorage()[offsetInInlineStorage(offset)])->store(JSValue::encode(value), std::memory_order_release); // M2
             WTF::storeStoreFence();
@@ -1060,7 +1075,9 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
             if (offset != invalidOffset)
                 reinterpret_cast<Atomic<uint64_t>*>(newButterfly->propertyStorage() - (outOfLineButterflyIndex(offset) + 1))->store(JSValue::encode(value), std::memory_order_release); // private copy
             WTF::storeStoreFence(); // Contents before the word.
-            if (!casButterfly(static_cast<JSObjectWithButterfly*>(this), word, encodeButterfly(newButterfly, currentButterflyTID(), false))) {
+            if (!g_jscConfig.gilOffProcess)
+                std::bit_cast<Atomic<uint64_t>*>(butterflyAddress())->store(encodeButterfly(newButterfly, currentButterflyTID(), false), std::memory_order_release); // GIL on (history §37): no mutator can move the word inside this window.
+            else if (!casButterfly(static_cast<JSObjectWithButterfly*>(this), word, encodeButterfly(newButterfly, currentButterflyTID(), false))) {
                 // Nothing can move the word of a claimed, owner-tagged SW=0
                 // instance (SW flips need the un-nuked header; locked writers
                 // lost the lane); defensive un-claim + RESTART, never merge.
@@ -1202,7 +1219,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, newButterfly);
             return;
         }
-        ASSERT(!Options::useJSThreads());
+        ASSERT(!Options::useTaggedButterflies());
         if (isX86() || vm.heap.mutatorShouldBeFenced()) {
             setStructureIDDirectly(oldStructureID.nuke());
             WTF::storeStoreFence();
@@ -1339,11 +1356,19 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                             // clear()-style delete; a quarantine bypass handing out
                             // never-zapped slots would trip this).
                             ASSERT_UNUSED(offset, offset <= preEditMaxOffset ? !!JSValue::encode(getDirect(offset)) : !JSValue::encode(getDirect(offset)));
+                            // I9 (history §41): the value goes in BEFORE addAfterFind publishes the entry, as in
+                            // putDirectWithoutTransitionConcurrent. No reader takes the cell lock (the named lookups and
+                            // the listing readers take only the structure's lock, or none), so a store made after the
+                            // publication left every one of them a window in which the name resolved to a slot that
+                            // still held EMPTY (fresh) or the previous occupant's residue (reused).
+                            putDirectOffset(vm, offset, value);
                         });
-                        if (!isAdded && mode == PutModePut && (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)) [[unlikely]]
-                            readonlyError = true;
-                        else
-                            putDirectOffset(vm, offset, value); // I9: with the table edit, inside the lock.
+                        if (!isAdded) {
+                            if (mode == PutModePut && (attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)) [[unlikely]]
+                                readonlyError = true;
+                            else
+                                putDirectOffset(vm, offset, value); // A replace: the slot already holds the property's previous value.
+                        }
                     }
                     if (preNuked && this->structureID().isNuked()) {
                         WTF::storeStoreFence();
@@ -1689,7 +1714,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // put sites carry the pre-threads body plus this single predicted-false
     // branch and a cold call — insensitive to future growth of the
     // concurrent arm. See the trampoline comment for the full race statement.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         return putDirectInternalConcurrentOutOfLine([&]() ALWAYS_INLINE_LAMBDA {
             return impl.template operator()</* jsThreads */ true>();
         });
@@ -2076,7 +2101,7 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // Another thread can brand the object first. That is the error above.
         bool alreadyBranded = false;
         publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
@@ -2119,7 +2144,7 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES: {
         // With the flag on, the word may be segmented, which butterfly() must not decode.
-        unsigned usedLength = Options::useJSThreads() ? getArrayLength() : butterfly()->publicLength();
+        unsigned usedLength = Options::useTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
         for (unsigned i = 0; i < usedLength; ++i) {
             JSValue value = getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, void());
@@ -2321,7 +2346,7 @@ inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
         // With the flag on, the word may be segmented, which butterfly() must not decode.
-        return Options::useJSThreads() ? getArrayLength() : butterfly()->publicLength();
+        return Options::useTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         auto* storage = butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());

@@ -161,15 +161,36 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
         // Must be constructed before we allocate anything using SequesteredArenaMalloc
         ArenaLifetime saLifetime;
 #endif
+        // Flag on (GIL on only; GIL off forces the concurrent path, Options.cpp): the synchronous compilation claims
+        // its key for its whole duration, so the dedup backstop below (§5.7.3) covers a second thread that reaches the
+        // same tier-up after a handoff while this one's result is not installed yet. SPEC-jit history §49.
+        if (Options::useJSThreads()) [[unlikely]] {
+            Locker locker { *m_lock };
+            if (m_plans.contains(plan->key()) || m_finalizingPlans.contains(plan->key())) {
+                plan->cancel();
+                return CompilationResult::CompilationDeferred;
+            }
+            m_finalizingPlans.add(plan->key(), plan.ptr());
+        }
         plan->beginSignpost();
         plan->compileInThread(nullptr);
         if (plan->stage() != JITPlanStage::Canceled)
             plan->endSignpost();
-        return plan->finalize();
+        CompilationResult result = plan->finalize();
+        if (Options::useJSThreads()) [[unlikely]] {
+            Locker locker { *m_lock };
+            m_finalizingPlans.remove(plan->key());
+        }
+        return result;
     }
     ASSERT(plan->stage() == JITPlanStage::Preparing);
     plan->beginSignpost();
 
+    // SPEC-jit history §56: GIL off, a requested synchronous JIT is a parked wait on the concurrent one.
+    VM& planVM = *plan->vm();
+    const JITCompilationKey planKey = plan->key();
+    const bool waitForThePlan = Options::useJSThreadsWaitForJITPlans() && planVM.gilOff();
+    {
     Locker locker { *m_lock };
     if (Options::verboseCompilationQueue()) {
         dump(locker, WTF::dataFile());
@@ -217,12 +238,27 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
             dataLogLn(": Cancelling duplicate plan for ", plan->key());
         }
         plan->cancel(); // cancel() also ends the signpost (SignpostDetail::Canceled).
-        return CompilationResult::CompilationDeferred;
+        if (!waitForThePlan) [[likely]]
+            return CompilationResult::CompilationDeferred;
+        // The key is in somebody else's hands; the promise is about the key, so wait for theirs.
+    } else {
+        m_plans.add(plan->key(), plan.copyRef());
+        m_totalLoad += planLoad(plan);
+        m_queues[tier].append(WTF::move(plan));
+        wakeThreads(locker, tier);
     }
-    m_plans.add(plan->key(), plan.copyRef());
-    m_totalLoad += planLoad(plan);
-    m_queues[tier].append(WTF::move(plan));
-    wakeThreads(locker, tier);
+    }
+    if (waitForThePlan) [[unlikely]] {
+        // Each wait gives up this thread's heap access (stops and collections go on around it); the completion runs
+        // every ready plan of the VM through the deferred-compilation callbacks, the caller's among them. Another
+        // thread's completion may have taken the caller's ready plan into its own hands first: it is "Compiling"
+        // until that thread has installed it and released the key, which the next wait waits for.
+        for (;;) {
+            waitUntilAllPlansForVMAreReady(planVM, planKey);
+            if (completeAllReadyPlansForVM(planVM, planKey) != Compiling)
+                break;
+        }
+    }
     return CompilationResult::CompilationDeferred;
 }
 
@@ -309,12 +345,14 @@ auto JITWorklist::completeAllReadyPlansForVM(VM& vm, JITCompilationKey requested
         Locker locker { *m_lock };
         for (auto& plan : myReadyPlans)
             m_finalizingPlans.remove(plan->key());
+        if (Options::useJSThreadsWaitForJITPlans()) [[unlikely]]
+            m_planCompiledOrCancelled.notifyAll(); // A requester may be waiting for its key to leave our hands (history §56).
     }
     return resultingState;
 }
 
 
-void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
+void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm, JITCompilationKey keyNotBeingFinalized)
 {
     DeferGC deferGC(vm);
 
@@ -374,6 +412,10 @@ void JITWorklist::waitUntilAllPlansForVMAreReady(VM& vm)
                     break;
                 }
             }
+
+            // SPEC-jit history §56: a ready plan that another thread took to finalize is not installed yet.
+            if (allAreCompiled && keyNotBeingFinalized && m_finalizingPlans.contains(keyNotBeingFinalized)) [[unlikely]]
+                allAreCompiled = false;
 
             if (allAreCompiled)
                 break;
@@ -436,6 +478,8 @@ void JITWorklist::cancelAllPlansForVM(VM& vm)
         Locker locker { *m_lock };
         for (auto& plan : myReadyPlans)
             m_finalizingPlans.remove(plan->key());
+        if (Options::useJSThreadsWaitForJITPlans()) [[unlikely]]
+            m_planCompiledOrCancelled.notifyAll();
     }
 }
 

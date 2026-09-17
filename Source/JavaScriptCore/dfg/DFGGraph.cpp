@@ -317,6 +317,8 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
     }
     if (node->hasStructureFlags())
         out.print(comma, node->structureFlags());
+    if (node->op() == CheckTraps && node->pollVisibilityData())
+        out.print(comma, "pollWrites(", listDump(node->pollVisibilityData()->heaps), ")");
     if (node->hasStorageAccessData()) {
         StorageAccessData& storageAccessData = node->storageAccessData();
         out.print(comma, "id"_s, storageAccessData.identifierNumber, "{"_s, identifiers()[storageAccessData.identifierNumber], "}"_s);

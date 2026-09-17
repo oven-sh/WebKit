@@ -1388,6 +1388,7 @@ public:
     Vector<uint32_t> m_uint32ValuesInUse;
     
     Bag<StorageAccessData> m_storageAccessData;
+    Bag<PollVisibilityData> m_pollVisibilityData;
     
     // In CPS, this is all of the SetArgumentDefinitely nodes for the arguments in the machine code block
     // that survived DCE. All of them except maybe "this" will survive DCE, because of the Flush

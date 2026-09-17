@@ -33,6 +33,7 @@
 #include "JSCJSValueInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "MaxFrameExtentForSlowPathCall.h"
+#include "VMLite.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include "WasmOperations.h"
@@ -493,6 +494,12 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
     GPRReg stackLimitGPR = Wasm::wasmCallingConvention().prologueScratchGPRs[0];
 
     CCallHelpers::JumpList slowPath;
+
+    // SPEC-ungil §I (tenth round): flag on, this entry is only handed out with the GIL on and before the first spawn
+    // (WebAssemblyFunction::jsCallICEntrypoint); call sites linked to it then go to the cold entry, which refuses a
+    // spawned thread, once a Thread has been spawned.
+    if (Options::useJSThreads()) [[unlikely]]
+        slowPath.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(addressOfAnyJSThreadEverSpawned())));
 
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::wasmContextInstancePointer);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, WebAssemblyFunction::offsetOfBoxedCallee()), scratchGPR);

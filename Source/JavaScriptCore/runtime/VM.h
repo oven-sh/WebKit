@@ -1203,7 +1203,14 @@ public:
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
 
-    bool mightBeExecutingTaintedCode() const { return m_mightBeExecutingTaintedCode.load(std::memory_order_relaxed); }
+    bool mightBeExecutingTaintedCode() const
+    {
+        if (gilOffWithProcessGate()) [[unlikely]] {
+            if (VMLite* lite = VMLite::currentIfExists())
+                return lite->mightBeExecutingTaintedCode; // K4.II.15: this thread's hint.
+        }
+        return m_mightBeExecutingTaintedCode.load(std::memory_order_relaxed);
+    }
 #if USE(BUN_JSC_ADDITIONS)
     // Set once the embedder starts using JSGlobalObject::m_asyncContextData (its
     // first AsyncLocalStorage); never cleared. Until then no async context can have
@@ -1212,7 +1219,16 @@ public:
     void setAsyncContextTrackingEnabled() { WTF::atomicStore(&m_asyncContextTrackingEnabled, true, std::memory_order_relaxed); }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return reinterpret_cast<bool*>(&m_mightBeExecutingTaintedCode); }
-    void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode.store(value, std::memory_order_relaxed); }
+    void setMightBeExecutingTaintedCode(bool value = true)
+    {
+        if (gilOffWithProcessGate()) [[unlikely]] {
+            if (VMLite* lite = VMLite::currentIfExists()) {
+                lite->mightBeExecutingTaintedCode = value;
+                return;
+            }
+        }
+        m_mightBeExecutingTaintedCode.store(value, std::memory_order_relaxed);
+    }
 
     AtomStringTable* atomStringTable() const { return m_atomStringTable; }
     WTF::SymbolRegistry& symbolRegistry() { return m_symbolRegistry.get(); }
@@ -1781,14 +1797,9 @@ public:
     {
         ASSERT(currentThreadIsHoldingAPILock());
         m_currentWeakRefVersion.fetch_add(1, std::memory_order_relaxed);
-        // V7: GIL-off the taint hint is shared by N lites — one lite's
-        // synchronous-execution boundary must not erase another lite's
-        // in-flight taint mark. Leave it sticky (over-tainting is the safe
-        // direction; the flag is already a conservative "might"). GIL-on /
-        // flag-off: byte-identical clear behind the read-only Config-page
-        // gate (same pattern as softStackLimitForCurrentThreadSlow).
-        if (!gilOffWithProcessGate()) [[likely]]
-            setMightBeExecutingTaintedCode(false);
+        // K4.II.15 (SPEC-ungil history, tenth round): GIL off the hint is per lite, so this clears the ending
+        // thread's own and no other thread's. GIL on / flag off: the VM's byte, as on main.
+        setMightBeExecutingTaintedCode(false);
     }
 
     uintptr_t currentWeakRefVersion() const { return m_currentWeakRefVersion.load(std::memory_order_relaxed); }

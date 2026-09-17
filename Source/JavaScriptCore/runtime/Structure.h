@@ -91,6 +91,14 @@ public:
 
     const Structure* structure() const { return m_structure; }
 
+    // SPEC-jit §5.6 "Deferred claims in flight": true while this object holds the members of a set it claimed.
+    bool holdsClaim() const { return watchpointsToFire().state() == IsWatched; }
+    // Fires now instead of at scope exit. For the transitions that publish and fire in one stop; world stopped.
+    void fireNow()
+    {
+        if (holdsClaim())
+            fireAllSlow();
+    }
 
 private:
     JS_EXPORT_PRIVATE void fireAllSlow();
@@ -1125,7 +1133,7 @@ public:
     void set##upperName(type newValue) \
     {\
         uint32_t setBits = (static_cast<uint32_t>(newValue) & s_##lowerName##Mask) << offset;\
-        if (Options::useJSThreads()) [[unlikely]] {\
+        if (Options::useTaggedButterflies()) [[unlikely]] {\
             setBitFieldConcurrently(setBits, s_##lowerName##Mask << offset);\
             return;\
         }\
@@ -1305,7 +1313,7 @@ private:
 
     void clearPreviousID()
     {
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!Options::useTaggedButterflies()) [[likely]] {
             if (hasRareData())
                 rareData()->clearPreviousID();
             else

@@ -110,7 +110,9 @@ namespace JSC {
     v(loopEntryIntoSupersededDFGGILOff) \
     v(loopEntryRefusedReplacementIsFTLGILOff) \
     v(watchpointFireWatcherless) \
-    v(deleteLostLaneRestart)
+    v(deleteLostLaneRestart) \
+    v(searchOperationClampedStaleStorageGILOff) \
+    v(newArrayWithSizeOperation)
 
 struct JSThreadsCounters {
 #define JSTHREADS_COUNTER_FIELD(name) std::atomic<uint64_t> name { 0 };

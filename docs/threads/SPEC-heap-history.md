@@ -1392,3 +1392,39 @@ Test: `gc-stress/destructor-takes-api-lock-inside-stop-gil-off.js` (`$vm.createD
 destructor takes a `JSLockHolder`): before (r9zb: the probe flag without the re-entry) 3 of 3 runs hang GIL off, stopped at 120 s; after (r9za) 5 of 5 pass in under a second GIL off; GIL on passes on both; the lock-free §10G test passes 3 of 3 on r9za. At the Bun level, `test/js/web/fetch` GIL off with the keep-alive thread hangs 4 of 4 runs
 on r9y and r9u (after `wasm-streaming.test.ts`, the stacks above) and completes 2 of 2 on r9za with the round
 start's counts (11,602 pass, 40 fail; r9b 1 of 1).
+
+
+### 37. Tenth landing round: window-liveness retention switched off (I12)
+
+What the constraint cost. With two or more clients attached, every collection rooted and traced what any parked client
+had allocated since the last marking (its blocks' newly allocated cells, and every precise allocation). An Eden
+collection therefore reclaimed almost nothing that was young: the full JetStream 2 list, GIL off, with one extra thread
+that only waits (`new Thread(() => Atomics.wait(...))`, which is what Bun's GIL-off test runs attach) ran 57-62 Full
+and 147-178 Eden collections and peaked at 2.4-2.8 GB resident, against 19-25 Full, 213-232 Eden and 1.2-1.35 GB
+without the constraint (three interleaved runs each; one thread alone: 1.57 GB; `main`: 2.07 GB); the scores are the
+same (253-259 against 256-263). It is also what the ninth round's open items "GIL-off memory with two or more
+allocating threads" and the `serve.test.ts` stream counts describe, and it is why a collection could not be conducted
+by anything but the one mutator of a single-threaded program without paying it (a service conductor thread tried this
+round: its client makes two).
+
+What it stood in for. The June hunt (`Tools/threads/bughunt/prev-gc-undermark-20260610/EVIDENCE.md`) found a live
+auxiliary cell (a `Map` buffer, a butterfly) that no scanned stack word and no traced heap edge reached, corrupting
+`repro-bigint-shared-ingest.js` 13 runs of 13 at four threads; the edge that was lost was never identified (its round
+5 target, the barrier and the stop protocol for storage installs, was not pursued once the retention stopped the
+corruption), and the ninth round recorded the residual as never closed. Since then the object model's ownership,
+publication order and barriers were rewritten (OM revisions 12-17) and five rounds closed ways for a thread to keep
+heap access, or to run, across a stop.
+
+What was run with the constraint off (`--useSharedGCWindowLivenessRetention=0`, Release, the pack's six GIL-off flags):
+the pack's reproducers - `repro-bigint-shared-ingest.js` 20 of 20, its two-thread form 20 of 20, the instrumented copy
+10 of 10, `min2.js` 20 of 20, variants A, B, C and no-teardown 10 of 10 each, Full-only 10 of 10, synchronous sweep 10
+of 10, no JIT 5 of 5, scribbled and zombie cells 10 of 10, and under `--verifyGC=1` (after marking, a second visitor
+re-marks from the same roots and asserts that every cell it reaches is marked: the lost edge itself, not its
+consequence) 10 of 10 and `min2.js` 10 of 10; the GIL-off corpus twice (366 pass, the one failure a GIL-on-only test;
+CVE lane 62 pass) and once more under `--verifyGC=1` (the same counts); the GC stress matrix over `gc-stress/` in its
+four modes (the same single premise failure as with the constraint on); SCALEBENCH at 4 and 8 threads, plain, with
+scribbled and zombie cells (checksums equal) and at 4 threads under the verifier. The constraint stays in the tree
+behind the option for a round; the rest of this round's battery (Debug, TSAN, the amplifier, Bun) runs with it off.
+Test: `gc-stress/eden-reclaims-young-garbage-with-parked-thread-gil-off.js` (a second thread leaves 2,000 dead young
+objects behind `WeakRef`s and parks; the main thread conducts one Eden collection): 1,506 reclaimed with the constraint
+on, 3 runs of 3 (the parked thread's current blocks are kept, with what they reach), at least 1,800 with it off.

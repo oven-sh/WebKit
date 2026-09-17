@@ -57,6 +57,7 @@
 #include "DFGOSREntrypointCreationPhase.h"
 #include "DFGObjectAllocationSinkingPhase.h"
 #include "DFGPhantomInsertionPhase.h"
+#include "DFGPollVisibilityPhase.h"
 #include "DFGPredictionInjectionPhase.h"
 #include "DFGPredictionPropagationPhase.h"
 #include "DFGPutStackSinkingPhase.h"
@@ -385,6 +386,7 @@ Plan::CompilationPath Plan::compileInThreadImpl()
             RUN_PHASE(performPutStackSinking);
         
         RUN_PHASE(performConstantHoisting);
+        RUN_PHASE(performPollVisibilityAnalysis); // GIL off only; before every consumer of the polls' write sets.
         RUN_PHASE(performGlobalCSE);
         RUN_PHASE(performGraphPackingAndLivenessAnalysis);
         RUN_PHASE(performCFA);
@@ -404,6 +406,7 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         if (changed) {
             // State-at-tail and state-at-head will be invalid if we did strength reduction since
             // it might increase live ranges.
+            RUN_PHASE(performPollVisibilityAnalysis);
             RUN_PHASE(performGlobalCSE);
             RUN_PHASE(performGraphPackingAndLivenessAnalysis);
             RUN_PHASE(performCFA);
@@ -418,6 +421,7 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         // then we'd need to do some simple SSA fix-up.
         RUN_PHASE(performGraphPackingAndLivenessAnalysis);
         RUN_PHASE(performCFA);
+        RUN_PHASE(performPollVisibilityAnalysis);
         RUN_PHASE(performLICM);
 
         // FIXME: Currently: IntegerRangeOptimization *must* be run after LICM.
@@ -432,6 +436,7 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         
         RUN_PHASE(performCleanUp);
         RUN_PHASE(performIntegerCheckCombining);
+        RUN_PHASE(performPollVisibilityAnalysis);
         RUN_PHASE(performGlobalCSE);
 
         // At this point we're not allowed to do any further code motion because our reasoning

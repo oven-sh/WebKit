@@ -1487,7 +1487,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (!newStructure || !newStructure->propertyAccessesAreCacheable())
                     return GiveUpOnCache;
 
-                if (Options::useJSThreads()) [[unlikely]] {
+                if (Options::useTaggedButterflies()) [[unlikely]] {
                     // SPEC-jit §5.5 Transition (OM E4-C, r17): a cached
                     // transition is the claim-first non-reallocating form with
                     // its runtime owner test; it needs a source that is not
@@ -1902,7 +1902,7 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
         // SPEC-jit section 5.5 (Task 8): deletes are transitions with slot
         // clearing; flag-on they require the locked/quarantined OM path, so
         // delete ICs are never created (generic operation handles them).
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return GiveUpOnCache;
 
         ASSERT(oldStructure);
@@ -2292,7 +2292,7 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         // SPEC-jit section 5.5 (Task 8): SetBrand is a structure-only
         // transition (OM N2); flag-on it requires the locked header-CAS
         // path, so the IC form is never created.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             return GiveUpOnCache;
 
         ASSERT(oldStructure);

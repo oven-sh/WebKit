@@ -101,6 +101,8 @@ void CCallHelpers::logShadowChickenTailPacket(GPRReg shadowPacket, GPRReg thisGP
 
 void CCallHelpers::maskButterflyTag(GPRReg destGPR)
 {
+    if (!Options::useTaggedButterflies())
+        return; // untagged words (SPEC-jit §5.5; OM G1): the top 16 bits are zero
     and64(TrustedImm64(static_cast<int64_t>(butterflyPointerMask)), destGPR);
 }
 
@@ -164,7 +166,7 @@ auto CCallHelpers::loadButterflyForRead(GPRReg baseGPR, GPRReg destGPR, Concurre
 {
     using namespace CCallHelpersConcurrentButterfly;
     JumpList slowCases;
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!Options::useTaggedButterflies()) [[likely]] { // flag off, and GIL on with one owner (SPEC-jit §5.5 "Untagged words")
         loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
         return slowCases; // I1: today's single load, nothing else
     }
@@ -207,7 +209,7 @@ auto CCallHelpers::loadButterflyForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg 
 {
     using namespace CCallHelpersConcurrentButterfly;
     JumpList slowCases;
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!Options::useTaggedButterflies()) [[likely]] { // flag off, and GIL on with one owner (SPEC-jit §5.5 "Untagged words")
         loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
         return slowCases; // I1
     }
@@ -256,7 +258,7 @@ auto CCallHelpers::loadButterflyForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg 
 
 void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, GPRReg result, GPRReg storageScratch, JumpList& slowCases, GPRReg structureIDGPR)
 {
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!Options::useTaggedButterflies()) [[likely]] { // flag off, and GIL on with one owner (SPEC-jit §5.5 "Untagged words")
         AssemblyHelpers::loadProperty(object, offset, result);
         return;
     }
@@ -287,7 +289,7 @@ void CCallHelpers::loadProperty(GPRReg object, GPRReg offset, GPRReg result, GPR
 
 void CCallHelpers::storeProperty(GPRReg value, GPRReg object, GPRReg offset, GPRReg scratch, GPRReg tidScratch, JumpList& slowCases, GPRReg structureIDGPR)
 {
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!Options::useTaggedButterflies()) [[likely]] { // flag off, and GIL on with one owner (SPEC-jit §5.5 "Untagged words")
         AssemblyHelpers::storeProperty(value, object, offset, scratch);
         return;
     }

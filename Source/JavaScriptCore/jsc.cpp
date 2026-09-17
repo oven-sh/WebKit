@@ -83,6 +83,7 @@
 #include "StructuredCloneTags.h"
 #include "SuperSampler.h"
 #include "TestRunnerUtils.h"
+#include "ThreadManager.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayInlines.h"
 #include "VMInlines.h"
@@ -5182,6 +5183,9 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
     vm.codeCache()->write();
 
     if (options.m_destroyVM || isWorker) {
+        // SPEC-api 4.6 item 4: a joined Thread's native thread may still hold its reference to the VM.
+        if (Options::useJSThreads())
+            ThreadManager::singleton().waitForCompletedThreadsToReleaseVM(vm);
         JSLockHolder locker(vm);
         // This is needed because we don't want the worker's main
         // thread to die before its compilation threads finish.

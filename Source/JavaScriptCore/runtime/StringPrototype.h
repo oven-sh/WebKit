@@ -66,6 +66,9 @@ JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSearch);
 JSValue stringSearchSlow(JSGlobalObject*, JSString* thisString, JSValue regexpValue);
 JSValue stringMatchAllSlow(JSGlobalObject*, JSString* thisString, JSValue regexpValue);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSplit);
+// GIL off, the split paths' offset vector: this thread's counterpart of vm.stringSplitIndice (grow-only, reused from
+// call to call, never holds a cell). Same reentrancy assumption as the VM's: no split runs inside another's fill.
+JS_EXPORT_PRIVATE Vector<unsigned>& stringSplitIndicesForCurrentThreadGILOff();
 JSCell* stringSplitFast(JSGlobalObject*, JSString* thisString, JSString* separatorString, unsigned limit);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncSubstring);
 JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIterator);

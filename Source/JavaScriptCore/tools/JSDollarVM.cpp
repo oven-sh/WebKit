@@ -63,6 +63,8 @@
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
 #include "JSONObject.h"
+#include "JSModuleLoader.h"
+#include "JSLexicalEnvironmentInlines.h"
 #include "JSThreadsSafepoint.h"
 #include "JSPromise.h"
 #include "JSString.h"

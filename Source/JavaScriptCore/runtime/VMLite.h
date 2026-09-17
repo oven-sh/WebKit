@@ -44,6 +44,7 @@
 #include "DFGDoesGCCheck.h" // AB18-C per-lite DoesGC validation word (only forward-declares VM — no cycle with the "must not include VM.h" rule below).
 #include "Interpreter.h" // JSOrWasmInstruction (interpreter/Interpreter.h:61); brings JSCJSValue.h (EncodedJSValue).
 #include "JSExportMacros.h"
+#include "Options.h" // currentButterflyTID(): SPEC-objectmodel G1
 #include "VMExceptionScopeVerificationState.h" // Obligation 10: per-lite EXCEPTION_SCOPE_VERIFICATION state (debug-only L2 tail append below).
 #include "VMThreadContext.h" // §A.2.1 per-lite traps/stack limits (brings VMTraps.h; VMLite is only forward-declared there — no cycle).
 #include "WriteBarrier.h" // AB-17 sort-scratch reroute: Group-3 m_cachedSortScratch slot type (no VM.h dependency).
@@ -116,6 +117,14 @@ extern "C" __attribute__((tls_model("initial-exec"))) constinit thread_local VML
 #else
 extern "C" constinit thread_local VMLite* g_jscCurrentVMLite;
 #endif
+
+// Set before the first spawned Thread of the process can run and never cleared (SPEC-ungil §I, tenth round): while it
+// is 0 every JS frame belongs to a carrier, so nothing reachable only from carriers needs a spawned-thread check.
+// Generated code tests the byte (the warm JS->wasm entry, JSToWasm.cpp); ThreadManager::allocateSpawnedThreadState
+// writes it while holding the spawning VM's GIL.
+JS_EXPORT_PRIVATE extern std::atomic<uint8_t> g_jscAnyJSThreadEverSpawned;
+inline bool anyJSThreadEverSpawned() { return g_jscAnyJSThreadEverSpawned.load(std::memory_order_relaxed); }
+inline const uint8_t* addressOfAnyJSThreadEverSpawned() { return reinterpret_cast<const uint8_t*>(&g_jscAnyJSThreadEverSpawned); }
 
 // =============================================================================
 // VMLitePrimitives — frozen ABI artifact (SPEC-vmstate §6.3, Groups 1-3).
@@ -306,6 +315,13 @@ public:
     // (level 1, U-T3) is set: 0 => VM Group-3 storage (a second, GIL-on VM's
     // protocol stays intact — U0b), 1 => lite storage.
     uint8_t gilOff { 0 };
+
+    // K4.II.15 (SPEC-ungil history, tenth round): GIL off the "tainted code may have run in this synchronous execution"
+    // hint is this thread's. Written by the owner only - Baseline/DFG/FTL prologues of code blocks that could be
+    // tainted store 1 through loadVMLite, C++ through VM::setMightBeExecutingTaintedCode - and cleared by the owner
+    // at the end of its synchronous execution. GIL on and flag off the VM's byte is authoritative.
+    uint8_t mightBeExecutingTaintedCode { 0 };
+    static constexpr ptrdiff_t offsetOfMightBeExecutingTaintedCode() { return OBJECT_OFFSETOF(VMLite, mightBeExecutingTaintedCode); }
 
     // ANNEX EXIT1/A36 (r31/r32) carrier/lite state machine. EVERY transition
     // AND every read is under VMLiteRegistry::lock. LIVE -> TEARDOWN (owner's
@@ -626,7 +642,13 @@ static_assert(OBJECT_OFFSETOF(VMLite, primitives) == 0);
 ALWAYS_INLINE ButterflyTID currentButterflyTID()
 {
     VMLite* lite = VMLite::currentIfExists();
-    return lite ? lite->tid : 0;
+    if (!lite)
+        return 0;
+    // SPEC-objectmodel G1: one owner with the GIL. lite->tid itself stays the ThreadManager's (thread identity,
+    // teardown bookkeeping); only the butterfly tag derived from it is shared.
+    if (!Options::useTaggedButterflies()) [[unlikely]]
+        return 0;
+    return lite->tid;
 }
 
 // TID-tag hook (§6.7; jit CS3/I19 provider). Null by default; jit task 1b

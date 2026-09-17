@@ -39,6 +39,7 @@
 #include "JSObjectInlines.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "JSThreadsSafepoint.h"
+#include <wtf/SpinBackoff.h>
 #include "LLIntEntrypoint.h"
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
@@ -64,11 +65,12 @@ RecursiveLock& gilOffCompilationLock()
 void lockGILOffCompilationLockContended(VM& vm)
 {
     RecursiveLock& lock = gilOffCompilationLock();
+    SpinBackoff backoff;
     while (!lock.tryLock()) {
         if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
             continue; // Parked across a stop window: retrying tryLock is the re-validation.
         handleTrapsForCurrentThreadIfNeeded(vm, VMTraps::NeedStopTheWorld);
-        Thread::yield();
+        backoff.spinOnce();
     }
 }
 

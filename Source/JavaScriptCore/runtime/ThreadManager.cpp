@@ -331,6 +331,7 @@ bool ThreadManager::isJSThreadCurrent()
 
 RefPtr<ThreadState> ThreadManager::allocateSpawnedThreadState(VM& vm)
 {
+    g_jscAnyJSThreadEverSpawned.store(1, std::memory_order_release); // Before the Thread exists; see VMLite.h.
     // UNGIL U0b (U-T6): under gilOffProcess exactly ONE VM per process — the
     // m_gilOff winner (U0c) — may hold per-thread clients, hence spawn.
     // A loser VM's spawn returns null and the host call throws RangeError.
@@ -406,6 +407,32 @@ void ThreadManager::unregisterThread(ThreadState& state)
         m_retiredSpawnedTIDs.append(state.tid);
         maybeArmAndSealRebiasLocked();
     }
+}
+
+void ThreadManager::noteThreadWillPublishCompletion(VM& vm)
+{
+    Locker locker { m_vmHoldersLock };
+    m_completedThreadsHoldingVM.add(&vm, 0).iterator->value++;
+}
+
+void ThreadManager::noteExitedThreadReleasedVM(const void* vmAddress)
+{
+    Locker locker { m_vmHoldersLock };
+    auto iterator = m_completedThreadsHoldingVM.find(vmAddress);
+    if (iterator == m_completedThreadsHoldingVM.end())
+        return; // The thread never published completion (the OS refused it, or it died abnormally).
+    if (!--iterator->value)
+        m_completedThreadsHoldingVM.remove(iterator);
+    m_vmHoldersCondition.notifyAll();
+}
+
+void ThreadManager::waitForCompletedThreadsToReleaseVM(VM& vm)
+{
+    // GIL on the exiting thread finishes its tail under the API lock, so a caller that held it would wait forever.
+    RELEASE_ASSERT(!vm.currentThreadIsHoldingAPILock());
+    Locker locker { m_vmHoldersLock };
+    while (m_completedThreadsHoldingVM.contains(&vm))
+        m_vmHoldersCondition.wait(m_vmHoldersLock);
 }
 
 // ---------------- UNGIL §A.3.6 carrier TIDs (ANNEX A36; U-T6) ----------------
@@ -800,6 +827,7 @@ static void closeThreadInboxAndComplete(VM& vm, VMLite& lite, ThreadState& state
         }
 
         Vector<Ref<AsyncTicket>> joiners;
+        ThreadManager::singleton().noteThreadWillPublishCompletion(vm); // SPEC-api 4.6 item 4
         {
             Locker joinLocker { state.joinLock };
             state.phase.store(phase, std::memory_order_release);

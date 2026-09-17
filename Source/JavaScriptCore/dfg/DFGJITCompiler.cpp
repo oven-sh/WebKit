@@ -166,8 +166,13 @@ void JITCompiler::compileEntry()
     // both normal return code and when jumping to an exception handler).
     emitFunctionPrologue();
     jitAssertCodeBlockOnCallFrameWithType(GPRInfo::regT2, JITType::DFGJIT);
-    if (m_graph.m_codeBlock->couldBeTainted())
-        store8(TrustedImm32(1), vm().addressOfMightBeExecutingTaintedCode());
+    if (m_graph.m_codeBlock->couldBeTainted()) {
+        if (vm().gilOff()) [[unlikely]] { // K4.II.15: the running thread's hint, not the VM's.
+            loadVMLite(GPRInfo::regT2);
+            store8(TrustedImm32(1), Address(GPRInfo::regT2, VMLite::offsetOfMightBeExecutingTaintedCode()));
+        } else
+            store8(TrustedImm32(1), vm().addressOfMightBeExecutingTaintedCode());
+    }
 }
 
 void JITCompiler::compileSetupRegistersForEntry()

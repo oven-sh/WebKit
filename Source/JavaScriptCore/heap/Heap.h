@@ -1821,7 +1821,7 @@ private:
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;
     unsigned m_numberOfActiveParallelMarkers { 0 };
-    unsigned m_numberOfWaitingParallelMarkers { 0 };
+    unsigned m_numberOfWaitingParallelMarkers WTF_GUARDED_BY_LOCK(m_markingMutex) { 0 };
     // SPEC-congc §9.1(2) marker-pause pair (CG-3a; ANNEX CGP1 BINDING).
     // BOTH guarded by m_markingMutex; participant set is EXACTLY the helpers
     // inside drainFromShared(HelperDrain) (F14 — the counters' only
@@ -2342,11 +2342,11 @@ private:
 
     // Guarded by m_markingMutex: visitors between entry to and return from
     // SlotVisitor::drainFromShared (each is active, waiting for work, or
-    // paused). Balanced on every return, unlike m_numberOfWaitingParallelMarkers,
-    // which is only the stealSomeCellsFrom partitioning hint and keeps the
-    // pre-threads behavior of staying incremented across returns. The
-    // marker-pause predicate is m_numberOfParallelMarkersInDrainFromShared ==
-    // m_pausedParallelMarkers, and runEndPhase asserts it is zero.
+    // paused). Balanced on every return (as m_numberOfWaitingParallelMarkers,
+    // the stealSomeCellsFrom partitioning hint, has been since upstream's scope
+    // exit in drainFromShared). The marker-pause predicate is
+    // m_numberOfParallelMarkersInDrainFromShared == m_pausedParallelMarkers, and
+    // runEndPhase asserts it is zero.
     unsigned m_numberOfParallelMarkersInDrainFromShared { 0 };
 
     // Config-independent ordering guards: each trailer member is declared

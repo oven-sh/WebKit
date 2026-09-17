@@ -70,10 +70,19 @@ enum class DateField : int64_t {
 // Phantom* allocation nodes are deliberately absent: they emit no code (the
 // allocation was sunk; materialization happens at OSR exit), so there is no
 // runtime park site under them.
-inline bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
+inline bool jsThreadsParkableSlowPathClobbersHeapFactsGILOff(Graph&, Node*);
+// The gate is a separate always-inlined function: the three consumers call this once per node and phase, and with the
+// switch in the same body the compiler kept the whole function out of line, so flag off and GIL on paid a call for
+// the early return (1.5 % of Babylon's instructions flag off).
+ALWAYS_INLINE bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
 {
     if (!Options::useJSThreads() || Options::useThreadGIL()) [[likely]]
         return false;
+    return jsThreadsParkableSlowPathClobbersHeapFactsGILOff(graph, node);
+}
+
+inline bool jsThreadsParkableSlowPathClobbersHeapFactsGILOff(Graph& graph, Node* node)
+{
     switch (node->op()) {
     // GC-heap allocations modeled with write(HeapObjectCount) (the
     // allocation-class widening the audit's P10c row charters).
@@ -908,9 +917,21 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 // stay poll-bounded too, because in this design plain
                 // (non-SAB) ArrayBuffers are shareable across Threads and
                 // get no coverage from the ECMA SAB memory model.)
-                write(NamedProperties);
-                write(IndexedProperties);
-                write(Butterfly_publicLength);
+                // Tenth round (SPEC-jit history §50): in FTL plans DFGPollVisibilityPhase
+                // attaches to a poll inside a loop the value heaps read by the backward
+                // slices of that loop's Branch/Switch conditions, and the poll writes those
+                // instead of the whole set: whatever can decide control flow is still read
+                // again after every poll, data-only reads may be hoisted. No attachment
+                // (DFG plans, polls outside loops, loops the analysis gave up on) = the set.
+                PollVisibilityData* pollVisibility = node->pollVisibilityData();
+                if (pollVisibility) {
+                    for (AbstractHeap heap : pollVisibility->heaps)
+                        write(heap);
+                } else {
+                    write(NamedProperties);
+                    write(IndexedProperties);
+                    write(Butterfly_publicLength);
+                }
                 // Tier-B B3 / map-MC-JIT.md S2(a) (B3-JIT-POLL-CLOBBER-LINT):
                 // the BUTTERFLY POINTER itself MUST NOT survive the poll in
                 // unregistered code. The precise-jettison story above covers
@@ -956,15 +977,19 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 // at the next stop, which this poll may be parked in. A hoisted
                 // {vector, length} pair would otherwise survive the poll and
                 // index freed memory.
-                write(MiscFields);
-                write(Absolute);
-                write(JSMapFields);
-                write(JSSetFields);
-                write(JSWeakMapFields);
-                write(JSWeakSetFields);
-                write(JSInternalFields);
-                write(JSDateFields);
-                write(RegExpObject_lastIndex);
+                // (With an attached set the memory-safety half of this comment is carried
+                // by the epoch bump of the stop that retires the quarantine, ungil §N.6.)
+                if (!pollVisibility) {
+                    write(MiscFields);
+                    write(Absolute);
+                    write(JSMapFields);
+                    write(JSSetFields);
+                    write(JSWeakMapFields);
+                    write(JSWeakSetFields);
+                    write(JSInternalFields);
+                    write(JSDateFields);
+                    write(RegExpObject_lastIndex);
+                }
                 def(HeapLocation(InvalidationPointLoc, Watchpoint_fire), LazyNode(node));
                 return;
             }
@@ -1949,7 +1974,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         
     case GetButterfly:
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 9: flag-on, GetButterfly emits the
             // read predicate (structureID for the ARM64 R7/F7 dependency,
             // indexing byte for the AS-rule SW test).
@@ -2153,7 +2178,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiGetByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on, the FTL lowering emits
             // the read predicate (indexing byte for the conservative AS-rule
             // SW test on prototype-base / MaybeArrayStorage cases).
@@ -2172,7 +2197,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiPutByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on write predicate
             // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
             read(JSCell_indexingType);
@@ -2205,7 +2230,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiDeleteByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on write predicate
             // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
             read(JSCell_indexingType);
@@ -2225,7 +2250,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         unsigned identifierNumber = node->storageAccessData().identifierNumber;
         AbstractHeap heap(NamedProperties, identifierNumber);
         write(heap);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 9: flag-on, out-of-line PutByOffset
             // re-loads the tagged butterfly from the base object (plus the
             // structureID for the ARM64 R7/F7 dependency and possibly the
@@ -2486,7 +2511,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(sourceHeap);
@@ -2510,7 +2535,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(IndexedContiguousProperties);

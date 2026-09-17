@@ -316,7 +316,7 @@ public:
         // Flag-on the probe's transition arm is the claim-first form and refuses
         // PreciseAllocation, copy-on-write and ArrayStorage instances at runtime
         // (SPEC-jit §5.5); sources of those shapes are not worth an entry.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             IndexingType mode = oldStructureID.decode()->indexingMode();
             if (hasAnyArrayStorage(mode) || isCopyOnWrite(mode))
                 return;

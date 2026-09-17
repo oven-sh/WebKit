@@ -1843,3 +1843,255 @@ I21 held for the C++ writers of a flat butterfly's length (the CAS-max of i03-t5
 hole store, push or pop wrote the length with a plain store, lowering a racing thread's CAS-max bump GIL off and hiding
 its element. SPEC-jit §5.5's length-update rule and history §46 have the sites and the fix.
 
+
+## §35. Tenth landing round: `Object.values` fills its result in two walks (AUDIT R10-5)
+
+The tenth round's base brought a fast path for `Object.values` (upstream f37e63364972): one walk counts the target's
+enumerable indexed and named properties, `JSArray::tryCreate` allocates a Contiguous array of that length, and a
+second walk stores each value at the next index through `ContiguousData::at`, whose index check is a Debug
+assertion. Flag off and GIL on the two walks agree: nothing between them runs JS or hands the GIL over (the
+allocation can collect, not call out). GIL off the second walk re-read `target->structure()` and re-walked the
+indexed storage, so a thread that added a named property (a new structure, or an in-place add to a dictionary) or
+pushed an element between the walks made it store more values than it had allocated for - past the end of the
+result's butterfly - and a thread that deleted left trailing holes. It is I42's consumer shape (several slots read
+under one validation, then stored), with one difference: the target of the stores is a fresh array no other thread
+can see, so storing before the re-check is harmless as long as every store is in bounds.
+
+Rule (GIL off; flag off and GIL on keep upstream's code): the fast path takes one Structure snapshot and walks that
+same Structure both times, so the named count is fixed by construction; it is refused for dictionary structures,
+whose table changes in place under the same Structure; the indexed walk stops at the count it allocated for; after
+the fill and a load-load fence it requires that both walks produced exactly the counted number of values, that the
+target still has the snapshot's StructureID, and that no stored value is empty (a slot a racing delete cleared reads
+empty before the delete's transition is visible). If any of these fails the fresh array is dropped and the generic
+path runs, which reads each property on its own (I42). A value read under the snapshot and confirmed by the re-check
+is a read linearized before any later transition, which the staleness model allows.
+Test: `shared-objects/object-values-vs-add-gil-off.js` (one thread calls `Object.values` on an object with named
+properties and on one that also has elements, while two threads add and delete named properties and one grows and
+rewrites the elements): Debug 3 of 3 runs assert on the round's first build (`index == result->length()` twice, the
+contiguous storage's `index < m_length` once - the out-of-bounds store); Release stores past the array silently.
+
+
+## §36. Tenth landing round: GIL on, the mutator's property-table walk is the flag-off walk (L6-G)
+
+L6 (iii) sends every flag-on mutator lookup that misses the inline caches - `Structure::get` from the C++ get, put,
+in and delete paths - through `getConcurrently`: resolve the transition chain, then a seqlock-validated probe of the
+table (`PropertyTable::findConcurrently`), because with the GIL off another mutator may be editing a dictionary's
+table, stealing a table for a successor structure, or materializing one. Profiles of the tenth round's base GIL on put
+`findConcurrently` at 3.4-4.3 % of all instructions on FlightPlanner (133-148 samples of 2M where flag off has none in
+its top list) and `findConcurrently` + `getConcurrently` at 1.8 % on typescript. GIL on none of those writers can run
+during the walk: they are all mutator operations, a mutator holds the VM's GIL across a C++ property operation, and
+the GIL changes hands only inside blocking primitives (jit I21) - the argument E4-G (§33) already rests on. So in a
+GIL-on process the walk is the flag-off one (materialize the table if needed, plain probe); a GIL-off process keeps
+L6 (iii). Compiler threads and the collector are untouched (they never mutate tables and read through their own
+Concurrently paths in every configuration). Test: the existing `objectmodel/gil-on-unclaimed-transitions-across-handoffs.js`
+(property adds and reads on shared objects across every GIL handoff primitive) and the dictionary/structure corpus in
+GIL-on mode; measured in PERF-RESULTS (tenth round).
+
+
+## §37. Tenth landing round: GIL on, the C++ publication helpers store instead of compare-and-swapping (E4-G, extended)
+
+E4-G (§33) removed the StructureID claim from the inline caches' owner transitions GIL on and made the C++ E4-C leg
+store nuked(S) instead of claiming it, on the argument that GIL on no other mutator can be inside a window on the same
+object: the GIL is handed over only inside blocking primitives, and none of the windows contains one. The C++ helpers
+under those legs kept their GIL-off forms: `storeTaggedButterflyWordConcurrent` published every owner install with a
+`lock cmpxchg` loop (whose only tolerated failure is a racing foreign SW flip - a foreign MUTATOR), the E4-C growth
+leg published its grown butterfly with `casButterfly` (whose only failure is "defensive un-claim + RESTART"), the
+butterfly-less N2-LF leg claimed the StructureID lane with a CAS, and every butterfly copy or clear went word by word
+through an out-of-line loop (`butterflyConcurrentCopyWordsSlow`), which exists because a foreign thread's first store
+can land in the source during the copy. A reduced case (megamorphic adds that grow out-of-line storage, 400,000
+objects of 16 shapes) ran 1.39x flag off's instructions GIL on, with `storeTaggedButterflyWordConcurrent`,
+`casButterfly`, the copy loop and `tryPutDirectTransitionConcurrent` together a quarter of the samples; typescript GIL
+on had the same four symbols at 3-4 % of all instructions.
+
+Rule (GIL on, i.e. gilOffProcess == 0; a GIL-off process is unchanged): those read-modify-writes are stores and the
+copies are the flag-off memcpy/memset. What each CAS excluded was another mutator's write to the same word between
+this thread's load and store; GIL on there is none (E4-G's argument, unchanged), and the parties that do run
+concurrently - the marker, compiler threads - only read these words, for which the publication order (contents,
+store-store fence, tagged word; nuke, fence, word, fence, StructureID) is kept exactly. The owner/shape witnesses the
+CAS loops carried as release assertions stay as assertions on the loaded word. Test: the existing
+`objectmodel/gil-on-unclaimed-transitions-across-handoffs.js` (adds, growths and reads on shared objects across every
+handoff primitive, values checked) and the GIL-on corpus; measured in PERF-RESULTS (tenth round).
+
+
+## §38. Tenth landing round: GIL on, the owner materializes a CopyOnWrite butterfly without the cell lock (E4-G, §4.8)
+
+The first write to an array literal materializes its CopyOnWrite butterfly. With the flag on every materialization,
+the owner's included (review round 3), goes through one cell-locked serialization point so that an owner and a foreign
+materializer cannot both publish: lock the cell, re-read the StructureID and the word (seq_cst), claim the ID with a
+CAS, publish {header, word} with a 128-bit DCAS (or the fenced CAS order on a precise allocation), unlock - five
+locked read-modify-writes. Two million calls of `var a = [0, 0, 0, 0]; for (i < 4) a[i] = n + i` take 607 M cycles
+flag off and 1,518 M GIL on, 60 % of them in `tryMaterializeCopyOnWriteButterflyForSharedWrite`; stanford-crypto-aes
+GIL on has the function, `casButterfly` and the transition watchpoint at 5 % of its instructions.
+
+GIL on the serialization point has nobody to serialize: the GIL is handed over only inside blocking primitives and the
+materialization contains none, so no other mutator - owner or foreign - can be between its first read and its last
+store (E4-G's argument, §33 and §37). The owner's materialization (`!butterflyWriterIsForeign(word)`; CopyOnWrite
+words are never SW=1 or segmented, I35) is therefore the flag-off routine with the tagged word: copy, storeStoreFence,
+`nukeStructureAndSetButterfly` (nuked(S), fence, the word tagged (currentTID, 0) stored, fence), `setStructure`, the
+object's write barrier. The marker and compiler threads see the order they see flag off. A thread that is not the
+word's writer still fires F2 when a set is valid and takes the cell-locked route: its F2 obligation, and the restart
+after the stop, are not what this removes. A GIL-off process is unchanged.
+Measured (six million calls, cycles): flag off 600 M; GIL on 1,495 M before, 914 M with the owner leg. A third of what was
+left was one locked instruction per call in neither leg: every transition out of an original array Structure fires
+that Structure's transition watchpoint set again, the set is thin and already invalidated after the first fire, and
+the flag-on thin store (`InlineWatchpointSet::tryStoreThinState`, a CAS because the word is shared) re-stored the value
+it had just read. It now returns when the word already holds the desired value, in both GIL modes: the store would
+have been a no-op that linearizes at the read.
+Test: `objectmodel/gil-on-cow-materialization-across-handoffs.js` (array literals written by their allocating thread
+and by another one on either side of every handoff primitive; contents and lengths checked; the literal's shared
+butterfly never changes); the existing `cve/mc-lock-cow-materialize-race.js` and the CopyOnWrite corpus in both modes.
+
+
+## §39. Tenth landing round: GIL on, every thread is the owner (G1)
+
+Where GIL on stood after the ninth round: JetStream 2 at 0.908 of flag off, the Average sub-score 0.895. Polling traps,
+the other thing GIL on has and flag off does not, cost 5.5 % of instructions and 0.5 % of cycles (`main` with
+`--usePollingTraps=1` against `main`, 36 tests, geometric mean); GIL on against flag off is 11.4 % of instructions and
+8.4 % of cycles. The rest is the object model's presence in generated code: every butterfly load masks the tag, every
+store compares the word's tag with the thread's, every transition sits behind an owner check, arrays raise their
+length through a helper. Generated code, GIL on against `main` with polling traps: delta-blue FTL 105 KB against 87,
+DFG 135 against 106; ai-astar FTL 65 against 39, DFG 94 against 47 (and 29 FTL compilations against 22); cycles 1.33x
+flag off on delta-blue, 1.18x on ai-astar, 1.16x on richards. E4-G (§33), its extension to the C++ helpers (§37), L6-G
+(§36) and the CopyOnWrite leg (§38) each removed one synchronization the GIL makes redundant, on one argument: with
+the GIL on the running mutator has no concurrent mutator. The tag itself is the last such thing: it records which
+thread may write an object without synchronizing, and GIL on every thread may.
+
+Rule G1: in a GIL-on process every thread's butterfly TID is 0. `currentButterflyTID()` and the tag word the JIT reads
+(jit R5, `g_jscButterflyTIDTag`) return 0 there; nothing else changes in C++, where every owner test now passes on
+every thread and every foreign leg is dead code. Words are their payloads, so the tiers emit the flag-off access forms
+(SPEC-jit §5.5, history §52). What is given up is the observability of ownership GIL on: a test that reads
+`$vm.butterflyOwnerTID`, expects a thread-local set to fire on another thread's first write, or tells the generic path
+from the fast one by an ArrayStorage conversion sees the single-owner answer. Three tests of the corpus do
+(`objectmodel/n1i-instance-keyed-ownership.js`, `objectmodel/owner-transitions-after-fire-claim-first.js`,
+`jit/dfg-array-shift-elements-race.js` part 1); they keep their GIL-off runs, and run GIL on with
+`--useJSThreadsSingleOwnerWithGIL=0`, which restores per-thread tags (and the tagged code) for exactly this purpose.
+The rest of the GIL-on corpus (340 tests) and the CVE lane (48) pass unchanged on an experiment that changed only the
+two TID providers.
+
+Why no storage pointer survives a handoff. The GIL changes hands only inside blocking host calls (`Atomics.wait`,
+`join`, `Lock`/`Condition` waits, the property-wait path) - calls from JS into C++. Flag-off JSC already assumes that a
+call may run arbitrary JS that reallocates any butterfly: generated code reloads storage after every call (calls clobber
+`JSObject_butterfly`), and C++ re-fetches after anything that can call out. A handoff inside such a call is one more
+way for "other JS ran", and the other thread's JS is ordinary JS. Embedders that enter the VM from several threads
+under the API lock are the same situation and are supported on `main`.
+C++ follows generated code. With the tags gone the flag-on C++ paths were the remaining object-model cost GIL on:
+stanford-crypto-aes spent 1,900 of 7,900 instruction samples in `ensureLengthSlowConcurrent`,
+`trySetIndexQuicklyConcurrent`, `putIndexConcurrent`, `casButterfly` and the CopyOnWrite materializer where flag off
+spends 700 in `ensureLengthSlow`, `reallocArrayRightIfPossible` and `convertFromCopyOnWrite` (fresh copies instead of
+in-place growth, per-element dispatch on the word); Air and typescript the concurrent named-put path. The gates of the
+object-model files (`JSObject*`, `JSArray*`, `Structure*`, `PropertyTable.h`, `ArrayPrototype*`, `SparseArrayValueMap.h`,
+`JSCellInlines.h`, `ButterflyInlines.h`) are keyed on `useTaggedButterflies` like the emitters, so a single-owner GIL-on
+process runs `main`'s bodies; the thread-restriction checks and the concurrent helpers' own assertions keep
+`useJSThreads`. The flag-on bodies remain valid on untagged words (they ran on them before this change, with every
+owner test passing), and stubs compiled with flag-on forms still call them.
+Tests: `objectmodel/gil-on-single-owner-across-handoffs.js` (objects and arrays allocated by one thread and grown,
+reshaped, shifted, sliced, deleted from and frozen by others, in turns separated by every handoff primitive, from
+LLInt through FTL, values checked; `$vm.butterflyOwnerTID` is 0 for an object a spawned thread allocated), the
+existing handoff tests of §33/§38, and the GIL-on corpus.
+
+
+## §40. Tenth landing round: the Double promotion learns from the request, not from the lanes (T4-P, amended)
+
+History §28's promotion decides that a site is numeric by sampling the lanes of the array that demoted the site's
+recommendation: 24 from the front and 8 spread over the rest, all numbers, at least one not an int32. That misses the
+arrays it was written for whenever the doubles are few or late. `navier-stokes` allocates six arrays of 16,900 lanes
+per iteration, fills them with the integer 0 and then runs a solver whose first double store turns each of them
+Int32->Double flag off; GIL off T4-O executes that request as Int32->Contiguous, the site's profile learns Contiguous
+at the next iteration, and the sampled lanes of the previous iteration's array are integer zeros (boundary cells and
+cells the solver wrote 0 into), so the promotion never fires: the test ran 2.45 times the instructions of GIL on, all
+of it in generated code working on boxed doubles. `ML` (matrix rows created as `new Array(n)` and zero-filled) ran
+1.89 times.
+
+The substitution itself is the better witness: an Int32->Double request means a double was stored into an all-int32
+array, which is what makes the flag-off profile recommend Double. `relabelIndexingShapeConcurrent` records the array's
+address in a 256-entry direct-mapped process table when it substitutes (GIL off only), and `updateProfile` treats an
+array found there as numeric. The table holds addresses, not references: nothing dereferences an entry, a stale entry
+can at worst promote one site wrongly, and that is the case the demotion set already handles (the site's Double arrays
+meet a non-number, the set fires, the site is never promoted again). The table is cleared when a collection ends, so
+an address is not compared across a reuse of its cell. Owner-only sampling (§28) does not apply to the address test.
+Test: `objectmodel/double-array-profile-promotion-by-request-gil-off.js` (a site whose arrays are 4,096 lanes of 0
+and receive doubles only in three lanes the sampling never reads: ArrayWithContiguous on every call before,
+ArrayWithDouble from the second call on after, in Release, Debug and TSan builds; sums agree on four threads; a site
+of the same shape that also stores a string settles Contiguous with one or two stop requests over 20,000 arrays).
+Two limits, both measured. The promotion needs the site to allocate again after the request: `navier-stokes`
+allocates its six arrays once per run (its setup runs once, not per iteration), so nothing a profile learns can
+reach them, and the test is unchanged (10.6 G instructions GIL off against 4.0 G GIL on); `ML` promoted six sites and
+did not move either (53.2 G), because its hot loops read rows that arrive from many sites in three shapes (Int32,
+Contiguous, Double) and compile to a MultiGetByVal with unboxing. Both need the transition itself (history §29; Open
+items). And a profile can forget the array before the request: the lower tiers' tier-up checks consume the profile's
+last-array word, so a long fill loop in the allocating function makes the site learn Int32 from the array while it
+is still all int32 (the test fills with `fill(0)` for that reason; flag off the same loss exists and is hidden by the
+in-place conversion).
+Measured in PERF-RESULTS (tenth round): navier-stokes and ML GIL off.
+
+## §41. Tenth landing round: the rest of the multi-slot readers take §30's rule (AUDIT R10-24)
+
+The tenth round's two-hour amplifier campaign crashed once in `cve/mc-val-multislot-clone.js`, GIL off (signal 11; one
+run in about 410). Amplified alone, 2,000 runs per lane with the machine loaded: 13 to 25 crashes per lane on every
+build of the round including the rebased tree it started from (the rate does not depend on window liveness retention
+either), so the defect is older than the round. All of 59 recorded faults are one instruction: the type-byte load of
+`Stringifier::appendStringifiedValue` on a null cell, called from `Stringifier::Holder::appendNextProperty` - the
+general `JSON.stringify` walker passed an empty `JSValue` it had read from a property slot, and an empty value tests
+as a cell.
+
+How a slot the validated structure lists can read empty GIL off: the object is a cacheable dictionary (the test's
+object has some 500 properties), whose adds edit the property table in place and store the value afterwards, both
+inside the writer's cell lock (SPEC-objectmodel §6, L3: dictionary readers take the cell lock). The stringifier lists
+the table once, under the structure's lock but not the cell's, and later reads each listed offset behind a
+structure-ID comparison; a dictionary's ID does not change on an in-place add, and between the moment the table edit
+becomes visible (the structure's lock is released) and the value store a few instructions later the listed slot is
+empty. Nothing can park the writer there (no poll, collections deferred), so the window is a few nanoseconds unless
+the scheduler takes the writer off its core inside it: that is why the rate follows machine load (0 in 12,000
+amplified runs on a lightly loaded machine, 16 in 2,400 with each run pinned to one core, on the same build).
+§30 found the same read in the fast data-property copies and gave the rule; its sweep stopped at the copies. The
+readers it missed, all behind `canPerformFastPropertyEnumeration[Common]`-style admission, which admits cacheable
+dictionaries:
+
+| reader | what an empty read did |
+|---|---|
+| `Stringifier::Holder::appendNextProperty` (two arms: data-only and accessor-tolerant) | null dereference (above) |
+| `FastStringifier::append` (object arm) | the same dereference; its flag-on structure check precedes the read and says nothing about an in-place add |
+| `Object.entries` fast path | the empty value stored as element 1 of the pair: a hole, read back as `undefined` or through the prototype |
+| `Object.defineProperties` fast path | `toPropertyDescriptor` on an empty value: `isObject()` dereferences null |
+| `toPropertyDescriptor` fast path | none: it already treats an empty field as absent |
+
+Rule (the §30 rule, GIL off only; flag off and GIL on no other thread runs between the listing and the reads): a
+reader that takes slots by offsets listed from a structure re-checks, after the read and a load-load fence, that the
+object still has that structure ID and that the value is not empty, and takes the generic per-property path
+(`get`, `getOwnPropertySlot`: cell-locked on a dictionary, so it waits for the writer) otherwise. The stringifier
+checks per property, since it interleaves reads with calls; the batch readers check the batch before using any of it.
+`FastStringifier` gives the fast attempt up (it has no side effects to undo; the general walker runs next). A value
+read before a delete and checked against the pre-delete structure is a read linearized before the delete, as in §30;
+D1's `undefined` stays possible.
+
+Amendment, same round: the readers were the symptom; the writer was the defect. With the crash gone, the same CVE
+test diverged in about one amplified run in 20,000 on a loaded machine (on the round's earlier builds too): a
+consumer reported a property under another property's value, for instance `w1_180 -> "w0_206!"` from
+`JSON.stringify`, once, while a generic read of the same key a moment later returned the right value and `w0_206` no
+longer existed. That is the same window on a REUSED offset: a dictionary's in-place add that takes a
+quarantine-promoted slot made the name visible while the slot still held its residue - D1's `undefined`, or a tardy
+store the quarantine sanctions - and a well-formed residue passes "same ID, not empty". Refusing dictionaries in the
+listing readers GIL off (the first attempt) made the test fail MORE often (13 of 60 runs against 2 of 60), through
+the generic path: `getOwnPropertySlot` resolves a name under the structure's lock or its lock-free probe and then
+reads the slot, and takes no cell lock either. §6's "dictionary readers are cell-locked (L3)" describes no reader in
+the tree; what protected fresh slots was the generic reader's spin on EMPTY (M7(c)), which a residue defeats.
+`putDirectWithoutTransitionConcurrent` had it right all along: it stores the value inside the structure's add
+callback, which the flag-on `Structure::add` arms run BEFORE they publish the entry (the closing edit-count bump is
+the release). The dictionary leg of `putDirectInternal` - the one ordinary `o[k] = v` takes - stored after the
+callback had returned and the entry was public. It now stores inside the callback too (I9, restated: no flag-on add
+publishes a name before its value). The readers keep their after-read check for transitions and deletes that race
+them; they admit cacheable dictionaries as `main` does.
+
+A rarer, PERSISTENT form of the divergence (the object itself holds `w0_55!` in `w1_67`'s slot: a generic read
+returns it too, and a write through the key lands in the same slot; about one in 100,000 amplified runs under load,
+on the round's first build as well) is a different, writer-against-writer defect. It is not explained and is
+recorded in LANDING-PLAN Open items with what was captured.
+
+Tests: `shared-objects/multislot-readers-vs-dictionary-add-gil-off.js` (small objects made cacheable dictionaries
+with `$vm.toCacheableDictionary`, so that a reader reaches the last listed slot within nanoseconds of listing it; the
+readers run while two threads add to the object in place, into slots that deleted properties left and a collection
+released; every value encodes its key and nothing is deleted afterwards, so `undefined` under a listed key is a
+finding as well: signal 11 in 7 of 40 runs before the readers' check, `undefined` or "Property description must be an
+object" in 2 of 60 with the check alone and 13 of 60 with dictionaries refused, 0 of 120 with the store moved);
+the CVE test above, amplified with each run pinned to one core: 16 crashes in 2,400 runs before, 0 in 2,400 after.
+

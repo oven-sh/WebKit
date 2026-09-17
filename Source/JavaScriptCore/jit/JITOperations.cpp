@@ -1370,7 +1370,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
     Structure* newStructure = WTF::opaque(entry->m_newStructureID.decode());
     PropertyOffset offset = entry->m_offset;
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // Flag-on a reallocating transition installs a new butterfly, which is a
         // tagged-word publication with its owner/claim protocol (SPEC-objectmodel
         // E4 / E4-C / §4.3): go through it, and take the generic add when it asks
@@ -4810,8 +4810,9 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     const Identifier& ident = codeBlock->identifier(bytecode.m_var);
     JSScope* environment = callFrame->uncheckedR(bytecode.m_scope).Register::scope();
     auto& metadata = bytecode.metadata(codeBlock);
+    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
-    if (metadata.m_resolveType == ModuleVar) {
+    if (resolveType == ModuleVar) {
         JSObject* result = JSModuleEnvironment::fillImportSlot(globalObject, environment, metadata.m_localScopeDepth, ScopeOffset(metadata.m_moduleImportSlot));
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(result));
@@ -4820,9 +4821,6 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    auto& metadata = bytecode.metadata(codeBlock);
-    ResolveType resolveType = WTF::atomicLoad(&metadata.m_resolveType, std::memory_order_relaxed);
 
     switch (resolveType) {
     case GlobalProperty:
@@ -5023,7 +5021,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     Structure* oldStructure = WTF::opaque(handler->structureID().decode());
     Structure* newStructure = WTF::opaque(handler->newStructureID().decode());
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // Flag-on (r17): the (re)allocating transition installs a new butterfly,
         // a tagged-word publication with its owner/claim protocol (SPEC-objectmodel
         // E4 / E4-C / §4.3). The handler's inline path sends its non-owner,

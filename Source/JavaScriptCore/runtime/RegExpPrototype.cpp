@@ -1000,8 +1000,7 @@ JSCell* regExpSplitFast(JSGlobalObject* globalObject, RegExpObject* regexpObject
 
     unsigned maxSizeForDirectPath = 100000;
 
-    Vector<unsigned> threadLocalSpans;
-    auto& spans = gilOff ? threadLocalSpans : vm.stringSplitIndice;
+    auto& spans = gilOff ? stringSplitIndicesForCurrentThreadGILOff() : vm.stringSplitIndice;
     spans.shrink(0);
     MatchResult lastMatchResult = genericSplit(
         globalObject, regexp, inputString, input, inputSize, position, matchPosition, regExpIsSticky, regExpIsUnicode,

@@ -230,7 +230,7 @@ public:
         // (I21(b)). Declared in DFGClobberize.h; defined in
         // DFGSpeculativeJIT.cpp; flag-off no-op.
         DFG::validateButterflyTagDisciplineForGraph(m_graph);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]]
             m_graph.markButterflyLoadsThatFeedElementWrites();
 
         State* state = &m_ftlState;
@@ -347,8 +347,12 @@ public:
         m_numberTag = m_out.constInt64(JSValue::NumberTag);
         m_notCellMask = m_out.constInt64(JSValue::NotCellMask);
 
-        if (m_graph.m_codeBlock->couldBeTainted())
-            m_out.store32As8(m_out.int32One, m_out.absolute(vm->addressOfMightBeExecutingTaintedCode()));
+        if (m_graph.m_codeBlock->couldBeTainted()) {
+            if (vm->gilOff()) [[unlikely]] // K4.II.15: the running thread's hint, not the VM's.
+                m_out.store32As8(m_out.int32One, m_out.address(m_heaps.root, currentVMLitePointer(), VMLite::offsetOfMightBeExecutingTaintedCode()));
+            else
+                m_out.store32As8(m_out.int32One, m_out.absolute(vm->addressOfMightBeExecutingTaintedCode()));
+        }
         // SCAN-CLOBBERIZE-SIGTRAP: validator suppressed gilOff (shared
         // vm.didEnterVM byte → cross-thread false positives AND negatives).
         // See the DOCUMENTED PROTOCOL EXCEPTION block in
@@ -4735,6 +4739,8 @@ private:
     {
         // SPEC-jit §5.5 Transition runtime legs (see the DFG's codegen).
         LValue cell = lowCell(m_node->child1());
+        if (!Options::useTaggedButterflies())
+            return; // "Untagged words" (OM G1): every thread owns every object.
         speculate(BadCache, noValue(), m_node->child1().node(),
             m_out.testNonZeroPtr(cell, m_out.constIntPtr(PreciseAllocation::halfAlignment)));
         // One owner test for every word (OM r16 N1-I): tag == (currentTID, SW=0).
@@ -6344,6 +6350,8 @@ private:
     // loop-invariant/hoistable as R5 requires.
     LValue loadButterflyTIDTag()
     {
+        if (!Options::useTaggedButterflies())
+            return m_out.constInt64(0); // SPEC-jit §5.5 "Untagged words" (OM G1): the tag is 0 on every thread.
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         patchpoint->setGenerator(
             [](CCallHelpers& jit, const StackmapGenerationParams& params) {
@@ -6359,6 +6367,8 @@ private:
     // argument as the Task-8/9 emitters).
     LValue loadTaggedButterflyWithStructureDependency(LValue base)
     {
+        if (!Options::useTaggedButterflies())
+            return m_out.loadPtr(base, m_heaps.JSObject_butterfly); // no concurrent mutator to order against (OM G1)
 #if CPU(ARM64)
         LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
         LValue dependency = m_out.m_block->appendNew<B3::Value>(m_out.m_proc, B3::Depend, m_out.origin(), structureID); // 0, data-dependent on the structureID
@@ -6401,6 +6411,10 @@ private:
     // THREAD.md), it is only WRITE routing decisions that need freshness.
     LValue loadTaggedButterflyPinnedForWrite(LValue base)
     {
+        // SPEC-jit §5.5 "Untagged words" (OM G1): no write predicate is evaluated on the word, so there is no
+        // routing decision to keep fresh, and the load is the flag-off one.
+        if (!Options::useTaggedButterflies())
+            return m_out.loadPtr(base, m_heaps.JSObject_butterfly);
         PatchpointValue* patchpoint = m_out.patchpoint(Int64);
         patchpoint->appendSomeRegister(base);
 #if CPU(ARM64)
@@ -6445,6 +6459,8 @@ private:
 
     LValue maskedButterfly(LValue taggedButterfly)
     {
+        if (!Options::useTaggedButterflies())
+            return taggedButterfly; // untagged words (OM G1)
         return m_out.bitAnd(taggedButterfly, m_out.constInt64(static_cast<int64_t>(butterflyPointerMask)));
     }
 
@@ -6452,6 +6468,8 @@ private:
     // all ones: tagged >= butterflyTagMask (unsigned) <=> segmented.
     LValue isSegmentedButterfly(LValue taggedButterfly)
     {
+        if (!Options::useTaggedButterflies())
+            return m_out.booleanFalse; // no segmented word exists in an untagged process (OM G1)
         return m_out.aboveOrEqual(taggedButterfly, m_out.constInt64(static_cast<int64_t>(butterflyTagMask)));
     }
 
@@ -6504,6 +6522,8 @@ private:
     ThreadedButterflyAccess threadedButterflyLoadForRead(LValue base, const ThreadedButterflyPlan& plan)
     {
         ASSERT(Options::useJSThreads());
+        if (!Options::useTaggedButterflies())
+            return { m_out.loadPtr(base, m_heaps.JSObject_butterfly), nullptr }; // SPEC-jit §5.5 "Untagged words"
 
         LValue tagged = loadTaggedButterflyWithStructureDependency(base);
         LValue slowCondition = nullptr;
@@ -6545,6 +6565,8 @@ private:
     ThreadedButterflyAccess threadedButterflyLoadForWrite(LValue base, const ThreadedButterflyPlan& plan)
     {
         ASSERT(Options::useJSThreads());
+        if (!Options::useTaggedButterflies())
+            return { m_out.loadPtr(base, m_heaps.JSObject_butterfly), nullptr }; // SPEC-jit §5.5 "Untagged words": every thread is the owner
 
         // I16 (review round 1): every WRITE predicate evaluates a PINNED
         // tagged word (and, in the AS arm, a PINNED indexing byte) that B3
@@ -6598,7 +6620,7 @@ private:
     {
         LValue base = lowCell(m_node->child1());
 
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner): the raw load below
             // Flag-on there is no unthreaded arm: the raw load below cannot
             // read a TID-tagged word. The useThreadedFTL kill switch therefore
             // disables the whole tier (Options::notifyOptionsChanged) rather
@@ -13063,7 +13085,7 @@ IGNORE_CLANG_WARNINGS_END
             }
 
             if (cache) {
-                if (Options::useJSThreads()) [[unlikely]] {
+                if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] { // GIL on no mutator races the probe (tenth round, SPEC-jit history §52)
                     // SPEC-jit section 5.5 (Task 8 pattern): no inline
                     // quick-cache probes flag-on — a key compare + separate
                     // value load races foreign mutators' entry writes through
@@ -13127,7 +13149,7 @@ IGNORE_CLANG_WARNINGS_END
             }
 
             if (cache) {
-                if (Options::useJSThreads()) [[unlikely]] {
+                if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
                     // See the numberOfStrings==2 case above: flag-on, no
                     // inline quick-cache probes; defer to the locked generic
                     // operation.
@@ -13986,7 +14008,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         StorageAccessData& data = m_node->storageAccessData();
 
-        if (Options::useJSThreads() && isOutOfLineOffset(data.offset) && !putByOffsetStoresIntoFreshTransitionStorage(m_node)) [[unlikely]] {
+        if (Options::useTaggedButterflies() && isOutOfLineOffset(data.offset) && !putByOffsetStoresIntoFreshTransitionStorage(m_node)) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10 (mirrors the DFG
             // compilePutByOffset conversion, Task 9): out-of-line stores
             // re-load the TAGGED butterfly from the base (child2) and run the
@@ -14153,7 +14175,7 @@ IGNORE_CLANG_WARNINGS_END
         // Flag-on it is unreachable: tryCacheDeleteBy never creates delete
         // ICs under useJSThreads, so DeleteByStatus is never Simple and the
         // parser always emits the generic DeleteById.
-        RELEASE_ASSERT(!Options::useJSThreads());
+        RELEASE_ASSERT(!Options::useTaggedButterflies());
 
         LValue base = lowCell(m_node->child1());
         MultiDeleteByOffsetData& data = m_node->multiDeleteByOffsetData();
@@ -22603,7 +22625,7 @@ IGNORE_CLANG_WARNINGS_END
         // transition copies from it and installs the tagged word
         // (nukeStructureAndSetButterflyConcurrent) before the caller's value
         // store.
-        bool threaded = Options::useJSThreads();
+        bool threaded = Options::useTaggedButterflies();
         auto loadExisting = [&] {
             LValue word = m_out.loadPtr(object, m_heaps.JSObject_butterfly);
             return threaded ? m_out.bitAnd(word, m_out.constIntPtr(butterflyPointerMask)) : word;
@@ -23192,8 +23214,14 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.equal(span, m_out.constInt32(2)), rarely(substringRopeSlowAlloc), usually(substringRopeAllocCase));
 
         m_out.appendTo(substringRopeAllocCase, substringRopeSlowAlloc);
-        Allocator allocator = allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists);
-        LValue rope = allocateCell(m_out.constIntPtr(allocator.localAllocator()), vm().stringStructure.get(), substringRopeSlowAlloc);
+        // GIL off allocatorForConcurrently is empty (IT-9): without the lite-relative allocator every substring took
+        // operationStringSubstr (SPEC-jit §5.5 "Inline allocation GIL off", tenth round; see compileMakeRope).
+        LValue ropeAllocator;
+        if (vm().gilOff()) [[unlikely]]
+            ropeAllocator = tlcAllocatorOrLegacy<JSRopeString>(sizeof(JSRopeString));
+        else
+            ropeAllocator = m_out.constIntPtr(allocatorForConcurrently<JSRopeString>(vm(), sizeof(JSRopeString), AllocatorForMode::AllocatorIfExists).localAllocator());
+        LValue rope = allocateCell(ropeAllocator, vm().stringStructure.get(), substringRopeSlowAlloc);
         LValue baseIs8BitFlag = m_out.bitAnd(m_out.load32(stringImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit()));
         m_out.storePtr(m_out.bitOr(m_out.constIntPtr(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), m_out.zeroExtPtr(baseIs8BitFlag)), rope, m_heaps.JSRopeString_fiber0);
         m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(span), m_out.shl(string, m_out.constInt32(32))), rope, m_heaps.JSRopeString_fiber1);
@@ -25947,6 +25975,14 @@ IGNORE_CLANG_WARNINGS_END
             // statically known, since the compute effort of doing it here is probably not worth it.
         }
 
+        // SPEC-jit §5.5 (history §51): with the shared heap C++ rounds every fresh contiguous vector length to 4k-1
+        // (Butterfly::optimalContiguousVectorLength). An inline allocation that kept the raw length would draw from
+        // a size class C++ never allocates from, hence never refills, and would always end in the operation.
+        if (Options::useSharedGCHeap() && !staticVectorLength) [[unlikely]] {
+            static_assert(butterflyFragmentSlots == 4 && BASE_CONTIGUOUS_VECTOR_LEN <= 3 && (BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 3) == 7);
+            vectorLength = m_out.select(m_out.isZero32(vectorLength), m_out.constInt32(7), m_out.bitOr(vectorLength, m_out.constInt32(3)));
+        }
+
         ValueFromBlock noButterfly = m_out.anchor(m_out.intPtrZero);
 
         LValue predicate;
@@ -27800,8 +27836,12 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(m_out.isZero64(value), unsure(continuation), unsure(fastCase));
 
         LBasicBlock lastNext = m_out.appendTo(fastCase, slowCase);
-        Allocator allocatorValue = allocatorForConcurrently<JSBigInt>(vm(), JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists);
-        LValue bigInt = allocateCell(m_out.constIntPtr(allocatorValue.localAllocator()), structure, slowCase);
+        LValue bigIntAllocator;
+        if (vm().gilOff()) [[unlikely]] // See compileStringSliceOrSubstring.
+            bigIntAllocator = tlcAllocatorOrLegacy<JSBigInt>(JSBigInt::allocationSize(1));
+        else
+            bigIntAllocator = m_out.constIntPtr(allocatorForConcurrently<JSBigInt>(vm(), JSBigInt::allocationSize(1), AllocatorForMode::AllocatorIfExists).localAllocator());
+        LValue bigInt = allocateCell(bigIntAllocator, structure, slowCase);
 
         // Initialize m_length = 1 and m_hash = 0 with a single 64-bit store.
         m_out.store64(m_out.constInt64(1), bigInt, m_heaps.JSBigInt_length);
@@ -30313,7 +30353,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         // With threads, another thread's transition can nuke the ID. A nuked ID
         // still names the old structure (see AssemblyHelpers).
-        if (Options::useJSThreads()) [[unlikely]]
+        if (Options::useTaggedButterflies()) [[unlikely]] // a concurrent mutator's transition; none in an untagged process (OM G1)
             structureID = m_out.bitAnd(structureID, m_out.constInt32(~static_cast<int32_t>(StructureID::nukedStructureIDBit)));
         return m_out.bitOr(m_out.constIntPtr(structureIDBase()), m_out.zeroExtPtr(structureID));
     }

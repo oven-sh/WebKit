@@ -49,6 +49,8 @@
 
 namespace JSC {
 
+std::atomic<uint8_t> g_jscAnyJSThreadEverSpawned { 0 };
+
 EncodedJSValue generatorClaimTokenForThread(Thread&); // JSGlobalObject.cpp
 
 

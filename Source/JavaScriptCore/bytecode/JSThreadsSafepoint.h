@@ -33,7 +33,11 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RecursiveLockAdapter.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
+#if OS(LINUX)
+#include <sched.h>
+#endif
 
 namespace JSC {
 
@@ -349,6 +353,20 @@ private:
     bool m_shouldLock;
 };
 
+// A bare scheduler yield for the places whose purpose is to let another thread
+// run now (the GIL/token handoff after a notify, the race amplifier's
+// perturbation). WTF's Thread::yield() sleeps a timer-slack period on Linux
+// (AUDIT R10-1), which is a different tool; a poll loop that waits for a lock
+// or a word uses WTF::SpinBackoff instead of either.
+inline void jsThreadsYieldToScheduler()
+{
+#if OS(LINUX)
+    sched_yield();
+#else
+    Thread::yield();
+#endif
+}
+
 // The same gated, polling acquisition for a plain lock that serializes a
 // first-use initialization GIL-off (state that a cell builds on first use with
 // a check and a store, which two threads can otherwise both run). The holder
@@ -365,10 +383,11 @@ public:
     {
         if (!m_shouldLock) [[likely]]
             return;
+        SpinBackoff backoff;
         while (!m_lock.tryLock()) {
             if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
                 continue;
-            Thread::yield();
+            backoff.spinOnce();
         }
     }
 

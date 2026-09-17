@@ -25,6 +25,8 @@
 
 #pragma once
 #include "JSThreadsCounters.h"
+#include "TopExceptionScope.h"
+#include <wtf/SpinBackoff.h>
 
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/GCMemoryOperations.h>
@@ -767,10 +769,11 @@ public:
     {
         JSTHREADS_COUNT(mapReadLockFreeGILOff);
         VM* vm = globalObject ? &getVM(globalObject) : nullptr; // Size queries pass no global object and never look at keys
+        SpinBackoff backoff; // a writer's odd version lasts one set/delete (a rehash at worst): pause, never sleep (AUDIT R10-1)
         for (unsigned attempt = 0; attempt < 4; ++attempt) {
             uint32_t v1 = owner->m_versionGILOff.load(std::memory_order_acquire);
             if (v1 & 1) {
-                Thread::yield();
+                backoff.spinOnce();
                 continue;
             }
             Storage* storage = owner->m_storage.get();
@@ -884,6 +887,7 @@ public:
     static void fillTableGILOff(JSGlobalObject* globalObject, Storage& base, Storage& copy)
     {
         VM& vm = getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm); // Nothing here throws (see the loop); a throw scope would hand a check to every caller.
         TableSize baseCapacity = capacity(base);
         TableSize newCapacity = capacity(copy);
         ASSERT(!isObsolete(base));
@@ -912,6 +916,7 @@ public:
                 setKeyOrValueData(vm, copy, newEntryKeyIndex + 1, get(base, baseEntryKeyIndex + 1));
 
             TableSize hash = jsMapHashForAlreadyHashedValue(globalObject, vm, baseKey);
+            scope.assertNoException(); // A stored key is hashed already; this is the check the helper's scope asks of its caller.
             addToChain(copy, bucketIndex(newHashTableStartIndex, newBucketCount, hash), newEntryKeyIndex);
             newEntryKeyIndex += EntrySize;
         }

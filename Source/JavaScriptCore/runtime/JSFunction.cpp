@@ -49,6 +49,7 @@
 #endif
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -350,11 +351,12 @@ static bool storeLazyPrototypeIfMissingGILOff(VM& vm, JSFunction* function, cons
     auto isMissing = [&] {
         return !isValidOffset(function->getDirectOffset(vm, vm.propertyNames->prototype));
     };
+    SpinBackoff backoff;
     while (!s_lazyPrototypeLock.tryLock()) {
         if (!isMissing())
             return false;
         if (!JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-            Thread::yield();
+            backoff.spinOnce();
     }
     Locker locker { AdoptLock, s_lazyPrototypeLock };
     if (!isMissing())

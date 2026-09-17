@@ -46,6 +46,7 @@
 #include "JSPromise.h"
 #include "ObjectConstructor.h"
 #include "ProxyObject.h"
+#include "SamplingProfiler.h"
 #include "TopExceptionScope.h"
 #include "TypedArrayController.h"
 #include "TypedArrayType.h"
@@ -289,6 +290,7 @@ static void threadMain(VM& vm, Ref<ThreadState> state)
             // settle the moved tickets via the 5.5 schedule. Never waits for
             // tickets (4.6.1).
             Vector<Ref<AsyncTicket>> joiners;
+            ThreadManager::singleton().noteThreadWillPublishCompletion(vm); // SPEC-api 4.6 item 4
             {
                 Locker joinLocker { state->joinLock };
                 state->phase.store(phase, std::memory_order_release);
@@ -400,8 +402,17 @@ JSC_DEFINE_HOST_FUNCTION(constructThread, (JSGlobalObject* globalObject, CallFra
     // guarantees the VM outlives this thread. If the embedder drops its last
     // ref while we are running (e.g. main script exits without join()), the
     // VM must stay alive until threadMain returns or this is a use-after-free.
-    RefPtr<Thread> nativeThread = Thread::tryCreate("JS Thread"_s, [state = Ref { *state }, protectedVM = Ref { vm }]() mutable {
-        threadMain(protectedVM.get(), WTF::move(state));
+    RefPtr<Thread> nativeThread = Thread::tryCreate("JS Thread"_s, [state = Ref { *state }, protectedVM = RefPtr<VM> { &vm }, vmAddress = static_cast<const void*>(&vm)]() mutable {
+        threadMain(*protectedVM, WTF::move(state));
+#if ENABLE(SAMPLING_PROFILER)
+        // With the GIL on this thread bound as the profiler's sampled thread whenever it took the API lock.
+        if (SamplingProfiler* profiler = protectedVM->samplingProfiler()) [[unlikely]]
+            profiler->noticeCurrentThreadIsExiting();
+#endif
+        // SPEC-api 4.6 item 4: completion was published long before this point. An embedder that destroys the VM
+        // waits for the count below first, so this release is not the last one; if it is, ~VM fail-stops (MC-TDWN S1).
+        protectedVM = nullptr;
+        ThreadManager::singleton().noteExitedThreadReleasedVM(vmAddress);
     }, ThreadType::JavaScript, Thread::QOS::UserInitiated, Thread::defaultSchedulingPolicy, stackSpecification);
     if (!nativeThread) [[unlikely]] {
         // The OS refused the thread (maxJSThreads is above typical process

@@ -202,7 +202,7 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
 {
     // SPEC-jit §4.3/I18: Unset mode is poison under JS threads (the asm reads
     // the mode byte and word 1 non-coherently); flag-on this must be unreachable.
-    ASSERT(!Options::useJSThreads());
+    ASSERT(!Options::useTaggedButterflies());
     WTF::atomicStore(&mode, GetByIdMode::Unset, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
     unsetMode.structureID = structure->id();
     defaultMode.cachedOffset = 0;
@@ -247,7 +247,7 @@ inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, Property
     // SPEC-jit §4.3/I18: ProtoLoad's 16-byte record cannot be published as one
     // word; flag-on its sole installer (setupGetByIdPrototypeCache) is disabled
     // wholesale, so this must be unreachable.
-    ASSERT(!Options::useJSThreads());
+    ASSERT(!Options::useTaggedButterflies());
     // We rely on ProtoLoad being 0, or else the high bits of cachedSlot would write the wrong mode and hit count.
     static_assert(!static_cast<std::underlying_type_t<GetByIdMode>>(GetByIdMode::ProtoLoad));
 
@@ -258,8 +258,9 @@ inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, Property
     // during GC when we clear the LLInt caches.
 
     // The write to cachedSlot also writes the mode, since they overlap in the struct layout. We know that
-    // the mode ProtoLoad is 0 by the static assertion above.
-    protoLoadMode.cachedSlot = static_cast<uint64_t>(std::bit_cast<uintptr_t>(cachedSlot));
+    // the mode ProtoLoad is 0 by the static assertion above. A Baseline compiler thread reads the mode byte
+    // (loadModeConcurrently), so the word is stored atomically (relaxed: the same instruction).
+    WTF::atomicStore(&protoLoadMode.cachedSlot, static_cast<uint64_t>(std::bit_cast<uintptr_t>(cachedSlot)), std::memory_order_relaxed);
 
     ASSERT(mode == GetByIdMode::ProtoLoad);
     ASSERT(!hitCountForLLIntCaching);

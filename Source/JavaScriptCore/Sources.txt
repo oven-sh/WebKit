@@ -429,6 +429,7 @@ dfg/DFGPhantomInsertionPhase.cpp
 dfg/DFGPhase.cpp
 dfg/DFGPhiChildren.cpp
 dfg/DFGPlan.cpp
+dfg/DFGPollVisibilityPhase.cpp
 dfg/DFGPredictionInjectionPhase.cpp
 dfg/DFGPredictionPropagationPhase.cpp
 dfg/DFGPromotedHeapLocation.cpp

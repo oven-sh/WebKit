@@ -50,6 +50,8 @@ public:
     void* freeList() const { return m_freeList; }
 
 private:
+    JS_EXPORT_PRIVATE static RegExp** executingRegExpSlotGILOff(VM&);
+
     void* m_stackLimit;
     void* m_freeList { nullptr };
     RegExp** m_executingRegExpSlot { nullptr };
@@ -73,11 +75,11 @@ inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, Matc
         // note both name the VM member as the GIL-on storage side); the
         // GIL-off profiler reader half (SamplingProfiler.cpp lite-resolved
         // reads) is the PENDING U-T8d wiring recorded in SamplingProfiler.h.
+        // The lite lookup is out of line (RegExp.cpp): with it in this body the compiler stopped inlining the
+        // constructor into the match operations, which cost flag off a call per match (tenth round).
         m_executingRegExpSlot = &vm.m_executingRegExp;
-        if (vm.gilOffWithProcessGate()) [[unlikely]] {
-            if (VMLite* lite = VMLite::currentIfExists(); lite && lite->vm == &vm)
-                m_executingRegExpSlot = &lite->executingRegExp;
-        }
+        if (vm.gilOffWithProcessGate()) [[unlikely]]
+            m_executingRegExpSlot = executingRegExpSlotGILOff(vm);
         *m_executingRegExpSlot = regExp;
     } else {
         StackBounds stack = Thread::currentSingleton().stack();

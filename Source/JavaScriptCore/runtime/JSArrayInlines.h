@@ -273,7 +273,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     //   - AS words with a foreign SW=0 writer: the §4.6 per-event SW stop.
     // Residue (shape transition on a shared word, sparse territory) takes the
     // generic putByIndex protocol.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         uint64_t word = taggedButterflyWord();
         // T6-segmented-push-fastpath (SCALEBENCH §25 Phase A): once a posting
         // array segments, every per-doc push(d) was falling out of the inline
@@ -384,7 +384,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     Butterfly* butterfly;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (Options::useTaggedButterflies()) [[unlikely]] {
         // The block above saw a flat word that this thread owns, or a null
         // word. butterfly() must not decode a segmented word, and a foreign
         // conversion can land between the two loads. So this load is decoded
@@ -531,7 +531,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         // m_numValuesInVector stores are the in-place stores §4.6 sanctions
         // under the lock. The beyond-vector paths run unlocked here; their
         // mutation sites (increaseVectorLength, sparse map) lock themselves.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (Options::useTaggedButterflies()) [[unlikely]] {
             {
                 Locker locker { cellLock() };
                 ArrayStorage* lockedStorage = this->butterfly()->arrayStorage();
