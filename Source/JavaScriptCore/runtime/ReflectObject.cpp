@@ -103,16 +103,25 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
             return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the third argument be a constructor if present"_s));
     }
 
-    MarkedArgumentBuffer arguments;
     JSObject* argumentsObject = dynamicDowncast<JSObject>(callFrame->argument(1));
     if (!argumentsObject)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the second argument be an object"_s));
 
-    forEachInArrayLike(globalObject, argumentsObject, [&] (JSValue value) -> bool {
+    // CreateListFromArrayLike. construct() rejects a list longer than maxArguments, so
+    // bound the length before reading the elements, as sizeOfVarargs() does for apply.
+    uint64_t length = toLength(globalObject, argumentsObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (length > maxArguments) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return encodedJSValue();
+    }
+
+    MarkedArgumentBuffer arguments;
+    for (uint64_t index = 0; index < length; ++index) {
+        JSValue value = argumentsObject->getIndex(globalObject, index);
+        RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
         arguments.append(value);
-        return true;
-    });
-    RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
+    }
     if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return encodedJSValue();
