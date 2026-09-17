@@ -41,7 +41,7 @@ function generic(source, flags) {
     const patterns = [
         ["\\d+", "g"], ["\\d+", ""], ["(\\d)(\\w)?", "g"], ["a|(b)", "g"], ["(a)|(b)|(c)", ""],
         ["(?<year>\\d{4})-(?<month>\\d{2})", "g"], ["(?<year>\\d{4})-(?<month>\\d{2})", ""],
-        ["(?<a>x)|(?<a>y)", "g"],
+        ["(?<a>x)|(?<a>y)", "g"], ["(?<first>x)|(?<second>y)", "g"], ["(?<__proto__>x)(?<constructor>y)?", "g"],
         ["(?:)", "g"], ["(?:)", "gu"], ["(?:)", ""], ["x*", "g"], ["^", "gm"], ["$", "gm"],
         ["\\u{1F600}", "gu"], [".", "gsu"], [".", "g"], ["\\p{L}+", "gv"],
         ["b", "y"], ["b", "gy"], ["(?:)", "y"], ["B", "gi"], ["(?<=a)b", "g"], ["nomatch", "g"], ["nomatch", ""],
@@ -50,9 +50,25 @@ function generic(source, flags) {
         "", "abc 123 def 456 ghi", "2024-01-15 and 2025-12-31", "a\u{1F600}b\u{1F600}", "\uD83D", "xxyyxx",
         "line1\nline2\n", "abab", "bbab", "ABab", "a1b2c3".repeat(20),
     ];
+    // What a replacer function is called with: the number of arguments, undefined captures as such, and the
+    // groups object with its prototype, extensibility, key order and property attributes.
+    function describeArgument(value) {
+        if (value === undefined)
+            return "<undefined>";
+        if (typeof value !== "object" || value === null)
+            return value;
+        return {
+            prototype: Object.getPrototypeOf(value) === null ? "null" : "an object",
+            extensible: Object.isExtensible(value),
+            properties: Reflect.ownKeys(value).map(key => {
+                const descriptor = Object.getOwnPropertyDescriptor(value, key);
+                const attributes = (descriptor.writable ? "w" : "-") + (descriptor.enumerable ? "e" : "-") + (descriptor.configurable ? "c" : "-");
+                return [String(key), "value" in descriptor ? describeArgument(descriptor.value) : "<accessor>", attributes];
+            }),
+        };
+    }
     const collect = function() {
-        const args = Array.prototype.slice.call(arguments);
-        return "<" + JSON.stringify(args) + ">";
+        return "<" + JSON.stringify([arguments.length, Array.prototype.map.call(arguments, describeArgument)]) + ">";
     };
     const replacements = [
         "-", "", "$&$&", "[$1|$2|$3]", "$<year>/$<month>", "$<nope>", "$<a>", "$`|$'", "$$", "$0", "$10", "$",
@@ -223,9 +239,23 @@ function generic(source, flags) {
     shouldBe(other.RegExp.prototype[Symbol.replace].call(/(l+)/g, "hello world", "[$1]"), "he[ll]o wor[l]d");
     shouldBe(symbolReplace.call(new other.RegExp("(l+)", "g"), "hello world", "[$1]"), "he[ll]o wor[l]d");
     shouldBe(symbolReplace.call(new other.RegExp("(l+)", "g"), "hello world", (match, p1) => p1.length), "he2o wor1d");
+
+    // A RegExp of another realm takes the generic path. Its "exec" updates the legacy static properties of the
+    // realm of the RegExp, not those of the realm of the function that was called.
+    function lastMatches(call) {
+        /here/.exec("here");
+        other.eval("/there/.exec('there')");
+        call();
+        return RegExp.lastMatch + "," + other.RegExp.lastMatch;
+    }
+    shouldBe(lastMatches(() => symbolReplace.call(/a1/, "a1", "-")), "a1,there");
+    shouldBe(lastMatches(() => other.RegExp.prototype[Symbol.replace].call(/a1/, "a1", "-")), "a1,there");
+    shouldBe(lastMatches(() => other.RegExp.prototype[Symbol.replace].call(/a1/g, "a1", () => "-")), "a1,there");
+    shouldBe(lastMatches(() => symbolReplace.call(new other.RegExp("a1"), "a1", "-")), "here,a1");
+    shouldBe(lastMatches(() => symbolReplace.call(new other.RegExp("a1", "g"), "a1", () => "-")), "here,a1");
 }
 
-// 6. The legacy static properties after the call.
+// 6. The legacy static properties. After the call they are those of the last match on both paths.
 {
     /(\d)(\d)/g[Symbol.replace]("a12b34c", "-");
     shouldBe(RegExp.lastMatch, "34");
@@ -237,6 +267,49 @@ function generic(source, flags) {
     /(b)/[Symbol.replace]("abc", () => "");
     shouldBe(RegExp.lastMatch, "b");
     shouldBe(RegExp.$1, "b");
+}
+
+// Inside a replacer function of a global RegExp the two paths differ, and this is the one thing a program can
+// see of the fast path. The generic path finds every match before the first call, as the specification says, so
+// every call sees the last match. The fast path calls the function after each match, unless the function is a
+// JS function, the RegExp has no named groups and the string has thresholdForStringReplaceCache (4096)
+// characters or more: then it finds every match first too. The direct call sees what String.prototype.replace sees.
+{
+    function seenInside(call, regexp, string, wrap) {
+        const seen = [];
+        call(regexp, string, wrap(match => {
+            seen.push(RegExp.lastMatch + RegExp.$1);
+            return match;
+        }));
+        return seen.join();
+    }
+    const direct = (regexp, string, replacer) => regexp[Symbol.replace](string, replacer);
+    const viaString = (regexp, string, replacer) => string.replace(regexp, replacer);
+    const viaGeneric = (regexp, string, replacer) => generic(regexp.source, regexp.flags)[Symbol.replace](string, replacer);
+
+    const short = "a1b2c3";
+    const long = short + "x".repeat(5000);
+    const plain = f => f;
+    const bound = f => f.bind(null);
+    const afterEachMatch = "11,22,33";
+    const afterAllMatches = "33,33,33";
+
+    const cases = [
+        [() => /(\d)/g, short, plain, afterEachMatch],
+        [() => /(\d)/g, short, bound, afterEachMatch],
+        [() => /(\d)/g, long, plain, afterAllMatches],
+        [() => /(\d)/g, long, bound, afterEachMatch],
+        [() => /(?<digit>\d)/g, short, plain, afterEachMatch],
+        [() => /(?<digit>\d)/g, long, plain, afterEachMatch],
+        [() => /(\d)/, short, plain, "11"],
+        [() => /(\d)/, long, plain, "11"],
+    ];
+    for (const [makeRegExp, string, wrap, expected] of cases) {
+        const label = `${makeRegExp()} on ${string.length} characters`;
+        shouldBe(seenInside(direct, makeRegExp(), string, wrap), expected, label);
+        shouldBe(seenInside(viaString, makeRegExp(), string, wrap), expected, label + " (String.prototype.replace)");
+        shouldBe(seenInside(viaGeneric, makeRegExp(), string, wrap), makeRegExp().global ? afterAllMatches : expected, label + " (generic path)");
+    }
 }
 
 // 7. A replaced RegExp.prototype.exec is observed: while an argument is converted, and from then on.
