@@ -89,8 +89,9 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // The captured async context (AsyncContextSwapScope: an async context, with its script
-    // execution owner if there was one) the top-level code of this loader's modules runs in, its top-level await continuations included. Empty
-    // (the default): whatever is current when a module is executed.
+    // execution owner if there was one) the top-level code of this loader's modules runs in,
+    // its top-level await continuations included. Empty (the default): whatever is current
+    // when a module is executed.
     JSValue asyncContext() const { return m_asyncContext.get(); }
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif

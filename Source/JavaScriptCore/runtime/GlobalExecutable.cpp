@@ -30,6 +30,7 @@
 #include "IsoCellSetInlines.h"
 #include "JSCellInlines.h"
 #include "JITWorklist.h"
+#include "JSLexicalEnvironment.h"
 #include "ScriptExecutableInlines.h"
 
 namespace JSC {
@@ -77,6 +78,27 @@ CodeBlock* GlobalExecutable::replaceCodeBlockWith(VM& vm, CodeBlock* newCodeBloc
     CodeBlock* oldCodeBlock = codeBlock();
     m_codeBlock.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
+}
+
+Vector<SymbolTable*> GlobalExecutable::symbolTablesOfScope(JSGlobalObject* globalObject, JSScope* scope)
+{
+    Vector<SymbolTable*> symbolTables;
+    for (; scope != globalObject->globalLexicalEnvironment(); scope = scope->next()) {
+        RELEASE_ASSERT(scope && scope->type() == LexicalEnvironmentType);
+        symbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(scope)->symbolTable());
+    }
+    return symbolTables;
+}
+
+bool GlobalExecutable::areSameSymbolTables(const FixedVector<WriteBarrier<SymbolTable>>& ours, const Vector<SymbolTable*>& theirs)
+{
+    if (ours.size() != theirs.size())
+        return false;
+    for (unsigned i = 0; i < theirs.size(); ++i) {
+        if (ours[i].get() != theirs[i])
+            return false;
+    }
+    return true;
 }
 
 bool GlobalExecutable::canReleaseLinkedCodeNow(VM& vm)

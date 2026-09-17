@@ -1244,8 +1244,8 @@ failedJSONP:
     if (error) [[unlikely]]
         return throwException(globalObject, throwScope, error);
 
-    if (scope->structure()->isUncacheableDictionary())
-        scope->flattenDictionaryObject(vm);
+    if (globalObject->globalScope()->structure()->isUncacheableDictionary())
+        globalObject->globalScope()->flattenDictionaryObject(vm);
 
     RefPtr<JSC::JITCode> jitCode;
     ProtoCallFrame protoCallFrame;

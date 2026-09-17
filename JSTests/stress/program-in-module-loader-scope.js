@@ -1,8 +1,16 @@
 //@ requireOptions("--useDollarVM=1")
-// (Not the bytecode cache modes: what $vm.evaluateInModuleLoaderScope() evaluates is a string, which has no cache.)
+// (defaultRun without its bytecode cache mode: what $vm.evaluateInModuleLoaderScope() evaluates is a string, which
+// has no cache, and that mode requires every program to come from one.)
 //@ runDefault
 //@ runDefault("--useRunOnceCodeRelease=0")
 //@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100")
+//@ runMiniMode
+//@ runNoLLInt
+//@ runNoCJITValidatePhases
+//@ runDFGEager
+//@ runNoFTL
+//@ runFTLEager
+//@ runFTLNoCJITValidate
 
 // A program evaluated in a scope of its own (JSC::evaluateInScope: here a module loader's module scope, which holds
 // the loader's bindings) resolves that scope's variables as closure variables, in every tier, where the same source

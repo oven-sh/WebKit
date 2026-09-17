@@ -546,14 +546,12 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // which these differ links its own, which later records are then compared against.
     // Nothing about the imports is resolved for this until a second record for the key and module scope turns up
     // (resolvesImportsLike): a record that is the only one to link a module pays for the comparison nothing.
-    Vector<SymbolTable*> moduleScopeSymbolTables;
-    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next())
-        moduleScopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(moduleScope)->symbolTable());
+    Vector<SymbolTable*> moduleScopeSymbolTables = GlobalExecutable::symbolTablesOfScope(globalObject, moduleLoader()->moduleScope());
     // Keyed by the module key's impl and the module scope's symbol table, so loaders with
     // different module scopes each keep their entry: a live entry whose key died and was
     // reused for another module fails the URL / source comparison and is replaced.
     auto& executables = globalObject->moduleProgramExecutables();
-    JSGlobalObject::ModuleProgramExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
+    JSGlobalObject::ScopedExecutableKey key { moduleKey().impl(), moduleScopeSymbolTables.isEmpty() ? nullptr : moduleScopeSymbolTables.first() };
     {
         ModuleProgramExecutable* shared = executables.get(key);
         // (An executable whose code was deleted, ScriptExecutable::clearCode, is left to the

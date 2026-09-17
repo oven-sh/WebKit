@@ -4227,9 +4227,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateInModuleLoaderScope, (JSGlobalObject* g
     if (!loader)
         return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
     String source = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, { });
     String url = callFrame->argument(2).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, { });
     NakedPtr<Exception> exception;
     JSValue result = evaluateInScope(globalObject, makeSource(source, SourceOrigin { URL({ }, url) }, SourceTaintedOrigin::Untainted, url), loader->moduleScope(), JSValue(), exception);
     if (exception) {

@@ -136,13 +136,7 @@ void ModuleProgramExecutable::setLinkerImportedBindings(std::optional<ImportedBi
 
 bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
 {
-    if (m_moduleScopeSymbolTables.size() != symbolTables.size())
-        return false;
-    for (unsigned i = 0; i < symbolTables.size(); ++i) {
-        if (m_moduleScopeSymbolTables[i].get() != symbolTables[i])
-            return false;
-    }
-    return true;
+    return areSameSymbolTables(m_moduleScopeSymbolTables, symbolTables);
 }
 
 bool ModuleProgramExecutable::ImportedBinding::operator==(const ImportedBinding& other) const

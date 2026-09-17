@@ -60,7 +60,7 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
     // Asked now rather than when there is something to clean up: reconciliation runs during the GC
     // flip, where no JS objects (the DOM wrapper for our document) can be allocated and where
     // whoever is current has nothing to do with this registry.
-    internalField(Field::ScriptExecutionOwner).setWithoutWriteBarrier(globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject));
+    internalField(Field::ScriptExecutionOwner).set(vm, this, globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject));
 }
 
 template<typename Visitor>

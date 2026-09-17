@@ -520,10 +520,12 @@ public:
     // is suspended. The owner is not kept alive and its address can come back as another owner's: what is found is checked.
     using ResumableCodeSymbolTableKey = std::pair<JSCell*, unsigned>;
     WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable> m_resumableCodeSymbolTableClones;
-    using ModuleProgramExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>; // module key, module scope: JSModuleRecord::getOrMakeExecutable
-    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable> m_moduleProgramExecutables;
-    using ScopedProgramExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>; // source URL, scope: ProgramExecutable::getOrCreateForScope
-    WeakGCMap<ScopedProgramExecutableKey, ProgramExecutable> m_scopedProgramExecutables;
+    // Executables that the code of several scopes with the same symbol tables shares. The key is the module key
+    // (JSModuleRecord::getOrMakeExecutable) or the source URL (ProgramExecutable::getOrCreateForScope), and the
+    // scope's innermost symbol table (null: the global scope).
+    using ScopedExecutableKey = std::pair<UniquedStringImpl*, SymbolTable*>;
+    WeakGCMap<ScopedExecutableKey, ModuleProgramExecutable> m_moduleProgramExecutables;
+    WeakGCMap<ScopedExecutableKey, ProgramExecutable> m_scopedProgramExecutables;
 
     String m_name;
 
@@ -1197,8 +1199,8 @@ public:
     StructureCache& structureCache() LIFETIME_BOUND { return m_structureCache; }
     WeakGCMap<SymbolTable*, SymbolTable>& symbolTableCache() { return m_symbolTableCache; }
     WeakGCMap<ResumableCodeSymbolTableKey, SymbolTable>& resumableCodeSymbolTableClones() { return m_resumableCodeSymbolTableClones; }
-    WeakGCMap<ModuleProgramExecutableKey, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
-    WeakGCMap<ScopedProgramExecutableKey, ProgramExecutable>& scopedProgramExecutables() { return m_scopedProgramExecutables; }
+    WeakGCMap<ScopedExecutableKey, ModuleProgramExecutable>& moduleProgramExecutables() { return m_moduleProgramExecutables; }
+    WeakGCMap<ScopedExecutableKey, ProgramExecutable>& scopedProgramExecutables() { return m_scopedProgramExecutables; }
 
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }

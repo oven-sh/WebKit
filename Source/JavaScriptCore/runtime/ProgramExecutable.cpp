@@ -62,11 +62,7 @@ void ProgramExecutable::destroy(JSCell* cell)
 ProgramExecutable* ProgramExecutable::getOrCreateForScope(JSGlobalObject* globalObject, const SourceCode& source, JSScope* scope)
 {
     VM& vm = globalObject->vm();
-    Vector<SymbolTable*> scopeSymbolTables;
-    for (; scope != globalObject->globalLexicalEnvironment(); scope = scope->next()) {
-        RELEASE_ASSERT(scope && scope->type() == LexicalEnvironmentType); // as JSModuleLoader::finishCreation requires of a module scope
-        scopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(scope)->symbolTable());
-    }
+    Vector<SymbolTable*> scopeSymbolTables = symbolTablesOfScope(globalObject, scope);
     if (scopeSymbolTables.isEmpty())
         return create(globalObject, source);
 
@@ -75,21 +71,12 @@ ProgramExecutable* ProgramExecutable::getOrCreateForScope(JSGlobalObject* global
     // another URL fails the comparison and is replaced.
     auto& executables = globalObject->scopedProgramExecutables();
     AtomString url { source.provider()->sourceURL() };
-    JSGlobalObject::ScopedProgramExecutableKey key { url.impl(), scopeSymbolTables.first() };
+    JSGlobalObject::ScopedExecutableKey key { url.impl(), scopeSymbolTables.first() };
     if (ProgramExecutable* shared = executables.get(key)) {
-        auto hasScopeSymbolTables = [&] {
-            if (shared->m_scopeSymbolTables.size() != scopeSymbolTables.size())
-                return false;
-            for (unsigned i = 0; i < scopeSymbolTables.size(); ++i) {
-                if (shared->m_scopeSymbolTables[i].get() != scopeSymbolTables[i])
-                    return false;
-            }
-            return true;
-        };
         // (Its code, if it still has it, has to be in the mode this run would ask for: the linked code of an
         // earlier run may still be installed.)
         UnlinkedProgramCodeBlock* sharedCode = shared->unlinkedCodeBlock();
-        if (hasScopeSymbolTables() && (!sharedCode || sharedCode->codeGenerationMode() == globalObject->defaultCodeGenerationMode())
+        if (areSameSymbolTables(shared->m_scopeSymbolTables, scopeSymbolTables) && (!sharedCode || sharedCode->codeGenerationMode() == globalObject->defaultCodeGenerationMode())
             && shared->source().provider()->sourceURL() == source.provider()->sourceURL() && shared->source().provider()->hash() == source.provider()->hash() && shared->source().view() == source.view())
             return shared;
     }
