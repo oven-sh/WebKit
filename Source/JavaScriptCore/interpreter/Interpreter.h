@@ -156,13 +156,12 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 
 #if USE(BUN_JSC_ADDITIONS)
         // precompiled: see ProgramExecutable::initializeGlobalProperties().
-        JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled = nullptr);
+        // programScope: the scope the program runs in instead of the global scope (null), a chain of lexical
+        // environments over the global lexical environment: see ProgramExecutable::getOrCreateForScope().
+        JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled = nullptr, JSScope* programScope = nullptr);
 #else
         JSValue executeProgram(const SourceCode&, JSGlobalObject*, JSObject* thisObj);
 #endif
-        // The program runs in `scope` (a chain of lexical environments over the global lexical environment)
-        // instead of the global scope: ProgramExecutable::getOrCreateForScope().
-        JSValue executeProgramInScope(const SourceCode&, JSGlobalObject*, JSObject* thisObj, JSScope*);
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
         JSValue executeCall(JSObject* function, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
         JSObject* executeConstruct(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
