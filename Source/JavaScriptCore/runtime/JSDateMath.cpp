@@ -224,13 +224,14 @@ void DateCache::DSTCache::extendTheAfterCache(int64_t millisecondsFromEpoch, Loc
 
 LocalTimeOffset DateCache::DSTCache::localTimeOffset(DateCache& dateCache, int64_t millisecondsFromEpoch, TimeType inputTimeType)
 {
-    if (millisecondsFromEpoch >= WTF::Int64Milliseconds::minECMAScriptTime && millisecondsFromEpoch <= WTF::Int64Milliseconds::maxECMAScriptTime) {
-        // Do nothing. Use millisecondsFromEpoch directly
-    } else {
-        // Adjust to equivalent time.
-        int64_t newTime = WTF::equivalentTime(millisecondsFromEpoch);
-        dataLogLnIf(JSDateMathInternal::verbose, "Equivalent time conversion from ", millisecondsFromEpoch, " to ", newTime);
-        millisecondsFromEpoch = newTime;
+    // The cache below marks an empty entry with start = maxECMAScriptTime, end = minECMAScriptTime, so it can only hold
+    // times in that range. UTC(t), https://tc39.es/ecma262/#sec-utc-t, runs before TimeClip on a local time value that
+    // is up to one UTC offset outside the range while its result is still inside (canNarrowToInt64Milliseconds() lets
+    // through up to a day). Ask ICU directly for those. Mapping them to an "equivalent" year inside the range instead
+    // would apply that year's UTC offset, not this one's.
+    if (millisecondsFromEpoch < WTF::Int64Milliseconds::minECMAScriptTime || millisecondsFromEpoch > WTF::Int64Milliseconds::maxECMAScriptTime) [[unlikely]] {
+        dataLogLnIf(JSDateMathInternal::verbose, "Out of cache range ", millisecondsFromEpoch);
+        return dateCache.calculateLocalTimeOffset(millisecondsFromEpoch, inputTimeType);
     }
 
     if (m_epoch > UINT32_MAX) [[unlikely]] {
@@ -447,7 +448,7 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
             double value = v8::ParseDateTimeString(dateString.data(), dateString.size(), local);
 
             if (local)
-                value -= localTimeOffset(static_cast<int64_t>(value), TimeType::LocalTime).offset;
+                value = localTimeToMS(value, TimeType::LocalTime);
 
             return v8::TimeClip(value);
         }
