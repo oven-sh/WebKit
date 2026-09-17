@@ -1,15 +1,4 @@
 //@ requireOptions("--useBBQJIT=1")
-//@ skip
-// Failure:
-// Exception: Failure: expected <true> found <false>
-//  
-//  Stack: MjsUnitAssertionError@mjsunit.js:36:27
-//  failWithMessage@mjsunit.js:323:36
-//  fail@mjsunit.js:343:27
-//  assertEquals@mjsunit.js:413:11
-//  assertTrue@mjsunit.js:465:17
-//  run@unreachable-validation.js:46:15
-//  global code@unreachable-validation.js:109:4
 
 // Copyright 2015 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
