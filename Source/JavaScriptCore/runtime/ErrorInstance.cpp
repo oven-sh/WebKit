@@ -512,7 +512,13 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    // VM::onComputeErrorInfoJSValue() can throw, and the lazy properties are stored even then.
+    // A getOwnPropertySlot() that throws has to return false. There is no ThrowScope because its
+    // destructor simulates a throw, and callers such as JSModuleLoader::isFetchError() look up a
+    // property of an error and do not check for one.
+    if (materializedProperties && vm.exceptionForInspection()) [[unlikely]]
+        return false;
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
 
@@ -551,8 +557,12 @@ bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, P
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
     bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    if (materializedProperties)
+    if (materializedProperties) {
+        // As in getOwnPropertySlot(): a delete that throws does not delete.
+        if (vm.exceptionForInspection()) [[unlikely]]
+            return false;
         slot.disableCaching();
+    }
     return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
