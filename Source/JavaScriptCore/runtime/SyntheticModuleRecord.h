@@ -70,6 +70,14 @@ public:
     // of it or when it is read off a module namespace object.
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
+    // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. runDeferredGenerator()
+    // gives the record its exports; AbstractModuleRecord::link() calls it before it links anything.
+    static SyntheticModuleRecord* createWithDeferredGenerator(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, Ref<SyntheticSourceProvider>&&);
+
+    // No-op unless the record still has a deferred generator. Runs arbitrary JS and throws what the generator throws,
+    // again on every later call.
+    void runDeferredGenerator(JSGlobalObject*);
+
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
     // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
@@ -91,8 +99,12 @@ private:
 
     void finishCreation(JSGlobalObject*, VM&);
 
+    void initializeExports(JSGlobalObject*, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
+    RefPtr<SyntheticSourceProvider> m_deferredGenerator;
+    WriteBarrier<Unknown> m_deferredGeneratorError;
 #endif
 };
 
