@@ -183,6 +183,9 @@ public:
         m_flags = static_cast<Flags>(m_flags | HasAnyKindOfGetterSetterProperties);
     }
 
+    void seal();
+    void freeze();
+
     static SparseArrayEntry& entryFor(const_iterator it) { return const_cast<SparseArrayEntry&>(*it); }
 
     // These methods may mutate the contents of the map
