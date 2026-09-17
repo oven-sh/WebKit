@@ -239,7 +239,15 @@ String IntlLocale::keywordValue(ASCIILiteral key, bool isBoolean) const
     if (!value)
         return nullString();
     auto result = String::fromLatin1(value);
-    if (result == "true"_s)
+    // ICU represents a -u- keyword without a type as the internal sentinel "yes"
+    // (uloc_forLanguageTag("en-u-ca") -> "en@calendar=yes"). uloc_toUnicodeLocaleType
+    // passes "yes" through unchanged because it is well-formed. Normalize it to the
+    // UTS #35 implied value "true" so the sentinel never reaches JavaScript.
+    if (result == "yes"_s)
+        result = "true"_s;
+    // "true" is not a valid value for kf (colcasefirst: "upper" / "lower" / "false").
+    // Match V8 and test262 intl402/Locale/getters.js by returning "" for this key only.
+    if (result == "true"_s && key == "colcasefirst"_s)
         return emptyString();
     return result;
 }
