@@ -682,6 +682,12 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
 // it counts on hitting the buffer size limit to catch those things. If it fails,
 // since there is no side effect, the full general purpose Stringifier can be used
 // and the only cost of the fast stringifying attempt is the time wasted.
+//
+// In DynamicBuffer mode the buffer limit is the 2GB string length limit, so the
+// buffer limit alone is far too expensive as a cycle check: a cyclic value with a
+// gap reaches it only after writing (and repeatedly reallocating) gigabytes. A
+// depth limit bounds that wasted work. Values nested deeper than the limit take
+// the general Stringifier, whose holder stack detects cycles immediately.
 
 enum class BufferMode : uint8_t {
     StaticBuffer,
@@ -695,6 +701,7 @@ enum class FailureReason : uint8_t {
     Found16BitEarly,
     Found16BitLate,
     StackOverflow,
+    DepthLimit,
     Unknown,
 };
 
@@ -706,6 +713,15 @@ public:
 
     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
     static constexpr unsigned dynamicBufferInlineCapacity = bufferMode == BufferMode::StaticBuffer ? 0 : 1024;
+
+    // DynamicBuffer mode only: values nested deeper than this bail to the general
+    // Stringifier. Keeps a cyclic value from filling the buffer up to the string
+    // length limit before the general Stringifier gets to throw for the cycle.
+    static constexpr unsigned maximumDepth = 512;
+
+    // m_depth drives the indentation when there is a gap, and the maximumDepth
+    // check in DynamicBuffer mode.
+    static constexpr bool trackDepthWithoutGap = bufferMode == BufferMode::DynamicBuffer;
 
     static constexpr bool useShortCopyTier = bufferMode == BufferMode::DynamicBuffer;
 
@@ -1351,6 +1367,10 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
             return;
         }
+        if (m_depth >= maximumDepth) [[unlikely]] {
+            recordFailure(FailureReason::DepthLimit, "depth limit"_s);
+            return;
+        }
     }
 
     if (value.isNull()) {
@@ -1525,7 +1545,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             recordFailure("object has non-reified static properties"_s);
             return;
         }
-        if constexpr (hasGap == HasGap::Yes)
+        if constexpr (hasGap == HasGap::Yes || trackDepthWithoutGap)
             ++m_depth;
         const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
         structure.forEachProperty(m_vm, [&](const auto& entry) -> bool {
@@ -1654,7 +1674,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         });
         if (haveFailure()) [[unlikely]]
             return;
-        if constexpr (hasGap == HasGap::Yes)
+        if constexpr (hasGap == HasGap::Yes || trackDepthWithoutGap)
             --m_depth;
         bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '{';
         if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
@@ -1701,11 +1721,11 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
         buffer()[m_length++] = '[';
-        if constexpr (hasGap == HasGap::Yes)
+        if constexpr (hasGap == HasGap::Yes || trackDepthWithoutGap)
             ++m_depth;
 
         auto closeArray = [&] {
-            if constexpr (hasGap == HasGap::Yes)
+            if constexpr (hasGap == HasGap::Yes || trackDepthWithoutGap)
                 --m_depth;
             bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '[';
             if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
