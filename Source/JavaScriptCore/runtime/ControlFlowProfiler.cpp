@@ -99,6 +99,10 @@ Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFun
 Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID sourceID, VM& vm) const
 {
     Vector<BasicBlockRange> result(0);
+    // Runtime.getBasicBlocks passes the sourceID that the inspector frontend sent, which can be a reserved key.
+    if (!m_sourceIDBuckets.isValidKey(sourceID))
+        return result;
+
     auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
     if (bucketFindResult == m_sourceIDBuckets.end())
         return result;
