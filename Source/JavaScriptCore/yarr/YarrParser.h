@@ -139,8 +139,8 @@ private:
     public:
         NamedCaptureGroups()
         {
-            m_nestedCaptureGroupNames.grow(1);
-            m_activeCaptureGroupNames.grow(1);
+            m_activeNewCaptureGroupNames.grow(1);
+            m_previousAlternativeCaptureGroupNames.grow(1);
         }
 
         bool contains(String name)
@@ -156,57 +156,72 @@ private:
         void reset()
         {
             m_captureGroupNames.clear();
-            m_nestedCaptureGroupNames.clear();
-            m_nestedCaptureGroupNames.grow(1);
-            m_activeCaptureGroupNames.clear();
-            m_activeCaptureGroupNames.grow(1);
+            m_currentlyActiveCaptureGroupNames.clear();
+            m_activeNewCaptureGroupNames.clear();
+            m_activeNewCaptureGroupNames.grow(1);
+            m_previousAlternativeCaptureGroupNames.clear();
+            m_previousAlternativeCaptureGroupNames.grow(1);
         }
 
         void nextAlternative()
         {
-            m_nestedCaptureGroupNames.last().addAll(std::exchange(m_activeCaptureGroupNames.last(), { }));
-
-            // For nested parenthesis, we need to seed the new alternative with the already seen
-            // named captures from the containing alternative.
-            if (m_activeCaptureGroupNames.size() > 1)
-                m_activeCaptureGroupNames.last().addAll(m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2]);
+            // Names introduced by the alternative that just finished drop out of
+            // scope for the next alternative; stash them so popParenthesis() can
+            // surface them to the containing alternative.
+            auto namesFromThisAlternative = std::exchange(m_activeNewCaptureGroupNames.last(), { });
+            for (auto& name : namesFromThisAlternative)
+                m_currentlyActiveCaptureGroupNames.remove(name);
+            m_previousAlternativeCaptureGroupNames.last().addAll(WTF::move(namesFromThisAlternative));
         }
 
         void pushParenthesis()
         {
-            auto currentTop = m_activeCaptureGroupNames.last();
-            m_nestedCaptureGroupNames.append(GroupNameHashSet());
-            m_activeCaptureGroupNames.append(currentTop);
+            m_activeNewCaptureGroupNames.append(GroupNameHashSet());
+            m_previousAlternativeCaptureGroupNames.append(GroupNameHashSet());
         }
 
         void popParenthesis()
         {
-            ASSERT(m_nestedCaptureGroupNames.size() > 1);
-            ASSERT(m_activeCaptureGroupNames.size() > 1);
-            m_nestedCaptureGroupNames.last().addAll(WTF::move(m_activeCaptureGroupNames.last()));
+            ASSERT(m_activeNewCaptureGroupNames.size() > 1);
+            ASSERT(m_previousAlternativeCaptureGroupNames.size() > 1);
 
-            // Add all the names seen in this parenthesis to the containing alternative.
-            m_activeCaptureGroupNames[m_activeCaptureGroupNames.size() - 2].addAll(WTF::move(m_nestedCaptureGroupNames.last()));
+            // Collect every name introduced anywhere in this group (any alternative).
+            auto namesFromThisGroup = m_previousAlternativeCaptureGroupNames.takeLast();
+            namesFromThisGroup.addAll(m_activeNewCaptureGroupNames.takeLast());
 
-            m_nestedCaptureGroupNames.removeLast();
-            m_activeCaptureGroupNames.removeLast();
+            // All of them become active in the containing alternative. None of these
+            // names can already be attributed to the containing level: they were first
+            // activated inside this group, which is only possible if they were not
+            // already active on entry.
+            m_currentlyActiveCaptureGroupNames.addAll(namesFromThisGroup);
+            m_activeNewCaptureGroupNames.last().addAll(WTF::move(namesFromThisGroup));
         }
 
         GroupNameHashSet::AddResult add(String name)
         {
             m_captureGroupNames.add(name);
 
-            // If the name is not new, the caller should flag a syntax error.
-            return m_activeCaptureGroupNames.last().add(name);
+            // If the name is already active on this alternative's path, the caller
+            // should flag a syntax error.
+            auto result = m_currentlyActiveCaptureGroupNames.add(name);
+            if (result.isNewEntry)
+                m_activeNewCaptureGroupNames.last().add(name);
+            return result;
         }
 
     private:
         // Names seen in the whole expression up to this point.
         GroupNameHashSet m_captureGroupNames;
-        // All active names from prior alternatives at this nesting level.
-        Vector<GroupNameHashSet, 1> m_nestedCaptureGroupNames;
-        // Names seen in containing disjunction / alternative and the current alternative.
-        Vector<GroupNameHashSet, 1> m_activeCaptureGroupNames;
+        // Names that would collide if redeclared at the current parse point (the
+        // union of the containing alternatives' names at every nesting level).
+        // A name appears here iff it is in exactly one m_activeNewCaptureGroupNames entry.
+        GroupNameHashSet m_currentlyActiveCaptureGroupNames;
+        // For each nesting level, names first activated in the current alternative at
+        // that level (either via add() or propagated up from a child on popParenthesis()).
+        Vector<GroupNameHashSet, 1> m_activeNewCaptureGroupNames;
+        // For each nesting level, names introduced in prior alternatives of that
+        // level's disjunction (not currently active).
+        Vector<GroupNameHashSet, 1> m_previousAlternativeCaptureGroupNames;
     };
 
     /*
