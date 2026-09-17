@@ -298,6 +298,11 @@ BEXPORT void freeLargeVirtual(void* object, size_t, HeapKind kind = HeapKind::Pr
 
 BEXPORT void scavengeThisThread(bool force = true);
 
+// The calling thread is idle and about to block for a while. Return what its thread-local
+// allocator state holds for it: retired pages, blocks that other threads freed into its pages,
+// and the free runs inside the pages it still uses. Only the owning thread can do this.
+BEXPORT void scavengeThisThreadOnIdle();
+
 BEXPORT void scavenge();
 
 BEXPORT bool isEnabled(HeapKind kind = HeapKind::Primary);
