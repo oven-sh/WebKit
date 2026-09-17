@@ -325,12 +325,14 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // FIXME: Extend this for non JSFinalObject. For example, we would like to use this fast path for function objects too.
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
-    bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+    auto fastPutAvailability = targetObject ? targetObject->fastPutInlineAvailabilityExcludingProto() : JSObject::FastPutInlineAvailability::Unavailable;
+    bool targetCanPerformFastPut = fastPutAvailability != JSObject::FastPutInlineAvailability::Unavailable && targetObject->isStructureExtensible();
+    bool mustCheckPrototypeProperties = fastPutAvailability == JSObject::FastPutInlineAvailability::AvailableIfPrototypesDoNotDefineProperties;
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.
     // We limit argsCount < 5 not to increase properties / values vector super large.
-    if (argsCount > 2 && argsCount < 5 && targetCanPerformFastPut) {
+    if (argsCount > 2 && argsCount < 5 && targetCanPerformFastPut && !mustCheckPrototypeProperties) {
         bool willBatch = true;
         for (unsigned i = 1; i < argsCount; ++i) {
             JSValue sourceValue = callFrame->uncheckedArgument(i);
@@ -394,7 +396,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
                 RETURN_IF_EXCEPTION(scope, { });
             }
 
-            bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values);
+            bool objectAssignFastSucceeded = objectAssignFast(globalObject, targetObject, source, properties, values, mustCheckPrototypeProperties);
             RETURN_IF_EXCEPTION(scope, { });
             if (objectAssignFastSucceeded)
                 continue;
@@ -1189,6 +1191,11 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+        object->freeze(vm);
+        return object;
+    }
+
+    if (object->indexingMode() == ArrayClass && object->inherits<JSArray>() && !object->hasNonReifiedStaticProperties()) {
         object->freeze(vm);
         return object;
     }
