@@ -1632,6 +1632,18 @@ bool isWellFormedCurrencyCode(StringView currency)
     return currency.length() == 3 && currency.containsOnly<isASCIIAlpha>();
 }
 
+#if USE(BUN_JSC_ADDITIONS) && !USE(APPLE_INTERNAL_SDK)
+// uloc_canonicalize is documented to not map aliased names (ICU-21506), so
+// Intl.Locale / Intl.getCanonicalLocales miss CLDR alias replacements like
+// fre -> fr, en-UK -> en-GB, sh -> sr-Latn, SU -> RU/AM on Bun builds. The
+// fix lives in icu::Locale::createCanonical (runs the CLDR AliasReplacer
+// since ICU 68) / Apple's ualoc_canonicalForm SPI, neither of which is
+// reachable here because Platform.h sets U_SHOW_CPLUSPLUS_API=0. Bun provides
+// a C wrapper with the uloc_canonicalize signature instead. Weak so the jsc
+// shell still links.
+extern "C" __attribute__((weak)) int32_t Bun__canonicalizeLocaleID(const char*, char*, int32_t, UErrorCode*);
+#endif
+
 std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const char* localeID)
 {
     ASSERT(localeID);
@@ -1641,15 +1653,16 @@ std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const 
     // ICU-21506 is a bug upstreaming this SPI to ICU.
     // https://unicode-org.atlassian.net/browse/ICU-21506
     auto status = callBufferProducingFunction(ualoc_canonicalForm, localeID, buffer);
-    if (U_FAILURE(status))
-        return std::nullopt;
-    return buffer;
+#elif USE(BUN_JSC_ADDITIONS)
+    auto status = Bun__canonicalizeLocaleID
+        ? callBufferProducingFunction(Bun__canonicalizeLocaleID, localeID, buffer)
+        : callBufferProducingFunction(uloc_canonicalize, localeID, buffer);
 #else
     auto status = callBufferProducingFunction(uloc_canonicalize, localeID, buffer);
+#endif
     if (U_FAILURE(status))
         return std::nullopt;
     return buffer;
-#endif
 }
 
 std::optional<String> mapICUCalendarKeywordToBCP47(const String& calendar)
