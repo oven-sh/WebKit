@@ -1429,6 +1429,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSCJSValueInlines.h
     runtime/JSCJSValuePropertyInlines.h
     runtime/JSCJSValueStructure.h
+    runtime/JSCPrimordials.h
+    runtime/JSCPrimordialsTable.h
     runtime/JSCallee.h
     runtime/JSCalleeInlines.h
     runtime/JSCast.h

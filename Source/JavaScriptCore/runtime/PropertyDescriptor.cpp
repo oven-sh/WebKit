@@ -57,7 +57,7 @@ struct WeakCustomGetterOrSetterHashTranslator {
     }
 };
 
-static JSCustomSetterFunction* createCustomSetterFunction(JSGlobalObject* globalObject, VM& vm, PropertyName propertyName, PutValueFunc putValueFunc)
+JSCustomSetterFunction* createCustomSetterFunction(JSGlobalObject* globalObject, VM& vm, PropertyName propertyName, PutValueFunc putValueFunc)
 {
     using Translator = WeakCustomGetterOrSetterHashTranslator<JSCustomSetterFunction>;
 
@@ -69,7 +69,7 @@ static JSCustomSetterFunction* createCustomSetterFunction(JSGlobalObject* global
     });
 }
 
-static JSCustomGetterFunction* createCustomGetterFunction(JSGlobalObject* globalObject, VM& vm, PropertyName propertyName, GetValueFunc getValueFunc, std::optional<DOMAttributeAnnotation> domAttribute)
+JSCustomGetterFunction* createCustomGetterFunction(JSGlobalObject* globalObject, VM& vm, PropertyName propertyName, GetValueFunc getValueFunc, std::optional<DOMAttributeAnnotation> domAttribute)
 {
     using Translator = WeakCustomGetterOrSetterHashTranslator<JSCustomGetterFunction>;
 
@@ -83,6 +83,7 @@ static JSCustomGetterFunction* createCustomGetterFunction(JSGlobalObject* global
         return JSCustomGetterFunction::create(vm, globalObject, propertyName, getValueFunc, domAttribute);
     });
 }
+
 
 bool PropertyDescriptor::writable() const
 {
