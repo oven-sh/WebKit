@@ -48,6 +48,9 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_hasParseLocation(false)
+#endif
 {
 }
 
