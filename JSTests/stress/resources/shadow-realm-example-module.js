@@ -22,4 +22,11 @@ function getCallCount() {
 }
 
 var answer = 6;
-export { anObject, answer, getCallCount, getFromGlobal, getAnObject, putInGlobal };
+var undefinedValue = undefined;
+let notYet;
+
+function setNotYet(val) {
+    notYet = val;
+}
+
+export { anObject, answer, getCallCount, getFromGlobal, getAnObject, notYet, putInGlobal, setNotYet, undefinedValue };
