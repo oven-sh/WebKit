@@ -36,6 +36,7 @@
 #include "RegExpGlobalDataInlines.h"
 #include "RegExpObject.h"
 #include "RegExpObjectInlines.h"
+#include "RegExpPrototype.h"
 #include <wtf/Range.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringSearch.h>
@@ -1580,8 +1581,15 @@ ALWAYS_INLINE JSString* replace(VM& vm, JSGlobalObject* globalObject, JSValue th
     JSString* searchJSString = searchValue.isString() ? asString(searchValue) : nullptr;
     JSString* replaceJSString = replaceValue.isString() ? asString(replaceValue) : nullptr;
 
-    if (searchValue.inherits<RegExpObject>())
-        RELEASE_AND_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, string, searchValue, replaceValue));
+    if (RegExpObject* regExpObject = dynamicDowncast<RegExpObject>(searchValue)) {
+        // The DFG checked the RegExp before ToString(this) ran. Check again, as stringProtoFuncReplace does.
+        if (!regExpObject->isSymbolReplaceFastAndNonObservable()) [[unlikely]] {
+            JSValue result = regExpReplaceGeneric(globalObject, regExpObject, string, replaceValue);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            RELEASE_AND_RETURN(scope, result.toString(globalObject));
+        }
+        RELEASE_AND_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, string, regExpObject, replaceValue));
+    }
 
     if constexpr (replaceMode == StringReplaceMode::Single) {
         if (searchJSString && replaceJSString) {
