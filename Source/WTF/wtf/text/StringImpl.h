@@ -1268,6 +1268,12 @@ inline constexpr bool StringImpl::isValidLength(size_t length)
     return length <= max;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The UTF-8 converters size a Vector<char16_t> by the length of their input. This fails to compile if a merge
+// takes the halved limit of 310668@main for isValidCapacityForVector again.
+static_assert(isValidCapacityForVector<char16_t>(StringImpl::MaxLength));
+#endif
+
 template<typename T> constexpr size_t StringImpl::tailOffset()
 {
     return roundUpToMultipleOf<alignof(T)>(offsetof(StringImpl, m_hashAndFlags) + sizeof(StringImpl::m_hashAndFlags));
