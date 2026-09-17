@@ -147,19 +147,24 @@ public:
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
             // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
-            RELEASE_ASSERT(mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena));
-            structureHeap = mi_heap_new_in_arena(structureArena);
+            // mimalloc needs a whole MI_ARENA_MIN_SIZE (32 MB) chunk after aligning the start up to a
+            // slice, which the 32 MB rung of the loop above no longer has once the first block is taken
+            // off. Hand out blocks from the reservation directly then, as when bmalloc is disabled.
+            if (mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena)) {
+                structureHeap = mi_heap_new_in_arena(structureArena);
 #if OS(LINUX) && defined(MADV_DOFORK)
-            // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
-            // mi_arena_t and theaps inside this region and registers them in
-            // process-wide lists that _mi_process_fork_child walks pre-exec.
-            while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+                // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
+                // mi_arena_t and theaps inside this region and registers them in
+                // process-wide lists that _mi_process_fork_child walks pre-exec.
+                while (madvise(reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap), g_jscConfig.sizeOfStructureHeap, MADV_DOFORK) == -1 && errno == EAGAIN) { }
 #elif OS(DARWIN)
-            // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
-            // same rationale as the Linux MADV_DOFORK branch above.
-            vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
+                // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
+                // same rationale as the Linux MADV_DOFORK branch above.
+                vm_inherit(mach_task_self(), static_cast<vm_address_t>(g_jscConfig.startOfStructureHeap), static_cast<vm_size_t>(g_jscConfig.sizeOfStructureHeap), VM_INHERIT_COPY);
 #endif
-            return;
+                return;
+            }
+            m_useSystemHeap = true;
         }
         m_usedBlocks.set(0);
 #else
@@ -254,6 +259,7 @@ private:
     // The actual preferred size will be the next power-of-two below this value
     // This value results in a 512MiB reservation on 3GiB devices, 1GiB on 4GiB
     static constexpr size_t maximumPercentageOfPhysicalMemoryToReserveWhenVAConstrained = 20;
+    static constexpr size_t minimumStructureHeapSizeWhenAddressSpaceLimited = 128 * MB;
     Lock m_lock;
     bool m_useSystemHeap { true };
     BitVector m_usedBlocks;
@@ -314,6 +320,12 @@ size_t StructureMemoryManager::computePreferredStructureHeapReservationSize()
             cachedSize = std::bit_floor(baseSize);
 #else
         cachedSize = baseSize;
+        // An address-space limit (RLIMIT_AS) charges the reservation whether or not it is committed,
+        // so take at most a sixteenth of it, or else the heap and the JIT pool lose that space. Running
+        // out of this reservation is fatal, so not less than 128 MB; the constructor still halves from
+        // there when even that does not fit.
+        if (size_t limit = addressSpaceLimit(); limit != std::numeric_limits<size_t>::max())
+            cachedSize = std::min(cachedSize, std::max(std::bit_floor(limit / 16), minimumStructureHeapSizeWhenAddressSpaceLimited));
 #endif
 
 #if CPU(ADDRESS64)
