@@ -1492,20 +1492,22 @@ void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JS
 
 void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 #if USE(BUN_JSC_ADDITIONS)
     {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
         UncheckedKeyHashSet<AbstractModuleRecord*> visited;
         generateDeferredSyntheticModules(globalObject, visited);
         RETURN_IF_EXCEPTION(scope, void());
     }
 #endif
-    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this))
-        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher)); // can throw
-    else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
+        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
+        RETURN_IF_EXCEPTION(scope, void());
+    } else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
         moduleRecord->link(globalObject, WTF::move(scriptFetcher));
-    else
+        RETURN_IF_EXCEPTION(scope, void());
+    } else
         RELEASE_ASSERT_NOT_REACHED();
 }
 
