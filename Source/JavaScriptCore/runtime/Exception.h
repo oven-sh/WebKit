@@ -64,6 +64,13 @@ public:
     const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
     static size_t estimatedSize(JSCell*, VM&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The async context (JSGlobalObject::m_asyncContextData field 0) this was first thrown in.
+    // Empty: never thrown, or thrown before the embedder started tracking async contexts.
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+#endif
+
     bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
     void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
 
@@ -80,6 +87,9 @@ private:
     static void destroy(JSCell*);
 
     WriteBarrier<Unknown> m_value;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     Vector<StackFrame> m_stack;
     bool m_didNotifyInspectorOfThrow { false };
 
