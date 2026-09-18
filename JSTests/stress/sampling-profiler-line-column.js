@@ -1,7 +1,3 @@
-// Bun: upstream has no requireOptions here. A sample of test() has a line only while test() is LLInt or baseline code, or
-// when the code it runs has a PC to CodeOrigin map, and the shell's startSamplingProfiler() does not turn that map on.
-// In the eager modes test() is FTL code before its first call returns, and the wait below times out.
-//@ requireOptions("--alwaysGeneratePCToCodeOriginMap=true")
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error('bad value: ' + actual);
