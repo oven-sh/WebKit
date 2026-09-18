@@ -1,5 +1,9 @@
 //@ skip if not $jitTests
 //@ $skipModes << :lockdown
+// Bun: upstream leaves the concurrent JIT on. The numberOfDFGCompiles() bounds at the end of testStringToAllCompare() are 2,
+// and a concurrent compile that is installed after the types it was compiled for changed adds one. Without the concurrent JIT
+// every count is 2.
+//@ requireOptions("--useConcurrentJIT=false")
 //@ defaultNoEagerRun
 "use strict";
 
