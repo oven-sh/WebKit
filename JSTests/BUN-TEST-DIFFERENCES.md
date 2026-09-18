@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 122 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -122,8 +122,6 @@ Rules for an edit to an upstream test:
 | 32 × `stress/ffi-*.js` | `--useExecutableAllocationFuzz=false` added to `requireOptions` | the `ftl-eager-no-cjit` mode fails executable allocations at random; `bun:ffi`'s thunks have no fallback tier and throw `RangeError: Out of memory`. Same opt-out as `wasm-loop-consistency.js` |
 | `stress/sampling-profiler-bound-function-name.js` | `--useExecutableAllocationFuzz=false` added as `requireOptions` | with the DFG on it waits for the frame `baz -> foo` (the bound function inlined). When `ftl-eager-no-cjit`'s random allocation failure hits the DFG compile of `baz`, `dontOptimizeAnytimeSoon()` keeps `baz` in the baseline JIT and the test throws after its 50 s loop. 11 of 200 runs measured, 0 of 300 with the option |
 | `stress/sampling-profiler-line-column.js` | `--alwaysGeneratePCToCodeOriginMap=true` added as `requireOptions` | it waits for a sample of `test()` with a line. DFG and FTL code has one only with a PC to CodeOrigin map, which `--useSamplingProfiler` turns on and the shell's `startSamplingProfiler()` does not; without it the sample has to land before `test()` tiers up. 38 of 3,000 runs of `ftl-eager` found none in 10 s, 0 of 3,000 with the option |
-| `stress/for-of-mixed-element-types-value-profile.js` | `--useConcurrentJIT=false` added to `requireOptions` | it bounds `numberOfDFGCompiles(walk)` at 4. Each concurrent compile that began before the element type changed is installed afterwards, exits and is jettisoned, so the count follows the machine's load: 2 to 4 in 3,000 local runs on one core, 5 in CI. Without the concurrent JIT it is 3 in 3,000 of 3,000 |
-| `stress/compare-strict-eq-on-various-types.js` | `--useConcurrentJIT=false` added as `requireOptions` | it bounds four `numberOfDFGCompiles()` at 2. With the concurrent JIT the counts follow the machine's load (0 to 2 in 1,500 local runs on two cores, over 2 once in CI's `no-ftl` on arm64); without it each is 2 in 400 of 400 |
 | `stress/buffer-accessor-jit-byteoffset.js`, `-fractional-value.js`, `-large.js` | `$skipModes << :lockdown` | they check `numberOfDFGCompiles()`; lockdown runs with the JIT off |
 | `stress/regress-174463162.js` | `$skipModes` for `dfg-eager`, `dfg-eager-no-cjit-validate`, `ftl-eager`, `ftl-eager-no-cjit`, `no-cjit-collect-continuously` | its `$vm` helper scribbles a live cell's header; a collection before the script ends marks a cell with no Structure. Only the `--collectContinuously=true` modes collect that early. Upstream's bots hit it too |
 | `wasm/regress/298930.js` | `skip if $asan` | ASan's fake stack moves `ConstExprInterpreter`'s `MarkedArgumentBuffer` off the stack the collector scans |
