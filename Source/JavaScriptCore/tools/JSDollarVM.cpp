@@ -2264,9 +2264,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
-#if USE(BUN_JSC_ADDITIONS)
-static JSC_DECLARE_HOST_FUNCTION(functionEvaluateInModuleLoaderScope);
-#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4215,31 +4212,6 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-// $vm.evaluateInModuleLoaderScope({ loader }, source, url): evaluates `source` as a program in that
-// loader's module scope (JSC::evaluateInScope) and returns its completion value.
-JSC_DEFINE_HOST_FUNCTION(functionEvaluateInModuleLoaderScope, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
-    if (!loader)
-        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
-    String source = callFrame->argument(1).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    String url = callFrame->argument(2).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    NakedPtr<Exception> exception;
-    JSValue result = evaluateInScope(globalObject, makeSource(source, SourceOrigin { URL({ }, url) }, SourceTaintedOrigin::Untainted, url), loader->moduleScope(), JSValue(), exception);
-    if (exception) {
-        throwException(globalObject, scope, exception);
-        return { };
-    }
-    return JSValue::encode(result);
-}
-#endif
-
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6009,9 +5981,6 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
-#if USE(BUN_JSC_ADDITIONS)
-    addFunction(vm, allowIfNotFuzz, "evaluateInModuleLoaderScope"_s, functionEvaluateInModuleLoaderScope, 3);
-#endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);

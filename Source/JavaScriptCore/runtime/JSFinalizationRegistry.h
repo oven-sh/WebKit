@@ -29,16 +29,12 @@
 
 namespace JSC {
 
-class JSFinalizationRegistry final : public JSInternalFieldObjectImpl<2> {
+class JSFinalizationRegistry final : public JSInternalFieldObjectImpl<1> {
 public:
-    using Base = JSInternalFieldObjectImpl<2>;
+    using Base = JSInternalFieldObjectImpl<1>;
 
     enum class Field : uint8_t { 
         Callback,
-        // The script execution owner (GlobalObjectMethodTable::currentScriptExecutionOwner) that was
-        // current when the registry was made. Its cleanup work is that owner's, whoever happens to
-        // be running when a collection finds something to clean up.
-        ScriptExecutionOwner,
     };
 
     static size_t allocationSize(Checked<size_t> inlineCapacity)
@@ -57,7 +53,6 @@ public:
     {
         return { {
             jsNull(),
-            jsNull(),
         } };
     }
 
@@ -65,7 +60,6 @@ public:
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     JSObject* callback() const { return uncheckedDowncast<JSObject>(internalField(Field::Callback).get()); }
-    JSObject* scriptExecutionOwner() const { return uncheckedDowncast<JSObject>(internalField(Field::ScriptExecutionOwner).get()); }
 
     static JSFinalizationRegistry* create(VM&, Structure*, JSObject* callback);
     static JSFinalizationRegistry* createWithInitialValues(VM&, Structure*);

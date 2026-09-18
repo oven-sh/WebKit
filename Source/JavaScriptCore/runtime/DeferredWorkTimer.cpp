@@ -193,16 +193,12 @@ void DeferredWorkTimer::runRunLoop()
 
 DeferredWorkTimer::WeakTicket DeferredWorkTimer::addPendingWork(WorkType type, VM& vm, JSObject* target, Vector<JSCell*>&& dependencies)
 {
-    auto* globalObject = target->realm();
-    return addPendingWork(type, vm, target, WTF::move(dependencies), globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject));
-}
-
-DeferredWorkTimer::WeakTicket DeferredWorkTimer::addPendingWork(WorkType type, VM& vm, JSObject* target, Vector<JSCell*>&& dependencies, JSObject* scriptExecutionOwner)
-{
     ASSERT_UNUSED(vm, vm.currentThreadIsHoldingAPILock() || (Thread::mayBeGCThread() && vm.heap.worldIsStopped()));
     for (unsigned i = 0; i < dependencies.size(); ++i)
         ASSERT(dependencies[i] != target && dependencies[i]);
 
+    auto* globalObject = target->realm();
+    JSObject* scriptExecutionOwner = globalObject->globalObjectMethodTable()->currentScriptExecutionOwner(globalObject);
     dependencies.append(target);
 
     auto ticket = Ticket::create(type, scriptExecutionOwner, WTF::move(dependencies));

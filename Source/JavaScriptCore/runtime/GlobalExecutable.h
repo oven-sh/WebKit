@@ -57,12 +57,6 @@ public:
     // that did tier up is left to age out like any other.
     bool canReleaseLinkedCodeNow(VM&);
 
-    // For code that runs in a scope of its own instead of the global scope (a module loader's module scope, the scope
-    // a program is evaluated in): the symbol tables of the lexical environments between `scope` and the global lexical
-    // environment, innermost first. Code is compiled for them and shared by scopes that have the same ones.
-    static Vector<SymbolTable*> symbolTablesOfScope(JSGlobalObject*, JSScope*);
-    static bool areSameSymbolTables(const FixedVector<WriteBarrier<SymbolTable>>&, const Vector<SymbolTable*>&);
-
 protected:
     friend class ScriptExecutable;
     GlobalExecutable(Structure* structure, VM& vm, const SourceCode& sourceCode, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, Intrinsic intrinsic)

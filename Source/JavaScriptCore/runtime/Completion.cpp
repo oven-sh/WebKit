@@ -133,24 +133,12 @@ RefPtr<CachedBytecode> generateModuleBytecode(VM& vm, const SourceCode& source, 
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-static JSValue evaluate(JSGlobalObject*, const SourceCode&, UnlinkedProgramCodeBlock* precompiled, JSScope*, JSValue thisValue, NakedPtr<Exception>& returnedException);
-
 JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
 {
-    return evaluate(globalObject, source, nullptr, nullptr, thisValue, returnedException);
+    return evaluate(globalObject, source, nullptr, thisValue, returnedException);
 }
 
 JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, UnlinkedProgramCodeBlock* precompiled, JSValue thisValue, NakedPtr<Exception>& returnedException)
-{
-    return evaluate(globalObject, source, precompiled, nullptr, thisValue, returnedException);
-}
-
-JSValue evaluateInScope(JSGlobalObject* globalObject, const SourceCode& source, JSScope* scope, JSValue thisValue, NakedPtr<Exception>& returnedException)
-{
-    return evaluate(globalObject, source, nullptr, scope, thisValue, returnedException);
-}
-
-static JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, UnlinkedProgramCodeBlock* precompiled, JSScope* programScope, JSValue thisValue, NakedPtr<Exception>& returnedException)
 #else
 JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue thisValue, NakedPtr<Exception>& returnedException)
 #endif
@@ -165,7 +153,7 @@ JSValue evaluate(JSGlobalObject* globalObject, const SourceCode& source, JSValue
         thisValue = globalObject;
     JSObject* thisObj = uncheckedDowncast<JSObject>(thisValue.toThis(globalObject, ECMAMode::sloppy()));
 #if USE(BUN_JSC_ADDITIONS)
-    JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj, precompiled, programScope);
+    JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj, precompiled);
 #else
     JSValue result = vm.interpreter.executeProgram(source, globalObject, thisObj);
 #endif

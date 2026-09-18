@@ -1046,22 +1046,16 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled, JSScope* programScope)
+JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj, UnlinkedProgramCodeBlock* precompiled)
 #else
 JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj)
 #endif
 {
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-#if USE(BUN_JSC_ADDITIONS)
-    JSScope* scope = programScope ? programScope : thisObj->realm()->globalScope();
-#else
     JSScope* scope = thisObj->realm()->globalScope();
-#endif
     JSGlobalObject* globalObject = scope->realm();
-    bool runsInGlobalScope = scope == globalObject->globalScope();
-    // The program's scope register is its callee's scope.
-    JSCallee* callee = runsInGlobalScope ? globalObject->globalCallee() : JSCallee::create(vm, globalObject, scope);
+    JSCallee* globalCallee = globalObject->globalCallee();
 
     VMEntryScope entryScope(vm, globalObject);
 
@@ -1072,7 +1066,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     if (SourceProfiler::g_profilerHook) [[unlikely]]
         SourceProfiler::profile(SourceProfiler::Type::Program, source);
 
-    ProgramExecutable* program = ProgramExecutable::getOrCreateForScope(globalObject, source, scope);
+    ProgramExecutable* program = ProgramExecutable::create(globalObject, source);
     EXCEPTION_ASSERT(throwScope.exception() || program);
     RETURN_IF_EXCEPTION(throwScope, { });
 
@@ -1097,8 +1091,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     StringView programSource = program->source().view();
     // Skip JSONP if the program is tainted. We want there to be a tainted
     // frame on the stack in case the program does an eval via a setter.
-    // Also if it runs in a scope of its own: JSONP looks names up in the global scope.
-    if (source.provider()->sourceTaintedOrigin() != SourceTaintedOrigin::Untainted || !runsInGlobalScope)
+    if (source.provider()->sourceTaintedOrigin() != SourceTaintedOrigin::Untainted)
         goto failedJSONP;
 
     if (programSource.isNull())
@@ -1244,8 +1237,8 @@ failedJSONP:
     if (error) [[unlikely]]
         return throwException(globalObject, throwScope, error);
 
-    if (globalObject->globalScope()->structure()->isUncacheableDictionary())
-        globalObject->globalScope()->flattenDictionaryObject(vm);
+    if (scope->structure()->isUncacheableDictionary())
+        scope->flattenDictionaryObject(vm);
 
     RefPtr<JSC::JITCode> jitCode;
     ProtoCallFrame protoCallFrame;
@@ -1264,7 +1257,7 @@ failedJSONP:
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             jitCode = program->generatedJITCode();
-            protoCallFrame.init(codeBlock, globalObject, callee, thisObj, nullptr, 1);
+            protoCallFrame.init(codeBlock, globalObject, globalCallee, thisObj, nullptr, 1);
         }
     }
 
@@ -1273,10 +1266,8 @@ failedJSONP:
     ASSERT(jitCode == program->generatedJITCode().ptr());
     JSValue result = JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     // This executable was made for this one run; only the functions it created still refer to it.
-    // (One that runs in a scope of its own keeps its unlinked code for the next program of its source in
-    // a scope with the same symbol tables, unless that can be decoded again: getOrCreateForScope.)
     if (Options::useRunOnceCodeRelease() && program->canReleaseLinkedCodeNow(vm))
-        program->clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*program->subspace()), runsInGlobalScope ? ScriptExecutable::ClearCode::All : ScriptExecutable::ClearCode::KeepWhatNeedsParsing);
+        program->clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*program->subspace()));
     return result;
 }
 
