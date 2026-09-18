@@ -1699,7 +1699,7 @@ void VM::drainMicrotasks()
     if (executionForbidden()) [[unlikely]]
         m_defaultMicrotaskQueue->clear();
     else {
-        std::optional<VMEntryScope> entryScope;
+        OptionalVMEntryScope entryScope;
         if (!m_defaultMicrotaskQueue->isEmpty())
             entryScope.emplace(*this, nullptr);
         while (true) {
