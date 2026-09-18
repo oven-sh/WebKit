@@ -1,6 +1,6 @@
 name: Flaky test hunt
 
-# Not to be merged. Runs ci.yml's `test` job REPEAT times per tested lane, against the jsc shell of the published release
+# Not to be merged. Runs ci.yml's `test` job 30 times per tested lane, against the jsc shell of the published release
 # of SHA, to find the tests that fail intermittently. Nothing is built. Another round is a re-run of all jobs of the run.
 
 on:
@@ -60,6 +60,9 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y "${missing[@]}"
           fi
+          # A core file for every jsc that dies of a signal, for the `Backtraces` step.
+          mkdir -p "$RUNNER_TEMP/cores"
+          sudo sysctl -w kernel.core_pattern="$RUNNER_TEMP/cores/core.%e.%p"
       - name: Download the jsc shell
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,6 +91,7 @@ jobs:
         env: *test_env
         run: |
           set +e -uo pipefail
+          ulimit -c unlimited
           root="$RUNNER_TEMP/bun-webkit"
           results="$RUNNER_TEMP/jsc-results.json"
           echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
@@ -119,6 +123,26 @@ jobs:
           # Kept only when the runner died before its results: it is the only record of that.
           [ ! -f "$results" ] || rm "$RUNNER_TEMP/jsc-tests.log"
           exit "$status"
+      # Tests that crash on purpose leave cores too. Only the cores of glibc's assertion in __pthread_tpp_change_priority
+      # are looked at: the message abort() formatted is in the core's memory.
+      - name: Backtraces
+        if: always()
+        env:
+          DEBUGINFOD_URLS: https://debuginfod.ubuntu.com
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/cores"
+          mkdir -p ../backtraces
+          ls -la | tee ../backtraces/cores.txt | tail -n +2 | wc -l
+          for core in *; do
+            grep -qa "__pthread_tpp_change_priority: Assertion" "$core" 2>/dev/null || continue
+            command -v gdb >/dev/null || { sudo apt-get update; sudo apt-get install -y gdb; }
+            timeout 600 gdb -batch -iex "set debuginfod enabled on" -ex "info threads" -ex "thread apply all bt" -ex "bt full 12" \
+              "$RUNNER_TEMP/bun-webkit/bin/jsc" "$core" > "../backtraces/$core.txt" 2>&1
+            echo "##### $core"; cat "../backtraces/$core.txt"
+            zstd -q -T0 "$core" -o "../backtraces/$core.zst"
+          done
+          exit 0
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -130,5 +154,6 @@ jobs:
             ${{ runner.temp }}/jsc-tests.log
             ${{ runner.temp }}/jsc-exit-status.txt
             ${{ runner.temp }}/testffi.log
+            ${{ runner.temp }}/backtraces/
           if-no-files-found: ignore
           retention-days: 14
