@@ -41,6 +41,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SafeStrerror.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/WTFConfig.h>
@@ -173,6 +174,11 @@ static SuspendResumeRequest pendingSuspendResumeRequestForCurrentThread()
 
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
+    // sigsuspend() below always sets errno to EINTR, and the interrupted code may be about to read its own.
+    auto restoreErrno = makeScopeExit([savedErrno = errno] {
+        errno = savedErrno;
+    });
+
     // Touching a global variable atomic types from signal handlers is allowed.
     //
     // Anything but a suspend request for this thread is not for this invocation: either nobody
