@@ -1,6 +1,9 @@
 //@ skip if not $jitTests
 //@ $skipModes << :lockdown
-//@ requireOptions("--forceUnlinkedDFG=0")
+// Bun: upstream leaves the concurrent JIT on. Every compile of walk that started before the element type changed and
+// is installed after it exits and is jettisoned once more, so the count below depends on the machine's load (2 to 5 seen).
+// Without the concurrent JIT it is 3.
+//@ requireOptions("--forceUnlinkedDFG=0", "--useConcurrentJIT=false")
 
 // The baseline JIT's fast-array op_iterator_next path must profile the iterated element into the
 // getValue checkpoint's value profile. When it wrote to the computeNext slot instead, the DFG kept
