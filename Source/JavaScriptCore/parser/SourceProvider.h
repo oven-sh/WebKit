@@ -211,6 +211,19 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
+        // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
+        // It does not run when the module record is created, which happens whenever that module's fetch completes, but
+        // once the whole graph importing it has loaded, in import order, right before that graph is linked. See
+        // AbstractModuleRecord::generateDeferredSyntheticModules().
+        static Ref<SyntheticSourceProvider> createDeferred(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
+        {
+            Ref provider = create(WTF::move(generator), sourceOrigin, WTF::move(sourceURL));
+            provider->m_isDeferred = true;
+            return provider;
+        }
+
+        bool isDeferred() const { return m_isDeferred; }
+
         unsigned hash() const final
         {
             return m_source.impl()->hash();
@@ -243,6 +256,7 @@ private:
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
+        bool m_isDeferred { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

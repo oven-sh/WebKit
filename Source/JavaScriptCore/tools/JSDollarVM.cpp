@@ -2312,6 +2312,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionHeapTotalBytesAllocated);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
 static JSC_DECLARE_HOST_FUNCTION(functionJITSizeStatistics);
@@ -4868,6 +4871,15 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapExtraMemorySize, (JSGlobalObject* globalObj
     return JSValue::encode(jsNumber(globalObject->vm().heap.extraMemorySize()));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Everything the heap counted as allocated so far, cells and reported extra memory. Collections are paced on it.
+JSC_DEFINE_HOST_FUNCTION(functionHeapTotalBytesAllocated, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.totalBytesAllocated()));
+}
+#endif
+
 #if ENABLE(JIT)
 JSC_DEFINE_HOST_FUNCTION(functionJITSizeStatistics, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -6015,6 +6027,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "evaluateWithScopeExtension"_s, functionEvaluateWithScopeExtension, 1);
 
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "heapTotalBytesAllocated"_s, functionHeapTotalBytesAllocated, 0);
+#endif
     addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
 #if ENABLE(JIT)
