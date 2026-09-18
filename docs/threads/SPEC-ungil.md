@@ -710,6 +710,19 @@ only; §N.6 rules wasm buffers. Wasm-GC: hasGCObjectTypes()
 precheck => LinkError, both GIL modes - SUPERSESSION (heap
 §5.5/manifest 11, both sides; FULL text: r9 F8 + r22 list; r33
 compressed). U17 positive arm. IU row.
+IMPLEMENTATION STATE of item (2) (checked against the tree in the
+eleventh session): the tree has neither the VMLite::isSpawned byte
+nor a check in the shared generated entries
+(createJSToWasmJITShared, LLInt js_to_wasm_wrapper_entry). The
+refusal lives in the host function callWebAssemblyFunction only,
+and two C++ callers reach vmEntryToWasm without passing it
+(Interpreter::executeCall and the microtask call): measured GIL
+on, a spawned Thread runs a carrier-created export through
+JSON.parse's reviver, String.prototype.replace and a promise
+reaction. Also a wasm memory.atomic.wait parks holding the GIL
+(no GILDroppedSection, unlike Atomics.wait). Both are open
+defects in both flag-on modes; the generated choke point and the
+wait bracket are DESIGN-PROPOSALS G, D1.4/D1.5 (= D3.1).
 Tenth round, item (2) with the GIL on: the warm entry is handed out
 while no Thread has ever been spawned in the process (a process
 byte, set before the first spawned Thread exists, never cleared;

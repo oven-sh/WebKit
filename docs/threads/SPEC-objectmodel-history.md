@@ -2017,7 +2017,10 @@ Two limits, both measured. The promotion needs the site to allocate again after 
 allocates its six arrays once per run (its setup runs once, not per iteration), so nothing a profile learns can
 reach them, and the test is unchanged (10.6 G instructions GIL off against 4.0 G GIL on); `ML` promoted six sites and
 did not move either (53.2 G), because its hot loops read rows that arrive from many sites in three shapes (Int32,
-Contiguous, Double) and compile to a MultiGetByVal with unboxing. Both need the transition itself (history §29; Open
+Contiguous, Double) and compile to a MultiGetByVal with unboxing (population re-measured in the eleventh session on the
+final tree: Double 125,688, CopyOnWrite Int32 38,556, Contiguous 3,612 of the rows sampled in `mmul` - the Contiguous
+shape is almost gone; what keeps the site polymorphic is int32 literal rows that `main` converts on arrival through
+`Arrayify(Double+Convert)`; same conclusion, DESIGN-PROPOSALS C-3). Both need the transition itself (history §29; Open
 items). And a profile can forget the array before the request: the lower tiers' tier-up checks consume the profile's
 last-array word, so a long fill loop in the allocating function makes the site learn Int32 from the array while it
 is still all int32 (the test fills with `fill(0)` for that reason; flag off the same loss exists and is hidden by the

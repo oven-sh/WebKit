@@ -1406,3 +1406,133 @@ threads). GIL on is serial by construction (1.00x-1.17x; richards-like 0.64x at 
 its single-thread times fell with the round: richards-like 1,793 -> 1,339 ms, raytrace-like 177 -> 161, string-heavy
 1,579 -> 1,442. The pass on the tree before the last is what caught the generic-`PutById` rule: richards-like GIL off
 3,515 ms on one thread and 54.8 s on four (SPEC-jit history section 57).
+
+### 6.13 Eleventh session (design phase): corrections to 6.12 and measurement notes
+
+No build and no quiet pass was made in this session; the numbers of 6.12 stand as measured. What follows corrects
+attributions in 6.12 that a closer reading did not bear out, and records two measurement pitfalls. Evidence and the full
+argument for every line are in `DESIGN-PROPOSALS.md`, in the section named.
+
+**Method.** `perf record -e instructions:u -c N` with N of 1-2 M (the period of 6.12's per-symbol sweeps) was throttled by
+the kernel on the measurement machine (`perf_event_max_sample_rate` had been lowered to 8,000/s): 25-50 % of the samples
+are dropped, and they are dropped where the instruction rate is highest, which is poll-dense GIL-off code. A period of
+4 M loses nothing there (`perf report --stats` shows no throttle events; the event count equals `perf stat`'s). Ratios
+between two configurations taken the same way survive better than absolute shares. Second: an unquoted shell variable
+holding the three GIL-off environment settings is not word-split by zsh; such a run is silently GIL on. The rounds'
+scripts are bash and were not affected.
+
+**GIL off / GIL on per test (instructions).** By `perf stat` on the final tree: delta-blue 1.61 (6.12 says 1.95), hash-map
+1.66 (6.12 says 1.61). Over fifteen tests the 1.30 geometric mean factors into 1.06 (the poll as an instruction sequence)
+x 1.05 (the butterfly tag) x 1.16 (what only a GIL-off process does) (section L, L-0).
+
+**"What a poll costs a loop whose condition reads the heap" (delta-blue).** The visibility rule proper is about 40 % of
+delta-blue's gap and 35 % of hash-map's. The rest: 136 of delta-blue's 182 in-loop polls are function-entry polls of
+inlined callees (10.5 % of its FTL instructions, and the reason every control-deciding read is performed two or more
+times per iteration); 126 of the 182 still write the interim set because `PutStack` writes `Heap` GIL off, so history
+§50's analysis gives up on those loops (it moved delta-blue by nothing, float-mm.c by a third) (section B).
+
+**"The Double family".** sha256's message block is Contiguous by T4-C (a `concat` with a Double operand), not T4-O; the
+exit batches are 101, 201, 401, 801, not "a hundred each". navier-stokes: 31.0 / 43.1 / 82.0 instructions per `lin_solve`
+inner iteration (GIL on / GIL off with Double arrays / GIL off as it is). ML: the rows reaching `mmul` are Double 125,688,
+CopyOnWrite Int32 38,556, Contiguous 3,612 of those sampled; the kernel is 14.7 against 43.7 instructions per iteration
+(section C).
+
+**"Array growth that copies" (aes).** 2,250 of 4,422 extra samples is gross; GIL on spends 1,150 on the same scale in
+`main`'s counterparts. Net the growth chain is 21 % of the gap, generated code 67 %; `main` copies every block-allocated
+butterfly too. One growth event costs about 960 C++ instructions GIL off against 360: re-dispatch
+(`trySetIndexQuicklyConcurrent` 3.00 times per event), not the copy. The micro rows "append by index" and "push" contain
+no growth event in steady state (the allocation profile's vector-length hint covers sixteen elements); they measure the
+inline per-element path, 27 against 16 instructions (section D).
+
+**"RegExp and strings".** No configuration inlines `RegExpExec` or calls Yarr code inline; what is off GIL off is
+`RegExpTestInline`, constant folding and the cached-result record. Per call today (main / flag off / GIL on / GIL off):
+`exec` 1,463 / 1,536 / 1,535 / 1,767; `test` 905 / 903 / 908 / 1,148; `replace` 2,189 / 2,430 / 2,435 / 3,131; regexp `split`
+2,316 / 2,647 / 2,649 / 4,105; `search` 959 / 988 / 998 / 1,111; string `split` 1,252 / 1,410 / 1,414 / 1,628. Flag off above
+`main` is 17 to 53 Config-page gate tests per call plus helpers the compiler no longer inlines (section F).
+
+**"Collection latency on the main thread (splay, gbemu, ML Worst Case)".** Only splay is: GIL off the main thread is out
+of JavaScript for 265 ms of collections against 69 ms GIL on. ML runs 70 against 74 collections, 80 against 82 ms. gbemu
+runs 45 collections against 17 because growth by copying leaves 1.13 GB of garbage (array growth, not the collector).
+The service-conductor experiment's losses were not the allocation limits (collection counts do not rise with the second
+client) but two real rendezvous per short cycle (section J).
+
+**Micro table.** `class-ctor-4` and `astar-like-nodes` measure `operationCreateThis` on a poly-proto function (the
+harness re-creates the constructor in every timed call; 1.0 M of 1.2 M constructions take the slow path in every
+configuration, `main` included); mono-proto variants of the same loops are at 1.5-1.8 GIL off over GIL on (section L).
+`array-int32-to-double-relabel`: GIL off no relabel happens in steady state (the site is promoted; the cost is
+copy-on-write materialization and growth by copying); flag off over `main` is +74 instructions per iteration of
+per-operation gates in three runtime calls, not the conversion (section C). `map-set-get` 1.19 and `regexp-exec` 1.13 GIL
+on over flag off have identical instruction counts and 94 M / 18 M more locked operations (`StringImpl::deref`, `cost`,
+`setHash` in shared-atom-table mode) (sections M, F).
+
+**GIL on / flag off per test.** Re-measured by instruction count, three runs per cell: WSL 1.09, Air 1.054, earley-boyer
+1.05, typescript 1.017 are real; FlightPlanner, Babylon and `out-of-line-replace-poly` are bimodal at the same rate in all
+three configurations; async-fs, octane-code-load, json-stringify-inspector are equal; navier-stokes runs identical code
+(3.857 G instructions in all three configurations under a synchronous JIT) and lands in its slower timing mode GIL on, 14
+runs of 14. "Handler inline caches in FTL code ... a wash as a rule" rested on Babylon (5.78-7.01 G flag off in five runs)
+and does not hold: forcing them flag off costs class-ctor-4 3.67 -> 4.51 G, Air +3.4 %, WSL's handler samples 1,703 ->
+2,629 (section M).
+
+**Flag off / main.** "The marking loop (+5 % instructions per collection: relaxed-atomic visit counters and the
+helper-pause checkpoint)": measured on a fixed live graph +6.4 % (385.7 M -> 410.3 M instructions per full collection,
+the same with one marker), +13 instructions per visited cell: 5 from the counters and the mark stack's `m_top`, 8 from
+`visitButterflyImpl`'s mode flag captured by reference and a switch reshaped by a GIL-off-only case; the helper-pause
+checkpoint contributes nothing. "The RegExp matching context's constructor inlines into the match operations again":
+in the final binary it is still an out-of-line symbol (213 bytes against 114 on `main`, 47 call sites against 4) and
+takes 81-109 samples in OfflineAssembler; only the hot 8-bit leg of one operation has it inline. `JSArray::tryCreate` is
+109 -> 124 instructions per call. The whole +4,006-sample list regrouped by class is in section E; its common shape is
+Config-byte gates whose inline cold arms bloat leaf functions until their callers stop inlining them (text 35.26 MB
+against 30.50 MB). `array-int32-to-double-relabel` at 200,000 iterations measures mostly Baseline- and DFG-tier code and
+the C++ under it (+78 instructions per iteration of 582); in the FTL steady state the difference is about +20.
+
+**Scaling.** `richards-like` creates its constructors and helpers inside the workload function, so every invocation of
+the optimized code exits in its prologue, on `main` too (five serial invocations flag off on `main`: 365, 535, 684,
+1,294, 2,498 ms); its T(1) in the gate is the third invocation's recovery time (1,250 ms where a fresh copy of the same
+function runs 485 ms), and a fresh private copy per thread scales 3.9x at four threads. The `Overflow` exit behind
+string-heavy's slow mode is the hoisted `1 / expected` of the corpus's `shouldBe` helper, not "the FNV multiply"
+(section K).
+
+**Scaling suite, peak resident set (MB), GIL off at 1 / 2 / 4 / 8 threads (flag off serial; GIL on at four).** splay-like
+322 / 290 / 403 / 639 (242; 503); map-heavy 167 / 256 / 351 / 548 (165; 168); raytrace-like 71 / 105 / 170 / 303 (70; 70);
+string-heavy 478 / 526 / 637 / 721 (88; 100). string-heavy's first column is weak-bearing blocks recycled 32 per cycle end
+(section J).
+
+### 6.14 Eleventh session, second part: the experiment build behind PARITY-PLAN.md
+
+One throw-away Release build of the branch head carrying nineteen run-time switches (prototypes of the designs that
+could be prototyped cheaply, ceilings of the others); not in the tree. Full tables, the per-test breakdown, the profile
+of what is left and the ledger are in `PARITY-PLAN.md` Parts 2 and 3.
+
+Whole-process instructions (three runs on a loaded machine, minima) and main-thread counters (`perf stat --no-inherit`,
+two runs on an idle machine, minima), geometric means of ratios to `main` over the 36 tests; scores from one quiet pass
+(full JetStream, interleaved, medians of three):
+
+| configuration | whole-process instructions | main-thread instructions | main-thread cycles | score (quiet pass) |
+|---|---|---|---|---|
+| flag off | 1.018 | 1.015 | 1.011 | - |
+| GIL on | 1.032 | 1.037 | 1.050 | 0.947 |
+| GIL on + polls in optimized code + tagged words (the floor) | 1.141 | 1.163 | 1.132 | - |
+| GIL off, branch head | 1.318 | 1.349 | 1.291 | 0.758 |
+| the same with one parked spawned Thread | 1.318 | 1.349 | 1.294 | 0.743 |
+| + design set (D-B1 to D-B4, RegExp entry, one-pass append, lone conductor, MakeAtomString, join, fused predicate, fresh owner) | 1.266 | 1.289 | 1.251 | - |
+| + no machine-frame entry poll | 1.256 | 1.285 | 1.252 | - |
+| + Double family as GIL on before the spawn, no lane verification, no second bound | 1.187 | 1.212 | 1.216 | 0.804 |
+| + every FTL poll writes nothing | 1.174 | 1.198 | 1.206 | - |
+| + no poll in optimized code | 1.152 | 1.172 | 1.195 | - |
+| + untagged words in every tier and C++ | 1.104 | 1.123 | 1.178 | 0.832 |
+
+Notes. The score is 0.98 divided by the main-thread cycle ratio in all four configurations that have both; the main thread's
+CPU time equals wall time within 2 % except on splay GIL off. Locked loads per thousand main-thread instructions: `main`
+0.25, GIL on 0.34, GIL off 0.48 (at twenty cycles each: 4.7 % of `main`'s cycles; no switch moves it). stanford-crypto-pbkdf2
+GIL off has a 55.6 G-instruction mode (10.8 G normally) that the branch head takes four runs in four on a loaded machine:
+section C-1's mechanism. ai-astar, Babylon, async-fs and FlightPlanner vary by 5 to 20 % in whole-process instructions between
+runs under load in every configuration including `main`. Compiler threads' instructions are in the whole-process totals; GIL
+off the parkable predicate evaluated on every `clobberize` call adds 1 to 2 % to three tests that way.
+
+Flag off against `main`, examined further in the same session (FLAG-OFF-LANDING.md section 2.2 has the tables). The suite in
+one process, main thread only, three runs: instructions 1.0145, cycles 1.0133, CPU time 1.010, locked loads 1.11, total score
+0.964; quiet pass, medians of five: 0.966 (Startup 0.950, Worst Case 0.957, Average 0.978). First iteration of every test:
+cycles 1.039 (per test 1.028); first six iterations 1.023. Tier-capped, six iterations: interpreter only 1.057 in cycles
+(per test, geometric mean 1.041; instructions 1.052), Baseline 1.010, DFG 1.025. Generated code over all tiers +0.4 % of a
+run; C++ +1.6 %. Start-up of the shell: +2.7 % instructions, +1.4 MB. Peak resident set: single tests +2.2 %; the suite in one
+process 1,801 to 2,164 MB on `main`, 2,163 to 2,716 MB flag off (four pairs of runs).

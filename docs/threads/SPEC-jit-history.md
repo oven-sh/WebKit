@@ -1183,6 +1183,15 @@ change had no demonstrated effect to set against the audit surface it
 touches (AUDIT-checktraps row CA stays "conservative"). Recorded so the idea
 is not re-derived without first explaining that measurement.
 
+Eleventh-session note: the measurement now exists and contradicts the one above. On the tenth round's final tree a
+watched fire's stop does jettison every parked thread's on-stack optimized code (`heapFactRewriteOnStackJettison` = 3
+per fire with four threads): `stopTheWorldAndRun` bumps the epoch for every window not under
+`PureCodeLifecycleStopWindowScope`, and only `CodeBlock::jettison` and two other sites open that scope. It is the
+trigger of `scaling/string-heavy.js`'s slow mode at four threads (a "Did cache property replacement" fire in 6 of 6
+slow runs, 0 of 4 fast ones), after which two tier-up defects keep the knocked-out threads in Baseline. Either the test
+above parked threads that had no optimized frame on the stack at the poll, or the in-window bump postdates it.
+DESIGN-PROPOSALS K4 / K-D4 re-opens the idea, to land after K-D2/K-D3 with its own audit.
+
 ## §42. GIL off, a site that meets Double arrays among others is generic, not converting (eighth landing round; §5.5, OM §4.7)
 
 Flag-off, a get/put-by-val site whose profile saw several indexing shapes
@@ -1449,7 +1458,10 @@ speculation check is not a branch: a loop whose only way out is an exception or 
 box.inner.x`, ended by another thread clearing `box.inner`) is not analysed, and what such a check reads inside a loop
 that does have an exit branch is data (the loop ends by its own condition at the latest). Fallbacks to the interim
 set: a slice node that reads the whole heap, a loop that contains a node writing the whole heap (nothing is hoistable
-there anyway), a loop that no Branch or Switch leaves, irreducible or unanalysed control flow, a poll outside any loop,
+there anyway - true for a real call; corrected in the eleventh session: GIL off every node of AUDIT-checktraps P10c
+writes the whole heap too, including call-free ones such as `PutStack` through the predicate's default arm, which is
+most object-heavy loops: 126 of delta-blue's 182 in-loop polls and 35 of hash-map's 50 keep the interim set for this
+reason, DESIGN-PROPOSALS B-3), a loop that no Branch or Switch leaves, irreducible or unanalysed control flow, a poll outside any loop,
 DFG plans (no LICM; their polls also re-load the butterfly, §39), and `--useJSThreadsPollVisibilityAnalysis=0`.
 
 The one place where a stale read was a memory-safety matter is recorded in the old comment: a view's {vector, length}
@@ -1501,7 +1513,9 @@ array's length. `Options::useTaggedButterflies()` (false flag off and in a singl
 `Options::useJSThreads()` as the gate of exactly those emissions, in the Baseline/IC choke points, the DFG and the
 FTL. Gates that are not about the tag keep `useJSThreads`: data-IC call linking and its publication order, handler-IC
 chains, the polling-trap requirement, the structure-load dependency on weakly ordered targets is dropped with the
-tag (it orders against a concurrent mutator's transition, which GIL on does not exist), GIL-off-only emissions were
+tag (it orders against a concurrent mutator's transition, which GIL on does not exist; the store-side fence of the same
+protocol in the FTL/DFG `PutStructure` lowering and the `create_this` pair re-read were NOT moved and still run GIL on -
+eleventh-session correction, DESIGN-PROPOSALS D-M2), GIL-off-only emissions were
 already keyed on `!useThreadGIL`. A site left on `useJSThreads` by mistake costs instructions and is still correct
 (the predicates pass on zero tags); a site moved by mistake would change GIL-on behaviour, so each moved site is
 listed in AUDIT-upstream-since-rebase §9 with what it emits.
@@ -1526,7 +1540,10 @@ metadata layout is the same in both forms (D7), so nothing else changes.
 
 One more GIL-off-only emission was keyed on the flag alone: DFG and FTL MakeAtomString with a concat-key cache call
 the locked operation instead of probing the cache's two quick entries inline, because another mutator may be rewriting
-an entry between the key compare and the value load. GIL on none can; the inline probes are back there (WSL spent 1,522
+an entry between the key compare and the value load (eleventh-session note: that reason no longer describes the writer -
+`ConcatKeyAtomStringCache::getOrInsert` writes each quick slot exactly once, under the lock, value before key with a
+store-store fence - so GIL off the probe is "not yet re-enabled" rather than unsafe; it costs WSL 1,296 samples, 22 % of
+its GIL-off excess; DESIGN-PROPOSALS L-5 / L-D4). GIL on none can; the inline probes are back there (WSL spent 1,522
 instruction samples of 15,332 in `operationMakeAtomString2WithCache` GIL on against 117 of 12,573 flag off).
 The operation's own body follows for the same reason (`ConcatKeyAtomStringCache::getOrInsert`): flag on it took the
 cache's lock around the map probe and again around the insert, and wrote each quick entry once in value-then-key
@@ -1581,7 +1598,11 @@ ninth-round audit's list of upstream-added sites gains a column for it.
 
 Same family, found by the same measurement and fixed in C++ (SPEC-ungil, not here): `String.prototype.split` and
 `RegExp.prototype[@@split]` allocated their index vector with `fastMalloc` per call GIL off (the VM's reusable vector
-is shared), and looked up the per-thread match scratch three times per match.
+is shared), and looked up the per-thread match scratch three times per match. (Eleventh-session correction: the fix
+covered the split paths' index vector only; `RegExpGlobalData::performMatch` still asks for the match scratch up to three
+times per match GIL off - 14 lookups in one five-match `replace`, 11 in a four-match regexp `split` - and the
+legacy-statics stream, the executing-RegExp slot and the stack limit are looked up per match as well;
+DESIGN-PROPOSALS F-I4 / F-D1.)
 
 
 ## 55. Tenth landing round: GIL off, a transition that would make stale code unsafe publishes and fires in one stop (§5.6; precondition 10, narrowed)
@@ -1636,6 +1657,9 @@ keep the kind, prevent-extensions, prototype changes). Their stale consumers rea
 the kind they expect - the old value, or `undefined` after a delete (SPEC-objectmodel D1) - or, for a relabel of a
 foreign-readable owned Double array, a boxed lane as a double (a wrong number, never a pointer). Wrong-value windows a
 few instructions to one stop long, which the staleness model allows for unsynchronized access; listed in LANDING-PLAN.
+(Corrected in the eleventh session: the delete case is value-safe only while the deleted slot stays quarantined, and a
+collection conducted between the claimant's publication and its own stop releases the quarantine inside the window;
+DESIGN-PROPOSALS I-1a and D-1(E).)
 
 Tests: `jit/unsafe-transitions-publish-and-fire-in-one-stop-gil-off.js` (fresh watched structures every round, two threads
 released together into optimized code that relabels / redefines its own object of the shared structure); the two
@@ -1693,6 +1717,23 @@ numbers back. Why objects built through the generic put path fail the consumers'
 established (a reduction with the same constructor shape builds the same structure either way). Withdrawn: the
 parser forces the exit as on `main`. What would do it properly is the charter of §4.3's last sentence - the transition
 cache back as an immutable single-pointer record, which the DFG can read as profiling - not a parser heuristic.
+
+Addendum (eleventh session, design phase; evidence in DESIGN-PROPOSALS.md section A). The cause is established and it
+is not the put path. The objects have the same structures with the rule on and off: the workload declares its
+constructors inside the workload function, so every invocation has fresh structures, and optimized code from one
+invocation fails its first structure check in the next in every configuration, `main` included. With `main`'s forced
+exit the function-entry path is dead in the prologue, the only optimized loop code is an OSR-entry compilation whose
+entry expectations pin the previous invocation's scope object (`AbstractValue::mergeOSREntryValue`, the clear-value
+arm), the next invocation's loop entries fail validation cheaply, the failures are charged to the replacement, and the
+loop reoptimization trigger jettisons it after 5 x (1 + live threads) x 2^retry of them. With the generic `PutById` the
+prologue is live, the loop header's expectations are general, the entries succeed, and the code exits at once - into a
+defect of the eighth round's loop-entry rule: `operationOptimize` asks the FTL replacement's exit counter whether to
+reoptimize but enters the superseded DFG block (`gilOffDFGForLoopEntry`) and, through it, that block's FTL-for-OSR-entry
+child; their exits are counted on their own counters against the non-loop threshold, 100 x (1 + live threads) x
+2^retry per block, each exit followed by a long warm-up in Baseline. 1,600 + 915 exits on one thread. The defect is on
+the final tree and independent of this rule: a loop whose objects change structure between invocations takes 2 exits on
+`main`, flag off and GIL on and 903 GIL off. It has to be fixed (DESIGN-PROPOSALS sections A and K) before the forced
+exit can be removed by any means.
 
 
 ## 58. Tenth landing round: GIL off, a callee's tier-up republishes the caller's polymorphic stub instead of unlinking the site (§5.8)

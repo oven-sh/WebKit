@@ -122,7 +122,7 @@ Paths are under `JSTests/threads/`.
 | VM-5 | Fixed at both sites. | `vmstate/split-cache-regexp-statics.js` | 10 of 10 |
 | VM-6 | Fixed. The DateTimeFormat cache stays empty in a GIL-off process. A lock is not enough: the cached impl is `RefCounted`, and cells on any thread ref it. | `vmstate/intl-datetimeformat-cache-per-thread.js` | 10 of 10 |
 | VM-7 | Fixed. The collator is not cached with the GIL off. | `vmstate/intl-localecompare-cache-per-thread.js` | 7 of 10 Debug, 9 of 10 Release |
-| VM-8, OPT-1, OPT-2 | Fixed by refusal. With the GIL off, the FFI IC stub, the DFG and FTL call paths, and the direct call are off (`Options.cpp`), and a spawned thread that creates or calls an FFI function gets a TypeError (`throwIfFFIRefusedOnCurrentThread`). The full fix (a per-thread arena and UTF-8 cache, a CAS publish of the context, and per-thread state in the JIT paths) is not done. | none (the jsc shell has no `bun:ffi`) | |
+| VM-8, OPT-1, OPT-2 | Fixed by refusal. With the GIL off, the FFI IC stub, the DFG and FTL call paths, and the direct call are off (`Options.cpp`), and a spawned thread that creates or calls an FFI function gets a TypeError (`throwIfFFIRefusedOnCurrentThread`). The full fix (a per-thread arena and UTF-8 cache, a CAS publish of the context, and per-thread state in the JIT paths) is not done. Eleventh-session state, read from the tree: the CAS publish of the context IS done (`JSGlobalObject::ffiContext()`); the stub's exception checks are mode-keyed already (`emitExceptionCheck`); what is still VM-level is nine sites - the stub's two `topCallFrame` stores and one `topEntryFrame` load, one store and one raw exception load in DFG `compileCallFFI`, three stores and two raw loads in FTL `compileCallFFIImpl` - and the fast paths bypass `ffiHostCall`'s spawned-thread refusal. The engine's FFI patches nothing: the "inline cache" is an immutable per-function thunk installed as the native executable's entry. DESIGN-PROPOSALS H1 / D-H1 gives the carrier its fast paths back behind a TID-range gate. | none (the jsc shell has no `bun:ffi`) | |
 | VM-9 | Fixed. The publish: a GIL-off VM creates the table eagerly. The scope (second round): a deadline terminates only the thread that added it (`VMTraps::fireTargetedTermination`). The bit is set in that thread's word and in the VM word, which call-free loops poll, and the other threads ignore the VM word's bit while no VM-wide termination is raised. `VM::cancelTermination` keeps another thread's pending one. | `giloff-time-limit-terminates-one-thread.js` | 10 of 10 (Release) |
 | VM-10 | Fixed by reading: a leaf lock in `link` and `unlink`. The test written for it never failed, so it was not kept. | none | |
 | VM-11, RB-2 | Fixed. | none | |
@@ -1861,7 +1861,10 @@ exist).
   harness excepted); the GIL/token handoff yield and the amplifier's bare yield call `sched_yield()` on Linux
   (`jsThreadsYieldToScheduler`). Measurements in PERF-RESULTS (tenth round).
 - R10-12: no code change; the rule (only the main thread loads modules GIL off, every loader enters through
-  `importModule`'s refusal) is restated in LANDING-PLAN Open items for Bun's additional loaders.
+  `importModule`'s refusal) is restated in LANDING-PLAN Open items for Bun's additional loaders. Scope, clarified in the
+  eleventh session: the rule covers LOADING and LINKING only. EVALUATION reaches spawned threads in both flag-on modes
+  (a deferred namespace's first property read; a top-level-await continuation on the thread that settles the promise,
+  which also runs the async parents' bodies) and has no claim: DESIGN-PROPOSALS H5 / D-H5.
 - R10-14: the stale comments were rewritten and `runEndPhase` now asserts `m_numberOfWaitingParallelMarkers` is zero
   with the other two counters.
 - R10-21: `slow_path_resolve_scope` loads the resolve type once, atomically, like the two operations.

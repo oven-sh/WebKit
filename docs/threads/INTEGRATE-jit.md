@@ -992,7 +992,7 @@ grep -n "emitLegacyButterflyTagTrap" Source/JavaScriptCore/jit/AssemblyHelpers.c
 
 ## Known gaps / follow-ups (MUST-FIX list for Tasks 9/10/13 + integrator)
 
-1. **R7/F7 ARM64 dependency gaps — CLOSED at the choke point (review round 1)**:
+1. **R7/F7 ARM64 dependency gaps — CLOSED at the choke point (review round 1), with two exceptions recorded in the eleventh-session reading pass (DESIGN-PROPOSALS N4): the plain load emitted when dest == base (no temporary exists), and the DFG Spread / ArraySort / enumerator choke calls of "Known gaps" item 3; and one gap the R7 rule never covered, the inline-slot read after a structure check (N2)**:
    `CCallHelpers.cpp loadButterflyWithStructureDependency` now emits the
    dependency UNCONDITIONALLY on ARM64 whenever dest != base: if no live
    structureID register is supplied it RE-LOADS the cell's structureID through
@@ -2495,6 +2495,10 @@ happens outside a stop-the-world window, and never as an in-place rebox"
 (LLInt get/put_by_val, Baseline/DFG/FTL CheckArray-then-GetButterfly paths).**
 If OM ever relaxes it, every rejoin must re-validate the shape from data
 derived after the butterfly load. Comments added at the LLInt rejoin sites.
+(Eleventh-session note: OM rev 17's T4-O has made Undecided->X and Int32->Contiguous stop-free for the owner
+since the sixth round, so the premise as worded is already relaxed; what still holds, and what the rejoin
+argument uses, is the narrower "no conversion that changes lane ENCODING happens outside a stop". DESIGN-PROPOSALS
+C-D3 proposes relaxing that too, with exactly the re-validation this paragraph asks for.)
 
 ## R1-7 (major, FIXED): FTL I16 was not enforced against B3 load-CSE
 

@@ -1,5 +1,10 @@
 # SPEC-congc.md - N-MUTATOR CONCURRENT GC (draft rev 13)
 
+(Note added in the eleventh session: this document cites `Heap.cpp` by line number throughout; the numbers are stale -
+`conductSharedCollection` is some 2,000 lines further down now - so read the citations by function name. The C2-C4 stage
+options exist in `OptionsList.h` and nothing beyond the `sharedGCWindowedConductActive()` predicate reads them: they are
+reserved. DESIGN-PROPOSALS section J describes how a GIL-off cycle runs today.)
+
 Status: DRAFT rev 13 — NOT converged. Rev 13 = §7.1a gilOff
 single-handoff (gc-sharedheap-zero-concurrent-overlap-now-11pct;
 SCALEBENCH §35 round-2 / §27.S2 re-evaluation on 56b8f886e000):

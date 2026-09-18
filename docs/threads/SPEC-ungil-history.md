@@ -5537,6 +5537,21 @@ variants (SD19); unblocks the regexp corpus arm flagged in
 annex K4 §0.
 
 ### AUD1.K3 (K4-U3) module evaluation state
+IMPLEMENTATION STATE (eleventh session, checked against the tree): none
+of (a), (b), (c) below is implemented in the C++ module loader the
+branch is rebased onto. The counter is a plain int64_t incremented with
+++, the synchronous queue is a VM member, CyclicModuleRecord::setStatus
+is a plain store with no claim, and the line references below are
+stale. Evaluation does reach spawned threads (a deferred namespace's
+first property read; a top-level-await continuation and with it the
+async parents' bodies, on the thread that settles the promise, in both
+flag-on modes). Measured GIL off, four threads on 200 deferred modules:
+121-139 TypeErrors and 4-11 TDZ ReferenceErrors per thread, 12-17
+modules evaluated twice, a Debug assertion in
+CyclicModuleRecord::evaluate. DESIGN-PROPOSALS H5 / D-H5 proposes one
+module-evaluation lock released at the GIL's hand-over points in place
+of the per-record claim of (c), which does not compose for overlapping
+graph walks; under it (a) and (b) are unnecessary.
 (a) VM::m_moduleAsyncEvaluationCount (VM.h:1332): std::atomic
 fetch_add, relaxed. ECMA [[AsyncEvaluation]] ordering needs only
 uniqueness + monotonicity of issued values, which fetch_add

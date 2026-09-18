@@ -352,7 +352,7 @@ construction BEFORE the lock, publish under it.
 | K4.III.13 | `m_sharedJITStubs` (`VM.h:784`; `bytecode/SharedJITStubSet.h:134-145`) | already-safe — every accessor takes its own m_lock (landed in thread-implement, R2-2) |
 | K4.III.14 | `ftlThunks` (`VM.h:787`; `ftl/FTLThunks.h:98 m_lock`) | already-safe — internally locked |
 | K4.III.15 | `m_drainMicrotaskDelayScopeCount` (`VM.h:1318`) | embedder API counter; make atomic (degenerate lock); not on JS fast path |
-| K4.III.16 | `m_moduleAsyncEvaluationCount` (`VM.h:1332`, ++ at :1178) | atomic fetch_add, relaxed; order discharged per §0 U3 (AUD1.K3) |
+| K4.III.16 | `m_moduleAsyncEvaluationCount` (`VM.h:1332`, ++ at :1178) | atomic fetch_add, relaxed; order discharged per §0 U3 (AUD1.K3); NOT IMPLEMENTED in the current loader (plain `++`; see the implementation-state note at AUD1.K3 in SPEC-ungil-history and DESIGN-PROPOSALS D-H5) |
 | K4.III.17 | `machineCodeBytesPerBytecodeWordForBaselineJIT` (`VM.h:658`) | stats-only SimpleStats at JIT finalize; leaf lock (or per-lite merge); no correctness payload |
 | K4.III.18 | JSGlobalObject `m_installedObjectPropertyChangeAdaptiveWatchpoints` (`JSGlobalObject.h:593`) | append-only Vector of installed watchpoints; install paths race GIL-off => lock; firing = K4.VI |
 
@@ -400,7 +400,7 @@ frames use §A.2.7/§A.3 stops.
 | K4.V.15 | VMInspector (`tools/VMInspector.h:40`) | already-safe — stateless static facade (post-refactor: no instance list in the header; VM enumeration lives in VMManager, row VII.2); dump entry points are debugger/REPL main-only |
 | K4.V.16 | JSGlobalObject `m_inspectorController` / `m_inspectorDebuggable` (`JSGlobalObject.h:512-513`) + `m_debugger` (`JSGlobalObject.h:237`) | inspector wiring; SD13 umbrella |
 | K4.V.17 | JSGlobalObject `m_globalScopeExtension` (`JSGlobalObject.h:256`) | debugger/embedder scope injection; main-only writes |
-| K4.V.18 | `m_synchronousModuleQueue` (`VM.h:1358`) | RE-RULED per-lite (§E.1 family) per §0 U3 (AUD1.K3); listed here for history only |
+| K4.V.18 | `m_synchronousModuleQueue` (`VM.h:1358`) | RE-RULED per-lite (§E.1 family) per §0 U3 (AUD1.K3); listed here for history only; NOT IMPLEMENTED (still a VM member; loading is carrier-only, which is what makes it sound today) |
 
 ## VI. Requires-stop — class 4 (§K.5)
 
