@@ -143,6 +143,9 @@ enum class SuspendResumeRequest : uint8_t { None, Suspend, Resume };
 static constexpr uintptr_t suspendResumeRequestMask = 3;
 static std::atomic<pthread_t> requestedThreadHandle { };
 static std::atomic<uintptr_t> pendingSuspendResumeRequest { 0 }; // generation << 2 | SuspendResumeRequest
+// The signal handler reads and writes both, and only a lock-free atomic is safe there.
+static_assert(decltype(requestedThreadHandle)::is_always_lock_free);
+static_assert(decltype(pendingSuspendResumeRequest)::is_always_lock_free);
 
 static void publishSuspendResumeRequest(pthread_t handle, SuspendResumeRequest request)
 {
