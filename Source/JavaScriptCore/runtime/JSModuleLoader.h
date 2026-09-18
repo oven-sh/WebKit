@@ -175,6 +175,9 @@ public:
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
 
     JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
+#if USE(BUN_JSC_ADDITIONS)
+    void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
+#endif
 
     static ErrorInstance* duplicateTypeError(JSGlobalObject*, ErrorInstance*);
     static ErrorInstance* duplicateError(JSGlobalObject*, ErrorInstance*);

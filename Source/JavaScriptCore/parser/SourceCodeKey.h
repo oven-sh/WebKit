@@ -117,11 +117,7 @@ public:
             && m_functionConstructorParametersEndPosition == other.m_functionConstructorParametersEndPosition
             && m_name == other.m_name
             && host() == other.host()
-#if USE(BUN_JSC_ADDITIONS)
-            ;
-#else
             && (m_sourceCode == other.m_sourceCode || string() == other.string());
-#endif
     }
 
     struct HashTraits : SimpleClassHashTraits<SourceCodeKey> {

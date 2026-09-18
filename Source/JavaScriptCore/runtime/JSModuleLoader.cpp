@@ -362,6 +362,27 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, jsSourceCode); // can throw
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Settles the fetch promise of an entry whose asynchronous fetch is still in flight by running the embedder's fetch
+// again while a synchronous load is active. fetchPromise was already pipeFrom()'d by the asynchronous path, which set
+// isFirstResolvingFunctionCalledFlag, so this uses the unguarded fulfill/reject. The ModuleRegistryFetchSettled
+// reaction on fetchPromise lands on the synchronous queue and drives the rest of the chain.
+void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(vm.m_synchronousModuleQueue);
+    ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
+
+    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (promise->status() == JSPromise::Status::Fulfilled)
+        fetchPromise->fulfillPromise(vm, promise->result());
+    else if (promise->status() == JSPromise::Status::Rejected)
+        fetchPromise->rejectPromise(vm, promise->result());
+}
+#endif
+
 JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer)
 {
     VM& vm = globalObject->vm();
@@ -385,8 +406,16 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
             if (error)
                 return JSPromise::rejectedPromise(globalObject, error);
 
-            if (entry->status() != ModuleRegistryEntry::Status::New)
+            if (entry->status() != ModuleRegistryEntry::Status::New) {
                 promise = entry->ensureFetchPromise(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+                // require(esm) of a module whose fetch an import already started.
+                if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
+                    fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
+                    RETURN_IF_EXCEPTION(scope, nullptr);
+                }
+#endif
+            }
         }
     }
 
@@ -810,19 +839,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
-                    // Transpilation still in flight — re-issue through the
-                    // embedder's synchronous fetch. fetchPromise was already
-                    // pipeFrom()'d by the async path which set
-                    // isFirstResolvingFunctionCalledFlag, so use the unguarded
-                    // fulfill/reject. The ModuleRegistryFetchSettled reaction on
-                    // fetchPromise lands on the sync queue and drives the rest of
-                    // the chain (including loadPromise).
-                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
+                    fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (promise->status() == JSPromise::Status::Fulfilled)
-                        fetchPromise->fulfillPromise(vm, promise->result());
-                    else if (promise->status() == JSPromise::Status::Rejected)
-                        fetchPromise->rejectPromise(vm, promise->result());
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -1470,6 +1488,13 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
     case SourceProviderSourceType::Synthetic: {
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
+        if (syntheticSourceProvider->isDeferred()) {
+            auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, Ref { *syntheticSourceProvider });
+            scope.release();
+            promise->fulfill(vm, moduleRecord);
+            return promise;
+        }
+
         MarkedArgumentBuffer args;
         Vector<Identifier, 4> exportNames;
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);

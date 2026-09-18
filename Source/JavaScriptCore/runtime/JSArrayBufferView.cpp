@@ -277,8 +277,8 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     // memory here that it's not necessary to trigger a GC - just accounting what
     // we have done is good enough. The sort of bizarre exception to the "allocating
     // little memory" is when we transfer a backing buffer into the C heap; this
-    // will temporarily get counted towards heap footprint (incorrectly, in the case
-    // of adopting an oversize typed array) but we don't GC here anyway. That's
+    // will temporarily get counted towards heap footprint (adopting an oversize
+    // typed array does not, see below) but we don't GC here anyway. That's
     // almost certainly fine. The worst case is if you created a ton of fast typed
     // arrays, and did nothing but caused all of them to slow down and waste memory.
     // In that case, your memory footprint will double before the GC realizes what's
@@ -292,6 +292,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     Structure* structure = this->structure();
 
     RefPtr<ArrayBuffer> buffer;
+    size_t bytesAlreadyReported = 0;
 
     switch (m_mode) {
     case FastTypedArray: {
@@ -302,10 +303,10 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     }
 
     case OversizeTypedArray: {
-        // FIXME: consider doing something like "subtracting" from extra memory
-        // cost, since right now this case will cause the GC to think that we reallocated
-        // the whole buffer.
+        // The buffer adopts the vector. ConstructionContext reported the vector as
+        // allocated when it allocated it, so only the ArrayBuffer itself is new.
         buffer = ArrayBuffer::createAdopted(span());
+        bytesAlreadyReported = buffer->byteLength();
         break;
     }
 
@@ -327,7 +328,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
         WTF::storeStoreFence();
         m_mode = WastefulTypedArray; // There is no possibility that FastTypedArray or OversizeTypedArray becomes resizable ones since resizable ones do not start with FastTypedArray or OversizeTypedArray.
     }
-    heap->addReference(this, buffer.get());
+    heap->addReference(this, buffer.get(), bytesAlreadyReported);
 
     return buffer.unsafeGet();
 }

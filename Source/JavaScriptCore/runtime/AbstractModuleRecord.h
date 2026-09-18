@@ -285,6 +285,9 @@ public:
     }
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+#endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown> internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
