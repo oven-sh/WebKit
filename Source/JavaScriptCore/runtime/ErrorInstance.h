@@ -162,6 +162,9 @@ protected:
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     void computeErrorInfo(VM&, bool allocationAllowed);
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue headedStack(VM&, String&& frames);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     void* m_bunErrorData { nullptr };
@@ -181,8 +184,7 @@ protected:
     bool m_nativeGetterTypeError : 1;
     bool m_parseError : 1;
 #if USE(BUN_JSC_ADDITIONS)
-    // m_stackString is the frames only: the error's name and message are read when the stack is.
-    bool m_stackStringLacksHeader : 1;
+    bool m_stackStringIsFramesOnly : 1;
 #endif
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;

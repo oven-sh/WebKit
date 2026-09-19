@@ -46,7 +46,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_nativeGetterTypeError(false)
     , m_parseError(false)
 #if USE(BUN_JSC_ADDITIONS)
-    , m_stackStringLacksHeader(false)
+    , m_stackStringIsFramesOnly(false)
 #endif
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
@@ -274,6 +274,9 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
     m_stackString = WTF::move(stackString);
+#if USE(BUN_JSC_ADDITIONS)
+    m_stackStringIsFramesOnly = false;
+#endif
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -419,12 +422,9 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
             else {
-                // This may be the end of a collection, where the error's name and message cannot be
-                // read as a read of the stack reads them (that allocates, and throws for a Symbol).
-                // The hook formats the frames, which is what is about to be lost; the error outlives
-                // this, so materializeErrorInfoIfNeeded() heads the stack when it is read.
+                // Possibly the end of a collection: the hook formats the frames, and headedStack() adds the rest.
                 stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
-                m_stackStringLacksHeader = true;
+                m_stackStringIsFramesOnly = true;
             }
         } else {
             getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
@@ -445,6 +445,28 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The frames a collection formatted, headed as a stack materialized on access is. undefined if reading
+// the name or the message throws, which is what the hook that materializes a stack on access leaves.
+JSValue ErrorInstance::headedStack(VM& vm, String&& frames)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGlobalObject* globalObject = this->globalObject();
+    String name = sanitizedNameString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    String message = sanitizedMessageString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
+    ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
+    String headed = tryMakeString(name, separator, message, frames);
+    if (headed.isNull())
+        headed = tryMakeString(name, separator, message);
+    if (headed.isNull())
+        headed = WTF::move(message);
+    return jsString(vm, WTF::move(headed));
+}
+#endif
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
@@ -493,7 +515,6 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         if (!m_sourceURL.isEmpty())
             putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
 
-        m_errorInfoMaterialized = true;
         if (!m_stackPropertyAlreadyMaterialized) {
             WTF::String stackString;
             {
@@ -501,28 +522,12 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 stackString = WTF::move(m_stackString);
             }
 #if USE(BUN_JSC_ADDITIONS)
-            if (m_stackStringLacksHeader) {
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                JSGlobalObject* globalObject = this->globalObject();
-                String name = sanitizedNameString(globalObject);
-                String message;
-                if (!scope.exception()) [[likely]]
-                    message = sanitizedMessageString(globalObject);
-                if (scope.exception()) [[unlikely]] {
-                    // As when the hook that materializes a stack on access throws.
-                    putDirect(vm, vm.propertyNames->stack, jsUndefined(), attributes);
-                    return true;
-                }
-                // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
-                ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
-                String headed = tryMakeString(name, separator, message, stackString);
-                if (headed.isNull())
-                    headed = tryMakeString(name, separator, message);
-                stackString = headed.isNull() ? WTF::move(name) : WTF::move(headed);
-            }
-#endif
+            putDirect(vm, vm.propertyNames->stack, m_stackStringIsFramesOnly ? headedStack(vm, WTF::move(stackString)) : jsString(vm, WTF::move(stackString)), attributes);
+#else
             putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+#endif
         }
+        m_errorInfoMaterialized = true;
     }
 
     return true;
@@ -541,9 +546,11 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyNa
 bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
+    if (thisObject->materializeErrorInfoIfNeeded(vm, propertyName)) [[unlikely]]
+        RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot));
 }
 
 void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode mode)
