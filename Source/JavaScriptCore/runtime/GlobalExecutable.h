@@ -52,6 +52,11 @@ public:
 
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
+    // For code that has run and will not run again (Options::useRunOnceCodeRelease): true if no compiler thread can be
+    // looking at the linked code, i.e. it never left the interpreter and no baseline compile of it is queued. Code
+    // that did tier up is left to age out like any other.
+    bool canReleaseLinkedCodeNow(VM&);
+
 protected:
     friend class ScriptExecutable;
     GlobalExecutable(Structure* structure, VM& vm, const SourceCode& sourceCode, LexicallyScopedFeatures lexicallyScopedFeatures, DerivedContextType derivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType evalContextType, Intrinsic intrinsic)

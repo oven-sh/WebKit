@@ -285,6 +285,9 @@ public:
     }
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+#endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
     WriteBarrier<Unknown> internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -356,6 +359,7 @@ private:
 protected:
     // nullopt: not answerable from the graph (take the by-name path).
     std::optional<Resolution> tryResolveImportPrelinked(JSGlobalObject*, const Identifier& localName);
+    std::optional<Resolution> tryResolveImportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Import&);
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const Identifier& exportName);
     std::optional<Resolution> tryResolveExportPrelinked(JSGlobalObject*, const PrelinkedModuleGraph::Export&);
     std::optional<Resolution> prelinkedResolution(JSGlobalObject*, PrelinkedModuleGraph::ResolutionKind, uint32_t resolvedModule, uint32_t resolvedLocalSid, uint32_t requestIndex, uint32_t importNameSid);

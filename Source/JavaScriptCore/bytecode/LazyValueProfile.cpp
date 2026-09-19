@@ -43,8 +43,7 @@ void CompressedLazyValueProfileHolder::computeUpdatedPredictions(CodeBlock* code
         profile.computeUpdatedPrediction();
 
     for (auto& pair : m_data->speculationFailureValueProfileBuckets) {
-        ValueProfile& profile = codeBlock->valueProfileForBytecodeIndex(pair.first);
-        profile.computeUpdatedPredictionForExtraValue(pair.second);
+        codeBlock->valueProfileForBytecodeIndex(pair.first).computeUpdatedPredictionForExtraValue(pair.second);
     }
 }
 

@@ -10,5 +10,5 @@ try {
 if (!(exception instanceof ReferenceError))
     throw "FAILED: expected ReferenceError, got " + exception;
 
-if (exception.message != "Can't find variable")
+if (exception.message != "Variable is not defined")
     throw "FAILED: " + exception.message;

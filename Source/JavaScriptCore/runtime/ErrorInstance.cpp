@@ -48,6 +48,9 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_stackStringIsFramesOnly(false)
+#endif
 {
 }
 
@@ -83,6 +86,14 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     if (!codeBlock->hasExpressionInfo() || message.isNull())
         return message;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A private builtin (one of JSC's own, whose source has no URL) has expression info only when assertions are on
+    // (BytecodeGenerator::emitExpressionInfo), for the positions. Its source text stays out of the message in every
+    // build, so that a message does not depend on the build and does not name the builtin's internals.
+    if (auto* executable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); executable && executable->isPrivateBuiltinFunction())
+        return message;
+#endif
+
     auto info = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex);
     int expressionStart = info.divot - info.startOffset;
     int expressionStop = info.divot + info.endOffset;
@@ -117,6 +128,11 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
+    // A collection may already have formatted the frames these replace.
+    m_stackString = String();
+#if USE(BUN_JSC_ADDITIONS)
+    m_stackStringIsFramesOnly = false;
+#endif
     vm.writeBarrier(this);
 }
 
@@ -263,6 +279,9 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
     m_stackString = WTF::move(stackString);
+#if USE(BUN_JSC_ADDITIONS)
+    m_stackStringIsFramesOnly = false;
+#endif
 }
 
 // Based on ErrorPrototype's errorProtoFuncToString(), but is modified to
@@ -348,35 +367,8 @@ String ErrorInstance::tryGetMessageForDebugging()
     return emptyString();
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-extern "C" __attribute__((weak)) void Bun__errorInstance__finalize(void* bunNativePtr);
-
-class BunErrorInstanceFinalizer {
-public:
-    BunErrorInstanceFinalizer(JSC::ErrorInstance* errorInstance)
-        : m_errorInstance(errorInstance)
-    {
-    }
-
-    ~BunErrorInstanceFinalizer()
-    {
-        if (Bun__errorInstance__finalize && m_errorInstance->bunErrorData()) {
-            Bun__errorInstance__finalize(m_errorInstance->bunErrorData());
-        }
-    }
-
-private:
-    JSC::ErrorInstance* m_errorInstance;
-};
-#endif
-
 void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // Run this after we've computed the stack trace so that it can potentially be used there.
-    BunErrorInstanceFinalizer finalizer(this);
-#endif
-
     if (!m_stackTrace)
         return;
 
@@ -407,8 +399,11 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
         if (fn) {
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
-            else
-                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
+            else {
+                // Possibly the end of a collection: the hook formats the frames, and stackWithHeader() prepends the header.
+                stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL);
+                m_stackStringIsFramesOnly = true;
+            }
         } else {
             getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
             // If the stack property was already materialized by Error.captureStackString,
@@ -429,6 +424,29 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// "name: message" in front of the frames a collection formatted, as a stack materialized on access
+// begins. undefined if reading the name or the message throws, which is what the hook that
+// materializes a stack on access leaves.
+JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGlobalObject* globalObject = this->globalObject();
+    String name = sanitizedNameString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    String message = sanitizedMessageString(globalObject);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
+    ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
+    String stack = tryMakeString(name, separator, message, frames);
+    if (stack.isNull())
+        stack = tryMakeString(name, separator, message);
+    if (stack.isNull())
+        stack = WTF::move(message);
+    return jsString(vm, WTF::move(stack));
+}
+#endif
+
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
     if (m_errorInfoMaterialized)
@@ -443,7 +461,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         JSValue stack;
         if (!m_stackPropertyAlreadyMaterialized)
-            stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this, this->bunErrorData());
+            stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
 
         {
             Locker locker { cellLock() };
@@ -482,7 +500,12 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 Locker locker { cellLock() };
                 stackString = WTF::move(m_stackString);
             }
-            putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_stackStringIsFramesOnly)
+                putDirect(vm, vm.propertyNames->stack, stackWithHeader(vm, WTF::move(stackString)), attributes);
+            else
+#endif
+                putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
         }
         m_errorInfoMaterialized = true;
     }
@@ -490,12 +513,17 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     return true;
 }
 
-bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)
+static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
 {
-    if (propertyName == vm.propertyNames->line
+    return propertyName == vm.propertyNames->line
         || propertyName == vm.propertyNames->column
         || propertyName == vm.propertyNames->sourceURL
-        || propertyName == vm.propertyNames->stack)
+        || propertyName == vm.propertyNames->stack;
+}
+
+bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)
+{
+    if (isErrorInfoProperty(vm, propertyName))
         return materializeErrorInfoIfNeeded(vm);
     return false;
 }
@@ -504,7 +532,12 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    // Only materializing can throw; a ThrowScope on the common path would oblige every caller to check.
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        thisObject->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
 

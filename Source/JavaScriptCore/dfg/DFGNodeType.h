@@ -296,6 +296,7 @@ namespace JSC { namespace DFG {
     macro(GetGlobalThis, NodeResultJS) \
     macro(UnwrapGlobalProxy, NodeResultJS) \
     macro(GetClosureVar, NodeResultJS) \
+    macro(GetLazyClosureVar, NodeResultJS) \
     macro(PutClosureVar, NodeMustGenerate) \
     macro(GetGlobalVar, NodeResultJS) \
     macro(GetGlobalLexicalVariable, NodeResultJS) \

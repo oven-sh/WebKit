@@ -452,11 +452,16 @@ auto AbstractModuleRecord::prelinkedResolution(JSGlobalObject* globalObject, Pre
 // names variables, not import indices); the binding is computed once per import and reused by every use site.
 auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const Identifier& localName) -> std::optional<Resolution>
 {
-    const auto& module = prelinkedModule();
-    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(module, localName.impl());
+    const PrelinkedModuleGraph::Import* import = m_prelinked->findImport(prelinkedModule(), localName.impl());
     if (!import)
         return Resolution::notFound();
-    auto imports = m_prelinked->imports(module);
+    return tryResolveImportPrelinked(globalObject, *import);
+}
+
+auto AbstractModuleRecord::tryResolveImportPrelinked(JSGlobalObject* globalObject, const PrelinkedModuleGraph::Import& entry) -> std::optional<Resolution>
+{
+    const PrelinkedModuleGraph::Import* import = &entry;
+    auto imports = m_prelinked->imports(prelinkedModule());
     if (m_prelinkedImportResolutions.size() != imports.size()) [[unlikely]]
         m_prelinkedImportResolutions = FixedVector<Resolution>(imports.size());
     Resolution& memo = m_prelinkedImportResolutions[import - imports.data()];
@@ -1487,11 +1492,22 @@ void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JS
 
 void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
 {
-    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this))
-        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher)); // can throw
-    else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        UncheckedKeyHashSet<AbstractModuleRecord*> visited;
+        generateDeferredSyntheticModules(globalObject, visited);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+#endif
+    if (auto* cyclicModuleRecord = dynamicDowncast<CyclicModuleRecord>(this)) {
+        cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
+        RETURN_IF_EXCEPTION(scope, void());
+    } else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
         moduleRecord->link(globalObject, WTF::move(scriptFetcher));
-    else
+        RETURN_IF_EXCEPTION(scope, void());
+    } else
         RELEASE_ASSERT_NOT_REACHED();
 }
 
@@ -1905,6 +1921,38 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
     // 17. Return index.
     RELEASE_AND_RETURN(scope, index);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// Runs the deferred generators (SyntheticSourceProvider::createDeferred()) of the graph below this record, depth first
+// in the order of the import declarations, which is the order InnerModuleEvaluation would reach those modules in.
+//
+// This is its own pass ahead of InnerModuleLinking because a generator runs user code, and user code can require() an
+// ES module that imports back into this graph. Such a load links and evaluates; started from inside InnerModuleLinking
+// it would find the records on the outer linking stack in the LINKING state and treat them as linked.
+void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, UncheckedKeyHashSet<AbstractModuleRecord*>& visited)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
+
+    // Everything below a record that has been linked went through this pass when that link started.
+    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
+    if (!module || module->status() != CyclicModuleRecord::Status::Unlinked)
+        return;
+    if (!visited.add(this).isNewEntry)
+        return;
+
+    for (const ModuleRequest& request : module->requestedModules()) {
+        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
+        checkSafeToRecurse(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, void());
+        requiredModule->generateDeferredSyntheticModules(globalObject, visited);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+#endif
 
 unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, Vector<CyclicModuleRecord*, 8>& stack, unsigned index, RefPtr<ScriptFetcher> scriptFetcher)
 {

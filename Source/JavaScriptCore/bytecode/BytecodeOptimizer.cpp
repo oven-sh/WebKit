@@ -90,6 +90,7 @@ struct Insn {
     // beyond the function's own scope; get_from_scope gets ResolvedClosureVar with a known slot.
     std::optional<unsigned> staticOuterHops;
     std::optional<unsigned> staticScopeOffset;
+    bool staticScopeOffsetIsLazyFunctionSlot { false };
 
     bool clobbers(VirtualRegister r) const { return r.isLocal() && static_cast<unsigned>(r.toLocal()) >= clobberFrom && static_cast<unsigned>(r.toLocal()) < clobberEnd; }
 
@@ -170,6 +171,7 @@ static bool isPure(const Insn& insn)
     case op_typeof:
     case op_new_object:
     case op_new_reg_exp:
+    case op_new_reg_exp_shared:
     case op_new_func:
     case op_new_func_exp:
     case op_new_generator_func:
@@ -187,7 +189,7 @@ static bool isPure(const Insn& insn)
         return insn.staticOuterHops || type == GlobalProperty || type == GlobalPropertyWithVarInjectionChecks || type == ModuleVar;
     }
     case op_get_from_scope:
-        return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
+        return insn.staticScopeOffset || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar || insn.instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedLazyClosureVar;
     default:
         return false;
     }
@@ -220,6 +222,8 @@ static bool allowsOperandSubstitution(const Insn& insn)
     case op_enumerator_next:
     case op_async_iterator_open:
     case op_async_iterator_next:
+    // Reads and writes its iterator operand, and names the registers that op_iterator_open / op_iterator_next keep their state in.
+    case op_iterator_close_check:
         return false;
     default:
         return true;
@@ -452,6 +456,7 @@ void BytecodeOptimizerAccess::replaceWith(Insn& insn, Insn::Kind kind, VirtualRe
     insn.knownConstants.shrink(0);
     insn.staticOuterHops = std::nullopt;
     insn.staticScopeOffset = std::nullopt;
+    insn.staticScopeOffsetIsLazyFunctionSlot = false;
     computeUseDef(insn);
 }
 
@@ -1337,6 +1342,7 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
                     bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32();
                     if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
                         insn.staticScopeOffset = resolution.offset;
+                        insn.staticScopeOffsetIsLazyFunctionSlot = resolution.isLazyFunctionSlot;
                         changed = true;
                         m_staticGets++;
                     }
@@ -1766,6 +1772,7 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
             case op_new_async_generator_func:
             case op_new_async_generator_func_exp:
             case op_new_reg_exp:
+            case op_new_reg_exp_shared:
             case op_to_string:
             case op_strcat:
             case op_typeof:
@@ -1971,7 +1978,7 @@ struct BytecodeOptimizerAccess::Mapper {
     GetPutInfo operator()(BytecodeOperandName, GetPutInfo info)
     {
         if (insn->staticScopeOffset && insn->effectiveOpcode() == op_get_from_scope)
-            return GetPutInfo(info.resolveMode(), ResolvedClosureVar, info.initializationMode(), info.ecmaMode());
+            return GetPutInfo(info.resolveMode(), insn->staticScopeOffsetIsLazyFunctionSlot ? ResolvedLazyClosureVar : ResolvedClosureVar, info.initializationMode(), info.ecmaMode());
         return info;
     }
 

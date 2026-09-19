@@ -1948,6 +1948,17 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
     }
         
+    case GetLazyClosureVar: {
+        // The slow path instantiates a function declaration into the slot.
+        read(HeapObjectCount);
+        write(HeapObjectCount);
+        read(AbstractHeap(ScopeProperties, node->scopeOffset().offset()));
+        write(AbstractHeap(ScopeProperties, node->scopeOffset().offset()));
+        write(Watchpoint_fire);
+        def(HeapLocation(ClosureVariableLoc, AbstractHeap(ScopeProperties, node->scopeOffset().offset()), node->child1()), LazyNode(node));
+        return;
+    }
+
     case PutClosureVar: {
         auto location = node->child2().useKind() == DoubleRepUse ? ClosureVariableDoubleLoc : ClosureVariableLoc;
         write(AbstractHeap(ScopeProperties, node->scopeOffset().offset()));

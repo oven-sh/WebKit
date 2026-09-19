@@ -101,8 +101,11 @@ static void NODELETE copyMemory(void* dst, const void* src, size_t size)
     CPURegister* dstPtr = reinterpret_cast<CPURegister*>(dst);
     const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
     size /= sizeof(CPURegister);
-    while (size--)
-        *dstPtr++ = *srcPtr++;
+    // The copy is scanned in place of the stack, and only the stack knows which of its words are poisoned.
+    while (size--) {
+        *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? 0 : *srcPtr;
+        ++srcPtr;
+    }
 }
     
 

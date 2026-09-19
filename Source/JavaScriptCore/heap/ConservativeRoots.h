@@ -27,11 +27,34 @@
 
 #include "Heap.h"
 
+#if ASAN_ENABLED && __has_include(<sanitizer/asan_interface.h>)
+#include <sanitizer/asan_interface.h>
+#define JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS 1
+#else
+#define JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS 0
+#endif
+
 namespace JSC {
 
 class CodeBlockSet;
 class HeapCell;
 class JITStubRoutineSet;
+
+// A word ASan has poisoned is one the program may not touch: the redzone between two locals of an instrumented frame,
+// a local whose scope has ended, the unused capacity of an annotated container. Nothing can have put a live value
+// there, but whatever an earlier frame left in that stack memory is still in it, and a redzone is never written, so
+// under a frame that stays on the stack (MicrotaskQueue::drain, for the whole of a module's top-level-await body) a
+// stale cell pointer in one was a root at every collection. A pointer needs all of its bytes addressable.
+// Asked of the stack itself: a copy of it (MachineThreads::tryCopyOtherThreadStack) has no poison of its own.
+ALWAYS_INLINE bool isPoisonedForConservativeScan(const void* word)
+{
+#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
+    return __asan_region_is_poisoned(const_cast<void*>(word), sizeof(void*));
+#else
+    UNUSED_PARAM(word);
+    return false;
+#endif
+}
 
 class ConservativeRoots {
 public:

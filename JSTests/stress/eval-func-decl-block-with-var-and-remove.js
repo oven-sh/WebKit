@@ -21,18 +21,18 @@ var assertThrow = function (cb, expected) {
 
 function foo() {
     {   
-        assertThrow(() => f, "ReferenceError: Can't find variable: f");
+        assertThrow(() => f, "ReferenceError: f is not defined");
         eval('eval(" { function f() { }; } ")');
         assert(typeof f, "function");
     }
     assert(typeof f, "function", "#1");
     delete f;
-    assertThrow(() => f, "ReferenceError: Can't find variable: f", "#1");
+    assertThrow(() => f, "ReferenceError: f is not defined", "#1");
 }
 
 for (var i = 0; i < testLoopCount; i++) {
     foo();
-    assertThrow(() => f, "ReferenceError: Can't find variable: f");
+    assertThrow(() => f, "ReferenceError: f is not defined");
 }
 
 function boo() {
@@ -43,12 +43,12 @@ function boo() {
     }
     assert(typeof l, 'function', "#4");
     delete l;
-    assertThrow(() => f, "ReferenceError: Can't find variable: f");
+    assertThrow(() => f, "ReferenceError: f is not defined");
 }
 
 for (var i = 0; i < testLoopCount; i++){
     boo();
-    assertThrow(() => f, "ReferenceError: Can't find variable: f");
+    assertThrow(() => f, "ReferenceError: f is not defined");
 }
 
 function joo() {
@@ -59,12 +59,12 @@ function joo() {
     }
     assert(typeof h, "function", "#10");
     delete h;
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }
 
 for (var i = 0; i < testLoopCount; i++){
     joo();
-    assertThrow(() => h, "ReferenceError: Can't find variable: h");
+    assertThrow(() => h, "ReferenceError: h is not defined");
 }
 
 function koo() {
@@ -80,5 +80,5 @@ function koo() {
 
 for (var i = 0; i < testLoopCount; i++){
     koo();
-    assertThrow(() => k, "ReferenceError: Can't find variable: k");
+    assertThrow(() => k, "ReferenceError: k is not defined");
 }

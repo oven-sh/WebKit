@@ -87,7 +87,7 @@ public:
     }
 
     void setStatus(Status newStatus) { m_status = newStatus; }
-    void setEvaluationError(VM& vm, JSValue error) { m_evaluationError.set(vm, this, error); }
+    void setEvaluationError(VM&, JSValue);
     void setDFSAncestorIndex(unsigned newIndex) { m_dfsAncestorIndex = newIndex; }
 
 protected:

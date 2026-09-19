@@ -275,6 +275,9 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleScope);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
     Locker locker { thisObject->cellLock() };
     auto moduleMapValues = thisObject->m_moduleMap.values();
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());
@@ -359,6 +362,27 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, jsSourceCode); // can throw
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Settles the fetch promise of an entry whose asynchronous fetch is still in flight by running the embedder's fetch
+// again while a synchronous load is active. fetchPromise was already pipeFrom()'d by the asynchronous path, which set
+// isFirstResolvingFunctionCalledFlag, so this uses the unguarded fulfill/reject. The ModuleRegistryFetchSettled
+// reaction on fetchPromise lands on the synchronous queue and drives the rest of the chain.
+void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(vm.m_synchronousModuleQueue);
+    ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
+
+    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (promise->status() == JSPromise::Status::Fulfilled)
+        fetchPromise->fulfillPromise(vm, promise->result());
+    else if (promise->status() == JSPromise::Status::Rejected)
+        fetchPromise->rejectPromise(vm, promise->result());
+}
+#endif
+
 JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer)
 {
     VM& vm = globalObject->vm();
@@ -382,8 +406,16 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
             if (error)
                 return JSPromise::rejectedPromise(globalObject, error);
 
-            if (entry->status() != ModuleRegistryEntry::Status::New)
+            if (entry->status() != ModuleRegistryEntry::Status::New) {
                 promise = entry->ensureFetchPromise(globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+                // require(esm) of a module whose fetch an import already started.
+                if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
+                    fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
+                    RETURN_IF_EXCEPTION(scope, nullptr);
+                }
+#endif
+            }
         }
     }
 
@@ -807,19 +839,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             JSPromise* modulePromise = mapEntry->ensureModulePromise(globalObject);
             if (modulePromise->status() == JSPromise::Status::Pending) {
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
-                    // Transpilation still in flight — re-issue through the
-                    // embedder's synchronous fetch. fetchPromise was already
-                    // pipeFrom()'d by the async path which set
-                    // isFirstResolvingFunctionCalledFlag, so use the unguarded
-                    // fulfill/reject. The ModuleRegistryFetchSettled reaction on
-                    // fetchPromise lands on the sync queue and drives the rest of
-                    // the chain (including loadPromise).
-                    JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, resolved), moduleReferrer(referrerKey), nullptr, scriptFetcher.copyRef());
+                    fetchSynchronously(globalObject, fetchPromise, resolved, moduleReferrer(referrerKey), RefPtr { moduleRequest.m_attributes }, scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
-                    if (promise->status() == JSPromise::Status::Fulfilled)
-                        fetchPromise->fulfillPromise(vm, promise->result());
-                    else if (promise->status() == JSPromise::Status::Rejected)
-                        fetchPromise->rejectPromise(vm, promise->result());
                 } else if (fetchPromise->status() == JSPromise::Status::Fulfilled) {
                     // fetchPromise already settled but its
                     // ModuleRegistryFetchSettled reaction is sitting on the
@@ -1236,20 +1257,23 @@ void JSModuleLoader::pinPrelinkedEdges(uint32_t moduleIndex)
     AbstractModuleRecord* leaving = m_prelinkedRecords[moduleIndex].get();
     if (!leaving)
         return;
-    auto pin = [&](AbstractModuleRecord* importer, uint32_t onlyTarget) {
-        auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
-        for (unsigned i = 0; i < requests.size(); ++i) {
-            uint32_t target = requests[i].moduleIndex;
-            if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
-                continue;
-            if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
-                importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
-        }
-    };
-    pin(leaving, PrelinkedModuleGraph::noModule);
+    pinPrelinkedEdgesOf(leaving, PrelinkedModuleGraph::noModule);
     for (auto& slot : m_prelinkedRecords) {
         if (slot && slot.get() != leaving)
-            pin(slot.get(), moduleIndex);
+            pinPrelinkedEdgesOf(slot.get(), moduleIndex);
+    }
+}
+
+// importer's edges to onlyTarget (noModule: to every module) whose target is still in the table.
+void JSModuleLoader::pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget)
+{
+    auto requests = m_prelinkedGraph->requests(importer->prelinkedModule());
+    for (unsigned i = 0; i < requests.size(); ++i) {
+        uint32_t target = requests[i].moduleIndex;
+        if (target == PrelinkedModuleGraph::noModule || (onlyTarget != PrelinkedModuleGraph::noModule && target != onlyTarget))
+            continue;
+        if (AbstractModuleRecord* record = prelinkedRecordForResolution(target))
+            importer->setImportedModule(importer->globalObject(), importer->requestedModules()[i], record);
     }
 }
 
@@ -1264,10 +1288,18 @@ void JSModuleLoader::forgetPrelinkedRecord(uint32_t moduleIndex)
 
 void JSModuleLoader::forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll)
 {
+    if (!keyOrNullForAll) {
+        // Every slot leaves: pin each edge once, from its importer, while all the targets are still in the table.
+        for (auto& slot : m_prelinkedRecords) {
+            if (slot)
+                pinPrelinkedEdgesOf(slot.get(), PrelinkedModuleGraph::noModule);
+        }
+    }
     for (unsigned i = 0; i < m_prelinkedRecords.size(); ++i) {
         auto& slot = m_prelinkedRecords[i];
         if (slot && (!keyOrNullForAll || slot->moduleKey().impl() == keyOrNullForAll)) {
-            pinPrelinkedEdges(i);
+            if (keyOrNullForAll)
+                pinPrelinkedEdges(i);
             slot.clear();
             m_prelinkedRecordRemoved.ensureSize(m_prelinkedRecords.size());
             m_prelinkedRecordRemoved.quickSet(i);
@@ -1456,6 +1488,14 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
     case SourceProviderSourceType::Synthetic: {
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
+        if (syntheticSourceProvider->isDeferred()) {
+            auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, Ref { *syntheticSourceProvider });
+            moduleRecord->setEvaluationSteps(syntheticSourceProvider->evaluator());
+            scope.release();
+            promise->fulfill(vm, moduleRecord);
+            return promise;
+        }
+
         MarkedArgumentBuffer args;
         Vector<Identifier, 4> exportNames;
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);

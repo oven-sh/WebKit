@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // Threadsafe callbacks. The C caller invokes the callback from a FOREIGN OS thread; the engine
 // must NOT run JS there. It copies the raw argument slots into a record and hands it to the
 // registered dispatch function (here $vm's queue); the JS thread later drains the queue, and only
