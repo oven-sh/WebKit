@@ -2378,6 +2378,9 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
 
     DepthManager statementDepth(&m_statementDepth);
     m_statementDepth = 0;
+    // The body of a function nested in a switch case/default clause is not part of that clause:
+    // a `using` / `await using` declaration at its top level is allowed, as in parseBlockStatement().
+    SetForScope switchCaseScope(m_insideSwitchCaseBody, false);
     if (bodyType == ArrowFunctionBodyExpression) {
         if (m_debuggerParseData)
             failIfFalse(parseArrowFunctionSingleExpressionBodySourceElements(context), "Cannot parse body of this arrow function");
