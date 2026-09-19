@@ -2587,6 +2587,9 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
     Scope* parentScope = currentScope();
 
+    // ArrowParameters[?Yield]: the parameters of an arrow function in a generator are parsed with [+Yield], see below.
+    const bool parseArrowParametersAsGenerator = SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(mode) && parentScope->isGeneratorFunction();
+
     bool functionNameIsAwait = isPossiblyEscapedAwait(m_token);
     const char* isDisallowedAwaitFunctionNameReason = functionNameIsAwait && !canUseIdentifierAwait() ? disallowedIdentifierAwaitReason() : nullptr;
 
@@ -2625,6 +2628,12 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
         // If we know about this function already, we can use the cached info and skip the parser to the end of the function.
         if (const SourceProviderCacheItem* cachedInfo = TreeBuilder::CanUseFunctionCache ? findCachedFunctionInfo(parametersStart) : nullptr) {
+            // isArrowFunctionParameters() parses parameters in a scope that is never a generator, so an arrow function in them is
+            // parsed, and cached, with `yield` as an identifier. That item does not say that the arrow function is valid in a
+            // generator. Parse it again here, as without the cache. The new item replaces it.
+            if (parseArrowParametersAsGenerator && !cachedInfo->arrowParametersParsedAsGenerator)
+                return false;
+
             // If we're in a strict context, the cached function info must say it was strict too.
             ASSERT(!strictMode() || (cachedInfo->lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature));
             JSTokenLocation endLocation;
@@ -2713,7 +2722,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         {
             // Parse formal parameters with [+Yield] parameterization, in order to ban YieldExpressions
             // in ArrowFormalParameters, per ES6 #sec-arrow-function-definitions-static-semantics-early-errors.
-            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parentScope->isGeneratorFunction());
+            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parseArrowParametersAsGenerator);
             SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !isAsyncFunctionParseMode(mode));
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
@@ -2907,6 +2916,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
         parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
+        parameters.arrowParametersParsedAsGenerator = parseArrowParametersAsGenerator;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;

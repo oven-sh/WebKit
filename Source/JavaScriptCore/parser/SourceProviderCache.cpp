@@ -54,7 +54,8 @@ void SourceProviderCache::clear()
 
 void SourceProviderCache::add(int sourcePosition, std::unique_ptr<SourceProviderCacheItem> item)
 {
-    m_map.add(sourcePosition, WTF::move(item));
+    // Parser::parseFunctionInfo() parses a function again when it cannot use the item that is here. The new item replaces it.
+    m_map.set(sourcePosition, WTF::move(item));
 }
 
 }
