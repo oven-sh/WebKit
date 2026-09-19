@@ -39,6 +39,7 @@
 #include "Printer.h"
 #include "ScriptExecutable.h"
 #include "UnlinkedCodeBlock.h"
+#include <wtf/ScopedLambda.h>
 
 #if ENABLE(DFG_JIT)
 #include "DFGCodeOriginPool.h"
@@ -68,6 +69,7 @@ class JSModuleEnvironment;
 class LLIntOffsetsExtractor;
 class LLIntPrototypeLoadAdaptiveStructureWatchpoint;
 class MetadataTable;
+class PolymorphicAccessJITStubRoutine;
 class PropertyInlineCache;
 class RegisterAtOffsetList;
 class ScriptExecutable;
@@ -305,6 +307,7 @@ public:
 
     // O(n) operation. Use getICStatusMap() unless you really only intend to get one stub info.
     PropertyInlineCache* findPropertyCache(CodeOrigin);
+    void forEachICStubRoutine(const ScopedLambda<void(PolymorphicAccessJITStubRoutine&)>&);
 
     const JITCodeMap& jitCodeMap();
 
