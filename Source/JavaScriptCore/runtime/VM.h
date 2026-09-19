@@ -177,9 +177,7 @@ constexpr bool validateDFGDoesGC = ENABLE_DFG_DOES_GC_VALIDATION;
 
 #if USE(BUN_JSC_ADDITIONS)
 using StackTraceAppenderFunction = WTF::Function<void(VM&, JSCell* owner, Vector<StackFrame>& stackTrace, size_t maxToAppend)>;
-// Also called from the end of a collection (ErrorInstance::reconcileWeakReferencesAtGCEnd), where the
-// error may be read but nothing may be allocated in the heap and no script may run.
-using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, void* bunErrorData)>;
+using ErrorInfoFunction = WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, void* bunErrorData)>;
 using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSC::JSObject*, void* bunErrorData)>;
 #endif
 
