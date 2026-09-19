@@ -357,16 +357,106 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
     return ParseInnerResult { parameters, sourceElements, scope->takeFunctionDeclarations(), scope->takeDeclaredVariables(), scope->takeLexicalEnvironment(), features, context.numConstants() };
 }
 
+// Steps over the text with the lexer to the bracket that closes the one at openBracketOffset, and answers whether the
+// token after that bracket is tokenAfterClosingBracket. The open bracket is the current token, or it is a "(" that the
+// parser is already past (openParens is 1). The answer is "it can be" when the lexer alone does not see the text the
+// way the parser does: a template literal, a regular expression, or brackets that do not nest. Then the caller does
+// the work that this check would have saved.
 template <typename LexerType>
-template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context)
+template <class TreeBuilder> bool Parser<LexerType>::maybeTokenAfterClosingBracket(TreeBuilder& context, JSTokenType tokenAfterClosingBracket, unsigned openBracketOffset, unsigned openParens)
+{
+    ASSERT(openParens || match(OPENPAREN) || match(OPENBRACKET) || match(OPENBRACE));
+    ASSERT(!hasError());
+
+    // The text says what the answer is, so a "yes" holds for every later visit of the same bracket. A "no" is not
+    // kept: the parse of this text ends right after it.
+    if (m_bracketsFollowedByToken.contains(openBracketOffset))
+        return true;
+
+    SavePoint savePoint = createSavePoint(context);
+    unsigned openBrackets = 0;
+    unsigned openBraces = 0;
+    bool result = true;
+
+    while (true) {
+        bool closesBracket = false;
+        switch (m_token.m_type) {
+        case OPENPAREN:
+            ++openParens;
+            break;
+        case OPENBRACKET:
+            ++openBrackets;
+            break;
+        case OPENBRACE:
+            ++openBraces;
+            break;
+        case CLOSEPAREN:
+            if (!openParens)
+                goto done;
+            --openParens;
+            closesBracket = true;
+            break;
+        case CLOSEBRACKET:
+            if (!openBrackets)
+                goto done;
+            --openBrackets;
+            closesBracket = true;
+            break;
+        case CLOSEBRACE:
+            if (!openBraces)
+                goto done;
+            --openBraces;
+            closesBracket = true;
+            break;
+        case BACKQUOTE:
+            // The lexer scans a template literal on request. Token by token, it reads the text of the literal as
+            // source.
+            goto done;
+        case DIVIDE:
+        case DIVEQUAL:
+            // The lexer scans a regular expression on request, and this can be the start of one.
+            goto done;
+        case EOFTOK:
+            // The source ends before the closing bracket, so no token follows it.
+            result = false;
+            goto done;
+        default:
+            if (m_token.m_type & CanBeErrorTokenFlag) [[unlikely]]
+                goto done;
+            break;
+        }
+
+        // Only brackets and the token after them matter here, so the lexer does not have to build the value of each
+        // token, and it does not have to tell a keyword from an identifier.
+        next({ LexerFlags::DontBuildStrings, LexerFlags::DontBuildKeywords, LexerFlags::IgnoreReservedWords });
+        if (closesBracket && !openParens && !openBrackets && !openBraces) {
+            result = match(tokenAfterClosingBracket);
+            goto done;
+        }
+    }
+
+done:
+    restoreSavePoint(context, savePoint);
+    if (result)
+        m_bracketsFollowedByToken.add(openBracketOffset);
+    return result;
+}
+
+template <typename LexerType>
+template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context, bool lookAheadForArrow)
 {
     if (match(OPENPAREN)) {
+        unsigned openParenOffset = m_token.m_startPosition.offset;
         SavePoint saveArrowFunctionPoint = createSavePoint(context);
         next();
         bool isArrowFunction = false;
         if (consume(CLOSEPAREN))
             isArrowFunction = match(ARROWFUNCTION);
-        else {
+        else if (lookAheadForArrow && !maybeTokenAfterClosingBracket(context, ARROWFUNCTION, openParenOffset, 1)) {
+            // No "=>" follows the ")" that closes these parentheses, so they hold no parameters. The parse below
+            // finds that out too, but it reaches every candidate that the text holds, and each of them parses its
+            // own text more than once.
+        } else {
             SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
             // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
             AutoPopScope fakeScope(this, pushScope());
@@ -1387,8 +1477,12 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                         bool isEvalOrArguments = m_vm.propertyNames->eval == *propertyName || m_vm.propertyNames->arguments == *propertyName;
                         failIfTrueIfStrict(isEvalOrArguments, "Cannot modify '", propertyName->impl(), "' in strict mode");
 
-                        if (match(EQUAL))
-                            currentScope()->useVariable(propertyName, m_vm.propertyNames->eval == *propertyName);
+                        // The target is a variable that this code uses. The parse of the same text as an object
+                        // literal says so too, but it does not always get here: it stops at the first property with
+                        // a default value, and it does not run at a known start of a destructuring assignment.
+                        currentScope()->useVariable(propertyName, m_vm.propertyNames->eval == *propertyName);
+                        if (m_vm.propertyNames->arguments == *propertyName)
+                            context.propagateArgumentsUse();
                     }
                     innerPattern = createBindingPattern(context, kind, exportType, *propertyName, identifierToken, bindingContext, duplicateIdentifier);
                 }
@@ -4303,6 +4397,15 @@ template <typename LexerType>
 template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseDestructuringAssignment(TreeBuilder& context, SavePoint& savePoint, const JSTokenLocation& location, bool isPossiblePattern)
 {
     SavePointWithError expressionErrorLocation = swapSavePointForError(context, savePoint);
+
+    // A "{" or "[" with no "=" after the bracket that closes it starts no destructuring assignment. The pattern
+    // parse below reaches every candidate the text holds. The lexer steps over the same text on its own. The text
+    // already failed to parse as an expression, so the error of that parse is the one to report.
+    if (isPossiblePattern && !maybeTokenAfterClosingBracket(context, EQUAL, location.startOffset)) [[unlikely]] {
+        restoreSavePointWithError(context, expressionErrorLocation);
+        propagateError();
+    }
+
     auto pattern = tryParseDestructuringPatternExpression(context, AssignmentContext::AssignmentExpression);
 
     // The reason why we use restoreSavePointWithError only when isPossiblePattern = true is that
@@ -4313,6 +4416,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseDestructu
     }
     failIfFalse(pattern, "Cannot parse assignment pattern");
     consumeOrFail(EQUAL, "Expected '=' following assignment pattern");
+    m_knownDestructuringAssignmentStarts.add(location.startOffset);
     auto rhs = parseAssignmentExpression(context);
     if (!rhs)
         propagateError();
@@ -4334,12 +4438,14 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
         }
     }
 
-    if (isArrowFunctionParameters(context)) {
+    // The text did not parse as an expression, and nothing says yet that "=>" follows its parentheses.
+    bool lookAheadForArrow = !isArrowFunctionToken && !m_knownArrowFunctionStarts.contains(location.startOffset);
+    if (isArrowFunctionParameters(context, lookAheadForArrow)) {
         if (wasOpenParen)
             currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
         // A single identifier holds no other candidate and is cheap to parse again.
         if (match(OPENPAREN))
-            addKnownArrowFunctionStart(location.startOffset);
+            m_knownArrowFunctionStarts.add(location.startOffset);
         shouldReturnResult = true;
         return parseArrowFunctionExpression(context, isAsync, location);
     }
@@ -4390,16 +4496,27 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmen
     }
 
     // An enclosing candidate is parsed again, and the parser is back at an arrow function it found before: see
-    // isKnownArrowFunctionStart(). The parameters are still checked, because what they can hold depends on what
-    // encloses them: `async (a = (await) => 0) => a` is an error only in the pass that knows the outer function is
-    // async.
-    if (maybeValidArrowFunctionStart && isKnownArrowFunctionStart(location.startOffset)) [[unlikely]] {
+    // KnownStarts. The parameters are still checked, because what they can hold depends on what encloses them:
+    // `async (a = (await) => 0) => a` is an error only in the pass that knows the outer function is async.
+    if (maybeValidArrowFunctionStart && m_knownArrowFunctionStarts.contains(location.startOffset)) [[unlikely]] {
         bool shouldReturnResult = false;
         bool isArrowFunctionToken = false;
         TreeExpression result = parseArrowFunctionCandidate(context, *savePoint, location, isArrowFunctionToken, wasOpenParen, usedVariablesSize, shouldReturnResult);
         if (shouldReturnResult)
             return result;
         // The parameters are not valid in this pass. The expression pass finds the error to report.
+    }
+
+    // The parser is back at a destructuring assignment it found before, for the same reason: see KnownStarts. The
+    // pattern parse still runs on every visit, because what a pattern can hold depends on what encloses it.
+    if (maybeAssignmentPattern && m_knownDestructuringAssignmentStarts.contains(location.startOffset)) [[unlikely]] {
+        bool isPossiblePattern = false;
+        TreeExpression result = parseDestructuringAssignment(context, *savePoint, location, isPossiblePattern);
+        if (result)
+            return result;
+        // The text is not a destructuring assignment in this pass. The expression pass runs as before, so the
+        // reported error does not change.
+        restoreSavePoint(context, *savePoint);
     }
 
     TreeExpression lhs = parseConditionalExpression(context);
@@ -4423,7 +4540,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmen
     if (maybeValidArrowFunctionStart && !match(EOFTOK)) {
         bool isArrowFunctionToken = match(ARROWFUNCTION);
         // The parameters of a known start were checked above. Without "=>" a second check changes nothing.
-        if ((!lhs && !isKnownArrowFunctionStart(location.startOffset)) || isArrowFunctionToken) {
+        if ((!lhs && !m_knownArrowFunctionStarts.contains(location.startOffset)) || isArrowFunctionToken) {
             bool shouldReturnResult = false;
             TreeExpression result = parseArrowFunctionCandidate(context, *savePoint, location, isArrowFunctionToken, wasOpenParen, usedVariablesSize, shouldReturnResult);
             if (shouldReturnResult)
