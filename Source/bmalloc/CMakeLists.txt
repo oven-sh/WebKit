@@ -11,8 +11,9 @@ set(bmalloc_PRIVATE_INCLUDE_DIRECTORIES
 )
 
 if (USE_MIMALLOC)
+    # Bun's mimalloc, see mimalloc/CMakeLists.txt.
     list(APPEND bmalloc_PRIVATE_INCLUDE_DIRECTORIES
-        "${BMALLOC_DIR}/mimalloc/mimalloc/include"
+        "${MIMALLOC_SOURCE_DIR}/include"
     )
 endif ()
 
@@ -631,7 +632,7 @@ set(bmalloc_PRIVATE_HEADERS
 
 if (USE_MIMALLOC)
     list(APPEND bmalloc_PUBLIC_HEADERS
-        mimalloc/mimalloc/include/mimalloc.h
+        "${MIMALLOC_SOURCE_DIR}/include/mimalloc.h"
     )
 endif ()
 
