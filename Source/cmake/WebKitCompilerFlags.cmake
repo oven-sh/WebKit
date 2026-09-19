@@ -323,7 +323,6 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                                 -Wl,-U,_WTFTimer__secondsUntilTimer
                                                 -Wl,-U,_WTFTimer__cancel
                                                 -Wl,-U,_Bun__thisThreadHasVM
-                                                -Wl,-U,_Bun__errorInstance__finalize
                                                 -Wl,-U,_Bun__reportUnhandledError)
         else()
             WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wl,-u,_WTFTimer__create
@@ -333,7 +332,6 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                                 -Wl,-u,_WTFTimer__secondsUntilTimer
                                                 -Wl,-u,_WTFTimer__cancel
                                                 -Wl,-u,_Bun__thisThreadHasVM
-                                                -Wl,-u,_Bun__errorInstance__finalize
                                                 -Wl,-u,_Bun__reportUnhandledError)
         endif()
     endif ()
