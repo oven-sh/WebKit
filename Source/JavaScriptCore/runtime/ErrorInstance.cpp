@@ -535,12 +535,17 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     return true;
 }
 
-bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)
+static bool isErrorInfoProperty(VM& vm, PropertyName propertyName)
 {
-    if (propertyName == vm.propertyNames->line
+    return propertyName == vm.propertyNames->line
         || propertyName == vm.propertyNames->column
         || propertyName == vm.propertyNames->sourceURL
-        || propertyName == vm.propertyNames->stack)
+        || propertyName == vm.propertyNames->stack;
+}
+
+bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyName)
+{
+    if (isErrorInfoProperty(vm, propertyName))
         return materializeErrorInfoIfNeeded(vm);
     return false;
 }
@@ -548,11 +553,15 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm, PropertyName propertyNa
 bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot));
+    // A ThrowScope obliges every caller to check for an exception, and callers reading any other
+    // property of an error do not: only materializing the error info can throw.
+    if (!thisObject->m_errorInfoMaterialized && isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        thisObject->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
 }
 
 void ErrorInstance::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode mode)
