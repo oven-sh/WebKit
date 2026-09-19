@@ -987,7 +987,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
             failIfFalse(matchSpecIdentifier(), "Expected an identifier name in 'using' declaration");
         }
         if (matchSpecIdentifier()) {
-            semanticFailIfTrue(currentScope()->isStaticBlock() && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+            semanticFailIfTrue(isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
             failIfTrue(isPossiblyEscapedLet(m_token) && (declarationType == DeclarationType::LetDeclaration || declarationType == DeclarationType::ConstDeclaration || isUsingDeclaration),
                 "Cannot use 'let' as an identifier name for a LexicalDeclaration");
             semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a ", declarationTypeToVariableKind(declarationType), " ", disallowedIdentifierAwaitReason());
@@ -3301,7 +3301,7 @@ parseMethod:
             break;
         case OPENBRACKET:
             next();
-            semanticFailIfTrue(currentScope()->isStaticBlock() && match(IDENT) && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+            semanticFailIfTrue(match(IDENT) && isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
             computedPropertyName = parseAssignmentExpression(context);
             type = static_cast<PropertyNode::Type>(type | PropertyNode::Computed);
             failIfFalse(computedPropertyName, "Cannot parse computed property name");
@@ -4771,6 +4771,12 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
+            if (*ident == m_vm.propertyNames->arguments) [[unlikely]] {
+                // A shorthand property is an IdentifierReference: the checks of parsePrimaryExpression apply.
+                semanticFailIfTrue(argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
+                semanticFailIfTrue(m_parserState.isParsingClassFieldInitializer, "Cannot reference 'arguments' in class field initializer");
+                semanticFailIfTrue(closestScopeOwningArguments()->evalContextType() == EvalContextType::InstanceFieldEvalContext, "arguments is not valid in this context");
+            }
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
@@ -5206,7 +5212,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::tryParseArguments
     // If semantic checks fail here, then let `parsePrimaryExpression` handle the error thrown.
     // Note that these checks must align to the checks in `parsePrimaryExpression` under
     // the clause with token type IDENT.
-    if (currentScope()->isStaticBlock()
+    if (argumentsBelongToStaticBlock()
         || m_parserState.isParsingClassFieldInitializer
         || closestScopeOwningArguments()->evalContextType() == EvalContextType::InstanceFieldEvalContext) [[unlikely]]
         return 0;
@@ -5272,7 +5278,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
 
         goto identifierExpression;
     case IDENT: {
-        semanticFailIfTrue(currentScope()->isStaticBlock() && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+        semanticFailIfTrue(isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
         if (*m_token.m_data.ident == m_vm.propertyNames->async && !m_token.m_data.escaped) [[unlikely]] {
             JSTextPosition functionStart = tokenStartPosition();
             const Identifier* ident = m_token.m_data.ident;

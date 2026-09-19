@@ -1330,6 +1330,14 @@ private:
         return scope;
     }
 
+    // ClassStaticBlockBody: it is a Syntax Error if ContainsArguments of the statement list is true.
+    // ContainsArguments looks into arrow functions and stops at other functions, so the check follows
+    // `arguments` to the scope that owns it. currentScope()->isStaticBlock() is false in an arrow function.
+    bool argumentsBelongToStaticBlock()
+    {
+        return closestScopeOwningArguments()->isStaticBlock();
+    }
+
     Scope* closestClassScopeOrTopLevelScope()
     {
         Scope* scope = currentScope();
