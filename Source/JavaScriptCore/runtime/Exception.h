@@ -65,7 +65,8 @@ public:
     static size_t estimatedSize(JSCell*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The async context (JSGlobalObject::m_asyncContextData field 0) this was first thrown in.
+    // The async context this was first thrown in, as captured (AsyncContextSwapScope::current()):
+    // with the script execution owner if there was one.
     // Empty: it never went through VM::throwException (never thrown, the termination exception),
     // or did before the embedder started tracking async contexts.
     JSValue asyncContext() const { return m_asyncContext.get(); }

@@ -2336,6 +2336,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakCreate);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
+static JSC_DECLARE_HOST_FUNCTION(functionAsyncContextScriptExecutionOwner);
+static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4237,6 +4239,21 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext, (JSGlobalObject* globalObject,
     globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, callFrame->argument(0));
     return JSValue::encode(jsUndefined());
 }
+
+// The script execution owner slot next to it (field 1), captured and restored with it.
+JSC_DEFINE_HOST_FUNCTION(functionAsyncContextScriptExecutionOwner, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(1));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    globalObject->vm().setAsyncContextTrackingEnabled();
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 1, callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6059,6 +6076,8 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
+    addFunction(vm, alwaysAllow, "asyncContextScriptExecutionOwner"_s, functionAsyncContextScriptExecutionOwner, 0);
+    addFunction(vm, alwaysAllow, "setAsyncContextScriptExecutionOwner"_s, functionSetAsyncContextScriptExecutionOwner, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

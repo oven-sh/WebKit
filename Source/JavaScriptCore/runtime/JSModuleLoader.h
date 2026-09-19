@@ -88,9 +88,10 @@ public:
     JSScope* moduleScope() const { return m_moduleScope.get(); }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The async context (JSGlobalObject::m_asyncContextData field 0) the top-level code of
-    // this loader's modules runs in, its top-level await continuations included. Empty
-    // (the default): whatever is current when a module is executed.
+    // The captured async context (AsyncContextSwapScope: an async context, with its script
+    // execution owner if there was one) the top-level code of this loader's modules runs in,
+    // its top-level await continuations included. Empty (the default): whatever is current
+    // when a module is executed.
     JSValue asyncContext() const { return m_asyncContext.get(); }
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif

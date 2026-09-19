@@ -3952,6 +3952,21 @@ void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+JSValue JSGlobalObject::currentAsyncContextWithScriptExecutionOwner(VM& vm)
+{
+    JSValue asyncContext = m_asyncContextData->getInternalField(0);
+    JSValue scriptExecutionOwner = m_asyncContextData->getInternalField(1);
+    ASSERT(!scriptExecutionOwner.isUndefined());
+    InternalFieldTuple* captured = m_capturedAsyncContextWithScriptExecutionOwner.get();
+    if (!captured || captured->getInternalField(0) != asyncContext || captured->getInternalField(1) != scriptExecutionOwner) {
+        captured = InternalFieldTuple::create(vm, internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);
+        m_capturedAsyncContextWithScriptExecutionOwner = Weak<InternalFieldTuple>(captured);
+    }
+    return captured;
+}
+#endif
+
 void JSGlobalObject::addWeakTicket(DeferredWorkTimer::Ticket& ticket)
 {
     Locker locker { cellLock() };

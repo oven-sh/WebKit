@@ -18331,12 +18331,14 @@ void SpeculativeJIT::compilePerformPromiseThenOneHandler(Node* node)
     slowCases.append(branchTest64(NonZero, packedGPR, TrustedImm64(mask)));
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Inline reactions cannot carry an async context; when one is active,
-    // take the slow path so performPromiseThen captures it (see JSPromise.cpp).
+    // Inline reactions cannot carry an async context; when one is active (or a script
+    // execution owner, which is captured with it), take the slow path so
+    // performPromiseThen captures it (see JSPromise.cpp).
     loadLinkableConstant(LinkableConstant::globalObject(*this, node), asyncContextGPR);
     loadPtr(Address(asyncContextGPR, JSGlobalObject::offsetOfAsyncContextData()), asyncContextGPR);
     Jump noAsyncContextData = branchTestPtr(Zero, asyncContextGPR);
     slowCases.append(branch64(NotEqual, Address(asyncContextGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(0)), TrustedImm64(JSValue::encode(jsUndefined()))));
+    slowCases.append(branch64(NotEqual, Address(asyncContextGPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(1)), TrustedImm64(JSValue::encode(jsUndefined()))));
     noAsyncContextData.link(this);
 #endif
 
