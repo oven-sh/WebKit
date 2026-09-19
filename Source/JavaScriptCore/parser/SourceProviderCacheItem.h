@@ -65,6 +65,7 @@ struct SourceProviderCacheItemCreationParameters {
     bool needsSuperBinding : 1 { false };
     bool isBodyArrowExpression : 1 { false };
     bool containsTaggedTemplate : 1 { false };
+    bool arrowParametersUseYieldAsIdentifier : 1 { false };
     // Where the lexer stood after the function's last token, which for a token spanning lines is not lastTokenLine.
     unsigned lastTokenEndLine { 0 };
     unsigned lastTokenEndLineStartOffset { 0 };
@@ -123,6 +124,8 @@ public:
     unsigned implementationVisibility : 2; // ImplementationVisibility
     bool usesImportMeta : 1 { false };
     bool containsTaggedTemplate : 1 { false };
+    // An arrow function that is valid only where [Yield] is off. Parser::parseFunctionInfo() does not use the item in a generator.
+    bool arrowParametersUseYieldAsIdentifier : 1 { false };
     unsigned lastTokenEndLine;
     unsigned lastTokenEndLineStartOffset;
 
@@ -159,6 +162,7 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     , implementationVisibility(static_cast<unsigned>(parameters.implementationVisibility))
     , usesImportMeta(parameters.usesImportMeta)
     , containsTaggedTemplate(parameters.containsTaggedTemplate)
+    , arrowParametersUseYieldAsIdentifier(parameters.arrowParametersUseYieldAsIdentifier)
     , lastTokenEndLine(parameters.lastTokenEndLine)
     , lastTokenEndLineStartOffset(parameters.lastTokenEndLineStartOffset)
 {

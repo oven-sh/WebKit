@@ -130,8 +130,8 @@ for (const [expression, , neverValid] of invalid) {
     shouldThrowSyntaxError(`(function () { "use strict"; (${expression}); })`);
 }
 
-// The arrow functions do what they say. One with `yield` as an identifier in its parameters is not in the source provider
-// cache, so it is parsed in full each time the parser gets to it.
+// The arrow functions do what they say. One with `yield` as an identifier in its parameters still has its item in the source
+// provider cache. Only a generator does not use it.
 {
     const f = (a = (yield) => yield + 1) => a;
     shouldBe(f()(41), 42, "yield as a parameter name");
