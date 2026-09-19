@@ -45,12 +45,12 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_stackPropertyAlreadyMaterialized(false)
     , m_nativeGetterTypeError(false)
     , m_parseError(false)
-#if USE(BUN_JSC_ADDITIONS)
-    , m_stackStringIsFramesOnly(false)
-#endif
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_stackStringIsFramesOnly(false)
+#endif
 {
 }
 
@@ -550,8 +550,8 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    if (thisObject->materializeErrorInfoIfNeeded(vm, propertyName)) [[unlikely]]
-        RETURN_IF_EXCEPTION(scope, false);
+    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
     RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot));
 }
 

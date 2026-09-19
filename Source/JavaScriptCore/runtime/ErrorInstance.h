@@ -162,13 +162,6 @@ protected:
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     void computeErrorInfo(VM&, bool allocationAllowed);
-#if USE(BUN_JSC_ADDITIONS)
-    JSValue stackWithHeader(VM&, String&& frames);
-#endif
-
-#if USE(BUN_JSC_ADDITIONS)
-    void* m_bunErrorData { nullptr };
-#endif
 
     SourceAppender m_sourceAppender { nullptr };
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
@@ -183,11 +176,13 @@ protected:
     bool m_stackPropertyAlreadyMaterialized : 1;
     bool m_nativeGetterTypeError : 1;
     bool m_parseError : 1;
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_stackStringIsFramesOnly : 1;
-#endif
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_stackStringIsFramesOnly : 1;
+    void* m_bunErrorData { nullptr };
+    JSValue stackWithHeader(VM&, String&& frames);
 #endif
 };
 
