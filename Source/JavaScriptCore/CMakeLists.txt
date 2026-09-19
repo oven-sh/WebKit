@@ -1603,6 +1603,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ModuleLoaderPayload.h
     runtime/ModuleLoadingContext.h
     runtime/ModuleMap.h
+    runtime/ModuleNamespaceExportLayout.h
     runtime/ModuleProgramExecutable.h
     runtime/ModuleProgramExecutableInlines.h
     runtime/ModuleRegistryEntry.h

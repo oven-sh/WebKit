@@ -1008,6 +1008,7 @@ runtime/MicrotaskQueue.cpp
 runtime/ModuleGraphLoadingState.cpp
 runtime/ModuleLoadingContext.cpp
 runtime/ModuleLoaderPayload.cpp
+runtime/ModuleNamespaceExportLayout.cpp
 runtime/ModuleProgramExecutable.cpp
 runtime/ModuleRegistryEntry.cpp
 runtime/NarrowingNumberPredictionFuzzerAgent.cpp
