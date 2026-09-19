@@ -2613,6 +2613,16 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
     });
 
+    // ArrowParameters[?Yield]: in the parameters of an arrow function, `yield` is an identifier only where [Yield] is off. It is always
+    // off in the scope of isArrowFunctionParameters(), and on below in a generator. So the same arrow function can be valid in one parse
+    // and an error in the next, where its item in the SourceProviderCache would skip it. The item says that the arrow function, or one in
+    // its parameters, has such a `yield`, and a generator does not use it.
+    bool enclosingCodeSawYieldAsIdentifier = std::exchange(m_seenYieldAsIdentifier, false);
+    bool arrowParametersUseYieldAsIdentifier = false;
+    auto propagateYieldAsIdentifier = makeScopeExit([&] {
+        m_seenYieldAsIdentifier = enclosingCodeSawYieldAsIdentifier || arrowParametersUseYieldAsIdentifier;
+    });
+
     auto tryLoadCachedFunction = [&] () -> bool {
         if (!Options::useSourceProviderCache()) [[unlikely]]
             return false;
@@ -2625,6 +2635,11 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
         // If we know about this function already, we can use the cached info and skip the parser to the end of the function.
         if (const SourceProviderCacheItem* cachedInfo = TreeBuilder::CanUseFunctionCache ? findCachedFunctionInfo(parametersStart) : nullptr) {
+            // Not valid here. Parse the arrow function again for the error, as without the cache.
+            if (cachedInfo->arrowParametersUseYieldAsIdentifier && parentScope->isGeneratorFunction())
+                return false;
+            arrowParametersUseYieldAsIdentifier = cachedInfo->arrowParametersUseYieldAsIdentifier;
+
             // If we're in a strict context, the cached function info must say it was strict too.
             ASSERT(!strictMode() || (cachedInfo->lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature));
             JSTokenLocation endLocation;
@@ -2718,6 +2733,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
+        arrowParametersUseYieldAsIdentifier = m_seenYieldAsIdentifier;
 
         matchOrFail(ARROWFUNCTION, "Expected a '=>' after arrow function parameter declaration");
 
@@ -2907,6 +2923,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
         parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
+        parameters.arrowParametersUseYieldAsIdentifier = arrowParametersUseYieldAsIdentifier;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;
