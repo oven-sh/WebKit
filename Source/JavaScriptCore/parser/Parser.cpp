@@ -2366,6 +2366,10 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
 {
     SetForScope overrideParsingClassFieldInitializer(m_parserState.isParsingClassFieldInitializer, bodyType != StandardFunctionBodyBlock && m_parserState.isParsingClassFieldInitializer);
     SetForScope maybeUnmaskAsync(m_parserState.classFieldInitMasksAsync, !isAsyncFunctionParseMode(m_parseMode) && m_parserState.classFieldInitMasksAsync);
+    // allowAwait is cleared while a parameter list that reserves `await` is parsed (see parseFunctionInfo). This function
+    // may be nested in such a parameter list, but its body is not part of it: whether `await` is an identifier in the body
+    // is decided by the body's own scope (canUseIdentifierAwait), exactly as for a function that is not nested in parameters.
+    SetForScope overrideAllowAwait(m_parserState.allowAwait, true);
     bool isArrowFunctionBodyExpression = bodyType == ArrowFunctionBodyExpression;
     if (!isArrowFunctionBodyExpression) {
         next();
@@ -2587,6 +2591,12 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
     Scope* parentScope = currentScope();
 
+    // ArrowParameters[?Yield, ?Await]: the parameters of an arrow function in a generator are parsed with [+Yield], and those
+    // of an arrow function in an async function with [+Await], see below.
+    const bool isArrowFunctionMode = SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(mode);
+    const bool parseArrowParametersAsGenerator = isArrowFunctionMode && parentScope->isGeneratorFunction();
+    const bool parseArrowParametersAsAsync = isArrowFunctionMode && (parentScope->isAsyncFunction() || isAsyncFunctionParseMode(mode));
+
     bool functionNameIsAwait = isPossiblyEscapedAwait(m_token);
     const char* isDisallowedAwaitFunctionNameReason = functionNameIsAwait && !canUseIdentifierAwait() ? disallowedIdentifierAwaitReason() : nullptr;
 
@@ -2625,6 +2635,15 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
         // If we know about this function already, we can use the cached info and skip the parser to the end of the function.
         if (const SourceProviderCacheItem* cachedInfo = TreeBuilder::CanUseFunctionCache ? findCachedFunctionInfo(parametersStart) : nullptr) {
+            // isArrowFunctionParameters() parses parameters in a scope that is never a generator and never async, so an arrow
+            // function in them is parsed, and cached, with `yield` and `await` as identifiers. That item does not say that the
+            // arrow function is valid in a generator or in an async function. Parse it again here, as without the cache. The
+            // new item replaces it.
+            if (parseArrowParametersAsGenerator && !cachedInfo->arrowParametersParsedAsGenerator)
+                return false;
+            if (parseArrowParametersAsAsync && !cachedInfo->arrowParametersParsedAsAsync)
+                return false;
+
             // If we're in a strict context, the cached function info must say it was strict too.
             ASSERT(!strictMode() || (cachedInfo->lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature));
             JSTokenLocation endLocation;
@@ -2713,8 +2732,9 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         {
             // Parse formal parameters with [+Yield] parameterization, in order to ban YieldExpressions
             // in ArrowFormalParameters, per ES6 #sec-arrow-function-definitions-static-semantics-early-errors.
-            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parentScope->isGeneratorFunction());
-            SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !isAsyncFunctionParseMode(mode));
+            // Likewise with [+Await] in an async function, which bans AwaitExpressions and `await` as a parameter name.
+            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parseArrowParametersAsGenerator);
+            SetForScope overrideAllowAwait(m_parserState.allowAwait, !parseArrowParametersAsAsync);
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
@@ -2907,6 +2927,8 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
         parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
+        parameters.arrowParametersParsedAsGenerator = parseArrowParametersAsGenerator;
+        parameters.arrowParametersParsedAsAsync = parseArrowParametersAsAsync;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;
