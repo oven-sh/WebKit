@@ -106,12 +106,13 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
         RELEASE_ASSERT(iter.value.size());
 #endif
 
+    // Nothing can throw at the end of a collection, and registerTarget() can leave a list full. What does not fit
+    // in its list is dropped: that cleanup callback never runs, which the specification allows.
     bool readiedCell = false;
     m_noUnregistrationLive.removeAllMatching([&] (const Registration& reg) {
         ASSERT(!reg.holdings.get().isCell() || vm.heap.isMarked(reg.holdings.get().asCell()));
         if (!vm.heap.isMarked(reg.target)) {
-            m_noUnregistrationDead.append(reg.holdings);
-            readiedCell = true;
+            readiedCell |= m_noUnregistrationDead.tryAppend(reg.holdings);
             return true;
         }
         return false;
@@ -122,25 +123,29 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
 
         bool keyIsDead = !vm.heap.isMarked(bucket.key);
         DeadRegistrations* deadList = nullptr;
-        auto getDeadList = [&] () -> DeadRegistrations& {
+        auto tryAppendToDeadList = [&] (const WriteBarrier<Unknown>& holdings) -> bool {
             if (!deadList) [[unlikely]]
                 deadList = &m_deadRegistrations.add(bucket.key, DeadRegistrations()).iterator->value;
-            return *deadList;
+            if (deadList->tryAppend(holdings)) [[likely]]
+                return true;
+            // takeDeadHoldingsValue() expects every bucket to hold a value.
+            if (deadList->isEmpty()) {
+                m_deadRegistrations.remove(bucket.key);
+                deadList = nullptr;
+            }
+            return false;
         };
 
         bucket.value.removeAllMatching([&] (const Registration& reg) {
             ASSERT(!reg.holdings.get().isCell() || vm.heap.isMarked(reg.holdings.get().asCell()));
             if (!vm.heap.isMarked(reg.target)) {
-                if (keyIsDead)
-                    m_noUnregistrationDead.append(reg.holdings);
-                else
-                    getDeadList().append(reg.holdings);
-                readiedCell = true;
+                readiedCell |= keyIsDead ? m_noUnregistrationDead.tryAppend(reg.holdings) : tryAppendToDeadList(reg.holdings);
                 return true;
             }
 
             if (keyIsDead) {
-                m_noUnregistrationLive.append(reg);
+                bool appended = m_noUnregistrationLive.tryAppend(reg);
+                UNUSED_VARIABLE(appended);
                 return true;
             }
 
@@ -204,20 +209,27 @@ JSValue JSFinalizationRegistry::takeDeadHoldingsValue()
     return result;
 }
 
-void JSFinalizationRegistry::registerTarget(VM& vm, JSCell* target, JSValue holdings, JSValue token)
+bool JSFinalizationRegistry::registerTarget(VM& vm, JSCell* target, JSValue holdings, JSValue token)
 {
     Locker locker { cellLock() };
     Registration registration;
     registration.target = target;
     registration.holdings.setWithoutWriteBarrier(holdings);
-    if (token.isUndefined())
-        m_noUnregistrationLive.append(WTF::move(registration));
-    else {
+    if (token.isUndefined()) {
+        if (!m_noUnregistrationLive.tryAppend(WTF::move(registration))) [[unlikely]]
+            return false;
+    } else {
         RELEASE_ASSERT(token.isCell());
         auto result = m_liveRegistrations.add(token.asCell(), LiveRegistrations());
-        result.iterator->value.append(WTF::move(registration));
+        if (!result.iterator->value.tryAppend(WTF::move(registration))) [[unlikely]] {
+            // reconcileWeakReferencesAtGCEnd() expects every bucket to hold a registration.
+            if (result.isNewEntry)
+                m_liveRegistrations.remove(result.iterator);
+            return false;
+        }
     }
     vm.writeBarrier(this);
+    return true;
 }
 
 bool JSFinalizationRegistry::unregister(VM&, JSCell* token)
