@@ -554,9 +554,8 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    // A ThrowScope obliges every caller to check for an exception, and callers reading any other
-    // property of an error do not: only materializing the error info can throw.
-    if (!thisObject->m_errorInfoMaterialized && isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+    // Only materializing can throw; a ThrowScope on the common path would oblige every caller to check.
+    if (isErrorInfoProperty(vm, propertyName) && !thisObject->m_errorInfoMaterialized) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         thisObject->materializeErrorInfoIfNeeded(vm);
         RETURN_IF_EXCEPTION(scope, false);
