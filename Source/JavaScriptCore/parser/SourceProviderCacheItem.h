@@ -65,7 +65,6 @@ struct SourceProviderCacheItemCreationParameters {
     bool needsSuperBinding : 1 { false };
     bool isBodyArrowExpression : 1 { false };
     bool containsTaggedTemplate : 1 { false };
-    bool arrowParametersParsedAsGenerator : 1 { false };
     // Where the lexer stood after the function's last token, which for a token spanning lines is not lastTokenLine.
     unsigned lastTokenEndLine { 0 };
     unsigned lastTokenEndLineStartOffset { 0 };
@@ -124,8 +123,6 @@ public:
     unsigned implementationVisibility : 2; // ImplementationVisibility
     bool usesImportMeta : 1 { false };
     bool containsTaggedTemplate : 1 { false };
-    // The parameters of this arrow function were parsed with [+Yield]. If not, nothing says that they are valid in a generator.
-    bool arrowParametersParsedAsGenerator : 1 { false };
     unsigned lastTokenEndLine;
     unsigned lastTokenEndLineStartOffset;
 
@@ -162,7 +159,6 @@ inline SourceProviderCacheItem::SourceProviderCacheItem(const SourceProviderCach
     , implementationVisibility(static_cast<unsigned>(parameters.implementationVisibility))
     , usesImportMeta(parameters.usesImportMeta)
     , containsTaggedTemplate(parameters.containsTaggedTemplate)
-    , arrowParametersParsedAsGenerator(parameters.arrowParametersParsedAsGenerator)
     , lastTokenEndLine(parameters.lastTokenEndLine)
     , lastTokenEndLineStartOffset(parameters.lastTokenEndLineStartOffset)
 {

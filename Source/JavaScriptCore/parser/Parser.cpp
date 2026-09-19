@@ -2587,9 +2587,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
     Scope* parentScope = currentScope();
 
-    // ArrowParameters[?Yield]: the parameters of an arrow function in a generator are parsed with [+Yield], see below.
-    const bool parseArrowParametersAsGenerator = SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(mode) && parentScope->isGeneratorFunction();
-
     bool functionNameIsAwait = isPossiblyEscapedAwait(m_token);
     const char* isDisallowedAwaitFunctionNameReason = functionNameIsAwait && !canUseIdentifierAwait() ? disallowedIdentifierAwaitReason() : nullptr;
 
@@ -2616,6 +2613,16 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
     });
 
+    // ArrowParameters[?Yield]: in the parameters of an arrow function, `yield` is an identifier only where [Yield] is off. It is always
+    // off in the scope of isArrowFunctionParameters(), and on below in a generator. So the same arrow function can be valid in one parse
+    // and an error in the next, where an item in the SourceProviderCache would skip it. Such an arrow function gets no item. Nor does an
+    // arrow function that has it in its parameters.
+    bool enclosingCodeSawYieldAsIdentifier = std::exchange(m_seenYieldAsIdentifier, false);
+    bool arrowParametersUseYieldAsIdentifier = false;
+    auto propagateYieldAsIdentifier = makeScopeExit([&] {
+        m_seenYieldAsIdentifier = enclosingCodeSawYieldAsIdentifier || arrowParametersUseYieldAsIdentifier;
+    });
+
     auto tryLoadCachedFunction = [&] () -> bool {
         if (!Options::useSourceProviderCache()) [[unlikely]]
             return false;
@@ -2628,12 +2635,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
         // If we know about this function already, we can use the cached info and skip the parser to the end of the function.
         if (const SourceProviderCacheItem* cachedInfo = TreeBuilder::CanUseFunctionCache ? findCachedFunctionInfo(parametersStart) : nullptr) {
-            // isArrowFunctionParameters() parses parameters in a scope that is never a generator, so an arrow function in them is
-            // parsed, and cached, with `yield` as an identifier. That item does not say that the arrow function is valid in a
-            // generator. Parse it again here, as without the cache. The new item replaces it.
-            if (parseArrowParametersAsGenerator && !cachedInfo->arrowParametersParsedAsGenerator)
-                return false;
-
             // If we're in a strict context, the cached function info must say it was strict too.
             ASSERT(!strictMode() || (cachedInfo->lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature));
             JSTokenLocation endLocation;
@@ -2722,11 +2723,12 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         {
             // Parse formal parameters with [+Yield] parameterization, in order to ban YieldExpressions
             // in ArrowFormalParameters, per ES6 #sec-arrow-function-definitions-static-semantics-early-errors.
-            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parseArrowParametersAsGenerator);
+            Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parentScope->isGeneratorFunction());
             SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !isAsyncFunctionParseMode(mode));
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
+        arrowParametersUseYieldAsIdentifier = m_seenYieldAsIdentifier;
 
         matchOrFail(ARROWFUNCTION, "Expected a '=>' after arrow function parameter declaration");
 
@@ -2903,7 +2905,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     int sourceLength = functionInfo.endOffset - functionInfo.startOffset;
     SourceProviderCacheItemCreationParameters parameters;
     bool hasPrecomputedFreeVariables = false;
-    if (TreeBuilder::CanUseFunctionCache && m_functionCache && sourceLength > minimumSourceLengthToCache) {
+    if (TreeBuilder::CanUseFunctionCache && m_functionCache && sourceLength > minimumSourceLengthToCache && !arrowParametersUseYieldAsIdentifier) {
         parameters.endFunctionOffset = functionInfo.endOffset;
         parameters.lastTokenLine = location.line;
         parameters.lastTokenStartOffset = location.startOffset;
@@ -2916,7 +2918,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
         parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
-        parameters.arrowParametersParsedAsGenerator = parseArrowParametersAsGenerator;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;

@@ -130,7 +130,8 @@ for (const [expression, , neverValid] of invalid) {
     shouldThrowSyntaxError(`(function () { "use strict"; (${expression}); })`);
 }
 
-// The arrow functions do what they say, also the ones that the parser had to parse again for the generator.
+// The arrow functions do what they say. One with `yield` as an identifier in its parameters is not in the source provider
+// cache, so it is parsed in full each time the parser gets to it.
 {
     const f = (a = (yield) => yield + 1) => a;
     shouldBe(f()(41), 42, "yield as a parameter name");
@@ -139,6 +140,15 @@ for (const [expression, , neverValid] of invalid) {
         return () => (a = (yield) => yield * 2) => a;
     }
     shouldBe(inArrowBody().next().value()()(21), 42, "yield as a parameter name in the body of an arrow function in a generator");
+
+    const nest = (a = (yield = 1) => (b = (c = yield + 1) => c) => b) => a;
+    shouldBe(nest()()()(), 2, "yield as a parameter name and in a default value");
+
+    function yieldAsVariable() {
+        var yield = 5;
+        return ((a = (b = yield) => b * 2) => a)()();
+    }
+    shouldBe(yieldAsVariable(), 10, "yield as a variable in a default value");
 
     // "{ x = 1 }" is not an expression, so the nested arrow functions are first parsed in the scope that is not a generator.
     const captures = `(function* (p) {
