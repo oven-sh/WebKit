@@ -959,8 +959,13 @@ void _mi_prim_thread_init_auto_done(void) {
 }
 
 void _mi_prim_thread_done_auto_done(void) {
-  if (_mi_heap_default_key != (pthread_key_t)(-1)) {  // do not leak the key, see issue #809
-    pthread_key_delete(_mi_heap_default_key);
+  // Bun: as in mimalloc's dev3 and in oven-sh/mimalloc. Threads that are still running at process exit go on calling
+  // _mi_prim_thread_associate_default_theap(); with the deleted key left in _mi_heap_default_key they write their theap
+  // into whichever key pthread_key_create() hands that slot to next.
+  pthread_key_t key = _mi_heap_default_key;
+  if (key != (pthread_key_t)(-1)) {  // do not leak the key, see issue #809
+    _mi_heap_default_key = (pthread_key_t)(-1);
+    pthread_key_delete(key);
   }
 }
 
