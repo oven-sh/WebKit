@@ -4337,6 +4337,9 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
     if (isArrowFunctionParameters(context)) {
         if (wasOpenParen)
             currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
+        // A single identifier holds no other candidate and is cheap to parse again.
+        if (match(OPENPAREN))
+            addKnownArrowFunctionStart(location.startOffset);
         shouldReturnResult = true;
         return parseArrowFunctionExpression(context, isAsync, location);
     }
@@ -4386,6 +4389,19 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmen
         currentScope()->pushUsedVariableSet();
     }
 
+    // An enclosing candidate is parsed again, and the parser is back at an arrow function it found before: see
+    // isKnownArrowFunctionStart(). The parameters are still checked, because what they can hold depends on what
+    // encloses them: `async (a = (await) => 0) => a` is an error only in the pass that knows the outer function is
+    // async.
+    if (maybeValidArrowFunctionStart && isKnownArrowFunctionStart(location.startOffset)) [[unlikely]] {
+        bool shouldReturnResult = false;
+        bool isArrowFunctionToken = false;
+        TreeExpression result = parseArrowFunctionCandidate(context, *savePoint, location, isArrowFunctionToken, wasOpenParen, usedVariablesSize, shouldReturnResult);
+        if (shouldReturnResult)
+            return result;
+        // The parameters are not valid in this pass. The expression pass finds the error to report.
+    }
+
     TreeExpression lhs = parseConditionalExpression(context);
 
     // Current implementation of parseAssignmentExpression causes a weird parsing loop 
@@ -4406,7 +4422,8 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmen
 
     if (maybeValidArrowFunctionStart && !match(EOFTOK)) {
         bool isArrowFunctionToken = match(ARROWFUNCTION);
-        if (!lhs || isArrowFunctionToken) {
+        // The parameters of a known start were checked above. Without "=>" a second check changes nothing.
+        if ((!lhs && !isKnownArrowFunctionStart(location.startOffset)) || isArrowFunctionToken) {
             bool shouldReturnResult = false;
             TreeExpression result = parseArrowFunctionCandidate(context, *savePoint, location, isArrowFunctionToken, wasOpenParen, usedVariablesSize, shouldReturnResult);
             if (shouldReturnResult)
