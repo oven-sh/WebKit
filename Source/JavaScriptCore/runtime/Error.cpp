@@ -267,13 +267,20 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
         }
-#endif
 
-        errorInstance->materializeErrorInfoIfNeeded(vm);
+        // The host's formatter can run script (Error.prepareStackTrace). The callers throw the parser's error
+        // without a check in between, as upstream, where nothing here can throw. So a throw from the formatter
+        // ends here: the parser's error is the one to report. A termination stays pending.
+        {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            errorInstance->materializeErrorInfoIfNeeded(vm);
+            scope.clearExceptionExceptTermination();
+        }
 
-#if USE(BUN_JSC_ADDITIONS)
         if (hostComputes)
             return errorInstance;
+#else
+        errorInstance->materializeErrorInfoIfNeeded(vm);
 #endif
     }
 
