@@ -58,7 +58,7 @@ public:
     String NODELETE label() const;
     void setLabel(String&&);
 
-    using MapAsyncPromise = DOMPromiseDeferred<IDLNull>;
+    using MapAsyncPromise = DOMPromiseDeferred<void>;
     void mapAsync(GPUMapModeFlags, GPUSize64 offset, std::optional<GPUSize64> sizeForMap, MapAsyncPromise&&);
     ExceptionOr<Ref<JSC::ArrayBuffer>> getMappedRange(GPUSize64 offset, std::optional<GPUSize64> rangeSize);
     void unmap(ScriptExecutionContext&);

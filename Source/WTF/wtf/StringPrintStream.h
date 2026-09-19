@@ -40,7 +40,7 @@ public:
 
     size_t length() const { return m_length; }
     
-    WTF_EXPORT_PRIVATE CString toCString() const;
+    WTF_EXPORT_PRIVATE UTF8CString toUTF8CString() const;
     WTF_EXPORT_PRIVATE std::expected<String, UTF8ConversionError> tryToString() const;
     WTF_EXPORT_PRIVATE String toString() const;
     WTF_EXPORT_PRIVATE String toStringWithLatin1Fallback() const;
@@ -57,11 +57,11 @@ private:
 // Stringify any type T that has a WTF::printInternal(PrintStream&, const T&)
 
 template<typename... Types>
-CString toCString(const Types&... values)
+UTF8CString toUTF8CString(const Types&... values)
 {
     StringPrintStream stream;
     stream.print(values...);
-    return stream.toCString();
+    return stream.toUTF8CString();
 }
 
 template<typename... Types>
@@ -85,6 +85,6 @@ std::optional<String> toStringWithBoundsCheck(const Types&... values)
 } // namespace WTF
 
 using WTF::StringPrintStream;
-using WTF::toCString;
+using WTF::toUTF8CString;
 using WTF::toString;
 using WTF::toStringWithBoundsCheck;

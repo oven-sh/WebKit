@@ -302,10 +302,11 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
     bool sign = value < 0; // -0 was already handled above.
     uint64_t doubleBits = std::bit_cast<uint64_t>(value);
     int32_t rawExponent = static_cast<int32_t>(doubleBits >> doublePhysicalMantissaSize) & 0x7ff;
-    ASSERT(rawExponent != 0x7ff); // Since value is integer, exponent should not be 0x7ff (full bits, used for infinity etc.).
-    ASSERT(rawExponent >= 0x3ff); // Since value is integer, exponent should be >= 0 + bias (0x3ff).
-    int32_t exponent = rawExponent - 0x3ff;
-    int32_t digits = exponent / digitBits + 1;
+    // value is an integer, so rawExponent is neither below the bias (that would be a fraction) nor
+    // the all-ones pattern that encodes infinity and NaN.
+    RELEASE_ASSERT(rawExponent >= 0x3ff && rawExponent < 0x7ff);
+    unsigned exponent = static_cast<unsigned>(rawExponent) - 0x3ff;
+    size_t digits = exponent / digitBits + 1;
     Vector<Digit, 64> resultVector(FillWith { }, digits, 0);
     auto result = resultVector.mutableSpan();
 
@@ -324,7 +325,7 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
 
     int32_t mantissaTopBit = doubleMantissaSize - 1; // 0-indexed.
     // 0-indexed position of most significant bit in the most significant digit.
-    int32_t msdTopBit = exponent % digitBits;
+    int32_t msdTopBit = static_cast<int32_t>(exponent % digitBits);
     // Number of unused bits in mantissa. We'll keep them shifted to the
     // left (i.e. most significant part) of the underlying uint64_t.
     int32_t remainingMantissaBits = 0;
@@ -343,7 +344,7 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
     }
     result[digits - 1] = digit;
     // Then fill in the rest of the digits.
-    for (int32_t digitIndex = digits - 2; digitIndex >= 0; digitIndex--) {
+    for (size_t digitIndex = digits - 1; digitIndex-- > 0;) {
         if (remainingMantissaBits > 0) {
             remainingMantissaBits -= digitBits;
             if constexpr (sizeof(Digit) == 4) {
@@ -1314,6 +1315,10 @@ static size_t karatsubaRoundUpLength(size_t length)
     return ((length + additive) >> shift) << shift;
 }
 
+// Returns a chunk width k for splitting an n-digit operand. Callers size product buffers as 2 * k
+// and fill them with up to n digits, so they need 2 * k >= n. That holds with room to spare because
+// the loop below halves n only until it reaches karatsubaThreshold, leaving the re-shift to discard
+// far less than half.
 static size_t karatsubaLength(size_t n)
 {
     n = karatsubaRoundUpLength(n);
@@ -1461,6 +1466,10 @@ void JSBigInt::karatsubaChunk(InterruptCheck& interrupt, std::span<Digit> z, std
 
 void JSBigInt::karatsubaStart(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k)
 {
+    // The chunk loop below indexes z at offsets below x.size() + y.size(); these two bounds are
+    // what prove those offsets in range without a test at each one.
+    RELEASE_ASSERT(y.size() <= z.size());
+    RELEASE_ASSERT(x.size() <= z.size() - y.size());
     karatsubaMain(interrupt, z, x, y, scratch, k);
     if (interrupt.interrupted())
         return;
@@ -1474,25 +1483,27 @@ void JSBigInt::karatsubaStart(InterruptCheck& interrupt, std::span<Digit> z, std
     auto x0 = clampedSubspan(x, 0, k);
     auto y0 = clampedSubspan(y, 0, k);
     auto y1 = clampedSubspan(y, k, y.size());
+    Digit overflow = 0;
     if (!y1.empty()) {
         karatsubaChunk(interrupt, product, x0, y1, scratch);
         if (interrupt.interrupted())
             return;
-        inplaceAddAndPropagate(z.subspan(k), product);
+        overflow += inplaceAddAndPropagate(z.subspan(k), product);
     }
     for (size_t i = k; i < x.size(); i += k) {
         auto xi = clampedSubspan(x, i, k);
         karatsubaChunk(interrupt, product, xi, y0, scratch);
         if (interrupt.interrupted())
             return;
-        inplaceAddAndPropagate(z.subspan(i), product);
+        overflow += inplaceAddAndPropagate(z.subspan(i), product);
         if (!y1.empty()) {
             karatsubaChunk(interrupt, product, xi, y1, scratch);
             if (interrupt.interrupted())
                 return;
-            inplaceAddAndPropagate(z.subspan(i + k), product);
+            overflow += inplaceAddAndPropagate(z.subspan(i + k), product);
         }
     }
+    ASSERT_UNUSED(overflow, !overflow);
 }
 
 std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
@@ -2970,9 +2981,9 @@ bool JSBigInt::greaterThanOrEqual(std::span<const Digit> a, std::span<const Digi
 
 static std::span<JSBigInt::Digit> spanCopy(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x)
 {
-    if (z.data() == x.data())
-        return z;
-    memmoveSpan(z, x);
+    RELEASE_ASSERT(z.size() >= x.size());
+    if (z.data() != x.data())
+        memmoveSpan(z, x);
     return z.first(x.size());
 }
 
@@ -2993,11 +3004,11 @@ std::span<JSBigInt::Digit> JSBigInt::leftShift(std::span<Digit> z, std::span<con
         carry = d >> (digitBits - shift);
     }
 
-    if (i < z.size())
-        z[i++] = carry;
-    else {
-        ASSERT(carry == 0);
+    if (i < z.size()) {
+        z[i] = carry;
+        return z.first(i + 1);
     }
+    ASSERT(!carry);
     return z.first(i);
 }
 
@@ -3014,16 +3025,16 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
         return { };
 
     RELEASE_ASSERT(z.size() >= x.size());
+    z = z.first(x.size());
     Digit carry = x[0] >> shift;
-    size_t last = x.size() - 1;
-    size_t i = 0;
-    for (; i < last; i++) {
+    size_t last = z.size() - 1;
+    for (size_t i = 0; i < last; i++) {
         Digit d = x[i + 1];
         z[i] = (d << (digitBits - shift)) | carry;
         carry = d >> shift;
     }
-    z[i++] = carry;
-    return z.first(x.size());
+    z.back() = carry;
+    return z;
 }
 
 // Computes Q(uotient) and R(emainder) for A/B, such that
@@ -3032,6 +3043,7 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
 // can pass the other with len == 0.
 // If Q is present, its length must be at least A.len - B.len + 1.
 // If R is present, its length must be at least B.len.
+// Callers must not assume either returned span is trimmed of leading zero digits.
 // See Knuth, Volume 2, section 4.3.1, Algorithm D.
 std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, InterruptCheck* interrupt)
 {
@@ -3047,6 +3059,10 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     // Maintaining this consistency is probably more useful than trying to
     // come up with more descriptive names for them.
     const size_t n = b.size();
+    // Every divisor reaching here is a BigInt's digits or a cached-modulo buffer, so this cannot
+    // fail. Bounding n from above is what tells the compiler n + 1 cannot wrap; without it the
+    // window indexing below re-tests its bounds once per quotient digit.
+    RELEASE_ASSERT(n <= maxLength);
     const size_t m = a.size() - n;
 
     // D1.
@@ -3080,13 +3096,21 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         if (uSpan.size() != filled.size())
             zeroSpan(uSpan.subspan(filled.size()));
     }
-    RELEASE_ASSERT(uSpan.size() == a.size() + 1);
 
     // In each iteration, {qhatv} holds {divisor} * {current quotient digit}.
     // "v" is the book's name for {divisor}, "qhat" the current quotient digit.
     Vector<Digit, 16> qhatv(n + 1);
     auto qhatvSpan = qhatv.mutableSpan();
     RELEASE_ASSERT(qhatvSpan.size() == n + 1);
+    RELEASE_ASSERT(qhatvSpan.size() > normalizedDivisor.size());
+
+    // Each iteration reads and writes the n+1 digit window of U starting at its own digit, and
+    // writes one digit of Q. Bounding both up front is what proves every access inside the loop in
+    // range without a test at each one.
+    RELEASE_ASSERT(m <= uSpan.size());
+    RELEASE_ASSERT(n + 1 <= uSpan.size() - m);
+    if (!q.empty())
+        q = q.first(std::min(m + 1, q.size()));
 
     // D2.
     // Iterate over the dividend's digits (like the "grad school" algorithm).
@@ -3102,25 +3126,27 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
             if (interrupt->interrupted())
                 break;
         }
+        auto window = uSpan.subspan(j, n + 1);
+
         // D3.
         // Estimate the current iteration's quotient digit (see Knuth for details).
         // {qhat} is the current quotient digit.
         Digit qhat = std::numeric_limits<Digit>::max();
 
         // {ujn} is the dividend's most significant remaining digit.
-        Digit ujn = uSpan[j + n];
+        Digit ujn = window[n];
         if (ujn != vn1) {
             // {rhat} is the current iteration's remainder.
             Digit rhat = 0;
             // Estimate the current quotient digit by dividing the most significant
             // digits of dividend and divisor. The result will not be too small,
             // but could be a bit too large.
-            qhat = digitDiv.div(ujn, uSpan[j + n - 1], rhat);
+            qhat = digitDiv.div(ujn, window[n - 1], rhat);
 
             // Decrement the quotient estimate as needed by looking at the next
             // digit, i.e. by testing whether
             // qhat * v_{n-2} > (rhat << digitBits) + u_{j+n-2}.
-            Digit ujn2 = uSpan[j + n - 2];
+            Digit ujn2 = window[n - 2];
             while (productGreaterThan(qhat, vn2, rhat, ujn2)) {
                 qhat--;
                 Digit prevRhat = rhat;
@@ -3136,36 +3162,29 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // it from the dividend. If there was "borrow", then the quotient digit
         // was one too high, so we must correct it and undo one subtraction of
         // the (shifted) divisor.
-        if (qhat != 0) {
+        if (qhat) {
             auto filled = multiplySingle(normalizedDivisor, qhat, qhatvSpan);
-            if (qhatvSpan.size() != filled.size())
-                zeroSpan(qhatvSpan.subspan(filled.size()));
+            ASSERT_UNUSED(filled, filled.size() == qhatvSpan.size());
 
-            Digit c = inplaceSub(uSpan.subspan(j), qhatvSpan);
+            Digit c = inplaceSub(window, qhatvSpan);
             if (c) {
-                c = inplaceAdd(uSpan.subspan(j), normalizedDivisor);
-                uSpan[j + n] = uSpan[j + n] + c;
+                c = inplaceAdd(window, normalizedDivisor);
+                window[n] = window[n] + c;
                 qhat--;
             }
         }
 
-        if (!q.empty()) {
-            if (j >= q.size())
-                RELEASE_ASSERT(qhat == 0);
-            else
-                q[j] = qhat;
-        }
+        if (j < q.size())
+            q[j] = qhat;
+        else if (!q.empty())
+            RELEASE_ASSERT(!qhat);
     }
 
-    // Determine the actual quotient length: it's m+1 if q[m] is non-zero, otherwise m.
-    auto qResult = q;
-    if (!q.empty())
-        qResult = q.first(std::min(m + 1, q.size()));
     auto rResult = r;
     if (!r.empty())
         rResult = rightShift(r, uSpan, shift);
 
-    return { qResult, rResult };
+    return { q, rResult };
 }
 
 // Z := X, zero-padding Z. Only the digits of X that fit are read.
@@ -4337,10 +4356,10 @@ JSValue JSBigInt::cbrt(JSGlobalObject* globalObject, JSBigInt* bigInt)
     RELEASE_AND_RETURN(scope, tryConvertToBigInt32(tryCreateFromImpl(globalObject, vm, sign, result)));
 }
 
-// Compute the multiplicative inverse Inv ≈ floor(2^(2n*digitBits) / B) for cached modulo.
-// Given divisor B with n digits, the inverse has n+1 digits.
+// Compute the multiplicative inverse Inv, approximately floor(2^(2n*digitBits) / B), for cached
+// modulo. Given divisor B with n digits, the inverse has n+1 digits.
 // Uses V8's bit-negation trick to avoid a (2n+1)-digit dividend:
-//   A = ~(B << n) ≈ 2^(2n) - B*2^n - 1, then Inv = A/B + 2^n (undo the subtraction).
+//   A = ~(B << n), approximately 2^(2n) - B*2^n - 1, then Inv = A/B + 2^n (undo the subtraction).
 //
 // This is computing I in Algorithm 2.5 in the following reference.
 // R. P. Brent and P. Zimmermann, Modern Computer Arithmetic. Cambridge, U.K.: Cambridge University Press, 2010.
@@ -4355,16 +4374,16 @@ void JSBigInt::cachedModMakeInverse(VM& vm, std::span<const Digit> b)
     // Construct A (2n digits) using bit-negation trick:
     // A[0..n-1] = ~0 (all 1-bits), A[n..2n-1] = ~B[i-n]
     Vector<Digit, 2 * maxCachedModDivisorSize> a(2 * n);
-    size_t i = 0;
-    for (; i < n; i++)
-        a[i] = ~static_cast<Digit>(0);
-    for (; i < 2 * n; i++)
-        a[i] = ~b[i - n];
+    auto aSpan = a.mutableSpan();
+    memsetSpan(aSpan.first(n), 0xFF);
+    auto aHigh = aSpan.subspan(n);
+    for (size_t i = 0; i < n; i++)
+        aHigh[i] = ~b[i];
 
     // Inv = A / B. Since A has 2n digits and B has n digits,
     // quotient has at most n+1 digits (which is invLen).
     auto inv = vm.m_bigIntCachedInverse.mutableSpan();
-    divideSchoolbook(inv, { }, a.span(), b);
+    divideSchoolbook(inv, { }, aSpan, b);
 
     // Undo the bit-negation: add 1 to the upper part (starting at digit n).
     // This corresponds to adding back 2^n that was subtracted by the trick.
@@ -6645,12 +6664,13 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
     ASSERT(resultString.size());
     ASSERT(resultString.size() <= static_cast<size_t>(maximumCharactersRequired));
 
-    // Remove leading zeroes.
-    unsigned newSizeNoLeadingZeroes = resultString.size();
-    while (newSizeNoLeadingZeroes  > 1 && resultString[newSizeNoLeadingZeroes - 1] == '0')
-        newSizeNoLeadingZeroes--;
-
-    resultString.shrink(newSizeNoLeadingZeroes);
+    {
+        // Remove leading zeroes; the characters are still least-significant-first, so they trail.
+        auto characters = resultString.span();
+        while (characters.size() > 1 && characters.back() == '0')
+            characters = characters.first(characters.size() - 1);
+        resultString.shrink(characters.size());
+    }
 
     if (sign)
         resultString.append('-');
@@ -7660,8 +7680,7 @@ JSBigInt::ImplResult JSBigInt::truncateToNBits(JSGlobalObject* globalObject, uns
 
     // Copy all digits except the MSD.
     size_t last = neededDigits - 1;
-    for (size_t i = 0; i < last; i++)
-        result[i] = span[i];
+    memcpySpan(result.first(last), span.first(last));
 
     // The MSD might contain extra bits that we don't want.
     Digit msd = span[last];

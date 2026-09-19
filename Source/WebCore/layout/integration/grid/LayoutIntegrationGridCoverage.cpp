@@ -906,7 +906,7 @@ static void printLegacyGridReasons()
         stream << "\n";
     }
     stream << "---------------------------------------------------\n";
-    WTFLogAlways("%s", stream.release().utf8().data());
+    WTFLogAlways("%s", stream.release().utf8().legacyCStringPointer());
 }
 #endif
 

@@ -398,8 +398,8 @@ bool NotificationService::showNotification(const WebNotification& notification, 
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
 
-        g_variant_builder_add(&builder, "{sv}", "title", g_variant_new_string(notification.title().utf8().data()));
-        g_variant_builder_add(&builder, "{sv}", "body", g_variant_new_string(notification.body().utf8().data()));
+        g_variant_builder_add(&builder, "{sv}", "title", g_variant_new_string(notification.title().utf8().legacyCStringPointer()));
+        g_variant_builder_add(&builder, "{sv}", "body", g_variant_new_string(notification.body().utf8().legacyCStringPointer()));
         g_variant_builder_add(&builder, "{sv}", "default-action", g_variant_new_string("default"));
         if (resources) {
             if (auto* bytes = iconCache().iconBytes(notification.iconURL(), resources->icon())) {
@@ -408,7 +408,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
             }
         }
         addResult.iterator->value.portalID = createVersion4UUIDString();
-        g_dbus_proxy_call(m_proxy.get(), "AddNotification", g_variant_new("(s@a{sv})", addResult.iterator->value.portalID.utf8().data(), g_variant_builder_end(&builder)),
+        g_dbus_proxy_call(m_proxy.get(), "AddNotification", g_variant_new("(s@a{sv})", addResult.iterator->value.portalID.utf8().legacyCStringPointer(), g_variant_builder_end(&builder)),
             G_DBUS_CALL_FLAGS_NONE, -1, nullptr, [](GObject* source, GAsyncResult* result, gpointer) {
                 GUniqueOutPtr<GError> error;
                 GRefPtr<GVariant> variant = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, &error.outPtr()));
@@ -448,7 +448,7 @@ bool NotificationService::showNotification(const WebNotification& notification, 
         g_dbus_proxy_call(m_proxy.get(), "Notify", g_variant_new(
             "(susssasa{sv}i)",
             g_get_application_name(), addResult.iterator->value.id, appIcon ? appIcon : "",
-            notification.title().utf8().data(), body.data(),
+            notification.title().utf8().legacyCStringPointer(), body.data(),
             &actionsBuilder, &hintsBuilder, -1
             ), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, [](GObject* source, GAsyncResult* result, gpointer userData) {
                 GUniqueOutPtr<GError> error;
@@ -481,7 +481,7 @@ void NotificationService::cancelNotification(WebNotificationIdentifier webNotifi
         if (it->value.portalID.isEmpty())
             return;
 
-        g_dbus_proxy_call(m_proxy.get(), "RemoveNotification", g_variant_new("(s)", it->value.portalID.utf8().data()), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
+        g_dbus_proxy_call(m_proxy.get(), "RemoveNotification", g_variant_new("(s)", it->value.portalID.utf8().legacyCStringPointer()), G_DBUS_CALL_FLAGS_NONE, -1, nullptr,
             [](GObject* source, GAsyncResult* result, gpointer) {
                 GUniqueOutPtr<GError> error;
                 GRefPtr<GVariant> variant = adoptGRef(g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, &error.outPtr()));

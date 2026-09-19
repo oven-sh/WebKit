@@ -62,6 +62,7 @@ set(wgslc_HEADERS
     ContextProvider.h
     ContextProviderInlines.h
     EntryPointRewriter.h
+    EvaluationOrderRewriter.h
     GlobalSorting.h
     GlobalVariableRewriter.h
     Lexer.h

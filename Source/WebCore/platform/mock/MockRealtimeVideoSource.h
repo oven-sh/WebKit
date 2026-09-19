@@ -151,14 +151,17 @@ private:
     DrawingState& drawingState();
     void invalidateDrawingState();
 
-    std::optional<DrawingState> m_drawingState WTF_GUARDED_BY_LOCK(m_imageBufferLock);
-    mutable RefPtr<ImageBuffer> m_imageBuffer WTF_GUARDED_BY_LOCK(m_imageBufferLock);
+    std::optional<DrawingState> m_drawingState WTF_GUARDED_BY_LOCK(m_frameGenerationLock);
+    mutable RefPtr<ImageBuffer> m_imageBuffer WTF_GUARDED_BY_LOCK(m_frameGenerationLock);
 
     Path m_path;
     DashArray m_dashWidths;
 
-    MonotonicTime m_startTime { MonotonicTime::nan() };
-    Seconds m_elapsedTime { 0_s };
+    // Written on the caller's thread and read on m_runLoop's thread by drawText() and
+    // updateSampleBuffer(), both of which run under the lock.
+    MonotonicTime m_startTime WTF_GUARDED_BY_LOCK(m_frameGenerationLock) { MonotonicTime::nan() };
+    Seconds m_elapsedTime WTF_GUARDED_BY_LOCK(m_frameGenerationLock) { 0_s };
+    // Only used by generateFrame() and delaySamples(), both on m_runLoop's thread.
     MonotonicTime m_delayUntil;
 
     unsigned m_frameNumber { 0 };
@@ -170,10 +173,12 @@ private:
     Color m_fillColor { Color::black };
     Color m_fillColorWithZoom { Color::red };
     MockMediaDevice m_device;
-    std::optional<VideoPreset> m_preset;
-    VideoFrameRotation m_deviceOrientation;
+    std::optional<VideoPreset> m_preset WTF_GUARDED_BY_LOCK(m_frameGenerationLock);
+    // Read on both the caller's thread by settings() and m_runLoop's thread by
+    // videoFrameRotation(), which is virtual and so may be called from anywhere.
+    std::atomic<VideoFrameRotation> m_deviceOrientation;
 
-    Lock m_imageBufferLock;
+    Lock m_frameGenerationLock;
     std::optional<PhotoCapabilities> m_photoCapabilities;
     std::optional<PhotoSettings> m_photoSettings;
     bool m_beingConfigured { false };

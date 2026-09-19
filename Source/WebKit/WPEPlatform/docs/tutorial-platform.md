@@ -1,8 +1,6 @@
 Title: Writing a WPE platform implementation
 Slug: tutorial-platform
 
-# Writing a WPE platform implementation
-
 WPE WebKit renders web content, but it does not talk to the underlying
 platform on its own. That job belongs to a *platform implementation*: a
 small set of GObject subclasses that connect WebKit to a display

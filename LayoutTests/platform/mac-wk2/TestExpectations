@@ -391,19 +391,6 @@ http/tests/resourceLoadStatistics/switch-session-on-navigation-to-prevalent-with
 http/tests/websocket/tests/hybi/interleaved-fragments.html [ Pass Failure Timeout ]
 http/tests/websocket/tests/hybi/send-object-tostring-check.html [ Pass Failure Timeout ]
 
-# rdar://77084155 (REGRESSION: [ MacOS WK2 ] WebGL textures tests are consistently timing out)
-webgl/2.0.y/conformance/textures/image_bitmap_from_video/tex-2d-rgb-rgb-unsigned_byte.html [ Skip ]
-webgl/2.0.y/conformance/textures/image_bitmap_from_video/tex-2d-rgb-rgb-unsigned_short_5_6_5.html [ Skip ]
-webgl/2.0.y/conformance/textures/image_bitmap_from_video/tex-2d-rgba-rgba-unsigned_byte.html [ Skip ]
-webgl/2.0.y/conformance/textures/image_bitmap_from_video/tex-2d-rgba-rgba-unsigned_short_4_4_4_4.html [ Skip ]
-webgl/2.0.y/conformance/textures/image_bitmap_from_video/tex-2d-rgba-rgba-unsigned_short_5_5_5_1.html [ Skip ]
-webgl/2.0.y/conformance/textures/misc/texture-upload-size.html [ Skip ]
-webgl/2.0.y/conformance/textures/video/tex-2d-rgb-rgb-unsigned_byte.html [ Skip ]
-webgl/2.0.y/conformance/textures/video/tex-2d-rgb-rgb-unsigned_short_5_6_5.html [ Skip ]
-webgl/2.0.y/conformance/textures/video/tex-2d-rgba-rgba-unsigned_byte.html [ Skip ]
-webgl/2.0.y/conformance/textures/video/tex-2d-rgba-rgba-unsigned_short_4_4_4_4.html [ Skip ]
-webgl/2.0.y/conformance/textures/video/tex-2d-rgba-rgba-unsigned_short_5_5_5_1.html [ Skip ]
-
 # fast/events/controlclick-no-onclick.html fails or times out on Mac WK2
 webkit.org/b/105948 fast/events/controlclick-no-onclick.html [ Skip ]
 
@@ -582,8 +569,8 @@ webkit.org/b/141085 http/tests/media/video-query-url.html [ Pass Timeout ]
 http/tests/inspector/network/local-resource-override-mapped-to-directory.html [ Pass ]
 http/tests/inspector/network/local-resource-override-mapped-to-file.html [ Pass ]
 
-# Network throttling is currently disabled pending rdar://122224142 (Per process network link conditioner SPI).
-http/tests/inspector/network/setEmulatedConditions.html [ Skip ]
+# Network throttling is currently only enabled on Cocoa platforms.
+http/tests/inspector/network/setEmulatedConditions.html [ Pass ]
 
 # Content Extensions tests must be enabled explicitly on mac-wk2.
 http/tests/contentextensions [ Pass ]
@@ -1330,7 +1317,9 @@ fast/webgpu/nocrash/fuzz-286820.html [ Skip ]
 
 # skipped outside of macOS Sequoia due to crash in failed allocation
 [ Sonoma ] fast/webgpu/nocrash/fuzz-279086.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/command_buffer/queries/timestampQuery.html [ Skip ]
+
+# Skipped: many_query_sets:65536 and many_slots exhaust GPU memory, which Queue.mm turns into a crash.
+http/tests/webgpu/webgpu/api/operation/command_buffer/queries/timestampQuery.html [ Skip Slow ]
 
 # skipped on non-AS due to requiring features unavailable on Intel
 [ x86_64 ] fast/webgpu/nocrash/fuzz-273021.html [ Skip ]
@@ -1372,7 +1361,20 @@ webkit.org/b/293808 [ Sequoia+ arm64 ] http/tests/webgpu/webgpu/api [ Slow ]
 webkit.org/b/293808 [ Sequoia+ arm64 ] http/tests/webgpu/webgpu/shader [ Slow ]
 [ Release arm64 Sequoia+ ] http/tests/webgpu/webgpu/web_platform [ Pass Failure Timeout ]
 
+# Thousands of canvases, so context eviction warnings are logged a GC-dependent number of times.
+http/tests/webgpu/webgpu/web_platform/canvas/readbackFromWebGPUCanvas.html [ Pass DumpJSConsoleLogInStdErr ]
+http/tests/webgpu/webgpu/web_platform/copyToTexture/canvas.html [ Pass DumpJSConsoleLogInStdErr Timeout ]
+
+# 6 failures: cameraCapture color edges, where 4:2:0 chroma reconstruction is wider than canvas 2D's; Debug's edge texels differ by 2/255.
+[ Debug arm64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Pass Failure Slow ]
+[ Release arm64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Pass Slow ]
+# Fails on Intel, which was not investigated.
+[ x86_64 ] http/tests/webgpu/webgpu/web_platform/external_texture/video.html [ Skip ]
+
 [ arm64 ] http/tests/webgpu/webgpu/api/validation/capability_checks/features/texture_formats.html [ Pass ]
+
+# 1 failure: texture-component-swizzle is unimplemented, so a non-identity swizzle is not rejected.
+http/tests/webgpu/webgpu/api/validation/capability_checks/features/texture_component_swizzle.html [ Pass ]
 
 # Skip tests due to taking too long to run on EWS
 [ Debug ] http/tests/webgpu/webgpu/api/operation/render_pipeline/sample_mask.html [ Skip ]
@@ -1383,12 +1385,20 @@ webkit.org/b/293808 [ Sequoia+ arm64 ] http/tests/webgpu/webgpu/shader [ Slow ]
 [ Debug ] http/tests/webgpu/webgpu/shader/validation/uniformity/uniformity.html [ Skip ]
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/distance.html [ Skip ]
 
-http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Skip ]
-http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxStorageTexturesPerShaderStage.html [ Skip ]
+# Too slow in Debug; in Release these take 88s and 53s on arm64, within the Slow budget.
+[ Debug ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Skip ]
+[ Release ] http/tests/webgpu/webgpu/api/operation/command_buffer/copyTextureToTexture.html [ Slow ]
+[ Release ] http/tests/webgpu/webgpu/api/operation/command_buffer/image_copy.html [ Slow ]
+
+# Too slow in Debug, 22s on Release arm64, and crashes on Release x86_64.
+[ Debug ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Skip ]
+[ Release arm64 ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Slow ]
+[ Release x86_64 ] http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Skip ]
+
+http/tests/webgpu/webgpu/api/operation/resource_init/texture_zero.html [ Skip Slow ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxStorageTexturesPerShaderStage.html [ Skip Slow ]
 http/tests/webgpu/webgpu/api/validation/render_pipeline/vertex_state.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/api/validation/encoding/cmds/render/draw.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/createTexture.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/error_scope.html [ Skip ]
 
@@ -1401,33 +1411,57 @@ http/tests/webgpu/webgpu/api/operation/adapter/info.html [ Skip ]
 http/tests/webgpu/webgpu/api/operation/rendering/basic.html [ Skip ]
 http/tests/webgpu/webgpu/api/operation/storage_texture/read_only.html [ Skip ]
 http/tests/webgpu/webgpu/api/operation/texture_view/write.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/createBindGroup.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/image_copy/layout_related.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/render_pipeline/depth_stencil_state.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/render_pipeline/misc.html [ Skip ]
 http/tests/webgpu/webgpu/api/validation/resource_usages/texture/in_render_common.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSampledTexturesPerShaderStage.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSamplersPerShaderStage.html [ Skip ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSampledTexturesPerShaderStage.html [ Skip Slow ]
+http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSamplersPerShaderStage.html [ Skip Slow ]
+
+# No longer flaky on arm64 over 8 runs; left skipped on Intel, which was not measured.
+[ x86_64 ] http/tests/webgpu/webgpu/api/validation/createBindGroup.html [ Skip ]
 
 # shader tests that timeout
-http/tests/webgpu/webgpu/shader/execution/expression/binary/bitwise.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureDimensions.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureGather.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureGatherCompare.html [ Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/binary/bitwise.html [ Pass Slow ]
+[ arm64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Timeout ]
+# The :external: subcase leaks VideoFrames, so its warning is logged a GC-dependent number of times.
+[ arm64 ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureDimensions.html [ Pass DumpJSConsoleLogInStdErr Slow ]
+
+# One CTS file per test, so the longest in the suite; they clear 150s only outside a parallel run.
 http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureLoad.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSample.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleBias.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleCompare.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleCompareLevel.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleGrad.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleLevel.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/robust_access.html [ Pass Timeout ]
-http/tests/webgpu/webgpu/shader/execution/zero_init.html [ Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSample.html [ Pass Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleBias.html [ Pass Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleCompare.html [ Pass Timeout ]
+
+# Correct results, but past the 150s Slow buys: 137s in parallel, then 244s, 274s and 317s.
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureGatherCompare.html [ Skip Slow ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleCompareLevel.html [ Skip Slow ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleGrad.html [ Skip Slow ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureSampleLevel.html [ Skip Slow ]
+
+# Never finishes: tens of thousands of readbacks, each parked in synchronous IPC. webkit.org/b/293808.
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureGather.html [ Skip Slow ]
+
+http/tests/webgpu/webgpu/shader/execution/robust_access.html [ Pass Slow ]
+
+# 1 failure: method_replacement leaves own EventTarget methods on GPUDevice.prototype, a CTS bug.
+http/tests/webgpu/webgpu/idl/javascript.html [ Pass ]
+
+# Can only finish by failing: exposed.html.js registers no subtest, so all_done() never fires.
+http/tests/webgpu/webgpu/idl/exposed.http.html [ Skip ]
+http/tests/webgpu/webgpu/idl/exposed.https.html [ Skip ]
+
+# 1 failure: display-p3 to srgb of (0x80, 0, 0x80) rounds to 133 vs ColorSync's 132; no tolerance.
+http/tests/webgpu/webgpu/util/texture/color_space_conversions.html [ Pass ]
+
+# 14 failures: the CTS asks for more than the 8192 bytes WGSL allows and does not catch the rejection.
+[ arm64 ] http/tests/webgpu/webgpu/shader/execution/zero_init.html [ Pass Slow ]
+# On Intel it times out as well as crashing, so it cannot be expected to finish there.
+webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/zero_init.html [ Skip ]
 http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/mix.html [ Pass Timeout ]
 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/memory_layout.html [ Pass Failure Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/subgroupMinMax.html [ Timeout ]
-http/tests/webgpu/webgpu/shader/execution/expression/binary/af_matrix_matrix_multiplication.html [ Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/subgroupMinMax.html [ Pass Timeout ]
+http/tests/webgpu/webgpu/shader/execution/expression/binary/af_matrix_matrix_multiplication.html [ Pass Slow ]
 
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f16_matrix_matrix_multiplication.html [ Pass Timeout ]
 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/faceForward.html [ Pass Timeout ]
@@ -1446,16 +1480,12 @@ http/tests/webgpu/webgpu/api/operation/rendering/depth_clip_clamp.html  [ Skip ]
 http/tests/webgpu/webgpu/api/validation/getBindGroupLayout.html  [ Skip ]
 http/tests/webgpu/webgpu/api/validation/image_copy/buffer_texture_copies.html [ Skip ]
 
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/dot.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/extractBits.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/insertBits.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/textureSample.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/textureSampleGrad.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/textureSampleLevel.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/parse/shadow_builtins.html [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/barriers.html  [ Skip ]
-http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/mix.html [ Skip ]
-http/tests/webgpu/webgpu/shader/execution/limits.html [ Skip ]
+http/tests/webgpu/webgpu/shader/validation/expression/call/builtin/mix.html [ Slow ]
+
+# 4 failures: the CTS fills the 8192-byte function address space, then adds a loop counter. CTS bug.
+[ Release ] http/tests/webgpu/webgpu/shader/execution/limits.html [ Pass ]
+# Pushing the limits trips the ASSERT in StreamClientConnectionBuffer::acquireNoWait(), Debug only.
+[ Debug ] http/tests/webgpu/webgpu/shader/execution/limits.html [ Skip ]
 
 [ Debug ]  http/tests/webgpu/webgpu/api/operation/buffers/map_ArrayBuffer.html [ Skip ]
 
@@ -1470,9 +1500,9 @@ http/tests/webgpu/webgpu/shader/execution/limits.html [ Skip ]
 [ x86_64 ] media/media-video-videorange-offscreen.html [ Failure ]
 
 # skipped due to debug crashes - https://bugs.webkit.org/show_bug.cgi?id=274972
-http/tests/webgpu/webgpu/api/validation/render_pass/render_pass_descriptor.html [ Skip ]
-http/tests/webgpu/webgpu/web_platform/canvas/getCurrentTexture.html [ Skip ]
-http/tests/webgpu/webgpu/api/validation/createBindGroupLayout.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/render_pass/render_pass_descriptor.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/web_platform/canvas/getCurrentTexture.html [ Skip ]
+[ Debug ] http/tests/webgpu/webgpu/api/validation/createBindGroupLayout.html [ Skip ]
 
 # skipped debug due to https://bugs.webkit.org/show_bug.cgi?id=273961
 [ Release ] http/tests/webgpu/webgpu/api/operation/buffers/map.html [ Pass ]
@@ -1850,10 +1880,6 @@ webkit.org/b/295743 [ Debug ] media/video-display-aspect-ratio.html [ Pass Failu
 # FIXME: Needs bug.
 http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-with-unfiltered-link-decoration-before-short-deletion.html [ Failure ]
 
-webkit.org/b/295756 webgl/1.0.x/conformance/rendering/texture-switch-performance.html [ Pass Failure ]
-webkit.org/b/295756 webgl/2.0.y/conformance/rendering/texture-switch-performance.html [ Pass Failure ]
-webkit.org/b/295756 webgl/2.0.y/conformance2/rendering/texture-switch-performance.html [ Pass Failure ]
-
 webkit.org/b/295814 [ arm64 ] scrollingcoordinator/mac/latching/horizontal-overflow-back-swipe.html [ Pass Timeout ]
 
 webkit.org/b/295820 [ arm64 Debug ] webrtc/audio-peer-connection-webaudio.html [ Pass Failure ]
@@ -2008,8 +2034,11 @@ http/tests/webgpu/webgpu/web_platform/copyToTexture [ Pass Timeout ]
 
 http/tests/webgpu/webgpu/web_platform/copyToTexture/image_file.html [ Pass ]
 
-# this test is very slow so expect a timeout or pass
-http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Timeout ]
+# 1 failure: CoreGraphics decodes premultiplied, destroying the RGB of fully transparent pixels.
+http/tests/webgpu/webgpu/web_platform/copyToTexture/image.html [ Pass Timeout ]
+
+# Very slow: 233s on Release arm64, past the 150s that Slow buys. Crashes on Intel, see below.
+[ arm64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Skip Slow ]
 
 # skip on intel for now due to small precision error differences
 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/video.html [ Skip ]
@@ -2477,3 +2506,7 @@ webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-
 webkit.org/b/322847 [ Debug ] imported/w3c/web-platform-tests/css/css-grid/grid-lanes/subgrid/grid-subgridded-to-grid-lanes/baseline/row-grid-lanes-item-baseline-subgrid-005.html [ Crash ]
 
 webkit.org/b/323246 [ Debug x86_64 ] accessibility/isolated-tree/canvas-fallback-content-2.html [ Timeout Pass ]
+
+webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageBitmap.html [ Pass Crash Timeout ]
+webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Crash Timeout ]
+webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/expression/call/builtin/textureDimensions.html [ Pass Crash DumpJSConsoleLogInStdErr Slow ]

@@ -103,8 +103,6 @@ public:
 #endif
 
     void trackInstance(JSWebAssemblyInstance*);
-    void trackModule(Module&);
-    void untrackModule(Module&);
 
     void setPort(uint64_t port) { m_port = port; }
 

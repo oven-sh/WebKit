@@ -139,7 +139,7 @@ public:
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
     ExceptionOr<std::optional<OffscreenRenderingContext>> getContext(JSC::JSGlobalObject&, RenderingContextType, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
-    ExceptionOr<RefPtr<ImageBitmap>> transferToImageBitmap();
+    ExceptionOr<Ref<ImageBitmap>> transferToImageBitmap();
     void convertToBlob(ImageEncodeOptions&&, Ref<DeferredPromise>&&);
 
     void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;

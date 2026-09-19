@@ -34,6 +34,7 @@
 #include <WebCore/IntRectHash.h>
 #include <WebCore/LoadSchedulingMode.h>
 #include <WebCore/MediaSessionGroupIdentifier.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/Pagination.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
@@ -277,7 +278,6 @@ using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
 
 enum class EventThrottlingBehavior : bool { Responsive, Unresponsive };
-enum class MainFrameMainResource : bool { No, Yes };
 
 enum class PageIsEditable : bool { No, Yes };
 
@@ -437,10 +437,6 @@ public:
     Frame& mainFrame() const { return m_mainFrame.get(); }
     WEBCORE_EXPORT void setMainFrame(Ref<Frame>&&);
     WEBCORE_EXPORT const URL& NODELETE mainFrameURL() const LIFETIME_BOUND;
-
-    bool hasRemoteFrames() const;
-    void didAttachRemoteFrame() { ++m_remoteFrameCount; }
-    void didDetachRemoteFrame() { ASSERT(m_remoteFrameCount); --m_remoteFrameCount; }
 
     WEBCORE_EXPORT void didObserveFirstPartyUserGesture();
     SecurityOrigin& mainFrameOrigin() const;
@@ -1141,6 +1137,7 @@ public:
     bool isUtilityPage() const { return m_isUtilityPage; }
 
     WEBCORE_EXPORT bool allowsLoadFromURL(const URL&, MainFrameMainResource) const;
+    const NetworkLoadPolicy& networkLoadPolicy() const { return m_networkLoadPolicy; }
     WEBCORE_EXPORT bool hasLocalDataForURL(const URL&);
 
     ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking() const { return m_shouldRelaxThirdPartyCookieBlocking; }
@@ -1544,8 +1541,6 @@ private:
     HashSet<WeakRef<LocalFrame>> m_rootFrames;
     const UniqueRef<EditorClient> m_editorClient;
 
-    // Declared before m_mainFrame so a remote main frame can count itself as m_mainFrame is built.
-    unsigned m_remoteFrameCount { 0 };
     Ref<Frame> m_mainFrame;
     String m_mainFrameURLFragment;
 
@@ -1797,9 +1792,8 @@ private:
     Vector<UserContentURLPattern> m_corsDisablingPatterns;
     const HashSet<String> m_maskedURLSchemes;
     Vector<UserStyleSheet> m_userStyleSheetsPendingInjection;
-    const std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> m_allowedNetworkHosts;
+    const NetworkLoadPolicy m_networkLoadPolicy;
     bool m_isTakingSnapshotsForApplicationSuspension { false };
-    bool m_loadsSubresources { true };
     bool m_canUseCredentialStorage { true };
     ShouldRelaxThirdPartyCookieBlocking m_shouldRelaxThirdPartyCookieBlocking;
     LoadSchedulingMode m_loadSchedulingMode { LoadSchedulingMode::Direct };

@@ -31,6 +31,7 @@
 #include "ColorSpace.h"
 #include "Document.h"
 #include "DocumentPage.h"
+#include "EventLoop.h"
 #include "GPUAdapter.h"
 #include "GPUCanvasConfiguration.h"
 #include "GPUDevice.h"
@@ -460,9 +461,23 @@ RefPtr<ImageBuffer> GPUCanvasContextCocoa::transferToImageBuffer()
         return nullptr;
     Ref<ImageBuffer> bufferRef = buffer.releaseNonNull();
     if (m_configuration) {
-        m_compositorIntegration->paintCompositedResultsToCanvas(bufferRef, m_configuration->frameCount);
+        auto frameCount = m_configuration->frameCount;
         m_currentTexture = nullptr;
-        m_presentationContext->present(m_configuration->frameCount, true);
+        // The frame has to be presented before it can be read. For a texture format the surface
+        // cannot hold as it stands, such as rgba16float, presenting is the step that converts the
+        // rendered frame into the surface being read here, so reading first hands back a frame
+        // that has not been drawn yet.
+        m_compositorIntegration->prepareForDisplay(frameCount, [weakThis = WeakPtr { *this }, frameCount, bufferRef] mutable {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return;
+            bufferRef->flushDrawingContext();
+            protectedThis->m_compositorIntegration->paintCompositedResultsToCanvas(bufferRef, frameCount);
+        });
+        // Transferring a frame away ends it, so the texture the page drew into expires and the next
+        // getCurrentTexture() has to hand back a new one. The backing has already been presented by
+        // preparing for display, so it must not be presented a second time here.
+        m_presentationContext->present(frameCount, /* presentBacking */ false);
         m_configuration->lastPresentedFrameIndex = std::nullopt;
         m_readDisplayBuffer = nullptr;
         m_readDisplayBufferImage = nullptr;
@@ -642,6 +657,23 @@ ExceptionOr<Ref<GPUTexture>> GPUCanvasContextCocoa::getCurrentTexture()
     willUpdateDisplayBufferContents();
     m_currentTexture = m_presentationContext->getCurrentTexture(m_configuration->frameCount);
     currentTexture = m_currentTexture;
+
+    // The texture expires once the task it was handed out in has run to completion, so that the
+    // next task draws a new frame instead of drawing over the frame this one has finished. Presenting
+    // expires it too, but that happens later in the rendering update than the animation frame
+    // callbacks do, so waiting for it would hand the same texture, and the previous frame's contents,
+    // to the first animation frame callback that asks for one.
+    if (RefPtr scriptExecutionContext = protect(canvasBase())->scriptExecutionContext()) {
+        protect(scriptExecutionContext->eventLoop())->queueTask(TaskSource::WebGPU, [weakThis = WeakPtr { *this }, texture = currentTexture] {
+            RefPtr protectedThis = weakThis.get();
+            // Anything which expired the texture in the meantime, presenting above all, has already
+            // moved on to a new frame.
+            if (!protectedThis || protectedThis->m_currentTexture != texture)
+                return;
+            protectedThis->expireCurrentTexture();
+        });
+    }
+
     return currentTexture.releaseNonNull();
 }
 
@@ -674,6 +706,13 @@ RefPtr<GraphicsLayerContentsDisplayDelegate> GPUCanvasContextCocoa::layerContent
     return m_layerContentsDisplayDelegate.ptr();
 }
 
+void GPUCanvasContextCocoa::expireCurrentTexture()
+{
+    if (RefPtr currentTexture = m_currentTexture)
+        currentTexture->destroy();
+    m_currentTexture = nullptr;
+}
+
 void GPUCanvasContextCocoa::present(uint32_t frameIndex)
 {
     if (!m_configuration)
@@ -682,9 +721,7 @@ void GPUCanvasContextCocoa::present(uint32_t frameIndex)
     m_compositingResultsNeedsUpdating = false;
     m_configuration->lastPresentedFrameIndex = frameIndex;
     m_configuration->frameCount = (m_configuration->frameCount + 1) % m_configuration->renderBuffers.size();
-    if (RefPtr currentTexture = m_currentTexture)
-        currentTexture->destroy();
-    m_currentTexture = nullptr;
+    expireCurrentTexture();
     m_presentationContext->present(frameIndex);
 }
 

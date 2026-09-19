@@ -104,7 +104,8 @@ public:
     // FIXME: Add support for find/contains/remove from a ValueArg* via a HashTranslator.
 
 private:
-    void pruneStaleEntries() final;
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
+    NEVER_INLINE void pruneStaleEntries();
 
     HashSetType m_set;
     VM& m_vm;

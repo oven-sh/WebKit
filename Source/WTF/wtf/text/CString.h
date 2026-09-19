@@ -39,6 +39,11 @@
 #include <wtf/text/Latin1Character.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
+#ifdef __OBJC__
+#include <objc/objc.h>
+#include <wtf/RetainPtr.h>
+#endif
+
 namespace WTF {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CStringBuffer);
@@ -89,6 +94,12 @@ public:
     CString(HashTableDeletedValueType) : m_buffer(HashTableDeletedValue) { }
 
     const char* data() const LIFETIME_BOUND; // Any encoding
+
+    // Escape hatch for external C functions and printf-style formatting, matching
+    // CStringWithEncoding::legacyCStringPointer() below. Unlike data(), this keeps returning const char*
+    // as producers are migrated to the encoding-aware types. Named for the destination rather than the
+    // contents: const char* is what C string interfaces take, which is why it is char and not char8_t.
+    const char* legacyCStringPointer() const LIFETIME_BOUND { return data(); } // Any encoding
 
     std::string toStdString() const;
 
@@ -212,6 +223,20 @@ public:
             ASSERT(charactersAreAllASCII(byteCast<Latin1Character>(characters)));
     }
 
+    // std::string does not know its encoding, so this asserts that its bytes are in CharacterType's.
+    explicit CStringWithEncoding(const std::string& string)
+        : CStringWithEncoding(byteCast<CharacterType>(std::span { string }))
+    {
+    }
+
+    // Null-terminated, like CString(const char*), and likewise asserts the encoding of its bytes.
+    explicit CStringWithEncoding(const CharacterType* string)
+        : CString(byteCast<char>(string))
+    {
+        if constexpr (std::same_as<CharacterType, char>)
+            ASSERT(charactersAreAllASCII(byteCast<Latin1Character>(CString::span())));
+    }
+
     static CStringWithEncoding newUninitialized(size_t length, std::span<CharacterType>& characterBuffer)
     {
         std::span<char> bytes;
@@ -227,12 +252,28 @@ public:
     std::span<CharacterType> mutableSpan() LIFETIME_BOUND { return byteCast<CharacterType>(CString::mutableSpan()); }
     std::span<CharacterType> mutableSpanIncludingNullTerminator() LIFETIME_BOUND { return byteCast<CharacterType>(CString::mutableSpanIncludingNullTerminator()); }
 
-    // This is the escape hatch for external C functions and printf-style formatting, matching ASCIILiteral::characters().
+    // This is the escape hatch for external C functions and printf-style formatting. It is named for the
+    // destination rather than the contents: const char* is what C string interfaces take, which is why this
+    // is char and not the char8_t that would otherwise be correct for UTF-8.
     // Interactions with other strings should go through the span. Not offered for Latin-1: handing Latin-1 bytes to a
     // const char* API is only meaningful when they happen to be ASCII, and such a string should have come from
     // String::ascii(). Callers that really want the raw bytes can use byteCast<char>(span()) or slice to CString.
     // FIXME: Should go away once callers that only need bytes have moved to span().
-    const char* characters() const LIFETIME_BOUND requires (!std::same_as<CharacterType, Latin1Character>) { return CString::data(); }
+    const char* legacyCStringPointer() const LIFETIME_BOUND requires (!std::same_as<CharacterType, Latin1Character>) { return CString::data(); }
+
+#if USE(FOUNDATION) && defined(__OBJC__)
+    // Converts a null string to an empty string, like String::createNSString(). ASCII decodes as
+    // Latin-1, matching how the comparison operators below treat it, so that an ASCIICString holding
+    // a mislabeled non-ASCII byte round-trips instead of failing.
+    RetainPtr<NSString> createNSString() const
+    {
+        auto characters = span();
+        if (characters.empty())
+            return @"";
+        constexpr auto encoding = std::same_as<CharacterType, char8_t> ? NSUTF8StringEncoding : NSISOLatin1StringEncoding;
+        return adoptNS([[NSString alloc] initWithBytes:characters.data() length:characters.size() encoding:encoding]);
+    }
+#endif
 
 private:
     explicit CStringWithEncoding(CStringBuffer* buffer)

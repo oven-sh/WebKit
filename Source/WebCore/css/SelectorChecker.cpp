@@ -814,6 +814,11 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, LocalContext& c
     if (selector.match() == CSSSelector::Match::Class)
         return element->hasClassName(selector.value());
 
+    if (selector.isEquivalentToClassSelector()) {
+        ASSERT(m_strictParsing);
+        return element->hasClassName(selector.value());
+    }
+
     if (selector.match() == CSSSelector::Match::Id) {
         ASSERT(!selector.value().isNull());
         return element->idForStyleResolution() == selector.value();
@@ -1399,13 +1404,6 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, LocalContext& c
         }
 
         case CSSSelector::PseudoElement::Highlight:
-            // Always matches when not specifically requested so it gets added to the collectedPseudoElements.
-            if (!requestedPseudoElement)
-                return true;
-            if (requestedPseudoElement->type != PseudoElementType::Highlight || !selector.stringList())
-                return false;
-            return selector.stringList()->first() == requestedPseudoElement->nameOrPart;
-
         case CSSSelector::PseudoElement::ViewTransitionGroup:
         case CSSSelector::PseudoElement::ViewTransitionImagePair:
         case CSSSelector::PseudoElement::ViewTransitionOld:
@@ -1416,9 +1414,11 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, LocalContext& c
             if (requestedPseudoElement->type != CSSSelector::stylePseudoElementTypeFor(selector.pseudoElement()) || !selector.stringList())
                 return false;
 
+            // universalPseudoElementNameAtom() means ::highlight(*) or ::view-transition-*(*), which matches any name.
             auto& list = *selector.stringList();
+            ASSERT(selector.pseudoElement() != CSSSelector::PseudoElement::Highlight || list.size() == 1);
             auto& name = list.first();
-            if (name != starAtom() && name != requestedPseudoElement->nameOrPart)
+            if (name != universalPseudoElementNameAtom() && name != requestedPseudoElement->nameOrPart)
                 return false;
 
             if (list.size() == 1)

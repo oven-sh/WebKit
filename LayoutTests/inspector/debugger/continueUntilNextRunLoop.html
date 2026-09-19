@@ -19,7 +19,7 @@ function pause2() {
 function test()
 {
     function topCallFrameName() {
-        let targetData = WI.debuggerManager.dataForTarget(WI.mainTarget);
+        let targetData = WI.debuggerManager.dataForTarget(InspectorTest.mainFrameTarget);
         return targetData.stackTrace.callFrames[0].functionName;
     }
 
@@ -29,7 +29,7 @@ function test()
         name: "Debugger.Unpaused.continueUntilNextRunLoop",
         description: "Debugger.continueUntilNextRunLoop should only work when paused.",
         test(resolve, reject) {
-            DebuggerAgent.continueUntilNextRunLoop((error) => {
+            InspectorTest.mainFrameTarget.DebuggerAgent.continueUntilNextRunLoop((error) => {
                 InspectorTest.expectThat(error, "Should produce an error if not paused.");
                 InspectorTest.log(error);
                 resolve();
@@ -45,7 +45,7 @@ function test()
             WI.debuggerManager.singleFireEventListener(WI.DebuggerManager.Event.Paused, (event) => {
                 InspectorTest.pass("Received First Pause Event.");
                 InspectorTest.expectEqual(topCallFrameName(), "pause1", "Should be paused in pause1.");
-                WI.debuggerManager.continueUntilNextRunLoop(WI.mainTarget);
+                WI.debuggerManager.continueUntilNextRunLoop(InspectorTest.mainFrameTarget);
                 WI.debuggerManager.singleFireEventListener(WI.DebuggerManager.Event.Paused, (event) => {
                     InspectorTest.pass("Received Second Pause Event.");
                     InspectorTest.expectEqual(topCallFrameName(), "pause2", "Should be paused in pause2.");

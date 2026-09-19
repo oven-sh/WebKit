@@ -562,7 +562,7 @@ void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& t
     ASSERT(!beforeChild || &to == beforeChild->parent());
     if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && is<RenderBlock>(from) && child.isRenderBox())
         RenderBlock::removePercentHeightDescendant(downcast<RenderBox>(child));
-    if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && (to.isRenderBlock() || to.isRenderInline())) {
+    if (normalizeAfterInsertion == NormalizeAfterInsertion::Yes && (to.isRenderBlock() || to.isInlineBox())) {
         // Takes care of adding the new child correctly if toBlock and fromBlock
         // have different kind of children (block vs inline).
         auto childToMove = detachFromRenderElement(from, child, WillBeDestroyed::No);
@@ -584,7 +584,7 @@ void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& t
     };
     // When moving a subtree out of a BFC we need to make sure that the line boxes generated for the inline tree are not accessible anymore from the renderers.
     // Let's find the BFC root and nuke the inline tree (At some point we are going to destroy the subtree instead of moving these renderers around.)
-    if (is<RenderInline>(child))
+    if (child.isInlineBox())
         findBFCRootAndDestroyInlineTree();
 }
 
@@ -1066,7 +1066,7 @@ RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderElement(RenderElement
             addListItemNeedingMarkerUpdate(listItem);
     }
 
-    if (m_tearDownType == RenderTreeBuilder::TearDownType::Root || is<RenderInline>(m_subtreeDestroyRoot)) {
+    if (m_tearDownType == RenderTreeBuilder::TearDownType::Root || (m_subtreeDestroyRoot && m_subtreeDestroyRoot->isInlineBox())) {
         // In case of partial damage on the inline content (the block root is not going away), we need to initiate inline layout invalidation on leaf renderers too.
         invalidateLineLayout(child, IsRemoval::Yes);
     }

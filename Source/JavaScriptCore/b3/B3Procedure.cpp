@@ -567,7 +567,7 @@ void Procedure::appendIonGraphPass(ASCIILiteral passName)
                 value->dumpMeta(comma, stream);
                 auto effects = value->effects();
                 {
-                    CString string = toCString(effects);
+                    auto string = toUTF8CString(effects);
                     if (string.length())
                         stream.print(comma, string);
                 }

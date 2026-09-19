@@ -190,6 +190,7 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/MakeString.h>
+#import <wtf/text/TextStream.h>
 
 #if ENABLE(WEB_AUTHN)
 #import <WebKit/WKDigitalCredentialsPicker.h>
@@ -2150,7 +2151,7 @@ bool WebViewImpl::canChangeFrameLayout(WebFrameProxy& frame)
 
 RetainPtr<NSPrintOperation> WebViewImpl::printOperationWithPrintInfo(NSPrintInfo *printInfo, WebFrameProxy& frame)
 {
-    LOG(Printing, "Creating an NSPrintOperation for frame '%s'", frame.url().string().utf8().data());
+    LOG_WITH_STREAM(Printing, stream << "Creating an NSPrintOperation for frame '"_s << frame.url().string() << "'"_s);
 
     // FIXME: If the frame cannot be printed (e.g. if it contains an encrypted PDF that disallows
     // printing), this function should return nil.
@@ -3132,7 +3133,7 @@ static String commandNameForSelector(SEL selector)
     auto selectorName = unsafeSpan(sel_getName(selector));
     if (selectorName.size() < 2 || selectorName[selectorName.size() - 1] != ':')
         return String();
-    return String(selectorName.first(selectorName.size() - 1));
+    return String::fromLatin1(selectorName.first(selectorName.size() - 1));
 }
 
 bool WebViewImpl::executeSavedCommandBySelector(SEL selector)

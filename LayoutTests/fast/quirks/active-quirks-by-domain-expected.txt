@@ -89,6 +89,14 @@ https://play.geforcenow.com/
     NeedsGeforcenowWarningDisplayNoneQuirk
 https://www.google.com/
     MaybeBypassBackForwardCache
+https://www.google.com/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
+https://www.google.com/search/howsearchworks
+    MaybeBypassBackForwardCache
+https://www.google.co.jp/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
 https://www.google.com/maps/
     MayNeedToIgnoreContentObservation
     MaybeBypassBackForwardCache

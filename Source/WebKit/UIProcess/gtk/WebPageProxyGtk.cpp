@@ -66,7 +66,7 @@ void WebPageProxy::bindAccessibilityTree(const String& plugID)
         webkitWebViewBaseSetPlugID(WEBKIT_WEB_VIEW_BASE(viewWidget()), plugID);
 #else
     auto* accessible = gtk_widget_get_accessible(viewWidget());
-    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().data()));
+    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().legacyCStringPointer()));
     atk_object_notify_state_change(accessible, ATK_STATE_TRANSIENT, FALSE);
 #endif
 }

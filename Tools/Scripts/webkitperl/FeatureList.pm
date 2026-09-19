@@ -171,7 +171,7 @@ my @features = (
       define => "ENABLE_ASSERTS", value => \$assertsEnabled, },
 
     { option => "fatal-warnings", desc => "Toggle warnings as errors (CMake only)",
-      define => "DEVELOPER_MODE_FATAL_WARNINGS", value => \$fatalWarnings },
+      define => "CMAKE_COMPILE_WARNING_AS_ERROR", value => \$fatalWarnings },
 
     { option => "accessibility-isolated-tree", desc => "Toggle accessibility isolated tree support",
       define => "ENABLE_ACCESSIBILITY_ISOLATED_TREE", value => \$accessibilityIsolatedTreeSupport },

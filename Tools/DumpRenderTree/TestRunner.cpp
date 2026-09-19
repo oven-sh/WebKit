@@ -2154,7 +2154,7 @@ void TestRunner::waitToDumpWatchdogTimerFired()
 
     auto logs = getAndResetAccumulatedLogs();
     if (!logs.isEmpty())
-        fprintf(testResult, "Logs accumulated during test run:\n%s\n", logs.utf8().data());
+        SAFE_FPRINTF(testResult, "Logs accumulated during test run:\n%s\n", logs.utf8());
 
     notifyDone();
 }
@@ -2301,7 +2301,7 @@ void TestRunner::callUIScriptCallback(unsigned callbackID, JSStringRef result)
 
 void TestRunner::uiScriptDidComplete(const String& result, unsigned callbackID)
 {
-    auto stringRef = adopt(JSStringCreateWithUTF8CString(result.utf8().data()));
+    auto stringRef = adopt(JSStringCreateWithUTF8CString(result.utf8().legacyCStringPointer()));
     callUIScriptCallback(callbackID, stringRef.get());
 }
 

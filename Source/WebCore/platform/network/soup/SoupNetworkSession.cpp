@@ -182,12 +182,12 @@ void SoupNetworkSession::setHSTSPersistentStorage(const String& directory)
         return;
 
     if (!FileSystem::makeAllDirectories(directory)) {
-        RELEASE_LOG_ERROR(Network, "Unable to create the HSTS storage directory \"%s\". Using a memory enforcer instead.", directory.utf8().data());
+        RELEASE_LOG_ERROR(Network, "Unable to create the HSTS storage directory \"%s\". Using a memory enforcer instead.", directory.utf8().legacyCStringPointer());
         return;
     }
 
-    CString storagePath = FileSystem::fileSystemRepresentation(directory);
-    GUniquePtr<char> dbFilename(g_build_filename(storagePath.data(), "hsts-storage.sqlite", nullptr));
+    auto storagePath = FileSystem::fileSystemRepresentation(directory);
+    GUniquePtr<char> dbFilename(g_build_filename(storagePath.legacyCStringPointer(), "hsts-storage.sqlite", nullptr));
     GRefPtr<SoupHSTSEnforcer> enforcer = adoptGRef(soup_hsts_enforcer_db_new(dbFilename.get()));
     soup_session_remove_feature_by_type(m_soupSession.get(), SOUP_TYPE_HSTS_ENFORCER);
     soup_session_add_feature(m_soupSession.get(), SOUP_SESSION_FEATURE(enforcer.get()));
@@ -211,7 +211,7 @@ void SoupNetworkSession::deleteHSTSCacheForHostNames(const Vector<String>& hostN
     ASSERT(enforcer);
 
     for (const auto& hostName : hostNames) {
-        GUniquePtr<SoupHSTSPolicy> policy(soup_hsts_policy_new(hostName.utf8().data(), SOUP_HSTS_POLICY_MAX_AGE_PAST, FALSE));
+        GUniquePtr<SoupHSTSPolicy> policy(soup_hsts_policy_new(hostName.utf8().legacyCStringPointer(), SOUP_HSTS_POLICY_MAX_AGE_PAST, FALSE));
         soup_hsts_enforcer_set_policy(enforcer, policy.get());
     }
 }
@@ -242,12 +242,12 @@ static inline bool stringIsNumeric(const std::string_view& str)
 // Old versions of WebKit created this cache.
 void SoupNetworkSession::clearOldSoupCache(const String& cacheDirectory)
 {
-    CString cachePath = FileSystem::fileSystemRepresentation(cacheDirectory);
-    GUniquePtr<char> cacheFile(g_build_filename(cachePath.data(), "soup.cache2", nullptr));
+    auto cachePath = FileSystem::fileSystemRepresentation(cacheDirectory);
+    GUniquePtr<char> cacheFile(g_build_filename(cachePath.legacyCStringPointer(), "soup.cache2", nullptr));
     if (!g_file_test(cacheFile.get(), G_FILE_TEST_IS_REGULAR))
         return;
 
-    GUniquePtr<GDir> dir(g_dir_open(cachePath.data(), 0, nullptr));
+    GUniquePtr<GDir> dir(g_dir_open(cachePath.legacyCStringPointer(), 0, nullptr));
     if (!dir)
         return;
 
@@ -256,7 +256,7 @@ void SoupNetworkSession::clearOldSoupCache(const String& cacheDirectory)
         if (!nameView.starts_with("soup.cache") && !stringIsNumeric(nameView))
             continue;
 
-        GUniquePtr<gchar> filename(g_build_filename(cachePath.data(), name, nullptr));
+        GUniquePtr<gchar> filename(g_build_filename(cachePath.legacyCStringPointer(), name, nullptr));
         if (g_file_test(filename.get(), G_FILE_TEST_IS_REGULAR))
             g_unlink(filename.get());
     }

@@ -132,7 +132,7 @@ public:
     static bool supportsMultisampling(WGPUTextureFormat, const Device&);
     static bool supportsResolve(WGPUTextureFormat, const Device&);
     static bool supportsBlending(WGPUTextureFormat, const Device&);
-    void NODELETE recreateIfNeeded();
+    void recreateIfNeeded();
     void NODELETE makeCanvasBacking();
     void setCommandEncoder(CommandEncoder&) const;
     static ASCIILiteral formatToString(WGPUTextureFormat);

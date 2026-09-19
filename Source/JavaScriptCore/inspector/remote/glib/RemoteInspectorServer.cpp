@@ -165,8 +165,8 @@ const SocketConnection::MessageHandlers& RemoteInspectorServer::messageHandlers(
             inspectorServer.startAutomationSession(connection, sessionID, capabilities);
             auto clientCapabilities = RemoteInspector::singleton().clientCapabilities();
             connection.sendMessage("DidStartAutomationSession", g_variant_new("(ss)",
-                clientCapabilities ? clientCapabilities->browserName.utf8().data() : "",
-                clientCapabilities ? clientCapabilities->browserVersion.utf8().data() : ""));
+                clientCapabilities ? clientCapabilities->browserName.utf8().legacyCStringPointer() : "",
+                clientCapabilities ? clientCapabilities->browserVersion.utf8().legacyCStringPointer() : ""));
         }}
     }
     });

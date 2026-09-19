@@ -51,9 +51,9 @@ static bool soupServerListen(SoupServer* server, const String& host, unsigned po
     if (host == "all"_s)
         return soup_server_listen_all(server, port, options, error);
 
-    GRefPtr<GSocketAddress> address = adoptGRef(g_inet_socket_address_new_from_string(host.utf8().data(), port));
+    GRefPtr<GSocketAddress> address = adoptGRef(g_inet_socket_address_new_from_string(host.utf8().legacyCStringPointer(), port));
     if (!address) {
-        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8().data());
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid host IP address '%s'", host.utf8().legacyCStringPointer());
         return false;
     }
 
@@ -83,7 +83,7 @@ static void handleIncomingHandshake(SoupServer*, SoupServerMessage* message, con
     RELEASE_LOG(WebDriverBiDi, "Error during handshake, sending error response: %s", errorResponse.data.data());
     soup_server_message_set_status(message, errorResponse.statusCode, nullptr);
     auto* responseHeaders = soup_server_message_get_response_headers(message);
-    soup_message_headers_append(responseHeaders, "Content-Type", errorResponse.contentType.utf8().data());
+    soup_message_headers_append(responseHeaders, "Content-Type", errorResponse.contentType.utf8().legacyCStringPointer());
     soup_message_headers_append(responseHeaders, "Cache-Control", "no-cache");
     auto* responseBody = soup_server_message_get_response_body(message);
     soup_message_body_append(responseBody, SOUP_MEMORY_COPY, errorResponse.data.data(), errorResponse.data.length());
@@ -178,8 +178,8 @@ std::optional<String> WebSocketServer::listen(const String& host, unsigned port)
 void WebSocketServer::sendMessage(WebSocketMessageHandler::Connection connection, const String& message)
 {
     ASSERT(connection);
-    RELEASE_LOG(WebDriverBiDi, "Sending message: %s", message.utf8().data());
-    GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.utf8().data(), message.utf8().length()));
+    RELEASE_LOG(WebDriverBiDi, "Sending message: %s", message.utf8().legacyCStringPointer());
+    GRefPtr<GBytes> rawMessage = adoptGRef(g_bytes_new(message.utf8().legacyCStringPointer(), message.utf8().length()));
     soup_websocket_connection_send_message(connection.get(), SOUP_WEBSOCKET_DATA_TEXT, rawMessage.get());
 }
 

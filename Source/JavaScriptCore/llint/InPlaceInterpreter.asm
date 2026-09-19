@@ -1162,14 +1162,11 @@ end
 
 op(wasm_ipint_check_debugger_hook_and_throw_trap, macro ()
     handleDebuggerTrapIfNeeded()
-    # r0 == 0 i.e. DebuggerTrapStatus::ResolvedByDebugger i.e. this was purely a debugger trap / breakpoint,
-    #              and has been handled.  We should continue executing because it's not a Wasm trap.
-    # r0 == 1 i.e. DebuggerTrapStatus::NotResolvedByDebugger i.e. this was a fatal Wasm trap.  We should
-    #              throw it to terminate Wasm execution.
-    btpz r0, .continue
+    # r0 is the displaced opcode to resume with, or Unreachable (0) to throw.
+    btpz r0, .throwTrap
+    dispatchIPIntOpcode(r0)
+.throwTrap:
     jmp _wasm_throw_from_slow_path_trampoline
-.continue:
-    nextIPIntInstruction()
 end)
 
 op(wasm_throw_from_slow_path_trampoline, macro ()

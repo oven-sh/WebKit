@@ -1,8 +1,6 @@
 Title: Overview
 Slug: overview
 
-# Overview
-
 WPEPlatform is a GObject library that abstracts the platform layer for
 WPE WebKit. It is the successor to [libwpe](https://github.com/WebKit/libwpe)
 and the various out-of-tree backends written against it (notably

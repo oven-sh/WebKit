@@ -114,6 +114,7 @@ enum class ScriptTrackingPrivacyCategory : uint8_t;
 enum class StorageBlockingPolicy : uint8_t;
 enum class TaskSource : uint8_t;
 struct CryptoKeyData;
+struct NetworkLoadPolicy;
 struct SettingsValues;
 
 #if ENABLE(NOTIFICATIONS)
@@ -160,6 +161,8 @@ public:
     virtual String userAgent(const URL&) const = 0;
 
     virtual const SettingsValues& settingsValues() const = 0;
+
+    virtual const NetworkLoadPolicy& networkLoadPolicy() const = 0;
 
     virtual NotificationClient* notificationClient() { return nullptr; }
     virtual std::optional<PAL::SessionID> sessionID() const;

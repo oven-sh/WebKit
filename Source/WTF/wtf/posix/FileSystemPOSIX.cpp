@@ -57,7 +57,7 @@ namespace FileSystemImpl {
 
 FileHandle openFile(const String& path, FileOpenMode mode, FileAccessPermission permission, OptionSet<FileLockMode> lockMode, bool failIfFileExists)
 {
-    CString fsRep = fileSystemRepresentation(path);
+    auto fsRep = fileSystemRepresentation(path);
 
     if (fsRep.isNull())
         return { };
@@ -89,20 +89,20 @@ FileHandle openFile(const String& path, FileOpenMode mode, FileAccessPermission 
     else if (permission == FileAccessPermission::All)
         permissionFlag |= (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 
-    return FileHandle::adopt(open(fsRep.data(), platformFlag, permissionFlag), lockMode);
+    return FileHandle::adopt(open(fsRep.legacyCStringPointer(), platformFlag, permissionFlag), lockMode);
 }
 
 std::optional<WallTime> fileCreationTime(const String& path)
 {
 #if (OS(LINUX) && HAVE(STATX)) || OS(DARWIN) || OS(OPENBSD) || OS(NETBSD) || OS(FREEBSD)
-    CString fsRep = fileSystemRepresentation(path);
-    if (!fsRep.data() || fsRep.data()[0] == '\0')
+    auto fsRep = fileSystemRepresentation(path);
+    if (!fsRep.legacyCStringPointer() || fsRep.legacyCStringPointer()[0] == '\0')
         return std::nullopt;
 
 #if OS(LINUX) && HAVE(STATX)
     struct statx fileInfo;
 
-    if (statx(-1, fsRep.data(), 0, STATX_BTIME, &fileInfo) == -1)
+    if (statx(-1, fsRep.legacyCStringPointer(), 0, STATX_BTIME, &fileInfo) == -1)
         return std::nullopt;
 
     return WallTime::fromRawSeconds(fileInfo.stx_btime.tv_sec);
@@ -128,7 +128,7 @@ bool fileIDsAreEqual(std::optional<PlatformFileID> a, std::optional<PlatformFile
 std::optional<uint32_t> volumeFileBlockSize(const String& path)
 {
     struct statvfs fileStat;
-    if (!statvfs(fileSystemRepresentation(path).data(), &fileStat))
+    if (!statvfs(fileSystemRepresentation(path).legacyCStringPointer(), &fileStat))
         return fileStat.f_frsize;
 
     return std::nullopt;
@@ -143,7 +143,7 @@ String stringFromFileSystemRepresentation(const char* path)
     return String::fromUTF8(path);
 }
 
-CString fileSystemRepresentation(const String& path)
+UTF8CString fileSystemRepresentation(const String& path)
 {
     return path.utf8();
 }
@@ -179,20 +179,15 @@ std::pair<String, FileHandle> openTemporaryFile(StringView prefix, StringView su
     // This is OK for now since the code using it is built on macOS only.
     ASSERT_UNUSED(suffix, suffix.isEmpty());
 
-    const auto temporaryDirectoryUtf8 = temporaryDirectory.utf8();
-    IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
-    const char* directory = !temporaryDirectory.isEmpty() ? temporaryDirectoryUtf8.data() : temporaryFileDirectory();
-    CString prefixUTF8 = prefix.utf8();
-    size_t length = strlen(directory) + 1 + prefixUTF8.length() + 1 + 6 + 1;
-    auto buffer = MallocSpan<char>::malloc(length);
-    snprintf(buffer.mutableSpan().data(), length, "%s/%s-XXXXXX", directory, prefixUTF8.data());
-    IGNORE_CLANG_WARNINGS_END
+    auto directory = !temporaryDirectory.isEmpty() ? temporaryDirectory : String::fromUTF8(temporaryFileDirectory());
+    // mkostemp overwrites the XXXXXX in place, so this needs to be a mutable buffer.
+    auto path = makeString(directory, '/', prefix, "-XXXXXX"_s).utf8();
 
-    auto handle = FileHandle::adopt(mkostemp(buffer.mutableSpan().data(), O_CLOEXEC));
+    auto handle = FileHandle::adopt(mkostemp(byteCast<char>(path.mutableSpan()).data(), O_CLOEXEC));
     if (!handle)
         return { String(), FileHandle() };
 
-    return { String::fromUTF8(buffer.span().data()), WTF::move(handle) };
+    return { String { path }, WTF::move(handle) };
 }
 #endif // !PLATFORM(COCOA)
 
@@ -215,13 +210,13 @@ std::optional<int32_t> getFileDeviceId(const String& path)
 
 bool fileExists(const String& path)
 {
-    return access(fileSystemRepresentation(path).data(), F_OK) != -1;
+    return access(fileSystemRepresentation(path).legacyCStringPointer(), F_OK) != -1;
 }
 
 bool deleteFile(const String& path)
 {
     // unlink(...) returns 0 on successful deletion of the path and non-zero in any other case (including invalid permissions or non-existent file)
-    bool unlinked = !unlink(fileSystemRepresentation(path).data());
+    bool unlinked = !unlink(fileSystemRepresentation(path).legacyCStringPointer());
     if (!unlinked && errno != ENOENT)
         LOG_ERROR("File failed to delete. Error message: %s", safeStrerror(errno).data());
 
@@ -235,24 +230,24 @@ bool makeAllDirectories(const String& path)
     if (!length)
         return false;
 
-    if (!access(fullPath.data(), F_OK))
+    if (!access(fullPath.legacyCStringPointer(), F_OK))
         return true;
 
-    auto p = fullPath.mutableSpanIncludingNullTerminator().subspan(1);
+    auto p = byteCast<char>(fullPath.mutableSpanIncludingNullTerminator()).subspan(1);
     if (p[length - 1] == '/')
         p[length - 1] = '\0';
     for (; p[0]; skip(p, 1)) {
         if (p[0] == '/') {
             p[0] = '\0';
-            if (access(fullPath.data(), F_OK)) {
-                if (mkdir(fullPath.data(), S_IRWXU))
+            if (access(fullPath.legacyCStringPointer(), F_OK)) {
+                if (mkdir(fullPath.legacyCStringPointer(), S_IRWXU))
                     return false;
             }
             p[0] = '/';
         }
     }
-    if (access(fullPath.data(), F_OK)) {
-        if (mkdir(fullPath.data(), S_IRWXU))
+    if (access(fullPath.legacyCStringPointer(), F_OK)) {
+        if (mkdir(fullPath.legacyCStringPointer(), S_IRWXU))
             return false;
     }
 

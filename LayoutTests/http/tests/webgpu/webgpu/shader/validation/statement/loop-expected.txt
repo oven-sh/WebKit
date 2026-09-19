@@ -32,24 +32,7 @@ PASS :parse:test="var_break_continuing_discard"
 PASS :parse:test="continuing_break_if"
 PASS :parse:test="expr_break"
 PASS :parse:test="loop"
-FAIL :parse:test="continuing_break" assert_unreached:
-  - EXPECTATION FAILED: Expected validation error
-      at (elided: below max severity)
-  - VALIDATION FAILED: Missing expected compilationInfo 'error' message.
-
-
-    ---- shader ----
-
-    fn f() {
-      let expr = true;
-      loop { continuing {} break; }
-    }
-    @http://127.0.0.1:8000/webgpu/webgpu/shader/validation/shader_validation_test.js:91:30
-    async finalize@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:128:16
-    async runTest@http://127.0.0.1:8000/webgpu/common/internal/test_group.js:532:28
-    async run@http://127.0.0.1:8000/webgpu/common/internal/test_group.js:680:31
-    @http://127.0.0.1:8000/webgpu/common/runtime/wpt.js:75:27
- Reached unreachable code
+PASS :parse:test="continuing_break"
 PASS :parse:test="break_continuing_continue"
 PASS :parse:test="break_continuing_return"
 PASS :parse:test="break_continuing_if_break"

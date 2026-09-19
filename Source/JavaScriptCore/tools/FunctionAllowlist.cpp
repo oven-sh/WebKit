@@ -73,7 +73,7 @@ FunctionAllowlist::FunctionAllowlist(const char* filename)
         if (!length)
             continue;
         
-        m_entries.add(String(unsafeMakeSpan(line, length)));
+        m_entries.add(String::fromLatin1(unsafeMakeSpan(line, length)));
     }
 
     int result = fclose(f);

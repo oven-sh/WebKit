@@ -331,6 +331,7 @@ activebuttontext
 -webkit-link
 -webkit-focus-ring-color
 -internal-document-text-color
+-internal-current-background-color
 
 //
 // CSS_PROP_BACKGROUND_REPEAT:
@@ -1790,6 +1791,11 @@ additive
 -internal-simplified-chinese-formal
 -internal-traditional-chinese-informal
 -internal-traditional-chinese-formal
+-internal-japanese-informal
+-internal-japanese-formal
+-internal-korean-hangul-formal
+-internal-korean-hanja-informal
+-internal-korean-hanja-formal
 -internal-ethiopic-numeric
 extends
 

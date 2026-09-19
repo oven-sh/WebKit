@@ -30,7 +30,6 @@
     Exposed=(Window,Worker),
     SecureContext
 ]
-interface GPUOutOfMemoryError {
+interface GPUOutOfMemoryError : GPUError {
     constructor(DOMString message);
-    readonly attribute DOMString message;
 };

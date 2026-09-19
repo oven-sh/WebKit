@@ -163,7 +163,7 @@ void PersistentBytecodePayloads::rememberChildExecutables(UnlinkedCodeBlock& cod
     m_childExecutables.set(key(codeBlock.cachedPayloadIndex(), codeBlock.cachedRecordOffset()), WTF::move(children));
 }
 
-void PersistentBytecodePayloads::pruneStaleEntries()
+void PersistentBytecodePayloads::reconcileWeakReferencesAtGCEnd(VM&, CollectionScope)
 {
     if (m_childExecutables.isEmpty())
         return;

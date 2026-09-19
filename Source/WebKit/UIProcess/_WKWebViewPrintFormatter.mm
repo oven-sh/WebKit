@@ -26,7 +26,7 @@
 #import "config.h"
 #import "_WKWebViewPrintFormatterInternal.h"
 
-#if PLATFORM(IOS_FAMILY)
+#if HAVE(UIKIT_PRINTING)
 
 #import "UIKitSPI.h"
 #import "WKWebViewInternal.h"
@@ -244,4 +244,4 @@
 
 @end
 
-#endif // PLATFORM(IOS_FAMILY)
+#endif // HAVE(UIKIT_PRINTING)

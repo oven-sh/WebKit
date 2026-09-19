@@ -42,44 +42,49 @@
 #import <WebKit/WKWebExtensionWindowConfiguration.h>
 #import <WebKit/WebKit.h>
 
+NS_HEADER_AUDIT_BEGIN(nullability, sendability)
+
+NS_SWIFT_UI_ACTOR
 @interface TestWebExtensionsDelegate : NSObject <WKWebExtensionControllerDelegate, WKWebExtensionControllerDelegatePrivate>
 
-@property (nonatomic, copy) NSArray<id <WKWebExtensionWindow>> *(^openWindows)(WKWebExtensionContext *);
-@property (nonatomic, copy) id <WKWebExtensionWindow> (^focusedWindow)(WKWebExtensionContext *);
+@property (nonatomic, copy, nullable) NSArray<id <WKWebExtensionWindow>> *(^openWindows)(WKWebExtensionContext *);
+@property (nonatomic, copy, nullable) id <WKWebExtensionWindow> _Nullable (^focusedWindow)(WKWebExtensionContext *);
 
 #if PLATFORM(MAC)
-@property (nonatomic, copy) void (^openNewWindow)(WKWebExtensionWindowConfiguration *, WKWebExtensionContext *, void (^)(id<WKWebExtensionWindow>, NSError *));
+@property (nonatomic, copy, nullable) void (^openNewWindow)(WKWebExtensionWindowConfiguration *, WKWebExtensionContext *, void (^)(id<WKWebExtensionWindow> _Nullable, NSError * _Nullable));
 #endif
 
-@property (nonatomic, copy) void (^openNewTab)(WKWebExtensionTabConfiguration *, WKWebExtensionContext *, void (^)(id<WKWebExtensionTab>, NSError *));
-@property (nonatomic, copy) void (^moveTabs)(NSArray<id <WKWebExtensionTab>> *, NSUInteger index, id <WKWebExtensionWindow> window, WKWebExtensionContext *, void (^)(NSError *));
-@property (nonatomic, copy) void (^openOptionsPage)(WKWebExtensionContext *, void (^)(NSError *));
+@property (nonatomic, copy, nullable) void (^openNewTab)(WKWebExtensionTabConfiguration *, WKWebExtensionContext *, void (^)(id<WKWebExtensionTab> _Nullable, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^moveTabs)(NSArray<id <WKWebExtensionTab>> *, NSUInteger index, id <WKWebExtensionWindow> window, WKWebExtensionContext *, void (^)(NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^openOptionsPage)(WKWebExtensionContext *, void (^)(NSError * _Nullable));
 
-@property (nonatomic, copy) void (^promptForPermissions)(id <WKWebExtensionTab>, NSSet<NSString *> *, void (^)(NSSet<WKWebExtensionPermission> *, NSDate *));
-@property (nonatomic, copy) void (^promptForPermissionMatchPatterns)(id <WKWebExtensionTab>, NSSet<WKWebExtensionMatchPattern *> *, void (^)(NSSet<WKWebExtensionMatchPattern *> *, NSDate *));
-@property (nonatomic, copy) void (^promptForPermissionToAccessURLs)(id <WKWebExtensionTab>, NSSet<NSURL *> *, void (^)(NSSet<NSURL *> *, NSDate *));
+@property (nonatomic, copy, nullable) void (^promptForPermissions)(id <WKWebExtensionTab> _Nullable, NSSet<NSString *> *, void (^)(NSSet<WKWebExtensionPermission> *, NSDate * _Nullable));
+@property (nonatomic, copy, nullable) void (^promptForPermissionMatchPatterns)(id <WKWebExtensionTab> _Nullable, NSSet<WKWebExtensionMatchPattern *> *, void (^)(NSSet<WKWebExtensionMatchPattern *> *, NSDate * _Nullable));
+@property (nonatomic, copy, nullable) void (^promptForPermissionToAccessURLs)(id <WKWebExtensionTab> _Nullable, NSSet<NSURL *> *, void (^)(NSSet<NSURL *> *, NSDate * _Nullable));
 
-@property (nonatomic, copy) void (^sendMessage)(id message, NSString *applicationIdentifier, void (^)(id replyMessage, NSError *));
-@property (nonatomic, copy) void (^connectUsingMessagePort)(WKWebExtensionMessagePort *);
+@property (nonatomic, copy, nullable) void (^sendMessage)(id message, NSString * _Nullable applicationIdentifier, void (^)(id _Nullable replyMessage, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^connectUsingMessagePort)(WKWebExtensionMessagePort *);
 
-@property (nonatomic, copy) void (^didUpdateAction)(WKWebExtensionAction *);
-@property (nonatomic, copy) void (^presentPopupForAction)(WKWebExtensionAction *);
+@property (nonatomic, copy, nullable) void (^didUpdateAction)(WKWebExtensionAction *);
+@property (nonatomic, copy, nullable) void (^presentPopupForAction)(WKWebExtensionAction *);
 
-@property (nonatomic, copy) void (^presentSidebar)(_WKWebExtensionSidebar *);
+@property (nonatomic, copy, nullable) void (^presentSidebar)(_WKWebExtensionSidebar *);
 
-@property (nonatomic, copy) void (^closeSidebar)(_WKWebExtensionSidebar *);
+@property (nonatomic, copy, nullable) void (^closeSidebar)(_WKWebExtensionSidebar *);
 
-@property (nonatomic, copy) void (^didUpdateSidebar)(_WKWebExtensionSidebar *);
+@property (nonatomic, copy, nullable) void (^didUpdateSidebar)(_WKWebExtensionSidebar *);
 
-@property (nonatomic, copy) void (^didInvalidateSidebar)(_WKWebExtensionSidebar *);
-@property (nonatomic, copy) _WKWebExtensionSidebarSide (^sidebarSide)(void);
+@property (nonatomic, copy, nullable) void (^didInvalidateSidebar)(_WKWebExtensionSidebar *);
+@property (nonatomic, copy, nullable) _WKWebExtensionSidebarSide (^sidebarSide)(void);
 
-@property (nonatomic, copy) void (^createBookmarkWithParentIdentifier)(NSString *parentId, NSNumber *index, NSString *url, NSString *title, void (^)(NSObject<_WKWebExtensionBookmark> *, NSError *));
-@property (nonatomic, copy) void (^bookmarksForExtensionContext)(void (^)(NSArray<NSObject<_WKWebExtensionBookmark> *> *, NSError *));
-@property (nonatomic, copy) void (^removeBookmarkWithIdentifier)(NSString *bookmarkId, BOOL removeFolderWithChildren, void (^completionHandler)(NSError *));
-@property (nonatomic, copy) void (^updateBookmarkWithIdentifier)(NSString *bookmarkId, NSString *title, NSString *url, void (^)(NSObject<_WKWebExtensionBookmark> *, NSError *));
-@property (nonatomic, copy) void (^moveBookmarkWithIdentifier)(NSString *bookmarkId, NSString *parentId, NSNumber *index, void (^)(NSObject<_WKWebExtensionBookmark> *, NSError *));
+@property (nonatomic, copy, nullable) void (^createBookmarkWithParentIdentifier)(NSString * _Nullable parentId, NSNumber * _Nullable index, NSString * _Nullable url, NSString *title, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^bookmarksForExtensionContext)(void (^)(NSArray<NSObject<_WKWebExtensionBookmark> *> * _Nullable, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^removeBookmarkWithIdentifier)(NSString *bookmarkId, BOOL removeFolderWithChildren, void (^completionHandler)(NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^updateBookmarkWithIdentifier)(NSString *bookmarkId, NSString * _Nullable title, NSString * _Nullable url, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
+@property (nonatomic, copy, nullable) void (^moveBookmarkWithIdentifier)(NSString *bookmarkId, NSString * _Nullable parentId, NSNumber * _Nullable index, void (^)(NSObject<_WKWebExtensionBookmark> * _Nullable, NSError * _Nullable));
 @end
+
+NS_HEADER_AUDIT_END(nullability, sendability)
 
 #endif // __OBJC__
 

@@ -29,6 +29,7 @@
 #include <WebCore/ContentSecurityPolicyResponseHeaders.h>
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/FetchRequestCredentials.h>
+#include <WebCore/NetworkLoadPolicy.h>
 #include <WebCore/NotificationPermission.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ServiceWorkerRegistrationData.h>
@@ -91,6 +92,7 @@ public:
     OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections;
     std::optional<uint64_t> noiseInjectionHashSalt;
     String agentClusterID;
+    NetworkLoadPolicy networkLoadPolicy;
 
     WorkerParameters isolatedCopy() const;
 };

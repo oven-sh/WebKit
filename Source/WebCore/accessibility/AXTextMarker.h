@@ -32,18 +32,12 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
 
-#define TEXT_MARKER_ASSERT(assertion) do { \
-    std::string debugString = "Text marker origin: " + originToString(origin()).utf8().toStdString(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
-#define TEXT_MARKER_ASSERT_SINGLE(assertion, marker) do { \
-    std::string debugString = "Text marker origin: " + originToString(marker.origin()).utf8().toStdString(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
-#define TEXT_MARKER_ASSERT_DOUBLE(assertion, marker1, marker2) do { \
-    std::string debugString = "Text marker origins: " + originToString(marker1.origin()).utf8().toStdString() + ", " + originToString(marker2.origin()).utf8().data(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
+#define TEXT_MARKER_ASSERT(assertion) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origin: %s", originToString(origin()).utf8().legacyCStringPointer())
+#define TEXT_MARKER_ASSERT_SINGLE(assertion, marker) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origin: %s", originToString(marker.origin()).utf8().legacyCStringPointer())
+#define TEXT_MARKER_ASSERT_DOUBLE(assertion, marker1, marker2) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origins: %s, %s", originToString(marker1.origin()).utf8().legacyCStringPointer(), originToString(marker2.origin()).utf8().legacyCStringPointer())
 
 namespace WebCore {
 

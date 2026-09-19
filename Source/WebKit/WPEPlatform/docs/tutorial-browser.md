@@ -1,8 +1,6 @@
 Title: How to Use WPE Platform to Create a WPE WebKit Browser
 Slug: tutorial-browser
 
-# How to Use WPE Platform to Create a WPE WebKit Browser
-
 This tutorial walks through writing the smallest useful WPE WebKit
 browser: a single window that loads a URL and runs a GLib main loop.
 It is aimed at application developers who are starting a new project

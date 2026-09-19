@@ -79,8 +79,8 @@ WebKitFormSubmissionRequest* webkitFormSubmissionRequestCreate(const Vector<std:
         request->priv->textFieldNames = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         request->priv->textFieldValues = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         for (size_t i = 0; i < values.size(); i++) {
-            g_ptr_array_add(request->priv->textFieldNames.get(), g_strdup(values[i].first.utf8().data()));
-            g_ptr_array_add(request->priv->textFieldValues.get(), g_strdup(values[i].second.utf8().data()));
+            g_ptr_array_add(request->priv->textFieldNames.get(), g_strdup(values[i].first.utf8().legacyCStringPointer()));
+            g_ptr_array_add(request->priv->textFieldValues.get(), g_strdup(values[i].second.utf8().legacyCStringPointer()));
         }
     }
     request->priv->listener = WTF::move(listener);

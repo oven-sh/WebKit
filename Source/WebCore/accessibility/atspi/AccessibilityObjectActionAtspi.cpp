@@ -39,15 +39,15 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_actionFunctions = {
         else if (!g_strcmp0(methodName, "GetName")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->actionName().utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->actionName().utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "GetLocalizedName")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->localizedActionName().utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->localizedActionName().utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "GetKeyBinding")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->actionKeyBinding().utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", !index ? atspiObject->actionKeyBinding().utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "DoAction")) {
             int index;
             g_variant_get(parameters, "(i)", &index);

@@ -141,9 +141,9 @@ void MediaSourcePrivateGStreamer::handleLogMessage(const WTFLogChannel& channel,
     const char* file = location ? location->file : __FILE__;
     int line = location ? location->line : __LINE__;
 #if GST_CHECK_VERSION(1, 22, 0)
-    gst_debug_log_id_literal(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().data(), line, identifierString.utf8().data(), message.utf8().data());
+    gst_debug_log_id_literal(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
 #else
-    gst_debug_log(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().data(), line, nullptr, "%s: %s", identifierString.utf8().data(), message.utf8().data());
+    gst_debug_log(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, nullptr, "%s: %s", identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
 #endif
 }
 #endif // !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)

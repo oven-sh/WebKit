@@ -22,7 +22,7 @@ function test() {
                 WI.debuggerManager.resume();
             });
 
-            let debuggerData = WI.debuggerManager.dataForTarget(WI.mainTarget);
+            let debuggerData = WI.debuggerManager.dataForTarget(InspectorTest.mainFrameTarget);
 
             let script = debuggerData.scripts.filter(isHelperScript)[0];
             if (!script) {

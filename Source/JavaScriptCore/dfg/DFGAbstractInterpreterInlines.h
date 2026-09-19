@@ -214,15 +214,15 @@ void AbstractInterpreter<AbstractStateType>::verifyEdge(Node* node, Edge edge)
     if (edge.node()->isTuple()) {
         if (edge.useKind() == UntypedUse && node->op() == ExtractFromTuple)
             return;
-        DFG_CRASH(m_graph, node, toCString("Tuple edge verification error: ", node, "->", edge, " was expected to have Untyped use kind (had ", edge.useKind(),
-            "). Has type ", SpeculationDump(m_state.forTupleNodeWithoutFastForward(edge.node(), node->extractOffset()).m_type)).data(),
+        DFG_CRASH(m_graph, node, toUTF8CString("Tuple edge verification error: ", node, "->", edge, " was expected to have Untyped use kind (had ", edge.useKind(),
+            "). Has type ", SpeculationDump(m_state.forTupleNodeWithoutFastForward(edge.node(), node->extractOffset()).m_type)).legacyCStringPointer(),
             AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), m_state.forNodeWithoutFastForward(node).m_type);
     }
 
     if (!(m_state.forNodeWithoutFastForward(edge).m_type & ~typeFilterFor(edge.useKind())))
         return;
     
-    DFG_CRASH(m_graph, node, toCString("Edge verification error: ", node, "->", edge, " was expected to have type ", SpeculationDump(typeFilterFor(edge.useKind())), " but has type ", SpeculationDump(forNode(edge).m_type), " (", forNode(edge).m_type, ")").data(), AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), forNode(edge).m_type);
+    DFG_CRASH(m_graph, node, toUTF8CString("Edge verification error: ", node, "->", edge, " was expected to have type ", SpeculationDump(typeFilterFor(edge.useKind())), " but has type ", SpeculationDump(forNode(edge).m_type), " (", forNode(edge).m_type, ")").legacyCStringPointer(), AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), forNode(edge).m_type);
 }
 
 template<typename AbstractStateType>

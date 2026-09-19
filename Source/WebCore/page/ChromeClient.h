@@ -47,10 +47,12 @@
 #include <wtf/Assertions.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
+#include <wtf/Markable.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Platform.h>
 #include <wtf/Seconds.h>
 #include <wtf/URL.h>
+#include <wtf/UUID.h>
 #include <wtf/Vector.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -779,7 +781,7 @@ public:
 
     virtual void addSourceTextAnimationForActiveWritingToolsSession(const WTF::UUID& /*sourceAnimationUUID*/, const WTF::UUID& /*destinationAnimationUUID*/, bool, const CharacterRange&, const String&, CompletionHandler<void(TextAnimationRunMode)>&&) { }
 
-    virtual void addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& /*sourceAnimationUUID*/, const WTF::UUID& /*destinationAnimationUUID*/, const std::optional<CharacterRange>&, const String&) { }
+    virtual void addDestinationTextAnimationForActiveWritingToolsSession(Markable<WTF::UUID> /*sourceAnimationUUID*/, Markable<WTF::UUID> /*destinationAnimationUUID*/, const std::optional<CharacterRange>&, const String&) { }
 
     virtual void saveSnapshotOfTextPlaceholderForAnimation(const SimpleRange&) { };
 

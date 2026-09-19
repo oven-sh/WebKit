@@ -4229,6 +4229,191 @@ void testStoreAddLoad32(int32_t amount)
     CHECK_EQ(slot, 37 + amount);
 }
 
+// d = (-n) * m and d = n * (-m)
+template<typename FloatType>
+static void testMulNegOperandFP(bool negateLeft)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<FloatType, FloatType>(proc, root);
+
+    Value* arg0 = arguments[0];
+    Value* arg1 = arguments[1];
+    Value* result;
+    if (negateLeft) {
+        Value* negated = root->appendNew<Value>(proc, Neg, Origin(), arg0);
+        result = root->appendNew<Value>(proc, Mul, Origin(), negated, arg1);
+    } else {
+        Value* negated = root->appendNew<Value>(proc, Neg, Origin(), arg1);
+        result = root->appendNew<Value>(proc, Mul, Origin(), arg0, negated);
+    }
+    root->appendNewControlValue(proc, Return, Origin(), result);
+
+    auto code = compileProc(proc);
+    if (isARM64())
+        checkUsesInstruction(*code, "fnmul");
+
+    auto testValues = floatingPointOperands<FloatType>();
+    for (auto a : testValues) {
+        for (auto b : testValues) {
+            FloatType expected = negateLeft ? (-a.value) * b.value : a.value * (-b.value);
+            FloatType actual = invoke<FloatType>(*code, a.value, b.value);
+            if (std::isnan(expected))
+                CHECK(std::isnan(actual));
+            else
+                CHECK(isIdentical(actual, expected));
+        }
+    }
+}
+
+void testMulNegArgArgDouble()
+{
+    testMulNegOperandFP<double>(true);
+}
+
+void testMulArgNegArgDouble()
+{
+    testMulNegOperandFP<double>(false);
+}
+
+void testMulNegArgArgFloat()
+{
+    testMulNegOperandFP<float>(true);
+}
+
+void testMulArgNegArgFloat()
+{
+    testMulNegOperandFP<float>(false);
+}
+
+void testMulNegArgArgInt32()
+{
+    // d = (-n) * m on Int32. B3ReduceStrength canonicalizes this into Neg(Mul(n, m)) above the
+    // lowest opt level; at O0 it reaches lowering unchanged and is matched in case Mul.
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t, int32_t>(proc, root);
+
+    Value* negated = root->appendNew<Value>(proc, Neg, Origin(), arguments[0]);
+    Value* result = root->appendNew<Value>(proc, Mul, Origin(), negated, arguments[1]);
+    root->appendNewControlValue(proc, Return, Origin(), result);
+
+    auto code = compileProc(proc);
+    if (isARM64())
+        checkUsesInstruction(*code, "mneg");
+
+    for (auto a : int32Operands()) {
+        for (auto b : int32Operands()) {
+            uint32_t expected = (0u - static_cast<uint32_t>(a.value)) * static_cast<uint32_t>(b.value);
+            CHECK_EQ(invoke<int32_t>(*code, a.value, b.value), static_cast<int32_t>(expected));
+        }
+    }
+}
+
+void testMulNegNegArgsDouble()
+{
+    // d = (-n) * (-m) : one negation is absorbed into the fused multiply and the other stays
+    // materialized, which is exact. Stripping both would flip the sign of a NaN result.
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
+
+    Value* negArg0 = root->appendNew<Value>(proc, Neg, Origin(), arguments[0]);
+    Value* negArg1 = root->appendNew<Value>(proc, Neg, Origin(), arguments[1]);
+    Value* result = root->appendNew<Value>(proc, Mul, Origin(), negArg0, negArg1);
+    root->appendNewControlValue(proc, Return, Origin(), result);
+
+    auto code = compileProc(proc);
+    if (isARM64()) {
+        checkUsesInstruction(*code, "fnmul");
+        checkUsesInstruction(*code, "fneg");
+    }
+
+    auto testValues = floatingPointOperands<double>();
+    for (auto a : testValues) {
+        for (auto b : testValues) {
+            double expected = (-a.value) * (-b.value);
+            double actual = invoke<double>(*code, a.value, b.value);
+            if (std::isnan(expected))
+                CHECK(std::isnan(actual));
+            else
+                CHECK(isIdentical(actual, expected));
+        }
+    }
+}
+
+void testMulNegArgArgDoubleMultiUse()
+{
+    // d = ((-n) * m) * (-n) : Neg has two users, so neither multiply can absorb it.
+    // Two multiplies rather than a multiply and an add, so the expected value here cannot
+    // be contracted into an FMA while B3 emits the unfused form.
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double>(proc, root);
+
+    Value* negArg0 = root->appendNew<Value>(proc, Neg, Origin(), arguments[0]);
+    Value* product = root->appendNew<Value>(proc, Mul, Origin(), negArg0, arguments[1]);
+    Value* result = root->appendNew<Value>(proc, Mul, Origin(), product, negArg0);
+    root->appendNewControlValue(proc, Return, Origin(), result);
+
+    auto code = compileProc(proc);
+    if (isARM64()) {
+        checkDoesNotUseInstruction(*code, "fnmul");
+        checkUsesInstruction(*code, "fneg");
+    }
+
+    auto testValues = floatingPointOperands<double>();
+    for (auto a : testValues) {
+        for (auto b : testValues) {
+            double negA = -a.value;
+            double expected = (negA * b.value) * negA;
+            double actual = invoke<double>(*code, a.value, b.value);
+            if (std::isnan(expected))
+                CHECK(std::isnan(actual));
+            else
+                CHECK(isIdentical(actual, expected));
+        }
+    }
+}
+
+void testMulNegArgArgDoubleAcrossBlocks(bool takeMultiply)
+{
+    // d = (-n) * m, with the Neg in a dominating block away from its single use. Lowering walks
+    // blocks in pre-order, so the Neg already has a Tmp by the time the multiply is reached and
+    // the fold does not fire. This is here to catch a miscompile if that ever changes.
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* thenCase = proc.addBlock();
+    BasicBlock* elseCase = proc.addBlock();
+    auto arguments = cCallArgumentValues<double, double, int32_t>(proc, root);
+
+    Value* arg0 = arguments[0];
+    Value* arg1 = arguments[1];
+    Value* condition = arguments[2];
+    Value* negArg0 = root->appendNew<Value>(proc, Neg, Origin(), arg0);
+    root->appendNewControlValue(proc, Branch, Origin(), condition, FrequentedBlock(thenCase), FrequentedBlock(elseCase));
+
+    Value* product = thenCase->appendNew<Value>(proc, Mul, Origin(), negArg0, arg1);
+    thenCase->appendNewControlValue(proc, Return, Origin(), product);
+
+    elseCase->appendNewControlValue(
+        proc, Return, Origin(),
+        elseCase->appendNew<ConstDoubleValue>(proc, Origin(), 0.));
+
+    auto code = compileProc(proc);
+    auto testValues = floatingPointOperands<double>();
+    for (auto a : testValues) {
+        for (auto b : testValues) {
+            double expected = takeMultiply ? (-a.value) * b.value : 0.;
+            double actual = invoke<double>(*code, a.value, b.value, takeMultiply ? 1 : 0);
+            if (std::isnan(expected))
+                CHECK(std::isnan(actual));
+            else
+                CHECK(isIdentical(actual, expected));
+        }
+    }
+}
+
 // Make sure the compiler does not try to optimize anything out.
 static NEVER_INLINE double NODELETE zero()
 {
@@ -4368,6 +4553,15 @@ void addArgTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testMulNegZeroExtend32());
     RUN(testMulNegArgsDouble());
     RUN(testMulNegArgsFloat());
+    RUN(testMulNegArgArgDouble());
+    RUN(testMulArgNegArgDouble());
+    RUN(testMulNegArgArgFloat());
+    RUN(testMulArgNegArgFloat());
+    RUN(testMulNegArgArgInt32());
+    RUN(testMulNegNegArgsDouble());
+    RUN(testMulNegArgArgDoubleMultiUse());
+    RUN(testMulNegArgArgDoubleAcrossBlocks(true));
+    RUN(testMulNegArgArgDoubleAcrossBlocks(false));
     
     RUN_BINARY(testMulArgNegArg, int64Operands(), int64Operands())
     RUN_BINARY(testMulNegArgArg, int64Operands(), int64Operands())

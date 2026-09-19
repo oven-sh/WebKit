@@ -411,8 +411,8 @@ void webkitDownloadNotifyProgress(WebKitDownload* download, guint64 bytesReceive
 
 void webkitDownloadFailed(WebKitDownload* download, const ResourceError& resourceError)
 {
-    GUniquePtr<GError> webError(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().data()),
-        toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().data()));
+    GUniquePtr<GError> webError(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().legacyCStringPointer()),
+        toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
     if (download->priv->timer)
         g_timer_stop(download->priv->timer.get());
 
@@ -453,9 +453,9 @@ void webkitDownloadDestinationCreated(WebKitDownload* download, const String& de
         return;
 
 #if ENABLE(2022_GLIB_API)
-    g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationPath.utf8().data());
+    g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationPath.utf8().legacyCStringPointer());
 #else
-    GUniquePtr<char> destinationURI(g_filename_to_uri(destinationPath.utf8().data(), nullptr, nullptr));
+    GUniquePtr<char> destinationURI(g_filename_to_uri(destinationPath.utf8().legacyCStringPointer(), nullptr, nullptr));
     ASSERT(destinationURI);
     g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationURI.get());
 #endif

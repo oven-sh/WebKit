@@ -225,7 +225,7 @@ private:
     std::unique_ptr<UNumberFormatter, UNumberFormatterDeleter> m_numberFormatter;
     std::unique_ptr<UNumberRangeFormatter, UNumberRangeFormatterDeleter> m_numberRangeFormatter;
     String m_numberFormatterSkeleton;
-    CString m_dataLocaleWithExtensions;
+    UTF8CString m_dataLocaleWithExtensions;
 
     String m_locale;
     String m_dataLocale;

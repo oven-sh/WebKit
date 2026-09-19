@@ -378,5 +378,5 @@ void webkitScriptDialogImplSetEntryText(WebKitScriptDialogImpl* dialog, const St
     if (dialog->priv->dialog->type != WEBKIT_SCRIPT_DIALOG_PROMPT)
         return;
 
-    gtk_entry_set_text(GTK_ENTRY(dialog->priv->entry), text.utf8().data());
+    gtk_entry_set_text(GTK_ENTRY(dialog->priv->entry), text.utf8().legacyCStringPointer());
 }

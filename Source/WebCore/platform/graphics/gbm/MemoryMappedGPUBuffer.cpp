@@ -46,6 +46,7 @@
 
 #if USE(LIBDRM)
 #include <drm_fourcc.h>
+#include <xf86drm.h>
 #endif
 
 namespace WebCore {
@@ -122,6 +123,13 @@ static CPUMappingStrategy runCapabilityProbe()
         return CPUMappingStrategy::Unsupported;
     }
 
+    // CPUMappingStrategy::DmaBufFDMmap doesn't work for the combination of i915 driver and Intel Arc.
+    bool preferGBMBoMap = false;
+    if (drmVersion* version = drmGetVersion(gbm_device_get_fd(gbmDevice->device()))) {
+        preferGBMBoMap = equalSpans(unsafeSpan(version->name), "i915"_span);
+        drmFreeVersion(version);
+    }
+
     // mmap capability depends on the kernel dma-buf subsystem and the GBM backend, not on
     // buffer size, format, or modifier -- so the single-plane linear probe generalizes.
     static constexpr int probeSize = 16;
@@ -134,11 +142,13 @@ static CPUMappingStrategy runCapabilityProbe()
 
     auto strategy = CPUMappingStrategy::Unsupported;
 
-    if (auto* bo = createProbeBO()) {
-        UnixFileDescriptor fd { gbm_bo_get_fd_for_plane(bo, 0), UnixFileDescriptor::Adopt };
-        if (fd && probeReadWriteMappability(fd.value(), gbm_bo_get_stride_for_plane(bo, 0) * probeSize))
-            strategy = CPUMappingStrategy::DmaBufFDMmap;
-        gbm_bo_destroy(bo);
+    if (!preferGBMBoMap) {
+        if (auto* bo = createProbeBO()) {
+            UnixFileDescriptor fd { gbm_bo_get_fd_for_plane(bo, 0), UnixFileDescriptor::Adopt };
+            if (fd && probeReadWriteMappability(fd.value(), gbm_bo_get_stride_for_plane(bo, 0) * probeSize))
+                strategy = CPUMappingStrategy::DmaBufFDMmap;
+            gbm_bo_destroy(bo);
+        }
     }
 
     if (strategy == CPUMappingStrategy::Unsupported) {
@@ -484,6 +494,9 @@ MemoryMappedGPUBuffer::AccessScope::AccessScope(MemoryMappedGPUBuffer& buffer, A
 MemoryMappedGPUBuffer::AccessScope::~AccessScope()
 {
     m_buffer.performDMABufSyncSystemCall({ DMABufSyncFlag::End, m_mode == AccessScope::Mode::Read ? DMABufSyncFlag::Read : DMABufSyncFlag::Write });
+
+    if (m_mode == Mode::Write && cachedCPUMappingStrategy() == CPUMappingStrategy::GBMBoMap)
+        m_buffer.unmapIfNeeded();
 }
 
 std::unique_ptr<MemoryMappedGPUBuffer::AccessScope> MemoryMappedGPUBuffer::AccessScope::create(MemoryMappedGPUBuffer& buffer, AccessScope::Mode mode)

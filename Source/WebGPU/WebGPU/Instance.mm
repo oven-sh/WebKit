@@ -279,11 +279,11 @@ void wgpuInstanceRequestAdapter(WGPUInstance instance, const WGPURequestAdapterO
 {
     protect(WebGPU::fromAPI(instance))->requestAdapter(*options, [callback, userdata](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         if (status != WGPURequestAdapterStatus_Success) {
-            callback(status, nullptr, message.utf8().data(), userdata);
+            callback(status, nullptr, message.utf8().legacyCStringPointer(), userdata);
             return;
         }
 
-        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().data(), userdata);
+        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().legacyCStringPointer(), userdata);
     });
 }
 
@@ -291,11 +291,11 @@ void wgpuInstanceRequestAdapterWithBlock(WGPUInstance instance, WGPURequestAdapt
 {
     protect(WebGPU::fromAPI(instance))->requestAdapter(*options, [callback = WebGPU::fromAPI(WTF::move(callback))](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         if (status != WGPURequestAdapterStatus_Success) {
-            callback(status, nullptr, message.utf8().data());
+            callback(status, nullptr, message.utf8().legacyCStringPointer());
             return;
         }
 
-        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().data());
+        callback(status, WebGPU::releaseToAPI(WTF::move(adapter)), message.utf8().legacyCStringPointer());
     });
 }
 

@@ -19,7 +19,7 @@ function test()
     }
 
     function searchInContent(script, query, options = {}) {
-        return DebuggerAgent.searchInContent(script.id, query, options.caseSensitive, options.isRegex)
+        return script.target.DebuggerAgent.searchInContent(script.id, query, options.caseSensitive, options.isRegex)
         .then(({result}) => {
             InspectorTest.log("");
             InspectorTest.log("QUERY: " + query + " " + JSON.stringify(options));

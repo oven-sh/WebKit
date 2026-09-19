@@ -154,6 +154,7 @@ public:
     static RefPtr<CSSValue> extractFontShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractFontSynthesisShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractFontVariantShorthand(ExtractorState&);
+    static RefPtr<CSSValue> extractHyphenateLimitCharsShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractLineClampShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractMaskShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractMaskBorderShorthand(ExtractorState&);
@@ -253,6 +254,7 @@ public:
     static void extractFontShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractFontSynthesisShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractFontVariantShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
+    static void extractHyphenateLimitCharsShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractLineClampShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractMaskShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractMaskBorderShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
@@ -912,7 +914,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyGridAutoFlow> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyRotate> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.rotate());
     }
@@ -921,7 +923,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyRotate> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyScale> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.scale());
     }
@@ -930,7 +932,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyScale> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyTranslate> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.translate());
     }
@@ -2956,6 +2958,46 @@ inline void ExtractorCustom::extractFontVariantShorthandSerialization(ExtractorS
 {
     // FIXME: Do this more efficiently without creating and destroying a CSSValue object.
     builder.append(extractFontVariantShorthand(state)->cssText(context));
+}
+
+inline RefPtr<CSSValue> ExtractorCustom::extractHyphenateLimitCharsShorthand(ExtractorState& state)
+{
+    auto& style = state.style;
+    auto total = style.internalHyphenateLimitCharsWord();
+    auto before = style.hyphenateLimitBefore();
+    auto after = style.hyphenateLimitAfter();
+
+    bool showAfter = after != before;
+    bool showBefore = showAfter || !before.isAuto();
+
+    CSSValueListBuilder list;
+    list.append(createCSSValue(state.pool, style, total));
+    if (showBefore)
+        list.append(createCSSValue(state.pool, style, before));
+    if (showAfter)
+        list.append(createCSSValue(state.pool, style, after));
+    return CSSValueList::createSpaceSeparated(WTF::move(list));
+}
+
+inline void ExtractorCustom::extractHyphenateLimitCharsShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context)
+{
+    auto& style = state.style;
+    auto total = style.internalHyphenateLimitCharsWord();
+    auto before = style.hyphenateLimitBefore();
+    auto after = style.hyphenateLimitAfter();
+
+    bool showAfter = after != before;
+    bool showBefore = showAfter || !before.isAuto();
+
+    serializationForCSS(builder, context, style, total);
+    if (showBefore) {
+        builder.append(' ');
+        serializationForCSS(builder, context, style, before);
+    }
+    if (showAfter) {
+        builder.append(' ');
+        serializationForCSS(builder, context, style, after);
+    }
 }
 
 inline RefPtr<CSSValue> ExtractorCustom::extractLineClampShorthand(ExtractorState& state)

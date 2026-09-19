@@ -64,21 +64,24 @@ end
 
 # Tail-call bytecode dispatch
 
-macro nextIPIntInstruction()
-    loadb [PC], t0
+macro dispatchIPIntOpcode(opcode)
 if ARM64 or ARM64E
-    # x0 = opcode
     pcrtoaddr ipint_dispatch_base, t7
-    addlshiftp t7, t0, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
+    addlshiftp t7, opcode, (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
     jmp t0
 elsif X86_64
     pcrtoaddr ipint_dispatch_base, t1
-    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), t0
-    addq t1, t0
-    jmp t0
+    lshiftq (constexpr (WTF::fastLog2(JSC::IPInt::alignIPInt))), opcode
+    addq t1, opcode
+    jmp opcode
 else
     error
 end
+end
+
+macro nextIPIntInstruction()
+    loadb [PC], t0
+    dispatchIPIntOpcode(t0)
 end
 
 # Stack operations

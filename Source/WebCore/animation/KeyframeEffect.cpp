@@ -1355,6 +1355,7 @@ void KeyframeEffect::setBlendingKeyframes(BlendingKeyframes&& blendingKeyframes)
 
     checkForMatchingTransformFunctionLists();
 
+    updateComputedKeyframeOffsetsIfNeeded();
     updateAcceleratedAnimationIfNecessary();
 }
 
@@ -2005,11 +2006,13 @@ bool KeyframeEffect::canBeAccelerated(AccountForTimelineAccelerationAbility acco
     if (m_isAssociatedWithProgressBasedTimeline)
         return false;
 
+#if USE(CA)
     if (m_someKeyframesUseStepsTimingFunction || is<StepsTimingFunction>(timingFunction()))
         return false;
 
     if (m_someKeyframesUseLinearTimingFunctionWithPoints || isLinearTimingFunctionWithPoints(timingFunction()))
         return false;
+#endif
 
     if (m_compositeOperation != CompositeOperation::Replace)
         return false;
@@ -3320,7 +3323,7 @@ void KeyframeEffect::timelineAccelerationAbilityDidChange()
 
 Ref<AcceleratedEffect> KeyframeEffect::acceleratedRepresentation(const IntRect& borderBoxRect, const AcceleratedEffectValues& baseValues, OptionSet<AcceleratedEffectProperty>& disallowedProperties)
 {
-    updateComputedKeyframeOffsetsIfNeeded();
+    ASSERT(canBeAccelerated());
     Ref acceleratedEffect = AcceleratedEffect::create(*this, borderBoxRect, baseValues, disallowedProperties);
     m_acceleratedRepresentation = acceleratedEffect.ptr();
     return acceleratedEffect;

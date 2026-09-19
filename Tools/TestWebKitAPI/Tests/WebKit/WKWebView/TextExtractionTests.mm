@@ -235,8 +235,9 @@ SOFT_LINK_CLASS(SafariSafeBrowsing, SSBLookupContext);
 
 namespace TestWebKitAPI {
 
-static NSString *extractNodeIdentifier(NSString *debugText, NSString *searchText)
+static NSString *extractNodeIdentifier(NSString *debugText, NSString *searchText, NSUInteger occurrence)
 {
+    NSUInteger matchesSoFar = 0;
     for (NSString *line in [debugText componentsSeparatedByString:@"\n"]) {
         if (![line containsString:searchText])
             continue;
@@ -246,11 +247,19 @@ static NSString *extractNodeIdentifier(NSString *debugText, NSString *searchText
         if (!match)
             continue;
 
+        if (matchesSoFar++ < occurrence)
+            continue;
+
         NSRange identifierRange = [match rangeAtIndex:1];
         return [line substringWithRange:identifierRange];
     }
 
     return nil;
+}
+
+static NSString *extractNodeIdentifier(NSString *debugText, NSString *searchText)
+{
+    return extractNodeIdentifier(debugText, searchText, 0);
 }
 
 #if PLATFORM(MAC)
@@ -524,6 +533,44 @@ TEST(TextExtractionTests, InteractionDescriptionIncludesAssociatedLabelText)
     [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"Icon")];
     description = [interaction debugDescriptionInWebView:webView error:&error];
     EXPECT_WK_STREQ("Click on img labeled “Icon” under button labeled “Save changes” with id “save-button”", description);
+    EXPECT_NULL(error);
+}
+
+TEST(TextExtractionTests, InteractionDescriptionUsesAdjacentTextForSingleWordLinkWithoutDestination)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [[configuration preferences] _setTextExtractionEnabled:YES];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration]);
+    [webView synchronouslyLoadHTMLString:@"<div class='password-change-link'><label>Your password</label><span>••••••••••</span><a href='#'>Edit</a></div>"
+        "<div><label>Your name</label><span>Jane</span><a href='#'>Edit</a></div>"
+        "<div><label>Your handle</label><span>@jane</span><a href='#'>Edit profile</a></div>"
+        "<div><label>Your plan</label><span>Free</span><a href='/account/plan'>Edit</a></div>"];
+
+    RetainPtr debugText = [webView synchronouslyGetDebugText:nil];
+
+    NSError *error = nil;
+    NSString *description = nil;
+    RetainPtr interaction = adoptNS([[_WKTextExtractionInteraction alloc] initWithAction:_WKTextExtractionActionClick]);
+
+    [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"'Edit'", 0)];
+    description = [interaction debugDescriptionInWebView:webView error:&error];
+    EXPECT_WK_STREQ("Click on link with href “#” after rendered text “Your password ••••••••••”, with rendered text “Edit”", description);
+    EXPECT_NULL(error);
+
+    [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"'Edit'", 1)];
+    description = [interaction debugDescriptionInWebView:webView error:&error];
+    EXPECT_WK_STREQ("Click on link with href “#” after rendered text “Jane”, with rendered text “Edit”", description);
+    EXPECT_NULL(error);
+
+    [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"'Edit profile'")];
+    description = [interaction debugDescriptionInWebView:webView error:&error];
+    EXPECT_WK_STREQ("Click on link with href “#”, with rendered text “Edit profile”", description);
+    EXPECT_NULL(error);
+
+    [interaction setNodeIdentifier:extractNodeIdentifier(debugText, @"'Edit'", 2)];
+    description = [interaction debugDescriptionInWebView:webView error:&error];
+    EXPECT_WK_STREQ("Click on link with href “/account/plan”, with rendered text “Edit”", description);
     EXPECT_NULL(error);
 }
 
@@ -1606,6 +1653,42 @@ TEST(TextExtractionTests, FilterOptions)
         RetainPtr result = extractTextWithFilterOptions(_WKTextExtractionFilterClassifier);
         EXPECT_TRUE([[result textContent] containsString:@"“The quick brown fox jumped over the lazy dog”"]);
         EXPECT_TRUE([[result textContent] containsString:@"Here’s to the crazy ones"]);
+        EXPECT_FALSE([result filteredOutAnyText]);
+    }
+}
+
+TEST(TextExtractionTests, WordLimitDoesNotReportFilteringLeadingBlankLines)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:^{
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        [[configuration preferences] _setTextExtractionEnabled:YES];
+        return configuration.autorelease();
+    }()]);
+
+    auto extractWithWordLimit = [webView](NSUInteger wordLimit) {
+        return [webView synchronouslyExtractDebugTextResult:^{
+            RetainPtr configuration = adoptNS([_WKTextExtractionConfiguration new]);
+            [configuration setMaxWordsPerParagraph:wordLimit];
+            [configuration setMaxWordsPerParagraphPolicy:_WKTextExtractionWordLimitPolicyAlways];
+            return configuration.autorelease();
+        }()];
+    };
+
+    [webView synchronouslyLoadHTMLString:@"<div style='white-space: pre'>\n\nhello world</div>"];
+    {
+        RetainPtr result = extractWithWordLimit(100);
+        EXPECT_TRUE([[result textContent] containsString:@"hello world"]);
+        EXPECT_FALSE([result filteredOutAnyText]);
+    }
+    {
+        RetainPtr result = extractWithWordLimit(1);
+        EXPECT_TRUE([result filteredOutAnyText]);
+    }
+
+    [webView synchronouslyLoadHTMLString:@"<div style='white-space: pre'>hello world</div>"];
+    {
+        RetainPtr result = extractWithWordLimit(100);
+        EXPECT_TRUE([[result textContent] containsString:@"hello world"]);
         EXPECT_FALSE([result filteredOutAnyText]);
     }
 }

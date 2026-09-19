@@ -86,13 +86,13 @@ struct ValueProfileBase {
     bool isSampledBefore() const { return m_prediction != SpecNone; }
     SpeculatedType prediction() const { return m_prediction; }
     
-    CString briefDescription()
+    UTF8CString briefDescription()
     {
         SpeculatedType prediction = computeUpdatedPrediction();
         
         StringPrintStream out;
         out.print("predicting ", SpeculationDump(prediction));
-        return out.toCString();
+        return out.toUTF8CString();
     }
     
     void dump(PrintStream& out)

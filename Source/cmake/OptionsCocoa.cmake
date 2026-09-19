@@ -145,7 +145,6 @@ if (WEBKIT_SDK_IS_IOS_FAMILY)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_BACK_FORWARD_LIST_SWIFT PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MINIBROWSER PUBLIC OFF)
     # Mac-only features absent on the iOS family.
-    WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_AV1 PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SESSION_COORDINATOR PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MEDIA_SESSION_PLAYLIST PRIVATE OFF)
     WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_MOUSE_CURSOR_SCALE PRIVATE OFF)
@@ -168,23 +167,6 @@ WEBKIT_OPTION_END()
 # Shared Cocoa configuration.
 # ---------------------------------------------------------------------------
 set(SWIFT_REQUIRED ON)
-
-# Configure module building
-add_compile_options(
-    "$<$<COMPILE_LANGUAGE:Swift>:-explicit-module-build>"
-    # Needed for compatibility with modules in the (internal) SDK:
-    # https://bugs.webkit.org/show_bug.cgi?id=312083
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-bounds-safety-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-Xcc -fexperimental-late-parse-attributes>"
-    "$<$<COMPILE_LANGUAGE:Swift>:SHELL:-module-cache-path ${CMAKE_BINARY_DIR}/SwiftModuleCache>"
-)
-set_property(DIRECTORY "${CMAKE_BINARY_DIR}" APPEND PROPERTY
-    ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/SwiftModuleCache")
-
-# FIXME: Consider building with -wmo in release / performance builds.
-add_compile_options(
-    "$<$<COMPILE_LANGUAGE:Swift>:-enable-batch-mode>"
-)
 
 if (WEBKIT_SDK_IS_MACOS AND USE_APPLE_INTERNAL_SDK)
     set(WEBKIT_CODE_SIGN_IDENTITY "Safari Engineering")

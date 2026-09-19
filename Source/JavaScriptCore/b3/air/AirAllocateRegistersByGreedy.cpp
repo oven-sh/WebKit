@@ -2319,7 +2319,7 @@ private:
                     StringPrintStream out;
                     out.println("Pop: ", entry, " tmp: ", tmpData);
                     dumpRegRanges<bank>(out);
-                    dataLog(out.toCString());
+                    dataLog(out.toUTF8CString());
                 }
                 switch (tmpData.stage) {
                 case Stage::Unspillable:
@@ -2443,7 +2443,7 @@ private:
             }
             out.println("Code:", m_code);
             out.println("Register Allocator State:\n", pointerDump(this));
-            dataLogLn(out.toCString());
+            dataLogLn(out.toUTF8CString());
             RELEASE_ASSERT_NOT_REACHED();
         };
 

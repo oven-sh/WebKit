@@ -123,7 +123,7 @@ void LinkBuffer::logJITCodeForJITDump(CodeRef<LinkBufferPtrTag>& codeRef, ASCIIL
         dumpSimpleName(out, simpleName);
         break;
     }
-    auto finalName = out.toCString();
+    auto finalName = out.toUTF8CString();
 
     if (Options::useGdbJITInfo()) [[unlikely]]
         GdbJIT::log(finalName, codeRef);

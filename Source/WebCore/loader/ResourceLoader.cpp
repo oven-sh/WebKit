@@ -272,6 +272,9 @@ void ResourceLoader::start()
     if (!frameLoader)
         return;
 
+    if (m_options.keepAlive && startKeepAliveLoadForWebKitLegacy(*frameLoader))
+        return;
+
     if (!sourceOrigin) {
         RefPtr document = frameLoader->frame().document();
         sourceOrigin =  document ? &document->securityOrigin() : nullptr;
@@ -280,6 +283,27 @@ void ResourceLoader::start()
     bool isMainFrameNavigation = frame() && frame()->isMainFrame() && options().mode == FetchOptions::Mode::Navigate;
 
     m_handle = ResourceHandle::create(protect(frameLoader->networkingContext()), m_request, this, m_defersLoading, m_options.sniffContent == ContentSniffingPolicy::SniffContent, m_options.contentEncodingSniffingPolicy, WTF::move(sourceOrigin), isMainFrameNavigation);
+}
+
+bool ResourceLoader::startKeepAliveLoadForWebKitLegacy(FrameLoader& frameLoader)
+{
+    return platformStrategies()->loaderStrategy()->startKeepAliveLoadForWebKitLegacy(frameLoader, m_request, m_options, [weakThis = WeakPtr { *this }] (const ResourceError& error, const ResourceResponse& response) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis || protectedThis->reachedTerminalState())
+            return;
+
+        if (!error.isNull()) {
+            protectedThis->didFail(error);
+            return;
+        }
+
+        protectedThis->didReceiveResponse(ResourceResponse { response }, [protectedThis] {
+            if (protectedThis->reachedTerminalState())
+                return;
+            NetworkLoadMetrics emptyMetrics;
+            protectedThis->didFinishLoading(emptyMetrics);
+        });
+    });
 }
 
 void ResourceLoader::setDefersLoading(bool defers)

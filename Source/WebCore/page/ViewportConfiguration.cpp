@@ -787,7 +787,7 @@ String ViewportConfiguration::description() const
 
 void ViewportConfiguration::dump() const
 {
-    WTFLogAlways("%s", description().utf8().data());
+    WTFLogAlways("%s", description().utf8().legacyCStringPointer());
 }
 
 #endif

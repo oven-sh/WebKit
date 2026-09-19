@@ -1388,7 +1388,7 @@ static void removeJITCodeEntries(GdbJITCodeMap& map, const std::span<const uint8
 
 // Insert the entry into the map and register it with GDB.
 static void addJITCodeEntry(GdbJITCodeMap& map, std::span<const uint8_t> region,
-    JITCodeEntry* entry, bool shouldDump, const CString& nameHint)
+    JITCodeEntry* entry, bool shouldDump, const UTF8CString& nameHint)
 {
     static int fileNum = 0;
     if (shouldDump) {
@@ -1398,14 +1398,14 @@ static void addJITCodeEntry(GdbJITCodeMap& map, std::span<const uint8_t> region,
         else
             filename.print("/tmp");
         filename.print("/jit-", getCurrentProcessID(), fileNum++, nameHint, ".o");
-        auto fd = open(filename.toCString().data(), O_CREAT | O_TRUNC | O_RDWR, 0666);
+        auto fd = open(filename.toUTF8CString().legacyCStringPointer(), O_CREAT | O_TRUNC | O_RDWR, 0666);
         RELEASE_ASSERT(fd != -1);
         auto file = fdopen(fd, "wb");
         RELEASE_ASSERT(file);
 
         fwrite(entry->symfileAddr, entry->symfileSize, 1, file);
         fflush(file);
-        dataLogLnIf(GdbJITInternal::verbose, "GDBInfo dumped: ", nameHint, " ", RawPointer(region.data()), "-", RawPointer(std::to_address(region.end())), " ", region.size(), " ", filename.toCString().data());
+        dataLogLnIf(GdbJITInternal::verbose, "GDBInfo dumped: ", nameHint, " ", RawPointer(region.data()), "-", RawPointer(std::to_address(region.end())), " ", region.size(), " ", filename.toUTF8CString().legacyCStringPointer());
     }
 
     auto result = map.emplace(region, entry);
@@ -1414,7 +1414,7 @@ static void addJITCodeEntry(GdbJITCodeMap& map, std::span<const uint8_t> region,
     registerCodeEntry(entry);
 }
 
-void GdbJIT::log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> code)
+void GdbJIT::log(const UTF8CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> code)
 {
     if (!Options::useGdbJITInfo())
         return;
@@ -1455,7 +1455,7 @@ GdbJIT& GdbJIT::singleton()
     return logger.get();
 }
 
-void GdbJIT::log(const CString&, MacroAssemblerCodeRef<LinkBufferPtrTag>) { }
+void GdbJIT::log(const UTF8CString&, MacroAssemblerCodeRef<LinkBufferPtrTag>) { }
 
 } // namespace JSC
 
