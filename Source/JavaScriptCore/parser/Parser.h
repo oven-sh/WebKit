@@ -1330,6 +1330,14 @@ private:
         return scope;
     }
 
+    // ClassStaticBlockBody: it is a Syntax Error if ContainsArguments of the statement list is true.
+    // ContainsArguments looks into arrow functions and stops at other functions, so the check follows
+    // `arguments` to the scope that owns it. currentScope()->isStaticBlock() is false in an arrow function.
+    bool argumentsBelongToStaticBlock()
+    {
+        return closestScopeOwningArguments()->isStaticBlock();
+    }
+
     Scope* closestClassScopeOrTopLevelScope()
     {
         Scope* scope = currentScope();
@@ -1990,10 +1998,18 @@ private:
 
     const char* disallowedIdentifierAwaitReason()
     {
-        if (!m_parserState.allowAwait || currentScope()->isAsyncFunction())
-            return "in an async function";
         if (currentScope()->isStaticBlock())
             return "in a static block";
+        if (!m_parserState.allowAwait) {
+            // allowAwait is cleared for the parameters of an async function, and for those of an arrow
+            // function in an async function or in a static block (see parseFunctionInfo).
+            Scope* enclosingScope = currentFunctionScope()->containingScope();
+            if (!currentScope()->isAsyncFunction() && enclosingScope && enclosingScope->isStaticBlock())
+                return "in a static block";
+            return "in an async function";
+        }
+        if (currentScope()->isAsyncFunction())
+            return "in an async function";
         if (m_scriptMode == JSParserScriptMode::Module)
             return "in a module";
         RELEASE_ASSERT_NOT_REACHED();

@@ -987,7 +987,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
             failIfFalse(matchSpecIdentifier(), "Expected an identifier name in 'using' declaration");
         }
         if (matchSpecIdentifier()) {
-            semanticFailIfTrue(currentScope()->isStaticBlock() && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+            semanticFailIfTrue(isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
             failIfTrue(isPossiblyEscapedLet(m_token) && (declarationType == DeclarationType::LetDeclaration || declarationType == DeclarationType::ConstDeclaration || isUsingDeclaration),
                 "Cannot use 'let' as an identifier name for a LexicalDeclaration");
             semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a ", declarationTypeToVariableKind(declarationType), " ", disallowedIdentifierAwaitReason());
@@ -2302,7 +2302,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFormalParameters(TreeB
             break;
         
         if (consume(DOTDOTDOT)) {
-            semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a parameter name in an async function");
+            semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a parameter name ", disallowedIdentifierAwaitReason());
             TreeDestructuringPattern destructuringPattern = parseDestructuringPattern(context, DestructuringKind::DestructureToParameters, ExportType::NotExported, &duplicateParameter, &hasDestructuringPattern);
             propagateError();
             parameter = context.createRestParameter(destructuringPattern, restParameterStart);
@@ -2366,6 +2366,10 @@ template <class TreeBuilder> TreeFunctionBody Parser<LexerType>::parseFunctionBo
 {
     SetForScope overrideParsingClassFieldInitializer(m_parserState.isParsingClassFieldInitializer, bodyType != StandardFunctionBodyBlock && m_parserState.isParsingClassFieldInitializer);
     SetForScope maybeUnmaskAsync(m_parserState.classFieldInitMasksAsync, !isAsyncFunctionParseMode(m_parseMode) && m_parserState.classFieldInitMasksAsync);
+    // allowAwait is cleared while a parameter list that reserves `await` is parsed (see parseFunctionInfo). This function
+    // may be nested in such a parameter list, but its body is not part of it: whether `await` is an identifier in the body
+    // is decided by the body's own scope (canUseIdentifierAwait), exactly as for a function that is not nested in parameters.
+    SetForScope overrideAllowAwait(m_parserState.allowAwait, true);
     bool isArrowFunctionBodyExpression = bodyType == ArrowFunctionBodyExpression;
     if (!isArrowFunctionBodyExpression) {
         next();
@@ -2714,7 +2718,8 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             // Parse formal parameters with [+Yield] parameterization, in order to ban YieldExpressions
             // in ArrowFormalParameters, per ES6 #sec-arrow-function-definitions-static-semantics-early-errors.
             Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parentScope->isGeneratorFunction());
-            SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !isAsyncFunctionParseMode(mode));
+            // ArrowParameters[?Await]: the parameters take the [Await] of the enclosing code. A class static block is [+Await].
+            SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !parentScope->isStaticBlock() && !isAsyncFunctionParseMode(mode));
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
@@ -3279,7 +3284,7 @@ parseMethod:
             break;
         case OPENBRACKET:
             next();
-            semanticFailIfTrue(currentScope()->isStaticBlock() && match(IDENT) && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+            semanticFailIfTrue(match(IDENT) && isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
             computedPropertyName = parseAssignmentExpression(context);
             type = static_cast<PropertyNode::Type>(type | PropertyNode::Computed);
             failIfFalse(computedPropertyName, "Cannot parse computed property name");
@@ -5184,7 +5189,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::tryParseArguments
     // If semantic checks fail here, then let `parsePrimaryExpression` handle the error thrown.
     // Note that these checks must align to the checks in `parsePrimaryExpression` under
     // the clause with token type IDENT.
-    if (currentScope()->isStaticBlock()
+    if (argumentsBelongToStaticBlock()
         || m_parserState.isParsingClassFieldInitializer
         || closestScopeOwningArguments()->evalContextType() == EvalContextType::InstanceFieldEvalContext) [[unlikely]]
         return 0;
@@ -5250,7 +5255,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
 
         goto identifierExpression;
     case IDENT: {
-        semanticFailIfTrue(currentScope()->isStaticBlock() && isArgumentsIdentifier(), "Cannot use 'arguments' as an identifier in static block");
+        semanticFailIfTrue(isArgumentsIdentifier() && argumentsBelongToStaticBlock(), "Cannot use 'arguments' as an identifier in static block");
         if (*m_token.m_data.ident == m_vm.propertyNames->async && !m_token.m_data.escaped) [[unlikely]] {
             JSTextPosition functionStart = tokenStartPosition();
             const Identifier* ident = m_token.m_data.ident;
