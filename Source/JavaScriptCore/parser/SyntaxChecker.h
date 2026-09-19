@@ -168,7 +168,7 @@ public:
     ExpressionType createImportExpr(const JSTokenLocation&, ExpressionType, ExpressionType, bool, int, int, int) { return ImportExpr; }
     ExpressionType createThisExpr(const JSTokenLocation&) { return ThisExpr; }
     ExpressionType createSuperExpr(const JSTokenLocation&) { return SuperExpr; }
-    ExpressionType createNewTargetExpr(const JSTokenLocation&) { return NewTargetExpr; }
+    ExpressionType createNewTargetExpr(const JSTokenLocation&, bool) { return NewTargetExpr; }
     ExpressionType createImportMetaExpr(const JSTokenLocation&, ExpressionType) { return ImportMetaExpr; }
     ALWAYS_INLINE bool isMetaProperty(ExpressionType type) { return type & MetaPropertyBit; }
     ALWAYS_INLINE bool isNewTarget(ExpressionType type) { return type == NewTargetExpr; }
