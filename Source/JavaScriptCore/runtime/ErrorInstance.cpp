@@ -163,6 +163,11 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
 
         if (!m_stackTrace || !append) {
             m_stackTrace = WTF::move(stackTrace);
+            // A collection may already have formatted the frames these replace.
+            m_stackString = String();
+#if USE(BUN_JSC_ADDITIONS)
+            m_stackStringIsFramesOnly = false;
+#endif
             vm.writeBarrier(this);
             return;
         }
