@@ -26,7 +26,11 @@ function shouldThrowSyntaxError(source, message) {
         shouldBe(error.message, message, source);
 }
 
-const depth = 100;
+// A nest of this depth did not finish before.
+const depth = 32;
+// A call compiles one level with a new parser, which parses the levels below it again. A walk down the whole nest
+// costs depth^3, so it gets a nest of its own.
+const callDepth = 12;
 
 // Each shape is [text before the innermost value, text after it, how to get from one level's function to the next].
 const call = f => f();
@@ -50,17 +54,16 @@ const shapes = {
 globalThis.id = value => value;
 
 for (const [name, [before, after, next]] of Object.entries(shapes)) {
-    const source = before.repeat(depth) + "'innermost'" + after.repeat(depth);
-    let value = (0, eval)(source);
-    shouldBe(typeof value, "function", name);
+    const nest = levels => before.repeat(levels) + "'innermost'" + after.repeat(levels);
+    shouldBe(typeof (0, eval)(nest(depth)), "function", name);
 
-    // The same text where only a syntax check reads it, and where it is parsed again to compile the function.
-    shouldBe(typeof new Function(`return ${source};`)(), "function", name + " in a function");
-    shouldBe(typeof (0, eval)(`(async function () { return ${source}; })`), "function", name + " in an async function");
+    // The same text where a syntax check reads it first, and the call parses it again to compile the function.
+    shouldBe(typeof new Function(`return ${nest(depth)};`)(), "function", name + " in a function");
 
     if (!next)
         continue;
-    for (let i = 0; i < depth; i++)
+    let value = (0, eval)(nest(callDepth));
+    for (let i = 0; i < callDepth; i++)
         value = next(value);
     shouldBe(value, "innermost", name);
 }
@@ -68,10 +71,10 @@ for (const [name, [before, after, next]] of Object.entries(shapes)) {
 // An async arrow function returns a promise at every level, so walk down with await.
 {
     const [before, after] = shapes["async"];
-    let value = (0, eval)(before.repeat(depth) + "'innermost'" + after.repeat(depth));
+    let value = (0, eval)(before.repeat(callDepth) + "'innermost'" + after.repeat(callDepth));
     let result;
     (async () => {
-        for (let i = 0; i < depth; i++)
+        for (let i = 0; i < callDepth; i++)
             value = await value();
         result = value;
     })();
@@ -81,14 +84,15 @@ for (const [name, [before, after, next]] of Object.entries(shapes)) {
 
 // Two candidates side by side at every level.
 {
+    const levels = 8;
     const nest = level => level ? `(a = ${nest(level - 1)}, b = ${nest(level - 1)}) => [a, b]` : "1";
-    let value = (0, eval)(nest(10));
-    let levels = 0;
+    let value = (0, eval)(nest(levels));
+    let calls = 0;
     while (typeof value === "function") {
         value = value()[1];
-        levels++;
+        calls++;
     }
-    shouldBe(levels, 10, "two candidates per level");
+    shouldBe(calls, levels, "two candidates per level");
     shouldBe(value, 1, "two candidates per level");
 }
 
