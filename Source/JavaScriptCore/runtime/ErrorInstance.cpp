@@ -422,7 +422,7 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
             if (m_stackPropertyAlreadyMaterialized)
                 stackString = emptyString();
             else {
-                // Possibly the end of a collection: the hook formats the frames, and headedStack() adds the rest.
+                // Possibly the end of a collection: the hook formats the frames, and stackWithHeader() prepends the header.
                 stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this->bunErrorData());
                 m_stackStringIsFramesOnly = true;
             }
@@ -447,9 +447,10 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// The frames a collection formatted, headed as a stack materialized on access is. undefined if reading
-// the name or the message throws, which is what the hook that materializes a stack on access leaves.
-JSValue ErrorInstance::headedStack(VM& vm, String&& frames)
+// "name: message" in front of the frames a collection formatted, as a stack materialized on access
+// begins. undefined if reading the name or the message throws, which is what the hook that
+// materializes a stack on access leaves.
+JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSGlobalObject* globalObject = this->globalObject();
@@ -459,12 +460,12 @@ JSValue ErrorInstance::headedStack(VM& vm, String&& frames)
     RETURN_IF_EXCEPTION(scope, jsUndefined());
     // The name and the message come from JS: past String::MaxLength makeString() calls CRASH().
     ASCIILiteral separator = name.isEmpty() || message.isEmpty() ? ""_s : ": "_s;
-    String headed = tryMakeString(name, separator, message, frames);
-    if (headed.isNull())
-        headed = tryMakeString(name, separator, message);
-    if (headed.isNull())
-        headed = WTF::move(message);
-    return jsString(vm, WTF::move(headed));
+    String stack = tryMakeString(name, separator, message, frames);
+    if (stack.isNull())
+        stack = tryMakeString(name, separator, message);
+    if (stack.isNull())
+        stack = WTF::move(message);
+    return jsString(vm, WTF::move(stack));
 }
 #endif
 
@@ -522,10 +523,11 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
                 stackString = WTF::move(m_stackString);
             }
 #if USE(BUN_JSC_ADDITIONS)
-            putDirect(vm, vm.propertyNames->stack, m_stackStringIsFramesOnly ? headedStack(vm, WTF::move(stackString)) : jsString(vm, WTF::move(stackString)), attributes);
-#else
-            putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
+            if (m_stackStringIsFramesOnly)
+                putDirect(vm, vm.propertyNames->stack, stackWithHeader(vm, WTF::move(stackString)), attributes);
+            else
 #endif
+                putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stackString)), attributes);
         }
         m_errorInfoMaterialized = true;
     }

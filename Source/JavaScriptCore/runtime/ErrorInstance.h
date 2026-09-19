@@ -163,7 +163,7 @@ protected:
 
     void computeErrorInfo(VM&, bool allocationAllowed);
 #if USE(BUN_JSC_ADDITIONS)
-    JSValue headedStack(VM&, String&& frames);
+    JSValue stackWithHeader(VM&, String&& frames);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
