@@ -1490,6 +1490,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
         if (syntheticSourceProvider->isDeferred()) {
             auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, Ref { *syntheticSourceProvider });
+            moduleRecord->setEvaluationSteps(syntheticSourceProvider->evaluator());
             scope.release();
             promise->fulfill(vm, moduleRecord);
             return promise;
@@ -1502,6 +1503,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
         auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        moduleRecord->setEvaluationSteps(syntheticSourceProvider->evaluator());
 
         scope.release();
         promise->fulfill(vm, moduleRecord);

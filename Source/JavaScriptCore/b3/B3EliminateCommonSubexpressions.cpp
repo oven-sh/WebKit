@@ -40,6 +40,7 @@
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3PureCSE.h"
+#include "B3SlotBaseValue.h"
 #include "B3SSACalculator.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
@@ -82,8 +83,30 @@ class MemoryValueMap {
 public:
     MemoryValueMap() { }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // In a procedure lowered from C one pointer can have tens of thousands of accesses after it, at as many
+    // offsets, all of them still there: a store through it leaves the ones at other bytes as they are
+    // (CSE::isStoreToOtherBytes), where everywhere else a store clears what came before it. Everything asked of
+    // the map is about one offset, or the few offsets a store's bytes can reach, so there the accesses are kept by
+    // offset as well as by pointer, and the pointers that are stack slots' apart from the others. What the map
+    // answers is the same either way.
+    void indexByOffset() { m_isIndexedByOffset = true; }
+#endif
+
     void add(MemoryValue* memory)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_isIndexedByOffset) {
+            Value* pointer = memory->lastChild();
+            auto result = m_indexed.add(pointer, OffsetMap());
+            if (result.isNewEntry)
+                notePointer(pointer);
+            Matches& matches = result.iterator->value.add(keyForOffset(memory->offset()), Matches()).iterator->value;
+            if (!matches.contains(memory))
+                matches.append(memory);
+            return;
+        }
+#endif
         Matches& matches = m_map.add(memory->lastChild(), Matches()).iterator->value;
         if (matches.contains(memory))
             return;
@@ -93,31 +116,90 @@ public:
     template<typename Functor>
     void removeIf(const Functor& functor)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_isIndexedByOffset) {
+            Vector<Value*, 8> pointers;
+            for (Value* pointer : m_indexed.keys())
+                pointers.append(pointer);
+            for (Value* pointer : pointers)
+                removeIfThrough(pointer, functor);
+            return;
+        }
+#endif
         m_map.removeIf(
             [&] (UncheckedKeyHashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
-                entry.value.removeAllMatching(
-                    [&] (Value* value) -> bool {
-                        if (MemoryValue* memory = value->as<MemoryValue>())
-                            return functor(memory);
-                        return true;
-                    });
+                removeMatching(entry.value, functor);
                 return entry.value.isEmpty();
             });
     }
 
-    Matches* find(Value* ptr)
-    {
-        auto iter = m_map.find(ptr);
-        if (iter == m_map.end())
-            return nullptr;
-        return &iter->value;
-    }
-
+#if USE(BUN_JSC_ADDITIONS)
+    // What removeIf(functor) does, for a functor that keeps every access through `pointer` whose bytes are none of
+    // [begin, end), and every access to a stack slot when `pointer` is another stack slot's address: those are
+    // not looked at. No access is more than 16 bytes.
     template<typename Functor>
-    MemoryValue* find(Value* ptr, const Functor& functor)
+    void removeIfNotApartFrom(Value* pointer, int64_t begin, int64_t end, const Functor& functor)
+    {
+        ASSERT(m_isIndexedByOffset);
+        auto throughTheSamePointer = [&] {
+            auto iterator = m_indexed.find(pointer);
+            if (iterator == m_indexed.end())
+                return;
+            OffsetMap& byOffset = iterator->value;
+            for (int64_t offset = begin - 15; offset < end; ++offset) {
+                if (offset < std::numeric_limits<Value::OffsetType>::min() || offset > std::numeric_limits<Value::OffsetType>::max())
+                    continue;
+                auto bucket = byOffset.find(keyForOffset(static_cast<Value::OffsetType>(offset)));
+                if (bucket == byOffset.end())
+                    continue;
+                removeMatching(bucket->value, functor);
+                if (bucket->value.isEmpty())
+                    byOffset.remove(bucket);
+            }
+            if (byOffset.isEmpty())
+                forget(pointer);
+        };
+        Vector<Value*, 8> others;
+        if (auto* slotBase = pointer->as<SlotBaseValue>()) {
+            // Another slot's accesses stay, and are not looked at; the same slot's through another SlotBase do not.
+            if (auto sameSlot = m_slotBases.find(slotBase->slot()); sameSlot != m_slotBases.end()) {
+                for (Value* other : sameSlot->value) {
+                    if (other != pointer)
+                        others.append(other);
+                }
+            }
+            for (Value* other : m_otherPointers)
+                others.append(other);
+        } else {
+            for (Value* other : m_indexed.keys()) {
+                if (other != pointer)
+                    others.append(other);
+            }
+        }
+        throughTheSamePointer();
+        for (Value* other : others)
+            removeIfThrough(other, functor);
+    }
+#endif
+
+    // Every filter asks for an access at the offset it is given here.
+    template<typename Functor>
+    MemoryValue* find(Value* ptr, Value::OffsetType offset, const Functor& functor)
     {
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Looking for ", pointerDump(ptr), " in ", *this);
-        if (Matches* matches = find(ptr)) {
+        Matches* matches = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_isIndexedByOffset) {
+            if (auto iterator = m_indexed.find(ptr); iterator != m_indexed.end()) {
+                if (auto bucket = iterator->value.find(keyForOffset(offset)); bucket != iterator->value.end())
+                    matches = &bucket->value;
+            }
+        } else
+#endif
+        if (auto iter = m_map.find(ptr); iter != m_map.end())
+            matches = &iter->value;
+        UNUSED_PARAM(offset);
+        if (matches) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Matches: ", pointerListDump(*matches));
             for (Value* candidateValue : *matches) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Having candidate: ", pointerDump(candidateValue));
@@ -136,15 +218,77 @@ public:
         CommaPrinter comma;
         for (auto& entry : m_map)
             out.print(comma, pointerDump(entry.key), "=>"_s, pointerListDump(entry.value));
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& entry : m_indexed) {
+            for (auto& bucket : entry.value)
+                out.print(comma, pointerDump(entry.key), "=>"_s, pointerListDump(bucket.value));
+        }
+#endif
         out.print("}"_s);
     }
     
 private:
+    template<typename Functor>
+    static void removeMatching(Matches& matches, const Functor& functor)
+    {
+        matches.removeAllMatching(
+            [&] (Value* value) -> bool {
+                if (MemoryValue* memory = value->as<MemoryValue>())
+                    return functor(memory);
+                return true;
+            });
+    }
+
     // This uses Matches for two reasons:
     // - It cannot be a MemoryValue* because the key is imprecise. Many MemoryValues could have the
     //   same key while being unaliased.
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
     UncheckedKeyHashMap<Value*, Matches> m_map;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // An offset is any 32-bit number, and a key of a hash table is not zero or all ones.
+    using OffsetMap = UncheckedKeyHashMap<uint64_t, Matches>;
+    static uint64_t keyForOffset(Value::OffsetType offset) { return static_cast<uint64_t>(static_cast<int64_t>(offset) + (1ll << 32)); }
+
+    void notePointer(Value* pointer)
+    {
+        if (auto* slotBase = pointer->as<SlotBaseValue>())
+            m_slotBases.add(slotBase->slot(), Vector<Value*, 1>()).iterator->value.append(pointer);
+        else
+            m_otherPointers.add(pointer);
+    }
+
+    void forget(Value* pointer)
+    {
+        m_indexed.remove(pointer);
+        if (auto* slotBase = pointer->as<SlotBaseValue>()) {
+            auto iterator = m_slotBases.find(slotBase->slot());
+            iterator->value.removeFirst(pointer);
+            if (iterator->value.isEmpty())
+                m_slotBases.remove(iterator);
+        } else
+            m_otherPointers.remove(pointer);
+    }
+
+    template<typename Functor>
+    void removeIfThrough(Value* pointer, const Functor& functor)
+    {
+        auto iterator = m_indexed.find(pointer);
+        if (iterator == m_indexed.end())
+            return;
+        iterator->value.removeIf([&](OffsetMap::KeyValuePairType& bucket) {
+            removeMatching(bucket.value, functor);
+            return bucket.value.isEmpty();
+        });
+        if (iterator->value.isEmpty())
+            forget(pointer);
+    }
+
+    bool m_isIndexedByOffset { false };
+    UncheckedKeyHashMap<Value*, OffsetMap> m_indexed; // In place of m_map.
+    UncheckedKeyHashMap<Air::StackSlot*, Vector<Value*, 1>> m_slotBases; // The pointers of m_indexed that are a slot's address, by slot.
+    UncheckedKeyHashSet<Value*> m_otherPointers; // The rest of them.
+#endif
 };
 
 using WasmStructFieldKey = std::tuple<Value*, uint64_t>;
@@ -264,6 +408,17 @@ private:
 };
 
 struct ImpureBlockData {
+    ImpureBlockData() = default;
+#if USE(BUN_JSC_ADDITIONS)
+    explicit ImpureBlockData(bool indexMemoryByOffset)
+    {
+        if (indexMemoryByOffset) {
+            memoryStoresAtHead.indexByOffset();
+            memoryValuesAtTail.indexByOffset();
+        }
+    }
+#endif
+
     void dump(PrintStream& out) const
     {
         out.print(
@@ -310,6 +465,11 @@ public:
         m_proc.resetValueOwners();
         m_dominators = &m_proc.dominators();
         m_impureBlockData = IndexMap<BasicBlock*, ImpureBlockData>(m_proc.size());
+#if USE(BUN_JSC_ADDITIONS)
+        m_indexMemoryByOffset = m_proc.hasCodeFromC() && Options::useB3DisjointOffsetAliasAnalysis();
+        for (BasicBlock* block : m_proc)
+            m_impureBlockData[block] = ImpureBlockData(m_indexMemoryByOffset);
+#endif
         m_ssa = makeUnique<SSACalculator>(m_proc);
 
         // Summarize the impure effects of each block, and the impure values available at the end of
@@ -347,7 +507,7 @@ public:
                 data.reads.add(effects.reads);
 
                 if (HeapRange writes = effects.writes)
-                    clobber(data, writes);
+                    clobber(data, writes, memory);
                 data.fence |= effects.fence;
 
                 if (memory)
@@ -385,6 +545,9 @@ public:
                 for (unsigned j = 0; j < loop.size(); ++j)
                     loopBlocks.add(loop.at(j));
             }
+            // A pure value is matched with one met before it, and the first sweep put new values ahead of ones
+            // it had already met: what it remembers is no longer in the order the blocks are in.
+            m_pureCSE.clear();
             performCSE(&loopBlocks);
         }
 
@@ -404,7 +567,11 @@ private:
                 continue;
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Looking at ", *m_block, ":");
 
+#if USE(BUN_JSC_ADDITIONS)
+            m_data = ImpureBlockData(m_indexMemoryByOffset);
+#else
             m_data = ImpureBlockData();
+#endif
             for (m_index = 0; m_index < m_block->size(); ++m_index) {
                 m_value = m_block->at(m_index);
                 process();
@@ -540,7 +707,7 @@ private:
 
         // Clobber based on writes - this handles both MemoryValue and WasmStruct operations
         if (HeapRange writes = effects.writes)
-            clobber(m_data, writes);
+            clobber(m_data, writes, memory);
 
         // After clobber - CSE and tracking
         if (memory)
@@ -606,17 +773,52 @@ private:
         }
     }
 
-    void clobber(ImpureBlockData& data, HeapRange writes)
+    // In a procedure lowered from C (Procedure::hasCodeFromC): a store through the same pointer value
+    // at bytes that do not overlap, or into a different stack slot, cannot change what an earlier access
+    // saw, whatever their abstract heaps say.
+    bool isStoreToOtherBytes(MemoryValue* writer, MemoryValue* memory)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_proc.hasCodeFromC() || !Options::useB3DisjointOffsetAliasAnalysis() || !writer || !writer->isStore() || writer->hasFence())
+            return false;
+        if (writer->lastChild() != memory->lastChild()) {
+            // Two different stack slots are two different objects.
+            auto* writerSlot = writer->lastChild()->as<SlotBaseValue>();
+            auto* memorySlot = memory->lastChild()->as<SlotBaseValue>();
+            return writerSlot && memorySlot && writerSlot->slot() != memorySlot->slot();
+        }
+        int64_t writerBegin = writer->offset();
+        int64_t writerEnd = writerBegin + static_cast<int64_t>(writer->accessByteSize());
+        int64_t memoryBegin = memory->offset();
+        int64_t memoryEnd = memoryBegin + static_cast<int64_t>(memory->accessByteSize());
+        return writerEnd <= memoryBegin || memoryEnd <= writerBegin;
+#else
+        UNUSED_PARAM(writer);
+        UNUSED_PARAM(memory);
+        return false;
+#endif
+    }
+
+    void clobber(ImpureBlockData& data, HeapRange writes, MemoryValue* writer = nullptr)
     {
         data.writes.add(writes);
 
-        data.memoryValuesAtTail.removeIf(
-            [&](MemoryValue* memory) {
-                // If memory reads is immutable, clobbering never changes the result.
-                if (memory->readsMutability() == Mutability::Immutable)
-                    return false;
-                return memory->range().overlaps(writes);
-            });
+        auto isClobbered = [&](MemoryValue* memory) {
+            // If memory reads is immutable, clobbering never changes the result.
+            if (memory->readsMutability() == Mutability::Immutable)
+                return false;
+            if (isStoreToOtherBytes(writer, memory))
+                return false;
+            return memory->range().overlaps(writes);
+        };
+#if USE(BUN_JSC_ADDITIONS)
+        // The accesses isStoreToOtherBytes would say yes to are most of them, and the map can leave them be unasked.
+        if (m_indexMemoryByOffset && writer && writer->isStore() && !writer->hasFence()) {
+            int64_t begin = writer->offset();
+            data.memoryValuesAtTail.removeIfNotApartFrom(writer->lastChild(), begin, begin + static_cast<int64_t>(writer->accessByteSize()), isClobbered);
+        } else
+#endif
+        data.memoryValuesAtTail.removeIf(isClobbered);
 
         data.wasmStructValuesAtTail.removeIf(
             [&](WasmStructFieldValue* value) {
@@ -891,7 +1093,7 @@ private:
         while (BasicBlock* block = worklist.pop()) {
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);
+            MemoryValue* match = data.memoryStoresAtHead.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
             if (match && match != m_value)
                 continue;
 
@@ -989,7 +1191,8 @@ private:
             return { };
         }
         
-        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, filter)) {
+        Value::OffsetType offset = m_value->as<MemoryValue>()->offset();
+        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, offset, filter)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found ", *match, " locally.");
             return { match };
         }
@@ -1009,7 +1212,7 @@ private:
 
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryValuesAtTail.find(ptr, filter);
+            MemoryValue* match = data.memoryValuesAtTail.find(ptr, offset, filter);
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Consdering match: ", pointerDump(match));
             if (match && match != m_value) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found match: ", *match);
@@ -1586,6 +1789,9 @@ private:
     IndexMap<BasicBlock*, ImpureBlockData> m_impureBlockData;
 
     ImpureBlockData m_data;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_indexMemoryByOffset { false };
+#endif
 
     BasicBlock* m_block { nullptr };
     unsigned m_index { 0 };

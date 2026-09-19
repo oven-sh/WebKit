@@ -82,6 +82,18 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useFFIICStub, true, Normal, "install per-function FFI IC stubs"_s) \
     v(Bool, useFFICallInDFG, true, Normal, "allow Call -> CallFFI in DFG/FTL"_s) \
     v(Bool, useFFIDirectCall, true, Normal, "FTL calls the native FFI target directly (no invoke thunk)"_s) \
+    v(Bool, useFFIInlineC, true, Normal, "FTL inlines the body of a C function compiled from BIR into its JS caller"_s) \
+    v(Unsigned, maximumFFIInlineCInstructionCount, 200, Normal, "largest BIR function body the FTL inlines"_s) \
+    v(OptionString, dumpCModuleFunction, nullptr, Normal, "print the B3 IR and machine code of the compiled C function with this name"_s) \
+    v(Bool, writeCModulePerfMap, false, Normal, "append each compiled C function to /tmp/perf-<pid>.map so perf can name it"_s) \
+    v(Unsigned, maximumBIRInlineCalleeInstructionCount, 2000, Normal, "largest BIR callee inlined at a C call site"_s) \
+    v(Unsigned, maximumBIRInlineGrowthPerCallee, 300, Normal, "most BIR instructions inlining one callee at all of its call sites may add to a module"_s) \
+    v(Unsigned, maximumBIRInlineTrivialCalleeInstructionCount, 24, Normal, "a BIR callee this small is inlined at every C call site"_s) \
+    v(Unsigned, maximumBIRInlineConstantArgumentCalleeInstructionCount, 120, Normal, "a BIR callee this small is inlined where it is called with a constant argument"_s) \
+    v(Unsigned, birInlineHintGrowthMultiplier, 8, Normal, "how much more a BIR callee declared inline may grow the module by"_s) \
+    v(Unsigned, maximumBIRInlinedInstructionsPerFunction, 4000, Normal, "total BIR instructions a C function may absorb by inlining"_s) \
+    v(Unsigned, maximumBIRAlwaysInlinedInstructionsPerFunction, 20000, Normal, "total BIR instructions a C function may absorb by inlining always_inline callees"_s) \
+    v(Unsigned, maximumBIRInlineCalleeFrameBytes, 1024, Normal, "a BIR callee whose locals in memory take more than this is not inlined at a C call site"_s) \
     v(Bool, dumpFFIDisassembly, false, Normal, "disassemble generated FFI thunks/stubs"_s) \
     v(Bool, verboseFFI, false, Normal, "dataLog on FFI thunk/stub/signature creation"_s)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v) \
@@ -602,6 +614,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, maxB3TailDupBlockSize, 3, Normal, nullptr) \
     v(Unsigned, maxB3TailDupBlockSuccessors, 3, Normal, nullptr) \
     v(Bool, useB3HoistLoopInvariantValues, true, Normal, nullptr) \
+    v(Bool, useB3DisjointOffsetAliasAnalysis, true, Normal, "B3 load elimination in a procedure with code from C: a store through the same pointer at non-overlapping bytes, or into another stack slot, is not a clobber"_s) \
+    v(Bool, useB3RematerializeStackAddresses, true, Normal, "in a procedure with code from C, give each user of a stack slot's address a SlotBase of its own instead of keeping the address in a register"_s) \
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
     v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
     v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \

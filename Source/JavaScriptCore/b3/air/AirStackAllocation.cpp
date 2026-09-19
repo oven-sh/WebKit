@@ -86,8 +86,14 @@ Vector<StackSlot*> allocateAndGetEscapedStackSlotsWithoutChangingFrameSize(Code&
     RELEASE_ASSERT(code.frameSize() == stackAdjustmentForAlignment());
     Vector<StackSlot*> assignedEscapedStackSlots;
     Vector<StackSlot*> escapedStackSlotsWorklist;
+#if USE(BUN_JSC_ADDITIONS)
+    // Every slot gets bytes of its own, the way the escaped ones do: nothing is left for the allocator that shares.
+    bool everySlotIsApart = code.hasCallThatReturnsTwice();
+#else
+    bool everySlotIsApart = false;
+#endif
     for (StackSlot* slot : code.stackSlots()) {
-        if (slot->isLocked()) {
+        if (slot->isLocked() || everySlotIsApart) {
             if (slot->offsetFromFP())
                 assignedEscapedStackSlots.append(slot);
             else

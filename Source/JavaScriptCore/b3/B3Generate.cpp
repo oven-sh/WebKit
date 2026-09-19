@@ -48,6 +48,7 @@
 #include "B3Procedure.h"
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
+#include "B3RematerializeStackAddresses.h"
 #include "B3Validate.h"
 #include "CompilerTimingScope.h"
 
@@ -129,6 +130,9 @@ void generateToAir(Procedure& procedure)
     eliminateDeadCode(procedure);
     if (Options::useB3CanonicalizePrePostIncrements() && procedure.optLevel() >= 2)
         canonicalizePrePostIncrements(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+    rematerializeStackAddresses(procedure);
+#endif
 
     // FIXME: We should run pureCSE here to clean up some platform specific changes from the previous phases.
     // https://bugs.webkit.org/show_bug.cgi?id=164873
