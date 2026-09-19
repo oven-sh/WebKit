@@ -2302,7 +2302,7 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFormalParameters(TreeB
             break;
         
         if (consume(DOTDOTDOT)) {
-            semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a parameter name in an async function");
+            semanticFailIfTrue(isDisallowedIdentifierAwait(m_token), "Cannot use 'await' as a parameter name ", disallowedIdentifierAwaitReason());
             TreeDestructuringPattern destructuringPattern = parseDestructuringPattern(context, DestructuringKind::DestructureToParameters, ExportType::NotExported, &duplicateParameter, &hasDestructuringPattern);
             propagateError();
             parameter = context.createRestParameter(destructuringPattern, restParameterStart);
@@ -2592,10 +2592,11 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     Scope* parentScope = currentScope();
 
     // ArrowParameters[?Yield, ?Await]: the parameters of an arrow function in a generator are parsed with [+Yield], and those
-    // of an arrow function in an async function with [+Await], see below.
+    // of an arrow function in an async function or in a class static block (ClassStaticBlockStatementList is [+Await]) with
+    // [+Await], see below.
     const bool isArrowFunctionMode = SourceParseModeSet(SourceParseMode::ArrowFunctionMode, SourceParseMode::AsyncArrowFunctionMode).contains(mode);
     const bool parseArrowParametersAsGenerator = isArrowFunctionMode && parentScope->isGeneratorFunction();
-    const bool parseArrowParametersAsAsync = isArrowFunctionMode && (parentScope->isAsyncFunction() || isAsyncFunctionParseMode(mode));
+    const bool parseArrowParametersAsAsync = isArrowFunctionMode && (parentScope->isAsyncFunction() || parentScope->isStaticBlock() || isAsyncFunctionParseMode(mode));
 
     bool functionNameIsAwait = isPossiblyEscapedAwait(m_token);
     const char* isDisallowedAwaitFunctionNameReason = functionNameIsAwait && !canUseIdentifierAwait() ? disallowedIdentifierAwaitReason() : nullptr;

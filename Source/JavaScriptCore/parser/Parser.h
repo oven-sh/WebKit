@@ -1998,10 +1998,18 @@ private:
 
     const char* disallowedIdentifierAwaitReason()
     {
-        if (!m_parserState.allowAwait || currentScope()->isAsyncFunction())
-            return "in an async function";
         if (currentScope()->isStaticBlock())
             return "in a static block";
+        if (!m_parserState.allowAwait) {
+            // allowAwait is cleared for the parameters of an async function, and for those of an arrow
+            // function in an async function or in a static block (see parseFunctionInfo).
+            Scope* enclosingScope = currentFunctionScope()->containingScope();
+            if (!currentScope()->isAsyncFunction() && enclosingScope && enclosingScope->isStaticBlock())
+                return "in a static block";
+            return "in an async function";
+        }
+        if (currentScope()->isAsyncFunction())
+            return "in an async function";
         if (m_scriptMode == JSParserScriptMode::Module)
             return "in a module";
         RELEASE_ASSERT_NOT_REACHED();
