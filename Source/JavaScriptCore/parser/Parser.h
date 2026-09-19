@@ -1969,14 +1969,9 @@ private:
         return false;
     }
 
-    // Only asked at a `yield` token.
     ALWAYS_INLINE bool canUseIdentifierYield()
     {
-        if (strictMode() || currentScope()->isGeneratorFunction())
-            return false;
-        // parseFunctionInfo() needs to know when this happens in the parameters of an arrow function.
-        m_seenYieldAsIdentifier = true;
-        return true;
+        return !strictMode() && !currentScope()->isGeneratorFunction();
     }
 
     bool matchAllowedEscapedContextualKeyword()
@@ -2155,7 +2150,7 @@ private:
     bool m_seenTaggedTemplateInNonReparsingFunctionMode { false };
     bool m_seenPrivateNameUseInNonReparsingFunctionMode { false };
     bool m_seenArgumentsDotLength { false };
-    bool m_seenYieldAsIdentifier { false };
+    bool m_seenYieldAsIdentifier { false }; // `yield` was bound or referenced, not only a property name. See parseFunctionInfo().
     bool m_parsingBuiltin;
     bool m_isEvalContext;
     JSTextPosition m_lastTokenEndPosition; // on a later line than m_lastTokenLocation when that token is a template literal

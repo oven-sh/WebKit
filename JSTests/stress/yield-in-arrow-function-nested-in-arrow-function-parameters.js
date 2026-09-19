@@ -37,6 +37,8 @@ function shouldParse(source) {
 const parameterName = "Cannot use 'yield' as a parameter name in a generator function.";
 const yieldExpression = "Unexpected keyword 'yield'. Cannot use yield expression out of generator.";
 const shorthand = "Cannot use abbreviated destructuring syntax for keyword 'yield'.";
+const shorthandProperty = "Cannot use 'yield' as a shorthand property name in a generator function.";
+const escaped = "Unexpected escaped characters in keyword token: 'yi\\u0065ld'";
 
 // [text before the expression, text after it]. The messages below are those of the first one.
 const generators = [
@@ -75,6 +77,12 @@ const invalid = [
     ["(...[a = (yield) => 1]) => a", parameterName],
     ["async (a = (yield) => 1) => a", parameterName],
     ["async ({ a = (b = yield) => b }) => a", yieldExpression],
+    // Other ways to use `yield` as an identifier.
+    ["(a = (b = { yield }) => b) => a", shorthandProperty],
+    ["(a = (b = ({ yield } = { })) => b) => a", shorthandProperty],
+    ["(a = (b = [yield] = []) => b) => a", yieldExpression],
+    ["(a = (yi\\u0065ld) => 1) => a", escaped],
+    ["(a = (b = yi\\u0065ld) => b) => a", escaped],
     // Deeper.
     ["(a = (b = (yield) => 1) => b) => a", parameterName],
     ["(a = (b = (c = yield) => c) => b) => a", yieldExpression],
@@ -108,6 +116,13 @@ const valid = [
     "(a = function () { (b = (yield) => 1) => b; }) => a",
     "(a = function* () { yield 1; }) => a",
     "(a = { yield: 1 }.yield) => a",
+    // `yield` as a property name is not an identifier.
+    "(a = ({ yield: b }) => b) => a",
+    "(a = ({ yield: b = 1 }, c = (d = b) => d) => c) => a",
+    "(a = (b = { yield: 1, get yield() { return 1; }, set yield(v) { }, yield() { } }) => b) => a",
+    "(a = (b = ({ yield: c } = { })) => b) => a",
+    "(a = (b = c.yield) => b) => a",
+    "(a = (b = function yield() { }) => b) => a",
     "({ x = 1 }, a = (b = (c = 1) => c) => b) => a",
     "[a = (b = (c = 1) => c)] = []",
 ];
@@ -166,6 +181,24 @@ for (const [expression, , neverValid] of invalid) {
             fullGC();
         shouldBe(arrow({ })()(), 1111, "captured variables");
         shouldBe(arrow({ x: 2 })()(), 1112, "captured variables");
+    }
+
+    // A generator still takes a valid arrow function from the cache: one with `yield` as a property name only, and one with
+    // no `yield` at all. This shows in what the default value reads. It reads N of the generator, and the body declares an N
+    // of its own. With the item the generator knows that its N is captured. When the parser has to parse the arrow function
+    // to get there, the generator does not know it (a bug of that parse), and N is not defined.
+    if (jscOptions().useSourceProviderCache) {
+        function* yieldAsPropertyName() {
+            let N = 40;
+            return ({ x = 1 }, a = ({ yield: b } = { yield: N }) => { var N = 7; return b; }) => a;
+        }
+        shouldBe(yieldAsPropertyName().next().value({ })(), 40, "yield as a property name in a pattern");
+
+        function* noYield() {
+            let N = 40;
+            return ({ x = 1 }, a = (b = N + x) => { var N = 7; return b; }) => a;
+        }
+        shouldBe(noYield().next().value({ })(), 41, "a default value that reads a variable that the body declares again");
     }
 
     class Base {

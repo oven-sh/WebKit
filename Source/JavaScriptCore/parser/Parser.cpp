@@ -1115,6 +1115,9 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::createB
     
     ASSERT(name.impl()->isAtom() || name.impl()->isSymbol());
 
+    if (name == m_vm.propertyNames->yieldKeyword) [[unlikely]]
+        m_seenYieldAsIdentifier = true;
+
     switch (kind) {
     case DestructuringKind::DestructureToVariables: {
         DeclarationResultMask declarationResult = declareVariable(&name);
@@ -4766,6 +4769,8 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
+            if (*ident == m_vm.propertyNames->yieldKeyword) [[unlikely]]
+                m_seenYieldAsIdentifier = true;
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
@@ -5363,16 +5368,21 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
     case BACKQUOTE:
         return parseTemplateLiteral(context, LexerType::RawStringsBuildMode::DontBuildRawStrings);
     case YIELD:
-        if (canUseIdentifierYield()) [[likely]]
+        if (canUseIdentifierYield()) [[likely]] {
+            m_seenYieldAsIdentifier = true;
             goto identifierExpression;
+        }
         failDueToUnexpectedToken();
     case LET:
         if (!strictMode()) [[likely]]
             goto identifierExpression;
         failDueToUnexpectedToken();
     case ESCAPED_KEYWORD:
-        if (matchAllowedEscapedContextualKeyword()) [[likely]]
+        if (matchAllowedEscapedContextualKeyword()) [[likely]] {
+            if (*m_token.m_data.ident == m_vm.propertyNames->yieldKeyword)
+                m_seenYieldAsIdentifier = true;
             goto identifierExpression;
+        }
         [[fallthrough]];
     default:
         failDueToUnexpectedToken();
