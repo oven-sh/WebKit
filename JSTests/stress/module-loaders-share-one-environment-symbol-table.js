@@ -1,7 +1,6 @@
 //@ defaultRun
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=0")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useCodeRecoveryFromBytecodeCache=0")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useRunOnceCodeRelease=0")
 
 // Records of several module loaders share one ModuleProgramExecutable, its function declarations' executables and with

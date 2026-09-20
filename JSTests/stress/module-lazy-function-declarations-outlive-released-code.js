@@ -1,13 +1,11 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=1")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=1", "--useCodeRecoveryFromBytecodeCache=0")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=1", "--useRunOnceCodeRelease=0")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=1", "--useLeanBytecodeCacheDecoder=0")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=0")
 //@ runBytecodeCache("--useLazyModuleFunctionDeclarations=1")
 
 // A module's function declarations that nobody has read yet stay in the bytecode cache payload
 // (useLazyModuleFunctionDeclarations), and the module's code is let go of once its body has run, the unlinked code too
-// when it can be decoded again from a persistent payload (useRunOnceCodeRelease, useCodeRecoveryFromBytecodeCache). The
+// when it can be decoded again from a persistent payload (useRunOnceCodeRelease). The
 // module record must not be what keeps the UnlinkedModuleProgramCodeBlock alive for the sake of those declarations,
 // and reading one later has to work without it.
 
@@ -18,8 +16,8 @@ function assert(condition, message) {
 
 const options = jscOptions();
 const staysInterpreted = options.useLLInt && options.thresholdForJITAfterWarmUp >= 100 && options.thresholdForJITSoon >= 100;
-const releasesUnlinkedCode = staysInterpreted && options.useRunOnceCodeRelease && options.useCodeRecoveryFromBytecodeCache && options.useLeanBytecodeCacheDecoder
-    && options.useBorrowedBytecodeFromCache && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
+const releasesUnlinkedCode = staysInterpreted && options.useRunOnceCodeRelease
+    && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
 
 async function test() {
     const lib = await import("./resources/module-lazy-declarations-released-code/lib.js");
