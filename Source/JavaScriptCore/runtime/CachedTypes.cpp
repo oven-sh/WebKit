@@ -196,22 +196,21 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
         }
     }
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::useFastCachedAtoms()) {
-        uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
-        AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
-        if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
-            auto cached = entry->span8();
-            if (cached[0] == characters[0] && cached[1] == characters[1] && (length == 2 || cached[2] == characters[2])) [[likely]]
-                return *entry;
-        }
-        Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
-        atom->ref();
-        if (AtomStringImpl* evicted = std::exchange(entry, atom.ptr()))
-            evicted->deref();
-        return atom;
+    uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
+    AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
+    if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
+        auto cached = entry->span8();
+        if (cached[0] == characters[0] && cached[1] == characters[1] && (length == 2 || cached[2] == characters[2])) [[likely]]
+            return *entry;
     }
-#endif
+    Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
+    atom->ref();
+    if (AtomStringImpl* evicted = std::exchange(entry, atom.ptr()))
+        evicted->deref();
+    return atom;
+#else
     return AtomStringImpl::add(characters).releaseNonNull();
+#endif
 }
 
 String Decoder::stringForInlineString(std::span<const uint8_t, 4> slot)
@@ -340,7 +339,7 @@ Ref<StringImpl> DecoderStringTable::createImpl(const Record& r)
         : create(std::span<const char16_t> { std::bit_cast<const char16_t*>(r.characters), r.length });
 #if USE(BUN_JSC_ADDITIONS)
     // The hash a later atomFor promotion, property-key use or map insert would otherwise compute over the characters.
-    if (Options::useFastCachedAtoms() && AtomStringImpl::isValidPrecomputedHash(r.hash))
+    if (AtomStringImpl::isValidPrecomputedHash(r.hash))
         AtomStringImpl::adoptPrecomputedHash(result, r.hash);
 #endif
     return result;
@@ -376,10 +375,10 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
     if (characters.size() >= 48) {
 #if USE(BUN_JSC_ADDITIONS)
-        if (Options::useFastCachedAtoms()) // probes with the stored hash; allocates (a header only) just for a new atom
-            return AtomStringImpl::addWithoutCopying(hashed);
-#endif
+        return AtomStringImpl::addWithoutCopying(hashed); // probes with the stored hash; allocates (a header only) just for a new atom
+#else
         return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
+#endif
     }
     return AtomStringImpl::add(hashed).releaseNonNull();
 }
@@ -387,8 +386,6 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
 const DecoderStringTable* Decoder::stringsToPrefetch()
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (!Options::useFastCachedAtoms())
-        return nullptr;
     if (!m_lookedUpExternalStrings) [[unlikely]] { // ahead of externalStrings(), so that a Decoder's first (usually biggest) block is covered too
         m_lookedUpExternalStrings = true;
         if (!m_externalStrings)
@@ -1054,7 +1051,7 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
     , m_canDeferIntoPayload(m_cachedBytecode->payloadIsOwnedOrPersistent())
-    , m_canBorrowPayload(Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent())
+    , m_canBorrowPayload(m_cachedBytecode->payloadIsPersistent())
 #endif
 {
 }
@@ -1077,9 +1074,7 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
 {
     Ref decoder = adoptRef(*new Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider)));
 #if USE(BUN_JSC_ADDITIONS)
-    // Not without the lean decoder: the other one remembers the cells it decoded by their record's offset and would hand
-    // out a dropped code block again.
-    if (recoverableCode == RecoverableCode::Yes && Options::useCodeRecoveryFromBytecodeCache() && Options::useLeanBytecodeCacheDecoder() && decoder->m_provider && decoder->canBorrowPayload()) {
+    if (recoverableCode == RecoverableCode::Yes && decoder->m_provider && decoder->canBorrowPayload()) {
         auto& payloads = vm.persistentBytecodePayloads();
         if (uint16_t index = payloads.indexFor(decoder->m_cachedBytecode.get(), *decoder->m_provider)) {
             decoder->m_persistentPayloadIndex = index;
@@ -1120,10 +1115,11 @@ void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, pt
 {
 #if USE(BUN_JSC_ADDITIONS)
     // Only CachedBytecode::addFunctionUpdate reads this map, and Bun never calls it.
-    if (Options::useLeanBytecodeCacheDecoder())
-        return;
-#endif
+    UNUSED_PARAM(executable);
+    UNUSED_PARAM(offset);
+#else
     m_cachedBytecode->leafExecutables().add(executable, offset);
+#endif
 }
 
 template<typename Functor>
@@ -1429,10 +1425,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
         if constexpr (isSingleOwnerCachedType<T>) {
-            if (Options::useLeanBytecodeCacheDecoder()) {
-                isNewAllocation = true;
-                return get()->decode(decoder, std::forward<Args>(args)...);
-            }
+            isNewAllocation = true;
+            return get()->decode(decoder, std::forward<Args>(args)...);
         }
 #endif
 
@@ -1487,17 +1481,15 @@ public:
     {
 #if USE(BUN_JSC_ADDITIONS)
         if constexpr (isCanonicalCachedType<T>) {
-            if (Options::useLeanBytecodeCacheDecoder()) {
-                if (m_ptr.isEmpty())
-                    return nullptr;
-                if constexpr (CachedPtr<T, Source>::holdsString) {
-                    if (m_ptr.hasInlineString())
-                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
-                    if (m_ptr.hasExternalString())
-                        return adoptRef<Source, PtrTraits>(static_cast<Source*>(&decoder.atomForExternalString(m_ptr.externalStringOrdinal()).leakRef()));
-                }
-                return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
+            if (m_ptr.isEmpty())
+                return nullptr;
+            if constexpr (CachedPtr<T, Source>::holdsString) {
+                if (m_ptr.hasInlineString())
+                    return adoptRef<Source, PtrTraits>(static_cast<Source*>(&m_ptr.inlineString(decoder).leakRef()));
+                if (m_ptr.hasExternalString())
+                    return adoptRef<Source, PtrTraits>(static_cast<Source*>(&decoder.atomForExternalString(m_ptr.externalStringOrdinal()).leakRef()));
             }
+            return adoptRef<Source, PtrTraits>(m_ptr.get()->decode(decoder));
         }
 #endif
         bool isNewAllocation;
@@ -1904,15 +1896,14 @@ public:
             if (!m_isSymbol) {
                 RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
-                // only allocate the StringImpl header (with useFastCachedAtoms, only once the stored-hash probe found no atom).
+                // only allocate the StringImpl header, and only once the stored-hash probe found no atom.
                 WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
                 if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload()) {
 #if USE(BUN_JSC_ADDITIONS)
-                    if (Options::useFastCachedAtoms())
-                        atom = AtomStringImpl::addWithoutCopying(hashed);
-                    else
-#endif
+                    atom = AtomStringImpl::addWithoutCopying(hashed);
+#else
                         atom = AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(buffer) });
+#endif
                 } else
                     atom = AtomStringImpl::add(hashed);
                 if (m_ordinal != noOrdinal)
@@ -2572,7 +2563,7 @@ public:
     {
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
 #if USE(BUN_JSC_ADDITIONS)
-        if (Options::useLazySymbolTableConstants() && decoder.canDeferIntoPayload() && m_map.entryCount())
+        if (decoder.canDeferIntoPayload() && m_map.entryCount())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
         else
 #endif
@@ -4033,8 +4024,6 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(scalars.numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(scalars.numUnaryArithProfiles);
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
-    if (!Options::useLazyUnlinkedValueAndArrayProfiles())
-        ensureValueAndArrayProfiles();
 }
 
 template<typename CodeBlockType>
@@ -4070,7 +4059,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #if USE(BUN_JSC_ADDITIONS)
     // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
     // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-    if (Options::useLazyCachedExpressionInfo() && decoder.canBorrowPayload())
+    if (decoder.canBorrowPayload())
         codeBlock.m_cachedExpressionInfo = m_expressionInfo.operator->();
     else
 #endif
@@ -4534,7 +4523,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_unlinkedCodeBlockForConstruct()
     , m_members(nullptr)
 {
-    bool defer = Options::useThinChildExecutables() && decoder.canDeferIntoPayload();
+    bool defer = decoder.canDeferIntoPayload();
     CachedFunctionExecutable::View v = cachedExecutable.view(defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;

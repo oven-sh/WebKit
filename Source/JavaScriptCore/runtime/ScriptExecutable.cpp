@@ -82,7 +82,7 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
     auto clearGlobalCode = [&](GlobalExecutable* executable, bool canDecodeAgain) {
         executable->m_codeBlock.clear();
         UnlinkedCodeBlock* unlinkedCodeBlock = executable->m_unlinkedCodeBlock.get();
-        if (mode == ClearCode::All || (canDecodeAgain && unlinkedCodeBlock && unlinkedCodeBlock->cachedPayloadIndex() && Options::useCodeRecoveryFromBytecodeCache()))
+        if (mode == ClearCode::All || (canDecodeAgain && unlinkedCodeBlock && unlinkedCodeBlock->cachedPayloadIndex()))
             executable->m_unlinkedCodeBlock.clear();
     };
 

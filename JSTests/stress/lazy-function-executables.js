@@ -1,4 +1,4 @@
-// Options::useLazyFunctionExecutables() / Options::useThinChildExecutables() (both default on): a CodeBlock creates a
+// Options::useLazyFunctionExecutables() (default on) and executables decoded thin from a bytecode cache: a CodeBlock creates a
 // function's FunctionExecutable at its first new_func*, and a function decoded from the bytecode cache keeps its name and
 // end positions in the cache until introspection. The default modes run this from source and (bytecode-cache) from a cache.
 

@@ -135,7 +135,7 @@ public:
     String stringFor(uint32_t ordinal) const;
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
-    // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
+    // Unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
     // header, or slot -> offsets[] -> record -> atom-table bucket) and jsStringFor's miss is three. A caller about to
     // resolve a run of ordinals makes one pass per hop over the run first; each pass is a burst of independent loads, so
     // its misses overlap instead of queueing behind each other inside the decode:
@@ -247,8 +247,8 @@ public:
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     JSString* jsStringForExternalString(uint32_t ordinal);
     String stringForExternalString(uint32_t ordinal); // DecoderStringTable::stringFor
-    // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
-    // names a table string still fails in atomForExternalString, not here).
+    // See DecoderStringTable::prefetchSlot. Null with no embedder table (a payload that then names a table string still
+    // fails in atomForExternalString, not here).
     const DecoderStringTable* stringsToPrefetch();
 
     ~Decoder();
@@ -325,11 +325,11 @@ JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionC
 // The same, given the offset of the code block's own record (UnlinkedCodeBlock::cachedRecordOffset()) instead of its owner's slot.
 void decodeFunctionCodeBlockFromRecord(Decoder&, uint32_t recordOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
-// Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
+// Fill in the entries of a SymbolTable whose CachedSymbolTable record was left
 // undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.
 void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
-// Options::useLazyCachedExpressionInfo(): the ExpressionInfo for a CachedExpressionInfo record left unread in a persistent
-// payload that ends `payloadBytesLeft` past it (UnlinkedCodeBlock::expressionInfo). Any thread; allocates no GC cells.
+// The ExpressionInfo for a CachedExpressionInfo record left unread in a persistent payload (UnlinkedCodeBlock::expressionInfo).
+// Any thread; allocates no GC cells.
 std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);

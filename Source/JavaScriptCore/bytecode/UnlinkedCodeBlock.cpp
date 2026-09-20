@@ -376,8 +376,6 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
 
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(numUnaryArithProfiles);
-    if (!Options::useLazyUnlinkedValueAndArrayProfiles())
-        ensureValueAndArrayProfiles();
 }
 
 void UnlinkedCodeBlock::ensureValueAndArrayProfiles()

@@ -170,9 +170,9 @@ public:
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
-    // Decoded on first use when the block came from a persistent bytecode cache (Options::useLazyCachedExpressionInfo()).
+    // Decoded on first use when the block came from a persistent bytecode cache.
     // Any thread, including the collector's end phase (ErrorInstance::computeErrorInfo): the first call takes m_lock
-    // around a bounds-checked read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
+    // around a read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
     ExpressionInfo& expressionInfo()
     {
         if (m_expressionInfo) [[likely]]

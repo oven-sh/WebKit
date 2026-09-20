@@ -1,5 +1,4 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useCodeRecoveryFromBytecodeCache=0")
 
 // VM::persistentBytecodePayloads() keeps a slot per payload and SourceProvider for as long as code decoded from it, or a
 // Decoder for it, is alive, and no longer: a program that loads the same file again and again (each load is a new
