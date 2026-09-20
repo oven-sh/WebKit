@@ -235,8 +235,6 @@ public:
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
-    bool payloadContains(const void* start, size_t size) const;
-    std::span<const uint8_t> payloadSpan() const;
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
@@ -329,7 +327,7 @@ void decodeFunctionCodeBlockFromRecord(Decoder&, uint32_t recordOffset, WriteBar
 void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
 // Options::useLazyCachedExpressionInfo(): the ExpressionInfo for a CachedExpressionInfo record left unread in a persistent
 // payload that ends `payloadBytesLeft` past it (UnlinkedCodeBlock::expressionInfo). Any thread; allocates no GC cells.
-std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft);
+std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

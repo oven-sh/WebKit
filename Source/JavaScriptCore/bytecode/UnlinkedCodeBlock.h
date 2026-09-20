@@ -535,7 +535,6 @@ private:
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
-    uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
     uint32_t m_cachedRecordOffset { 0 }; // of this block's own record in that payload, while m_cachedPayloadIndex is set
     std::unique_ptr<ValueAndArrayProfiles> m_valueAndArrayProfiles;
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;

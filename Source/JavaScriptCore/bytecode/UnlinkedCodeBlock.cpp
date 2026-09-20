@@ -175,7 +175,7 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     ConcurrentJSLocker locker(m_lock);
     if (!m_expressionInfo) {
         RELEASE_ASSERT(m_cachedExpressionInfo);
-        std::unique_ptr<ExpressionInfo> expressionInfo = decodeBorrowedExpressionInfo(m_cachedExpressionInfo, m_cachedExpressionInfoBytes);
+        std::unique_ptr<ExpressionInfo> expressionInfo = decodeBorrowedExpressionInfo(m_cachedExpressionInfo);
         WTF::storeStoreFence(); // expressionInfo() and visitChildren read m_expressionInfo without m_lock
         m_expressionInfo = WTF::move(expressionInfo);
     }
