@@ -358,8 +358,10 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
 }
 
 template <typename LexerType>
-template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context)
+template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context, bool& isArrowFunctionWithInvalidParameters)
 {
+    isArrowFunctionWithInvalidParameters = false;
+
     if (match(OPENPAREN)) {
         SavePoint saveArrowFunctionPoint = createSavePoint(context);
         next();
@@ -367,19 +369,49 @@ template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(T
         if (consume(CLOSEPAREN))
             isArrowFunction = match(ARROWFUNCTION);
         else {
-            SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
-            // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
-            AutoPopScope fakeScope(this, pushScope());
+            auto parseParameters = [&](bool parseAsGeneratorFunction) {
+                SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
+                // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
+                AutoPopScope fakeScope(this, pushScope());
 
-            fakeScope->setSourceParseMode(SourceParseMode::ArrowFunctionMode);
-            resetImplementationVisibilityIfNeeded();
+                fakeScope->setSourceParseMode(SourceParseMode::ArrowFunctionMode);
+                resetImplementationVisibilityIfNeeded();
 
-            unsigned parametersCount = 0;
-            bool isArrowFunctionParameterList = true;
-            bool isMethod = false;
-            isArrowFunction = parseFormalParameters(syntaxChecker, syntaxChecker.createFormalParameterList(), isArrowFunctionParameterList, isMethod, parametersCount) && consume(CLOSEPAREN) && match(ARROWFUNCTION);
-            propagateError();
-            popScope(fakeScope, syntaxChecker.NeedsFreeVariableInfo);
+                unsigned parametersCount = 0;
+                bool isArrowFunctionParameterList = true;
+                bool isMethod = false;
+                bool result;
+                {
+                    Scope::MaybeParseAsGeneratorFunctionForScope parseAsGenerator(fakeScope.scope(), parseAsGeneratorFunction);
+                    result = parseFormalParameters(syntaxChecker, syntaxChecker.createFormalParameterList(), isArrowFunctionParameterList, isMethod, parametersCount) && consume(CLOSEPAREN) && match(ARROWFUNCTION);
+                }
+                if (hasError())
+                    return false;
+                popScope(fakeScope, syntaxChecker.NeedsFreeVariableInfo);
+                return result;
+            };
+
+            // parseFunctionInfo() parses these parameters with [+Yield] parameterization in a generator, and so does this. The two
+            // have to agree on what the parameters can hold: a function in them goes to the SourceProviderCache from here, and
+            // parseFunctionInfo() skips it from there.
+            bool parseAsGeneratorFunction = currentScope()->isGeneratorFunction();
+            isArrowFunction = parseParameters(parseAsGeneratorFunction);
+            if (hasError()) {
+                if (!parseAsGeneratorFunction)
+                    return false;
+
+                // When [+Yield] is all that is wrong, the text is an arrow function, and this error says what is wrong with it.
+                // The caller has another one, from the text as an expression, which it is not.
+                SavePointWithError parametersError = swapSavePointForError(context, saveArrowFunctionPoint);
+                next();
+                bool isArrowFunctionWithoutYield = parseParameters(false);
+                propagateError();
+                if (isArrowFunctionWithoutYield) {
+                    restoreSavePointWithError(context, parametersError);
+                    isArrowFunctionWithInvalidParameters = true;
+                    return false;
+                }
+            }
         }
         restoreSavePoint(context, saveArrowFunctionPoint);
         return isArrowFunction;
@@ -1114,9 +1146,6 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::createB
     ASSERT(!name.isNull());
     
     ASSERT(name.impl()->isAtom() || name.impl()->isSymbol());
-
-    if (name == m_vm.propertyNames->yieldKeyword) [[unlikely]]
-        m_seenYieldAsIdentifier = true;
 
     switch (kind) {
     case DestructuringKind::DestructureToVariables: {
@@ -2616,16 +2645,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         m_seenTaggedTemplateInNonReparsingFunctionMode |= enclosingCodeContainsTaggedTemplate;
     });
 
-    // ArrowParameters[?Yield]: in the parameters of an arrow function, `yield` is an identifier only where [Yield] is off. It is always
-    // off in the scope of isArrowFunctionParameters(), and on below in a generator. So the same arrow function can be valid in one parse
-    // and an error in the next, where its item in the SourceProviderCache would skip it. The item says that the arrow function, or one in
-    // its parameters, has such a `yield`, and a generator does not use it.
-    bool enclosingCodeSawYieldAsIdentifier = std::exchange(m_seenYieldAsIdentifier, false);
-    bool arrowParametersUseYieldAsIdentifier = false;
-    auto propagateYieldAsIdentifier = makeScopeExit([&] {
-        m_seenYieldAsIdentifier = enclosingCodeSawYieldAsIdentifier || arrowParametersUseYieldAsIdentifier;
-    });
-
     auto tryLoadCachedFunction = [&] () -> bool {
         if (!Options::useSourceProviderCache()) [[unlikely]]
             return false;
@@ -2638,11 +2657,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
         // If we know about this function already, we can use the cached info and skip the parser to the end of the function.
         if (const SourceProviderCacheItem* cachedInfo = TreeBuilder::CanUseFunctionCache ? findCachedFunctionInfo(parametersStart) : nullptr) {
-            // Not valid here. Parse the arrow function again for the error, as without the cache.
-            if (cachedInfo->arrowParametersUseYieldAsIdentifier && parentScope->isGeneratorFunction())
-                return false;
-            arrowParametersUseYieldAsIdentifier = cachedInfo->arrowParametersUseYieldAsIdentifier;
-
             // If we're in a strict context, the cached function info must say it was strict too.
             ASSERT(!strictMode() || (cachedInfo->lexicallyScopedFeatures() & StrictModeLexicallyScopedFeature));
             JSTokenLocation endLocation;
@@ -2736,7 +2750,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
-        arrowParametersUseYieldAsIdentifier = m_seenYieldAsIdentifier;
 
         matchOrFail(ARROWFUNCTION, "Expected a '=>' after arrow function parameter declaration");
 
@@ -2926,7 +2939,6 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         parameters.expectedSuperBinding = expectedSuperBinding;
         parameters.implementationVisibility = implementationVisibility;
         parameters.containsTaggedTemplate = m_seenTaggedTemplateInNonReparsingFunctionMode;
-        parameters.arrowParametersUseYieldAsIdentifier = arrowParametersUseYieldAsIdentifier;
         if (functionBodyType == ArrowFunctionBodyExpression) {
             parameters.isBodyArrowExpression = true;
             parameters.tokenType = m_token.m_type;
@@ -4354,7 +4366,8 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
         }
     }
 
-    if (isArrowFunctionParameters(context)) {
+    bool isArrowFunctionWithInvalidParameters = false;
+    if (isArrowFunctionParameters(context, isArrowFunctionWithInvalidParameters)) {
         if (wasOpenParen)
             currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
         shouldReturnResult = true;
@@ -4363,7 +4376,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
 
     // The reason why we use propagateError only when isArrowFunctionToken = true is that
     // this can produce better error message than restoring it to errorRestorationSavePoint.
-    if (isArrowFunctionToken && hasError()) [[unlikely]] {
+    if ((isArrowFunctionToken || isArrowFunctionWithInvalidParameters) && hasError()) [[unlikely]] {
         shouldReturnResult = true;
         return 0;
     }
@@ -4769,9 +4782,6 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
-            // Not the escaped keyword: the check above lets it through in a generator too.
-            if (identToken.m_type == YIELD) [[unlikely]]
-                m_seenYieldAsIdentifier = true;
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
@@ -5369,21 +5379,16 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
     case BACKQUOTE:
         return parseTemplateLiteral(context, LexerType::RawStringsBuildMode::DontBuildRawStrings);
     case YIELD:
-        if (canUseIdentifierYield()) [[likely]] {
-            m_seenYieldAsIdentifier = true;
+        if (canUseIdentifierYield()) [[likely]]
             goto identifierExpression;
-        }
         failDueToUnexpectedToken();
     case LET:
         if (!strictMode()) [[likely]]
             goto identifierExpression;
         failDueToUnexpectedToken();
     case ESCAPED_KEYWORD:
-        if (matchAllowedEscapedContextualKeyword()) [[likely]] {
-            if (*m_token.m_data.ident == m_vm.propertyNames->yieldKeyword)
-                m_seenYieldAsIdentifier = true;
+        if (matchAllowedEscapedContextualKeyword()) [[likely]]
             goto identifierExpression;
-        }
         [[fallthrough]];
     default:
         failDueToUnexpectedToken();

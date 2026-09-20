@@ -1,11 +1,11 @@
 // The parameters of an arrow function in a generator are parsed with [+Yield]: `yield` is not an identifier in them, and a
 // YieldExpression is an early error. That holds for an arrow function in the parameters of another arrow function too.
 //
-// The parser first reads "( ... )" as an expression. To see that it is a parameter list it parses it again, in a scope
-// that is never a generator, and an arrow function in there goes to the source provider cache with `yield` as an
-// identifier. The parse that knows about the generator then skipped that arrow function from the cache, so all of the
-// code below that must throw was accepted. It was always rejected with --useSourceProviderCache=false, and the messages
-// here are the ones that run gives.
+// The parser first reads "( ... )" as an expression. To see that it is a parameter list it parses it again in a scope
+// that it throws away. That scope was never a generator, so an arrow function in there went to the source provider cache
+// with `yield` as an identifier. The parse that knows about the generator then skipped that arrow function from the
+// cache, so all of the code below that must throw was accepted. It was always rejected with
+// --useSourceProviderCache=false, and the messages here are the ones that run gives.
 
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
@@ -83,6 +83,11 @@ const invalid = [
     ["(a = (b = [yield] = []) => b) => a", yieldExpression],
     ["(a = (yi\\u0065ld) => 1) => a", escaped],
     ["(a = (b = yi\\u0065ld) => b) => a", escaped],
+    // The name of a generator expression. With the escape it was an error only where the code around it is a generator.
+    ["(a = (b = function* yi\\u0065ld() { }) => b) => a", escaped, true],
+    // An error before and after, but the message is another one now: the parameters are parsed as in a generator earlier.
+    ["(a = async yield => 1) => a", undefined],
+    ["(a = class { [yield]() { } }) => a", undefined, true],
     // Deeper.
     ["(a = (b = (yield) => 1) => b) => a", parameterName],
     ["(a = (b = (c = yield) => c) => b) => a", yieldExpression],
@@ -145,8 +150,7 @@ for (const [expression, , neverValid] of invalid) {
     shouldThrowSyntaxError(`(function () { "use strict"; (${expression}); })`);
 }
 
-// The arrow functions do what they say. One with `yield` as an identifier in its parameters still has its item in the source
-// provider cache. Only a generator does not use it.
+// The arrow functions do what they say.
 {
     const f = (a = (yield) => yield + 1) => a;
     shouldBe(f()(41), 42, "yield as a parameter name");
@@ -183,10 +187,10 @@ for (const [expression, , neverValid] of invalid) {
         shouldBe(arrow({ x: 2 })()(), 1112, "captured variables");
     }
 
-    // A generator still takes a valid arrow function from the cache: one with `yield` as a property name only, and one with
-    // no `yield` at all. This shows in what the default value reads. It reads N of the generator, and the body declares an N
-    // of its own. With the item the generator knows that its N is captured. When the parser has to parse the arrow function
-    // to get there, the generator does not know it (a bug of that parse), and N is not defined.
+    // The parser still takes a valid arrow function in a generator from the cache: one with `yield` as a property name only,
+    // and one with no `yield` at all. This shows in what the default value reads. It reads N of the generator, and the body
+    // declares an N of its own. With the item the generator knows that its N is captured. When the parser has to parse the
+    // arrow function to get there, the generator does not know it (a bug of that parse), and N is not defined.
     if (jscOptions().useSourceProviderCache) {
         function* yieldAsPropertyName() {
             let N = 40;

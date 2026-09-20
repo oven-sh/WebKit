@@ -1871,7 +1871,7 @@ private:
     enum class FunctionDefinitionType { Expression, Declaration, Method };
     template <class TreeBuilder> NEVER_INLINE bool parseFunctionInfo(TreeBuilder&, FunctionNameRequirements, bool nameIsInContainingScope, ConstructorKind, SuperBinding, unsigned functionStart, ParserFunctionInfo<TreeBuilder>&, FunctionDefinitionType, std::optional<int> functionConstructorParametersEndPosition = std::nullopt);
     
-    template <class TreeBuilder> ALWAYS_INLINE bool isArrowFunctionParameters(TreeBuilder&);
+    template <class TreeBuilder> ALWAYS_INLINE bool isArrowFunctionParameters(TreeBuilder&, bool& isArrowFunctionWithInvalidParameters);
     
     template <class TreeBuilder, class FunctionInfoType> NEVER_INLINE typename TreeBuilder::FormalParameterList parseFunctionParameters(TreeBuilder&, FunctionInfoType&);
     template <class TreeBuilder> NEVER_INLINE typename TreeBuilder::FormalParameterList createGeneratorParameters(TreeBuilder&, unsigned& parameterCount);
@@ -2150,7 +2150,6 @@ private:
     bool m_seenTaggedTemplateInNonReparsingFunctionMode { false };
     bool m_seenPrivateNameUseInNonReparsingFunctionMode { false };
     bool m_seenArgumentsDotLength { false };
-    bool m_seenYieldAsIdentifier { false }; // `yield` was bound or referenced, not only a property name. See parseFunctionInfo().
     bool m_parsingBuiltin;
     bool m_isEvalContext;
     JSTextPosition m_lastTokenEndPosition; // on a later line than m_lastTokenLocation when that token is a template literal
