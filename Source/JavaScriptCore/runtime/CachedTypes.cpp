@@ -903,17 +903,22 @@ public:
     };
     bool arraySharingEnabled() const { return m_arraySharingEnabled; }
 
-    RefPtr<CachedBytecode> release(BytecodeCacheError& error)
+    RefPtr<CachedBytecode> release(BytecodeCacheError& error, uint32_t* payloadSizeSlot = nullptr)
     {
         if (!m_currentPage)
             return nullptr;
         m_currentPage->alignEnd();
 
+        size_t size = m_baseOffset + m_currentPage->size();
+        if (payloadSizeSlot) {
+            RELEASE_ASSERT(size <= std::numeric_limits<uint32_t>::max());
+            *payloadSizeSlot = static_cast<uint32_t>(size);
+        }
+
         if (m_fileHandle) {
             return releaseMapped(error);
         }
 
-        size_t size = m_baseOffset + m_currentPage->size();
         auto buffer = MallocSpan<uint8_t, VMMalloc>::malloc(size);
         auto bufferSpan = buffer.mutableSpan();
         for (const auto& page : m_pages)
@@ -4831,6 +4836,7 @@ private:
 
 class GenericCacheEntry {
 public:
+    uint32_t* payloadSizeSlot() { return &m_payloadSize; }
     bool decode(Decoder&, std::pair<SourceCodeKey, UnlinkedCodeBlock*>&) const;
     bool decode(Decoder&, SourceCodeKey&) const;
     bool isStillValid(Decoder&, const SourceCodeKey&, CachedCodeBlockTag) const;
@@ -4843,7 +4849,8 @@ protected:
     // @importModule. 6: op_iterator_close_check (opcode numbering). 7: op_new_reg_exp_shared (opcode numbering). 8: op_iterator_close_check jumps.
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
-    static constexpr uint32_t cachedTypesFormatRevision = 9;
+    // 10: GenericCacheEntry records the payload's size.
+    static constexpr uint32_t cachedTypesFormatRevision = 10;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -4858,8 +4865,10 @@ protected:
 
     bool isUpToDate(Decoder& decoder) const
     {
-        UNUSED_PARAM(decoder);
         if (m_cacheVersion != currentCacheVersion())
+            return false;
+        // A payload cut short (a partial write, a truncated file) is not this payload.
+        if (!m_payloadSize || decoder.size() < m_payloadSize)
             return false;
         // BytecodeGenerator numbers a code block's locals after the LLInt/baseline callee-save area, so its size is baked into the bytecode.
         if (m_reservedCalleeLocals != CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
@@ -4871,6 +4880,7 @@ private:
     uint32_t m_cacheVersion;
     CachedCodeBlockTag m_tag;
     uint32_t m_reservedCalleeLocals;
+    uint32_t m_payloadSize { 0 };
 };
 
 static_assert(alignof(GenericCacheEntry) <= encoderMaxAlignment);
@@ -4979,10 +4989,11 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
 }
 
 template<typename UnlinkedCodeBlockType>
-void encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
+GenericCacheEntry* encodeCodeBlock(Encoder& encoder, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock)
 {
     auto* entry = encoder.template malloc<CacheEntry<UnlinkedCodeBlockType>>(encoder);
     entry->encode(encoder, { key, uncheckedDowncast<UnlinkedCodeBlockType>(codeBlock) });
+    return entry;
 }
 
 // A builtin function (BuiltinExecutables::createExecutable) and, lazily, its body and nested functions. The embedder
@@ -5021,9 +5032,10 @@ RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecu
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
-    encoder.template malloc<BuiltinFunctionCacheEntry>(encoder)->encode(encoder, *executable, sourceLength, embedderStamp);
+    auto* entry = encoder.template malloc<BuiltinFunctionCacheEntry>(encoder);
+    entry->encode(encoder, *executable, sourceLength, embedderStamp);
     encoder.encodeDeferred();
-    return encoder.release(error);
+    return encoder.release(error, entry->payloadSizeSlot());
 }
 
 UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
@@ -5042,15 +5054,16 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     const ClassInfo* classInfo = codeBlock->classInfo();
 
     Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
+    GenericCacheEntry* entry = nullptr;
     if (classInfo == UnlinkedProgramCodeBlock::info())
-        encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
+        entry = encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, key, codeBlock);
     else if (classInfo == UnlinkedModuleProgramCodeBlock::info())
-        encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, key, codeBlock);
+        entry = encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, key, codeBlock);
     else
         ASSERT(classInfo == UnlinkedEvalCodeBlock::info());
     encoder.encodeDeferred();
 
-    return encoder.release(error);
+    return encoder.release(error, entry ? entry->payloadSizeSlot() : nullptr);
 }
 
 RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
@@ -5074,6 +5087,8 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
 
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
+    if (cachedBytecode->size() < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
+        return std::nullopt;
     const auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref<Decoder> decoder = Decoder::create(vm, WTF::move(cachedBytecode));
 
@@ -5125,10 +5140,10 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
 
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.
-static_assert(sizeof(GenericCacheEntry) == 12);
-static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 44);
-static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 44);
-static_assert(sizeof(BuiltinFunctionCacheEntry) == 24);
+static_assert(sizeof(GenericCacheEntry) == 16);
+static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 48);
+static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 48);
+static_assert(sizeof(BuiltinFunctionCacheEntry) == 28);
 static_assert(sizeof(VariableLengthObjectBase) == 4);
 static_assert(sizeof(CachedPtr<CachedString>) == 4);
 static_assert(sizeof(CachedRefPtr<CachedUniquedStringImpl>) == 4);
