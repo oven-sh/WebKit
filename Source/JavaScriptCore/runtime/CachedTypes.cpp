@@ -84,11 +84,6 @@ bool Decoder::canBorrowPayload() const
 #endif
 }
 
-bool Decoder::payloadIsTrusted() const
-{
-    return Options::useTrustedBytecodePayloads() && m_cachedBytecode->payloadIsTrusted();
-}
-
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
 class VarintWriter {
@@ -120,8 +115,7 @@ public:
     }
     ALWAYS_INLINE uint32_t u32()
     {
-        // Nearly every scalar fits one byte, and an unbounded reader (a record already known to lie inside the payload) has nothing to check for it.
-        if (!m_end && !(*m_p & 0x80)) [[likely]]
+        if ((!m_end || m_p < m_end) && !(*m_p & 0x80)) [[likely]]
             return *m_p++;
         return u32Slow();
     }
@@ -3912,17 +3906,17 @@ public:
         return e ? e->rareData.decode(decoder) : nullptr;
     }
 
-    // Everything the block points at (arrays, record, tail, derived members, child slots and the child records) must lie
-    // inside the payload; a damaged block is generated from source instead. This catches a truncated or misassembled
-    // payload cheaply; it is not a validation of every nested record (the strings, TDZ environments, rare data and
-    // constants those point at are trusted like the rest of a payload this build wrote, as upstream's decoder trusts them).
+    // Everything the block points at (arrays, record, tail, derived members, child slots) must lie inside the payload; a
+    // damaged block is generated from source instead. This catches a truncated or misassembled payload in constant time;
+    // it is not a validation of every nested record (the child records, strings, TDZ environments, rare data and constants
+    // those point at are trusted like the rest of a payload this build wrote, as upstream's decoder trusts them).
     bool regionIsIntact(Decoder& decoder, Tail& tail) const
     {
         if (!decoder.payloadContains(this, sizeof(Record)))
             return false;
         auto payload = decoder.payloadSpan();
         const uint8_t* end = payload.data() + payload.size();
-        tail = readTail(decoder.payloadIsTrusted() ? nullptr : end);
+        tail = readTail(end);
         if (!tail.intact)
             return false;
         const Layout& layout = tail.layout;
@@ -3957,18 +3951,6 @@ public:
             return false;
         if ((layout.flags & LayoutHasExtras) && (layout.extrasAt < 0 || begin + layout.extrasAt + sizeof(CachedCodeBlockExtras) > end))
             return false;
-
-        // Parsing every child record is the one part of this that grows with the block; a trusted payload skips it.
-        if (decoder.payloadIsTrusted())
-            return true;
-        for (const Array* children : { &layout.functionDecls, &layout.functionExprs }) {
-            auto* slots = at<CachedWriteBarrier<CachedFunctionExecutable>>(layout, *children);
-            for (unsigned i = 0; i < children->count; ++i) {
-                auto* record = slots[i].ptr().getIfInPayload(decoder);
-                if (!record || !record->isIntact(decoder))
-                    return false;
-            }
-        }
         return true;
     }
 

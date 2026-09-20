@@ -38,9 +38,6 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
-// For embedders that build against more than one revision of this header.
-#define JSC_CACHED_BYTECODE_HAS_TRUSTED_PAYLOAD 1
-
 namespace JSC {
 
 class Decoder;
@@ -88,8 +85,6 @@ public:
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
-    bool payloadIsTrusted() const { return m_payload.isTrusted(); }
-    void setPayloadIsTrusted() { m_payload.setIsTrusted(); }
     bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
     size_t sizeForUpdate() const { return m_size; }
