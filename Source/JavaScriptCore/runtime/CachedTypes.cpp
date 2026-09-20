@@ -75,14 +75,6 @@ template<typename T> concept PayloadType = std::has_unique_object_representation
 
 namespace JSC {
 
-bool Decoder::canBorrowPayload() const
-{
-#if USE(BUN_JSC_ADDITIONS)
-    return Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent();
-#else
-    return false;
-#endif
-}
 
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
@@ -1057,9 +1049,12 @@ private:
 Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
     : m_vm(vm)
     , m_cachedBytecode(WTF::move(cachedBytecode))
+    , m_payload(m_cachedBytecode->span().data())
+    , m_payloadSize(m_cachedBytecode->span().size())
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
     , m_canDeferIntoPayload(m_cachedBytecode->payloadIsOwnedOrPersistent())
+    , m_canBorrowPayload(Options::useBorrowedBytecodeFromCache() && m_cachedBytecode->payloadIsPersistent())
 #endif
 {
 }
@@ -1095,19 +1090,6 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
     return decoder;
 }
 
-size_t Decoder::size() const
-{
-    return m_cachedBytecode->size();
-}
-
-ptrdiff_t Decoder::offsetOf(const void* ptr)
-{
-    auto* addr = static_cast<const uint8_t*>(ptr);
-    auto cachedBytecodeSpan = m_cachedBytecode->span();
-    ASSERT(addr >= cachedBytecodeSpan.data() && addr < std::to_address(cachedBytecodeSpan.end()));
-    return addr - cachedBytecodeSpan.data();
-}
-
 void Decoder::cacheOffset(ptrdiff_t offset, void* ptr)
 {
     m_offsetToPtrMap.add(offset, ptr);
@@ -1119,12 +1101,6 @@ std::optional<void*> Decoder::cachedPtrForOffset(ptrdiff_t offset)
     if (it == m_offsetToPtrMap.end())
         return std::nullopt;
     return { it->value };
-}
-
-const void* Decoder::ptrForOffsetFromBase(ptrdiff_t offset)
-{
-    ASSERT(offset > 0 && static_cast<size_t>(offset) < m_cachedBytecode->size());
-    return m_cachedBytecode->span().subspan(offset).data();
 }
 
 CompactTDZEnvironmentMap::Handle Decoder::handleForTDZEnvironment(CompactTDZEnvironment* environment) const
@@ -4608,27 +4584,17 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     m_hasName = scalars.hasName;
 
     uint32_t leafExecutables = 2;
-    auto checkBounds = [&](int32_t& codeBlockOffset, const CachedFunctionExecutable::CodeBlockSlot* slot) {
-        if (slot && !slot->isEmpty()) {
-            ptrdiff_t offset = decoder.offsetOf(slot);
-            if (static_cast<size_t>(offset) < decoder.size()) {
-                codeBlockOffset = offset;
-                m_isCached = true;
-                leafExecutables--;
-                return;
-            }
-        }
-
-        codeBlockOffset = 0;
+    auto slotOffset = [&](const CachedFunctionExecutable::CodeBlockSlot* slot) -> int32_t {
+        if (!slot || slot->isEmpty())
+            return 0;
+        m_isCached = true;
+        leafExecutables--;
+        return static_cast<int32_t>(decoder.offsetOf(slot));
     };
-
     if ((v.call && !v.call->isEmpty()) || (v.construct && !v.construct->isEmpty())) {
-        checkBounds(m_cachedCodeBlockForCallOffset, v.call);
-        checkBounds(m_cachedCodeBlockForConstructOffset, v.construct);
-        if (m_isCached)
-            m_decoder = &decoder;
-        else
-            m_decoder = nullptr;
+        m_cachedCodeBlockForCallOffset = slotOffset(v.call);
+        m_cachedCodeBlockForConstructOffset = slotOffset(v.construct);
+        m_decoder = &decoder;
     }
 
     if (leafExecutables && (v.header & CachedFunctionExecutable::Updatable))
@@ -5238,8 +5204,7 @@ void decodeFunctionCodeBlockFromRecord(Decoder& decoder, uint32_t recordOffset, 
 {
     ASSERT(decoder.vm().heap.isDeferred());
     auto* record = static_cast<const CachedFunctionCodeBlock*>(decoder.ptrForOffsetFromBase(recordOffset));
-    if (UnlinkedFunctionCodeBlock* decoded = record->decode(decoder))
-        codeBlock.set(decoder.vm(), owner, decoded);
+    codeBlock.set(decoder.vm(), owner, record->decode(decoder));
 }
 
 void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedSymbolTable, SymbolTable& symbolTable, bool scopePartOnly)

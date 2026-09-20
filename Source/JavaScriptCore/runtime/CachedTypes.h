@@ -230,7 +230,7 @@ public:
     // dropped and decoded again): for code that is private to one executable.
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
-    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
@@ -254,12 +254,12 @@ public:
     ~Decoder();
 
     VM& NODELETE vm() { return m_vm; }
-    size_t size() const;
+    size_t size() const { return m_payloadSize; }
 
-    ptrdiff_t offsetOf(const void*);
+    ptrdiff_t offsetOf(const void* ptr) const { return static_cast<const uint8_t*>(ptr) - m_payload; }
     void cacheOffset(ptrdiff_t, void*);
     std::optional<void*> cachedPtrForOffset(ptrdiff_t);
-    const void* ptrForOffsetFromBase(ptrdiff_t);
+    const void* ptrForOffsetFromBase(ptrdiff_t offset) const { return m_payload + offset; }
     CompactTDZEnvironmentMap::Handle handleForTDZEnvironment(CompactTDZEnvironment*) const;
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
@@ -284,6 +284,8 @@ private:
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
+    const uint8_t* m_payload { nullptr };
+    size_t m_payloadSize { 0 };
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     DecoderStringTable* m_externalStrings { nullptr };
     bool m_lookedUpExternalStrings { false }; // stringsToPrefetch asked the embedder (m_externalStrings may still be null)
@@ -294,6 +296,7 @@ private:
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
+    bool m_canBorrowPayload { false };
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
