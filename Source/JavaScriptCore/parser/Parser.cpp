@@ -4769,7 +4769,8 @@ namedProperty:
 
         if (match(COMMA) || match(CLOSEBRACE)) {
             semanticFailureDueToKeywordCheckingToken(identToken, "shorthand property name");
-            if (*ident == m_vm.propertyNames->yieldKeyword) [[unlikely]]
+            // Not the escaped keyword: the check above lets it through in a generator too.
+            if (identToken.m_type == YIELD) [[unlikely]]
                 m_seenYieldAsIdentifier = true;
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
