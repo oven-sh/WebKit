@@ -2820,12 +2820,22 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
     // This might work itself out nicer if we declared a different
     // Scope struct for the parameters (because they are indeed implemented
     // as their own scope).
+    // The body can declare one of these names again, and then it is not a free
+    // variable of this function when the scope is popped. So the parent scope
+    // uses it from here on: that is how a capture reaches a function further
+    // out, and what a function restored from the source provider cache does.
+    // Except for "arguments" where this function has its own, as in
+    // Scope::collectFreeVariablesFrom().
     UniquedStringImplPtrSet nonLocalCapturesFromParameterExpressions;
+    UniquedStringImpl* ownArgumentsOrNull = functionScope->isArrowFunctionBoundary() ? nullptr : m_vm.propertyNames->arguments.impl();
     functionScope->forEachUsedVariable([&] (UniquedStringImpl* impl) {
         if (!functionScope->hasDeclaredParameter(impl)) {
             nonLocalCapturesFromParameterExpressions.add(impl);
-            if (TreeBuilder::NeedsFreeVariableInfo)
-                parentScope->addClosedVariableCandidateUnconditionally(impl);
+            if (impl != ownArgumentsOrNull) {
+                parentScope->useVariable(impl, false);
+                if (TreeBuilder::NeedsFreeVariableInfo)
+                    parentScope->addClosedVariableCandidateUnconditionally(impl);
+            }
         }
         return IterationStatus::Continue;
     });
