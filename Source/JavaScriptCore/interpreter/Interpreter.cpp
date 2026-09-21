@@ -571,6 +571,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+#if USE(BUN_JSC_ADDITIONS)
+                results.last().setThisValue(vm, owner, currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::This)).get());
+#endif
             }
         }
         currentGenerator = getParentGenerator(currentGenerator);
@@ -624,6 +627,25 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                     return;
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The receiver of a function frame, for the host to print as V8 does (`at Type.method`). A construct
+    // call keeps new.target in the this slot, so it gets none. An inlined frame's this is in the slot its
+    // recovery names: the parser flushes every argument of an inlined frame at each terminal.
+    auto thisValueForFrame = [&](StackVisitor& visitor) -> JSValue {
+        CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
+            return { };
+#if ENABLE(DFG_JIT)
+        if (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame()) {
+            if (inlineCallFrame->m_argumentsWithFixup.isEmpty())
+                return { };
+            return inlineCallFrame->m_argumentsWithFixup[0].recover(visitor->callFrame());
+        }
+#endif
+        return visitor->callFrame()->thisValue();
+    };
+#endif
 
     bool foundCaller = !caller;
     JSAsyncFunctionGenerator* asyncStackTraceOriginGenerator = nullptr;
@@ -680,8 +702,12 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 #else
             } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
 #endif
+            {
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
-            else
+#if USE(BUN_JSC_ADDITIONS)
+                results.last().setThisValue(vm, owner, thisValueForFrame(visitor));
+#endif
+            } else
                 results.append(StackFrame(vm, owner, visitor->callee().asCell()));
 
             previousEntryFrame = currentEntryFrame;

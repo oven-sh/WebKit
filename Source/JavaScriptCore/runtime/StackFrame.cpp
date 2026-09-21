@@ -114,6 +114,9 @@ void StackFrame::visitAggregate(Visitor& visitor)
                 visitor.append(jsFrame.callee);
             if (jsFrame.codeBlock)
                 visitor.append(jsFrame.codeBlock);
+#if USE(BUN_JSC_ADDITIONS)
+            visitor.append(jsFrame.thisValue);
+#endif
         },
         [](const WasmFrameData&) { }
     );
@@ -125,7 +128,16 @@ bool StackFrame::isMarked(VM& vm) const
 {
     return WTF::switchOn(m_frameData,
         [&vm](const JSFrameData& jsFrame) {
-            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get()));
+            if (jsFrame.callee && !vm.heap.isMarked(jsFrame.callee.get()))
+                return false;
+            if (jsFrame.codeBlock && !vm.heap.isMarked(jsFrame.codeBlock.get()))
+                return false;
+#if USE(BUN_JSC_ADDITIONS)
+            JSValue thisValue = jsFrame.thisValue.get();
+            if (thisValue.isCell() && !vm.heap.isMarked(thisValue.asCell()))
+                return false;
+#endif
+            return true;
         },
         [](const WasmFrameData&) { return true; }
     );
