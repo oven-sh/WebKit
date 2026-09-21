@@ -358,7 +358,7 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
 }
 
 template <typename LexerType>
-template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context, bool& isArrowFunctionWithInvalidParameters)
+template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context, bool isAsync, bool& isArrowFunctionWithInvalidParameters)
 {
     isArrowFunctionWithInvalidParameters = false;
 
@@ -369,7 +369,7 @@ template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(T
         if (consume(CLOSEPAREN))
             isArrowFunction = match(ARROWFUNCTION);
         else {
-            auto parseParameters = [&](bool parseAsGeneratorFunction) {
+            auto parseParameters = [&](bool parseAsGeneratorFunction, bool parseAsAsyncFunction) {
                 SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
                 // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
                 AutoPopScope fakeScope(this, pushScope());
@@ -383,6 +383,13 @@ template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(T
                 bool result;
                 {
                     Scope::MaybeParseAsGeneratorFunctionForScope parseAsGenerator(fakeScope.scope(), parseAsGeneratorFunction);
+                    // parseArrowFunctionExpression() and parseFunctionParameters() set the mode and the Parameters phase for the
+                    // parse that makes the cache item, and `await` depends on both: in a default value it is checked against
+                    // allowAwait in that phase, and in module code parseUnaryExpression() reads it as an AwaitExpression unless the
+                    // mode is a function's.
+                    SetForScope innerParseMode(m_parseMode, isAsync ? SourceParseMode::AsyncArrowFunctionMode : SourceParseMode::ArrowFunctionMode);
+                    SetForScope functionParsePhasePoisoner(m_parserState.functionParsePhase, FunctionParsePhase::Parameters);
+                    SetForScope overrideAllowAwait(m_parserState.allowAwait, m_parserState.allowAwait && !parseAsAsyncFunction);
                     result = parseFormalParameters(syntaxChecker, syntaxChecker.createFormalParameterList(), isArrowFunctionParameterList, isMethod, parametersCount) && consume(CLOSEPAREN) && match(ARROWFUNCTION);
                 }
                 if (hasError())
@@ -391,22 +398,23 @@ template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(T
                 return result;
             };
 
-            // parseFunctionInfo() parses these parameters with [+Yield] parameterization in a generator, and so does this. The two
-            // have to agree on what the parameters can hold: a function in them goes to the SourceProviderCache from here, and
-            // parseFunctionInfo() skips it from there.
+            // parseFunctionInfo() parses these parameters with [+Yield] parameterization in a generator and with [+Await] where
+            // `await` is not an identifier, and so does this. The two have to agree on what the parameters can hold: a function
+            // in them goes to the SourceProviderCache from here, and parseFunctionInfo() skips it from there.
             bool parseAsGeneratorFunction = currentScope()->isGeneratorFunction();
-            isArrowFunction = parseParameters(parseAsGeneratorFunction);
+            bool parseAsAsyncFunction = isAsync || !canUseIdentifierAwait();
+            isArrowFunction = parseParameters(parseAsGeneratorFunction, parseAsAsyncFunction);
             if (hasError()) {
-                if (!parseAsGeneratorFunction)
+                if (!parseAsGeneratorFunction && !parseAsAsyncFunction)
                     return false;
 
-                // When [+Yield] is all that is wrong, the text is an arrow function, and this error says what is wrong with it.
-                // The caller has another one, from the text as an expression, which it is not.
+                // When [+Yield] or [+Await] is all that is wrong, the text is an arrow function, and this error says what is wrong
+                // with it. The caller has another one, from the text as an expression, which it is not.
                 SavePointWithError parametersError = swapSavePointForError(context, saveArrowFunctionPoint);
                 next();
-                bool isArrowFunctionWithoutYield = parseParameters(false);
+                bool isArrowFunctionWithoutYieldOrAwait = parseParameters(false, false);
                 propagateError();
-                if (isArrowFunctionWithoutYield) {
+                if (isArrowFunctionWithoutYieldOrAwait) {
                     restoreSavePointWithError(context, parametersError);
                     isArrowFunctionWithInvalidParameters = true;
                     return false;
@@ -2623,6 +2631,8 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
 
     Scope* parentScope = currentScope();
 
+    // ArrowParameters[?Await]: the parameters of an arrow function reserve `await` where the code around them does.
+    const bool parentCanUseIdentifierAwait = canUseIdentifierAwait();
     bool functionNameIsAwait = isPossiblyEscapedAwait(m_token);
     const char* isDisallowedAwaitFunctionNameReason = functionNameIsAwait && !canUseIdentifierAwait() ? disallowedIdentifierAwaitReason() : nullptr;
 
@@ -2749,8 +2759,11 @@ template <class TreeBuilder> bool Parser<LexerType>::parseFunctionInfo(TreeBuild
         {
             // Parse formal parameters with [+Yield] parameterization, in order to ban YieldExpressions
             // in ArrowFormalParameters, per ES6 #sec-arrow-function-definitions-static-semantics-early-errors.
+            // Likewise with [+Await] where `await` is not an identifier (an async function, a module, a static block, or a
+            // parameter list that reserves it), which bans AwaitExpressions and `await` as a parameter name.
+            // isArrowFunctionParameters() parsed these parameters the same way.
             Scope::MaybeParseAsGeneratorFunctionForScope parseAsGeneratorFunction(functionScope.scope(), parentScope->isGeneratorFunction());
-            SetForScope overrideAllowAwait(m_parserState.allowAwait, !parentScope->isAsyncFunction() && !isAsyncFunctionParseMode(mode));
+            SetForScope overrideAllowAwait(m_parserState.allowAwait, parentCanUseIdentifierAwait && !isAsyncFunctionParseMode(mode));
             parseFunctionParameters(syntaxChecker, functionInfo);
             propagateError();
         }
@@ -4371,7 +4384,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
     }
 
     bool isArrowFunctionWithInvalidParameters = false;
-    if (isArrowFunctionParameters(context, isArrowFunctionWithInvalidParameters)) {
+    if (isArrowFunctionParameters(context, isAsync, isArrowFunctionWithInvalidParameters)) {
         if (wasOpenParen)
             currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
         shouldReturnResult = true;
