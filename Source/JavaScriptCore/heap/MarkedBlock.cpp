@@ -638,8 +638,12 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
-    bool isFirstSweepSinceFullCollection = m_markingVersionAtLastSweep != space()->markingVersion();
-    m_markingVersionAtLastSweep = space()->markingVersion();
+    // A sweep while a full collection is marking still goes by the previous collection's marks (they are stale, the
+    // block is treated as fully live or newly allocated): it is not that collection's first sweep, and must not count as it.
+    bool isMarking = space()->isMarking();
+    bool isFirstSweepSinceFullCollection = !isMarking && m_markingVersionAtLastSweep != space()->markingVersion();
+    if (!isMarking)
+        m_markingVersionAtLastSweep = space()->markingVersion();
 
     m_weakSet.sweep();
 
