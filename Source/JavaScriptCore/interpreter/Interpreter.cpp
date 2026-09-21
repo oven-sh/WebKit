@@ -636,15 +636,17 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         CodeBlock* codeBlock = visitor->codeBlock();
         if (!codeBlock || codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
             return { };
-        JSValue thisValue;
 #if ENABLE(DFG_JIT)
-        if (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame()) {
-            if (inlineCallFrame->m_argumentsWithFixup.isEmpty())
-                return { };
-            thisValue = inlineCallFrame->m_argumentsWithFixup[0].recover(visitor->callFrame());
-        } else
+        // An inlined frame has no slot that holds its this at every point of the callee: the
+        // argument recoveries of an InlineCallFrame describe the stack at an OSR exit, and read
+        // elsewhere they name a slot that can hold another value. Such a frame gets no receiver.
+        if (visitor->inlineCallFrame())
+            return { };
 #endif
-            thisValue = visitor->callFrame()->thisValue();
+        // The this slot of a machine frame holds a JSValue: the caller stores one, and the DFG
+        // and FTL check the slot against the flush format at entry and store back in a form that
+        // reads as the same JSValue.
+        JSValue thisValue = visitor->callFrame()->thisValue();
         if (!thisValue)
             return { };
         // A function that never reads `this` emits no op_to_this, so its slot still holds what the
