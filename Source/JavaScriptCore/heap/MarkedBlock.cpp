@@ -638,11 +638,12 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
-    // A sweep while a full collection is marking still goes by the previous collection's marks (they are stale, the
-    // block is treated as fully live or newly allocated): it is not that collection's first sweep, and must not count as it.
-    bool isMarking = space()->isMarking();
-    bool isFirstSweepSinceFullCollection = !isMarking && m_markingVersionAtLastSweep != space()->markingVersion();
-    if (!isMarking)
+    // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
+    // marks have not caught up): it is not that collection's first sweep and must not count as it. An eden collection's
+    // marking leaves the version and the old blocks' marks alone, so a sweep during it counts like any other.
+    bool marksArePending = space()->isMarking() && heap()->collectionScope() == CollectionScope::Full;
+    bool isFirstSweepSinceFullCollection = !marksArePending && m_markingVersionAtLastSweep != space()->markingVersion();
+    if (!marksArePending)
         m_markingVersionAtLastSweep = space()->markingVersion();
 
     m_weakSet.sweep();
