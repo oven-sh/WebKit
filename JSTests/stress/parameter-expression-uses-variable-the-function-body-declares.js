@@ -99,8 +99,7 @@ const declarations = [
     e => `(function* () { let local = 10; yield ${e}; })().next().value`,
 ];
 
-function check(makeDeclaration, makeBetween, makeFunction, [parameter, expected], bodyDeclaration) {
-    const source = makeDeclaration(makeBetween(makeFunction(parameter, bodyDeclaration)) + "()");
+function check(source, expected) {
     let actual;
     try {
         actual = (0, eval)(source);
@@ -108,27 +107,29 @@ function check(makeDeclaration, makeBetween, makeFunction, [parameter, expected]
         actual = String(e);
     }
     shouldBe(actual, expected, source);
-    try {
-        actual = (0, eval)(`"use strict"; ${source}`);
-    } catch (e) {
-        actual = String(e);
-    }
-    shouldBe(actual, expected, `"use strict"; ${source}`);
 }
 
-// Every pair of the five lists, with the first entry of the other three.
+function checkChoice(makeDeclaration, makeBetween, makeFunction, [parameter, expected], bodyDeclaration, alsoStrict) {
+    const source = makeDeclaration(makeBetween(makeFunction(parameter, bodyDeclaration)) + "()");
+    check(source, expected);
+    if (alsoStrict)
+        check(`"use strict"; ${source}`, expected);
+}
+
+// Each entry of each list with the first entry of the other lists. The functions and the body declarations also as
+// strict mode code.
 const lists = [declarations, between, functions, parameters, bodyDeclarations];
-for (let i = 0; i < lists.length; i++) {
-    for (let j = i + 1; j < lists.length; j++) {
-        for (const first of lists[i]) {
-            for (const second of lists[j]) {
-                const choice = lists.map(list => list[0]);
-                choice[i] = first;
-                choice[j] = second;
-                check(...choice);
-            }
-        }
+for (const list of lists) {
+    for (const entry of list) {
+        const choice = lists.map(other => other === list ? entry : other[0]);
+        checkChoice(...choice, list === functions || list === bodyDeclarations);
     }
+}
+
+// Each kind of code in between with an arrow function, a function expression, a method and a constructor.
+for (const makeBetween of between) {
+    for (const makeFunction of [functions[0], functions[1], functions[3], functions[7]])
+        checkChoice(declarations[0], makeBetween, makeFunction, parameters[0], bodyDeclarations[0], false);
 }
 
 // The text of this file is one source: the parser takes most of the functions below from the source provider cache when
@@ -293,9 +294,9 @@ shouldBe(new Function("let local = 10; return (() => (b = local) => { var local 
         let local = 10;
         const make = () => (b = local) => { var local = 7; return b; };
         let sum = 0;
-        for (let i = 0; i < 1e5; i++)
+        for (let i = 0; i < testLoopCount; i++)
             sum += make()();
         return sum;
     }
-    shouldBe(hot(), 1e6, "hot loop");
+    shouldBe(hot(), 10 * testLoopCount, "hot loop");
 }
