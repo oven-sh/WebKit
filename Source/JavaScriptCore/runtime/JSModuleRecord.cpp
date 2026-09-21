@@ -136,7 +136,7 @@ void JSModuleRecord::setFunctionDeclarationSlots(VM& vm, ModuleProgramExecutable
         uninstantiated->executable.set(vm, this, executable);
         // Code that ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable() lets go of once the module has run is not
         // kept alive from here: its declarations are still in the payload the slots decode from.
-        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex() && Options::useCodeRecoveryFromBytecodeCache();
+        bool declarationsOutliveTheCodeBlock = slots->hasDecodeSource() && unlinkedCodeBlock->cachedPayloadIndex();
         if (!declarationsOutliveTheCodeBlock)
             uninstantiated->unlinkedCodeBlock.set(vm, this, unlinkedCodeBlock);
         uninstantiated->remaining = slots->size();

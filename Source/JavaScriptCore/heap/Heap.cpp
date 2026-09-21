@@ -1215,7 +1215,7 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
     // happens before the heap is prepared for iteration, as in deleteAllCodeBlocks().
     // What they allocate must not start a collection either (this thread could still start one): returning code to its
     // cache rewrites an executable's code block slots into something a marker must not see half done.
-    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache) && Options::useCodeRecoveryFromBytecodeCache();
+    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache);
     UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
     std::optional<DeferGC> deferGC;
     if (returnsCodeToCache) {

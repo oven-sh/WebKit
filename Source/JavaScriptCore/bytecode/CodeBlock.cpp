@@ -531,7 +531,29 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         break; \
     }
 
+    // resolve_scope and the get_from_scope it feeds name the same variable, and a function names the same few variables
+    // over and over: what a read resolves to depends only on the scope chain this block links against, so remember it.
+    // (Writes are not remembered: resolving one prepares the variable's watchpoint set.)
+    struct RememberedRead {
+        UniquedStringImpl* name { nullptr };
+        unsigned depth { 0 };
+        ResolveType type { GlobalProperty };
+        std::optional<ResolveOp> op;
+    };
+    std::array<RememberedRead, 8> rememberedReads;
+    auto resolveRead = [&](unsigned depth, const Identifier& ident, ResolveType unlinkedType) -> const ResolveOp& {
+        RememberedRead& entry = rememberedReads[(std::bit_cast<uintptr_t>(ident.impl()) >> 4) & 7];
+        if (entry.name != ident.impl() || entry.depth != depth || entry.type != unlinkedType || !entry.op) {
+            entry.op.emplace(JSScope::abstractResolve(m_globalObject.get(), depth, scope, ident, Get, unlinkedType, InitializationMode::NotInitialization));
+            entry.name = ident.impl();
+            entry.depth = depth;
+            entry.type = unlinkedType;
+        }
+        return *entry.op;
+    };
+
     const auto& instructionStream = instructions();
+    unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -540,7 +562,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
         // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
         if (opcodeID != op_iterator_close_check)
-            m_bytecodeCost += opcodeLengths[opcodeID] + 1;
+            bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
         LINK(OpGetPrivateName)
@@ -635,7 +657,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 break;
             }
 
-            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, unlinkedResolveType, InitializationMode::NotInitialization);
+            const ResolveOp& op = resolveRead(bytecode.m_localScopeDepth, ident, unlinkedResolveType);
 
             metadata.m_resolveType = op.type;
             metadata.m_localScopeDepth = op.depth;
@@ -671,7 +693,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             }
 
             const Identifier& ident = identifier(bytecode.m_var);
-            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), bytecode.m_localScopeDepth, scope, ident, Get, bytecode.m_getPutInfo.resolveType(), InitializationMode::NotInitialization);
+            const ResolveOp& op = resolveRead(bytecode.m_localScopeDepth, ident, bytecode.m_getPutInfo.resolveType());
 
             ResolveType linkedType = op.type;
             if (linkedType == ModuleVar)
@@ -840,6 +862,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             break;
         }
     }
+    m_bytecodeCost = bytecodeCost;
 
 #undef CASE
 #undef INITIALIZE_METADATA
@@ -857,10 +880,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
     RETURN_IF_EXCEPTION(throwScope, false);
-
-    // Nothing was deferred, so there is nothing for prepareLazyStateForConcurrentCompilation() to do.
-    if (!Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables)
-        m_isLazyStatePreparedForConcurrentCompilation = true;
     return true;
 }
 
@@ -1258,13 +1277,11 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
     }
     // The module environment's SymbolTable was cloned (and prepared for type profiling) when the ModuleProgramExecutable
     // was created and the constructor stores that clone over this register afterwards; cloning it again here only hands
-    // symbolTableCache a dead table. Independent of lazy SymbolTable constants; gated only so it can be A/B'd.
+    // symbolTableCache a dead table.
     size_t moduleEnvironmentSymbolTableIndex = notFound;
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::useFastCachedAtoms()) {
-        if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
-            moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
-    }
+    if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
+        moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
 #endif
     // An activation of a generator, an async function or a module body can outlive this code: while it is suspended its
     // CodeBlock can be jettisoned and the unlinked code it was linked from thrown away, and it then resumes in a CodeBlock

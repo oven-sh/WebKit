@@ -1,6 +1,6 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyModuleFunctionDeclarations=0")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useCodeRecoveryFromBytecodeCache=0")
+//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useRunOnceCodeRelease=0")
 //@ runBytecodeCache
 
@@ -20,8 +20,8 @@ const options = jscOptions();
 const staysInterpreted = options.useLLInt && options.thresholdForJITAfterWarmUp >= 100 && options.thresholdForJITSoon >= 100;
 const releasesLinkedCode = staysInterpreted && options.useRunOnceCodeRelease;
 const keepsLinkedCodeForAWhile = !options.useEagerCodeBlockJettisonTiming && !options.forceCodeBlockToJettisonDueToOldAge;
-const releasesUnlinkedCode = releasesLinkedCode && options.useCodeRecoveryFromBytecodeCache && options.useLeanBytecodeCacheDecoder
-    && options.useBorrowedBytecodeFromCache && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
+const releasesUnlinkedCode = releasesLinkedCode
+    && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
 // What the executables hold, not how many code blocks are alive: the collector scans the stack conservatively, and a word
 // left behind in a frame of the run loop can keep a code block that nothing refers to any more for a while.
 const census = () => { fullGC(); return $vm.codeBlockCensus(); };

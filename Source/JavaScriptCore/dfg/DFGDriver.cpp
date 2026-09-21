@@ -62,8 +62,6 @@ unsigned getNumCompilations()
 // gets linked after this ran is just not inlined by this compilation.
 static void prepareLazyStateOfInlineCandidates(VM& vm, CodeBlock* codeBlock, CodeBlock* profiledDFGCodeBlock, JITCompilationMode mode)
 {
-    if (!Options::useThinChildExecutables() && !Options::useLazyFunctionExecutables())
-        return; // every block is born prepared
     DeferGCForAWhile deferGC(vm); // raw CodeBlock* / callee cells are held across the ensure*() allocations below
     JITType jitType = isFTL(mode) ? JITType::FTLJIT : JITType::DFGJIT;
 

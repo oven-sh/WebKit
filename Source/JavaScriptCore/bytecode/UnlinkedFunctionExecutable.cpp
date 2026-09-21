@@ -308,7 +308,7 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     DeferGC deferGC(vm);
 
     // m_unlinkedCodeBlockForCall shares its slot with the decoder we just moved out, so it is already null; the construct
-    // slot still holds the two offsets, and a decode that rejects a damaged block leaves its slot untouched.
+    // slot still holds the two offsets, and stays as it is when there is no construct code block to decode.
     m_unlinkedCodeBlockForConstruct.clear();
     auto decode = [&](int32_t offset, WriteBarrier<UnlinkedFunctionCodeBlock>& slot) {
         if (offset > 0)

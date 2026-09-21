@@ -1,5 +1,5 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useConcurrentJIT=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
-//@ runBytecodeCache("--useLazyUnlinkedValueAndArrayProfiles=0", "--useConcurrentJIT=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100")
+//@ runBytecodeCache("--useConcurrentJIT=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100")
 //@ runBytecodeCache("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--useEagerCodeBlockJettisonTiming=1")
 //@ runBytecodeCache
 
