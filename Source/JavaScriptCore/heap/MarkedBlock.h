@@ -164,7 +164,7 @@ public:
         inline void shrink();
         // Return interior OS pages that hold no live cell to the OS (after a sweep-only sweep); re-commit them
         // before the block is handed to an allocator or freed. No-op when an OS page is not smaller than a block.
-        void decommitUnusedPages();
+        void decommitUnusedPages(bool isFirstSweepSinceFullCollection);
         void recommitPages();
         unsigned numberOfDecommittedPages() const { return std::popcount(m_decommittedPages); }
             
@@ -254,6 +254,7 @@ public:
         bool m_isFreeListed { false };
         uint16_t m_decommittedPages { 0 }; // bit i set: OS page i of the block is decommitted
         uint16_t m_zeroPagesDuringSweep { 0 }; // The pages that were decommitted, and so all zero, when the sweep in progress began.
+        HeapVersion m_markingVersionAtLastSweep; // A full collection is what moves MarkedSpace::markingVersion() on.
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
