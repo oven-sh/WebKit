@@ -1162,8 +1162,7 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
         if (keepCodeInUse)
             unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
         heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
-        if (Options::useCodeRecoveryFromBytecodeCache())
-            m_codeCache->clearCodeDecodedFromPersistentPayloads();
+        m_codeCache->clearCodeDecodedFromPersistentPayloads();
         if (!keepCodeInUse)
             deleteAllRegExpCode();
         else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {

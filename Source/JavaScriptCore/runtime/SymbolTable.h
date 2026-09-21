@@ -451,7 +451,7 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
-    // Options::useLazySymbolTableConstants(): a table decoded from an owned or persistent bytecode cache payload
+    // A table decoded from an owned or persistent bytecode cache payload
     // (Decoder::canDeferIntoPayload), or cloned from one, keeps its entries in the payload until they are first read;
     // until then m_map is empty. They are decoded only on the mutator, outside GC phases, with m_lock held. A compiler
     // thread (or heap analysis during marking) holding m_lock therefore sees either the complete map or no entries; the

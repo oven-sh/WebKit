@@ -1,7 +1,6 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--forceCodeBlockToJettisonDueToOldAge=1")
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--destroy-vm")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useThinChildExecutables=0")
 
 // Drop after drop of code that a persistent bytecode cache hands back: every function is called between the drops, so no
 // executable stays behind naming the payload's Decoder and each drop has to come by one; functions are constructed as
@@ -20,7 +19,7 @@ function G(a) { if (new.target) this.g = a; return a; }
 function all() { const p = P(1); return [p.q(), p.tdzUser(), p.k.m(), new p.k().v, new F(2).a, G(3), new G(4).g].join(); }
 
 const options = jscOptions();
-const recovers = options.useCodeRecoveryFromBytecodeCache && options.useLeanBytecodeCacheDecoder && options.useBorrowedBytecodeFromCache && options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
+const recovers = options.diskCachePayloadIsPersistentForTesting && options.forceDiskCache;
 const expected = all();
 const keep = P(10);
 const rounds = 5;
