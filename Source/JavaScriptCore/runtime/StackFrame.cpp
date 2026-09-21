@@ -134,7 +134,7 @@ bool StackFrame::isMarked(VM& vm) const
                 return false;
 #if USE(BUN_JSC_ADDITIONS)
             JSValue thisValue = jsFrame.thisValue.get();
-            if (thisValue.isCell() && !vm.heap.isMarked(thisValue.asCell()))
+            if (thisValue && thisValue.isCell() && !vm.heap.isMarked(thisValue.asCell()))
                 return false;
 #endif
             return true;

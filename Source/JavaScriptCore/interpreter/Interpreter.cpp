@@ -636,14 +636,29 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         CodeBlock* codeBlock = visitor->codeBlock();
         if (!codeBlock || codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
             return { };
+        JSValue thisValue;
 #if ENABLE(DFG_JIT)
         if (InlineCallFrame* inlineCallFrame = visitor->inlineCallFrame()) {
             if (inlineCallFrame->m_argumentsWithFixup.isEmpty())
                 return { };
-            return inlineCallFrame->m_argumentsWithFixup[0].recover(visitor->callFrame());
-        }
+            thisValue = inlineCallFrame->m_argumentsWithFixup[0].recover(visitor->callFrame());
+        } else
 #endif
-        return visitor->callFrame()->thisValue();
+            thisValue = visitor->callFrame()->thisValue();
+        if (!thisValue)
+            return { };
+        // A function that never reads `this` emits no op_to_this, so its slot still holds what the
+        // call put there: the scope that a call like `f()` resolved `f` in, or undefined. Do the part
+        // of JSValue::toThis that allocates nothing. A sloppy primitive receiver stays a primitive.
+        bool isStrict = codeBlock->ownerExecutable()->isInStrictContext();
+        if (thisValue.isObject()) {
+            if (asObject(thisValue)->inherits<JSScope>())
+                return isStrict ? jsUndefined() : JSValue(codeBlock->globalObject()->globalThis());
+            return thisValue;
+        }
+        if (!isStrict && thisValue.isUndefinedOrNull())
+            return codeBlock->globalObject()->globalThis();
+        return thisValue;
     };
 #endif
 
