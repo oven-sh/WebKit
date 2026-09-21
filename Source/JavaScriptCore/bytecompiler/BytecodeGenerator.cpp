@@ -809,10 +809,10 @@ IGNORE_GCC_WARNINGS_END
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
             continue;
-        if (shouldCreateArgumentsVariableInParameterScope && entry.key.get() == propertyNames().arguments.impl())
-            continue;
         if (generatorOrAsyncWrapperFunctionParameterNames && generatorOrAsyncWrapperFunctionParameterNames->contains(entry.key.get()))
             continue;
+        // This includes a `var arguments` when "arguments" is in the parameter scope. They are two bindings, and
+        // initializeDefaultParameterValuesAndSetupFunctionScopeStack() starts the var with the parameter scope's value.
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }
 
@@ -2416,17 +2416,6 @@ void BytecodeGenerator::hoistSloppyModeFunctionIfNecessary(FunctionMetadataNode*
             SymbolTable* varSymbolTable = varScope.m_symbolTable;
             ASSERT(varSymbolTable->scopeType() == SymbolTable::ScopeType::VarScope);
             SymbolTableEntry::Fast entry = varSymbolTable->get(NoLockingNecessary, functionName.impl());
-            if (functionName == propertyNames().arguments && entry.isNull()) {
-                // "arguments" might be put in the parameter scope when we have a non-simple
-                // parameter list since "arguments" is visible to expressions inside the
-                // parameter evaluation list.
-                // e.g:
-                // function foo(x = arguments) { { function arguments() { } } }
-                RELEASE_ASSERT(*m_varScopeLexicalScopeStackIndex > 0);
-                varScope = m_lexicalScopeStack[*m_varScopeLexicalScopeStackIndex - 1];
-                SymbolTable* parameterSymbolTable = varScope.m_symbolTable;
-                entry = parameterSymbolTable->get(NoLockingNecessary, functionName.impl());
-            }
             RELEASE_ASSERT(!entry.isNull());
             bool isLexicallyScoped = false;
             emitPutToScope(varScope.m_scope, variableForLocalEntry(functionName, entry, varScope.m_symbolTableConstantIndex, isLexicallyScoped), currentValue.get(), DoNotThrowIfNotFound, InitializationMode::NotInitialization);
