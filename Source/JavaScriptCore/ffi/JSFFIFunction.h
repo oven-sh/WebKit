@@ -29,6 +29,7 @@
 
 #include "FFISignature.h"
 #include "JSFunction.h"
+#include "Watchpoint.h"
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
 
@@ -77,6 +78,14 @@ public:
     bool isHostPathOnly() const { return !!m_hooks; }
     JITCode* icCode() const { return m_icCode.get(); }
 
+    // After close() every call throws a TypeError and none reaches target(). The embedder closes a
+    // function before the code at target() goes away (the library is unloaded). An open function pays
+    // nothing for this: close() repatches the IC stub and jettisons the DFG and FTL code that inlined
+    // the call, and only ffiCall() tests isClosed().
+    JS_EXPORT_PRIVATE void close(VM&);
+    bool isClosed() const { return m_closedWatchpointSet.hasBeenInvalidated(); } // Safe on a compiler thread.
+    InlineWatchpointSet& closedWatchpointSet() { return m_closedWatchpointSet; }
+
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, Ref<FFI::Signature>&&, void* target, RefPtr<JITCode>&& icCode, const FFI::CallHooks* hooks);
 
@@ -85,6 +94,7 @@ private:
     RefPtr<JITCode> m_icCode; // Keeps the IC entry stub alive; null when no stub.
     WriteBarrier<JSObject> m_owner; // Optional; keeps the owner (e.g. library handle object) alive.
     const FFI::CallHooks* m_hooks; // Optional, static lifetime; non-null => host path only.
+    InlineWatchpointSet m_closedWatchpointSet { IsWatched }; // Fired by close(); DFG and FTL code with a CallFFI of this function watches it.
 };
 
 } // namespace JSC

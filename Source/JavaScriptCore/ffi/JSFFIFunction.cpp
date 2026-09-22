@@ -78,6 +78,21 @@ void JSFFIFunction::destroy(JSCell* cell)
     static_cast<JSFFIFunction*>(cell)->JSFFIFunction::~JSFFIFunction();
 }
 
+void JSFFIFunction::close(VM& vm)
+{
+    if (isClosed())
+        return;
+
+    dataLogLnIf(Options::verboseFFI(), "FFI: closing JSFFIFunction '", name(vm), "' target=", RawPointer(m_target));
+
+#if ENABLE(JIT)
+    if (m_icCode)
+        static_cast<FFI::ICStubCode*>(m_icCode.get())->close(); // m_icCode only ever comes from generateICStubCode().
+#endif
+    m_closedWatchpointSet.fireAll(vm, "bun:ffi function was closed");
+    ASSERT(isClosed());
+}
+
 static constexpr unsigned ffiIntrinsicAttributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
 static constexpr PropertyOffset ptrOffset = firstOutOfLineOffset;
 static constexpr PropertyOffset nativeOffset = firstOutOfLineOffset + 1;

@@ -62,8 +62,6 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     void* target = function->target();
     JSGlobalObject* globalObject = function->globalObject();
 
-    FFI::FFIContext* ffiContext = &globalObject->ffiContext();
-
     CodePtr<JITThunkPtrTag> invokeThunk = signature.invokeThunk();
     if (!invokeThunk) [[unlikely]] {
         flushRegisters();
@@ -82,6 +80,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     DFG_ASSERT(m_graph, node, m_graph.m_parameterSlots * sizeof(Register) >= signature.slotBufferBytes(), m_graph.m_parameterSlots, signature.slotCount());
 
     FrozenValue* frozenGlobalObject = m_graph.freeze(globalObject);
+    FrozenValue* frozenFunction = node->cellOperand();
 
     auto slotAddressFor = [&](unsigned slotIndex) -> Address {
         return Address(stackPointerRegister, static_cast<int32_t>(slotIndex * FFI::slotSize));
@@ -330,7 +329,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 addSlowPathGeneratorLambda([=, this, savePlans = WTF::move(savePlans), slowCases = WTF::move(slowCases)]() mutable {
                     slowCases.link(this);
                     silentSpill(savePlans);
-                    setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(ffiContext), TrustedImm32(static_cast<int32_t>(typeTag)), valueGPR, slotAddressGPR);
+                    setupArguments<decltype(operationFFIWriteSlot)>(TrustedImmPtr(frozenGlobalObject), TrustedImmPtr(frozenFunction), TrustedImm32(static_cast<int32_t>(typeTag)), valueGPR, slotAddressGPR);
                     appendCall(operationFFIWriteSlot);
                     if (exitArenaOnException)
                         emitArenaExitIfExceptionPending();
