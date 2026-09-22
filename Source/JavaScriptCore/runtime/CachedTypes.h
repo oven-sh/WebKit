@@ -160,9 +160,13 @@ public:
     void prefetchSlot(uint32_t ordinal) const;
     template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
     void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
+#if USE(BUN_JSC_ADDITIONS)
     // Payload order file recording: from now on tell the recorder each ordinal whose record is read. The table's bytes
     // must outlive the recorder, that is the process.
     JS_EXPORT_PRIVATE void enableFirstUseRecording(BytecodeOrderRecorder&);
+    // bytecodeOrderStringHash of the string, from its record.
+    uint64_t orderHashFor(uint32_t ordinal) const;
+#endif
 private:
     static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
@@ -193,7 +197,9 @@ private:
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
     bool m_visitedThisCycle WTF_GUARDED_BY_LOCK(m_cellsLock) { false };
+#if USE(BUN_JSC_ADDITIONS)
     RefPtr<BytecodeOrderRecorder> m_recorder;
+#endif
 };
 
 class VariableLengthObjectBase {
@@ -361,13 +367,14 @@ public:
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
     };
-    static constexpr unsigned numberOfRegions = 6;
+    static constexpr unsigned numberOfRegions = 6; // BytecodeLinkRegions::Count
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
         std::array<uint32_t, numberOfRegions> regionEnds { };
     };
 
+    // The shared string table is required. Destroy it, as it is used, on its VM's thread with the VM's lock held.
     JS_EXPORT_PRIVATE BytecodeLinkEncoder(VM&, EncoderStringTable*, Hints&&);
     JS_EXPORT_PRIVATE ~BytecodeLinkEncoder();
     // `source` is the whole module, as given to the parser; the code block is a module's or a program's.
@@ -376,6 +383,7 @@ public:
     // reads it back given the payload and the entry's offset.
     JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp);
     JS_EXPORT_PRIVATE Result finish();
+    JS_EXPORT_PRIVATE VM& vm() const;
 
 private:
     struct Impl;

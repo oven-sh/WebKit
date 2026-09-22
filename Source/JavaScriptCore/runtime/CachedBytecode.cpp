@@ -68,8 +68,16 @@ Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::allInProcess()
     return orderRecorders();
 }
 
+BytecodeOrderRecorder* BytecodeOrderRecorder::ifRecording(VM& vm)
+{
+    auto* payloads = vm.persistentBytecodePayloadsIfExists();
+    return payloads ? payloads->orderRecorder() : nullptr;
+}
+
 void BytecodeOrderRecorder::didDecodeFunction(SourceProvider& provider, unsigned startOffset, unsigned endOffset)
 {
+    if (m_pauseDepth)
+        return;
     Locker locker { m_lock };
     if (m_seenFunctions.add({ &provider, startOffset }).isNewEntry)
         m_recorded.functions.append({ &provider, startOffset, endOffset });
@@ -77,15 +85,22 @@ void BytecodeOrderRecorder::didDecodeFunction(SourceProvider& provider, unsigned
 
 void BytecodeOrderRecorder::didDecodeModule(SourceProvider& provider)
 {
+    if (m_pauseDepth)
+        return;
     Locker locker { m_lock };
-    m_recorded.modules.append(&provider);
+    if (m_seenModules.add(&provider).isNewEntry)
+        m_recorded.modules.append(&provider);
 }
 
 void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
 {
+    if (m_pauseDepth)
+        return;
     Locker locker { m_lock };
     if (m_seenStrings.set(ordinal))
         return;
+    // Ordinals mean something in one table only: a VM has one for as long as it records.
+    RELEASE_ASSERT(m_recorded.stringOrdinals.isEmpty() || m_recorded.stringTable.data() == stringTable.data());
     m_recorded.stringTable = stringTable;
     m_recorded.stringOrdinals.append(ordinal);
 }

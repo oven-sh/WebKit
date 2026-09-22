@@ -30,16 +30,17 @@
 #include "ParserModes.h"
 #include "Weak.h"
 #include "WeakGCHashTable.h"
+#include <array>
 #include <wtf/BitVector.h>
-#include <wtf/Lock.h>
-#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
-#include <wtf/FixedVector.h>
+#include <wtf/Lock.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -120,6 +121,11 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
+// The regions of a payload written by BytecodeLinkEncoder, in the order they lie in it.
+namespace BytecodeLinkRegions {
+enum : unsigned { EarlyHeads, Hot, Unknown, LateHeads, Cold, ExpressionInfo, Count };
+}
+
 // What one VM read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
 // while recording (PersistentBytecodePayloads::enableOrderRecording). Every recorder of the process stays registered,
 // whether or not its VM is still alive, and any thread may take a snapshot of it (the thread that writes the order file
@@ -133,6 +139,29 @@ public:
     ~BytecodeOrderRecorder();
     // In creation order.
     static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
+    // Null unless the VM is recording.
+    static BytecodeOrderRecorder* ifRecording(VM&);
+
+    // While one is alive on the recorder's VM (whose thread it belongs to) nothing is recorded: for code that decodes
+    // everything a payload holds rather than what a program uses.
+    class PauseScope {
+        WTF_MAKE_NONCOPYABLE(PauseScope);
+    public:
+        explicit PauseScope(VM& vm)
+            : m_recorder(ifRecording(vm))
+        {
+            if (m_recorder)
+                m_recorder->m_pauseDepth++;
+        }
+        ~PauseScope()
+        {
+            if (m_recorder)
+                m_recorder->m_pauseDepth--;
+        }
+
+    private:
+        RefPtr<BytecodeOrderRecorder> m_recorder;
+    };
 
     void didDecodeFunction(SourceProvider&, unsigned startOffset, unsigned endOffset);
     void didDecodeModule(SourceProvider&);
@@ -158,7 +187,9 @@ private:
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
     // A function is decoded again after its code was returned to the cache; providers stay alive in m_recorded.
     UncheckedKeyHashSet<std::pair<SourceProvider*, unsigned>> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashSet<SourceProvider*> m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
+    unsigned m_pauseDepth { 0 }; // the VM's thread only
 };
 #endif
 
