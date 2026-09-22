@@ -1533,6 +1533,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSRunLoopTimer.h
     runtime/JSScope.h
     runtime/JSScopeInlines.h
+    runtime/JSScriptExecutionOwnerEnvironment.h
+    runtime/JSScriptExecutionOwnerEnvironmentInlines.h
     runtime/JSSegmentedVariableObject.h
     runtime/JSSentinel.h
     runtime/JSSentinelInlines.h

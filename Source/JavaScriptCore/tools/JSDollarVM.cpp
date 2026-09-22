@@ -62,6 +62,7 @@
 #include "JSModuleRecord.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
+#include "JSScriptExecutionOwnerEnvironment.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "JSPromise.h"
 #include "JSString.h"
@@ -4152,7 +4153,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
 // properties as variables of a lexical environment between them and the global scope. With
 // `sharing` (an earlier result made with the same property names), that environment reuses
 // the symbol table of sharing.loader's, so the two loaders' modules share executables. With
-// `asScriptExecutionOwner`, that environment is a script execution owner (SymbolTable::isScriptExecutionOwner):
+// `asScriptExecutionOwner`, that environment is a script execution owner (a JSScriptExecutionOwnerEnvironment):
 // the loader's modules are evaluated with it current, and their functions run with it current whoever calls them.
 static JSModuleLoader* moduleLoaderFromHolder(VM& vm, JSValue value)
 {
@@ -4186,11 +4187,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
             symbolTable = SymbolTable::create(vm);
             for (auto& name : names)
                 symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
-#if USE(BUN_JSC_ADDITIONS)
-            symbolTable->setIsScriptExecutionOwner(callFrame->argument(2).toBoolean(globalObject));
-#endif
         }
+#if USE(BUN_JSC_ADDITIONS)
+        JSLexicalEnvironment* environment = callFrame->argument(2).toBoolean(globalObject)
+            ? JSScriptExecutionOwnerEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined())
+            : JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+#else
         JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+#endif
         for (auto& name : names) {
             JSValue value = bindings->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, {});
@@ -4200,7 +4204,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
     }
     JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, moduleScope);
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* symbolTable = moduleScope->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
+    if (moduleScope->inherits<JSScriptExecutionOwnerEnvironment>()) {
         vm.setAsyncContextTrackingEnabled();
         loader->setAsyncContext(vm, AsyncContextSwapScope::captured(vm, globalObject, jsUndefined(), moduleScope));
     }

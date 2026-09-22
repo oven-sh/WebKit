@@ -65,6 +65,7 @@
 #include "JSCJSValue.h"
 #include "JSLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
+#include "JSScriptExecutionOwnerEnvironment.h"
 #include "JSSet.h"
 #include "JSString.h"
 #include "JSSymbolTableObject.h"
@@ -436,10 +437,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     if (unlinkedCodeBlock->codeType() == FunctionCode && !unlinkedCodeBlock->isBuiltinFunction()) {
         unsigned depth = 0;
         for (JSScope* current = scope; current; current = current->next(), ++depth) {
-            if (SymbolTable* symbolTable = current->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
+            if (current->inherits<JSScriptExecutionOwnerEnvironment>()) {
                 // A scope chain is as deep as the parser's recursion let the source nest, far from this.
                 RELEASE_ASSERT(depth < noScriptExecutionOwner);
                 m_scriptExecutionOwnerDepth = depth;
+                m_hasScriptExecutionOwner = true;
                 break;
             }
         }

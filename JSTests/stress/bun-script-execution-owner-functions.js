@@ -3,7 +3,7 @@
 //@ runNoFTL
 //@ runNoLLInt
 
-// A script execution owner is a module loader's scope that says it is one (SymbolTable::isScriptExecutionOwner). A
+// A script execution owner is a module loader's scope that is a JSScriptExecutionOwnerEnvironment. A
 // function of script made under it runs with it current, whoever calls it (op_enter, CodeBlock::scriptExecutionOwnerDepth()): called
 // from outside, it tail-calls @callInScriptExecutionOwner, which makes the call again with the owner current and puts
 // back what was. Here: every way of reaching such a function from outside; two owners that share code, so that a

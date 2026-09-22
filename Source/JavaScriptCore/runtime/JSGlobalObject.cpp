@@ -192,6 +192,7 @@
 #include "JSRawJSONObject.h"
 #include "JSRegExpStringIteratorInlines.h"
 #include "JSRemoteFunctionInlines.h"
+#include "JSScriptExecutionOwnerEnvironmentInlines.h"
 #include "JSSetInlines.h"
 #include "JSSetIteratorInlines.h"
 #include "JSStringIteratorInlines.h"
@@ -1284,6 +1285,12 @@ void JSGlobalObject::init(VM& vm)
         [] (const Initializer<Structure>& init) {
             init.set(JSModuleEnvironment::createStructure(init.vm, init.owner));
         });
+#if USE(BUN_JSC_ADDITIONS)
+    m_scriptExecutionOwnerEnvironmentStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSScriptExecutionOwnerEnvironment::createStructure(init.vm, init.owner));
+        });
+#endif
     m_strictEvalActivationStructure.initLater(
         [] (const Initializer<Structure>& init) {
             init.set(StrictEvalActivation::createStructure(init.vm, init.owner, jsNull()));
@@ -3138,6 +3145,9 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_strictEvalActivationStructure.visit(visitor);
     visitor.append(thisObject->m_lexicalEnvironmentStructure);
     thisObject->m_moduleEnvironmentStructure.visit(visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    thisObject->m_scriptExecutionOwnerEnvironmentStructure.visit(visitor);
+#endif
     visitor.append(thisObject->m_directArgumentsStructure);
     visitor.append(thisObject->m_scopedArgumentsStructure);
     visitor.append(thisObject->m_clonedArgumentsStructure);

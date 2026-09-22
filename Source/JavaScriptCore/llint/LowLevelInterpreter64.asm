@@ -822,28 +822,6 @@ _llint_op_enter:
     traceExecution()
     checkStackPointerAlignment(t2, 0xdead00e1)
     loadp CodeBlock[cfr], t2                // t2<CodeBlock> = cfr.CodeBlock
-if BUN_JSC_ADDITIONS
-    // A function runs with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()).
-    loadh CodeBlock::m_scriptExecutionOwnerDepth[t2], t1
-    bieq t1, 0xffff, .opEnterInScriptExecutionOwner
-    loadp Callee[cfr], t0
-    loadp JSCallee::m_scope[t0], t0
-    btiz t1, .opEnterScriptExecutionOwnerFound
-.opEnterScriptExecutionOwnerLoop:
-    loadp JSScope::m_next[t0], t0
-    subi 1, t1
-    btinz t1, .opEnterScriptExecutionOwnerLoop
-.opEnterScriptExecutionOwnerFound:
-    loadp CodeBlock::m_globalObject[t2], t1
-    loadp JSGlobalObject::m_asyncContextData[t1], t1
-    loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
-    bqeq t0, t1, .opEnterInScriptExecutionOwner
-    callSlowPath(_slow_path_enter_script_execution_owner)
-    branchIfException(_llint_throw_from_slow_path_trampoline)
-    move r1, r0
-    doReturn()
-.opEnterInScriptExecutionOwner:
-end
     loadi CodeBlock::m_numVars[t2], t2      // t2<size_t> = t2<CodeBlock>.m_numVars
     subq CalleeSaveSpaceAsVirtualRegisters, t2
     move cfr, t1
@@ -859,7 +837,13 @@ end
 .opEnterDone:
     loadp CodeBlock[cfr], t2
     loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t2], t1
+if BUN_JSC_ADDITIONS
+    // m_couldBeTainted and m_hasScriptExecutionOwner, the word's two high bits (0xc0000000 as a 32-bit immediate).
+    btinz t1, -0x40000000, .opEnterTaintedOrHasScriptExecutionOwner
+.opEnterNotTainted:
+else
     btis t1, .opEnterSlow
+end
     loadp CodeBlock::m_vm[t2], t0
     loadb JSCell::m_cellState[t2], t1
     loadi (constexpr (VM::offsetOfHeapBarrierThreshold()))[t0], t0
@@ -877,6 +861,34 @@ end
 .opEnterSlow:
     callSlowPath(_slow_path_enter)
     jmp .opEnterDispatch
+
+if BUN_JSC_ADDITIONS
+.opEnterTaintedOrHasScriptExecutionOwner:
+    btiz t1, 0x40000000, .opEnterSlow
+    // A function runs with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()).
+    loadh CodeBlock::m_scriptExecutionOwnerDepth[t2], t1
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    btiz t1, .opEnterScriptExecutionOwnerFound
+.opEnterScriptExecutionOwnerLoop:
+    loadp JSScope::m_next[t0], t0
+    subi 1, t1
+    btinz t1, .opEnterScriptExecutionOwnerLoop
+.opEnterScriptExecutionOwnerFound:
+    loadp CodeBlock::m_globalObject[t2], t1
+    loadp JSGlobalObject::m_asyncContextData[t1], t1
+    loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
+    bqeq t0, t1, .opEnterInScriptExecutionOwner
+    callSlowPath(_slow_path_enter_script_execution_owner)
+    branchIfException(_llint_throw_from_slow_path_trampoline)
+    move r1, r0
+    doReturn()
+.opEnterInScriptExecutionOwner:
+    loadp CodeBlock[cfr], t2
+    loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t2], t1
+    btis t1, .opEnterSlow
+    jmp .opEnterNotTainted
+end
 
 
 llintOpWithProfile(op_get_argument, OpGetArgument, macro (size, get, dispatch, return)

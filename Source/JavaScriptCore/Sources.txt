@@ -964,6 +964,7 @@ runtime/JSRegExpStringIterator.cpp
 runtime/JSRemoteFunction.cpp
 runtime/JSRunLoopTimer.cpp
 runtime/JSScope.cpp
+runtime/JSScriptExecutionOwnerEnvironment.cpp
 runtime/JSSegmentedVariableObject.cpp
 runtime/JSSentinel.cpp
 runtime/JSSet.cpp

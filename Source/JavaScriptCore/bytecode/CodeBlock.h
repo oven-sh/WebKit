@@ -206,8 +206,8 @@ public:
     unsigned numberOfArgumentsToSkip() const { return m_numberOfArgumentsToSkip; }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // A function's script execution owner is the scope its code was made under whose symbol table says it is one
-    // (SymbolTable::isScriptExecutionOwner()): this many scopes up from the callee's. op_enter has the function run
+    // A function's script execution owner is the JSScriptExecutionOwnerEnvironment its code was made under: this many
+    // scopes up from the callee's. op_enter has the function run
     // with it as the current one (the second field of JSGlobalObject::m_asyncContextData): when another is, it calls
     // the function again through @callInScriptExecutionOwner and returns what that returns.
     static constexpr uint16_t noScriptExecutionOwner = std::numeric_limits<uint16_t>::max();
@@ -1058,7 +1058,15 @@ private:
         // The LLInt reads this union as a word and tests the sign bit to check m_couldBeTainted.
         unsigned m_numberOfArgumentsToSkipAndCouldBeTainted { 0 };
         struct {
+#if USE(BUN_JSC_ADDITIONS)
+            // As many bits as a function can have parameters (UnlinkedFunctionExecutable::m_parameterCount).
+            unsigned m_numberOfArgumentsToSkip : 30;
+            // Whether scriptExecutionOwnerDepth() is not noScriptExecutionOwner. Next to m_couldBeTainted so that the
+            // LLInt's op_enter tests the two together: code with neither runs what it ran before there were owners.
+            unsigned m_hasScriptExecutionOwner : 1;
+#else
             unsigned m_numberOfArgumentsToSkip : 31;
+#endif
             unsigned m_couldBeTainted : 1;
         };
     };

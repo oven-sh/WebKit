@@ -373,6 +373,9 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_withScopeStructure;
     LazyProperty<JSGlobalObject, Structure> m_strictEvalActivationStructure;
     LazyProperty<JSGlobalObject, Structure> m_moduleEnvironmentStructure;
+#if USE(BUN_JSC_ADDITIONS)
+    LazyProperty<JSGlobalObject, Structure> m_scriptExecutionOwnerEnvironmentStructure;
+#endif
     LazyProperty<JSGlobalObject, Structure> m_callbackConstructorStructure;
     LazyProperty<JSGlobalObject, Structure> m_callbackFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_callbackObjectStructure;
@@ -969,6 +972,9 @@ public:
     Structure* debuggerScopeStructure() const { return m_debuggerScopeStructure.get(this); }
     Structure* withScopeStructure() const { return m_withScopeStructure.get(this); }
     Structure* strictEvalActivationStructure() const { return m_strictEvalActivationStructure.get(this); }
+#if USE(BUN_JSC_ADDITIONS)
+    Structure* scriptExecutionOwnerEnvironmentStructure() const { return m_scriptExecutionOwnerEnvironmentStructure.get(this); }
+#endif
     Structure* activationStructure() const { return m_lexicalEnvironmentStructure.get(); }
     Structure* moduleEnvironmentStructure() const { return m_moduleEnvironmentStructure.get(this); }
     Structure* directArgumentsStructure() const { return m_directArgumentsStructure.get(); }
