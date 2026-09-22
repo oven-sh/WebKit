@@ -2344,6 +2344,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIRead);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIWrite);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICString);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIExternalArrayBuffer);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIArenaDepth);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICompileCounts);
 #endif
@@ -5310,7 +5311,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, Cal
         threadsafe = threadsafeValue.toBoolean(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (threadsafe && !FFI::FFIContext::threadsafeDispatch())
+    // Every callback needs the dispatch: a callback that is not threadsafe goes through it when the collector calls it.
+    if (!FFI::FFIContext::threadsafeDispatch())
         FFI::FFIContext::setThreadsafeDispatch(dollarVMThreadsafeDispatch);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), asObject(callableValue), signature.releaseNonNull(), threadsafe, nullptr)));
@@ -5464,6 +5466,36 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNull());
 
     return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
+}
+
+// $vm.ffiExternalArrayBuffer(byteLength, deallocator, context): an ArrayBuffer over external bytes. When the collector
+// frees it, it calls the C function `void deallocator(void* bytes, void* context)`, as JSObjectMakeArrayBufferWithBytesNoCopy does.
+JSC_DEFINE_HOST_FUNCTION(functionFFIExternalArrayBuffer, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    size_t byteLength = callFrame->argument(0).toIndex(globalObject, "byteLength"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!byteLength)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiExternalArrayBuffer: byteLength must not be 0"_s);
+
+    using Deallocator = void (*)(void* bytes, void* context);
+    auto deallocator = reinterpret_cast<Deallocator>(dollarVMFFIPointerFromJS(globalObject, callFrame->argument(1)));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!deallocator)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiExternalArrayBuffer: null deallocator"_s);
+
+    void* context = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(2));
+    RETURN_IF_EXCEPTION(scope, { });
+
+    auto* bytes = static_cast<uint8_t*>(fastZeroedMalloc(byteLength));
+    auto buffer = ArrayBuffer::createFromBytes({ bytes, byteLength }, createSharedTask<void(void*)>([deallocator, context](void* freedBytes) {
+        deallocator(freedBytes, context);
+        fastFree(freedBytes);
+    }));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject, CallFrame*))
@@ -6068,6 +6100,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "ffiRead"_s, functionFFIRead, 2);
     addFunction(vm, allowIfNotFuzz, "ffiWrite"_s, functionFFIWrite, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCString"_s, functionFFICString, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiExternalArrayBuffer"_s, functionFFIExternalArrayBuffer, 3);
     addFunction(vm, allowIfNotFuzz, "ffiArenaDepth"_s, functionFFIArenaDepth, 0);
     addFunction(vm, allowIfNotFuzz, "ffiCompileCounts"_s, functionFFICompileCounts, 0);
 #endif

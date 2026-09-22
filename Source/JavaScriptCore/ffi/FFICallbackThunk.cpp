@@ -351,29 +351,47 @@ private:
 #endif
 };
 
+// Copies the raw argument slots and hands them to the embedder's dispatch, which runs the call on the JS thread
+// later (runThreadsafeInvocation). The C caller gets 0 back.
+static void queueInvocation(JSFFICallback* callback, uint64_t* slots)
+{
+    const unsigned argumentCount = callback->signature().argumentCount();
+    auto dispatch = FFIContext::threadsafeDispatch();
+    RELEASE_ASSERT(dispatch);
+    if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
+        auto invocation = ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
+        dispatch(invocation.get());
+    }
+    slots[argumentCount] = 0;
+}
+
 } // namespace FFI
 
 JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatchThreadsafe, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
 {
     ASSERT(callback->isThreadsafe());
-    FFI::Signature& signature = callback->signature();
-    const unsigned argumentCount = signature.argumentCount();
-    auto dispatch = FFI::FFIContext::threadsafeDispatch();
-    RELEASE_ASSERT(dispatch);
-    if (callback->tryBeginThreadsafeInvocation()) [[likely]] {
-        auto invocation = FFI::ThreadsafeInvocation::create(callback, callback->embedderContext(), std::span<const uint64_t>(slots, argumentCount));
-        dispatch(invocation.get());
-    }
-    slots[argumentCount] = 0;
+    FFI::queueInvocation(callback, slots);
     return { encodedJSUndefined(), nullptr };
 }
 
 JSC_DEFINE_JIT_OPERATION(ffiCallbackDispatch, EncodedJSValue, (JSFFICallback* callback, uint64_t* slots))
 {
     ASSERT(!callback->isThreadsafe());
-    JSGlobalObject* globalObject = callback->globalObject();
-    VM& vm = globalObject->vm();
+    VM& vm = callback->vm(); // From the cell's address: this can be another thread, which must not read the structure.
+
+    // JS runs inline only on the thread that holds the VM's lock, and only while JS can run there. The collector is
+    // the caller when the callback is the deallocator of an ArrayBuffer it frees: in the end phase, on the JS thread
+    // or on the collector thread; in the last sweep of a VM that is being destroyed (the embedder drops what is queued
+    // for that VM); or on the thread of another VM the buffer was transferred to. A thread that does not hold the lock
+    // would wait for it below for as long as the JS thread keeps it. The last two tests read state of the JS thread, so
+    // they come after the lock test.
+    if (!vm.currentThreadIsHoldingAPILock() || vm.isCollectorBusyOnCurrentThread() || vm.heap.isShuttingDown()) [[unlikely]] {
+        FFI::queueInvocation(callback, slots);
+        return { encodedJSUndefined(), nullptr };
+    }
+
     JSLockHolder locker(vm);
+    JSGlobalObject* globalObject = callback->globalObject();
 
     FFI::Signature& signature = callback->signature();
     const unsigned argumentCount = signature.argumentCount();
