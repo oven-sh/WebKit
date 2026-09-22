@@ -336,6 +336,14 @@ JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
 // as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
 // in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
 JS_EXPORT_PRIVATE CString bytecodeOrderFileContents(VM&);
+// For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
+// function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
+// instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
+struct CachedCodeDigest {
+    uint64_t digest { 0 };
+    unsigned codeBlocks { 0 };
+};
+JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedCode(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>);
 
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
 // out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:

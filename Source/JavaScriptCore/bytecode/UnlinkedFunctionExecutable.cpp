@@ -303,6 +303,15 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFunctionExecutable::codeBlocksDecodingCached(VM& vm)
+{
+    if (m_isCached)
+        decodeCachedCodeBlocks(vm);
+    return { m_unlinkedCodeBlockForCall.get(), m_unlinkedCodeBlockForConstruct.get() };
+}
+#endif
+
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 {
     ASSERT(m_isCached);

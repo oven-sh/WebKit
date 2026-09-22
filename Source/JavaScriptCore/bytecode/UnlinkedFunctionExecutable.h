@@ -213,6 +213,11 @@ public:
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
     // The code blocks are still (or again) in the bytecode cache this was decoded from.
     bool isCached() const { return m_isCached; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The code blocks for call and construct as they are once whatever the bytecode cache holds for this function is
+    // decoded; never generates one (unlinkedCodeBlockFor does).
+    JS_EXPORT_PRIVATE std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> codeBlocksDecodingCached(VM&);
+#endif
     ConstructAbility constructAbility() const { return static_cast<ConstructAbility>(m_constructAbility); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
     bool isClassConstructorFunction() const

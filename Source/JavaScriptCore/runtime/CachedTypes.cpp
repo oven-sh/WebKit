@@ -32,6 +32,7 @@
 #include "BuiltinNames.h"
 #include "BytecodeCacheError.h"
 #include "BytecodeLivenessAnalysis.h"
+#include "CodeCache.h"
 #include "JSCBytecodeCacheVersion.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
@@ -5476,6 +5477,53 @@ CString bytecodeOrderFileContents(VM& vm)
             printLine('S', hash);
     }
     return out.toCString();
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+static void digestCodeBlock(VM& vm, OrderHasher& hasher, CachedCodeDigest& result, UnlinkedCodeBlock& codeBlock)
+{
+    auto addNumber = [&](uint64_t number) {
+        for (unsigned shift = 0; shift < 64; shift += 8)
+            hasher.add(static_cast<uint8_t>(number >> shift));
+    };
+    result.codeBlocks++;
+    const auto& instructions = codeBlock.instructions();
+    addNumber(instructions.sizeInBytes());
+    hasher.add(std::span { static_cast<const uint8_t*>(instructions.rawPointer()), instructions.sizeInBytes() });
+    addNumber(codeBlock.constantRegisters().size());
+    addNumber(codeBlock.numberOfIdentifiers());
+    for (size_t i = 0; i < codeBlock.numberOfIdentifiers(); ++i) {
+        const Identifier& identifier = codeBlock.identifier(i);
+        addNumber(identifier.isNull() ? 0 : bytecodeOrderStringHash(*identifier.impl()));
+    }
+    addNumber(codeBlock.expressionInfo().byteSizeForGCPacing());
+    unsigned declarations = codeBlock.numberOfFunctionDecls();
+    unsigned expressions = codeBlock.numberOfFunctionExprs();
+    addNumber(declarations);
+    addNumber(expressions);
+    for (unsigned i = 0; i < declarations + expressions; ++i) {
+        UnlinkedFunctionExecutable* executable = i < declarations ? codeBlock.functionDecl(i) : codeBlock.functionExpr(i - declarations);
+        auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+        addNumber(!!forCall | !!forConstruct << 1);
+        if (forCall)
+            digestCodeBlock(vm, hasher, result, *forCall);
+        if (forConstruct)
+            digestCodeBlock(vm, hasher, result, *forConstruct);
+    }
+}
+
+std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode)
+{
+    SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
+    UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
+    if (!codeBlock)
+        return std::nullopt;
+    OrderHasher hasher;
+    CachedCodeDigest result;
+    digestCodeBlock(vm, hasher, result, *codeBlock);
+    result.digest = hasher.finish();
+    return result;
 }
 #endif
 
