@@ -1060,7 +1060,16 @@ public:
 #endif
         m_bodies.append(WTF::move(encodeBody));
     }
-    void deferCold(Function<void()>&& encodeCold) { m_cold.append(WTF::move(encodeCold)); }
+    void deferCold(Function<void()>&& encodeCold)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_link) {
+            m_link->coldData.append({ m_link->linkClass, m_link->rank, m_link->nextSequence++, WTF::move(encodeCold) });
+            return;
+        }
+#endif
+        m_cold.append(WTF::move(encodeCold));
+    }
     void encodeDeferred()
     {
         while (!m_bodies.isEmpty())
@@ -1086,8 +1095,20 @@ public:
         bool operator>(const LinkedBody& other) const { return rank != other.rank ? rank > other.rank : sequence > other.sequence; }
     };
     using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    // What deferCold() defers, with the place of the head or body it belongs to: the last region is written in the order
+    // of the regions before it, so that what a run reads of it (the position tables of the code that throws) is as
+    // close together as that code is. An array equal to an earlier one is shared, so it sits with its hottest user.
+    struct LinkedColdData {
+        LinkClass linkClass;
+        uint64_t rank;
+        uint64_t sequence;
+        Function<void()> encode;
+        bool operator<(const LinkedColdData& other) const { return std::tie(linkClass, rank, sequence) < std::tie(other.linkClass, other.rank, other.sequence); }
+    };
     struct LinkState {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LinkState);
+        Vector<LinkedColdData> coldData;
+        uint64_t rank { 0 }; // of the head (its module's index) or body being encoded
         UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> hotRanks;
         // The functions the recorded build had and its run did not decode. Empty: the order file does not say, and
         // nothing is UNKNOWN.
@@ -1114,6 +1135,7 @@ public:
         m_link->module = module;
         m_link->scope = source;
         m_link->linkClass = isLate ? LinkClass::LateHead : LinkClass::EarlyHead;
+        m_link->rank = module;
         m_link->openRegion = m_link->linkClass;
     }
     void encodeLinkedBodies(LinkClass region)
@@ -1126,6 +1148,7 @@ public:
             m_link->module = body.module;
             m_link->scope = body.source;
             m_link->linkClass = region;
+            m_link->rank = body.rank;
             body.encode();
         }
     }
@@ -1135,10 +1158,12 @@ public:
     }
     void encodeLinkedCold()
     {
+        RELEASE_ASSERT(!hasQueuedLinkedBodies() && m_cold.isEmpty());
+        std::ranges::sort(m_link->coldData);
+        for (auto& data : m_link->coldData)
+            data.encode();
         RELEASE_ASSERT(!hasQueuedLinkedBodies());
-        while (!m_cold.isEmpty())
-            m_cold.takeFirst()();
-        RELEASE_ASSERT(!hasQueuedLinkedBodies());
+        m_link->coldData.clear();
     }
     void alignCurrentPageEnd() { m_currentPage->alignEnd(); }
 #endif
