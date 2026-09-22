@@ -29,6 +29,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include "JSCInlines.h"
+#include "JSLexicalEnvironmentInlines.h"
 #include "JSScriptExecutionOwnerEnvironmentInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
