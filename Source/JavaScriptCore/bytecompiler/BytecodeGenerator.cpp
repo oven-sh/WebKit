@@ -130,7 +130,6 @@ void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, 
         CASE(OpJneqNull)
         CASE(OpJundefinedOrNull)
         CASE(OpJnundefinedOrNull)
-        CASE(OpJcurrentScriptExecutionOwner)
         CASE(OpJeq)
         CASE(OpJstricteq)
         CASE(OpJneq)
@@ -574,11 +573,6 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
 
     allocateScope();
-
-#if USE(BUN_JSC_ADDITIONS)
-    if (!m_isBuiltinFunction)
-        emitEnterScriptExecutionOwner();
-#endif
 
     switch (constructorKind()) {
     case ConstructorKind::None:
@@ -1498,48 +1492,6 @@ Ref<LabelScope> BytecodeGenerator::newLabelScope(LabelScope::Type type, const Id
     m_labelScopes.append(type, name, labelScopeDepth(), newLabel(), type == LabelScope::Loop ? RefPtr<Label>(newLabel()) : RefPtr<Label>()); // Only loops have continue targets.
     return m_labelScopes.last();
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-// A function of script that has a script execution owner runs as its owner whoever calls it. When the owner is not
-// the current one (op_jcurrent_script_execution_owner falls through), the function tail-calls
-// @callInScriptExecutionOwner / @constructInScriptExecutionOwner (builtins/ScriptExecutionOwner.js), which makes the
-// same call again with the owner current. Nothing of the function's own has run: the callee, `this` (new.target when
-// constructing) and the arguments are as they were passed. No instruction here has a value profile: one that never
-// runs would count against every function's tier-up (CodeBlock::shouldOptimizeNowFromBaseline).
-void BytecodeGenerator::emitEnterScriptExecutionOwner()
-{
-    Ref<Label> body = newLabel();
-    {
-        RefPtr<RegisterID> owner = newTemporary();
-        OpJcurrentScriptExecutionOwner::emit(this, owner.get(), body->bind(this));
-
-        RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, isConstructor() ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
-        RefPtr<RegisterID> argumentValues = newTemporary();
-        OpCreateClonedArguments::emit(this, argumentValues.get());
-        CallArguments arguments(*this, nullptr, 4);
-        emitLoad(arguments.thisRegister(), jsUndefined());
-        move(arguments.argumentRegister(0), owner.get());
-        move(arguments.argumentRegister(1), &m_calleeRegister);
-        move(arguments.argumentRegister(2), &m_thisRegister);
-        move(arguments.argumentRegister(3), argumentValues.get());
-        JSTextPosition divot(m_scopeNode->firstLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset());
-        // A tail call is followed by a return of its result, as `return f()` is: an optimizing tier that inlines the
-        // callee makes an ordinary call of it and goes on from there.
-        RefPtr<RegisterID> result = newTemporary();
-        emitCall<OpTailCall>(result.get(), function.get(), NoExpectedFunction, arguments, divot, divot, divot, DebuggableCall::No);
-        OpRet::emit(this, result.get());
-    }
-    // The tail call never reaches the function's own code, whose variables are allocated next and have to follow the
-    // last one directly: what it left in its temporaries is never seen.
-    reclaimFreeRegisters();
-
-    emitLabel(body.get());
-    // A generator's state switch goes after this instruction, not after op_enter (BytecodeGeneratorification): a generator
-    // resumed from outside its owner enters the owner first.
-    if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
-        OpNop::emit(this);
-}
-#endif
 
 void BytecodeGenerator::emitEnter()
 {

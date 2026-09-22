@@ -96,7 +96,6 @@
 #include "ObjectConstructor.h"
 #include "OpcodeInlines.h"
 #include "PreciseJumpTargets.h"
-#include "PreciseJumpTargetsInlines.h"
 #include "PrivateFieldPutKind.h"
 #include "PropertyInlineCache.h"
 #include "PutByIdFlags.h"
@@ -498,6 +497,9 @@ private:
     Terminality handleVarargsCall(const JSInstruction* pc, NodeType op, CallMode);
     void emitFunctionChecks(CallVariant, Node* callTarget, VirtualRegister thisArgumnt);
     void emitArgumentPhantoms(int registerOffset, int argumentCountIncludingThis);
+#if USE(BUN_JSC_ADDITIONS)
+    void handleEnterScriptExecutionOwner();
+#endif
     Node* getArgumentCount();
     template<typename ChecksFunctor>
     bool handleRecursiveTailCall(Node* callTargetNode, CallVariant, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& emitFunctionCheckIfNeeded);
@@ -588,7 +590,6 @@ private:
 
     bool handleInByAsMatchStructure(VirtualRegister destination, Node* base, InByStatus);
     void handleInById(VirtualRegister destination, Node* base, CacheableIdentifier, InByStatus, BytecodeIndex osrExitIndex);
-    Node* scriptExecutionOwner(unsigned depth);
     void handleGetScope(VirtualRegister destination);
     void handleCheckTraps();
 
@@ -1640,9 +1641,6 @@ private:
         Vector<ArgumentPosition*> m_argumentPositions;
         
         InlineStackEntry* const m_caller;
-
-        // Read once, in parseCodeBlock(): a lower tier sets it while this code is being parsed.
-        bool m_scriptExecutionOwnerCheckHasFallenThrough { false };
         
         InlineStackEntry(
             ByteCodeParser*,
@@ -7812,25 +7810,114 @@ void ByteCodeParser::handleInById(VirtualRegister destination, Node* base, Cache
     set(destination, addToGraph(InById, OpInfo(identifier), base));
 }
 
-// The script execution owner of the code being parsed: the scope `depth` up from the callee's, or null when the code has
-// none (op_jcurrent_script_execution_owner).
-Node* ByteCodeParser::scriptExecutionOwner(unsigned depth)
+#if USE(BUN_JSC_ADDITIONS)
+// op_enter has a function run with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()).
+void ByteCodeParser::handleEnterScriptExecutionOwner()
 {
-    if (depth == UINT_MAX)
-        return nullptr;
-    Node* callee = get(VirtualRegister(CallFrameSlot::callee));
-    if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>()) {
-        // A scope's next scope never changes: the owner of a known function is known.
-        JSScope* scope = function->scope();
+    CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
+    unsigned depth = codeBlock->scriptExecutionOwnerDepth();
+    if (depth == CodeBlock::noScriptExecutionOwner)
+        return;
+
+    auto getOwner = [&](Node* callee) {
+        if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>()) {
+            // A scope's next scope never changes: the owner of a known function is known.
+            JSScope* scope = function->scope();
+            for (unsigned i = 0; i < depth; ++i)
+                scope = scope->next();
+            return weakJSConstant(scope);
+        }
+        Node* scope = addToGraph(GetScope, callee);
         for (unsigned i = 0; i < depth; ++i)
-            scope = scope->next();
-        return weakJSConstant(scope);
+            scope = addToGraph(SkipScope, scope);
+        return scope;
+    };
+    Node* owner = getOwner(get(VirtualRegister(CallFrameSlot::callee)));
+    JSGlobalObject* globalObject = codeBlock->globalObject();
+    Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(globalObject->m_asyncContextData.get()));
+
+    // Until the function has found another owner current (as op_jneq_ptr until it has jumped) that is checked for, and
+    // the call made then is not compiled: it forwards the arguments, which would have every argument kept boxed.
+    bool isConstruct = codeBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
+    JSFunction* enter = m_inlineStackTop->m_profiledBlock->hasEnteredScriptExecutionOwner()
+        ? globalObject->linkTimeConstantConcurrently<JSFunction*>(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner)
+        : nullptr;
+    if (!enter) {
+        if (owner->isCellConstant())
+            addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
+        else
+            addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(true))), addToGraph(CompareStrictEq, owner, current));
+        return;
     }
-    Node* scope = addToGraph(GetScope, callee);
-    for (unsigned i = 0; i < depth; ++i)
-        scope = addToGraph(SkipScope, scope);
-    return scope;
+
+    BasicBlock* enterBlock = allocateUntargetableBlock();
+    BasicBlock* inOwnerBlock = allocateUntargetableBlock();
+    BranchData* branchData = m_graph.m_branchData.add();
+    branchData->taken = BranchTarget(inOwnerBlock);
+    branchData->notTaken = BranchTarget(enterBlock);
+    addToGraph(Branch, OpInfo(branchData), addToGraph(CompareStrictEq, owner, current));
+
+    {
+        // What CommonSlowPaths::enterScriptExecutionOwner() does, as a tail call: the same call again, through `enter`,
+        // whose result is the function's. There is no call in the bytecode; the frame is made past the last register
+        // in use, as for a getter's.
+        m_currentBlock = enterBlock;
+        clearCaches();
+
+        noticeArgumentsUse();
+        Node* callee = get(VirtualRegister(CallFrameSlot::callee));
+        Node* ownerToEnter = getOwner(callee);
+        Node* thisValue = get(VirtualRegister(CallFrameSlot::thisArgument));
+        Node* argumentValues = addToGraph(CreateClonedArguments);
+
+        int argumentCountIncludingThis = 5;
+        int registerOffset = virtualRegisterForLocal(m_inlineStackTop->m_profiledBlock->numCalleeLocals() - 1).offset();
+        registerOffset -= argumentCountIncludingThis + 1; // True return PC.
+        registerOffset -= CallFrame::headerSizeInRegisters;
+        registerOffset = -WTF::roundUpToMultipleOf(stackAlignmentRegisters(), -registerOffset);
+        ensureLocals(m_inlineStackTop->remapOperand(VirtualRegister(registerOffset)).toLocal());
+
+        int nextRegister = registerOffset + CallFrame::headerSizeInRegisters;
+        set(VirtualRegister(nextRegister++), jsConstant(jsUndefined()), ImmediateNakedSet);
+        set(VirtualRegister(nextRegister++), ownerToEnter, ImmediateNakedSet);
+        set(VirtualRegister(nextRegister++), callee, ImmediateNakedSet);
+        set(VirtualRegister(nextRegister++), thisValue, ImmediateNakedSet);
+        set(VirtualRegister(nextRegister++), argumentValues, ImmediateNakedSet);
+
+        // We've set some locals, but they are not user-visible. It's still OK to exit from here.
+        m_exitOK = true;
+        addToGraph(ExitOK);
+
+        // Nothing of this function's is used again, or has been set: its scope register holds what an inlined call
+        // returns.
+        Operand result = codeBlock->scopeRegister();
+        Terminality terminality = handleCall(result, TailCall, InlineCallFrame::TailCall, nextOpcodeIndex(), weakJSConstant(enter), argumentCountIncludingThis, registerOffset, CallLinkStatus(CallVariant(enter)), SpecBytecodeTop, nullptr);
+        if (terminality == NonTerminal) {
+            // `enter` was inlined, or this function is: what op_ret does, in the instruction the call is in (the call's
+            // result is a queued SetLocal until the instruction ends).
+            processSetLocalQueue();
+            Node* returnValue = get(result);
+            if (!inlineCallFrame()) {
+                addToGraph(Return, returnValue);
+                flushForReturn();
+            } else {
+                flushForReturn();
+                if (m_inlineStackTop->m_returnValue.isValid())
+                    setDirect(m_inlineStackTop->m_returnValue, returnValue, ImmediateSetWithFlush);
+                if (!m_inlineStackTop->m_continuationBlock)
+                    m_inlineStackTop->m_continuationBlock = allocateUntargetableBlock();
+                addJumpTo(m_inlineStackTop->m_continuationBlock);
+            }
+        }
+    }
+
+    // As in op_enter before the check: exiting only runs op_enter again.
+    m_currentBlock = inOwnerBlock;
+    clearCaches();
+    m_exitOK = true;
+    addToGraph(ExitOK);
 }
+#endif
 
 void ByteCodeParser::handleGetScope(VirtualRegister destination)
 {
@@ -8358,6 +8445,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
         // === Function entry opcodes ===
 
         case op_enter: {
+#if USE(BUN_JSC_ADDITIONS)
+            // First, as in the LLInt and the baseline JIT: the block the function's own code starts in is then one that
+            // starts with everything op_enter sets, as it is without the check.
+            handleEnterScriptExecutionOwner();
+#endif
             Node* undefined = addToGraph(JSConstant, OpInfo(m_constantUndefined));
             // Initialize all locals to undefined.
             for (unsigned i = 0; i < m_inlineStackTop->m_codeBlock->numVars(); ++i)
@@ -10436,41 +10528,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_iterator_close_check);
         }
 
-        case op_jcurrent_script_execution_owner: {
-#if USE(BUN_JSC_ADDITIONS)
-            auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
-            auto& metadata = bytecode.metadata(codeBlock);
-            unsigned taken = m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel);
-            Node* owner = scriptExecutionOwner(metadata.m_depth);
-            if (owner && m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough) {
-                Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
-                Node* condition = addToGraph(CompareStrictEq, owner, current);
-                // The block ends here, before a queued SetLocal would be issued; nothing in this code origin has had an
-                // effect, and nothing after the SetLocal can exit.
-                set(bytecode.m_owner, owner, ImmediateNakedSet);
-                addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
-                LAST_OPCODE(op_jcurrent_script_execution_owner);
-            }
-
-            // Until it has fallen through (as op_jneq_ptr until it has jumped), the owner being the current one is checked
-            // for, and what it falls through to is not parsed: that forwards the arguments, and parsing it would have every
-            // argument of this function kept boxed. Nothing in there is a jump target, and `taken` is one only if something
-            // else jumps there (parseCodeBlock), so the function's own code goes on in this block as it did without the check.
-            ASSERT(limit >= taken);
-            if (owner) {
-                Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
-                if (owner->isCellConstant())
-                    addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
-                else
-                    addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(true))), addToGraph(CompareStrictEq, owner, current));
-            }
-            m_currentIndex = BytecodeIndex(taken);
-            continue;
-#else
-            RELEASE_ASSERT_NOT_REACHED();
-#endif
-        }
-
         case op_jeq_ptr: {
             auto bytecode = currentInstruction->as<OpJeqPtr>();
             JSValue constant = m_inlineStackTop->m_codeBlock->getConstant(bytecode.m_specialPointer);
@@ -11825,37 +11882,6 @@ void ByteCodeParser::parseCodeBlock()
 
     Vector<JSInstructionStream::Offset, 32> jumpTargets;
     computePreciseJumpTargets(codeBlock, jumpTargets);
-#if USE(BUN_JSC_ADDITIONS)
-    // Where op_jcurrent_script_execution_owner jumps is a block boundary only while it is a branch. Until it has fallen
-    // through it is a check, and the function's own code follows it in the same block unless something else jumps there.
-    {
-        const auto& instructions = codeBlock->instructions();
-        auto check = instructions.begin();
-        if (check != instructions.end() && check->is<OpEnter>())
-            ++check;
-        if (check != instructions.end() && check->is<OpJcurrentScriptExecutionOwner>()) {
-            auto& metadata = check->as<OpJcurrentScriptExecutionOwner>().metadata(codeBlock);
-            m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough = metadata.m_depth != UINT_MAX && metadata.m_hasFallenThrough;
-            if (!m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough) {
-                unsigned taken = check.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(codeBlock, *check);
-                bool somethingElseJumpsThere = instructions.at(taken)->is<OpLoopHint>();
-                for (unsigned i = codeBlock->numberOfExceptionHandlers(); i-- && !somethingElseJumpsThere;) {
-                    auto& handler = codeBlock->exceptionHandler(i);
-                    somethingElseJumpsThere = handler.target == taken || handler.start == taken || handler.end == taken;
-                }
-                for (auto instruction = instructions.begin(); instruction != instructions.end() && !somethingElseJumpsThere; ++instruction) {
-                    if (instruction.offset() == check.offset())
-                        continue;
-                    extractStoredJumpTargetsForInstruction(codeBlock, *instruction, [&](int32_t relativeOffset) {
-                        somethingElseJumpsThere |= instruction.offset() + relativeOffset == taken;
-                    });
-                }
-                if (!somethingElseJumpsThere)
-                    jumpTargets.removeFirst(taken);
-            }
-        }
-    }
-#endif
     if (Options::dumpBytecodeAtDFGTime()) [[unlikely]] {
         WTF::dataFile().atomically([&](auto&) {
             dataLog("Jump targets: ");

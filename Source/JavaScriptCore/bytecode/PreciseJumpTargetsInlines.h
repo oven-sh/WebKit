@@ -43,7 +43,6 @@ namespace JSC {
     CASE_OP(OpJneqNull) \
     CASE_OP(OpJundefinedOrNull) \
     CASE_OP(OpJnundefinedOrNull) \
-    CASE_OP(OpJcurrentScriptExecutionOwner) \
     CASE_OP(OpJeqPtr) \
     CASE_OP(OpJneqPtr) \
     \

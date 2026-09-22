@@ -822,6 +822,28 @@ _llint_op_enter:
     traceExecution()
     checkStackPointerAlignment(t2, 0xdead00e1)
     loadp CodeBlock[cfr], t2                // t2<CodeBlock> = cfr.CodeBlock
+if BUN_JSC_ADDITIONS
+    // A function runs with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()).
+    loadh CodeBlock::m_scriptExecutionOwnerDepth[t2], t1
+    bieq t1, 0xffff, .opEnterInScriptExecutionOwner
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    btiz t1, .opEnterScriptExecutionOwnerFound
+.opEnterScriptExecutionOwnerLoop:
+    loadp JSScope::m_next[t0], t0
+    subi 1, t1
+    btinz t1, .opEnterScriptExecutionOwnerLoop
+.opEnterScriptExecutionOwnerFound:
+    loadp CodeBlock::m_globalObject[t2], t1
+    loadp JSGlobalObject::m_asyncContextData[t1], t1
+    loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
+    bqeq t0, t1, .opEnterInScriptExecutionOwner
+    callSlowPath(_slow_path_enter_script_execution_owner)
+    branchIfException(_llint_throw_from_slow_path_trampoline)
+    move r1, r0
+    doReturn()
+.opEnterInScriptExecutionOwner:
+end
     loadi CodeBlock::m_numVars[t2], t2      // t2<size_t> = t2<CodeBlock>.m_numVars
     subq CalleeSaveSpaceAsVirtualRegisters, t2
     move cfr, t1
@@ -874,42 +896,6 @@ llintOpWithReturn(op_argument_count, OpArgumentCount, macro (size, get, dispatch
     subi 1, t0
     orq TagNumber, t0
     return(t0)
-end)
-
-
-# Jumps when this function's code has no script execution owner (m_depth is UINT_MAX), or its owner, the scope m_depth
-# up from the callee's, is the current one. Otherwise puts the owner in m_owner and falls through.
-llintOpWithMetadata(op_jcurrent_script_execution_owner, OpJcurrentScriptExecutionOwner, macro (size, get, dispatch, metadata, return)
-    if BUN_JSC_ADDITIONS
-        metadata(t5, t0)
-        loadi OpJcurrentScriptExecutionOwner::Metadata::m_depth[t5], t2
-        bieq t2, -1, .opJcurrentScriptExecutionOwnerTarget
-        loadp Callee[cfr], t0
-        loadp JSCallee::m_scope[t0], t0
-        btiz t2, .opJcurrentScriptExecutionOwnerFound
-
-    .opJcurrentScriptExecutionOwnerLoop:
-        loadp JSScope::m_next[t0], t0
-        subi 1, t2
-        btinz t2, .opJcurrentScriptExecutionOwnerLoop
-
-    .opJcurrentScriptExecutionOwnerFound:
-        loadp CodeBlock[cfr], t1
-        loadp CodeBlock::m_globalObject[t1], t1
-        loadp JSGlobalObject::m_asyncContextData[t1], t1
-        loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
-        bqeq t0, t1, .opJcurrentScriptExecutionOwnerTarget
-        storeb 1, OpJcurrentScriptExecutionOwner::Metadata::m_hasFallenThrough[t5]
-        get(m_owner, t1)
-        storeq t0, [cfr, t1, 8]
-        dispatch()
-
-    .opJcurrentScriptExecutionOwnerTarget:
-        get(m_targetLabel, t0)
-        jumpImpl(dispatchIndirect, t0)
-    else
-        crash()
-    end
 end)
 
 

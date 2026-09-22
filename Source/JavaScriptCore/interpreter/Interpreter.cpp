@@ -543,8 +543,20 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     };
 
     auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
+        BytecodeIndex bytecodeIndex(0);
         JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-        return stateValue.isInt32() ? codeBlock->bytecodeIndexForGeneratorState(stateValue.asInt32()) : BytecodeIndex(0);
+        if (stateValue.isInt32()) {
+            int32_t state = stateValue.asInt32();
+            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+            if (state > 0 && numberOfJumpTables > 0) {
+                size_t lastTableIndex = numberOfJumpTables - 1;
+                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+                int32_t offset = jumpTable.offsetForValue(state);
+                if (offset)
+                    bytecodeIndex = BytecodeIndex(offset);
+            }
+        }
+        return bytecodeIndex;
     };
 
     JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);
@@ -629,9 +641,19 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool isTopFrame = true;
+#endif
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
+
+#if USE(BUN_JSC_ADDITIONS)
+        // A frame under another that is still at its op_enter is a function calling itself again with its script
+        // execution owner current (CommonSlowPaths::enterScriptExecutionOwner): the function's frame is that call's.
+        if (!std::exchange(isTopFrame, false) && visitor->codeBlock() && visitor->codeBlock()->scriptExecutionOwnerDepth() != CodeBlock::noScriptExecutionOwner && !visitor->bytecodeIndex().offset())
+            return IterationStatus::Continue;
+#endif
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;

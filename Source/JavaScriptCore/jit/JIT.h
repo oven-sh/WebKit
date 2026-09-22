@@ -425,7 +425,6 @@ namespace JSC {
         void emit_op_jneq_null(const JSInstruction*);
         void emit_op_jundefined_or_null(const JSInstruction*);
         void emit_op_jnundefined_or_null(const JSInstruction*);
-        void emit_op_jcurrent_script_execution_owner(const JSInstruction*);
         void emit_op_jeq_ptr(const JSInstruction*);
         void emit_op_jneq_ptr(const JSInstruction*);
         void emit_op_less(const JSInstruction*);
@@ -653,6 +652,9 @@ namespace JSC {
         template <ResolveType>
         static MacroAssemblerCodeRef<JITThunkPtrTag> generateOpResolveScopeThunk(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> op_enter_handlerGenerator(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+        static MacroAssemblerCodeRef<JITThunkPtrTag> op_enter_script_execution_owner_handlerGenerator(VM&);
+#endif
         static MacroAssemblerCodeRef<JITThunkPtrTag> valueIsTruthyGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> valueIsFalseyGenerator(VM&);
 
@@ -881,6 +883,9 @@ namespace JSC {
         unsigned m_bytecodeCountHavingSlowCase { 0 };
         
         Label m_arityCheck;
+#if USE(BUN_JSC_ADDITIONS)
+        Label m_enterInScriptExecutionOwner; // in op_enter, after the script execution owner check
+#endif
 
         std::unique_ptr<JITDisassembler> m_disassembler;
         RefPtr<Profiler::Compilation> m_compilation;

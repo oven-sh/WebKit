@@ -89,6 +89,13 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case SuperSamplerBegin:
     case SuperSamplerEnd:
     case Jump:
+#if USE(BUN_JSC_ADDITIONS)
+    // A move and the epilogue, and the counter the FTL tier-up check puts before it. The return a function entering its
+    // script execution owner ends with follows an inlined tail call in the same instruction, op_enter, where nothing
+    // could exit to (ByteCodeParser::handleEnterScriptExecutionOwner).
+    case Return:
+    case CheckTierUpAtReturn:
+#endif
     case EntrySwitch:
     case Branch:
     case Unreachable:

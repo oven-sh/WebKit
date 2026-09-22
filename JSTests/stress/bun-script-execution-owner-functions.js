@@ -4,7 +4,7 @@
 //@ runNoLLInt
 
 // A script execution owner is a module loader's scope that says it is one (SymbolTable::isScriptExecutionOwner). A
-// function of script made under it runs with it current, whoever calls it (op_jcurrent_script_execution_owner): called
+// function of script made under it runs with it current, whoever calls it (op_enter, CodeBlock::scriptExecutionOwnerDepth()): called
 // from outside, it tail-calls @callInScriptExecutionOwner, which makes the call again with the owner current and puts
 // back what was. Here: every way of reaching such a function from outside; two owners that share code, so that a
 // function's owner is not a constant; functions with no owner; and every tier, before and after a function has first

@@ -205,6 +205,19 @@ public:
 
     unsigned numberOfArgumentsToSkip() const { return m_numberOfArgumentsToSkip; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A function's script execution owner is the scope its code was made under whose symbol table says it is one
+    // (SymbolTable::isScriptExecutionOwner()): this many scopes up from the callee's. op_enter has the function run
+    // with it as the current one (the second field of JSGlobalObject::m_asyncContextData): when another is, it calls
+    // the function again through @callInScriptExecutionOwner and returns what that returns.
+    static constexpr uint16_t noScriptExecutionOwner = std::numeric_limits<uint16_t>::max();
+    uint16_t scriptExecutionOwnerDepth() const { return m_scriptExecutionOwnerDepth; }
+    static constexpr ptrdiff_t offsetOfScriptExecutionOwnerDepth() { return OBJECT_OFFSETOF(CodeBlock, m_scriptExecutionOwnerDepth); }
+    // Whether op_enter ever found another owner current. Until then the DFG checks for that and exits.
+    bool hasEnteredScriptExecutionOwner() const { return m_hasEnteredScriptExecutionOwner; }
+    void setHasEnteredScriptExecutionOwner() { m_hasEnteredScriptExecutionOwner = true; }
+#endif
+
     unsigned numCalleeLocals() const { return m_numCalleeLocals; }
 
     unsigned numVars() const { return m_numVars; }
@@ -268,9 +281,6 @@ public:
     void NODELETE dumpMathICStats();
 
     bool isConstructor() const { return m_unlinkedCode->isConstructor(); }
-    // Where a generator (or async function) body suspended in `state` is: the yield before the point it resumes at.
-    // Bytecode index 0 when it is not suspended at one.
-    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexForGeneratorState(int32_t state);
     CodeType codeType() const { return m_unlinkedCode->codeType(); }
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }
@@ -1102,6 +1112,10 @@ private:
     // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
     uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
     uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
+#if USE(BUN_JSC_ADDITIONS)
+    uint8_t m_hasEnteredScriptExecutionOwner : 1 { false }; // read by compiler threads
+    uint16_t m_scriptExecutionOwnerDepth { noScriptExecutionOwner };
+#endif
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);

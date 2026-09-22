@@ -2966,6 +2966,17 @@ JSC_DEFINE_JIT_OPERATION(operationHandleTraps, UnusedPtr, (JSGlobalObject* globa
     OPERATION_RETURN(scope, nullptr);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DEFINE_JIT_OPERATION(operationEnterScriptExecutionOwner, EncodedJSValue, (JSGlobalObject* globalObject))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    OPERATION_RETURN(scope, JSValue::encode(CommonSlowPaths::enterScriptExecutionOwner(globalObject, callFrame)));
+}
+#endif
+
 JSC_DEFINE_JIT_OPERATION(operationDebug, void, (VM* vmPointer, int32_t debugHookType, EncodedJSValue encodedData))
 {
     VM& vm = *vmPointer;

@@ -685,7 +685,7 @@ public:
     void setUsesSloppyEval(bool usesSloppyEval) { m_usesSloppyEval = usesSloppyEval; }
 
     // The scope is a script execution owner: an embedder's module scope (JSModuleLoader::moduleScope) that the script made
-    // under it belongs to. A function of that script runs with its owner current (op_jcurrent_script_execution_owner).
+    // under it belongs to. A function of that script runs with its owner current (op_enter, CodeBlock::scriptExecutionOwnerDepth()).
     bool isScriptExecutionOwner() const { return m_isScriptExecutionOwner; }
     void setIsScriptExecutionOwner(bool isScriptExecutionOwner) { m_isScriptExecutionOwner = isScriptExecutionOwner; }
 

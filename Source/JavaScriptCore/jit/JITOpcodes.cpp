@@ -500,36 +500,6 @@ void JIT::emit_op_jnundefined_or_null(const JSInstruction* currentInstruction)
     addJump(branchIfNotNull(regT0), target);
 }
 
-void JIT::emit_op_jcurrent_script_execution_owner(const JSInstruction* currentInstruction)
-{
-#if USE(BUN_JSC_ADDITIONS)
-    auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
-    unsigned target = jumpTarget(currentInstruction, bytecode.m_targetLabel);
-
-    // No owner (m_depth is UINT_MAX), or the owner, the scope m_depth up from the callee's, is the current one.
-    load32FromMetadata(bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfDepth(), regT2);
-    addJump(branch32(Equal, regT2, TrustedImm32(UINT_MAX)), target);
-    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
-    loadPtr(Address(regT0, JSCallee::offsetOfScopeChain()), regT0);
-    Jump found = branchTest32(Zero, regT2);
-    Label loop = label();
-    loadPtr(Address(regT0, JSScope::offsetOfNext()), regT0);
-    branchSub32(NonZero, TrustedImm32(1), regT2).linkTo(loop, this);
-    found.link(this);
-
-    loadGlobalObject(regT1);
-    loadPtr(Address(regT1, JSGlobalObject::offsetOfAsyncContextData()), regT1);
-    loadPtr(Address(regT1, JSInternalFieldObjectImpl<>::offsetOfInternalField(1)), regT1);
-    addJump(branchPtr(Equal, regT0, regT1), target);
-
-    store8ToMetadata(TrustedImm32(1), bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfHasFallenThrough());
-    emitPutVirtualRegister(bytecode.m_owner, regT0);
-#else
-    UNUSED_PARAM(currentInstruction);
-    RELEASE_ASSERT_NOT_REACHED();
-#endif
-}
-
 void JIT::emit_op_jeq_ptr(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpJeqPtr>();
@@ -1487,6 +1457,17 @@ void JIT::emit_op_enter(const JSInstruction*)
     if (m_profiledCodeBlock->couldBeTainted())
         store8(TrustedImm32(1), vm().addressOfMightBeExecutingTaintedCode());
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A function runs with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()). This
+    // code is shared by every CodeBlock of the unlinked one, and whether there is an owner is the CodeBlock's.
+    if (m_unlinkedCodeBlock->codeType() == FunctionCode && !m_unlinkedCodeBlock->isBuiltinFunction()) {
+        loadPtr(addressFor(CallFrameSlot::codeBlock), scratch1GPR);
+        load16(Address(scratch1GPR, CodeBlock::offsetOfScriptExecutionOwnerDepth()), scratch1GPR);
+        addSlowCase(branch32(NotEqual, scratch1GPR, TrustedImm32(CodeBlock::noScriptExecutionOwner)));
+        m_enterInScriptExecutionOwner = label();
+    }
+#endif
+
     size_t startLocal = CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters();
     int startOffset = virtualRegisterForLocal(startLocal).offset();
     ASSERT(startOffset <= 0);
@@ -1543,6 +1524,52 @@ void JIT::emit_op_enter(const JSInstruction*)
     }
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_script_execution_owner_handlerGenerator(VM& vm)
+{
+    CCallHelpers jit;
+
+    jit.emitCTIThunkPrologue();
+
+    // The owner is the scope CodeBlock::scriptExecutionOwnerDepth() up from the callee's.
+    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), regT3);
+    jit.load16(Address(regT3, CodeBlock::offsetOfScriptExecutionOwnerDepth()), regT2);
+    jit.loadPtr(addressFor(CallFrameSlot::callee), regT0);
+    jit.loadPtr(Address(regT0, JSCallee::offsetOfScopeChain()), regT0);
+    Jump found = jit.branchTest32(Zero, regT2);
+    Label loop = jit.label();
+    jit.loadPtr(Address(regT0, JSScope::offsetOfNext()), regT0);
+    jit.branchSub32(NonZero, TrustedImm32(1), regT2).linkTo(loop, &jit);
+    found.link(&jit);
+
+    jit.loadPtr(Address(regT3, CodeBlock::offsetOfGlobalObject()), regT1);
+    jit.loadPtr(Address(regT1, JSGlobalObject::offsetOfAsyncContextData()), regT1);
+    jit.loadPtr(Address(regT1, JSInternalFieldObjectImpl<>::offsetOfInternalField(1)), regT1);
+    Jump enter = jit.branchPtr(NotEqual, regT0, regT1);
+    jit.emitCTIThunkEpilogue();
+    jit.ret();
+
+    enter.link(&jit);
+    // op_enter is always at bytecodeOffset 0.
+    jit.store32(TrustedImm32(0), highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.prepareCallOperation(vm);
+    loadGlobalObject(jit, argumentGPR0);
+    jit.setupArguments<decltype(operationEnterScriptExecutionOwner)>(argumentGPR0);
+    jit.callOperation<OperationPtrTag>(operationEnterScriptExecutionOwner);
+    jit.emitNonPatchableExceptionCheck(vm).linkThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>() }, &jit);
+
+    // What that returned is what the function returns: op_ret, from here.
+    jit.emitCTIThunkEpilogue();
+#if CPU(X86_64)
+    jit.addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister); // The return address into the function.
+#endif
+    jit.jumpThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
+
+    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "op_enter_script_execution_owner_handler"_s, "Baseline: op_enter_script_execution_owner_handler");
+}
+#endif
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
 {
@@ -1799,6 +1826,14 @@ void JIT::emit_op_super_sampler_end(const JSInstruction*)
 
 void JIT::emitSlow_op_enter(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_unlinkedCodeBlock->codeType() == FunctionCode && !m_unlinkedCodeBlock->isBuiltinFunction()) {
+        // Comes back when the owner is the current one; otherwise the function returns from in there.
+        linkSlowCase(iter);
+        nearCallThunk(CodeLocationLabel { vm().getCTIStub(op_enter_script_execution_owner_handlerGenerator).retaggedCode<NoPtrTag>() });
+        jump().linkTo(m_enterInScriptExecutionOwner, this);
+    }
+#endif
     linkAllSlowCases(iter);
     nearCallThunk(CodeLocationLabel { vm().getCTIStub(op_enter_handlerGenerator).retaggedCode<NoPtrTag>() });
 }

@@ -77,7 +77,6 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ObjectAllocationProfileInlines.h"
 #include "PCToCodeOriginMap.h"
-#include "PreciseJumpTargetsInlines.h"
 #include "ProfilerDatabase.h"
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
@@ -90,7 +89,6 @@
 #include "TypeProfiler.h"
 #include "VMInlines.h"
 #include <wtf/Forward.h>
-#include <wtf/Range.h>
 #include <wtf/SimpleStats.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/UniquedStringImpl.h>
@@ -362,6 +360,10 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
         createRareDataIfNecessary();
         m_rareData->m_exceptionHandlers = other.m_rareData->m_exceptionHandlers;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    m_scriptExecutionOwnerDepth = other.m_scriptExecutionOwnerDepth;
+    m_hasEnteredScriptExecutionOwner = other.m_hasEnteredScriptExecutionOwner;
+#endif
 }
 
 CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
@@ -428,6 +430,21 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A function's code, the engine's own aside; `scope` is the callee's. The rest runs as whoever evaluates it.
+    if (unlinkedCodeBlock->codeType() == FunctionCode && !unlinkedCodeBlock->isBuiltinFunction()) {
+        unsigned depth = 0;
+        for (JSScope* current = scope; current; current = current->next(), ++depth) {
+            if (SymbolTable* symbolTable = current->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
+                // A scope chain is as deep as the parser's recursion let the source nest, far from this.
+                RELEASE_ASSERT(depth < noScriptExecutionOwner);
+                m_scriptExecutionOwnerDepth = depth;
+                break;
+            }
+        }
+    }
+#endif
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
     // We wait to initialize template objects until the end of finishCreation beecause it can
@@ -556,14 +573,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     const auto& instructionStream = instructions();
     unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
-    // What a function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): from the instruction after
-    // op_enter, when it is op_jcurrent_script_execution_owner, to its target, where the function's own code starts.
-    WTF::Range<unsigned> scriptExecutionOwnerPrologue;
-    if (auto instruction = instructionStream.begin(); instruction != instructionStream.end() && instruction->is<OpEnter>()) {
-        ++instruction;
-        if (instruction != instructionStream.end() && instruction->is<OpJcurrentScriptExecutionOwner>())
-            scriptExecutionOwnerPrologue = { instruction.offset(), instruction.offset() + static_cast<unsigned>(jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, *instruction)) };
-    }
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -571,9 +580,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // in any tier. It is not counted: tier-up thresholds and inlining budgets scale with this number, and making every such function
         // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
         // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
-        // Nor is what every function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): a compare and
-        // a branch that the optimizing tiers fold away where there is no owner, and the tail call a call from outside the owner makes.
-        if (opcodeID != op_iterator_close_check && !scriptExecutionOwnerPrologue.contains(instruction.offset()))
+        if (opcodeID != op_iterator_close_check)
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
@@ -635,20 +642,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         case op_new_array_with_species: {
             INITIALIZE_METADATA(OpNewArrayWithSpecies)
-            break;
-        }
-
-        case op_jcurrent_script_execution_owner: {
-            INITIALIZE_METADATA(OpJcurrentScriptExecutionOwner)
-            // It runs before the function has a scope of its own: `scope` is the callee's.
-            metadata.m_depth = UINT_MAX;
-            unsigned depth = 0;
-            for (JSScope* current = scope; current; current = current->next(), ++depth) {
-                if (SymbolTable* symbolTable = current->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
-                    metadata.m_depth = depth;
-                    break;
-                }
-            }
             break;
         }
 
@@ -1089,26 +1082,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
 }
 #endif // ENABLE(JIT)
-
-BytecodeIndex CodeBlock::bytecodeIndexForGeneratorState(int32_t state)
-{
-    size_t numberOfJumpTables = numberOfUnlinkedSwitchJumpTables();
-    if (state <= 0 || !numberOfJumpTables)
-        return BytecodeIndex(0);
-    // The state switch's table is the last one (BytecodeGeneratorification), and its offsets are from the switch, which
-    // follows op_enter, or, in a function that starts with op_jcurrent_script_execution_owner, the op_nop at that
-    // instruction's target. Counted from op_enter's end they name the instruction before the resume point: the yield.
-    int32_t offset = unlinkedSwitchJumpTable(numberOfJumpTables - 1).offsetForValue(state);
-    if (!offset)
-        return BytecodeIndex(0);
-    const auto& instructionStream = instructions();
-    unsigned afterEnter = instructionStream.at(0)->size();
-    unsigned stateSwitch = afterEnter;
-    if (auto check = instructionStream.at(afterEnter); check->is<OpJcurrentScriptExecutionOwner>())
-        stateSwitch = instructionStream.at(check.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, check)).next().offset();
-    ASSERT(instructionStream.at(stateSwitch)->is<OpSwitchImm>());
-    return BytecodeIndex(offset + stateSwitch - afterEnter);
-}
 
 CodeBlock::~CodeBlock()
 {

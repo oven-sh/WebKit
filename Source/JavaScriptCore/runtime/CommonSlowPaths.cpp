@@ -1256,6 +1256,43 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_primitive)
     RETURN(GET_C(bytecode.m_src).jsValue().toPrimitive(globalObject));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSValue CommonSlowPaths::enterScriptExecutionOwner(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    JSFunction* callee = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
+    JSScope* owner = callee->scope();
+    for (unsigned depth = codeBlock->scriptExecutionOwnerDepth(); depth--;)
+        owner = owner->next();
+    codeBlock->setHasEnteredScriptExecutionOwner();
+
+    // In a constructor's frame `this` is new.target until the function makes its own.
+    bool isConstruct = codeBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
+    JSValue enter = globalObject->linkTimeConstant(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
+    JSObject* argumentValues = ClonedArguments::createWithMachineFrame(globalObject, callFrame, ArgumentsMode::Cloned);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(owner);
+    arguments.append(callee);
+    arguments.append(callFrame->thisValue());
+    arguments.append(argumentValues);
+    ASSERT(!arguments.hasOverflowed());
+    RELEASE_AND_RETURN(scope, call(globalObject, enter, jsUndefined(), arguments, "callInScriptExecutionOwner is a function"_s));
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enter_script_execution_owner)
+{
+    BEGIN();
+    JSValue result = CommonSlowPaths::enterScriptExecutionOwner(globalObject, callFrame);
+    CHECK_EXCEPTION();
+    RETURN_TWO(pc, std::bit_cast<void*>(JSValue::encode(result)));
+}
+#endif
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enter)
 {
     BEGIN();

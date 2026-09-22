@@ -803,25 +803,6 @@ op :get_by_id_direct,
         offset: unsigned,
     }
 
-# What a function of script does after op_enter. Script belongs to a script execution owner when one of the scopes
-# its code was made in is one (SymbolTable::isScriptExecutionOwner: an embedder's module scope,
-# JSModuleLoader::moduleScope). Jumps when this function's code has no owner, or its owner is the current one
-# (JSGlobalObject::m_asyncContextData field 1). Otherwise puts the owner in `owner` and falls through to a tail call
-# that makes the call again with the owner current (BytecodeGenerator::emitEnterScriptExecutionOwner). The target
-# label is where the function's own code starts.
-op :jcurrent_script_execution_owner,
-    args: {
-        owner: VirtualRegister,
-        targetLabel: BoundLabel,
-    },
-    metadata: {
-        # Written during linking: how many scopes up from the callee's the owner is. UINT_MAX: this code has none.
-        depth: unsigned,
-        # Written by LLInt and the baseline JIT, as op_jneq_ptr's hasJumped: until it has fallen through, the
-        # optimizing tiers check instead of branching and do not compile what it falls through to.
-        hasFallenThrough: bool,
-    }
-
 # Alignment: 1
 op :jneq_ptr,
     args: {

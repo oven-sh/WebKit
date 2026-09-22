@@ -367,6 +367,9 @@ JSC_DECLARE_JIT_OPERATION(operationNewAsyncGenerator, JSCell*, (VM*, Structure*)
 JSC_DECLARE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject*, JSCell*, WriteBarrier<JSCell>*, int32_t forTest));
 JSC_DECLARE_JIT_OPERATION(operationHandleTraps, UnusedPtr, (JSGlobalObject*));
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DECLARE_JIT_OPERATION(operationEnterScriptExecutionOwner, EncodedJSValue, (JSGlobalObject*));
+#endif
 JSC_DECLARE_JIT_OPERATION(operationThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationDebug, void, (VM*, int32_t debugHookType, EncodedJSValue encodedData));
 #if ENABLE(DFG_JIT)

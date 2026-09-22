@@ -949,9 +949,6 @@ namespace JSC {
         bool fuseTestAndJmp(RegisterID* cond, Label& target);
 
         void emitEnter();
-#if USE(BUN_JSC_ADDITIONS)
-        void emitEnterScriptExecutionOwner();
-#endif
         void emitCheckTraps();
 
         RegisterID* emitGetPropertyEnumerator(RegisterID* dst, RegisterID* base);

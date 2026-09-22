@@ -23,9 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// What a function of script tail-calls when it is called from outside its script execution owner
-// (BytecodeGenerator::emitEnterScriptExecutionOwner): the same call, made with the owner current. The previous owner and
-// async context come back however the call ends.
+// What op_enter calls when a function's script execution owner is not the current one
+// (CommonSlowPaths::enterScriptExecutionOwner(), ByteCodeParser::handleEnterScriptExecutionOwner()): the same call, made
+// with the owner current, whose result is the function's. The previous owner and async context come back however the
+// call ends.
 
 @linkTimeConstant
 function callInScriptExecutionOwner(owner, callee, thisValue, argumentValues)

@@ -51,6 +51,12 @@ namespace JSC {
 
 namespace CommonSlowPaths {
 
+#if USE(BUN_JSC_ADDITIONS)
+// What op_enter does when the function's script execution owner is not the current one: the same call again, through
+// @callInScriptExecutionOwner / @constructInScriptExecutionOwner, whose result is the function's.
+JS_EXPORT_PRIVATE JSValue enterScriptExecutionOwner(JSGlobalObject*, CallFrame*);
+#endif
+
 ALWAYS_INLINE int numberOfStackPaddingSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
 {
     if (static_cast<unsigned>(argumentCountIncludingThis) >= codeBlock->numParameters())
@@ -262,6 +268,9 @@ class CallFrame;
 
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter);
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter_script_execution_owner);
+#endif
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_to_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_tdz);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error);

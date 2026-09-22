@@ -4849,8 +4849,8 @@ protected:
     // @importModule. 6: op_iterator_close_check (opcode numbering). 7: op_new_reg_exp_shared (opcode numbering). 8: op_iterator_close_check jumps.
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
-    // 10: GenericCacheEntry records the payload's size. 11: op_jcurrent_script_execution_owner (opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 11;
+    // 10: GenericCacheEntry records the payload's size.
+    static constexpr uint32_t cachedTypesFormatRevision = 10;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
