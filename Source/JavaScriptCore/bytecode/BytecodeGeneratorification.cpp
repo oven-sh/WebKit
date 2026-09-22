@@ -35,6 +35,7 @@
 #include "BytecodeUseDef.h"
 #include "JSGenerator.h"
 #include "Label.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "StrongInlines.h"
 #include "UnlinkedCodeBlockGenerator.h"
 #include "UnlinkedMetadataTableInlines.h"
@@ -72,6 +73,14 @@ public:
             switch (instruction->opcodeID()) {
             case op_enter: {
                 m_enterPoint = instruction.offset();
+                break;
+            }
+
+            case op_jcurrent_script_execution_owner: {
+                // The function's own code starts at its target, with an op_nop for the state switch to follow
+                // (BytecodeGenerator::emitEnterScriptExecutionOwner).
+                m_enterPoint = instruction.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(m_codeBlock, instruction);
+                ASSERT(m_instructions.at(m_enterPoint)->is<OpNop>());
                 break;
             }
 

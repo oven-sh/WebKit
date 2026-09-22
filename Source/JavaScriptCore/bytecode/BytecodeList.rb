@@ -803,34 +803,26 @@ op :get_by_id_direct,
         offset: unsigned,
     }
 
-# Alignment: 1
-# USE(BUN_JSC_ADDITIONS). The first thing a function does. Script belongs to a script execution owner when one of the
-# scopes its code was made in is one (SymbolTable::isScriptExecutionOwner: an embedder's module scope,
+# What a function of script does after op_enter. Script belongs to a script execution owner when one of the scopes
+# its code was made in is one (SymbolTable::isScriptExecutionOwner: an embedder's module scope,
 # JSModuleLoader::moduleScope). Jumps when this function's code has no owner, or its owner is the current one
-# (JSGlobalObject::m_asyncContextData field 1); otherwise falls through to bytecode that makes the call again with the
-# owner current (BytecodeGenerator::emitEnterScriptExecutionOwner). The target label is where the function's own code starts.
+# (JSGlobalObject::m_asyncContextData field 1). Otherwise puts the owner in `owner` and falls through to a tail call
+# that makes the call again with the owner current (BytecodeGenerator::emitEnterScriptExecutionOwner). The target
+# label is where the function's own code starts.
 op :jcurrent_script_execution_owner,
     args: {
+        owner: VirtualRegister,
         targetLabel: BoundLabel,
     },
     metadata: {
         # Written during linking: how many scopes up from the callee's the owner is. UINT_MAX: this code has none.
         depth: unsigned,
+        # Written by LLInt and the baseline JIT, as op_jneq_ptr's hasJumped: until it has fallen through, the
+        # optimizing tiers check instead of branching and do not compile what it falls through to.
+        hasFallenThrough: bool,
     }
 
-# The script execution owner of this function's code: the first instruction of the path that makes the call again.
-op :get_script_execution_owner,
-    args: {
-        dst: VirtualRegister,
-    },
-    metadata: {
-        depth: unsigned,
-        # Written by LLInt and the baseline JIT. The optimizing tiers compile that path only once it has run (as
-        # op_jneq_ptr's hasJumped): it forwards the arguments, and a function that does is compiled with all of them
-        # boxed and on the stack.
-        hasRun: bool,
-    }
-
+# Alignment: 1
 op :jneq_ptr,
     args: {
         value: VirtualRegister,

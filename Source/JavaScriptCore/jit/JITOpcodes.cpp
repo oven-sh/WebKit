@@ -500,53 +500,34 @@ void JIT::emit_op_jnundefined_or_null(const JSInstruction* currentInstruction)
     addJump(branchIfNotNull(regT0), target);
 }
 
-// ownerGPR := this code's script execution owner: the scope m_depth up from the callee's. Jumps to noOwner when the code
-// has none (m_depth is UINT_MAX, so m_depth + 1 is 0 for it).
-template<typename Op>
-void JIT::emitLoadScriptExecutionOwner(const Op& bytecode, GPRReg ownerGPR, GPRReg scratchGPR, JumpList& noOwner)
-{
-    load32FromMetadata(bytecode, Op::Metadata::offsetOfDepth(), scratchGPR);
-    add32(TrustedImm32(1), scratchGPR);
-    noOwner.append(branchTest32(Zero, scratchGPR));
-
-    loadPtr(addressFor(CallFrameSlot::callee), ownerGPR);
-    loadPtr(Address(ownerGPR, JSCallee::offsetOfScopeChain()), ownerGPR);
-    sub32(TrustedImm32(1), scratchGPR);
-    Jump found = branchTest32(Zero, scratchGPR);
-    Label loop = label();
-    loadPtr(Address(ownerGPR, JSScope::offsetOfNext()), ownerGPR);
-    sub32(TrustedImm32(1), scratchGPR);
-    branchTest32(NonZero, scratchGPR).linkTo(loop, this);
-    found.link(this);
-}
-
 void JIT::emit_op_jcurrent_script_execution_owner(const JSInstruction* currentInstruction)
 {
+#if USE(BUN_JSC_ADDITIONS)
     auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
     unsigned target = jumpTarget(currentInstruction, bytecode.m_targetLabel);
 
-    JumpList noOwner;
-    emitLoadScriptExecutionOwner(bytecode, regT0, regT2, noOwner);
+    // No owner (m_depth is UINT_MAX), or the owner, the scope m_depth up from the callee's, is the current one.
+    load32FromMetadata(bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfDepth(), regT2);
+    addJump(branch32(Equal, regT2, TrustedImm32(UINT_MAX)), target);
+    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
+    loadPtr(Address(regT0, JSCallee::offsetOfScopeChain()), regT0);
+    Jump found = branchTest32(Zero, regT2);
+    Label loop = label();
+    loadPtr(Address(regT0, JSScope::offsetOfNext()), regT0);
+    branchSub32(NonZero, TrustedImm32(1), regT2).linkTo(loop, this);
+    found.link(this);
+
     loadGlobalObject(regT1);
     loadPtr(Address(regT1, JSGlobalObject::offsetOfAsyncContextData()), regT1);
-    loadPtr(Address(regT1, InternalFieldTuple::offsetOfInternalField(1)), regT1);
+    loadPtr(Address(regT1, JSInternalFieldObjectImpl<>::offsetOfInternalField(1)), regT1);
     addJump(branchPtr(Equal, regT0, regT1), target);
-    for (auto& jump : noOwner.jumps())
-        addJump(jump, target);
-}
 
-void JIT::emit_op_get_script_execution_owner(const JSInstruction* currentInstruction)
-{
-    auto bytecode = currentInstruction->as<OpGetScriptExecutionOwner>();
-    store8ToMetadata(TrustedImm32(1), bytecode, OpGetScriptExecutionOwner::Metadata::offsetOfHasRun());
-
-    JumpList noOwner;
-    emitLoadScriptExecutionOwner(bytecode, regT0, regT2, noOwner);
-    Jump done = jump();
-    noOwner.link(this);
-    move(TrustedImm64(JSValue::encode(jsUndefined())), regT0);
-    done.link(this);
-    emitPutVirtualRegister(bytecode.m_dst, regT0);
+    store8ToMetadata(TrustedImm32(1), bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfHasFallenThrough());
+    emitPutVirtualRegister(bytecode.m_owner, regT0);
+#else
+    UNUSED_PARAM(currentInstruction);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 void JIT::emit_op_jeq_ptr(const JSInstruction* currentInstruction)

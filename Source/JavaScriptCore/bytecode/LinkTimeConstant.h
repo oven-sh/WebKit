@@ -100,6 +100,7 @@ class JSGlobalObject;
     v(moveFunctionToRealm, nullptr) \
     v(isConstructor, nullptr) \
     v(sameValue, nullptr) \
+    v(asyncContextData, nullptr) \
     v(regExpProtoFlagsGetter, nullptr) \
     v(regExpProtoGlobalGetter, nullptr) \
     v(regExpProtoHasIndicesGetter, nullptr) \

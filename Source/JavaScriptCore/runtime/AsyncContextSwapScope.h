@@ -45,7 +45,7 @@ namespace JSC {
 //
 // A captured value is one JSValue, because one slot is what reactions and microtasks
 // have for it: field 0's value while there is no owner, otherwise an InternalFieldTuple
-// [async context, owner] (asyncContextOf() / scriptExecutionOwnerOf() take it apart).
+// [async context, owner] (scriptExecutionOwnerOf() reads the owner of one).
 //
 // A job that captured "no context" (undefined, or an empty JSValue for callers
 // that never capture) runs with no context and no owner: whatever an earlier job
@@ -145,12 +145,7 @@ public:
         return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);
     }
 
-    // The two parts of a captured value.
-    static ALWAYS_INLINE JSValue asyncContextOf(JSValue captured)
-    {
-        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(0) : captured;
-    }
-
+    // The owner of a captured value.
     static ALWAYS_INLINE JSValue scriptExecutionOwnerOf(JSValue captured)
     {
         return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(1) : jsUndefined();

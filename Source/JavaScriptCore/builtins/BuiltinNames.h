@@ -148,6 +148,7 @@ namespace JSC {
     macro(instanceOf) \
     macro(isArray) \
     macro(sameValue) \
+    macro(asyncContextData) \
     macro(regExpCreate) \
     macro(isRegExp) \
     macro(isFinite) \

@@ -30,7 +30,6 @@
 #include "config.h"
 #include "CodeBlock.h"
 
-#include "BuiltinNames.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -91,6 +90,7 @@
 #include "TypeProfiler.h"
 #include "VMInlines.h"
 #include <wtf/Forward.h>
+#include <wtf/Range.h>
 #include <wtf/SimpleStats.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/UniquedStringImpl.h>
@@ -554,20 +554,16 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         return *entry.op;
     };
 
-    // How many scopes up from the callee's this code's script execution owner is (both instructions run before the
-    // function has a scope of its own, and `scope` is the callee's here). UINT_MAX: the code has none.
-    auto scriptExecutionOwnerDepth = [&]() -> unsigned {
-        unsigned depth = 0;
-        for (JSScope* current = scope; current; current = current->next(), ++depth) {
-            if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(current); environment && environment->symbolTable()->isScriptExecutionOwner())
-                return depth;
-        }
-        return UINT_MAX;
-    };
-
     const auto& instructionStream = instructions();
     unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
-    BytecodeRange scriptExecutionOwnerPrologue = this->scriptExecutionOwnerPrologue();
+    // What a function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): from the instruction after
+    // op_enter, when it is op_jcurrent_script_execution_owner, to its target, where the function's own code starts.
+    WTF::Range<unsigned> scriptExecutionOwnerPrologue;
+    if (auto instruction = instructionStream.begin(); instruction != instructionStream.end() && instruction->is<OpEnter>()) {
+        ++instruction;
+        if (instruction != instructionStream.end() && instruction->is<OpJcurrentScriptExecutionOwner>())
+            scriptExecutionOwnerPrologue = { instruction.offset(), instruction.offset() + static_cast<unsigned>(jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, *instruction)) };
+    }
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -576,7 +572,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
         // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
         // Nor is what every function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): a compare and
-        // a branch that the optimizing tiers fold away where there is no owner, and the path a call from outside the owner takes.
+        // a branch that the optimizing tiers fold away where there is no owner, and the tail call a call from outside the owner makes.
         if (opcodeID != op_iterator_close_check && !scriptExecutionOwnerPrologue.contains(instruction.offset()))
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
@@ -644,13 +640,15 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         case op_jcurrent_script_execution_owner: {
             INITIALIZE_METADATA(OpJcurrentScriptExecutionOwner)
-            metadata.m_depth = scriptExecutionOwnerDepth();
-            break;
-        }
-
-        case op_get_script_execution_owner: {
-            INITIALIZE_METADATA(OpGetScriptExecutionOwner)
-            metadata.m_depth = scriptExecutionOwnerDepth();
+            // It runs before the function has a scope of its own: `scope` is the callee's.
+            metadata.m_depth = UINT_MAX;
+            unsigned depth = 0;
+            for (JSScope* current = scope; current; current = current->next(), ++depth) {
+                if (SymbolTable* symbolTable = current->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
+                    metadata.m_depth = depth;
+                    break;
+                }
+            }
             break;
         }
 
@@ -1091,19 +1089,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
 }
 #endif // ENABLE(JIT)
-
-CodeBlock::BytecodeRange CodeBlock::scriptExecutionOwnerPrologue()
-{
-    const auto& instructionStream = instructions();
-    auto instruction = instructionStream.begin();
-    if (instruction == instructionStream.end() || instruction->opcodeID() != op_enter)
-        return { };
-    ++instruction;
-    if (instruction == instructionStream.end() || instruction->opcodeID() != op_jcurrent_script_execution_owner)
-        return { };
-    unsigned begin = instruction.offset();
-    return { begin, begin + static_cast<unsigned>(jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, *instruction)) };
-}
 
 CodeBlock::~CodeBlock()
 {

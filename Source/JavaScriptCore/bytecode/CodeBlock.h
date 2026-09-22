@@ -268,17 +268,6 @@ public:
     void NODELETE dumpMathICStats();
 
     bool isConstructor() const { return m_unlinkedCode->isConstructor(); }
-    // The bytecode a function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): from
-    // op_jcurrent_script_execution_owner, the instruction after op_enter, to its target, where the function's own
-    // code starts. Nothing for code that has none.
-    struct BytecodeRange {
-        unsigned begin { 0 };
-        unsigned end { 0 };
-        bool contains(unsigned offset) const { return offset >= begin && offset < end; }
-    };
-    BytecodeRange scriptExecutionOwnerPrologue();
-    // A frame whose bytecode index is inside it is making its own call again, and is not one a stack trace shows.
-    bool isInScriptExecutionOwnerPrologue(BytecodeIndex index) { return scriptExecutionOwnerPrologue().contains(index.offset()); }
     CodeType codeType() const { return m_unlinkedCode->codeType(); }
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }

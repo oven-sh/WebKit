@@ -1639,12 +1639,6 @@ private:
         Vector<ArgumentPosition*> m_argumentPositions;
         
         InlineStackEntry* const m_caller;
-
-        // Where this frame's code's own bytecode starts, after what op_jcurrent_script_execution_owner falls through to;
-        // and, when that is not to be parsed (op_get_script_execution_owner), where parsing goes on.
-        unsigned m_scriptExecutionOwnerPrologueEnd { 0 };
-        unsigned m_skipParsingUntil { 0 };
-        bool m_skipsScriptExecutionOwnerPrologue { false };
         
         InlineStackEntry(
             ByteCodeParser*,
@@ -9867,14 +9861,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
             ASSERT(!m_currentBlock->terminal());
             auto bytecode = currentInstruction->as<OpJmp>();
             int relativeOffset = jumpTarget(bytecode.m_targetLabel);
-            if (m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue && m_currentIndex.offset() + relativeOffset < m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd) {
-                // Into bytecode that was not parsed (op_get_script_execution_owner): the jump that ends the exception
-                // handler of the path that makes the call again, which the generator puts after the function's code.
-                addToGraph(ForceOSRExit);
-                flushForTerminal();
-                addToGraph(Unreachable);
-                LAST_OPCODE(op_jmp);
-            }
             addToGraph(Jump, OpInfo(m_currentIndex.offset() + relativeOffset));
             if (relativeOffset <= 0)
                 flushForTerminal();
@@ -10447,51 +10433,37 @@ void ByteCodeParser::parseBlock(unsigned limit)
         }
 
         case op_jcurrent_script_execution_owner: {
+#if USE(BUN_JSC_ADDITIONS)
             auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
+            auto& metadata = bytecode.metadata(codeBlock);
             unsigned taken = m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel);
-            Node* owner = scriptExecutionOwner(bytecode.metadata(codeBlock).m_depth);
-            if (!owner) {
-                // Code with no script execution owner: nothing to compare.
-                addToGraph(Jump, OpInfo(taken));
+            Node* owner = scriptExecutionOwner(metadata.m_depth);
+            if (owner && metadata.m_hasFallenThrough) {
+                Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
+                Node* condition = addToGraph(CompareStrictEq, owner, current);
+                // The block ends here, before a queued SetLocal would be issued; nothing in this code origin has had an
+                // effect, and nothing after the SetLocal can exit.
+                set(bytecode.m_owner, owner, ImmediateNakedSet);
+                addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
                 LAST_OPCODE(op_jcurrent_script_execution_owner);
             }
-            m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd = taken;
-            Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->asyncContextData()));
-            if (owner->isCellConstant()) {
-                // Until the path that makes the call again has run (op_get_script_execution_owner, the next instruction), a
-                // known owner is checked for and that path is not parsed. A check of something a loop does not change
-                // leaves the loop; a branch stays in it.
-                auto next = codeBlock->instructions().at(m_currentIndex.offset() + currentInstruction->size());
-                ASSERT(next->is<OpGetScriptExecutionOwner>());
-                if (!next->as<OpGetScriptExecutionOwner>().metadata(codeBlock).m_hasRun) {
-                    addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
-                    addToGraph(Jump, OpInfo(taken));
-                    m_inlineStackTop->m_skipParsingUntil = taken;
-                    m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue = true;
-                    LAST_OPCODE(op_jcurrent_script_execution_owner);
-                }
-            }
-            Node* condition = addToGraph(CompareStrictEq, owner, current);
-            addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
-            LAST_OPCODE(op_jcurrent_script_execution_owner);
-        }
 
-        case op_get_script_execution_owner: {
-            auto bytecode = currentInstruction->as<OpGetScriptExecutionOwner>();
-            // The first instruction of the path that makes the call again. Until that path has run, it is an exit and
-            // the rest of it is not parsed (parseCodeBlock): it forwards the arguments, and parsing that makes every
-            // argument of this function boxed and, where the function is inlined, stored to the stack at each call.
-            if (!bytecode.metadata(codeBlock).m_hasRun) {
-                addToGraph(ForceOSRExit);
-                flushForTerminal();
-                addToGraph(Unreachable);
-                m_inlineStackTop->m_skipParsingUntil = m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd;
-                m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue = true;
-                LAST_OPCODE(op_get_script_execution_owner);
+            // Until it has fallen through (as op_jneq_ptr until it has jumped), the owner being the current one is checked
+            // for, and what it falls through to is not parsed: that forwards the arguments, and parsing it would have every
+            // argument of this function kept boxed. Nothing in there is a jump target, so the block ends at `taken`.
+            ASSERT(limit == taken);
+            if (owner) {
+                Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
+                if (owner->isCellConstant())
+                    addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
+                else
+                    addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(true))), addToGraph(CompareStrictEq, owner, current));
             }
-            Node* owner = scriptExecutionOwner(bytecode.metadata(codeBlock).m_depth);
-            set(bytecode.m_dst, owner ? owner : addToGraph(JSConstant, OpInfo(m_constantUndefined)));
-            NEXT_OPCODE(op_get_script_execution_owner);
+            m_currentIndex = BytecodeIndex(taken);
+            continue;
+#else
+            RELEASE_ASSERT_NOT_REACHED();
+#endif
         }
 
         case op_jeq_ptr: {
@@ -11882,15 +11854,6 @@ void ByteCodeParser::parseCodeBlock()
             }
 
             parseBlock(limit);
-
-            if (unsigned end = std::exchange(m_inlineStackTop->m_skipParsingUntil, 0)) {
-                // `end` is a jump target, op_jcurrent_script_execution_owner's: the blocks before it are not parsed.
-                ASSERT(m_currentBlock->terminal());
-                m_currentIndex = BytecodeIndex(end);
-                while (jumpTargets[jumpTargetIndex] < end)
-                    ++jumpTargetIndex;
-                limit = end;
-            }
 
             // We should not have gone beyond the limit.
             ASSERT(m_currentIndex.offset() <= limit);

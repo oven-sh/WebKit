@@ -62,6 +62,7 @@ $(PROJECT_DIR)/builtins/ObjectConstructor.js
 $(PROJECT_DIR)/builtins/PromiseConstructor.js
 $(PROJECT_DIR)/builtins/ProxyHelpers.js
 $(PROJECT_DIR)/builtins/ReflectObject.js
+$(PROJECT_DIR)/builtins/ScriptExecutionOwner.js
 $(PROJECT_DIR)/builtins/SetPrototype.js
 $(PROJECT_DIR)/builtins/ShadowRealmPrototype.js
 $(PROJECT_DIR)/builtins/StringConstructor.js

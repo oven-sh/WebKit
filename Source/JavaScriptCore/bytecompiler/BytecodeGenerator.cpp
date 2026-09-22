@@ -1501,61 +1501,43 @@ Ref<LabelScope> BytecodeGenerator::newLabelScope(LabelScope::Type type, const Id
 
 #if USE(BUN_JSC_ADDITIONS)
 // A function of script that has a script execution owner runs as its owner whoever calls it. When the owner is not
-// the current one (op_jcurrent_script_execution_owner falls through), the function makes the call it is for again with
-// the owner current, puts the previous owner and async context back however that call ends, and returns its result.
-// Nothing of the function's own has run: the callee, `this` (new.target when constructing) and the arguments are as
-// they were passed.
+// the current one (op_jcurrent_script_execution_owner falls through), the function tail-calls
+// @callInScriptExecutionOwner / @constructInScriptExecutionOwner (builtins/ScriptExecutionOwner.js), which makes the
+// same call again with the owner current. Nothing of the function's own has run: the callee, `this` (new.target when
+// constructing) and the arguments are as they were passed. No instruction here has a value profile: one that never
+// runs would count against every function's tier-up (CodeBlock::shouldOptimizeNowFromBaseline).
 void BytecodeGenerator::emitEnterScriptExecutionOwner()
 {
-    auto& names = propertyNames().builtinNames();
     Ref<Label> body = newLabel();
-    OpJcurrentScriptExecutionOwner::emit(this, body->bind(this));
-
     {
         RefPtr<RegisterID> owner = newTemporary();
-        OpGetScriptExecutionOwner::emit(this, owner.get());
+        OpJcurrentScriptExecutionOwner::emit(this, owner.get(), body->bind(this));
 
-        Variable asyncContextVariable = variable(names.asyncContextPrivateName());
-        RefPtr<RegisterID> asyncContextData = newTemporary();
-        RefPtr<RegisterID> asyncContextScope = emitResolveScope(asyncContextData.get(), asyncContextVariable);
-        emitGetFromScope(asyncContextData.get(), asyncContextScope.get(), asyncContextVariable, ThrowIfNotFound);
-
-        RefPtr<RegisterID> previousAsyncContext = emitGetInternalField(newTemporary(), asyncContextData.get(), 0);
-        RefPtr<RegisterID> previousOwner = emitGetInternalField(newTemporary(), asyncContextData.get(), 1);
-        emitPutInternalField(asyncContextData.get(), 1, owner.get());
-
-        Ref<Label> tryStart = newEmittedLabel();
-        Ref<Label> catchLabel = newLabel();
-        TryData* tryData = pushTry(tryStart.get(), catchLabel.get(), HandlerType::SynthesizedFinally);
-
-        RefPtr<RegisterID> arguments = newTemporary();
-        OpCreateClonedArguments::emit(this, arguments.get());
-        RefPtr<RegisterID> result = newTemporary();
+        RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, isConstructor() ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
+        RefPtr<RegisterID> argumentValues = newTemporary();
+        OpCreateClonedArguments::emit(this, argumentValues.get());
+        CallArguments arguments(*this, nullptr, 4);
+        emitLoad(arguments.thisRegister(), jsUndefined());
+        move(arguments.argumentRegister(0), owner.get());
+        move(arguments.argumentRegister(1), &m_calleeRegister);
+        move(arguments.argumentRegister(2), &m_thisRegister);
+        move(arguments.argumentRegister(3), argumentValues.get());
         JSTextPosition divot(m_scopeNode->firstLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset());
-        if (isConstructor())
-            emitConstructVarargs(result.get(), &m_calleeRegister, &m_thisRegister, arguments.get(), newTemporary(), 0, divot, divot, divot, DebuggableCall::No);
-        else
-            emitCallVarargs(result.get(), &m_calleeRegister, &m_thisRegister, arguments.get(), newTemporary(), 0, divot, divot, divot, DebuggableCall::No);
-
-        Ref<Label> tryEnd = newEmittedLabel();
-        popTry(tryData, tryEnd.get());
-        emitPutInternalField(asyncContextData.get(), 0, previousAsyncContext.get());
-        emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
+        // A tail call is followed by a return of its result, as `return f()` is: an optimizing tier that inlines the
+        // callee makes an ordinary call of it and goes on from there.
+        RefPtr<RegisterID> result = newTemporary();
+        emitCall<OpTailCall>(result.get(), function.get(), NoExpectedFunction, arguments, divot, divot, divot, DebuggableCall::No);
         OpRet::emit(this, result.get());
-
-        // The exception itself is thrown on, not its value: it says which owner and async context it was first thrown in.
-        emitLabel(catchLabel.get());
-        RefPtr<RegisterID> exception = newTemporary();
-        emitOutOfLineExceptionHandler(exception.get(), newTemporary(), nullptr, tryData);
-        emitPutInternalField(asyncContextData.get(), 0, previousAsyncContext.get());
-        emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
-        emitThrow(exception.get());
     }
-    // This path never reaches the function's own code, whose variables are allocated next and have to follow the
+    // The tail call never reaches the function's own code, whose variables are allocated next and have to follow the
     // last one directly: what it left in its temporaries is never seen.
     reclaimFreeRegisters();
 
     emitLabel(body.get());
+    // A generator's state switch goes after this instruction, not after op_enter (BytecodeGeneratorification): a generator
+    // resumed from outside its owner enters the owner first.
+    if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
+        OpNop::emit(this);
 }
 #endif
 
