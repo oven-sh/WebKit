@@ -336,6 +336,9 @@ JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
 // as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
 // in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
 JS_EXPORT_PRIVATE CString bytecodeOrderFileContents(VM&);
+// For an order file's list of the functions a build has: the bytecodeOrderSourceHash of every function `cachedBytecode`
+// holds code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
+JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, Vector<uint64_t>&);
 // For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
 // function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
 // instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
@@ -348,7 +351,7 @@ JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedCode(VM&, con
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
 // out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:
 //   0 heads (cache entry, key, top-level code, its functions' records) of modules the run evaluated, or did not know
-//   1 HOT bodies, in the order file's order   2 (reserved: bodies the recorded build did not have)
+//   1 HOT bodies, in the order file's order   2 UNKNOWN bodies: functions the recorded build did not have
 //   3 heads of modules the run knew and did not evaluate   4 all other bodies, in source order   5 expression info.
 // So every offset is final when it is written: a reference to something earlier is a plain delta, and a function
 // record's body slots and a code block's expression-info slot are filled in when their target is written, as in a
@@ -359,6 +362,7 @@ class BytecodeLinkEncoder {
 public:
     struct Hints {
         Vector<uint64_t> hotFunctions; // bytecodeOrderSourceHash, first-decode order
+        Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
     };

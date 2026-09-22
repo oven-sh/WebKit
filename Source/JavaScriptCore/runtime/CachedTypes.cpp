@@ -1072,61 +1072,73 @@ public:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // BytecodeLinkEncoder: bodies of every module of the link wait in two queues and are written region by region.
+    // BytecodeLinkEncoder: bodies of every module of the link wait in one queue per region and are written region by region.
+    // In file order; a head is a module's cache entry, key, top-level code and its functions' records.
+    enum class LinkClass : uint8_t { EarlyHead, Hot, Unknown, LateHead, Cold };
+    static constexpr unsigned numberOfLinkClasses = 5;
     struct LinkedBody {
         uint64_t rank; // HOT: the order file's; otherwise module index, then source offset (source pre-order)
         uint64_t sequence;
         unsigned module;
-        bool isHot;
+        LinkClass linkClass;
         SourceCode source;
         Function<void()> encode;
         bool operator>(const LinkedBody& other) const { return rank != other.rank ? rank > other.rank : sequence > other.sequence; }
     };
+    using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     struct LinkState {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LinkState);
         UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> hotRanks;
-        Vector<LinkedBody> hot; // min-heaps on (rank, sequence)
-        Vector<LinkedBody> cold;
+        // The functions the recorded build had and its run did not decode. Empty: the order file does not say, and
+        // nothing is UNKNOWN.
+        OrderHashSet knownFunctions;
+        std::array<Vector<LinkedBody>, numberOfLinkClasses> queues; // min-heaps on (rank, sequence); heads have none
         uint64_t nextSequence { 0 };
         // What is being encoded right now: functions met there are its children.
         unsigned module { 0 };
         SourceCode scope;
-        bool childrenMayBeHot { false };
-        bool hotRegionIsClosed { false };
+        LinkClass linkClass { LinkClass::EarlyHead };
+        LinkClass openRegion { LinkClass::EarlyHead }; // regions before it are complete
     };
-    void beginLink(std::span<const uint64_t> hotFunctions)
+    void beginLink(std::span<const uint64_t> hotFunctions, std::span<const uint64_t> knownFunctions)
     {
         m_link = makeUnique<LinkState>();
         for (uint32_t rank = 0; rank < hotFunctions.size(); ++rank)
             m_link->hotRanks.add(hotFunctions[rank], rank);
+        for (uint64_t hash : knownFunctions)
+            m_link->knownFunctions.add(hash);
     }
     // Top-level code of module `module` is about to be encoded.
-    void enterLinkedModule(unsigned module, const SourceCode& source, bool childrenMayBeHot)
+    void enterLinkedModule(unsigned module, const SourceCode& source, bool isLate)
     {
         m_link->module = module;
         m_link->scope = source;
-        m_link->childrenMayBeHot = childrenMayBeHot && !m_link->hotRegionIsClosed;
+        m_link->linkClass = isLate ? LinkClass::LateHead : LinkClass::EarlyHead;
+        m_link->openRegion = m_link->linkClass;
     }
-    void encodeLinkedBodies(bool hot)
+    void encodeLinkedBodies(LinkClass region)
     {
-        auto& queue = hot ? m_link->hot : m_link->cold;
+        m_link->openRegion = region;
+        auto& queue = m_link->queues[static_cast<unsigned>(region)];
         while (!queue.isEmpty()) {
             std::ranges::pop_heap(queue, std::greater<> { });
             LinkedBody body = queue.takeLast();
             m_link->module = body.module;
             m_link->scope = body.source;
-            m_link->childrenMayBeHot = body.isHot;
+            m_link->linkClass = region;
             body.encode();
         }
-        if (hot)
-            m_link->hotRegionIsClosed = true;
+    }
+    bool hasQueuedLinkedBodies() const
+    {
+        return std::ranges::any_of(m_link->queues, [](auto& queue) { return !queue.isEmpty(); });
     }
     void encodeLinkedCold()
     {
-        RELEASE_ASSERT(m_link->hot.isEmpty() && m_link->cold.isEmpty());
+        RELEASE_ASSERT(!hasQueuedLinkedBodies());
         while (!m_cold.isEmpty())
             m_cold.takeFirst()();
-        RELEASE_ASSERT(m_link->hot.isEmpty() && m_link->cold.isEmpty());
+        RELEASE_ASSERT(!hasQueuedLinkedBodies());
     }
     void alignCurrentPageEnd() { m_currentPage->alignEnd(); }
 #endif
@@ -1258,21 +1270,28 @@ private:
     };
 
 #if USE(BUN_JSC_ADDITIONS)
+    // A function's body goes where the order file puts the function: HOT if the recorded run decoded it (and its parent,
+    // so that it is reached before the HOT region is complete), UNKNOWN if the recorded build did not have it, COLD
+    // otherwise: what the run did not decode, and what is nested in that or belongs to a module it did not evaluate.
     void deferLinkedBody(const UnlinkedFunctionExecutable& executable, Function<void()>&& encodeBody)
     {
         LinkState& link = *m_link;
         SourceCode source = executable.linkedSourceCode(link.scope);
-        bool isHot = false;
+        LinkClass linkClass = LinkClass::Cold;
         uint64_t rank = static_cast<uint64_t>(link.module) << 32 | static_cast<uint32_t>(source.startOffset());
-        if (link.childrenMayBeHot) {
-            auto it = link.hotRanks.find(bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset()));
-            if (it != link.hotRanks.end()) {
-                isHot = true;
-                rank = it->value;
-            }
+        if (link.linkClass <= LinkClass::Unknown) {
+            uint64_t hash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
+            if (auto it = link.hotRanks.find(hash); it != link.hotRanks.end()) {
+                // Under an unknown function the HOT region is already complete: the next best place.
+                linkClass = link.linkClass == LinkClass::Unknown ? LinkClass::Unknown : LinkClass::Hot;
+                if (linkClass == LinkClass::Hot)
+                    rank = it->value;
+            } else if (!link.knownFunctions.isEmpty() && !link.knownFunctions.contains(hash))
+                linkClass = LinkClass::Unknown;
         }
-        auto& queue = isHot ? link.hot : link.cold;
-        queue.append(LinkedBody { rank, link.nextSequence++, link.module, isHot, WTF::move(source), WTF::move(encodeBody) });
+        RELEASE_ASSERT(linkClass >= link.openRegion);
+        auto& queue = link.queues[static_cast<unsigned>(linkClass)];
+        queue.append(LinkedBody { rank, link.nextSequence++, link.module, linkClass, WTF::move(source), WTF::move(encodeBody) });
         std::ranges::push_heap(queue, std::greater<> { });
     }
 #endif
@@ -5366,7 +5385,7 @@ struct BytecodeLinkEncoder::Impl {
     void writeHead(unsigned index)
     {
         Module& module = modules[index];
-        encoder.enterLinkedModule(index, module.source, !module.isLate);
+        encoder.enterLinkedModule(index, module.source, module.isLate);
         const ClassInfo* classInfo = module.codeBlock->classInfo();
         if (classInfo == UnlinkedProgramCodeBlock::info())
             module.entry = encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, module.key, module.codeBlock.get());
@@ -5390,7 +5409,7 @@ struct BytecodeLinkEncoder::Impl {
 BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hints&& hints)
     : m_impl(makeUnique<Impl>(vm, strings))
 {
-    m_impl->encoder.beginLink(hints.hotFunctions.span());
+    m_impl->encoder.beginLink(hints.hotFunctions.span(), hints.knownFunctions.span());
     for (uint64_t hash : hints.notEvaluatedModules)
         m_impl->notEvaluatedModules.add(hash);
     // A module the run both evaluated and (as a duplicate) did not counts as evaluated.
@@ -5418,15 +5437,16 @@ auto BytecodeLinkEncoder::finish() -> Result
         result.regionEnds[region] = safeCast<uint32_t>(encoder.currentOffset());
     };
     closeRegion(0);
-    encoder.encodeLinkedBodies(true);
+    encoder.encodeLinkedBodies(Encoder::LinkClass::Hot);
     closeRegion(1);
+    encoder.encodeLinkedBodies(Encoder::LinkClass::Unknown);
     closeRegion(2);
     for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
         if (m_impl->modules[index].isLate)
             m_impl->writeHead(index);
     }
     closeRegion(3);
-    encoder.encodeLinkedBodies(false);
+    encoder.encodeLinkedBodies(Encoder::LinkClass::Cold);
     closeRegion(4);
     encoder.encodeLinkedCold();
     // Every module's entry records the size of the payload they share: a Decoder is made over all of it, so one whose
@@ -5511,6 +5531,32 @@ static void digestCodeBlock(VM& vm, OrderHasher& hasher, CachedCodeDigest& resul
         if (forConstruct)
             digestCodeBlock(vm, hasher, result, *forConstruct);
     }
+}
+
+static void appendHashesOfFunctionsIn(VM& vm, UnlinkedCodeBlock& codeBlock, const SourceCode& scope, Vector<uint64_t>& hashes)
+{
+    unsigned declarations = codeBlock.numberOfFunctionDecls();
+    unsigned expressions = codeBlock.numberOfFunctionExprs();
+    for (unsigned i = 0; i < declarations + expressions; ++i) {
+        UnlinkedFunctionExecutable* executable = i < declarations ? codeBlock.functionDecl(i) : codeBlock.functionExpr(i - declarations);
+        SourceCode source = executable->linkedSourceCode(scope);
+        hashes.append(bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset()));
+        auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+        if (forCall)
+            appendHashesOfFunctionsIn(vm, *forCall, source, hashes);
+        if (forConstruct)
+            appendHashesOfFunctionsIn(vm, *forConstruct, source, hashes);
+    }
+}
+
+bool appendHashesOfAllCachedFunctions(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode, Vector<uint64_t>& hashes)
+{
+    SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
+    UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
+    if (!codeBlock)
+        return false;
+    appendHashesOfFunctionsIn(vm, *codeBlock, source, hashes);
+    return true;
 }
 
 std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode)
