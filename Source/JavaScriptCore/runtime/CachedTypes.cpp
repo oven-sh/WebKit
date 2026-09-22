@@ -1134,7 +1134,7 @@ public:
     void encodeLinkedCold()
     {
         RELEASE_ASSERT(!hasQueuedLinkedBodies() && m_cold.isEmpty());
-        std::ranges::sort(m_link->coldData);
+        std::sort(m_link->coldData.begin(), m_link->coldData.end());
         for (auto& data : m_link->coldData)
             data.encode();
         RELEASE_ASSERT(!hasQueuedLinkedBodies());
@@ -5327,13 +5327,25 @@ RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecu
 
 UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
 {
-    if (cachedBytecode->span().size() < sizeof(BuiltinFunctionCacheEntry))
+    size_t entryOffset = 0;
+#if USE(BUN_JSC_ADDITIONS)
+    entryOffset = cachedBytecode->entryOffset();
+#endif
+    auto span = cachedBytecode->span();
+    if (span.size() < entryOffset || span.size() - entryOffset < sizeof(BuiltinFunctionCacheEntry))
         return nullptr;
     unsigned sourceLength = provider.source().length();
-    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(cachedBytecode->span().data());
+    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(span.data() + entryOffset);
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
     DeferGC deferGC(vm);
-    return entry->decode(decoder.get(), sourceLength, embedderStamp);
+    UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), sourceLength, embedderStamp);
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* payloads = executable ? vm.persistentBytecodePayloadsIfExists() : nullptr) {
+        if (auto* recorder = payloads->orderRecorder()) [[unlikely]]
+            recorder->didDecodeModule(provider);
+    }
+#endif
+    return executable;
 }
 
 RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
@@ -5366,11 +5378,14 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeLinkEncoder);
 struct BytecodeLinkEncoder::Impl {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
 
+    // A module's or program's code block under its key, or an embedder's builtin function (encodeBuiltinFunction).
     struct Module {
         SourceCodeKey key;
-        Strong<UnlinkedCodeBlock> codeBlock; // and with it every function's code, which the queued bodies point into
+        Strong<JSCell> root; // and with it every function's code, which the queued bodies point into
         SourceCode source;
         bool isLate;
+        unsigned builtinSourceLength { 0 };
+        unsigned builtinEmbedderStamp { 0 };
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
     };
@@ -5386,19 +5401,36 @@ struct BytecodeLinkEncoder::Impl {
     {
         Module& module = modules[index];
         encoder.enterLinkedModule(index, module.source, module.isLate);
-        const ClassInfo* classInfo = module.codeBlock->classInfo();
+        const ClassInfo* classInfo = module.root->classInfo();
         if (classInfo == UnlinkedProgramCodeBlock::info())
-            module.entry = encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, module.key, module.codeBlock.get());
+            module.entry = encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, module.key, uncheckedDowncast<UnlinkedCodeBlock>(module.root.get()));
+        else if (classInfo == UnlinkedModuleProgramCodeBlock::info())
+            module.entry = encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, module.key, uncheckedDowncast<UnlinkedCodeBlock>(module.root.get()));
         else {
-            RELEASE_ASSERT(classInfo == UnlinkedModuleProgramCodeBlock::info());
-            module.entry = encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, module.key, module.codeBlock.get());
+            RELEASE_ASSERT(classInfo == UnlinkedFunctionExecutable::info());
+            auto* entry = encoder.template malloc<BuiltinFunctionCacheEntry>(encoder);
+            entry->encode(encoder, *uncheckedDowncast<UnlinkedFunctionExecutable>(module.root.get()), module.builtinSourceLength, module.builtinEmbedderStamp);
+            module.entry = entry;
         }
         module.entryOffset = safeCast<uint32_t>(encoder.offsetOf(module.entry));
     }
 
+    void add(Module&& module)
+    {
+        const SourceCode& source = module.source;
+        uint64_t moduleHash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
+        module.isLate = notEvaluatedModules.contains(moduleHash);
+        unsigned index = modules.size();
+        modules.append(WTF::move(module));
+        if (!modules[index].isLate)
+            writeHead(index);
+    }
+
     VM& vm;
     // Queued bodies point at function code blocks, which a collection may drop from a live executable
-    // (UnlinkedFunctionExecutable::codeBlockEdgeMayBeWeak). Everything generated is kept until finish() anyway.
+    // (UnlinkedFunctionExecutable::codeBlockEdgeMayBeWeak). Everything generated stays reachable until finish() anyway
+    // (the expression info is encoded last), so a collection could free next to nothing: rooting the queued code blocks
+    // instead and letting collections run left the peak memory and the time of a large link unchanged.
     DeferGC deferGC;
     FileSystem::FileHandle fileHandle; // invalid: the payload is built in memory
     Encoder encoder;
@@ -5421,12 +5453,12 @@ BytecodeLinkEncoder::~BytecodeLinkEncoder() = default;
 
 void BytecodeLinkEncoder::addModule(const SourceCodeKey& key, UnlinkedCodeBlock* codeBlock, const SourceCode& source)
 {
-    uint64_t moduleHash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
-    bool isLate = m_impl->notEvaluatedModules.contains(moduleHash);
-    unsigned index = m_impl->modules.size();
-    m_impl->modules.append(Impl::Module { key, Strong<UnlinkedCodeBlock>(m_impl->vm, codeBlock), source, isLate });
-    if (!isLate)
-        m_impl->writeHead(index);
+    m_impl->add(Impl::Module { key, Strong<JSCell>(m_impl->vm, codeBlock), source, false });
+}
+
+void BytecodeLinkEncoder::addBuiltinFunction(UnlinkedFunctionExecutable* executable, const SourceCode& source, unsigned embedderStamp)
+{
+    m_impl->add(Impl::Module { SourceCodeKey(), Strong<JSCell>(m_impl->vm, executable), source, false, static_cast<unsigned>(source.length()), embedderStamp });
 }
 
 auto BytecodeLinkEncoder::finish() -> Result
@@ -5554,6 +5586,37 @@ bool appendHashesOfAllCachedFunctions(VM& vm, const SourceCode& source, bool isM
     if (!codeBlock)
         return false;
     appendHashesOfFunctionsIn(vm, *codeBlock, source, hashes);
+    return true;
+}
+
+std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode)
+{
+    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp);
+    if (!executable)
+        return std::nullopt;
+    OrderHasher hasher;
+    CachedCodeDigest result;
+    auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+    if (forCall)
+        digestCodeBlock(vm, hasher, result, *forCall);
+    if (forConstruct)
+        digestCodeBlock(vm, hasher, result, *forConstruct);
+    result.digest = hasher.finish();
+    return result;
+}
+
+bool appendHashesOfAllCachedBuiltinFunctions(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode, Vector<uint64_t>& hashes)
+{
+    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp);
+    if (!executable)
+        return false;
+    SourceCode functionSource = executable->linkedSourceCode(source);
+    hashes.append(bytecodeOrderSourceHash(functionSource.provider()->source(), functionSource.startOffset(), functionSource.endOffset()));
+    auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+    if (forCall)
+        appendHashesOfFunctionsIn(vm, *forCall, functionSource, hashes);
+    if (forConstruct)
+        appendHashesOfFunctionsIn(vm, *forConstruct, functionSource, hashes);
     return true;
 }
 

@@ -264,8 +264,7 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (m_isCached) {
         decodeCachedCodeBlocks(vm);
 #if USE(BUN_JSC_ADDITIONS)
-        // (Not the embedder's own builtins: an order file describes the program.)
-        if (auto* payloads = vm.persistentBytecodePayloadsIfExists(); payloads && (!isBuiltinFunction() || isBuiltinDefaultClassConstructor())) {
+        if (auto* payloads = vm.persistentBytecodePayloadsIfExists()) {
             if (auto* recorder = payloads->orderRecorder()) [[unlikely]]
                 recorder->didDecodeFunction(*source.provider(), source.startOffset(), source.endOffset());
         }

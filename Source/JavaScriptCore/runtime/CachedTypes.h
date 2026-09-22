@@ -331,6 +331,8 @@ JS_EXPORT_PRIVATE CString bytecodeOrderFileContents();
 // For an order file's list of the functions a build has: the bytecodeOrderSourceHash of every function `cachedBytecode`
 // holds code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
 JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, Vector<uint64_t>&);
+// The same for a builtin function's payload (decodeBuiltinFunction), the builtin's own function included.
+JS_EXPORT_PRIVATE bool appendHashesOfAllCachedBuiltinFunctions(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>, Vector<uint64_t>&);
 // For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
 // function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
 // instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
@@ -339,6 +341,7 @@ struct CachedCodeDigest {
     unsigned codeBlocks { 0 };
 };
 JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedCode(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>);
+JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>);
 
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
 // out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:
@@ -369,6 +372,9 @@ public:
     JS_EXPORT_PRIVATE ~BytecodeLinkEncoder();
     // `source` is the whole module, as given to the parser; the code block is a module's or a program's.
     JS_EXPORT_PRIVATE void addModule(const SourceCodeKey&, UnlinkedCodeBlock*, const SourceCode&);
+    // An embedder's builtin (what encodeBuiltinFunction takes), `source` being all of its source: decodeBuiltinFunction
+    // reads it back given the payload and the entry's offset.
+    JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp);
     JS_EXPORT_PRIVATE Result finish();
 
 private:
