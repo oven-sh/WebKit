@@ -31,6 +31,7 @@
 
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
+#include "AsyncContextSwapScope.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -2338,6 +2339,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner);
+static JSC_DECLARE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4145,11 +4147,13 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
     return JSValue::encode(jsNumber(globalObject->vm().heap.globalObjectCount()));
 }
 
-// $vm.createModuleLoader(bindings?, sharing?): another module loader for this global object,
-// as { loader }. With `bindings`, the loader's modules see that object's own enumerable
+// $vm.createModuleLoader(bindings?, sharing?, asScriptExecutionOwner?): another module loader for this
+// global object, as { loader }. With `bindings`, the loader's modules see that object's own enumerable
 // properties as variables of a lexical environment between them and the global scope. With
 // `sharing` (an earlier result made with the same property names), that environment reuses
-// the symbol table of sharing.loader's, so the two loaders' modules share executables.
+// the symbol table of sharing.loader's, so the two loaders' modules share executables. With
+// `asScriptExecutionOwner`, that environment is a script execution owner (SymbolTable::isScriptExecutionOwner):
+// the loader's modules are evaluated with it current, and their functions run with it current whoever calls them.
 static JSModuleLoader* moduleLoaderFromHolder(VM& vm, JSValue value)
 {
     JSObject* holder = value.getObject();
@@ -4182,6 +4186,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
             symbolTable = SymbolTable::create(vm);
             for (auto& name : names)
                 symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
+#if USE(BUN_JSC_ADDITIONS)
+            symbolTable->setIsScriptExecutionOwner(callFrame->argument(2).toBoolean(globalObject));
+#endif
         }
         JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
         for (auto& name : names) {
@@ -4192,6 +4199,12 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
         moduleScope = environment;
     }
     JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, moduleScope);
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* symbolTable = moduleScope->symbolTable(); symbolTable && symbolTable->isScriptExecutionOwner()) {
+        vm.setAsyncContextTrackingEnabled();
+        loader->setAsyncContext(vm, AsyncContextSwapScope::captured(vm, globalObject, jsUndefined(), moduleScope));
+    }
+#endif
     JSObject* result = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(vm, Identifier::fromString(vm, "loader"_s), loader);
@@ -4253,6 +4266,19 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner, (JSGlobalO
     globalObject->vm().setAsyncContextTrackingEnabled();
     globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 1, callFrame->argument(0));
     return JSValue::encode(jsUndefined());
+}
+
+// $vm.isCurrentScriptExecutionOwner({ loader }): whether the current owner is that loader's module scope (a scope is
+// not a value script may hold, so it is not what asyncContextScriptExecutionOwner() is for).
+JSC_DEFINE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    if (!loader)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
+    return JSValue::encode(jsBoolean(globalObject->m_asyncContextData.get()->getInternalField(1) == JSValue(loader->moduleScope())));
 }
 #endif
 
@@ -5979,7 +6005,7 @@ void JSDollarVM::finishCreation(VM& vm)
 #endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
-    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
+    addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 3);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
@@ -6078,6 +6104,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, alwaysAllow, "asyncContextScriptExecutionOwner"_s, functionAsyncContextScriptExecutionOwner, 0);
     addFunction(vm, alwaysAllow, "setAsyncContextScriptExecutionOwner"_s, functionSetAsyncContextScriptExecutionOwner, 1);
+    addFunction(vm, alwaysAllow, "isCurrentScriptExecutionOwner"_s, functionIsCurrentScriptExecutionOwner, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
