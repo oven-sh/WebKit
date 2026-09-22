@@ -188,12 +188,16 @@ using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::
 using OrderHashRankMap = UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 constexpr bool isValidOrderHash(uint64_t hash) { return hash <= std::numeric_limits<uint64_t>::max() - 2; }
 
-// Sorted. A run that spells one of these is hashed as itself; every other identifier-like run hashes as 'i'.
+// Sorted. A run that spells one of these is hashed as itself; every other identifier-like run hashes as 'i'. Only words
+// that can never be the name of a binding in what a bundler emits: a minifier hands out short names afresh in every
+// build, and with thousands of bindings in a scope it gets to `of`, `as`, `get`, `set`, `async`, so the contextual
+// keywords must hash like any other name. `let`, `static`, `yield` and `await` are names only in sloppy scripts, outside
+// generators and async functions; a bundle is module code, where they are reserved and a minifier never assigns them.
 constexpr std::array reservedWordsForOrderHash = std::to_array<ASCIILiteral>({
-    "async"_s, "await"_s, "break"_s, "case"_s, "catch"_s, "class"_s, "const"_s, "continue"_s, "debugger"_s, "default"_s,
-    "delete"_s, "do"_s, "else"_s, "export"_s, "extends"_s, "false"_s, "finally"_s, "for"_s, "function"_s, "get"_s, "if"_s,
-    "import"_s, "in"_s, "instanceof"_s, "let"_s, "new"_s, "null"_s, "of"_s, "return"_s, "set"_s, "static"_s, "super"_s,
-    "switch"_s, "this"_s, "throw"_s, "true"_s, "try"_s, "typeof"_s, "var"_s, "void"_s, "while"_s, "with"_s, "yield"_s,
+    "await"_s, "break"_s, "case"_s, "catch"_s, "class"_s, "const"_s, "continue"_s, "debugger"_s, "default"_s, "delete"_s,
+    "do"_s, "else"_s, "export"_s, "extends"_s, "false"_s, "finally"_s, "for"_s, "function"_s, "if"_s, "import"_s, "in"_s,
+    "instanceof"_s, "let"_s, "new"_s, "null"_s, "return"_s, "static"_s, "super"_s, "switch"_s, "this"_s, "throw"_s,
+    "true"_s, "try"_s, "typeof"_s, "var"_s, "void"_s, "while"_s, "with"_s, "yield"_s,
 });
 
 // [first, end) in reservedWordsForOrderHash of the words that start with each of 'a'..'y'.
