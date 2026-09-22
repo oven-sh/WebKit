@@ -130,6 +130,7 @@ void GenericLabel<JSGeneratorTraits>::setLocation(BytecodeGenerator& generator, 
         CASE(OpJneqNull)
         CASE(OpJundefinedOrNull)
         CASE(OpJnundefinedOrNull)
+        CASE(OpJcurrentScriptExecutionOwner)
         CASE(OpJeq)
         CASE(OpJstricteq)
         CASE(OpJneq)
@@ -573,6 +574,11 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
 
     allocateScope();
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_isBuiltinFunction)
+        emitEnterScriptExecutionOwner();
+#endif
 
     switch (constructorKind()) {
     case ConstructorKind::None:
@@ -1492,6 +1498,20 @@ Ref<LabelScope> BytecodeGenerator::newLabelScope(LabelScope::Type type, const Id
     m_labelScopes.append(type, name, labelScopeDepth(), newLabel(), type == LabelScope::Loop ? RefPtr<Label>(newLabel()) : RefPtr<Label>()); // Only loops have continue targets.
     return m_labelScopes.last();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// A function of script that has a script execution owner runs as its owner whoever calls it (see
+// op_jcurrent_script_execution_owner). The result of the call made again goes where `this` was: nothing has read it
+// yet, and the function returns next.
+void BytecodeGenerator::emitEnterScriptExecutionOwner()
+{
+    Ref<Label> body = newLabel();
+    OpJcurrentScriptExecutionOwner::emit(this, body->bind(this));
+    OpCallInScriptExecutionOwner::emit(this, &m_thisRegister);
+    OpRet::emit(this, &m_thisRegister);
+    emitLabel(body.get());
+}
+#endif
 
 void BytecodeGenerator::emitEnter()
 {

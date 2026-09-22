@@ -554,6 +554,7 @@ namespace JSC { namespace DFG {
     macro(PhantomNewArrayBuffer, NodeResultJS | NodeMustGenerate) \
     macro(CreateScopedArguments, NodeResultJS) \
     macro(CreateClonedArguments, NodeResultJS) \
+    macro(CallInScriptExecutionOwner, NodeResultJS | NodeMustGenerate) \
     macro(PhantomClonedArguments, NodeResultJS | NodeMustGenerate) \
     macro(GetFromArguments, NodeResultJS) \
     macro(PutToArguments, NodeMustGenerate) \

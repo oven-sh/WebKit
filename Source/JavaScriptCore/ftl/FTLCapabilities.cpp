@@ -203,6 +203,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case DirectConstruct:
     case CallVarargs:
     case CallDirectEval:
+    case CallInScriptExecutionOwner:
     case TailCallVarargs:
     case TailCallVarargsInlinedCaller:
     case ConstructVarargs:

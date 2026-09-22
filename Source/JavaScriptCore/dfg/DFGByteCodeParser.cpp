@@ -2050,6 +2050,11 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;
 
+    if (codeBlock->hasCalledInScriptExecutionOwner()) {
+        VERBOSE_LOG("    Failing because the callee is called from outside its script execution owner.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+
     if (codeBlock->couldBeTainted() != m_codeBlock->couldBeTainted()) {
         VERBOSE_LOG("    Failing because taintedness of callee does not match the caller");
         return { UINT_MAX, InlineAttribute::None };
@@ -10409,6 +10414,43 @@ void ByteCodeParser::parseBlock(unsigned limit)
             if (handleIteratorCloseCheck(currentInstruction, jumpTarget(currentInstruction->as<OpIteratorCloseCheck>().m_targetLabel)) == Terminal)
                 LAST_OPCODE(op_iterator_close_check);
             NEXT_OPCODE(op_iterator_close_check);
+        }
+
+        case op_jcurrent_script_execution_owner: {
+            auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
+            auto& metadata = bytecode.metadata(codeBlock);
+            unsigned taken = m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel);
+            if (metadata.m_depth == UINT_MAX) {
+                // Code with no script execution owner: nothing to compare.
+                addToGraph(Jump, OpInfo(taken));
+                LAST_OPCODE(op_jcurrent_script_execution_owner);
+            }
+            Node* callee = get(VirtualRegister(CallFrameSlot::callee));
+            Node* scope;
+            if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>())
+                scope = weakJSConstant(function->scope());
+            else
+                scope = addToGraph(GetScope, callee);
+            for (unsigned i = 0; i < metadata.m_depth; ++i)
+                scope = addToGraph(SkipScope, scope);
+            Node* owner = addToGraph(GetClosureVar, OpInfo(metadata.m_offset), OpInfo(SpecObject), scope);
+            Node* asyncContextData = weakJSConstant(codeBlock->globalObject()->asyncContextData());
+            Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObject | SpecOther), asyncContextData);
+            Node* condition = addToGraph(CompareStrictEq, owner, current);
+            addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
+            LAST_OPCODE(op_jcurrent_script_execution_owner);
+        }
+
+        case op_call_in_script_execution_owner: {
+            auto bytecode = currentInstruction->as<OpCallInScriptExecutionOwner>();
+            if (m_inlineStackTop->m_inlineCallFrame) {
+                // Only a frame of the function's own has the arguments where the call made again reads them. A function
+                // that has done this is not inlined (inliningCost), so this is the first time: baseline code does it.
+                addToGraph(ForceOSRExit);
+                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            } else
+                set(bytecode.m_dst, addToGraph(CallInScriptExecutionOwner));
+            NEXT_OPCODE(op_call_in_script_execution_owner);
         }
 
         case op_jeq_ptr: {

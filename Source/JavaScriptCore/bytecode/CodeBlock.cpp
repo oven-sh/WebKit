@@ -30,6 +30,7 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "BuiltinNames.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -554,6 +555,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     const auto& instructionStream = instructions();
     unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
+    bool skipCostOfNextInstruction = false;
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -561,7 +563,14 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // in any tier. It is not counted: tier-up thresholds and inlining budgets scale with this number, and making every such function
         // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
         // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
-        if (opcodeID != op_iterator_close_check)
+        // Nor are the three instructions every function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner):
+        // a compare and a branch that the optimizing tiers fold away where there is no owner, and a path taken once per
+        // call from outside the owner.
+        if (opcodeID == op_call_in_script_execution_owner)
+            skipCostOfNextInstruction = true;
+        else if (skipCostOfNextInstruction)
+            skipCostOfNextInstruction = false;
+        else if (opcodeID != op_iterator_close_check && opcodeID != op_jcurrent_script_execution_owner)
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
@@ -623,6 +632,19 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         case op_new_array_with_species: {
             INITIALIZE_METADATA(OpNewArrayWithSpecies)
+            break;
+        }
+
+        case op_jcurrent_script_execution_owner: {
+            INITIALIZE_METADATA(OpJcurrentScriptExecutionOwner)
+            metadata.m_depth = UINT_MAX;
+            metadata.m_offset = 0;
+            // It runs before the function has a scope of its own: from the callee's scope, which is `scope` here.
+            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), 0, scope, vm.propertyNames->builtinNames().scriptExecutionOwnerPrivateName(), Get, GlobalProperty, InitializationMode::NotInitialization);
+            if (op.type == ClosureVar) {
+                metadata.m_depth = op.depth;
+                metadata.m_offset = op.operand;
+            }
             break;
         }
 

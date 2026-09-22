@@ -792,6 +792,7 @@ public:
             vm().setAsyncContextTrackingEnabled();
     }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
+    InternalFieldTuple* asyncContextData() const { return m_asyncContextData.get(); }
     // AsyncContextSwapScope::current() while there is a script execution owner: an
     // InternalFieldTuple of the two fields of m_asyncContextData, never written again.
     JS_EXPORT_PRIVATE JSValue currentAsyncContextWithScriptExecutionOwner(VM&);

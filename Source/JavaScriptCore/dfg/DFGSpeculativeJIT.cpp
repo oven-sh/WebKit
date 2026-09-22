@@ -16018,6 +16018,17 @@ void SpeculativeJIT::compileToPrimitive(Node* node)
     jsValueResult(resultGPR, node, DataFormatJS, UseChildrenCalledExplicitly);
 }
 
+// The frame this is in is its own function's (the parser does not emit it for an inlined one), so the operation
+// finds the callee, `this` and the arguments where they were passed.
+void SpeculativeJIT::compileCallInScriptExecutionOwner(Node* node)
+{
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    callOperation(operationCallInScriptExecutionOwner, resultGPR, LinkableConstant::globalObject(*this, node));
+    jsValueResult(resultGPR, node);
+}
+
 void SpeculativeJIT::compileToPropertyKey(Node* node)
 {
     DFG_ASSERT(m_graph, node, node->child1().useKind() == UntypedUse, node->child1().useKind());

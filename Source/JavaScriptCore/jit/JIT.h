@@ -424,6 +424,7 @@ namespace JSC {
         void emit_op_jmp(const JSInstruction*);
         void emit_op_jneq_null(const JSInstruction*);
         void emit_op_jundefined_or_null(const JSInstruction*);
+        void emit_op_jcurrent_script_execution_owner(const JSInstruction*);
         void emit_op_jnundefined_or_null(const JSInstruction*);
         void emit_op_jeq_ptr(const JSInstruction*);
         void emit_op_jneq_ptr(const JSInstruction*);

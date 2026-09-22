@@ -500,6 +500,35 @@ void JIT::emit_op_jnundefined_or_null(const JSInstruction* currentInstruction)
     addJump(branchIfNotNull(regT0), target);
 }
 
+void JIT::emit_op_jcurrent_script_execution_owner(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
+    unsigned target = jumpTarget(currentInstruction, bytecode.m_targetLabel);
+
+    // depth UINT_MAX: this code has no owner. depth + 1 is 0 for it.
+    load32FromMetadata(bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfDepth(), regT2);
+    add32(TrustedImm32(1), regT2);
+    addJump(branchTest32(Zero, regT2), target);
+
+    loadPtr(addressFor(CallFrameSlot::callee), regT0);
+    loadPtr(Address(regT0, JSCallee::offsetOfScopeChain()), regT0);
+    sub32(TrustedImm32(1), regT2);
+    Jump found = branchTest32(Zero, regT2);
+    Label loop = label();
+    loadPtr(Address(regT0, JSScope::offsetOfNext()), regT0);
+    sub32(TrustedImm32(1), regT2);
+    branchTest32(NonZero, regT2).linkTo(loop, this);
+    found.link(this);
+
+    load32FromMetadata(bytecode, OpJcurrentScriptExecutionOwner::Metadata::offsetOfOffset(), regT1);
+    loadPtr(BaseIndex(regT0, regT1, TimesEight, JSLexicalEnvironment::offsetOfVariables()), regT0);
+
+    loadGlobalObject(regT1);
+    loadPtr(Address(regT1, JSGlobalObject::offsetOfAsyncContextData()), regT1);
+    loadPtr(Address(regT1, InternalFieldTuple::offsetOfInternalField(1)), regT1);
+    addJump(branchPtr(Equal, regT0, regT1), target);
+}
+
 void JIT::emit_op_jeq_ptr(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpJeqPtr>();

@@ -5971,6 +5971,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
         
+    case CallInScriptExecutionOwner: {
+        compileCallInScriptExecutionOwner(node);
+        break;
+    }
+
     case CreateClonedArguments: {
         compileCreateClonedArguments(node);
         break;

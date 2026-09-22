@@ -1150,6 +1150,7 @@ private:
         }
 
         case WeakMapGet:
+        case CallInScriptExecutionOwner:
         case ResolveScopeForHoistingFuncDeclInEval: {
             setPrediction(SpecBytecodeTop);
             break;

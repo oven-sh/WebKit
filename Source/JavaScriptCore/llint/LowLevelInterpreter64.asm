@@ -877,6 +877,39 @@ llintOpWithReturn(op_argument_count, OpArgumentCount, macro (size, get, dispatch
 end)
 
 
+# Jumps when this function's code has no script execution owner, or its owner is the current one.
+llintOpWithMetadata(op_jcurrent_script_execution_owner, OpJcurrentScriptExecutionOwner, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    # depth UINT_MAX: no owner. depth + 1 is 0 for it, and the number of scopes to look at otherwise.
+    loadi OpJcurrentScriptExecutionOwner::Metadata::m_depth[t5], t2
+    addi 1, t2
+    btiz t2, .opJcurrentScriptExecutionOwnerTarget
+    loadp Callee[cfr], t0
+    loadp JSCallee::m_scope[t0], t0
+    subi 1, t2
+    btiz t2, .opJcurrentScriptExecutionOwnerFound
+
+.opJcurrentScriptExecutionOwnerLoop:
+    loadp JSScope::m_next[t0], t0
+    subi 1, t2
+    btinz t2, .opJcurrentScriptExecutionOwnerLoop
+
+.opJcurrentScriptExecutionOwnerFound:
+    loadi OpJcurrentScriptExecutionOwner::Metadata::m_offset[t5], t1
+    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_globalObject[t1], t1
+    loadp JSGlobalObject::m_asyncContextData[t1], t1
+    loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
+    bqeq t0, t1, .opJcurrentScriptExecutionOwnerTarget
+    dispatch()
+
+.opJcurrentScriptExecutionOwnerTarget:
+    get(m_targetLabel, t0)
+    jumpImpl(dispatchIndirect, t0)
+end)
+
+
 llintOpWithReturn(op_get_scope, OpGetScope, macro (size, get, dispatch, return)
     loadp Callee[cfr], t0
     loadp JSCallee::m_scope[t0], t0

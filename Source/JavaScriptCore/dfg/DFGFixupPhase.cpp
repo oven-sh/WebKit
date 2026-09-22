@@ -3864,6 +3864,7 @@ private:
         case DirectConstruct:
         case CallVarargs:
         case CallDirectEval:
+        case CallInScriptExecutionOwner:
         case TailCallVarargsInlinedCaller:
         case ConstructVarargs:
         case CallForwardVarargs:

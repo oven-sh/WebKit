@@ -268,6 +268,9 @@ public:
     void NODELETE dumpMathICStats();
 
     bool isConstructor() const { return m_unlinkedCode->isConstructor(); }
+    // op_call_in_script_execution_owner has run in this function: it has been called from outside its script execution owner.
+    bool hasCalledInScriptExecutionOwner() const { return m_hasCalledInScriptExecutionOwner; }
+    void setHasCalledInScriptExecutionOwner() { m_hasCalledInScriptExecutionOwner = true; }
     CodeType codeType() const { return m_unlinkedCode->codeType(); }
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }
@@ -885,6 +888,7 @@ public:
     bool m_didFailFTLCompilation : 1;
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
+    bool m_hasCalledInScriptExecutionOwner : 1 { false };
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
