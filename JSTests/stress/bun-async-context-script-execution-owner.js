@@ -206,3 +206,37 @@ const check = (expected, count) => {
         throw failure;
     shouldBe(current(), "-/-", "nothing is left over");
 }
+
+// Continuations of several (context, owner) pairs take turns, with collections between a capture and its run: each
+// continues with its own pair. (What a job captures while its pair is unchanged is the value it was entered with,
+// which its swap scope keeps alive; the global object's remembered pair is weak and has one entry.)
+{
+    const pairs = [[A, O, "A/O"], [B, O, "B/O"], [A, P, "A/P"], [undefined, P, "-/P"], [B, undefined, "B/-"]];
+    const steps = Math.max(10, testLoopCount / 10 | 0);
+    const settled = Promise.resolve(1);
+    let failure = null;
+    let finished = 0;
+    async function chain(tag) {
+        for (let i = 0; i < steps; i++) {
+            await settled;
+            if (current() !== tag)
+                failure = failure || new Error("interleaved await " + i + ": expected " + tag + " but got " + current());
+            if (!(i % 4))
+                await new Promise(resolve => resolve()).then(() => { if (current() !== tag) failure = failure || new Error("interleaved then: expected " + tag + " but got " + current()); });
+        }
+        ++finished;
+    }
+    for (const [ctx, own, tag] of pairs)
+        inside(ctx, own, () => { chain(tag).catch(error => { failure = failure || error; }); });
+    for (let i = 0; i < 8 && finished < pairs.length; i++) {
+        // One turn of every chain at a time is not something the shell offers; a collection between drains still lands
+        // between captures that were made and jobs that have not run when a job itself schedules more work.
+        gc();
+        drainMicrotasks();
+    }
+    drainMicrotasks();
+    if (failure)
+        throw failure;
+    shouldBe(finished, pairs.length, "every interleaved chain finished");
+    shouldBe(current(), "-/-", "nothing is left over after the interleaved chains");
+}

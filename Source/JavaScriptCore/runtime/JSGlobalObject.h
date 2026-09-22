@@ -531,6 +531,9 @@ public:
     // The last value captured while there was an owner, which the next capture of the same two values
     // reuses. Weak: what keeps an owner alive is the jobs that captured it, not that it was captured.
     Weak<InternalFieldTuple> m_capturedAsyncContextWithScriptExecutionOwner;
+    // The captured value the innermost AsyncContextSwapScope was entered with, when it has an owner. Not visited: that
+    // scope keeps it alive, and puts back what was here when it ends.
+    InternalFieldTuple* m_enteredAsyncContextWithScriptExecutionOwner { nullptr };
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 

@@ -98,6 +98,10 @@ public:
             m_asyncContextData->putInternalField(m_vm, 0, m_restoreAsyncContext);
             if (m_asyncContextData->getInternalField(1) != m_restoreScriptExecutionOwner) [[unlikely]]
                 m_asyncContextData->putInternalField(m_vm, 1, m_restoreScriptExecutionOwner);
+            if (m_enteredIn) [[unlikely]] {
+                m_enteredIn->m_enteredAsyncContextWithScriptExecutionOwner = m_restoreEntered;
+                ensureStillAliveHere(m_entered);
+            }
             m_asyncContextData = nullptr;
         }
     }
@@ -181,6 +185,12 @@ private:
             auto* tuple = uncheckedDowncast<InternalFieldTuple>(captured.asCell());
             asyncContext = tuple->getInternalField(0);
             scriptExecutionOwner = tuple->getInternalField(1);
+            // What this job schedules captures the same two values, unless it changes one: the tuple it was entered with
+            // is that capture (JSGlobalObject::currentAsyncContextWithScriptExecutionOwner). This scope, on the stack,
+            // keeps it alive.
+            m_entered = tuple;
+            m_enteredIn = globalObject;
+            m_restoreEntered = std::exchange(globalObject->m_enteredAsyncContextWithScriptExecutionOwner, tuple);
         }
         m_asyncContextData = globalObject->m_asyncContextData.get();
         m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
@@ -195,6 +205,9 @@ private:
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
     JSValue m_restoreScriptExecutionOwner;
+    InternalFieldTuple* m_entered { nullptr };
+    JSGlobalObject* m_enteredIn { nullptr };
+    InternalFieldTuple* m_restoreEntered { nullptr };
 };
 
 } // namespace JSC

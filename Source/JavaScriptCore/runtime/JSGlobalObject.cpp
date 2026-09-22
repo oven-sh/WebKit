@@ -3963,6 +3963,9 @@ JSValue JSGlobalObject::currentAsyncContextWithScriptExecutionOwner(VM& vm)
     JSValue asyncContext = m_asyncContextData->getInternalField(0);
     JSValue scriptExecutionOwner = m_asyncContextData->getInternalField(1);
     ASSERT(!scriptExecutionOwner.isUndefined());
+    // Jobs of several async contexts under one owner take turns: each finds its own pair in what it was entered with.
+    if (auto* entered = m_enteredAsyncContextWithScriptExecutionOwner; entered && entered->getInternalField(0) == asyncContext && entered->getInternalField(1) == scriptExecutionOwner)
+        return entered;
     InternalFieldTuple* captured = m_capturedAsyncContextWithScriptExecutionOwner.get();
     if (!captured || captured->getInternalField(0) != asyncContext || captured->getInternalField(1) != scriptExecutionOwner) {
         captured = InternalFieldTuple::create(vm, internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);
