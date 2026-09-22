@@ -4424,8 +4424,11 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     uint16_t payloadIndex = decoder.persistentPayloadIndex();
     uint32_t recordOffset = payloadIndex ? static_cast<uint32_t>(decoder.offsetOf(this)) : 0;
     PersistentBytecodePayloads* payloads = payloadIndex ? &decoder.vm().persistentBytecodePayloads() : nullptr;
-    if (payloads)
+    if (payloads) {
         remembered = payloads->takeChildExecutables(payloadIndex, recordOffset);
+        if constexpr (std::is_same_v<CodeBlockType, UnlinkedFunctionCodeBlock>)
+            payloads->didDecodeFunctionBody(decoder.ptrForOffsetFromBase(0), recordOffset, layout.recordOffsetInRegion + sizeof(Record));
+    }
     if (remembered.size() && remembered.size() == layout.functionDecls.count + layout.functionExprs.count) {
         auto decodeChildren = [&](const Array& array, auto& out, unsigned firstPosition, unsigned firstToDecode) {
             if (!array.count)

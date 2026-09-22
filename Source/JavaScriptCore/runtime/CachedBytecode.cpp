@@ -111,6 +111,13 @@ auto BytecodeOrderRecorder::snapshot() const -> Snapshot
     return m_recorded;
 }
 
+void PersistentBytecodePayloads::setLinkedPayload(std::span<const uint8_t> payload, const std::array<uint32_t, BytecodeLinkRegions::Count>& regionEnds)
+{
+    m_linkedPayloadBase = payload.data();
+    m_linkedPayloadStatistics = { };
+    m_linkedPayloadStatistics.regionEnds = regionEnds;
+}
+
 BytecodeOrderRecorder& PersistentBytecodePayloads::enableOrderRecording()
 {
     if (!m_orderRecorder)

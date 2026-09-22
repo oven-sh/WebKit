@@ -238,6 +238,34 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE BytecodeOrderRecorder& enableOrderRecording();
     BytecodeOrderRecorder* orderRecorder() { return m_orderRecorder.get(); }
+
+    // How well the order file a payload was laid out by (BytecodeLinkEncoder) matches what this VM runs: the function
+    // bodies decoded out of the payload, by the region they lie in. A body decoded again after its code was returned to
+    // the cache counts again. `bytes`: a body's own arrays and record, not what it shares with an identical earlier one.
+    struct LinkedPayloadStatistics {
+        struct Bodies {
+            uint64_t count { 0 };
+            uint64_t bytes { 0 };
+        };
+        std::array<uint32_t, BytecodeLinkRegions::Count> regionEnds { };
+        Bodies hot;
+        Bodies unknown;
+        Bodies cold;
+    };
+    // The embedder says which of its payloads is a linked one. Nothing is counted for any other payload.
+    JS_EXPORT_PRIVATE void setLinkedPayload(std::span<const uint8_t>, const std::array<uint32_t, BytecodeLinkRegions::Count>& regionEnds);
+    const LinkedPayloadStatistics* linkedPayloadStatistics() const { return m_linkedPayloadBase ? &m_linkedPayloadStatistics : nullptr; }
+    void didDecodeFunctionBody(const void* payloadBase, uint32_t recordOffset, uint32_t bytes)
+    {
+        if (payloadBase != m_linkedPayloadBase)
+            return;
+        auto& regionEnds = m_linkedPayloadStatistics.regionEnds;
+        auto& bodies = recordOffset < regionEnds[BytecodeLinkRegions::Hot] ? m_linkedPayloadStatistics.hot
+            : recordOffset < regionEnds[BytecodeLinkRegions::Unknown] ? m_linkedPayloadStatistics.unknown
+            : m_linkedPayloadStatistics.cold;
+        bodies.count++;
+        bodies.bytes += bytes;
+    }
 #endif
 
     // For diagnostics: what this and the Decoders it can reach hold on to.
@@ -270,6 +298,8 @@ private:
     UncheckedKeyHashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<BytecodeOrderRecorder> m_orderRecorder;
+    const void* m_linkedPayloadBase { nullptr }; // never a Decoder's base while null
+    LinkedPayloadStatistics m_linkedPayloadStatistics;
 #endif
 };
 
