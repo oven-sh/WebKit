@@ -57,6 +57,12 @@ constexpr size_t slotSize = 8;
 
 constexpr size_t argumentSlotOffset(unsigned index) { return static_cast<size_t>(index) * slotSize; }
 
+// The JIT tiers park a JSValue copy of every argument that can take a buffer snapshot right above
+// the slot buffer. A later conversion that runs JS can detach, transfer, or resize that buffer, so
+// the slow path of that conversion takes the snapshots again from the parked copies. See
+// operationFFIWriteSlotAndRetakeSnapshots.
+constexpr size_t argumentValueOffset(unsigned slotCount, unsigned index) { return (static_cast<size_t>(slotCount) + index) * slotSize; }
+
 class Signature final : public ThreadSafeRefCounted<Signature> {
     WTF_MAKE_TZONE_ALLOCATED(Signature);
     WTF_MAKE_NONCOPYABLE(Signature);
@@ -72,6 +78,10 @@ public:
 
     unsigned slotCount() const { return argumentCount() + 1; }
     size_t slotBufferBytes() const { return static_cast<size_t>(slotCount()) * slotSize; }
+
+    // The slot buffer plus the parked argument values (see argumentValueOffset): what a JIT tier
+    // needs on the stack to marshal one call.
+    size_t marshalBufferBytes() const { return slotBufferBytes() + static_cast<size_t>(argumentCount()) * slotSize; }
 
     unsigned hash() const { return m_hash; }
     JS_EXPORT_PRIVATE String toString() const;

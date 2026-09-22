@@ -124,6 +124,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 #include "FFIContext.h"
 #include "FFIConversions.h"
+#include "FFIDFG.h"
 #include "FFISignature.h"
 #include "FFIType.h"
 #include "JSFFIFunction.h"
@@ -15291,7 +15292,7 @@ IGNORE_CLANG_WARNINGS_END
 
         FFI::FFIContext& context = globalObject->ffiContext();
 
-        LValue slots = m_out.lockedStackSlot(signature.slotBufferBytes());
+        LValue slots = m_out.lockedStackSlot(signature.marshalBufferBytes());
         auto slotOffset = [](unsigned index) -> ptrdiff_t {
             return static_cast<ptrdiff_t>(index * FFI::slotSize);
         };
@@ -15301,6 +15302,27 @@ IGNORE_CLANG_WARNINGS_END
         auto slotAddress = [&](unsigned index) -> LValue {
             return m_out.addPtr(slots, slotOffset(index));
         };
+        auto valuePointer = [&](unsigned index) -> TypedPointer {
+            return m_out.address(m_heaps.root, slots, static_cast<ptrdiff_t>(FFI::argumentValueOffset(signature.slotCount(), index)));
+        };
+
+        // An argument whose conversion reads an address or a byte length off a live buffer needs
+        // that read taken again if a later conversion runs JS: the JS can detach, transfer, or
+        // resize the buffer. Park the JSValue of each such argument next to its slot, and let the
+        // slow path of the later conversion read the parked ones again.
+        static_assert(FFI::Signature::maxArguments <= 32);
+        uint32_t parkedValues = 0;
+        {
+            bool conversionAfterThisCanRunJS = false;
+            for (unsigned i = nativeArgumentCount; i--;) {
+                FFI::Type type = signature.argumentType(i);
+                UseKind useKind = m_graph.varArgChild(node, 2 + i).useKind();
+                if (conversionAfterThisCanRunJS && FFI::conversionCanTakeBufferSnapshot(type, useKind))
+                    parkedValues |= 1u << i;
+                if (FFI::conversionCanRunJS(type, useKind))
+                    conversionAfterThisCanRunJS = true;
+            }
+        }
 
         bool needsArena = false;
         {
@@ -15346,6 +15368,7 @@ IGNORE_CLANG_WARNINGS_END
 
         constexpr bool directCall = DirectCall;
         Vector<LValue> directOperands;
+        Vector<LValue> directValues; // one per argument: the conversion's own value, or null to read the slot
 
         for (unsigned i = 0; i < nativeArgumentCount; ++i) {
             FFI::Type type = signature.argumentType(i);
@@ -15422,12 +15445,23 @@ IGNORE_CLANG_WARNINGS_END
                 LValue typeTag = m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(type)));
                 TypedPointer slot = slotPointer(i, 0);
 
+                if (parkedValues & (1u << i))
+                    m_out.store64(value, valuePointer(i));
+
+                // Only this conversion can run JS, and only the arguments before it can already
+                // hold a buffer snapshot, so the retaking slow path is needed exactly when one of
+                // them is parked.
+                bool retakeSnapshots = parkedValues & ((1u << i) - 1);
                 auto emitSlowConversion = [&] {
                     if (needsArena) {
                         callPreflight();
-                        LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                        LValue exception = retakeSnapshots
+                            ? m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlotAndRetakeSnapshots), weakPointer(globalObject), m_out.constIntPtr(&signature), m_out.constInt32(static_cast<int32_t>(i)), value, slotAddress(i))
+                            : m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
                         exceptionCheckWithArenaExit(exception);
-                    } else
+                    } else if (retakeSnapshots)
+                        vmCall(Void, operationFFIWriteSlotAndRetakeSnapshots, weakPointer(globalObject), m_out.constIntPtr(&signature), m_out.constInt32(static_cast<int32_t>(i)), value, slotAddress(i));
+                    else
                         vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
                 };
 
@@ -15504,10 +15538,21 @@ IGNORE_CLANG_WARNINGS_END
                 DFG_CRASH(m_graph, node, "Bad use kind for a CallFFI argument");
                 break;
             }
-            if constexpr (directCall) {
-                if (directOperand)
-                    directOperands.append(directOperand);
-                else if (type == FFI::Type::Double)
+            if constexpr (directCall)
+                directValues.append(directOperand);
+        }
+
+        if constexpr (directCall) {
+            // Read the slots only now that every conversion has run. A conversion that runs JS
+            // makes its slow path take an earlier argument's buffer snapshot again, so a slot read
+            // before that would carry the stale address or length into the call.
+            for (unsigned i = 0; i < nativeArgumentCount; ++i) {
+                if (directValues[i]) {
+                    directOperands.append(directValues[i]);
+                    continue;
+                }
+                FFI::Type type = signature.argumentType(i);
+                if (type == FFI::Type::Double)
                     directOperands.append(m_out.loadDouble(slotPointer(i)));
                 else if (type == FFI::Type::Float)
                     directOperands.append(m_out.loadFloat(slotPointer(i)));
