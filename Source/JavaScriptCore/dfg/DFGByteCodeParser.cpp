@@ -1641,6 +1641,10 @@ private:
         Vector<ArgumentPosition*> m_argumentPositions;
         
         InlineStackEntry* const m_caller;
+#if USE(BUN_JSC_ADDITIONS)
+        // While the call handleEnterScriptExecutionOwner() makes is being parsed.
+        bool m_isEnteringScriptExecutionOwner { false };
+#endif
         
         InlineStackEntry(
             ByteCodeParser*,
@@ -2104,6 +2108,13 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     unsigned recursion = 0;
     
     for (InlineStackEntry* entry = m_inlineStackTop; entry; entry = entry->m_caller) {
+#if USE(BUN_JSC_ADDITIONS)
+        // A function entering its script execution owner, and the builtin it does that through, are two frames of fixed
+        // size between a caller and the function it called (handleEnterScriptExecutionOwner()): the function's own
+        // code is the frame after them, and is as deep, and as recursive, as it is without them.
+        if (entry->m_isEnteringScriptExecutionOwner || (entry->m_caller && entry->m_caller->m_isEnteringScriptExecutionOwner))
+            continue;
+#endif
         ++depth;
         if (depth >= Options::maximumInliningDepth()) {
             VERBOSE_LOG("    Failing because depth exceeded.\n");
@@ -7819,6 +7830,11 @@ void ByteCodeParser::handleEnterScriptExecutionOwner()
     if (depth == CodeBlock::noScriptExecutionOwner)
         return;
 
+    // Called by the builtin a function enters its owner through, this is that function, and its owner is what the
+    // builtin has just made the current one.
+    if (InlineStackEntry* enteredThrough = m_inlineStackTop->m_caller; enteredThrough && enteredThrough->m_caller && enteredThrough->m_caller->m_isEnteringScriptExecutionOwner)
+        return;
+
     auto getOwner = [&](Node* callee) {
         if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>()) {
             // A scope's next scope never changes: the owner of a known function is known.
@@ -7891,7 +7907,10 @@ void ByteCodeParser::handleEnterScriptExecutionOwner()
         // Nothing of this function's is used again, or has been set: its scope register holds what an inlined call
         // returns.
         Operand result = codeBlock->scopeRegister();
+        InlineStackEntry* entering = m_inlineStackTop;
+        entering->m_isEnteringScriptExecutionOwner = true;
         Terminality terminality = handleCall(result, TailCall, InlineCallFrame::TailCall, nextOpcodeIndex(), weakJSConstant(enter), argumentCountIncludingThis, registerOffset, CallLinkStatus(CallVariant(enter)), SpecBytecodeTop, nullptr);
+        entering->m_isEnteringScriptExecutionOwner = false;
         if (terminality == NonTerminal) {
             // `enter` was inlined, or this function is: what op_ret does, in the instruction the call is in (the call's
             // result is a queued SetLocal until the instruction ends).
