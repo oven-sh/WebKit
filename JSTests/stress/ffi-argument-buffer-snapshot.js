@@ -6,8 +6,8 @@
 // and then the address or the "buffer_length" of that argument describes memory that is gone. So
 // every tier reads the addresses and the lengths after all of that JS has run: the pointer of a
 // detached view is null, and the length behind a shrunk view is the new one. Each case runs cold
-// (the C++ host path), hot through a monomorphic exact-arity caller (the IC stub, the DFG, the
-// FTL) and pinned below the DFG, so no tier may disagree.
+// (the C++ host path) and hot through a monomorphic exact-arity caller (the IC stub, the DFG, the
+// FTL), so no tier may disagree.
 
 if (!$vm.useJIT())
     quit();
@@ -47,6 +47,21 @@ function check(actual, expected, label) {
 function makeCaller(callable, arity, tag) {
     const argumentList = Array.from({ length: arity }, (_, i) => "args[" + i + "]").join(", ");
     return new Function("callable", `/* ${tag} */ return function (args) { return callable(${argumentList}); };`)(callable);
+}
+
+// The nested case makes FFI calls outside its hot caller. They go through these two helpers, which
+// are never inlined and are compiled in every tier right here, before any case reads the compile
+// counts. So a CallFFI node that is compiled while a case runs belongs to that case's hot caller.
+function addressOf(view) { return BigInt(pointerOfThenInt(view, 0)); }
+function byteLengthOf(view) { return byteLength(view, view, 0); }
+noInline(addressOf);
+noInline(byteLengthOf);
+{
+    const view = new Uint8Array(64);
+    for (let i = 0; i < 1e3; ++i) {
+        addressOf(view);
+        byteLengthOf(view);
+    }
 }
 
 // Every call below detaches or shrinks the buffer it gets, so each one needs a buffer of its own.
@@ -129,15 +144,14 @@ const cases = [
         setUp() {
             const view = new Uint8Array(64);
             const nested = new Uint8Array(1024);
-            const address = BigInt(pointerOfThenInt(view, 0));
             const argument = {
                 get ptr() {
-                    if (byteLength(nested, nested, 0) !== 1024n)
+                    if (byteLengthOf(nested) !== 1024n)
                         throw new Error("the nested call marshalled the wrong length");
                     return 1;
                 },
             };
-            return { args: [view, argument], expected: address + 1n };
+            return { args: [view, argument], expected: addressOf(view) + 1n };
         },
     },
     {
