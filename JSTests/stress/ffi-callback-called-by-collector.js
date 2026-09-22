@@ -19,22 +19,27 @@ function makeBuffers(deallocator, count) {
 }
 noInline(makeBuffers);
 
+// The bytes belong to the deallocator, so it releases them: a call into C from a queued call.
+const freeBytes = $vm.ffiFunction({ args: ["ptr"], returns: "void" }, $vm.ffiFixture("ffi_free_external_bytes"), "free_external_bytes");
 const seen = new Map(); // context -> bytes
 function record(bytes, context) {
     if (seen.has(context)) throw new Error("deallocator called twice for context " + context);
     if (typeof bytes !== "number" || !bytes) throw new Error("bad bytes pointer: " + bytes);
     seen.set(context, bytes);
+    freeBytes(bytes);
 }
 
 const cb = $vm.ffiCallback(signature, record);
 if (cb.threadsafe !== false) throw new Error("expected .threadsafe === false, got " + cb.threadsafe);
 
 // (1) Called from C on the JS thread with no collection running: inline.
-const callDirectly = $vm.ffiFunction(signature, cb.ptr, "call_deallocator_directly");
+let inline = [];
+const inlineCallback = $vm.ffiCallback(signature, (bytes, context) => inline.push(bytes, context));
+const callDirectly = $vm.ffiFunction(signature, inlineCallback.ptr, "call_deallocator_directly");
 callDirectly(4096, 1000000);
-if (seen.get(1000000) !== 4096) throw new Error("the callback did not run inline outside a collection");
+if (inline.length !== 2 || inline[0] !== 4096 || inline[1] !== 1000000) throw new Error("the callback did not run inline outside a collection: " + inline);
 if ($vm.drainThreadsafeCallbacks() !== 0) throw new Error("an inline call was queued");
-seen.clear();
+inlineCallback.close();
 
 const count = 100;
 makeBuffers(cb.ptr, count);
@@ -55,7 +60,7 @@ for (let context = 1; context <= count; ++context) {
 cb.close();
 
 // (4) close() while calls are queued. `victim` stays referenced to the end of the test: a buffer the conservative
-// scan kept past close() still has the thunk as its deallocator (a closed callback drops the call).
+// scan kept past close() still has the thunk as its deallocator (a closed callback drops the call, and its bytes leak).
 seen.clear();
 const victim = $vm.ffiCallback(signature, record);
 makeBuffers(victim.ptr, count);

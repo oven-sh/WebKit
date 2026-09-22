@@ -5468,8 +5468,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICString, (JSGlobalObject* globalObject, Call
     return JSValue::encode(jsString(vm, String::fromUTF8(static_cast<const char*>(address))));
 }
 
-// $vm.ffiExternalArrayBuffer(byteLength, deallocator, context): an ArrayBuffer over external bytes. When the collector
-// frees it, it calls the C function `void deallocator(void* bytes, void* context)`, as JSObjectMakeArrayBufferWithBytesNoCopy does.
+// $vm.ffiExternalArrayBuffer(byteLength, deallocator, context): an ArrayBuffer over zeroed bytes that are not the engine's
+// to free. When the collector frees the buffer, it calls the C function `void deallocator(void* bytes, void* context)`, as
+// JSObjectMakeArrayBufferWithBytesNoCopy does. The bytes then belong to the deallocator, which releases them with the
+// ffi_free_external_bytes fixture. They come from the primitive Gigacage: the shell forbids an ArrayBuffer outside it.
 JSC_DEFINE_HOST_FUNCTION(functionFFIExternalArrayBuffer, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5490,10 +5492,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIExternalArrayBuffer, (JSGlobalObject* global
     void* context = dollarVMFFIPointerFromJS(globalObject, callFrame->argument(2));
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto* bytes = static_cast<uint8_t*>(fastZeroedMalloc(byteLength));
-    auto buffer = ArrayBuffer::createFromBytes({ bytes, byteLength }, createSharedTask<void(void*)>([deallocator, context](void* freedBytes) {
-        deallocator(freedBytes, context);
-        fastFree(freedBytes);
+    auto* bytes = static_cast<uint8_t*>(Gigacage::tryZeroedMalloc(Gigacage::Primitive, byteLength));
+    if (!bytes) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+    auto buffer = ArrayBuffer::createFromBytes({ bytes, byteLength }, createSharedTask<void(void*)>([deallocator, context](void* externalBytes) {
+        deallocator(externalBytes, context);
     }));
     RELEASE_AND_RETURN(scope, JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer))));
 }
