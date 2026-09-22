@@ -321,8 +321,6 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     , m_steppingMode(SteppingModeDisabled)
     , m_numBreakpoints(0)
     , m_bytecodeCost(other.m_bytecodeCost)
-    , m_scriptExecutionOwnerPrologueBegin(other.m_scriptExecutionOwnerPrologueBegin)
-    , m_scriptExecutionOwnerPrologueEnd(other.m_scriptExecutionOwnerPrologueEnd)
     , m_scopeRegister(other.m_scopeRegister)
     , m_hash(other.m_hash)
     , m_unlinkedCode(other.vm(), this, other.m_unlinkedCode.get())
@@ -558,6 +556,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     const auto& instructionStream = instructions();
     unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
+    BytecodeRange scriptExecutionOwnerPrologue = this->scriptExecutionOwnerPrologue();
     for (const auto& instruction : instructionStream) {
         OpcodeID opcodeID = instruction->opcodeID();
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
@@ -567,7 +566,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
         // Nor is what every function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): a compare and
         // a branch that the optimizing tiers fold away where there is no owner, and the path a call from outside the owner takes.
-        if (opcodeID != op_iterator_close_check && opcodeID != op_jcurrent_script_execution_owner && instruction.offset() >= m_scriptExecutionOwnerPrologueEnd)
+        if (opcodeID != op_iterator_close_check && !scriptExecutionOwnerPrologue.contains(instruction.offset()))
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
         LINK(OpGetByVal)
@@ -642,8 +641,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 metadata.m_depth = op.depth;
                 metadata.m_offset = op.operand;
             }
-            m_scriptExecutionOwnerPrologueBegin = instruction.offset();
-            m_scriptExecutionOwnerPrologueEnd = instruction.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, instruction);
             break;
         }
 
@@ -1084,6 +1081,19 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
 }
 #endif // ENABLE(JIT)
+
+CodeBlock::BytecodeRange CodeBlock::scriptExecutionOwnerPrologue()
+{
+    const auto& instructionStream = instructions();
+    auto instruction = instructionStream.begin();
+    if (instruction == instructionStream.end() || instruction->opcodeID() != op_enter)
+        return { };
+    ++instruction;
+    if (instruction == instructionStream.end() || instruction->opcodeID() != op_jcurrent_script_execution_owner)
+        return { };
+    unsigned begin = instruction.offset();
+    return { begin, begin + static_cast<unsigned>(jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, *instruction)) };
+}
 
 CodeBlock::~CodeBlock()
 {

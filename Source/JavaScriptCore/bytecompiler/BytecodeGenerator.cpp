@@ -1528,7 +1528,7 @@ void BytecodeGenerator::emitEnterScriptExecutionOwner()
 
         Ref<Label> tryStart = newEmittedLabel();
         Ref<Label> catchLabel = newLabel();
-        TryData* tryData = pushTry(tryStart.get(), catchLabel.get(), HandlerType::SynthesizedCatch);
+        TryData* tryData = pushTry(tryStart.get(), catchLabel.get(), HandlerType::SynthesizedFinally);
 
         RefPtr<RegisterID> arguments = newTemporary();
         OpCreateClonedArguments::emit(this, arguments.get());
@@ -1545,12 +1545,13 @@ void BytecodeGenerator::emitEnterScriptExecutionOwner()
         emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
         OpRet::emit(this, result.get());
 
+        // The exception itself is thrown on, not its value: it says which owner and async context it was first thrown in.
         emitLabel(catchLabel.get());
-        RefPtr<RegisterID> thrown = newTemporary();
-        emitOutOfLineCatchHandler(thrown.get(), nullptr, tryData);
+        RefPtr<RegisterID> exception = newTemporary();
+        emitOutOfLineExceptionHandler(exception.get(), newTemporary(), nullptr, tryData);
         emitPutInternalField(asyncContextData.get(), 0, previousAsyncContext.get());
         emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
-        emitThrow(thrown.get());
+        emitThrow(exception.get());
     }
     // This path never reaches the function's own code, whose variables are allocated next and have to follow the
     // last one directly: what it left in its temporaries is never seen.
