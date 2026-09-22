@@ -148,8 +148,25 @@ for (const [before, after] of fields) {
         "function (p = class { g = (q = arguments) => q; }) { }",
         "{ m(p = class { g = arguments; }) { } }",
         "function () { class C { g = arguments; } }",
+        // After the function, the rest of the initializer is checked as before.
+        "[function (p = arguments) { }, arguments]",
+        "[{ m(p = arguments) { } }, () => arguments]",
+        "function (p = arguments) { }(arguments)",
+        "(a = function (p = arguments) { }, b = arguments) => a",
+        "async (a = function (p = arguments) { }) => arguments",
+        "{ m(p = arguments) { }, [arguments]: 1 }",
+        "class { m(p = arguments) { } [arguments]() { } }",
+        "() => { (function (p = arguments) { }); return arguments; }",
     ])
         shouldThrowSyntaxError(before + expression + after, argumentsMessage);
+
+    // And what is valid only in the initializer is still valid after the function: in global code, `new.target` in an arrow function.
+    for (const expression of [
+        "[function (p = arguments) { }, () => new.target]",
+        "[() => 1, function (p = arguments) { }]",
+        "(a = function (p = arguments) { }) => function (q = arguments) { }",
+    ])
+        shouldNotThrowSyntaxError(before + expression + after);
 
     shouldThrowSyntaxError(before + "function (p = class { static { arguments; } }) { }" + after, "Cannot use 'arguments' as an identifier in static block.");
     // The parser reads "({ p = arguments })" as an expression first, and that fails before it gets to `arguments`.
@@ -171,6 +188,9 @@ for (const [before, after] of [
         "class { [super()]() { } }",
         "class extends Object { constructor(p = class { g = super(); }) { } }",
         "class extends Object { constructor(p = class { g = () => super(); }) { } }",
+        // After the constructor, the rest of the initializer is checked as before.
+        "[class extends Object { constructor(p = super()) { } }, super()]",
+        "[class extends Object { constructor(p = super()) { } }, () => super()]",
     ])
         shouldThrowSyntaxError(before + expression + after, superCallMessage);
 
