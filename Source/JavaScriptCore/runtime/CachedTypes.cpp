@@ -190,6 +190,18 @@ constexpr std::array reservedWordsForOrderHash = std::to_array<ASCIILiteral>({
     "switch"_s, "this"_s, "throw"_s, "true"_s, "try"_s, "typeof"_s, "var"_s, "void"_s, "while"_s, "with"_s, "yield"_s,
 });
 
+// [first, end) in reservedWordsForOrderHash of the words that start with each of 'a'..'y'.
+constexpr std::array<std::pair<uint8_t, uint8_t>, 25> reservedWordsByFirstLetter = [] {
+    std::array<std::pair<uint8_t, uint8_t>, 25> ranges { };
+    for (uint8_t index = 0; index < reservedWordsForOrderHash.size(); ++index) {
+        auto& range = ranges[reservedWordsForOrderHash[index][0] - 'a'];
+        if (range.first == range.second)
+            range.first = index;
+        range.second = index + 1;
+    }
+    return ranges;
+}();
+
 template<typename CharacterType>
 uint64_t orderSourceHash(std::span<const CharacterType> text)
 {
@@ -215,8 +227,10 @@ uint64_t orderSourceHash(std::span<const CharacterType> text)
                 ++i;
             auto run = text.subspan(begin, i - begin);
             bool isReserved = false;
-            if (run.size() <= 10) {
-                for (auto word : reservedWordsForOrderHash) {
+            if (run.size() >= 2 && run.size() <= 10 && c >= 'a' && c <= 'y') {
+                auto [first, end] = reservedWordsByFirstLetter[c - 'a'];
+                for (unsigned index = first; index < end; ++index) {
+                    ASCIILiteral word = reservedWordsForOrderHash[index];
                     if (word.length() == run.size() && std::ranges::equal(word.span8(), run, [](auto a, auto b) { return static_cast<CharacterType>(a) == b; })) {
                         hasher.add(word.span8());
                         isReserved = true;
