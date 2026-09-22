@@ -807,7 +807,8 @@ op :get_by_id_direct,
 # USE(BUN_JSC_ADDITIONS). The first thing a function does. Script belongs to a script execution owner when one is
 # a variable (@scriptExecutionOwner) of the scopes its code was made in: an embedder's module scope
 # (JSModuleLoader::moduleScope). Jumps when this function's code has no owner, or its owner is the current one
-# (JSGlobalObject::m_asyncContextData field 1); otherwise falls through to call_in_script_execution_owner.
+# (JSGlobalObject::m_asyncContextData field 1); otherwise falls through to bytecode that makes the call again with the
+# owner current (BytecodeGenerator::emitEnterScriptExecutionOwner). The target label is where the function's own code starts.
 op :jcurrent_script_execution_owner,
     args: {
         targetLabel: BoundLabel,
@@ -1200,13 +1201,6 @@ op :yield,
     }
 
 op :check_traps
-
-# Makes the call this frame is for again, with the function's script execution owner current for it and the
-# previous one back afterwards, however it ends. The function returns the result.
-op :call_in_script_execution_owner,
-    args: {
-        dst: VirtualRegister,
-    }
 
 op :log_shadow_chicken_prologue,
     args: {

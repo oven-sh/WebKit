@@ -1492,63 +1492,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
     RETURN(resolvedScope);
 }
 
-// op_call_in_script_execution_owner: the call `callFrame` is for, made again with the callee's script execution owner
-// current (JSGlobalObject::m_asyncContextData field 1), and the previous owner and async context back afterwards.
-// `callFrame` has not run anything yet: its callee, `this` (new.target when constructing) and arguments are as passed.
-JSValue callInScriptExecutionOwner(JSGlobalObject* globalObject, CallFrame* callFrame)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSObject* callee = callFrame->jsCallee();
-    JSValue owner;
-    UniquedStringImpl* name = vm.propertyNames->builtinNames().scriptExecutionOwnerPrivateName().impl();
-    for (JSScope* environment = uncheckedDowncast<JSCallee>(callee)->scope(); environment && !owner; environment = environment->next()) {
-        auto* lexicalEnvironment = dynamicDowncast<JSLexicalEnvironment>(environment);
-        if (!lexicalEnvironment)
-            continue;
-        auto entry = lexicalEnvironment->symbolTable()->get(name);
-        if (!entry.isNull())
-            owner = lexicalEnvironment->variableAt(entry.scopeOffset()).get();
-    }
-    RELEASE_ASSERT(owner);
-
-    // Optimized code that inlined this function cannot make the call again: it does not inline one that has.
-    callFrame->codeBlock()->baselineVersion()->setHasCalledInScriptExecutionOwner();
-
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
-    if (arguments.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return { };
-    }
-    bool constructing = callFrame->codeBlock()->isConstructor();
-    JSValue thisOrNewTarget = callFrame->thisValue();
-
-    InternalFieldTuple* asyncContextData = globalObject->asyncContextData();
-    JSValue previousAsyncContext = asyncContextData->getInternalField(0);
-    JSValue previousOwner = asyncContextData->getInternalField(1);
-    asyncContextData->putInternalField(vm, 1, owner);
-    auto restore = makeScopeExit([&] {
-        asyncContextData->putInternalField(vm, 0, previousAsyncContext);
-        asyncContextData->putInternalField(vm, 1, previousOwner);
-    });
-
-    if (constructing)
-        RELEASE_AND_RETURN(scope, JSValue(construct(globalObject, callee, thisOrNewTarget, arguments, "A function being constructed is a constructor"_s)));
-    RELEASE_AND_RETURN(scope, call(globalObject, callee, thisOrNewTarget, arguments, "A function being called is callable"_s));
-}
-
-JSC_DEFINE_COMMON_SLOW_PATH(slow_path_call_in_script_execution_owner)
-{
-    BEGIN();
-    auto bytecode = pc->as<OpCallInScriptExecutionOwner>();
-    JSValue result = callInScriptExecutionOwner(globalObject, callFrame);
-    CHECK_EXCEPTION();
-    RETURN(result);
-}
-
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_rest)
 {
     BEGIN();

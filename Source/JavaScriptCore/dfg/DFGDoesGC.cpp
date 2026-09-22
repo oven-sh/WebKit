@@ -298,7 +298,6 @@ bool doesGC(Graph& graph, Node* node)
     case CreateDirectArguments:
     case CreateScopedArguments:
     case CreateClonedArguments:
-    case CallInScriptExecutionOwner:
     case Call:
     case CallDirectEval:
     case CallForwardVarargs:

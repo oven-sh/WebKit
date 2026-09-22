@@ -1500,15 +1500,62 @@ Ref<LabelScope> BytecodeGenerator::newLabelScope(LabelScope::Type type, const Id
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// A function of script that has a script execution owner runs as its owner whoever calls it (see
-// op_jcurrent_script_execution_owner). The result of the call made again goes where `this` was: nothing has read it
-// yet, and the function returns next.
+// A function of script that has a script execution owner runs as its owner whoever calls it. When the owner is not
+// the current one (op_jcurrent_script_execution_owner falls through), the function makes the call it is for again with
+// the owner current, puts the previous owner and async context back however that call ends, and returns its result.
+// Nothing of the function's own has run: the callee, `this` (new.target when constructing) and the arguments are as
+// they were passed.
 void BytecodeGenerator::emitEnterScriptExecutionOwner()
 {
+    auto& names = propertyNames().builtinNames();
     Ref<Label> body = newLabel();
     OpJcurrentScriptExecutionOwner::emit(this, body->bind(this));
-    OpCallInScriptExecutionOwner::emit(this, &m_thisRegister);
-    OpRet::emit(this, &m_thisRegister);
+
+    {
+        Variable ownerVariable = variable(names.scriptExecutionOwnerPrivateName());
+        RefPtr<RegisterID> owner = newTemporary();
+        RefPtr<RegisterID> ownerScope = emitResolveScope(owner.get(), ownerVariable);
+        emitGetFromScope(owner.get(), ownerScope.get(), ownerVariable, ThrowIfNotFound);
+
+        Variable asyncContextVariable = variable(names.asyncContextPrivateName());
+        RefPtr<RegisterID> asyncContextData = newTemporary();
+        RefPtr<RegisterID> asyncContextScope = emitResolveScope(asyncContextData.get(), asyncContextVariable);
+        emitGetFromScope(asyncContextData.get(), asyncContextScope.get(), asyncContextVariable, ThrowIfNotFound);
+
+        RefPtr<RegisterID> previousAsyncContext = emitGetInternalField(newTemporary(), asyncContextData.get(), 0);
+        RefPtr<RegisterID> previousOwner = emitGetInternalField(newTemporary(), asyncContextData.get(), 1);
+        emitPutInternalField(asyncContextData.get(), 1, owner.get());
+
+        Ref<Label> tryStart = newEmittedLabel();
+        Ref<Label> catchLabel = newLabel();
+        TryData* tryData = pushTry(tryStart.get(), catchLabel.get(), HandlerType::SynthesizedCatch);
+
+        RefPtr<RegisterID> arguments = newTemporary();
+        OpCreateClonedArguments::emit(this, arguments.get());
+        RefPtr<RegisterID> result = newTemporary();
+        JSTextPosition divot(m_scopeNode->firstLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset());
+        if (isConstructor())
+            emitConstructVarargs(result.get(), &m_calleeRegister, &m_thisRegister, arguments.get(), newTemporary(), 0, divot, divot, divot, DebuggableCall::No);
+        else
+            emitCallVarargs(result.get(), &m_calleeRegister, &m_thisRegister, arguments.get(), newTemporary(), 0, divot, divot, divot, DebuggableCall::No);
+
+        Ref<Label> tryEnd = newEmittedLabel();
+        popTry(tryData, tryEnd.get());
+        emitPutInternalField(asyncContextData.get(), 0, previousAsyncContext.get());
+        emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
+        OpRet::emit(this, result.get());
+
+        emitLabel(catchLabel.get());
+        RefPtr<RegisterID> thrown = newTemporary();
+        emitOutOfLineCatchHandler(thrown.get(), nullptr, tryData);
+        emitPutInternalField(asyncContextData.get(), 0, previousAsyncContext.get());
+        emitPutInternalField(asyncContextData.get(), 1, previousOwner.get());
+        emitThrow(thrown.get());
+    }
+    // This path never reaches the function's own code, whose variables are allocated next and have to follow the
+    // last one directly: what it left in its temporaries is never seen.
+    reclaimFreeRegisters();
+
     emitLabel(body.get());
 }
 #endif

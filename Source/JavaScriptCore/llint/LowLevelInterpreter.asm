@@ -2284,7 +2284,6 @@ macro slowPathOp(opcodeName)
 end
 
 slowPathOp(create_rest)
-slowPathOp(call_in_script_execution_owner)
 slowPathOp(create_this)
 slowPathOp(create_promise)
 slowPathOp(create_generator)

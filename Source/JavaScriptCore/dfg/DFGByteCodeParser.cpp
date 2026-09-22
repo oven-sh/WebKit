@@ -2050,11 +2050,6 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;
 
-    if (codeBlock->hasCalledInScriptExecutionOwner()) {
-        VERBOSE_LOG("    Failing because the callee is called from outside its script execution owner.\n");
-        return { UINT_MAX, InlineAttribute::None };
-    }
-
     if (codeBlock->couldBeTainted() != m_codeBlock->couldBeTainted()) {
         VERBOSE_LOG("    Failing because taintedness of callee does not match the caller");
         return { UINT_MAX, InlineAttribute::None };
@@ -10439,18 +10434,6 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* condition = addToGraph(CompareStrictEq, owner, current);
             addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
             LAST_OPCODE(op_jcurrent_script_execution_owner);
-        }
-
-        case op_call_in_script_execution_owner: {
-            auto bytecode = currentInstruction->as<OpCallInScriptExecutionOwner>();
-            if (m_inlineStackTop->m_inlineCallFrame) {
-                // Only a frame of the function's own has the arguments where the call made again reads them. A function
-                // that has done this is not inlined (inliningCost), so this is the first time: baseline code does it.
-                addToGraph(ForceOSRExit);
-                set(bytecode.m_dst, addToGraph(JSConstant, OpInfo(m_constantUndefined)));
-            } else
-                set(bytecode.m_dst, addToGraph(CallInScriptExecutionOwner));
-            NEXT_OPCODE(op_call_in_script_execution_owner);
         }
 
         case op_jeq_ptr: {

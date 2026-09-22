@@ -604,6 +604,10 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
         if (isImplementationVisibilityPrivate(codeBlock))
             return IterationStatus::Continue;
+#if USE(BUN_JSC_ADDITIONS)
+        if (codeBlock->isInScriptExecutionOwnerPrologue(bytecodeIndex))
+            return IterationStatus::Continue;
+#endif
 
         results.append(StackFrame(vm, owner, codeBlock, bytecodeIndex));
         return IterationStatus::Continue;
@@ -663,7 +667,14 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 updateAsyncStackTraceOriginGenerator();
         }
 
-        if (!visitor->isImplementationVisibilityPrivate()) {
+#if USE(BUN_JSC_ADDITIONS)
+        // A frame that is making its own call again with its script execution owner current (CodeBlock::isInScriptExecutionOwnerPrologue):
+        // the frame above it is the same call.
+        bool isMakingItsCallAgain = !visitor->isNativeCalleeFrame() && visitor->codeBlock() && visitor->codeBlock()->isInScriptExecutionOwnerPrologue(visitor->bytecodeIndex());
+#else
+        bool isMakingItsCallAgain = false;
+#endif
+        if (!visitor->isImplementationVisibilityPrivate() && !isMakingItsCallAgain) {
             if (visitor->isNativeCalleeFrame()) {
                 auto* nativeCallee = visitor->callee().asNativeCallee();
                 switch (nativeCallee->category()) {

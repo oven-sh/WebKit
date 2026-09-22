@@ -1378,9 +1378,6 @@ private:
         case ToPropertyKey:
             compileToPropertyKey();
             break;
-        case CallInScriptExecutionOwner:
-            compileCallInScriptExecutionOwner();
-            break;
         case ToPropertyKeyOrNumber:
             compileToPropertyKeyOrNumber();
             break;
@@ -11737,12 +11734,6 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, results));
-    }
-
-    void compileCallInScriptExecutionOwner()
-    {
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        setJSValue(vmCall(Int64, operationCallInScriptExecutionOwner, weakPointer(globalObject)));
     }
 
     void compileToPropertyKey()

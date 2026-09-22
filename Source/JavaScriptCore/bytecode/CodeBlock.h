@@ -268,9 +268,10 @@ public:
     void NODELETE dumpMathICStats();
 
     bool isConstructor() const { return m_unlinkedCode->isConstructor(); }
-    // op_call_in_script_execution_owner has run in this function: it has been called from outside its script execution owner.
-    bool hasCalledInScriptExecutionOwner() const { return m_hasCalledInScriptExecutionOwner; }
-    void setHasCalledInScriptExecutionOwner() { m_hasCalledInScriptExecutionOwner = true; }
+    // The bytecode a function of script starts with (BytecodeGenerator::emitEnterScriptExecutionOwner): from
+    // op_jcurrent_script_execution_owner to the function's own code. Empty for code that has none. A frame whose
+    // bytecode index is inside it is making its own call again, and is not one a stack trace shows.
+    bool isInScriptExecutionOwnerPrologue(BytecodeIndex index) const { return index.offset() >= m_scriptExecutionOwnerPrologueBegin && index.offset() < m_scriptExecutionOwnerPrologueEnd; }
     CodeType codeType() const { return m_unlinkedCode->codeType(); }
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }
@@ -888,7 +889,6 @@ public:
     bool m_didFailFTLCompilation : 1;
     bool m_hasBeenCompiledWithFTL : 1;
     bool m_isJettisoned : 1;
-    bool m_hasCalledInScriptExecutionOwner : 1 { false };
 
     bool m_visitChildrenSkippedDueToOldAge { false };
 
@@ -1063,6 +1063,8 @@ private:
         };
     };
     unsigned m_bytecodeCost { 0 };
+    unsigned m_scriptExecutionOwnerPrologueBegin { 0 };
+    unsigned m_scriptExecutionOwnerPrologueEnd { 0 };
     VirtualRegister m_scopeRegister;
     mutable CodeBlockHash m_hash;
 

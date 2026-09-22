@@ -845,7 +845,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case ConstructVarargs:
     case ConstructForwardVarargs:
     case CallDirectEval:
-    case CallInScriptExecutionOwner:
     case CallWasm:
     case TailCallInlinedCallerWasm:
     case CallFFI:

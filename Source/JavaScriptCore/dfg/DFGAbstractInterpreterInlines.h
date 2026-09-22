@@ -5689,7 +5689,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case ConstructForwardVarargs:
     case TailCallForwardVarargsInlinedCaller:
     case CallDirectEval:
-    case CallInScriptExecutionOwner:
     case DirectCall:
     case DirectConstruct:
     case DirectTailCallInlinedCaller:

@@ -671,7 +671,6 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case DirectConstruct:
     case CallVarargs:
     case CallDirectEval:
-    case CallInScriptExecutionOwner:
     case TailCallVarargsInlinedCaller:
     case TailCallForwardVarargsInlinedCaller:
     case ConstructVarargs:

@@ -1678,7 +1678,6 @@ public:
     void compileNewPromise(Node*);
     void compileToPrimitive(Node*);
     void compileToPropertyKey(Node*);
-    void compileCallInScriptExecutionOwner(Node*);
     void compileToPropertyKeyOrNumber(Node*);
     void compileToNumeric(Node*);
     void compileCallNumberConstructor(Node*);

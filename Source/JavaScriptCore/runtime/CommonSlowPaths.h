@@ -316,8 +316,6 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_promise);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_generator);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_async_generator);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_rest);
-JSC_DECLARE_COMMON_SLOW_PATH(slow_path_call_in_script_execution_owner);
-JS_EXPORT_PRIVATE JSValue callInScriptExecutionOwner(JSGlobalObject*, CallFrame*);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_get_by_val_with_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_get_prototype_of);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_put_by_id_with_this);
