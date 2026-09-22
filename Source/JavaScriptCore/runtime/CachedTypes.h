@@ -31,6 +31,7 @@
 #include "JSCast.h"
 #include "ParserModes.h"
 #include "VariableEnvironment.h"
+#include <wtf/BitVector.h>
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -40,6 +41,7 @@
 #include <optional>
 #include <span>
 #include <wtf/Vector.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC {
@@ -158,6 +160,10 @@ public:
     void prefetchSlot(uint32_t ordinal) const;
     template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
     void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
+    // Payload order file recording: from now on remember each ordinal whose record is read, in first-read order.
+    JS_EXPORT_PRIVATE void enableFirstUseRecording();
+    // bytecodeOrderStringHash of each recorded string, in first-read order.
+    JS_EXPORT_PRIVATE Vector<uint64_t> recordedFirstUseHashes() const;
 private:
     static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
@@ -188,6 +194,14 @@ private:
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
     bool m_visitedThisCycle WTF_GUARDED_BY_LOCK(m_cellsLock) { false };
+    struct FirstUseRecording {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FirstUseRecording);
+        Lock lock; // record() is reached from the collector too (stringFor)
+        BitVector seen;
+        Vector<uint32_t> ordinals;
+    };
+    void noteFirstUse(uint32_t ordinal) const;
+    std::unique_ptr<FirstUseRecording> m_firstUseRecording;
 };
 
 class VariableLengthObjectBase {
@@ -318,6 +332,10 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKe
 // whitespace dropped, so a rename by the minifier keeps the identity. A module: the same over its whole source.
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset);
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
+// What this VM recorded (PersistentBytecodePayloads::enableOrderRecording, DecoderStringTable::enableFirstUseRecording)
+// as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
+// in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
+JS_EXPORT_PRIVATE CString bytecodeOrderFileContents(VM&);
 
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
 // out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:

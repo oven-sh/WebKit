@@ -31,6 +31,7 @@
 #include "Weak.h"
 #include "WeakGCHashTable.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/FixedVector.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
@@ -115,6 +116,34 @@ private:
     Vector<CacheUpdate> m_updates;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// What a run read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
+// while recording (PersistentBytecodePayloads::enableOrderRecording). Mutator thread only.
+class BytecodeOrderRecorder {
+    WTF_MAKE_NONCOPYABLE(BytecodeOrderRecorder);
+    WTF_MAKE_TZONE_ALLOCATED(BytecodeOrderRecorder);
+public:
+    BytecodeOrderRecorder();
+    ~BytecodeOrderRecorder();
+    void didDecodeFunction(SourceProvider&, unsigned startOffset, unsigned endOffset);
+    void didDecodeModule(SourceProvider&);
+
+    struct DecodedFunction {
+        RefPtr<SourceProvider> provider;
+        unsigned startOffset;
+        unsigned endOffset;
+    };
+    const Vector<DecodedFunction>& functions() const LIFETIME_BOUND { return m_functions; }
+    const Vector<RefPtr<SourceProvider>>& modules() const LIFETIME_BOUND { return m_modules; }
+
+private:
+    Vector<DecodedFunction> m_functions;
+    Vector<RefPtr<SourceProvider>> m_modules;
+    // A function is decoded again after its code was returned to the cache; providers stay alive in m_functions.
+    UncheckedKeyHashSet<std::pair<SourceProvider*, unsigned>> m_seenFunctions;
+};
+#endif
+
 // The persistent payloads (CachePayload::isPersistent) a VM has code from. An UnlinkedCodeBlock decoded from one
 // remembers its slot here and its record's offset, which is enough to decode it again after it was dropped
 // (UnlinkedFunctionExecutable::returnCodeToCache) without every block holding on to a Decoder.
@@ -157,6 +186,11 @@ public:
     // Before the heap's last finalization takes the weak references' storage.
     void clearChildExecutables() { m_childExecutables.clear(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void enableOrderRecording();
+    BytecodeOrderRecorder* orderRecorder() { return m_orderRecorder.get(); }
+#endif
+
     // For diagnostics: what this and the Decoders it can reach hold on to.
     struct Statistics {
         size_t payloads { 0 };
@@ -185,6 +219,9 @@ private:
     UncheckedKeyHashMap<Identity, uint16_t> m_indices;
     VM& m_vm;
     UncheckedKeyHashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<BytecodeOrderRecorder> m_orderRecorder;
+#endif
 };
 
 } // namespace JSC

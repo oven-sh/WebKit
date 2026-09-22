@@ -40,6 +40,30 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PersistentBytecodePayloads);
 
+#if USE(BUN_JSC_ADDITIONS)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeOrderRecorder);
+
+BytecodeOrderRecorder::BytecodeOrderRecorder() = default;
+BytecodeOrderRecorder::~BytecodeOrderRecorder() = default;
+
+void BytecodeOrderRecorder::didDecodeFunction(SourceProvider& provider, unsigned startOffset, unsigned endOffset)
+{
+    if (m_seenFunctions.add({ &provider, startOffset }).isNewEntry)
+        m_functions.append({ &provider, startOffset, endOffset });
+}
+
+void BytecodeOrderRecorder::didDecodeModule(SourceProvider& provider)
+{
+    m_modules.append(&provider);
+}
+
+void PersistentBytecodePayloads::enableOrderRecording()
+{
+    if (!m_orderRecorder)
+        m_orderRecorder = makeUnique<BytecodeOrderRecorder>();
+}
+#endif
+
 PersistentBytecodePayloads::PersistentBytecodePayloads(VM& vm)
     : m_vm(vm)
 {

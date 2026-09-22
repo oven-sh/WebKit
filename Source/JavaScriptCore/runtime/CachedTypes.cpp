@@ -53,6 +53,7 @@
 #include <wtf/MallocSpan.h>
 #include <wtf/Packed.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
 
@@ -489,6 +490,8 @@ Ref<StringImpl> DecoderStringTable::createImpl(const Record& r)
 DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
 {
     RELEASE_ASSERT(ordinal < m_count);
+    if (m_firstUseRecording) [[unlikely]]
+        noteFirstUse(ordinal);
     const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
     size_t offset = offsets[ordinal];
     RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
@@ -769,6 +772,36 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 String DecoderStringTable::stringFor(uint32_t ordinal) const
 {
     return createImpl(record(ordinal));
+}
+
+void DecoderStringTable::enableFirstUseRecording()
+{
+    if (!m_firstUseRecording)
+        m_firstUseRecording = makeUnique<FirstUseRecording>();
+}
+
+void DecoderStringTable::noteFirstUse(uint32_t ordinal) const
+{
+    Locker locker { m_firstUseRecording->lock };
+    if (m_firstUseRecording->seen.set(ordinal))
+        return;
+    m_firstUseRecording->ordinals.append(ordinal);
+}
+
+Vector<uint64_t> DecoderStringTable::recordedFirstUseHashes() const
+{
+    Vector<uint64_t> hashes;
+    if (!m_firstUseRecording)
+        return hashes;
+    Vector<uint32_t> ordinals;
+    {
+        Locker locker { m_firstUseRecording->lock };
+        ordinals = m_firstUseRecording->ordinals;
+    }
+    hashes.reserveInitialCapacity(ordinals.size());
+    for (uint32_t ordinal : ordinals)
+        hashes.append(bytecodeOrderStringHash(createImpl(record(ordinal)).get()));
+    return hashes;
 }
 
 template<typename Visitor>
@@ -5412,6 +5445,40 @@ auto BytecodeLinkEncoder::finish() -> Result
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+CString bytecodeOrderFileContents(VM& vm)
+{
+    StringPrintStream out;
+    out.print("v1\n");
+    using HashSetOfHashes = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    auto printLine = [&](char kind, uint64_t hash) {
+        out.printf("%c %016llx\n", kind, static_cast<unsigned long long>(hash));
+    };
+    if (auto* payloads = vm.persistentBytecodePayloadsIfExists()) {
+        if (auto* recorder = payloads->orderRecorder()) {
+            HashSetOfHashes seen;
+            for (auto& function : recorder->functions()) {
+                uint64_t hash = bytecodeOrderSourceHash(function.provider->source(), function.startOffset, function.endOffset);
+                if (seen.add(hash).isNewEntry)
+                    printLine('F', hash);
+            }
+            seen.clear();
+            for (auto& provider : recorder->modules()) {
+                StringView source = provider->source();
+                uint64_t hash = bytecodeOrderSourceHash(source, 0, source.length());
+                if (seen.add(hash).isNewEntry)
+                    printLine('M', hash);
+            }
+        }
+    }
+    if (DecoderStringTable* strings = vm.clientData ? vm.clientData->decoderStringTable() : nullptr) {
+        for (uint64_t hash : strings->recordedFirstUseHashes())
+            printLine('S', hash);
+    }
+    return out.toCString();
+}
+#endif
+
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
     FileSystem::FileHandle invalidFileHandle;
@@ -5468,6 +5535,13 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     }
     if (entry.first != key)
         return nullptr;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* payloads = vm.persistentBytecodePayloadsIfExists()) {
+        if (auto* recorder = payloads->orderRecorder()) [[unlikely]]
+            recorder->didDecodeModule(key.source().provider());
+    }
+#endif
 
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]] {
         MonotonicTime after = MonotonicTime::now();
