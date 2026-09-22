@@ -116,14 +116,16 @@ Rules for an edit to an upstream test:
 ### A10. With parameter expressions, a `var arguments` in the body is a binding of its own
 
 - Upstream keeps one `arguments` binding, in the parameter scope. A store to the body's `var arguments` changes what the
-  parameter expressions and their closures read. So does a function named `arguments` in a block of the body, which
-  Annex B.3.2.1 stores to the var environment when the block runs.
+  parameter expressions and their closures read. A function named `arguments` in a block of the body is stored to that
+  same binding when the block runs.
 - Fork code: the `FunctionNode` constructor of `BytecodeGenerator` (`bytecompiler/BytecodeGenerator.cpp`). Its loop over
   `varDeclarations()` creates the var `arguments` like any other var; upstream skips it when
   `shouldCreateArgumentsVariableInParameterScope` is set. `initializeDefaultParameterValuesAndSetupFunctionScopeStack`
   then copies the parameter scope's value into the var, as it does for a var that has a parameter's name.
-  `hoistSloppyModeFunctionIfNecessary` always finds the var; upstream falls back to the parameter scope. This is
-  FunctionDeclarationInstantiation step 28, and what V8 does.
+  `hoistSloppyModeFunctionIfNecessary` always finds the var; upstream falls back to the parameter scope.
+- For `var arguments` this is FunctionDeclarationInstantiation step 28. For the function in a block it is what V8 does
+  and what https://github.com/tc39/ecma262/issues/991 proposes: the var exists from the start. The current text of
+  Annex B.3.2.1 makes that var when the block runs, which only a store before the block or a `delete` after it can see.
 - Recognize: in `function foo(x = () => arguments) { var arguments = 25; }`, `x()` is the arguments object. Upstream: 25.
 - Files (2), one expectation each: `stress/arrow-functions-as-default-parameter-values.js`,
   `stress/sloppy-mode-hoist-arguments-function-non-simple-parameter-list.js`.

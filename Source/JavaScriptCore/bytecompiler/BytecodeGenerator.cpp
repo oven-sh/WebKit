@@ -811,7 +811,8 @@ IGNORE_GCC_WARNINGS_END
             continue;
         if (generatorOrAsyncWrapperFunctionParameterNames && generatorOrAsyncWrapperFunctionParameterNames->contains(entry.key.get()))
             continue;
-        // This includes a `var arguments` when "arguments" is in the parameter scope. They are two bindings, and
+        // This includes a `var arguments`, and the var of a function named "arguments" in a block (Annex B), when
+        // "arguments" is in the parameter scope. They are two bindings, and
         // initializeDefaultParameterValuesAndSetupFunctionScopeStack() starts the var with the parameter scope's value.
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }

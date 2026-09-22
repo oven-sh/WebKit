@@ -1,3 +1,4 @@
+//@ defaultRun; run("debugger-bytecode", "--forceDebuggerBytecodeGeneration=true"); run("profilers", "--useTypeProfiler=true", "--useControlFlowProfiler=true")
 // When the parameters have expressions, the body's vars live in an environment of their own, below the one that holds the
 // parameters and `arguments` (FunctionDeclarationInstantiation, step 28). A `var arguments` in the body is a binding of that
 // environment. It starts as the arguments object, and a store to it does not reach the `arguments` that the parameter
@@ -59,6 +60,14 @@ shouldBe(show(objectPattern(undefined, 1, 1, 1)), "[arguments(4),7]");
 shouldBe(show(arrayPattern(undefined, 1, 1, 1)), "[arguments(4),7]");
 shouldBe(show(nestedBlock(undefined, 1, 1, 1)), "[arguments(4),7]");
 
+// A direct eval in the body finds the body's var. It does not make another one.
+function evalDeclaresItAgain(a = () => arguments) { var arguments; eval("var arguments = 9"); return [a(), arguments]; }
+function evalDeclaresAFunction(a = () => arguments) { var arguments; eval("function arguments() { }"); return [a(), arguments]; }
+function evalDeclaresItAgainWithARestParameter(...rest) { var arguments; eval("var arguments = 9"); return arguments; }
+shouldBe(show(evalDeclaresItAgain(undefined, 1, 1, 1)), "[arguments(4),9]");
+shouldBe(show(evalDeclaresAFunction(undefined, 1, 1, 1)), "[arguments(4),function]");
+shouldBe(show(evalDeclaresItAgainWithARestParameter(1, 2, 3)), "9");
+
 // The var starts as the value that `arguments` has when the parameters are done, and the two stay apart after that.
 function storedInTheParameters(a = () => arguments, b = (arguments = 9)) { var arguments; return [a(), arguments]; }
 function storedByAClosureLater(a = () => arguments, b = () => { arguments = 9; }) { var arguments = 7; b(); return [a(), arguments]; }
@@ -79,9 +88,22 @@ shouldBe(show(functionInABlock(undefined, 1, 1, 1)), "[arguments(4),arguments(4)
 shouldBe(show(functionInABlockAndVar(undefined, 1, 1, 1)), "[arguments(4),arguments(4),function]");
 shouldBe(show(functionInABlockThatDoesNotRun(undefined, 1, 1, 1)), "[arguments(4),arguments(4),true]");
 
+// The var for a function in a block exists from the start and starts as the arguments object, as in V8 and as
+// https://github.com/tc39/ecma262/issues/991 proposes. The current text of Annex B.3.2.1 makes it when the block runs. Only a
+// store before the block, or a `delete` after it, can tell the two apart.
+function storeBeforeAFunctionInABlock(a = () => arguments) { arguments = 5; { function arguments() { } } return [a(), arguments]; }
+function storeBeforeAFunctionInABlockThatDoesNotRun(a = () => arguments) { arguments = 5; if (false) { function arguments() { } } return [a(), arguments]; }
+function storeFromTheParametersBeforeAFunctionInABlock(a = () => arguments, b = () => { arguments = 9; }) { b(); var before = arguments; { function arguments() { } } return [a(), before, arguments]; }
+function deleteAfterAFunctionInABlock(a = () => arguments) { { function arguments() { } } return [delete arguments, a(), arguments]; }
+shouldBe(show(storeBeforeAFunctionInABlock(undefined, 1, 1, 1)), "[arguments(4),function]");
+shouldBe(show(storeBeforeAFunctionInABlockThatDoesNotRun(undefined, 1, 1, 1)), "[arguments(4),5]");
+shouldBe(show(storeFromTheParametersBeforeAFunctionInABlock(undefined, undefined, 1)), "[9,arguments(3),function]");
+shouldBe(show(deleteAfterAFunctionInABlock(undefined, 1, 1, 1)), "[false,arguments(4),function]");
+
 // Every kind of function that makes its own arguments object.
 var functionExpression = function (a = () => arguments) { var arguments = 7; return [a(), arguments]; };
 var namedFunctionExpression = function named(a = () => arguments) { var arguments = 7; return [a(), arguments, typeof named]; };
+var functionExpressionNamedArguments = function arguments(a = () => arguments) { var arguments = 7; return [a(), arguments]; };
 var object = {
     method(a = () => arguments) { var arguments = 7; return [a(), arguments]; },
     set setter(a = () => arguments) { var arguments = 7; this.result = [a(), arguments]; },
@@ -97,6 +119,7 @@ async function* asyncGenerator(a = () => arguments) { var arguments = 7; object.
 
 shouldBe(show(functionExpression(undefined, 1, 1, 1)), "[arguments(4),7]");
 shouldBe(show(namedFunctionExpression(undefined, 1, 1, 1)), "[arguments(4),7,function]");
+shouldBe(show(functionExpressionNamedArguments(undefined, 1, 1, 1)), "[arguments(4),7]");
 shouldBe(show(object.method(undefined, 1, 1, 1)), "[arguments(4),7]");
 object.setter = undefined;
 shouldBe(show(object.result), "[arguments(1),7]");
@@ -133,13 +156,21 @@ shouldBe(show(restParameterNeverAssigned(1, 2, 3)), "[arguments(3),3]");
 shouldBe(show(patternWithoutExpressions({ x: 1 }, 2)), "[7,1]");
 shouldBe(show(patternWithoutExpressionsNeverAssigned({ x: 1 }, 2)), "[arguments(2),1]");
 
-// No `var arguments`: the body stores to the binding of the parameters. A parameter named `arguments` is an ordinary parameter.
+// No `var arguments`: the body stores to the binding of the parameters.
 function noDeclaration(a = () => arguments) { arguments = 7; return [a(), arguments]; }
 function lexicalDeclaration(a = () => arguments) { let arguments = 7; return [a(), arguments]; }
-function parameterNamedArguments(arguments, a = () => arguments) { var arguments = 7; return [a(), arguments]; }
 shouldBe(show(noDeclaration(undefined, 1, 1, 1)), "[7,7]");
 shouldBe(show(lexicalDeclaration(undefined, 1, 1, 1)), "[arguments(4),7]");
+
+// A parameter named `arguments` is an ordinary parameter, and there is no arguments object. The var starts with its value.
+function parameterNamedArguments(arguments, a = () => arguments) { var arguments = 7; return [a(), arguments]; }
+function patternBindsArguments({ arguments }, a = () => arguments) { var arguments = 7; return [a(), arguments]; }
+function restParameterNamedArguments(a = () => arguments, ...arguments) { var arguments = 7; return [a(), arguments]; }
+function patternBindsArgumentsStoredLater({ arguments }, a = () => arguments, b = () => { arguments = 9; }) { var arguments; b(); return [a(), arguments]; }
 shouldBe(show(parameterNamedArguments(5)), "[5,7]");
+shouldBe(show(patternBindsArguments({ arguments: 5 })), "[5,7]");
+shouldBe(show(restParameterNamedArguments(undefined, 1, 2)), "[[1,2],7]");
+shouldBe(show(patternBindsArgumentsStoredLater({ arguments: 5 })), "[9,5]");
 
 // Through the tiers, with the two bindings in registers and in environments.
 function hot(a = arguments, b = arguments.length) { var arguments = b + 3; return a.length * 100 + arguments; }
