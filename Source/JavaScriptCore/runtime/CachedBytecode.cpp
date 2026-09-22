@@ -32,6 +32,7 @@
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "WeakInlines.h"
+#include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -46,21 +47,60 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeOrderRecorder);
 BytecodeOrderRecorder::BytecodeOrderRecorder() = default;
 BytecodeOrderRecorder::~BytecodeOrderRecorder() = default;
 
+static Lock s_orderRecordersLock;
+static Vector<Ref<BytecodeOrderRecorder>>& orderRecorders() WTF_REQUIRES_LOCK(s_orderRecordersLock)
+{
+    static NeverDestroyed<Vector<Ref<BytecodeOrderRecorder>>> recorders;
+    return recorders;
+}
+
+Ref<BytecodeOrderRecorder> BytecodeOrderRecorder::create()
+{
+    Ref recorder = adoptRef(*new BytecodeOrderRecorder);
+    Locker locker { s_orderRecordersLock };
+    orderRecorders().append(recorder);
+    return recorder;
+}
+
+Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::allInProcess()
+{
+    Locker locker { s_orderRecordersLock };
+    return orderRecorders();
+}
+
 void BytecodeOrderRecorder::didDecodeFunction(SourceProvider& provider, unsigned startOffset, unsigned endOffset)
 {
+    Locker locker { m_lock };
     if (m_seenFunctions.add({ &provider, startOffset }).isNewEntry)
-        m_functions.append({ &provider, startOffset, endOffset });
+        m_recorded.functions.append({ &provider, startOffset, endOffset });
 }
 
 void BytecodeOrderRecorder::didDecodeModule(SourceProvider& provider)
 {
-    m_modules.append(&provider);
+    Locker locker { m_lock };
+    m_recorded.modules.append(&provider);
 }
 
-void PersistentBytecodePayloads::enableOrderRecording()
+void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
+{
+    Locker locker { m_lock };
+    if (m_seenStrings.set(ordinal))
+        return;
+    m_recorded.stringTable = stringTable;
+    m_recorded.stringOrdinals.append(ordinal);
+}
+
+auto BytecodeOrderRecorder::snapshot() const -> Snapshot
+{
+    Locker locker { m_lock };
+    return m_recorded;
+}
+
+BytecodeOrderRecorder& PersistentBytecodePayloads::enableOrderRecording()
 {
     if (!m_orderRecorder)
-        m_orderRecorder = makeUnique<BytecodeOrderRecorder>();
+        m_orderRecorder = BytecodeOrderRecorder::create();
+    return *m_orderRecorder;
 }
 #endif
 

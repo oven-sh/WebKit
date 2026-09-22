@@ -491,8 +491,8 @@ Ref<StringImpl> DecoderStringTable::createImpl(const Record& r)
 DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
 {
     RELEASE_ASSERT(ordinal < m_count);
-    if (m_firstUseRecording) [[unlikely]]
-        noteFirstUse(ordinal);
+    if (m_recorder) [[unlikely]]
+        m_recorder->didReadString(m_bytes, ordinal);
     const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
     size_t offset = offsets[ordinal];
     RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
@@ -775,34 +775,9 @@ String DecoderStringTable::stringFor(uint32_t ordinal) const
     return createImpl(record(ordinal));
 }
 
-void DecoderStringTable::enableFirstUseRecording()
+void DecoderStringTable::enableFirstUseRecording(BytecodeOrderRecorder& recorder)
 {
-    if (!m_firstUseRecording)
-        m_firstUseRecording = makeUnique<FirstUseRecording>();
-}
-
-void DecoderStringTable::noteFirstUse(uint32_t ordinal) const
-{
-    Locker locker { m_firstUseRecording->lock };
-    if (m_firstUseRecording->seen.set(ordinal))
-        return;
-    m_firstUseRecording->ordinals.append(ordinal);
-}
-
-Vector<uint64_t> DecoderStringTable::recordedFirstUseHashes() const
-{
-    Vector<uint64_t> hashes;
-    if (!m_firstUseRecording)
-        return hashes;
-    Vector<uint32_t> ordinals;
-    {
-        Locker locker { m_firstUseRecording->lock };
-        ordinals = m_firstUseRecording->ordinals;
-    }
-    hashes.reserveInitialCapacity(ordinals.size());
-    for (uint32_t ordinal : ordinals)
-        hashes.append(bytecodeOrderStringHash(createImpl(record(ordinal)).get()));
-    return hashes;
+    m_recorder = &recorder;
 }
 
 template<typename Visitor>
@@ -5492,34 +5467,32 @@ auto BytecodeLinkEncoder::finish() -> Result
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-CString bytecodeOrderFileContents(VM& vm)
+CString bytecodeOrderFileContents()
 {
     StringPrintStream out;
     out.print("v1\n");
     using HashSetOfHashes = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-    auto printLine = [&](char kind, uint64_t hash) {
-        out.printf("%c %016llx\n", kind, static_cast<unsigned long long>(hash));
+    HashSetOfHashes functions;
+    HashSetOfHashes modules;
+    HashSetOfHashes strings;
+    auto printLine = [&](char kind, uint64_t hash, HashSetOfHashes& seen) {
+        if (seen.add(hash).isNewEntry)
+            out.printf("%c %016llx\n", kind, static_cast<unsigned long long>(hash));
     };
-    if (auto* payloads = vm.persistentBytecodePayloadsIfExists()) {
-        if (auto* recorder = payloads->orderRecorder()) {
-            HashSetOfHashes seen;
-            for (auto& function : recorder->functions()) {
-                uint64_t hash = bytecodeOrderSourceHash(function.provider->source(), function.startOffset, function.endOffset);
-                if (seen.add(hash).isNewEntry)
-                    printLine('F', hash);
-            }
-            seen.clear();
-            for (auto& provider : recorder->modules()) {
-                StringView source = provider->source();
-                uint64_t hash = bytecodeOrderSourceHash(source, 0, source.length());
-                if (seen.add(hash).isNewEntry)
-                    printLine('M', hash);
-            }
+    // The first VM's first (a program's main thread), then each Worker's.
+    for (auto& recorder : BytecodeOrderRecorder::allInProcess()) {
+        auto recorded = recorder->snapshot();
+        for (auto& function : recorded.functions)
+            printLine('F', bytecodeOrderSourceHash(function.provider->source(), function.startOffset, function.endOffset), functions);
+        for (auto& provider : recorded.modules) {
+            StringView source = provider->source();
+            printLine('M', bytecodeOrderSourceHash(source, 0, source.length()), modules);
         }
-    }
-    if (DecoderStringTable* strings = vm.clientData ? vm.clientData->decoderStringTable() : nullptr) {
-        for (uint64_t hash : strings->recordedFirstUseHashes())
-            printLine('S', hash);
+        if (recorded.stringOrdinals.isEmpty())
+            continue;
+        DecoderStringTable table(recorded.stringTable); // a reader of the same bytes that records nothing
+        for (uint32_t ordinal : recorded.stringOrdinals)
+            printLine('S', bytecodeOrderStringHash(*table.stringFor(ordinal).impl()), strings);
     }
     return out.toCString();
 }

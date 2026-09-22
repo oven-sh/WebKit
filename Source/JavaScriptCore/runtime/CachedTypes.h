@@ -31,7 +31,6 @@
 #include "JSCast.h"
 #include "ParserModes.h"
 #include "VariableEnvironment.h"
-#include <wtf/BitVector.h>
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -47,6 +46,7 @@
 namespace JSC {
 
 class BytecodeCacheError;
+class BytecodeOrderRecorder;
 class CachedBytecode;
 class SourceCode;
 class SourceCodeKey;
@@ -160,10 +160,9 @@ public:
     void prefetchSlot(uint32_t ordinal) const;
     template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
     void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
-    // Payload order file recording: from now on remember each ordinal whose record is read, in first-read order.
-    JS_EXPORT_PRIVATE void enableFirstUseRecording();
-    // bytecodeOrderStringHash of each recorded string, in first-read order.
-    JS_EXPORT_PRIVATE Vector<uint64_t> recordedFirstUseHashes() const;
+    // Payload order file recording: from now on tell the recorder each ordinal whose record is read. The table's bytes
+    // must outlive the recorder, that is the process.
+    JS_EXPORT_PRIVATE void enableFirstUseRecording(BytecodeOrderRecorder&);
 private:
     static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
@@ -194,14 +193,7 @@ private:
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
     bool m_visitedThisCycle WTF_GUARDED_BY_LOCK(m_cellsLock) { false };
-    struct FirstUseRecording {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FirstUseRecording);
-        Lock lock; // record() is reached from the collector too (stringFor)
-        BitVector seen;
-        Vector<uint32_t> ordinals;
-    };
-    void noteFirstUse(uint32_t ordinal) const;
-    std::unique_ptr<FirstUseRecording> m_firstUseRecording;
+    RefPtr<BytecodeOrderRecorder> m_recorder;
 };
 
 class VariableLengthObjectBase {
@@ -332,10 +324,10 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKe
 // whitespace dropped, so a rename by the minifier keeps the identity. A module: the same over its whole source.
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset);
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
-// What this VM recorded (PersistentBytecodePayloads::enableOrderRecording, DecoderStringTable::enableFirstUseRecording)
-// as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
+// What every VM of the process recorded, VMs that are gone included (PersistentBytecodePayloads::enableOrderRecording,
+// DecoderStringTable::enableFirstUseRecording), as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
 // in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
-JS_EXPORT_PRIVATE CString bytecodeOrderFileContents(VM&);
+JS_EXPORT_PRIVATE CString bytecodeOrderFileContents();
 // For an order file's list of the functions a build has: the bytecodeOrderSourceHash of every function `cachedBytecode`
 // holds code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
 JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, Vector<uint64_t>&);

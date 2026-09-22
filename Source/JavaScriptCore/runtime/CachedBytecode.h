@@ -30,6 +30,9 @@
 #include "ParserModes.h"
 #include "Weak.h"
 #include "WeakGCHashTable.h"
+#include <wtf/BitVector.h>
+#include <wtf/Lock.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/FixedVector.h>
@@ -117,30 +120,45 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-// What a run read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
-// while recording (PersistentBytecodePayloads::enableOrderRecording). Mutator thread only.
-class BytecodeOrderRecorder {
+// What one VM read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
+// while recording (PersistentBytecodePayloads::enableOrderRecording). Every recorder of the process stays registered,
+// whether or not its VM is still alive, and any thread may take a snapshot of it (the thread that writes the order file
+// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: source
+// providers are kept alive, and strings are ordinals into a table whose bytes the embedder keeps for good.
+class BytecodeOrderRecorder final : public ThreadSafeRefCounted<BytecodeOrderRecorder> {
     WTF_MAKE_NONCOPYABLE(BytecodeOrderRecorder);
     WTF_MAKE_TZONE_ALLOCATED(BytecodeOrderRecorder);
 public:
-    BytecodeOrderRecorder();
+    static Ref<BytecodeOrderRecorder> create();
     ~BytecodeOrderRecorder();
+    // In creation order.
+    static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
+
     void didDecodeFunction(SourceProvider&, unsigned startOffset, unsigned endOffset);
     void didDecodeModule(SourceProvider&);
+    void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
 
     struct DecodedFunction {
         RefPtr<SourceProvider> provider;
         unsigned startOffset;
         unsigned endOffset;
     };
-    const Vector<DecodedFunction>& functions() const LIFETIME_BOUND { return m_functions; }
-    const Vector<RefPtr<SourceProvider>>& modules() const LIFETIME_BOUND { return m_modules; }
+    struct Snapshot {
+        Vector<DecodedFunction> functions;
+        Vector<RefPtr<SourceProvider>> modules;
+        std::span<const uint8_t> stringTable; // DecoderStringTable's bytes
+        Vector<uint32_t> stringOrdinals;
+    };
+    Snapshot snapshot() const;
 
 private:
-    Vector<DecodedFunction> m_functions;
-    Vector<RefPtr<SourceProvider>> m_modules;
-    // A function is decoded again after its code was returned to the cache; providers stay alive in m_functions.
-    UncheckedKeyHashSet<std::pair<SourceProvider*, unsigned>> m_seenFunctions;
+    BytecodeOrderRecorder();
+
+    mutable Lock m_lock;
+    Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
+    // A function is decoded again after its code was returned to the cache; providers stay alive in m_recorded.
+    UncheckedKeyHashSet<std::pair<SourceProvider*, unsigned>> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
 };
 #endif
 
@@ -187,7 +205,7 @@ public:
     void clearChildExecutables() { m_childExecutables.clear(); }
 
 #if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE void enableOrderRecording();
+    JS_EXPORT_PRIVATE BytecodeOrderRecorder& enableOrderRecording();
     BytecodeOrderRecorder* orderRecorder() { return m_orderRecorder.get(); }
 #endif
 
@@ -220,7 +238,7 @@ private:
     VM& m_vm;
     UncheckedKeyHashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
 #if USE(BUN_JSC_ADDITIONS)
-    std::unique_ptr<BytecodeOrderRecorder> m_orderRecorder;
+    RefPtr<BytecodeOrderRecorder> m_orderRecorder;
 #endif
 };
 
