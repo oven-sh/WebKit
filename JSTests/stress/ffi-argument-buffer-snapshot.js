@@ -18,6 +18,13 @@ const fixture = name => $vm.ffiFixture(name);
 // read for that argument: null once the view behind it is detached.
 const pointerOfThenInt = $vm.ffiFunction({ args: ["ptr", "i32"], returns: "ptr" }, fixture("ffi_ptr_identity"), "ffi_ptr_identity(ptr,i32)");
 const pointerOfThenPointer = $vm.ffiFunction({ args: ["ptr", "ptr"], returns: "ptr" }, fixture("ffi_ptr_identity"), "ffi_ptr_identity(ptr,ptr)");
+// "cstring" takes a view like "ptr" does, and an untyped "cstring" argument also makes the DFG
+// and the FTL bracket the call with the string arena.
+const pointerOfCStringThenInt = $vm.ffiFunction({ args: ["cstring", "i32"], returns: "ptr" }, fixture("ffi_ptr_identity"), "ffi_ptr_identity(cstring,i32)");
+// The widest signature there is: the view first, the conversion that runs JS last.
+const pointerOfThenManyInts = $vm.ffiFunction({ args: ["ptr", ...Array(31).fill("i32")], returns: "ptr" }, fixture("ffi_ptr_identity"), "ffi_ptr_identity(32 arguments)");
+// ffi_add_u64 adds its two arguments, so one answer carries both marshalled slots.
+const sumOfPointers = $vm.ffiFunction({ args: ["ptr", "ptr"], returns: "u64" }, fixture("ffi_add_u64"), "ffi_add_u64(ptr,ptr)");
 // ffi_view_byte_length returns the length it was given. ffi_view_last_byte reads the last byte of
 // the address and length pair it was given, which reads out of bounds if the two disagree.
 const byteLength = $vm.ffiFunction({ args: ["buffer", "buffer_length", "i32"], returns: "u64" }, fixture("ffi_view_byte_length"), "ffi_view_byte_length");
@@ -89,6 +96,48 @@ const cases = [
             const buffer = new ArrayBuffer(1024, { maxByteLength: 1024 });
             const view = new Uint8Array(buffer).fill(7);
             return { args: [view, view, { valueOf() { buffer.resize(16); return 1; } }], expected: 7 };
+        },
+    },
+    {
+        name: "valueOf transfers the view passed for cstring",
+        callable: pointerOfCStringThenInt,
+        arity: 2,
+        setUp() {
+            const view = new Uint8Array(64);
+            return { args: [view, { valueOf() { view.buffer.transfer(); return 1; } }], expected: null };
+        },
+    },
+    {
+        name: "the last of 32 arguments transfers the view passed for the first",
+        callable: pointerOfThenManyInts,
+        arity: 32,
+        setUp() {
+            const view = new Uint8Array(64);
+            const args = [view];
+            for (let i = 1; i < 31; ++i)
+                args.push(i);
+            args.push({ valueOf() { view.buffer.transfer(); return 1; } });
+            return { args, expected: null };
+        },
+    },
+    {
+        // The getter makes a whole FFI call of its own before the outer call reads its first
+        // argument again. The answer is the live address plus the 1 the getter returned.
+        name: "a nested FFI call inside a ptr getter leaves the outer arguments alone",
+        callable: sumOfPointers,
+        arity: 2,
+        setUp() {
+            const view = new Uint8Array(64);
+            const nested = new Uint8Array(1024);
+            const address = BigInt(pointerOfThenInt(view, 0));
+            const argument = {
+                get ptr() {
+                    if (byteLength(nested, nested, 0) !== 1024n)
+                        throw new Error("the nested call marshalled the wrong length");
+                    return 1;
+                },
+            };
+            return { args: [view, argument], expected: address + 1n };
         },
     },
     {
