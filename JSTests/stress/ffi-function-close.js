@@ -11,7 +11,7 @@ function shouldBe(actual, expected, what) {
         throw new Error(what + ": expected " + expected + " but got " + actual);
 }
 
-function shouldThrowClosed(fn, what) {
+function shouldThrowTypeError(fn, message, what) {
     let error = null;
     let result;
     try {
@@ -21,8 +21,12 @@ function shouldThrowClosed(fn, what) {
     }
     if (!error)
         throw new Error(what + ": the call reached the target and returned " + String(result));
-    if (!(error instanceof TypeError) || !/was closed/.test(error.message))
+    if (!(error instanceof TypeError) || error.message !== message)
         throw new Error(what + ": wrong error: " + error);
+}
+
+function shouldThrowClosed(name, fn, what) {
+    shouldThrowTypeError(fn, "bun:ffi: cannot call '" + name + "' because its library was closed", what);
 }
 
 function makeAdd(name) {
@@ -36,18 +40,18 @@ function testColdCall() {
     const ptr = add.ptr;
 
     $vm.ffiFunctionClose(add);
-    shouldThrowClosed(() => add(1, 2), "cold call after close");
-    shouldThrowClosed(() => add(), "cold call after close, too few arguments");
-    shouldThrowClosed(() => add("x", {}), "cold call after close, arguments that do not convert inline");
-    shouldThrowClosed(() => add.call(null, 1, 2), "Function.prototype.call after close");
-    shouldThrowClosed(() => add.apply(null, [1, 2]), "Function.prototype.apply after close");
-    shouldThrowClosed(() => Reflect.apply(add, null, [1, 2]), "Reflect.apply after close");
-    shouldThrowClosed(() => add.bind(null, 1)(2), "bound function after close");
-    shouldThrowClosed(() => [2, 1].sort(add), "call from C++ after close");
+    shouldThrowClosed("coldAdd", () => add(1, 2), "cold call after close");
+    shouldThrowClosed("coldAdd", () => add(), "cold call after close, too few arguments");
+    shouldThrowClosed("coldAdd", () => add("x", {}), "cold call after close, arguments that do not convert inline");
+    shouldThrowClosed("coldAdd", () => add.call(null, 1, 2), "Function.prototype.call after close");
+    shouldThrowClosed("coldAdd", () => add.apply(null, [1, 2]), "Function.prototype.apply after close");
+    shouldThrowClosed("coldAdd", () => Reflect.apply(add, null, [1, 2]), "Reflect.apply after close");
+    shouldThrowClosed("coldAdd", () => add.bind(null, 1)(2), "bound function after close");
+    shouldThrowClosed("coldAdd", () => [2, 1].sort(add), "call from C++ after close");
 
     // Closing is per function and idempotent, and it leaves the properties alone.
     $vm.ffiFunctionClose(add);
-    shouldThrowClosed(() => add(1, 2), "cold call after a second close");
+    shouldThrowClosed("coldAdd", () => add(1, 2), "cold call after a second close");
     shouldBe(other(40, 2), 42, "another function bound to the same target");
     shouldBe(add.ptr, ptr, ".ptr after close");
     shouldBe(add.native, add, ".native after close");
@@ -59,19 +63,6 @@ function testColdCall() {
         threw = e instanceof TypeError;
     }
     shouldBe(threw, true, "$vm.ffiFunctionClose rejects a non-FFI function");
-}
-
-function testMessageNamesTheFunction() {
-    const add = makeAdd("sqlite3_open");
-    $vm.ffiFunctionClose(add);
-    try {
-        add(1, 2);
-    } catch (e) {
-        if (!e.message.includes("sqlite3_open"))
-            throw new Error("the error does not name the function: " + e.message);
-        return;
-    }
-    throw new Error("no error");
 }
 
 function testCloseAfterTierUp() {
@@ -94,12 +85,12 @@ function testCloseAfterTierUp() {
         throw new Error("the hot caller was compiled without a CallFFI node");
 
     $vm.ffiFunctionClose(add);
-    shouldThrowClosed(() => hot(1, 2), "optimized caller, first call after close");
+    shouldThrowClosed("hotAdd", () => hot(1, 2), "optimized caller, first call after close");
 
     // The caller is compiled again while the function is closed. It must not get a CallFFI back.
     const closed = $vm.ffiCompileCounts();
     for (let i = 0; i < 1e4; ++i)
-        shouldThrowClosed(() => hot(i, 2), "optimized caller, call " + i + " after close");
+        shouldThrowClosed("hotAdd", () => hot(i, 2), "optimized caller, call " + i + " after close");
     const recompiled = $vm.ffiCompileCounts();
     // A concurrent compile that converted the call before the close can still generate it; that plan is discarded.
     if (!jscOptions().useConcurrentJIT)
@@ -139,8 +130,8 @@ function testCloseDuringArgumentConversion() {
     {
         const add = makeAdd("convertAddCold");
         const closer = { valueOf() { $vm.ffiFunctionClose(add); return 1; } };
-        shouldThrowClosed(() => add(closer, 2), "close inside valueOf, cold");
-        shouldThrowClosed(() => add(1, 2), "call after close inside valueOf, cold");
+        shouldThrowClosed("convertAddCold", () => add(closer, 2), "close inside valueOf, cold");
+        shouldThrowClosed("convertAddCold", () => add(1, 2), "call after close inside valueOf, cold");
     }
 
     // DFG / FTL: untyped arguments convert through operationFFIWriteSlot, then the compiled code calls
@@ -161,8 +152,8 @@ function testCloseDuringArgumentConversion() {
         shouldBe(sum, 2e5, "hot sum with untyped arguments");
 
         armed = true;
-        shouldThrowClosed(() => hot(sometimesCloser, 2), "close inside valueOf, optimized caller");
-        shouldThrowClosed(() => hot(1, 2), "call after close inside valueOf, optimized caller");
+        shouldThrowClosed("convertAddHot", () => hot(sometimesCloser, 2), "close inside valueOf, optimized caller");
+        shouldThrowClosed("convertAddHot", () => hot(1, 2), "call after close inside valueOf, optimized caller");
     }
 
     // A pointer argument reads `.ptr` off an object, which can be a getter.
@@ -180,8 +171,8 @@ function testCloseDuringArgumentConversion() {
             shouldBe(hot((i & 1) ? sometimesCloser : 1234), 1234, "hot pointer echo");
 
         armed = true;
-        shouldThrowClosed(() => hot(sometimesCloser), "close inside a ptr getter, optimized caller");
-        shouldThrowClosed(() => hot(1234), "call after close inside a ptr getter, optimized caller");
+        shouldThrowClosed("convertEchoPtr", () => hot(sometimesCloser), "close inside a ptr getter, optimized caller");
+        shouldThrowClosed("convertEchoPtr", () => hot(1234), "call after close inside a ptr getter, optimized caller");
     }
 }
 
@@ -190,7 +181,7 @@ function testHookedFunction() {
     const add = $vm.ffiFunction({ args: ["i32", "i32"], returns: "i32" }, $vm.ffiFixture("ffi_add_i32"), "hookedAdd", { owner, hooks: "test" });
     shouldBe(add(1, 2), 3, "open hooked call");
     $vm.ffiFunctionClose(add);
-    shouldThrowClosed(() => add(1, 2), "hooked call after close");
+    shouldThrowClosed("hookedAdd", () => add(1, 2), "hooked call after close");
 
     // The before-hook runs after the arguments are converted, and it can run JS too: the test hook reads owner.hookLog.
     let armed = false;
@@ -198,7 +189,7 @@ function testHookedFunction() {
     const lateAdd = $vm.ffiFunction({ args: ["i32", "i32"], returns: "i32" }, $vm.ffiFixture("ffi_add_i32"), "lateHookedAdd", { owner: closingOwner, hooks: "test" });
     shouldBe(lateAdd(1, 2), 3, "open hooked call, getter owner");
     armed = true;
-    shouldThrowClosed(() => lateAdd(1, 2), "close inside the before-hook");
+    shouldThrowClosed("lateHookedAdd", () => lateAdd(1, 2), "close inside the before-hook");
 }
 
 // The target calls back into JS, and that JS closes the function whose call is still on the stack. The
@@ -224,7 +215,7 @@ function testCloseDuringTheCall() {
 
         armed = true;
         shouldBe(hot(41), 42, "the call that closes its own function, warm-up " + warmUp);
-        shouldThrowClosed(() => hot(41), "call after a close from inside the call, warm-up " + warmUp);
+        shouldThrowClosed("callCb" + warmUp, () => hot(41), "call after a close from inside the call, warm-up " + warmUp);
         cb.close();
     }
 }
@@ -243,22 +234,13 @@ function testClosedFunctionAsPointerArgument() {
         shouldBe(hot(add), add.ptr, "an open function as a pointer argument");
 
     $vm.ffiFunctionClose(add);
-    for (const [what, fn] of [["cold ptr", () => echo(add)], ["optimized ptr", () => hot(add)], ["function", () => callCb(add, 1)]]) {
-        let error = null;
-        try {
-            fn();
-        } catch (e) {
-            error = e;
-        }
-        if (!(error instanceof TypeError) || !error.message.includes("cannot pass 'pointerAdd' as a pointer because its library was closed"))
-            throw new Error("closed function as a " + what + " argument: " + error);
-    }
+    for (const [what, fn] of [["cold ptr", () => echo(add)], ["optimized ptr", () => hot(add)], ["function", () => callCb(add, 1)]])
+        shouldThrowTypeError(fn, "bun:ffi: cannot pass 'pointerAdd' as a pointer because its library was closed", "closed function as a " + what + " argument");
     shouldBe(echo(add.ptr), add.ptr, "the raw number is the caller's business");
 }
 
 if ($vm.useJIT()) {
     testColdCall();
-    testMessageNamesTheFunction();
     testCloseAfterTierUp();
     testCloseInsideHotLoop();
     testCloseDuringArgumentConversion();
