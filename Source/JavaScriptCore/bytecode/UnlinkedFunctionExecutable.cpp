@@ -261,15 +261,8 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
-    if (m_isCached) {
+    if (m_isCached)
         decodeCachedCodeBlocks(vm);
-#if USE(BUN_JSC_ADDITIONS)
-        if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]] {
-            if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall ? m_unlinkedCodeBlockForCall.get() : m_unlinkedCodeBlockForConstruct.get())
-                recorder->didDecodeFunction(bytecodeOrderHash(source, *codeBlock, this));
-        }
-#endif
-    }
     switch (specializationKind) {
     case CodeSpecializationKind::CodeForCall:
         if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())

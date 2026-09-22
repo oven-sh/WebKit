@@ -48,6 +48,7 @@ namespace JSC {
 class Decoder;
 class SourceProvider;
 class UnlinkedCodeBlock;
+class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
 
@@ -141,6 +142,8 @@ public:
     static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
     // Null unless the VM is recording, and while a PauseScope is alive on it.
     static BytecodeOrderRecorder* ifRecording(VM&);
+    // Null unless the VM is recording.
+    static BytecodeOrderRecorder* ofVM(VM&);
 
     // While one is alive on the recorder's VM (whose thread it belongs to) nothing is recorded: for code that decodes
     // everything a payload holds rather than what a program uses.
@@ -163,14 +166,20 @@ public:
         RefPtr<BytecodeOrderRecorder> m_recorder;
     };
 
-    // bytecodeOrderHash of the function or module.
-    void didDecodeFunction(uint64_t hash);
-    void didDecodeModule(uint64_t hash);
+    // Code is known by where its record is in its payload, which outlives the program (CachePayload::isPersistent): what
+    // an order file names it by takes more of the payload than the program has decoded (BytecodeOrderFile).
+    void didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock&);
+    void didDecodeModule(const void* record);
     void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
 
+    // While set, on the VM's thread: nothing is recorded, and every function code block that is decoded is told where
+    // its record is.
+    using RecordsOfCodeBlocks = UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, const void*>;
+    void setRecordsOfCodeBlocks(RecordsOfCodeBlocks* records) { m_recordsOfCodeBlocks = records; }
+
     struct Snapshot {
-        Vector<uint64_t> functions;
-        Vector<uint64_t> modules;
+        Vector<const void*> functions;
+        Vector<const void*> modules;
         std::span<const uint8_t> stringTable; // DecoderStringTable's bytes
         Vector<uint32_t> stringOrdinals;
     };
@@ -178,16 +187,15 @@ public:
 
 private:
     BytecodeOrderRecorder();
-    static BytecodeOrderRecorder* ofVM(VM&);
 
     mutable Lock m_lock;
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
-    // A function is decoded again after its code was returned to the cache, and functions with the same text are one.
-    using HashSetOfHashes = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-    HashSetOfHashes m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
-    HashSetOfHashes m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
+    // A function is decoded again after its code was returned to the cache.
+    UncheckedKeyHashSet<const void*> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashSet<const void*> m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_pauseDepth { 0 }; // the VM's thread only
+    RecordsOfCodeBlocks* m_recordsOfCodeBlocks { nullptr }; // the VM's thread only
 };
 #endif
 

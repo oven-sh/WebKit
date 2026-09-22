@@ -325,24 +325,36 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKe
 #if USE(BUN_JSC_ADDITIONS)
 // Payload order file identities. They are computed the same way by the build that consumes an order file and by the run
 // that records one, and deliberately name no module (chunk names are content hashes).
-// Code is named by its OWN text: `source` (a function's UnlinkedFunctionExecutable::linkedSourceCode, a module's or
-// program's whole source) in which every function directly nested in it, that is every function of `codeBlock`, counts as
-// one token, whatever it contains; identifier-like runs that are not reserved words, digit runs and string contents each
-// collapse to one character and whitespace is dropped. So a rename by the minifier keeps the identity, an edit changes
-// the identity of the innermost function around it and of nothing else, and all of a program's text is hashed once.
-// `function`: the executable, when the code is a function's (the one kind of function without text of its own, the
-// initializer of a class's fields, is named by the fields).
-JS_EXPORT_PRIVATE uint64_t bytecodeOrderHash(const SourceCode& source, UnlinkedCodeBlock& codeBlock, const UnlinkedFunctionExecutable* function = nullptr);
+// Code is named by its own text with, in the place of each function written directly in it, that function's identity:
+// identifier-like runs that are not reserved words, digit runs and string contents each collapse to one character and
+// whitespace is dropped. So a rename by the minifier keeps the identity, two functions differ by anything written anywhere
+// in them, and all of a program's text is still read once. (The one kind of function without text of its own, the
+// initializer of a class's fields, is named by the fields.) Naming a function takes the code of everything nested in it.
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
-// What every VM of the process recorded, VMs that are gone included (PersistentBytecodePayloads::enableOrderRecording,
-// DecoderStringTable::enableFirstUseRecording), as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
-// in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
-JS_EXPORT_PRIVATE CString bytecodeOrderFileContents();
-// For an order file's lists of what a build has: the module's hash, and the hash of every function `cachedBytecode` holds
-// code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
-JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, uint64_t& moduleHash, Vector<uint64_t>&);
-// The same for a builtin function's payload (decodeBuiltinFunction), the builtin's own function included.
-JS_EXPORT_PRIVATE bool appendHashesOfAllCachedBuiltinFunctions(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>, uint64_t& moduleHash, Vector<uint64_t>&);
+// An order file of what every VM of the process recorded, VMs that are gone included
+// (PersistentBytecodePayloads::enableOrderRecording, DecoderStringTable::enableFirstUseRecording). A recorder knows the
+// code it saw decoded by where its record is; naming it takes all the code of its payload, so the embedder hands over
+// every payload the program has once the program is done, on a VM that records. Each is decoded in full (as
+// digestOfAllCachedCode does), none of which counts as something the program used.
+class BytecodeOrderFile {
+    WTF_MAKE_NONCOPYABLE(BytecodeOrderFile);
+public:
+    JS_EXPORT_PRIVATE BytecodeOrderFile();
+    JS_EXPORT_PRIVATE ~BytecodeOrderFile();
+    // False if the payload is not for `source`.
+    JS_EXPORT_PRIVATE bool addModule(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>);
+    // A builtin function's payload (decodeBuiltinFunction): the builtin is a module, and a function of it.
+    JS_EXPORT_PRIVATE bool addBuiltinFunction(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>);
+    // "v1", then one "<kind> <16 hex digits>" line each: "F" per function a recorder saw decoded, in first-decode order (the
+    // first VM's first), "S" per string read, "M" per module evaluated; then "N" per module that was there and not
+    // evaluated and "K" per function that was there and not decoded, with which a later build tells code the recorded
+    // build did not have from code its run did not use.
+    JS_EXPORT_PRIVATE CString contents() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
 // For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
 // function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
 // instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
@@ -366,7 +378,7 @@ class BytecodeLinkEncoder {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
 public:
     struct Hints {
-        Vector<uint64_t> hotFunctions; // bytecodeOrderHash, first-decode order
+        Vector<uint64_t> hotFunctions; // "F" lines, first-decode order
         Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;
@@ -375,6 +387,7 @@ public:
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
+        unsigned matchedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         std::array<uint32_t, numberOfRegions> regionEnds { };
     };
 

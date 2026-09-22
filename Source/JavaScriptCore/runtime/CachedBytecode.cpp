@@ -80,18 +80,24 @@ BytecodeOrderRecorder* BytecodeOrderRecorder::ifRecording(VM& vm)
     return recorder && !recorder->m_pauseDepth ? recorder : nullptr;
 }
 
-void BytecodeOrderRecorder::didDecodeFunction(uint64_t hash)
+void BytecodeOrderRecorder::didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock& codeBlock)
 {
+    if (m_recordsOfCodeBlocks) {
+        m_recordsOfCodeBlocks->set(&codeBlock, record);
+        return;
+    }
+    if (m_pauseDepth)
+        return;
     Locker locker { m_lock };
-    if (m_seenFunctions.add(hash).isNewEntry)
-        m_recorded.functions.append(hash);
+    if (m_seenFunctions.add(record).isNewEntry)
+        m_recorded.functions.append(record);
 }
 
-void BytecodeOrderRecorder::didDecodeModule(uint64_t hash)
+void BytecodeOrderRecorder::didDecodeModule(const void* record)
 {
     Locker locker { m_lock };
-    if (m_seenModules.add(hash).isNewEntry)
-        m_recorded.modules.append(hash);
+    if (m_seenModules.add(record).isNewEntry)
+        m_recorded.modules.append(record);
 }
 
 void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
