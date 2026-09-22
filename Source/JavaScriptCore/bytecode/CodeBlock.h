@@ -268,6 +268,9 @@ public:
     void NODELETE dumpMathICStats();
 
     bool isConstructor() const { return m_unlinkedCode->isConstructor(); }
+    // Where a generator (or async function) body suspended in `state` is: the yield before the point it resumes at.
+    // Bytecode index 0 when it is not suspended at one.
+    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexForGeneratorState(int32_t state);
     CodeType codeType() const { return m_unlinkedCode->codeType(); }
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }

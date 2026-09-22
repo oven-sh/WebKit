@@ -543,20 +543,8 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     };
 
     auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
-        BytecodeIndex bytecodeIndex(0);
         JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
+        return stateValue.isInt32() ? codeBlock->bytecodeIndexForGeneratorState(stateValue.asInt32()) : BytecodeIndex(0);
     };
 
     JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);

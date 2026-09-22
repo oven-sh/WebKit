@@ -1090,6 +1090,26 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 }
 #endif // ENABLE(JIT)
 
+BytecodeIndex CodeBlock::bytecodeIndexForGeneratorState(int32_t state)
+{
+    size_t numberOfJumpTables = numberOfUnlinkedSwitchJumpTables();
+    if (state <= 0 || !numberOfJumpTables)
+        return BytecodeIndex(0);
+    // The state switch's table is the last one (BytecodeGeneratorification), and its offsets are from the switch, which
+    // follows op_enter, or, in a function that starts with op_jcurrent_script_execution_owner, the op_nop at that
+    // instruction's target. Counted from op_enter's end they name the instruction before the resume point: the yield.
+    int32_t offset = unlinkedSwitchJumpTable(numberOfJumpTables - 1).offsetForValue(state);
+    if (!offset)
+        return BytecodeIndex(0);
+    const auto& instructionStream = instructions();
+    unsigned afterEnter = instructionStream.at(0)->size();
+    unsigned stateSwitch = afterEnter;
+    if (auto check = instructionStream.at(afterEnter); check->is<OpJcurrentScriptExecutionOwner>())
+        stateSwitch = instructionStream.at(check.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(this, check)).next().offset();
+    ASSERT(instructionStream.at(stateSwitch)->is<OpSwitchImm>());
+    return BytecodeIndex(offset + stateSwitch - afterEnter);
+}
+
 CodeBlock::~CodeBlock()
 {
     auto& cc = checker();
