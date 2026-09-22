@@ -96,6 +96,7 @@
 #include "ObjectConstructor.h"
 #include "OpcodeInlines.h"
 #include "PreciseJumpTargets.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PrivateFieldPutKind.h"
 #include "PropertyInlineCache.h"
 #include "PutByIdFlags.h"
@@ -1639,6 +1640,9 @@ private:
         Vector<ArgumentPosition*> m_argumentPositions;
         
         InlineStackEntry* const m_caller;
+
+        // Read once, in parseCodeBlock(): a lower tier sets it while this code is being parsed.
+        bool m_scriptExecutionOwnerCheckHasFallenThrough { false };
         
         InlineStackEntry(
             ByteCodeParser*,
@@ -10438,7 +10442,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto& metadata = bytecode.metadata(codeBlock);
             unsigned taken = m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel);
             Node* owner = scriptExecutionOwner(metadata.m_depth);
-            if (owner && metadata.m_hasFallenThrough) {
+            if (owner && m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough) {
                 Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
                 Node* condition = addToGraph(CompareStrictEq, owner, current);
                 // The block ends here, before a queued SetLocal would be issued; nothing in this code origin has had an
@@ -10450,8 +10454,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             // Until it has fallen through (as op_jneq_ptr until it has jumped), the owner being the current one is checked
             // for, and what it falls through to is not parsed: that forwards the arguments, and parsing it would have every
-            // argument of this function kept boxed. Nothing in there is a jump target, so the block ends at `taken`.
-            ASSERT(limit == taken);
+            // argument of this function kept boxed. Nothing in there is a jump target, and `taken` is one only if something
+            // else jumps there (parseCodeBlock), so the function's own code goes on in this block as it did without the check.
+            ASSERT(limit >= taken);
             if (owner) {
                 Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
                 if (owner->isCellConstant())
@@ -11820,6 +11825,37 @@ void ByteCodeParser::parseCodeBlock()
 
     Vector<JSInstructionStream::Offset, 32> jumpTargets;
     computePreciseJumpTargets(codeBlock, jumpTargets);
+#if USE(BUN_JSC_ADDITIONS)
+    // Where op_jcurrent_script_execution_owner jumps is a block boundary only while it is a branch. Until it has fallen
+    // through it is a check, and the function's own code follows it in the same block unless something else jumps there.
+    {
+        const auto& instructions = codeBlock->instructions();
+        auto check = instructions.begin();
+        if (check != instructions.end() && check->is<OpEnter>())
+            ++check;
+        if (check != instructions.end() && check->is<OpJcurrentScriptExecutionOwner>()) {
+            auto& metadata = check->as<OpJcurrentScriptExecutionOwner>().metadata(codeBlock);
+            m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough = metadata.m_depth != UINT_MAX && metadata.m_hasFallenThrough;
+            if (!m_inlineStackTop->m_scriptExecutionOwnerCheckHasFallenThrough) {
+                unsigned taken = check.offset() + jumpTargetForInstruction<OpJcurrentScriptExecutionOwner>(codeBlock, *check);
+                bool somethingElseJumpsThere = instructions.at(taken)->is<OpLoopHint>();
+                for (unsigned i = codeBlock->numberOfExceptionHandlers(); i-- && !somethingElseJumpsThere;) {
+                    auto& handler = codeBlock->exceptionHandler(i);
+                    somethingElseJumpsThere = handler.target == taken || handler.start == taken || handler.end == taken;
+                }
+                for (auto instruction = instructions.begin(); instruction != instructions.end() && !somethingElseJumpsThere; ++instruction) {
+                    if (instruction.offset() == check.offset())
+                        continue;
+                    extractStoredJumpTargetsForInstruction(codeBlock, *instruction, [&](int32_t relativeOffset) {
+                        somethingElseJumpsThere |= instruction.offset() + relativeOffset == taken;
+                    });
+                }
+                if (!somethingElseJumpsThere)
+                    jumpTargets.removeFirst(taken);
+            }
+        }
+    }
+#endif
     if (Options::dumpBytecodeAtDFGTime()) [[unlikely]] {
         WTF::dataFile().atomically([&](auto&) {
             dataLog("Jump targets: ");
