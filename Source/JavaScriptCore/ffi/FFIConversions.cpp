@@ -375,6 +375,11 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (type != Type::Buffer && cell->isObject()) {
+            // The `ptr` of a closed function is dangling, and the native callee would call it.
+            if (auto* function = dynamicDowncast<JSFFIFunction>(cell); function && function->isClosed()) [[unlikely]] {
+                throwTypeError(globalObject, scope, makeString("bun:ffi: cannot pass '"_s, function->name(vm), "' as a pointer because its library was closed"_s));
+                return false;
+            }
             JSValue ptrValue = uncheckedDowncast<JSObject>(cell)->get(globalObject, Identifier::fromString(vm, "ptr"_s));
             RETURN_IF_EXCEPTION(scope, false);
             if (ptrValue.isNumber() || ptrValue.isBigInt())
