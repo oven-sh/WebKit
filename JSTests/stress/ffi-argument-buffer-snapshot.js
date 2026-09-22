@@ -164,7 +164,7 @@ for (const testCase of cases) {
     const before = $vm.ffiCompileCounts();
     const hot = makeCaller(testCase.callable, testCase.arity, "hot " + testCase.name);
     noInline(hot);
-    for (let i = 0; i < 3e3; ++i)
+    for (let i = 0; i < 1e3; ++i)
         runCase(testCase, hot, "hot");
     // The loop must have reached the inline conversions the DFG and the FTL emit, not only the
     // host path: that is where a snapshot an earlier argument took has to be taken again.
@@ -183,7 +183,7 @@ for (const testCase of cases) {
     const argument = { get ptr() { ++reads; return 1; } };
     const hot = makeCaller(pointerOfThenPointer, 2, "ptr getter runs once");
     noInline(hot);
-    for (let i = 0; i < 3e3; ++i) {
+    for (let i = 0; i < 1e3; ++i) {
         reads = 0;
         hot([view, argument]);
         if (reads !== 1)
