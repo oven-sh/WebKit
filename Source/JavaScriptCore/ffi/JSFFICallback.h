@@ -68,7 +68,7 @@ public:
     // the VM's lock and while JS can run there. Any other call is queued for the JS thread like a threadsafe call
     // and returns 0: a call the collector makes (the callback is the deallocator of an ArrayBuffer being freed),
     // and a call from another thread. So the embedder registers a dispatch (FFIContext::setThreadsafeDispatch)
-    // and passes an embedderContext for every callback.
+    // and passes an embedderContext for every callback. A call made while the VM is being destroyed is dropped.
     JS_EXPORT_PRIVATE void* nativeEntrypoint() const;
 
     JS_EXPORT_PRIVATE void close();

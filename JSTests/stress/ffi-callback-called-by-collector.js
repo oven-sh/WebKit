@@ -8,7 +8,9 @@
 //   3) a drain on the JS thread delivers every call exactly once, with the C arguments;
 //   4) a callback close()d between the collection and the drain still delivers what the collection queued;
 //   5) a call from a thread that does not hold the VM's lock is queued too. That is the thread of another VM when
-//      a transferred ArrayBuffer is freed there. It used to wait for the lock, which the JS thread does not give up.
+//      a transferred ArrayBuffer is freed there. It used to wait for the lock, which the JS thread does not give up;
+//   6) a VM that is being destroyed drops the call. Its last sweep frees the buffers that are still alive and then
+//      the callback, so a queued call would point at a freed cell when this VM drains the queue.
 if (!$vm.useJIT()) quit();
 
 const signature = { args: ["ptr", "ptr"], returns: "void" };
@@ -86,5 +88,21 @@ const [a, b, c, d] = fromThread[0];
 if (fromThread.length !== 1 || a !== -7 || b !== -9007199254740993n || c !== 18446744073709551615n || d !== 2.5)
     throw new Error("wrong arguments from the other thread: " + fromThread.map(String));
 otherThread.close();
+
+// (6) The agent's VM is destroyed when its script ends. The sleeps give it the time; nothing is queued at any point.
+$.agent.start(`
+    const callback = $vm.ffiCallback({ args: ["ptr", "ptr"], returns: "void" }, () => { });
+    globalThis.buffers = [];
+    for (let context = 1; context <= 10; ++context)
+        buffers.push($vm.ffiExternalArrayBuffer(64, callback.ptr, context));
+    $.agent.report("made");
+    $.agent.leaving();
+`);
+while ($.agent.getReport() !== "made")
+    $.agent.sleep(1);
+for (let i = 0; i < 25; ++i) {
+    $.agent.sleep(20);
+    if ($vm.drainThreadsafeCallbacks() !== 0) throw new Error("a VM that is being destroyed queued a call");
+}
 
 print("ffi callback called by the collector: all checks passed");
