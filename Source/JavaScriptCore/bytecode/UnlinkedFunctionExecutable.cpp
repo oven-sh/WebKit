@@ -264,8 +264,10 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     if (m_isCached) {
         decodeCachedCodeBlocks(vm);
 #if USE(BUN_JSC_ADDITIONS)
-        if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]]
-            recorder->didDecodeFunction(*source.provider(), source.startOffset(), source.endOffset());
+        if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]] {
+            if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall ? m_unlinkedCodeBlockForCall.get() : m_unlinkedCodeBlockForConstruct.get())
+                recorder->didDecodeFunction(bytecodeOrderHash(source, *codeBlock, this));
+        }
 #endif
     }
     switch (specializationKind) {

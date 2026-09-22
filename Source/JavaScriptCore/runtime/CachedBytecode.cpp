@@ -68,28 +68,30 @@ Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::allInProcess()
     return orderRecorders();
 }
 
-BytecodeOrderRecorder* BytecodeOrderRecorder::ifRecording(VM& vm)
+BytecodeOrderRecorder* BytecodeOrderRecorder::ofVM(VM& vm)
 {
     auto* payloads = vm.persistentBytecodePayloadsIfExists();
     return payloads ? payloads->orderRecorder() : nullptr;
 }
 
-void BytecodeOrderRecorder::didDecodeFunction(SourceProvider& provider, unsigned startOffset, unsigned endOffset)
+BytecodeOrderRecorder* BytecodeOrderRecorder::ifRecording(VM& vm)
 {
-    if (m_pauseDepth)
-        return;
-    Locker locker { m_lock };
-    if (m_seenFunctions.add({ &provider, startOffset }).isNewEntry)
-        m_recorded.functions.append({ &provider, startOffset, endOffset });
+    auto* recorder = ofVM(vm);
+    return recorder && !recorder->m_pauseDepth ? recorder : nullptr;
 }
 
-void BytecodeOrderRecorder::didDecodeModule(SourceProvider& provider)
+void BytecodeOrderRecorder::didDecodeFunction(uint64_t hash)
 {
-    if (m_pauseDepth)
-        return;
     Locker locker { m_lock };
-    if (m_seenModules.add(&provider).isNewEntry)
-        m_recorded.modules.append(&provider);
+    if (m_seenFunctions.add(hash).isNewEntry)
+        m_recorded.functions.append(hash);
+}
+
+void BytecodeOrderRecorder::didDecodeModule(uint64_t hash)
+{
+    Locker locker { m_lock };
+    if (m_seenModules.add(hash).isNewEntry)
+        m_recorded.modules.append(hash);
 }
 
 void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)

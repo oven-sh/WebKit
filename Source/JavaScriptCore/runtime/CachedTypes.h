@@ -323,22 +323,26 @@ JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKe
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 
 #if USE(BUN_JSC_ADDITIONS)
-// Payload order file identities. Both are computed the same way by the build that consumes an order file and by the run
+// Payload order file identities. They are computed the same way by the build that consumes an order file and by the run
 // that records one, and deliberately name no module (chunk names are content hashes).
-// A function: its source text [startOffset, endOffset) of `source` (UnlinkedFunctionExecutable::linkedSourceCode) with
-// identifier-like runs that are not reserved words, digit runs and string contents each collapsed to one character and
-// whitespace dropped, so a rename by the minifier keeps the identity. A module: the same over its whole source.
-JS_EXPORT_PRIVATE uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset);
+// Code is named by its OWN text: `source` (a function's UnlinkedFunctionExecutable::linkedSourceCode, a module's or
+// program's whole source) in which every function directly nested in it, that is every function of `codeBlock`, counts as
+// one token, whatever it contains; identifier-like runs that are not reserved words, digit runs and string contents each
+// collapse to one character and whitespace is dropped. So a rename by the minifier keeps the identity, an edit changes
+// the identity of the innermost function around it and of nothing else, and all of a program's text is hashed once.
+// `function`: the executable, when the code is a function's (the one kind of function without text of its own, the
+// initializer of a class's fields, is named by the fields).
+JS_EXPORT_PRIVATE uint64_t bytecodeOrderHash(const SourceCode& source, UnlinkedCodeBlock& codeBlock, const UnlinkedFunctionExecutable* function = nullptr);
 JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
 // What every VM of the process recorded, VMs that are gone included (PersistentBytecodePayloads::enableOrderRecording,
 // DecoderStringTable::enableFirstUseRecording), as order file text: "v1", then one "F|M|S <16 hex digits>" line per function, evaluated module and string, each kind
 // in first-use order. The embedder appends the modules it knows were not evaluated ("N") and writes the file.
 JS_EXPORT_PRIVATE CString bytecodeOrderFileContents();
-// For an order file's list of the functions a build has: the bytecodeOrderSourceHash of every function `cachedBytecode`
-// holds code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
-JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, Vector<uint64_t>&);
+// For an order file's lists of what a build has: the module's hash, and the hash of every function `cachedBytecode` holds
+// code for, in tree order (decodes all of it, as digestOfAllCachedCode does). False if the payload is not for `source`.
+JS_EXPORT_PRIVATE bool appendHashesOfAllCachedFunctions(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>, uint64_t& moduleHash, Vector<uint64_t>&);
 // The same for a builtin function's payload (decodeBuiltinFunction), the builtin's own function included.
-JS_EXPORT_PRIVATE bool appendHashesOfAllCachedBuiltinFunctions(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>, Vector<uint64_t>&);
+JS_EXPORT_PRIVATE bool appendHashesOfAllCachedBuiltinFunctions(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>, uint64_t& moduleHash, Vector<uint64_t>&);
 // For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
 // function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
 // instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
@@ -362,7 +366,7 @@ class BytecodeLinkEncoder {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
 public:
     struct Hints {
-        Vector<uint64_t> hotFunctions; // bytecodeOrderSourceHash, first-decode order
+        Vector<uint64_t> hotFunctions; // bytecodeOrderHash, first-decode order
         Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
         Vector<uint64_t> evaluatedModules;
         Vector<uint64_t> notEvaluatedModules;

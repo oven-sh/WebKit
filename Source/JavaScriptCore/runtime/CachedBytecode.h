@@ -129,8 +129,8 @@ enum : unsigned { EarlyHeads, Hot, Unknown, LateHeads, Cold, ExpressionInfo, Cou
 // What one VM read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
 // while recording (PersistentBytecodePayloads::enableOrderRecording). Every recorder of the process stays registered,
 // whether or not its VM is still alive, and any thread may take a snapshot of it (the thread that writes the order file
-// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: source
-// providers are kept alive, and strings are ordinals into a table whose bytes the embedder keeps for good.
+// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: functions
+// and modules are hashes, and strings are ordinals into a table whose bytes the embedder keeps for good.
 class BytecodeOrderRecorder final : public ThreadSafeRefCounted<BytecodeOrderRecorder> {
     WTF_MAKE_NONCOPYABLE(BytecodeOrderRecorder);
     WTF_MAKE_TZONE_ALLOCATED(BytecodeOrderRecorder);
@@ -139,7 +139,7 @@ public:
     ~BytecodeOrderRecorder();
     // In creation order.
     static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
-    // Null unless the VM is recording.
+    // Null unless the VM is recording, and while a PauseScope is alive on it.
     static BytecodeOrderRecorder* ifRecording(VM&);
 
     // While one is alive on the recorder's VM (whose thread it belongs to) nothing is recorded: for code that decodes
@@ -148,7 +148,7 @@ public:
         WTF_MAKE_NONCOPYABLE(PauseScope);
     public:
         explicit PauseScope(VM& vm)
-            : m_recorder(ifRecording(vm))
+            : m_recorder(ofVM(vm))
         {
             if (m_recorder)
                 m_recorder->m_pauseDepth++;
@@ -163,18 +163,14 @@ public:
         RefPtr<BytecodeOrderRecorder> m_recorder;
     };
 
-    void didDecodeFunction(SourceProvider&, unsigned startOffset, unsigned endOffset);
-    void didDecodeModule(SourceProvider&);
+    // bytecodeOrderHash of the function or module.
+    void didDecodeFunction(uint64_t hash);
+    void didDecodeModule(uint64_t hash);
     void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
 
-    struct DecodedFunction {
-        RefPtr<SourceProvider> provider;
-        unsigned startOffset;
-        unsigned endOffset;
-    };
     struct Snapshot {
-        Vector<DecodedFunction> functions;
-        Vector<RefPtr<SourceProvider>> modules;
+        Vector<uint64_t> functions;
+        Vector<uint64_t> modules;
         std::span<const uint8_t> stringTable; // DecoderStringTable's bytes
         Vector<uint32_t> stringOrdinals;
     };
@@ -182,12 +178,14 @@ public:
 
 private:
     BytecodeOrderRecorder();
+    static BytecodeOrderRecorder* ofVM(VM&);
 
     mutable Lock m_lock;
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
-    // A function is decoded again after its code was returned to the cache; providers stay alive in m_recorded.
-    UncheckedKeyHashSet<std::pair<SourceProvider*, unsigned>> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
-    UncheckedKeyHashSet<SourceProvider*> m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
+    // A function is decoded again after its code was returned to the cache, and functions with the same text are one.
+    using HashSetOfHashes = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    HashSetOfHashes m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    HashSetOfHashes m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_pauseDepth { 0 }; // the VM's thread only
 };

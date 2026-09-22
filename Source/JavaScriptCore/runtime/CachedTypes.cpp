@@ -212,28 +212,51 @@ constexpr std::array<std::pair<uint8_t, uint8_t>, 25> reservedWordsByFirstLetter
     return ranges;
 }();
 
+// What a nested function hashes as. No other normalised byte is a control character.
+constexpr uint8_t nestedFunctionToken = 1;
+
+// `nested`: sorted ranges of `text`, each hashed as one token. A number, a name or a quoted string never runs into one: a
+// function does not start inside those, so what looks like a string there is a quote in a regular expression or a
+// comment, and the text is read as code again after the nested function. A template literal is one 's' and a token for
+// each function nested in it. A range that starts inside an earlier one goes unseen.
 template<typename CharacterType>
-uint64_t orderSourceHash(std::span<const CharacterType> text)
+uint64_t orderSourceHash(std::span<const CharacterType> text, std::span<const std::pair<size_t, size_t>> nested)
 {
     auto isIdentifierPart = [](CharacterType c) { return isASCIIAlphanumeric(c) || c == '_' || c == '$' || c >= 0x80; };
     OrderHasher hasher;
     size_t i = 0;
     size_t size = text.size();
+    size_t nextNested = 0;
+    // Where the next nested function starts, `size` if there is none. At one: its token, and `i` moves past it.
+    auto nestedStartFrom = [&] {
+        while (nextNested < nested.size() && nested[nextNested].first < i)
+            ++nextNested;
+        return nextNested < nested.size() ? nested[nextNested].first : size;
+    };
+    auto skipNested = [&] {
+        hasher.add(nestedFunctionToken);
+        i = std::max(i + 1, nested[nextNested++].second);
+    };
     while (i < size) {
+        size_t nestedStart = nestedStartFrom();
+        if (i == nestedStart) {
+            skipNested();
+            continue;
+        }
         CharacterType c = text[i];
         if (c <= ' ') {
             ++i;
             continue;
         }
         if (isASCIIDigit(c)) {
-            while (i < size && (isIdentifierPart(text[i]) || text[i] == '.'))
+            while (i < nestedStart && (isIdentifierPart(text[i]) || text[i] == '.'))
                 ++i;
             hasher.add('0');
             continue;
         }
         if (isIdentifierPart(c)) {
             size_t begin = i;
-            while (i < size && isIdentifierPart(text[i]))
+            while (i < nestedStart && isIdentifierPart(text[i]))
                 ++i;
             auto run = text.subspan(begin, i - begin);
             bool isReserved = false;
@@ -252,11 +275,23 @@ uint64_t orderSourceHash(std::span<const CharacterType> text)
                 hasher.add('i');
             continue;
         }
-        if (c == '"' || c == '\'' || c == '`') {
+        if (c == '`') {
             ++i;
-            while (i < size && text[i] != c)
+            hasher.add('s');
+            while (i < size && text[i] != '`') {
+                if (i == nestedStartFrom())
+                    skipNested();
+                else
+                    i += text[i] == '\\' ? 2 : 1;
+            }
+            ++i;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            ++i;
+            while (i < nestedStart && text[i] != c)
                 i += text[i] == '\\' ? 2 : 1;
-            ++i;
+            i = std::min(i + 1, nestedStart);
             hasher.add('s');
             continue;
         }
@@ -268,13 +303,68 @@ uint64_t orderSourceHash(std::span<const CharacterType> text)
 
 } // namespace
 
-uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset)
+static uint64_t orderSourceHash(StringView source, unsigned startOffset, unsigned endOffset, std::span<const std::pair<unsigned, unsigned>> nestedFunctions)
 {
     endOffset = std::min(endOffset, source.length());
     startOffset = std::min(startOffset, endOffset);
+    Vector<std::pair<size_t, size_t>, 16> nested;
+    for (auto [nestedStart, nestedEnd] : nestedFunctions) {
+        // Strictly inside: the function that initializes a class's fields has the text of the whole scope the class is in.
+        bool isInside = nestedStart >= startOffset && nestedStart < nestedEnd && nestedEnd <= endOffset;
+        if (isInside && nestedEnd - nestedStart < endOffset - startOffset)
+            nested.append({ nestedStart - startOffset, nestedEnd - startOffset });
+    }
+    std::ranges::sort(nested);
     if (source.is8Bit())
-        return orderSourceHash(source.span8().subspan(startOffset, endOffset - startOffset));
-    return orderSourceHash(source.span16().subspan(startOffset, endOffset - startOffset));
+        return orderSourceHash(source.span8().subspan(startOffset, endOffset - startOffset), nested.span());
+    return orderSourceHash(source.span16().subspan(startOffset, endOffset - startOffset), nested.span());
+}
+
+// The function that initializes a class's fields has no text of its own (`source` is the whole scope the class is in):
+// it is named by the fields it defines.
+static uint64_t orderHashOfClassFieldInitializer(const UnlinkedFunctionExecutable& executable)
+{
+    // Reading the definitions of an executable that came out of a cache decodes names the program does not read.
+    BytecodeOrderRecorder::PauseScope notRecorded(executable.vm());
+    OrderHasher hasher;
+    hasher.add(nestedFunctionToken);
+    if (auto* definitions = executable.classElementDefinitions()) {
+        for (auto& definition : *definitions) {
+            hasher.add(static_cast<uint8_t>(definition.kind));
+            // A minifier renames private names like any binding; property names stay.
+            bool nameIsStable = definition.kind != UnlinkedFunctionExecutable::ClassElementDefinition::Kind::FieldWithPrivatePropertyKey && !definition.ident.isNull();
+            uint64_t name = nameIsStable ? bytecodeOrderStringHash(*definition.ident.impl()) : 0;
+            for (unsigned shift = 0; shift < 64; shift += 8)
+                hasher.add(static_cast<uint8_t>(name >> shift));
+        }
+    }
+    return hasher.finish();
+}
+
+uint64_t bytecodeOrderHash(const SourceCode& source, UnlinkedCodeBlock& codeBlock, const UnlinkedFunctionExecutable* function)
+{
+    if (function && function->parseMode() == SourceParseMode::ClassFieldInitializerMode)
+        return orderHashOfClassFieldInitializer(*function);
+    Vector<std::pair<unsigned, unsigned>, 16> nested;
+    auto add = [&](UnlinkedFunctionExecutable* executable) {
+        SourceCode nestedSource = executable->linkedSourceCode(source);
+        if (nestedSource.provider() == source.provider()) // a default constructor's text is a builtin's
+            nested.append({ static_cast<unsigned>(nestedSource.startOffset()), static_cast<unsigned>(nestedSource.endOffset()) });
+    };
+    for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
+        add(codeBlock.functionDecl(i));
+    for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
+        add(codeBlock.functionExpr(i));
+    return orderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset(), nested.span());
+}
+
+// Of a function nested in `scope`. Nullopt if it has no code, generated or cached: nothing of it is placed.
+static std::optional<uint64_t> bytecodeOrderHashOfFunction(VM& vm, UnlinkedFunctionExecutable& executable, const SourceCode& scope)
+{
+    auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
+    if (UnlinkedFunctionCodeBlock* codeBlock = forCall ? forCall : forConstruct)
+        return bytecodeOrderHash(executable.linkedSourceCode(scope), *codeBlock, &executable);
+    return std::nullopt;
 }
 
 // Over the UTF-16 code units, so it does not depend on which width the string happens to be stored in.
@@ -1064,16 +1154,18 @@ public:
     // bodies follow breadth-first, and data that is only read on rare paths (expression info) goes after every body.
     // Decoding one block then reads one contiguous run of the payload rather than records scattered through every
     // descendant's subtree, so a mapped payload pages in only what is decoded.
-    void deferBody(const UnlinkedFunctionExecutable& executable, Function<void()>&& encodeBody)
+    // `codeBlock`: the function's code for call or for construct, null if `encodeBody` has none to encode.
+    void deferBody(const UnlinkedFunctionExecutable& executable, UnlinkedFunctionCodeBlock* codeBlock, Function<void()>&& encodeBody)
     {
 #if USE(BUN_JSC_ADDITIONS)
         if (m_link) {
-            deferLinkedBody(executable, WTF::move(encodeBody));
+            deferLinkedBody(executable, codeBlock, WTF::move(encodeBody));
             return;
         }
 #else
         UNUSED_PARAM(executable);
 #endif
+        UNUSED_PARAM(codeBlock);
         m_bodies.append(WTF::move(encodeBody));
     }
     void deferCold(Function<void()>&& encodeCold)
@@ -1332,14 +1424,14 @@ private:
     // A function's body goes where the order file puts the function: HOT if the recorded run decoded it (and its parent,
     // so that it is reached before the HOT region is complete), UNKNOWN if the recorded build did not have it, COLD
     // otherwise: what the run did not decode, and what is nested in that or belongs to a module it did not evaluate.
-    void deferLinkedBody(const UnlinkedFunctionExecutable& executable, Function<void()>&& encodeBody)
+    void deferLinkedBody(const UnlinkedFunctionExecutable& executable, UnlinkedFunctionCodeBlock* codeBlock, Function<void()>&& encodeBody)
     {
         LinkState& link = *m_link;
         SourceCode source = executable.linkedSourceCode(link.scope);
         LinkClass linkClass = LinkClass::Cold;
         uint64_t rank = static_cast<uint64_t>(link.module) << 32 | static_cast<uint32_t>(source.startOffset());
-        if (link.linkClass <= LinkClass::Unknown) {
-            uint64_t hash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
+        if (codeBlock && link.linkClass <= LinkClass::Unknown) {
+            uint64_t hash = bytecodeOrderHash(source, *codeBlock, &executable);
             if (auto it = link.hotRanks.find(hash); it != link.hotRanks.end()) {
                 // Under an unknown function the HOT region is already complete: the next best place.
                 linkClass = link.linkClass == LinkClass::Unknown ? LinkClass::Unknown : LinkClass::Hot;
@@ -4846,7 +4938,7 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     if (metadata && (!forCall || !forConstruct))
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this)); // CachedBytecode::addFunctionUpdate patches the Updatable layout's slots
 
-    encoder.deferBody(executable, [call, construct, &encoder, forCall, forConstruct] {
+    encoder.deferBody(executable, forCall ? forCall.get() : forConstruct.get(), [call, construct, &encoder, forCall, forConstruct] {
         if (call)
             call->encode(encoder, forCall);
         if (construct)
@@ -5416,8 +5508,15 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     DeferGC deferGC(vm);
     UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), sourceLength, embedderStamp);
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* recorder = executable ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
-        recorder->didDecodeModule(provider);
+    if (auto* recorder = executable ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]] {
+        // The builtin is the module and the function that is about to run: naming it takes its code, which therefore
+        // is not decoded, and recorded, by unlinkedCodeBlockFor().
+        SourceCode source(RefPtr<SourceProvider> { &provider }, 0, sourceLength, 1, 1);
+        if (auto hash = bytecodeOrderHashOfFunction(vm, *executable, source)) {
+            recorder->didDecodeModule(*hash);
+            recorder->didDecodeFunction(*hash);
+        }
+    }
 #endif
     return executable;
 }
@@ -5489,9 +5588,8 @@ struct BytecodeLinkEncoder::Impl {
 
     void add(Module&& module)
     {
-        const SourceCode& source = module.source;
-        uint64_t moduleHash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
-        module.isLate = notEvaluatedModules.contains(moduleHash);
+        auto hash = hashOf(module);
+        module.isLate = hash && notEvaluatedModules.contains(*hash);
         // `root` does not keep its functions' code alive (LinkState::functionCodeBlocks).
         JSCell* root = module.root.get();
         if (root->classInfo() == UnlinkedFunctionExecutable::info())
@@ -5502,6 +5600,16 @@ struct BytecodeLinkEncoder::Impl {
         modules.append(WTF::move(module));
         if (!modules[index].isLate)
             writeHead(index);
+    }
+
+    // What an order file names the module by: its own text, like a function (bytecodeOrderHash). A builtin function is
+    // that function.
+    std::optional<uint64_t> hashOf(const Module& module)
+    {
+        JSCell* root = module.root.get();
+        if (root->classInfo() != UnlinkedFunctionExecutable::info())
+            return bytecodeOrderHash(module.source, *uncheckedDowncast<UnlinkedCodeBlock>(root));
+        return bytecodeOrderHashOfFunction(vm, *uncheckedDowncast<UnlinkedFunctionExecutable>(root), module.source);
     }
 
     void rootCodeOf(UnlinkedFunctionExecutable& executable)
@@ -5615,12 +5723,10 @@ CString bytecodeOrderFileContents()
     // The first VM's first (a program's main thread), then each Worker's.
     for (auto& recorder : BytecodeOrderRecorder::allInProcess()) {
         auto recorded = recorder->snapshot();
-        for (auto& function : recorded.functions)
-            printLine('F', bytecodeOrderSourceHash(function.provider->source(), function.startOffset, function.endOffset), functions);
-        for (auto& provider : recorded.modules) {
-            StringView source = provider->source();
-            printLine('M', bytecodeOrderSourceHash(source, 0, source.length()), modules);
-        }
+        for (uint64_t hash : recorded.functions)
+            printLine('F', hash, functions);
+        for (uint64_t hash : recorded.modules)
+            printLine('M', hash, modules);
         if (recorded.stringOrdinals.isEmpty())
             continue;
         DecoderStringTable table(recorded.stringTable); // a reader of the same bytes that records nothing
@@ -5633,7 +5739,7 @@ CString bytecodeOrderFileContents()
 
 #if USE(BUN_JSC_ADDITIONS)
 static void digestCodeOf(VM&, OrderHasher&, CachedCodeDigest&, UnlinkedFunctionExecutable&);
-static void appendHashesOf(VM&, UnlinkedFunctionExecutable&, const SourceCode& scope, Vector<uint64_t>&);
+static std::optional<uint64_t> appendHashesOf(VM&, UnlinkedFunctionExecutable&, const SourceCode& scope, Vector<uint64_t>&);
 static void appendHashesOfFunctionsIn(VM&, UnlinkedCodeBlock&, const SourceCode& scope, Vector<uint64_t>&);
 
 static void digestCodeBlock(VM& vm, OrderHasher& hasher, CachedCodeDigest& result, UnlinkedCodeBlock& codeBlock)
@@ -5673,16 +5779,21 @@ static void digestCodeOf(VM& vm, OrderHasher& hasher, CachedCodeDigest& result, 
         digestCodeBlock(vm, hasher, result, *forConstruct);
 }
 
-// `executable`'s own hash, then those of the functions in its code; `scope` is the source its offsets are relative to.
-static void appendHashesOf(VM& vm, UnlinkedFunctionExecutable& executable, const SourceCode& scope, Vector<uint64_t>& hashes)
+// `executable`'s own hash, which is returned, then those of the functions in its code; `scope` is the source its offsets
+// are relative to. Nothing for a function without code.
+static std::optional<uint64_t> appendHashesOf(VM& vm, UnlinkedFunctionExecutable& executable, const SourceCode& scope, Vector<uint64_t>& hashes)
 {
-    SourceCode source = executable.linkedSourceCode(scope);
-    hashes.append(bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset()));
     auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
+    if (!forCall && !forConstruct)
+        return std::nullopt;
+    SourceCode source = executable.linkedSourceCode(scope);
+    uint64_t hash = bytecodeOrderHash(source, forCall ? *forCall : *forConstruct, &executable);
+    hashes.append(hash);
     if (forCall)
         appendHashesOfFunctionsIn(vm, *forCall, source, hashes);
     if (forConstruct)
         appendHashesOfFunctionsIn(vm, *forConstruct, source, hashes);
+    return hash;
 }
 
 static void appendHashesOfFunctionsIn(VM& vm, UnlinkedCodeBlock& codeBlock, const SourceCode& scope, Vector<uint64_t>& hashes)
@@ -5696,13 +5807,14 @@ static void appendHashesOfFunctionsIn(VM& vm, UnlinkedCodeBlock& codeBlock, cons
 }
 
 // These four decode all a payload holds: none of it is something the program read (BytecodeOrderRecorder).
-bool appendHashesOfAllCachedFunctions(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode, Vector<uint64_t>& hashes)
+bool appendHashesOfAllCachedFunctions(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode, uint64_t& moduleHash, Vector<uint64_t>& hashes)
 {
     BytecodeOrderRecorder::PauseScope notRecorded(vm);
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
     UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
     if (!codeBlock)
         return false;
+    moduleHash = bytecodeOrderHash(source, *codeBlock);
     appendHashesOfFunctionsIn(vm, *codeBlock, source, hashes);
     return true;
 }
@@ -5720,13 +5832,14 @@ std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const Sourc
     return result;
 }
 
-bool appendHashesOfAllCachedBuiltinFunctions(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode, Vector<uint64_t>& hashes)
+bool appendHashesOfAllCachedBuiltinFunctions(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode, uint64_t& moduleHash, Vector<uint64_t>& hashes)
 {
     BytecodeOrderRecorder::PauseScope notRecorded(vm);
     UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp);
-    if (!executable)
+    auto hash = executable ? appendHashesOf(vm, *executable, source, hashes) : std::nullopt;
+    if (!hash)
         return false;
-    appendHashesOf(vm, *executable, source, hashes);
+    moduleHash = *hash;
     return true;
 }
 
@@ -5794,8 +5907,10 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         return nullptr;
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]]
-        recorder->didDecodeModule(key.source().provider());
+    if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]] {
+        SourceProvider& provider = key.source().provider();
+        recorder->didDecodeModule(bytecodeOrderHash(SourceCode(RefPtr<SourceProvider> { &provider }, 0, provider.source().length(), 1, 1), *entry.second));
+    }
 #endif
 
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]] {
