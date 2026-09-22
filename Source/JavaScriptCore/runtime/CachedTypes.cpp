@@ -38,6 +38,7 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
+#include "StrongInlines.h"
 #include "SourceProvider.h"
 #include "SymbolTableInlines.h"
 #include "UnlinkedEvalCodeBlock.h"
@@ -152,6 +153,123 @@ void Decoder::setAtomForOrdinal(uint32_t ordinal, AtomStringImpl& atom)
 }
 
 // 1- and 2-character inline strings are the bulk of minified identifiers: length 1 is SmallStrings' single-character reps; length 2 hits one lazy 64x64 table on the VM, indexed by identifier character class (shared by every Decoder, not one per retained Decoder); length 3 (module_info's minified import/export names, once past two characters), and length 2 with a character outside those classes, a small direct-mapped cache in front of the atom table.
+#if USE(BUN_JSC_ADDITIONS)
+namespace {
+
+// FNV-1a over the normalised bytes, finished with a 64-bit mix. The top two values are reserved for hash-table sentinels.
+class OrderHasher {
+public:
+    void add(uint8_t byte) { m_state = (m_state ^ byte) * 0x100000001b3ULL; }
+    void add(std::span<const uint8_t> bytes)
+    {
+        for (auto byte : bytes)
+            add(byte);
+    }
+    uint64_t finish() const
+    {
+        uint64_t h = m_state;
+        h ^= h >> 33;
+        h *= 0xff51afd7ed558ccdULL;
+        h ^= h >> 33;
+        h *= 0xc4ceb9fe1a85ec53ULL;
+        h ^= h >> 33;
+        return std::min<uint64_t>(h, std::numeric_limits<uint64_t>::max() - 2);
+    }
+
+private:
+    uint64_t m_state { 0xcbf29ce484222325ULL };
+};
+
+// Sorted. A run that spells one of these is hashed as itself; every other identifier-like run hashes as 'i'.
+constexpr std::array reservedWordsForOrderHash = std::to_array<ASCIILiteral>({
+    "async"_s, "await"_s, "break"_s, "case"_s, "catch"_s, "class"_s, "const"_s, "continue"_s, "debugger"_s, "default"_s,
+    "delete"_s, "do"_s, "else"_s, "export"_s, "extends"_s, "false"_s, "finally"_s, "for"_s, "function"_s, "get"_s, "if"_s,
+    "import"_s, "in"_s, "instanceof"_s, "let"_s, "new"_s, "null"_s, "of"_s, "return"_s, "set"_s, "static"_s, "super"_s,
+    "switch"_s, "this"_s, "throw"_s, "true"_s, "try"_s, "typeof"_s, "var"_s, "void"_s, "while"_s, "with"_s, "yield"_s,
+});
+
+template<typename CharacterType>
+uint64_t orderSourceHash(std::span<const CharacterType> text)
+{
+    auto isIdentifierPart = [](CharacterType c) { return isASCIIAlphanumeric(c) || c == '_' || c == '$' || c >= 0x80; };
+    OrderHasher hasher;
+    size_t i = 0;
+    size_t size = text.size();
+    while (i < size) {
+        CharacterType c = text[i];
+        if (c <= ' ') {
+            ++i;
+            continue;
+        }
+        if (isASCIIDigit(c)) {
+            while (i < size && (isIdentifierPart(text[i]) || text[i] == '.'))
+                ++i;
+            hasher.add('0');
+            continue;
+        }
+        if (isIdentifierPart(c)) {
+            size_t begin = i;
+            while (i < size && isIdentifierPart(text[i]))
+                ++i;
+            auto run = text.subspan(begin, i - begin);
+            bool isReserved = false;
+            if (run.size() <= 10) {
+                for (auto word : reservedWordsForOrderHash) {
+                    if (word.length() == run.size() && std::ranges::equal(word.span8(), run, [](auto a, auto b) { return static_cast<CharacterType>(a) == b; })) {
+                        hasher.add(word.span8());
+                        isReserved = true;
+                        break;
+                    }
+                }
+            }
+            if (!isReserved)
+                hasher.add('i');
+            continue;
+        }
+        if (c == '"' || c == '\'' || c == '`') {
+            ++i;
+            while (i < size && text[i] != c)
+                i += text[i] == '\\' ? 2 : 1;
+            ++i;
+            hasher.add('s');
+            continue;
+        }
+        hasher.add(static_cast<uint8_t>(c));
+        ++i;
+    }
+    return hasher.finish();
+}
+
+} // namespace
+
+uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset)
+{
+    endOffset = std::min(endOffset, source.length());
+    startOffset = std::min(startOffset, endOffset);
+    if (source.is8Bit())
+        return orderSourceHash(source.span8().subspan(startOffset, endOffset - startOffset));
+    return orderSourceHash(source.span16().subspan(startOffset, endOffset - startOffset));
+}
+
+// Over the UTF-16 code units, so it does not depend on which width the string happens to be stored in.
+uint64_t bytecodeOrderStringHash(const StringImpl& string)
+{
+    OrderHasher hasher;
+    auto addUnit = [&](char16_t unit) {
+        hasher.add(static_cast<uint8_t>(unit));
+        hasher.add(static_cast<uint8_t>(unit >> 8));
+    };
+    if (string.is8Bit()) {
+        for (auto c : string.span8())
+            addUnit(c);
+    } else {
+        for (auto c : string.span16())
+            addUnit(c);
+    }
+    return hasher.finish();
+}
+#endif
+
 static std::span<const Latin1Character> inlineStringCharacters(std::span<const uint8_t, 4> slot)
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
@@ -269,10 +387,31 @@ uint32_t EncoderStringTable::slotFor(const StringImpl& string)
 }
 
 // [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
-Vector<uint8_t> EncoderStringTable::serialize() const
+Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStringHashes) const
 {
     Vector<uint8_t> out;
     uint32_t count = static_cast<uint32_t>(m_strings.size());
+    // The order the records are written in: ordinal order, unless an order file names strings to put first.
+    Vector<uint32_t> order;
+    if (!hotStringHashes.empty()) {
+        UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> rankByHash;
+        for (uint32_t rank = 0; rank < hotStringHashes.size(); ++rank)
+            rankByHash.add(hotStringHashes[rank], rank);
+        Vector<std::pair<uint32_t, uint32_t>> hot; // rank, ordinal
+        Vector<uint32_t> rest;
+        for (uint32_t i = 0; i < count; ++i) {
+            auto it = rankByHash.find(bytecodeOrderStringHash(m_strings[i].get()));
+            if (it != rankByHash.end())
+                hot.append({ it->value, i });
+            else
+                rest.append(i);
+        }
+        std::ranges::sort(hot);
+        order.reserveInitialCapacity(count);
+        for (auto [rank, ordinal] : hot)
+            order.append(ordinal);
+        order.appendVector(rest);
+    }
     size_t header = sizeof(uint32_t) * (1 + static_cast<size_t>(count));
     size_t body = 0;
     for (auto& s : m_strings)
@@ -282,7 +421,8 @@ Vector<uint8_t> EncoderStringTable::serialize() const
     uint32_t* words = std::bit_cast<uint32_t*>(out.mutableSpan().data());
     words[0] = count;
     size_t offset = header;
-    for (uint32_t i = 0; i < count; ++i) {
+    for (uint32_t position = 0; position < count; ++position) {
+        uint32_t i = order.isEmpty() ? position : order[position];
         words[1 + i] = static_cast<uint32_t>(offset);
         const StringImpl& s = m_strings[i].get();
         uint32_t* record = std::bit_cast<uint32_t*>(out.mutableSpan().data() + offset);
@@ -874,7 +1014,18 @@ public:
     // bodies follow breadth-first, and data that is only read on rare paths (expression info) goes after every body.
     // Decoding one block then reads one contiguous run of the payload rather than records scattered through every
     // descendant's subtree, so a mapped payload pages in only what is decoded.
-    void deferBody(Function<void()>&& encodeBody) { m_bodies.append(WTF::move(encodeBody)); }
+    void deferBody(const UnlinkedFunctionExecutable& executable, Function<void()>&& encodeBody)
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_link) {
+            deferLinkedBody(executable, WTF::move(encodeBody));
+            return;
+        }
+#else
+        UNUSED_PARAM(executable);
+#endif
+        m_bodies.append(WTF::move(encodeBody));
+    }
     void deferCold(Function<void()>&& encodeCold) { m_cold.append(WTF::move(encodeCold)); }
     void encodeDeferred()
     {
@@ -885,6 +1036,66 @@ public:
             RELEASE_ASSERT(m_bodies.isEmpty());
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // BytecodeLinkEncoder: bodies of every module of the link wait in two queues and are written region by region.
+    struct LinkedBody {
+        uint64_t rank; // HOT: the order file's; otherwise module index, then source offset (source pre-order)
+        uint64_t sequence;
+        unsigned module;
+        bool isHot;
+        SourceCode source;
+        Function<void()> encode;
+        bool operator>(const LinkedBody& other) const { return rank != other.rank ? rank > other.rank : sequence > other.sequence; }
+    };
+    struct LinkState {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LinkState);
+        UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> hotRanks;
+        Vector<LinkedBody> hot; // min-heaps on (rank, sequence)
+        Vector<LinkedBody> cold;
+        uint64_t nextSequence { 0 };
+        // What is being encoded right now: functions met there are its children.
+        unsigned module { 0 };
+        SourceCode scope;
+        bool childrenMayBeHot { false };
+        bool hotRegionIsClosed { false };
+    };
+    void beginLink(std::span<const uint64_t> hotFunctions)
+    {
+        m_link = makeUnique<LinkState>();
+        for (uint32_t rank = 0; rank < hotFunctions.size(); ++rank)
+            m_link->hotRanks.add(hotFunctions[rank], rank);
+    }
+    // Top-level code of module `module` is about to be encoded.
+    void enterLinkedModule(unsigned module, const SourceCode& source, bool childrenMayBeHot)
+    {
+        m_link->module = module;
+        m_link->scope = source;
+        m_link->childrenMayBeHot = childrenMayBeHot && !m_link->hotRegionIsClosed;
+    }
+    void encodeLinkedBodies(bool hot)
+    {
+        auto& queue = hot ? m_link->hot : m_link->cold;
+        while (!queue.isEmpty()) {
+            std::ranges::pop_heap(queue, std::greater<> { });
+            LinkedBody body = queue.takeLast();
+            m_link->module = body.module;
+            m_link->scope = body.source;
+            m_link->childrenMayBeHot = body.isHot;
+            body.encode();
+        }
+        if (hot)
+            m_link->hotRegionIsClosed = true;
+    }
+    void encodeLinkedCold()
+    {
+        RELEASE_ASSERT(m_link->hot.isEmpty() && m_link->cold.isEmpty());
+        while (!m_cold.isEmpty())
+            m_cold.takeFirst()();
+        RELEASE_ASSERT(m_link->hot.isEmpty() && m_link->cold.isEmpty());
+    }
+    void alignCurrentPageEnd() { m_currentPage->alignEnd(); }
+#endif
     uint32_t nextStringOrdinal() { return m_numberStrings ? m_nextStringOrdinal++ : std::numeric_limits<uint32_t>::max(); }
 
     // Content-sharing of arrays is only on while a code block encodes the arrays that may lie outside the block's own region.
@@ -1012,6 +1223,26 @@ private:
         ptrdiff_t m_offset { 0 };
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    void deferLinkedBody(const UnlinkedFunctionExecutable& executable, Function<void()>&& encodeBody)
+    {
+        LinkState& link = *m_link;
+        SourceCode source = executable.linkedSourceCode(link.scope);
+        bool isHot = false;
+        uint64_t rank = static_cast<uint64_t>(link.module) << 32 | static_cast<uint32_t>(source.startOffset());
+        if (link.childrenMayBeHot) {
+            auto it = link.hotRanks.find(bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset()));
+            if (it != link.hotRanks.end()) {
+                isHot = true;
+                rank = it->value;
+            }
+        }
+        auto& queue = isHot ? link.hot : link.cold;
+        queue.append(LinkedBody { rank, link.nextSequence++, link.module, isHot, WTF::move(source), WTF::move(encodeBody) });
+        std::ranges::push_heap(queue, std::greater<> { });
+    }
+#endif
+
     void allocateNewPage(size_t size = 0)
     {
         static constexpr size_t minPageSize = encoderMinPageSize;
@@ -1046,6 +1277,9 @@ private:
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<LinkState> m_link;
+#endif
 };
 
 Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
@@ -4497,7 +4731,7 @@ ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const Unli
     if (metadata && (!forCall || !forConstruct))
         encoder.addLeafExecutable(&executable, encoder.offsetOf(this)); // CachedBytecode::addFunctionUpdate patches the Updatable layout's slots
 
-    encoder.deferBody([call, construct, &encoder, forCall, forConstruct] {
+    encoder.deferBody(executable, [call, construct, &encoder, forCall, forConstruct] {
         if (call)
             call->encode(encoder, forCall);
         if (construct)
@@ -5073,6 +5307,111 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
     return encodeCodeBlock(vm, key, codeBlock, invalidFileHandle, error, externalStrings, updatable);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeLinkEncoder);
+
+struct BytecodeLinkEncoder::Impl {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
+
+    struct Module {
+        SourceCodeKey key;
+        Strong<UnlinkedCodeBlock> codeBlock; // and with it every function's code, which the queued bodies point into
+        SourceCode source;
+        bool isLate;
+        GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
+        uint32_t entryOffset { 0 };
+    };
+
+    Impl(VM& vm, EncoderStringTable* strings)
+        : vm(vm)
+        , deferGC(vm)
+        , encoder(vm, fileHandle, Encoder::NumberStrings::Yes, strings, BytecodeCacheUpdatable::No)
+    {
+    }
+
+    void writeHead(unsigned index)
+    {
+        Module& module = modules[index];
+        encoder.enterLinkedModule(index, module.source, !module.isLate);
+        const ClassInfo* classInfo = module.codeBlock->classInfo();
+        if (classInfo == UnlinkedProgramCodeBlock::info())
+            module.entry = encodeCodeBlock<UnlinkedProgramCodeBlock>(encoder, module.key, module.codeBlock.get());
+        else {
+            RELEASE_ASSERT(classInfo == UnlinkedModuleProgramCodeBlock::info());
+            module.entry = encodeCodeBlock<UnlinkedModuleProgramCodeBlock>(encoder, module.key, module.codeBlock.get());
+        }
+        module.entryOffset = safeCast<uint32_t>(encoder.offsetOf(module.entry));
+    }
+
+    VM& vm;
+    // Queued bodies point at function code blocks, which a collection may drop from a live executable
+    // (UnlinkedFunctionExecutable::codeBlockEdgeMayBeWeak). Everything generated is kept until finish() anyway.
+    DeferGC deferGC;
+    FileSystem::FileHandle fileHandle; // invalid: the payload is built in memory
+    Encoder encoder;
+    Vector<Module> modules;
+    UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> notEvaluatedModules;
+};
+
+BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hints&& hints)
+    : m_impl(makeUnique<Impl>(vm, strings))
+{
+    m_impl->encoder.beginLink(hints.hotFunctions.span());
+    for (uint64_t hash : hints.notEvaluatedModules)
+        m_impl->notEvaluatedModules.add(hash);
+    // A module the run both evaluated and (as a duplicate) did not counts as evaluated.
+    for (uint64_t hash : hints.evaluatedModules)
+        m_impl->notEvaluatedModules.remove(hash);
+}
+
+BytecodeLinkEncoder::~BytecodeLinkEncoder() = default;
+
+void BytecodeLinkEncoder::addModule(const SourceCodeKey& key, UnlinkedCodeBlock* codeBlock, const SourceCode& source)
+{
+    uint64_t moduleHash = bytecodeOrderSourceHash(source.provider()->source(), source.startOffset(), source.endOffset());
+    bool isLate = m_impl->notEvaluatedModules.contains(moduleHash);
+    unsigned index = m_impl->modules.size();
+    m_impl->modules.append(Impl::Module { key, Strong<UnlinkedCodeBlock>(m_impl->vm, codeBlock), source, isLate });
+    if (!isLate)
+        m_impl->writeHead(index);
+}
+
+auto BytecodeLinkEncoder::finish() -> Result
+{
+    Result result;
+    Encoder& encoder = m_impl->encoder;
+    auto closeRegion = [&](unsigned region) {
+        result.regionEnds[region] = safeCast<uint32_t>(encoder.currentOffset());
+    };
+    closeRegion(0);
+    encoder.encodeLinkedBodies(true);
+    closeRegion(1);
+    closeRegion(2);
+    for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
+        if (m_impl->modules[index].isLate)
+            m_impl->writeHead(index);
+    }
+    closeRegion(3);
+    encoder.encodeLinkedBodies(false);
+    closeRegion(4);
+    encoder.encodeLinkedCold();
+    // Every module's entry records the size of the payload they share: a Decoder is made over all of it, so one whose
+    // span is shorter than that is a miss for every module, as for a payload of one module (GenericCacheEntry::isUpToDate).
+    encoder.alignCurrentPageEnd();
+    uint32_t payloadSize = safeCast<uint32_t>(encoder.currentOffset());
+    for (auto& module : m_impl->modules)
+        *module.entry->payloadSizeSlot() = payloadSize;
+    BytecodeCacheError error;
+    result.payload = encoder.release(error);
+    RELEASE_ASSERT(result.payload && result.payload->size() == payloadSize && payloadSize <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
+    result.regionEnds[5] = safeCast<uint32_t>(result.payload->size());
+    for (auto& module : m_impl->modules)
+        result.entryOffsets.append(module.entryOffset);
+    m_impl->modules.clear();
+    return result;
+}
+#endif
+
 RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
     FileSystem::FileHandle invalidFileHandle;
@@ -5085,15 +5424,26 @@ RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCod
     return result;
 }
 
+// Null if the payload is too small to hold one.
+static const GenericCacheEntry* cacheEntryOf(const CachedBytecode& cachedBytecode)
+{
+    auto span = cachedBytecode.span();
+    size_t entryOffset = 0;
+#if USE(BUN_JSC_ADDITIONS)
+    entryOffset = cachedBytecode.entryOffset();
+#endif
+    if (span.size() < entryOffset || span.size() - entryOffset < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
+        return nullptr;
+    return std::bit_cast<const GenericCacheEntry*>(span.data() + entryOffset);
+}
+
 std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cachedBytecode)
 {
-    if (cachedBytecode->size() < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
-        return std::nullopt;
-    const auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
+    const auto* cachedEntry = cacheEntryOf(cachedBytecode.get());
     Ref<Decoder> decoder = Decoder::create(vm, WTF::move(cachedBytecode));
 
     SourceCodeKey key;
-    if (!cachedEntry->decode(decoder.get(), key))
+    if (!cachedEntry || !cachedEntry->decode(decoder.get(), key))
         return std::nullopt;
     return key;
 }
@@ -5104,9 +5454,9 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (Options::reportBytecodeCacheDecodeTimes()) [[unlikely]]
         before = MonotonicTime::now();
 
-    if (cachedBytecodeSize < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
+    auto* cachedEntry = cacheEntryOf(cachedBytecode.get());
+    if (!cachedEntry)
         return nullptr;
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()
     // goes with this Decoder and the code blocks it made.)
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider(), recoverableCode);
@@ -5129,10 +5479,9 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
 
 bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, const SourceCodeKey& key, SourceCodeType type)
 {
-    auto span = cachedBytecode->span();
-    if (span.size() < sizeof(CacheEntry<UnlinkedProgramCodeBlock>))
+    auto* cachedEntry = cacheEntryOf(cachedBytecode.get());
+    if (!cachedEntry)
         return false;
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(span.data());
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
 }

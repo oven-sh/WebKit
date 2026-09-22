@@ -84,6 +84,12 @@ public:
     // Where the root record starts within the payload (a function code block is written after its own arrays).
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Where this code's cache entry starts within the payload. Non-zero when several modules were encoded into one
+    // payload (BytecodeLinkEncoder): every offset a Decoder keeps stays relative to the start of the shared payload.
+    size_t entryOffset() const { return m_entryOffset; }
+    void setEntryOffset(size_t offset) { m_entryOffset = offset; }
+#endif
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
@@ -102,6 +108,9 @@ private:
     size_t m_size { 0 };
     CachePayload m_payload;
     size_t m_rootOffset { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_entryOffset { 0 };
+#endif
     LeafExecutableMap m_leafExecutables;
     Vector<CacheUpdate> m_updates;
 };

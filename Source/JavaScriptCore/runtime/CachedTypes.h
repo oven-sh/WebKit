@@ -36,12 +36,17 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <array>
 #include <optional>
+#include <span>
+#include <wtf/Vector.h>
+#include <wtf/text/StringView.h>
 
 namespace JSC {
 
 class BytecodeCacheError;
 class CachedBytecode;
+class SourceCode;
 class SourceCodeKey;
 class SourceProvider;
 class CachedSymbolTable;
@@ -91,7 +96,9 @@ public:
     // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
     // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
-    JS_EXPORT_PRIVATE Vector<uint8_t> serialize() const;
+    // `hotStringHashes` (bytecodeOrderStringHash values, hottest first; from a payload order file) moves those strings'
+    // records to the front, in that order; the rest follow in ordinal order. The offsets array stays indexed by ordinal.
+    JS_EXPORT_PRIVATE Vector<uint8_t> serialize(std::span<const uint64_t> hotStringHashes = { }) const;
     static constexpr uint32_t maxOrdinal = (1u << 30) - 1;
 private:
     UncheckedKeyHashMap<String, uint32_t> m_ordinals;
@@ -302,6 +309,51 @@ private:
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
+
+#if USE(BUN_JSC_ADDITIONS)
+// Payload order file identities. Both are computed the same way by the build that consumes an order file and by the run
+// that records one, and deliberately name no module (chunk names are content hashes).
+// A function: its source text [startOffset, endOffset) of `source` (UnlinkedFunctionExecutable::linkedSourceCode) with
+// identifier-like runs that are not reserved words, digit runs and string contents each collapsed to one character and
+// whitespace dropped, so a rename by the minifier keeps the identity. A module: the same over its whole source.
+JS_EXPORT_PRIVATE uint64_t bytecodeOrderSourceHash(StringView source, unsigned startOffset, unsigned endOffset);
+JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
+
+// `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
+// out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:
+//   0 heads (cache entry, key, top-level code, its functions' records) of modules the run evaluated, or did not know
+//   1 HOT bodies, in the order file's order   2 (reserved: bodies the recorded build did not have)
+//   3 heads of modules the run knew and did not evaluate   4 all other bodies, in source order   5 expression info.
+// So every offset is final when it is written: a reference to something earlier is a plain delta, and a function
+// record's body slots and a code block's expression-info slot are filled in when their target is written, as in a
+// single-module payload. Every module's unlinked code stays alive until finish().
+class BytecodeLinkEncoder {
+    WTF_MAKE_NONCOPYABLE(BytecodeLinkEncoder);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
+public:
+    struct Hints {
+        Vector<uint64_t> hotFunctions; // bytecodeOrderSourceHash, first-decode order
+        Vector<uint64_t> evaluatedModules;
+        Vector<uint64_t> notEvaluatedModules;
+    };
+    static constexpr unsigned numberOfRegions = 6;
+    struct Result {
+        RefPtr<CachedBytecode> payload;
+        Vector<uint32_t> entryOffsets; // per addModule call, in call order
+        std::array<uint32_t, numberOfRegions> regionEnds { };
+    };
+
+    JS_EXPORT_PRIVATE BytecodeLinkEncoder(VM&, EncoderStringTable*, Hints&&);
+    JS_EXPORT_PRIVATE ~BytecodeLinkEncoder();
+    // `source` is the whole module, as given to the parser; the code block is a module's or a program's.
+    JS_EXPORT_PRIVATE void addModule(const SourceCodeKey&, UnlinkedCodeBlock*, const SourceCode&);
+    JS_EXPORT_PRIVATE Result finish();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
+#endif
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
 
