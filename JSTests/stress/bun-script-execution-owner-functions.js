@@ -1,7 +1,22 @@
 //@ skip unless $buildType == "release" or $buildType == "relassert"
-//@ defaultRun
-//@ runNoFTL
+// What defaultRun runs, without the bytecode cache: a module of a loader that has bindings (as these do, to say what is
+// current) is not written to the disk cache, so --forceDiskCache has nothing to find for it.
+//@ runDefault
+//@ runNoJIT
 //@ runNoLLInt
+//@ runNoFTL
+//@ runNoCJITValidatePhases
+//@ runDFGEager
+//@ runDFGEagerNoCJITValidate
+//@ runEagerJettisonNoCJIT
+//@ runFTLEager
+//@ runFTLEagerNoCJITValidate
+//@ runFTLNoCJITSmallPool
+//@ runFTLNoCJITValidate
+//@ runFTLNoCJITNoPutStackValidate
+//@ runFTLNoCJITNoInlineValidate
+//@ runMiniMode
+//@ runLockdown
 
 // A script execution owner is a module loader's scope that is a JSScriptExecutionOwnerEnvironment. A
 // function of script made under it runs with it current, whoever calls it (op_enter, CodeBlock::scriptExecutionOwnerDepth()): called
