@@ -15289,8 +15289,6 @@ IGNORE_CLANG_WARNINGS_END
 
         FFI::g_ffiCompileCounts.ftlCallFFI++; // spec 11.2: proves an FFI call reached the FTL.
 
-        FFI::FFIContext& context = globalObject->ffiContext();
-
         LValue slots = m_out.lockedStackSlot(signature.slotBufferBytes());
         auto slotOffset = [](unsigned index) -> ptrdiff_t {
             return static_cast<ptrdiff_t>(index * FFI::slotSize);
@@ -15425,10 +15423,10 @@ IGNORE_CLANG_WARNINGS_END
                 auto emitSlowConversion = [&] {
                     if (needsArena) {
                         callPreflight();
-                        LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                        LValue exception = m_out.call(toOperationType(Void), m_out.operation(operationFFIWriteSlot), weakPointer(globalObject), weakPointer(ffiFunction), typeTag, value, slotAddress(i));
                         exceptionCheckWithArenaExit(exception);
                     } else
-                        vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), m_out.constIntPtr(&context), typeTag, value, slotAddress(i));
+                        vmCall(Void, operationFFIWriteSlot, weakPointer(globalObject), weakPointer(ffiFunction), typeTag, value, slotAddress(i));
                 };
 
                 bool numbersInline = type == FFI::Type::Pointer || type == FFI::Type::CString || type == FFI::Type::Function;

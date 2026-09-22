@@ -29,12 +29,13 @@
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
 
+#include "CodeLocation.h"
+#include "JITCode.h"
 #include <wtf/Forward.h>
 #include <wtf/RefPtr.h>
 
 namespace JSC {
 
-class JITCode;
 class JSGlobalObject;
 class VM;
 
@@ -42,7 +43,21 @@ namespace FFI {
 
 class Signature;
 
-RefPtr<JITCode> generateICStubCode(VM&, JSGlobalObject*, Signature&, void* target);
+// The stub bakes the target in, and callers link straight to its entry, so a closed function cannot be
+// kept out of it by a check the callers make. close() overwrites the start of the fast path with a jump
+// to the stub's slow path, which reaches ffiCall() and throws. An open function pays nothing for this.
+class ICStubCode final : public DirectJITCode {
+public:
+    ICStubCode(CodeRef<JSEntryPtrTag>, CodeLocationLabel<JSInternalPtrTag> fastPath, CodeLocationLabel<JSInternalPtrTag> slowPath);
+
+    void close();
+
+private:
+    CodeLocationLabel<JSInternalPtrTag> m_fastPath;
+    CodeLocationLabel<JSInternalPtrTag> m_slowPath;
+};
+
+RefPtr<ICStubCode> generateICStubCode(VM&, JSGlobalObject*, Signature&, void* target);
 
 } } // namespace JSC::FFI
 
