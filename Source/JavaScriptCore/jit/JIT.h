@@ -425,6 +425,8 @@ namespace JSC {
         void emit_op_jneq_null(const JSInstruction*);
         void emit_op_jundefined_or_null(const JSInstruction*);
         void emit_op_jcurrent_script_execution_owner(const JSInstruction*);
+        void emit_op_get_script_execution_owner(const JSInstruction*);
+        template<typename Op> void emitLoadScriptExecutionOwner(const Op&, GPRReg ownerGPR, GPRReg scratchGPR, JumpList& noOwner);
         void emit_op_jnundefined_or_null(const JSInstruction*);
         void emit_op_jeq_ptr(const JSInstruction*);
         void emit_op_jneq_ptr(const JSInstruction*);

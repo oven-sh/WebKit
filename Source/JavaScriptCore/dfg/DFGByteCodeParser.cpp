@@ -587,6 +587,7 @@ private:
 
     bool handleInByAsMatchStructure(VirtualRegister destination, Node* base, InByStatus);
     void handleInById(VirtualRegister destination, Node* base, CacheableIdentifier, InByStatus, BytecodeIndex osrExitIndex);
+    Node* scriptExecutionOwner(unsigned depth);
     void handleGetScope(VirtualRegister destination);
     void handleCheckTraps();
 
@@ -1638,6 +1639,12 @@ private:
         Vector<ArgumentPosition*> m_argumentPositions;
         
         InlineStackEntry* const m_caller;
+
+        // Where this frame's code's own bytecode starts, after what op_jcurrent_script_execution_owner falls through to;
+        // and, when that is not to be parsed (op_get_script_execution_owner), where parsing goes on.
+        unsigned m_scriptExecutionOwnerPrologueEnd { 0 };
+        unsigned m_skipParsingUntil { 0 };
+        bool m_skipsScriptExecutionOwnerPrologue { false };
         
         InlineStackEntry(
             ByteCodeParser*,
@@ -7807,6 +7814,26 @@ void ByteCodeParser::handleInById(VirtualRegister destination, Node* base, Cache
     set(destination, addToGraph(InById, OpInfo(identifier), base));
 }
 
+// The script execution owner of the code being parsed: the scope `depth` up from the callee's, or null when the code has
+// none (op_jcurrent_script_execution_owner).
+Node* ByteCodeParser::scriptExecutionOwner(unsigned depth)
+{
+    if (depth == UINT_MAX)
+        return nullptr;
+    Node* callee = get(VirtualRegister(CallFrameSlot::callee));
+    if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>()) {
+        // A scope's next scope never changes: the owner of a known function is known.
+        JSScope* scope = function->scope();
+        for (unsigned i = 0; i < depth; ++i)
+            scope = scope->next();
+        return weakJSConstant(scope);
+    }
+    Node* scope = addToGraph(GetScope, callee);
+    for (unsigned i = 0; i < depth; ++i)
+        scope = addToGraph(SkipScope, scope);
+    return scope;
+}
+
 void ByteCodeParser::handleGetScope(VirtualRegister destination)
 {
     Node* callee = get(VirtualRegister(CallFrameSlot::callee));
@@ -9840,6 +9867,14 @@ void ByteCodeParser::parseBlock(unsigned limit)
             ASSERT(!m_currentBlock->terminal());
             auto bytecode = currentInstruction->as<OpJmp>();
             int relativeOffset = jumpTarget(bytecode.m_targetLabel);
+            if (m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue && m_currentIndex.offset() + relativeOffset < m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd) {
+                // Into bytecode that was not parsed (op_get_script_execution_owner): the jump that ends the exception
+                // handler of the path that makes the call again, which the generator puts after the function's code.
+                addToGraph(ForceOSRExit);
+                flushForTerminal();
+                addToGraph(Unreachable);
+                LAST_OPCODE(op_jmp);
+            }
             addToGraph(Jump, OpInfo(m_currentIndex.offset() + relativeOffset));
             if (relativeOffset <= 0)
                 flushForTerminal();
@@ -10413,27 +10448,50 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
         case op_jcurrent_script_execution_owner: {
             auto bytecode = currentInstruction->as<OpJcurrentScriptExecutionOwner>();
-            auto& metadata = bytecode.metadata(codeBlock);
             unsigned taken = m_currentIndex.offset() + jumpTarget(bytecode.m_targetLabel);
-            if (metadata.m_depth == UINT_MAX) {
+            Node* owner = scriptExecutionOwner(bytecode.metadata(codeBlock).m_depth);
+            if (!owner) {
                 // Code with no script execution owner: nothing to compare.
                 addToGraph(Jump, OpInfo(taken));
                 LAST_OPCODE(op_jcurrent_script_execution_owner);
             }
-            Node* callee = get(VirtualRegister(CallFrameSlot::callee));
-            Node* scope;
-            if (JSFunction* function = callee->dynamicCastConstant<JSFunction*>())
-                scope = weakJSConstant(function->scope());
-            else
-                scope = addToGraph(GetScope, callee);
-            for (unsigned i = 0; i < metadata.m_depth; ++i)
-                scope = addToGraph(SkipScope, scope);
-            Node* owner = addToGraph(GetClosureVar, OpInfo(metadata.m_offset), OpInfo(SpecObject), scope);
-            Node* asyncContextData = weakJSConstant(codeBlock->globalObject()->asyncContextData());
-            Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObject | SpecOther), asyncContextData);
+            m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd = taken;
+            Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->asyncContextData()));
+            if (owner->isCellConstant()) {
+                // Until the path that makes the call again has run (op_get_script_execution_owner, the next instruction), a
+                // known owner is checked for and that path is not parsed. A check of something a loop does not change
+                // leaves the loop; a branch stays in it.
+                auto next = codeBlock->instructions().at(m_currentIndex.offset() + currentInstruction->size());
+                ASSERT(next->is<OpGetScriptExecutionOwner>());
+                if (!next->as<OpGetScriptExecutionOwner>().metadata(codeBlock).m_hasRun) {
+                    addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
+                    addToGraph(Jump, OpInfo(taken));
+                    m_inlineStackTop->m_skipParsingUntil = taken;
+                    m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue = true;
+                    LAST_OPCODE(op_jcurrent_script_execution_owner);
+                }
+            }
             Node* condition = addToGraph(CompareStrictEq, owner, current);
             addToGraph(Branch, OpInfo(branchData(taken, m_currentIndex.offset() + currentInstruction->size())), condition);
             LAST_OPCODE(op_jcurrent_script_execution_owner);
+        }
+
+        case op_get_script_execution_owner: {
+            auto bytecode = currentInstruction->as<OpGetScriptExecutionOwner>();
+            // The first instruction of the path that makes the call again. Until that path has run, it is an exit and
+            // the rest of it is not parsed (parseCodeBlock): it forwards the arguments, and parsing that makes every
+            // argument of this function boxed and, where the function is inlined, stored to the stack at each call.
+            if (!bytecode.metadata(codeBlock).m_hasRun) {
+                addToGraph(ForceOSRExit);
+                flushForTerminal();
+                addToGraph(Unreachable);
+                m_inlineStackTop->m_skipParsingUntil = m_inlineStackTop->m_scriptExecutionOwnerPrologueEnd;
+                m_inlineStackTop->m_skipsScriptExecutionOwnerPrologue = true;
+                LAST_OPCODE(op_get_script_execution_owner);
+            }
+            Node* owner = scriptExecutionOwner(bytecode.metadata(codeBlock).m_depth);
+            set(bytecode.m_dst, owner ? owner : addToGraph(JSConstant, OpInfo(m_constantUndefined)));
+            NEXT_OPCODE(op_get_script_execution_owner);
         }
 
         case op_jeq_ptr: {
@@ -11824,6 +11882,15 @@ void ByteCodeParser::parseCodeBlock()
             }
 
             parseBlock(limit);
+
+            if (unsigned end = std::exchange(m_inlineStackTop->m_skipParsingUntil, 0)) {
+                // `end` is a jump target, op_jcurrent_script_execution_owner's: the blocks before it are not parsed.
+                ASSERT(m_currentBlock->terminal());
+                m_currentIndex = BytecodeIndex(end);
+                while (jumpTargets[jumpTargetIndex] < end)
+                    ++jumpTargetIndex;
+                limit = end;
+            }
 
             // We should not have gone beyond the limit.
             ASSERT(m_currentIndex.offset() <= limit);

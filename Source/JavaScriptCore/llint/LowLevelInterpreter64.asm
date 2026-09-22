@@ -877,26 +877,29 @@ llintOpWithReturn(op_argument_count, OpArgumentCount, macro (size, get, dispatch
 end)
 
 
-# Jumps when this function's code has no script execution owner, or its owner is the current one.
-llintOpWithMetadata(op_jcurrent_script_execution_owner, OpJcurrentScriptExecutionOwner, macro (size, get, dispatch, metadata, return)
-    metadata(t5, t0)
-    # depth UINT_MAX: no owner. depth + 1 is 0 for it, and the number of scopes to look at otherwise.
-    loadi OpJcurrentScriptExecutionOwner::Metadata::m_depth[t5], t2
+# t0 := this code's script execution owner: the scope m_depth up from the callee's. Jumps to noOwner when the code has
+# none (m_depth is UINT_MAX, so m_depth + 1 is 0 for it). Expects the metadata in t5; clobbers t2.
+macro loadScriptExecutionOwner(opcodeStruct, noOwner)
+    loadi %opcodeStruct%::Metadata::m_depth[t5], t2
     addi 1, t2
-    btiz t2, .opJcurrentScriptExecutionOwnerTarget
+    btiz t2, noOwner
     loadp Callee[cfr], t0
     loadp JSCallee::m_scope[t0], t0
     subi 1, t2
-    btiz t2, .opJcurrentScriptExecutionOwnerFound
+    btiz t2, .loadScriptExecutionOwnerDone
 
-.opJcurrentScriptExecutionOwnerLoop:
+.loadScriptExecutionOwnerLoop:
     loadp JSScope::m_next[t0], t0
     subi 1, t2
-    btinz t2, .opJcurrentScriptExecutionOwnerLoop
+    btinz t2, .loadScriptExecutionOwnerLoop
 
-.opJcurrentScriptExecutionOwnerFound:
-    loadi OpJcurrentScriptExecutionOwner::Metadata::m_offset[t5], t1
-    loadq JSLexicalEnvironment_variables[t0, t1, 8], t0
+.loadScriptExecutionOwnerDone:
+end
+
+# Jumps when this function's code has no script execution owner, or its owner is the current one.
+llintOpWithMetadata(op_jcurrent_script_execution_owner, OpJcurrentScriptExecutionOwner, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    loadScriptExecutionOwner(OpJcurrentScriptExecutionOwner, .opJcurrentScriptExecutionOwnerTarget)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_globalObject[t1], t1
     loadp JSGlobalObject::m_asyncContextData[t1], t1
@@ -907,6 +910,18 @@ llintOpWithMetadata(op_jcurrent_script_execution_owner, OpJcurrentScriptExecutio
 .opJcurrentScriptExecutionOwnerTarget:
     get(m_targetLabel, t0)
     jumpImpl(dispatchIndirect, t0)
+end)
+
+
+llintOpWithMetadata(op_get_script_execution_owner, OpGetScriptExecutionOwner, macro (size, get, dispatch, metadata, return)
+    metadata(t5, t0)
+    storeb 1, OpGetScriptExecutionOwner::Metadata::m_hasRun[t5]
+    loadScriptExecutionOwner(OpGetScriptExecutionOwner, .opGetScriptExecutionOwnerNone)
+    return(t0)
+
+.opGetScriptExecutionOwnerNone:
+    move ValueUndefined, t0
+    return(t0)
 end)
 
 

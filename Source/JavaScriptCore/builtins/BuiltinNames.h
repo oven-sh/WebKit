@@ -218,7 +218,6 @@ namespace JSC {
     macro(indexOf) \
     macro(pop) \
     macro(asyncContext) \
-    macro(scriptExecutionOwner) \
     macro(wrapForValidIteratorCreate) \
     macro(asyncFromSyncIteratorCreate) \
     macro(regExpStringIteratorCreate) \

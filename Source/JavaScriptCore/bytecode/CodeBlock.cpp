@@ -554,6 +554,17 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         return *entry.op;
     };
 
+    // How many scopes up from the callee's this code's script execution owner is (both instructions run before the
+    // function has a scope of its own, and `scope` is the callee's here). UINT_MAX: the code has none.
+    auto scriptExecutionOwnerDepth = [&]() -> unsigned {
+        unsigned depth = 0;
+        for (JSScope* current = scope; current; current = current->next(), ++depth) {
+            if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(current); environment && environment->symbolTable()->isScriptExecutionOwner())
+                return depth;
+        }
+        return UINT_MAX;
+    };
+
     const auto& instructionStream = instructions();
     unsigned bytecodeCost = 0; // m_bytecodeCost, kept in a register while every instruction is walked
     BytecodeRange scriptExecutionOwnerPrologue = this->scriptExecutionOwnerPrologue();
@@ -633,14 +644,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
         case op_jcurrent_script_execution_owner: {
             INITIALIZE_METADATA(OpJcurrentScriptExecutionOwner)
-            metadata.m_depth = UINT_MAX;
-            metadata.m_offset = 0;
-            // It runs before the function has a scope of its own: from the callee's scope, which is `scope` here.
-            ResolveOp op = JSScope::abstractResolve(m_globalObject.get(), 0, scope, vm.propertyNames->builtinNames().scriptExecutionOwnerPrivateName(), Get, GlobalProperty, InitializationMode::NotInitialization);
-            if (op.type == ClosureVar) {
-                metadata.m_depth = op.depth;
-                metadata.m_offset = op.operand;
-            }
+            metadata.m_depth = scriptExecutionOwnerDepth();
+            break;
+        }
+
+        case op_get_script_execution_owner: {
+            INITIALIZE_METADATA(OpGetScriptExecutionOwner)
+            metadata.m_depth = scriptExecutionOwnerDepth();
             break;
         }
 

@@ -684,6 +684,11 @@ public:
     bool usesSloppyEval() const { return m_usesSloppyEval; }
     void setUsesSloppyEval(bool usesSloppyEval) { m_usesSloppyEval = usesSloppyEval; }
 
+    // The scope is a script execution owner: an embedder's module scope (JSModuleLoader::moduleScope) that the script made
+    // under it belongs to. A function of that script runs with its owner current (op_jcurrent_script_execution_owner).
+    bool isScriptExecutionOwner() const { return m_isScriptExecutionOwner; }
+    void setIsScriptExecutionOwner(bool isScriptExecutionOwner) { m_isScriptExecutionOwner = isScriptExecutionOwner; }
+
     bool isNestedLexicalScope() const { return m_nestedLexicalScope; }
     void markIsNestedLexicalScope() { ASSERT(scopeType() == LexicalScope); m_nestedLexicalScope = true; }
 
@@ -772,6 +777,7 @@ private:
     unsigned m_scopeType : 3; // ScopeType
     PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
     unsigned m_cachedEntriesScopePartOnly : 1 { 0 };
+    unsigned m_isScriptExecutionOwner : 1 { 0 };
 
     std::unique_ptr<SymbolTableRareData> m_rareData;
     RefPtr<Decoder> m_cachedEntriesDecoder;

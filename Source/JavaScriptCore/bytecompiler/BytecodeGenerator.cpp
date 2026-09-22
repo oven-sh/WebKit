@@ -1512,10 +1512,8 @@ void BytecodeGenerator::emitEnterScriptExecutionOwner()
     OpJcurrentScriptExecutionOwner::emit(this, body->bind(this));
 
     {
-        Variable ownerVariable = variable(names.scriptExecutionOwnerPrivateName());
         RefPtr<RegisterID> owner = newTemporary();
-        RefPtr<RegisterID> ownerScope = emitResolveScope(owner.get(), ownerVariable);
-        emitGetFromScope(owner.get(), ownerScope.get(), ownerVariable, ThrowIfNotFound);
+        OpGetScriptExecutionOwner::emit(this, owner.get());
 
         Variable asyncContextVariable = variable(names.asyncContextPrivateName());
         RefPtr<RegisterID> asyncContextData = newTemporary();
