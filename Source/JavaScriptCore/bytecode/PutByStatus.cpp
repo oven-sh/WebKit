@@ -376,7 +376,9 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
     for (unsigned i = 0; i < set.size(); ++i) {
         Structure* structure = set[i];
         
-        if (structure->typeInfo().overridesGetOwnPropertySlot() && structure->typeInfo().type() != GlobalObjectType)
+        // A getOwnPropertySlot() or put() override can give this property a meaning that the structure does not show.
+        // An inline cache learns that from PutPropertySlot::disableCaching(). This path has no slot to ask.
+        if ((structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().overridesPut()) && structure->typeInfo().type() != GlobalObjectType)
             return PutByStatus(LikelyTakesSlowPath);
 
         if (!structure->propertyAccessesAreCacheable())
