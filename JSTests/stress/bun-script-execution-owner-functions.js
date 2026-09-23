@@ -192,10 +192,10 @@ async function test() {
     for (let round = 0; round < 4; ++round) {
         for (const ns of [a, b, c]) {
             const results = {};
-            for (const shape of ["spread", "applyArguments", "applyArray", "newSpread", "reflectApply", "forwardArguments", "superSpread"])
+            for (const shape of ["spread", "applyArguments", "applyArray", "newSpread", "reflectApply", "forwardArguments", "superSpread", "superSpreadArguments", "proxyApplyTrap", "proxyConstructTrap", "callSpreadArguments", "applyRest"])
                 results[shape] = ns.varargsShapes[shape](n);
             const counting = n * (n - 1) / 2 + n;
-            same(results, { spread: counting, applyArguments: counting, applyArray: 3 * n, newSpread: 3 * n, reflectApply: counting, forwardArguments: counting, superSpread: counting }, "varargs calls inside an owner's code");
+            same(results, { spread: counting, applyArguments: counting, applyArray: 3 * n, newSpread: 3 * n, reflectApply: counting, forwardArguments: counting, superSpread: counting, superSpreadArguments: counting, proxyApplyTrap: counting, proxyConstructTrap: counting, callSpreadArguments: counting, applyRest: counting }, "varargs calls inside an owner's code");
         }
         same([a.varargsShapes.crossingSpread(n, b.addOf), b.varargsShapes.crossingSpread(n, a.addOf), a.callsBack(() => a.varargsShapes.crossingSpread(10, b.addOf))], [3 * n, 3 * n, ["A", 30, "A"]], "a varargs call of the other owner's function");
     }

@@ -133,8 +133,13 @@ public:
         if (!vm.isAsyncContextTrackingEnabled())
             return jsUndefined();
         ASSERT(globalObject->m_asyncContextData);
-        if (globalObject->m_asyncContextData->getInternalField(1).isUndefined()) [[likely]]
-            return globalObject->m_asyncContextData->getInternalField(0);
+        JSValue asyncContext = globalObject->m_asyncContextData->getInternalField(0);
+        JSValue scriptExecutionOwner = globalObject->m_asyncContextData->getInternalField(1);
+        if (scriptExecutionOwner.isUndefined()) [[likely]]
+            return asyncContext;
+        // What a job schedules while it has not changed either captures what the job was entered with.
+        if (auto* entered = globalObject->m_enteredAsyncContextWithScriptExecutionOwner; entered && entered->getInternalField(0) == asyncContext && entered->getInternalField(1) == scriptExecutionOwner) [[likely]]
+            return entered;
         return globalObject->currentAsyncContextWithScriptExecutionOwner(vm);
     }
 
