@@ -96,6 +96,9 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    thisObject->visitSourceFetcher(visitor);
+#endif
     visitor.append(thisObject->m_topLevelExecutable);
     visitor.append(thisObject->m_unlinkedExecutable);
     if (RareData* rareData = thisObject->m_rareData.get()) {
