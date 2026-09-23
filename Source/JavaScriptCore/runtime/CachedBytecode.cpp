@@ -44,10 +44,14 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PersistentBytecodePayloads);
 #if USE(BUN_JSC_ADDITIONS)
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeOrderRecorder);
 
-BytecodeOrderRecorder::BytecodeOrderRecorder() = default;
+BytecodeOrderRecorder::BytecodeOrderRecorder(bool isOver)
+    : m_isOver(isOver)
+{
+}
 BytecodeOrderRecorder::~BytecodeOrderRecorder() = default;
 
 static Lock s_orderRecordersLock;
+static bool s_orderRecordingIsOver WTF_GUARDED_BY_LOCK(s_orderRecordersLock) { false };
 static Vector<Ref<BytecodeOrderRecorder>>& orderRecorders() WTF_REQUIRES_LOCK(s_orderRecordersLock)
 {
     static NeverDestroyed<Vector<Ref<BytecodeOrderRecorder>>> recorders;
@@ -56,15 +60,16 @@ static Vector<Ref<BytecodeOrderRecorder>>& orderRecorders() WTF_REQUIRES_LOCK(s_
 
 Ref<BytecodeOrderRecorder> BytecodeOrderRecorder::create()
 {
-    Ref recorder = adoptRef(*new BytecodeOrderRecorder);
     Locker locker { s_orderRecordersLock };
+    Ref recorder = adoptRef(*new BytecodeOrderRecorder(s_orderRecordingIsOver));
     orderRecorders().append(recorder);
     return recorder;
 }
 
-Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::allInProcess()
+Vector<Ref<BytecodeOrderRecorder>> BytecodeOrderRecorder::endRecordingInProcess()
 {
     Locker locker { s_orderRecordersLock };
+    s_orderRecordingIsOver = true;
     return orderRecorders();
 }
 
@@ -74,34 +79,54 @@ BytecodeOrderRecorder* BytecodeOrderRecorder::ofVM(VM& vm)
     return payloads ? payloads->orderRecorder() : nullptr;
 }
 
-void BytecodeOrderRecorder::stop()
+unsigned BytecodeOrderRecorder::indexOf(RecordedOrderSource source)
 {
-    Locker locker { m_lock };
-    m_hasStopped = true;
+    // Most of what is decoded comes out of the source the last thing came out of.
+    if (m_lastSource < m_recorded.sources.size() && m_recorded.sources[m_lastSource] == source)
+        return m_lastSource;
+    auto result = m_sources.add({ source.payload, source.entryOffset }, m_recorded.sources.size());
+    if (result.isNewEntry)
+        m_recorded.sources.append(source);
+    m_lastSource = result.iterator->value;
+    return m_lastSource;
 }
 
-void BytecodeOrderRecorder::didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock& codeBlock)
+void BytecodeOrderRecorder::didDecodeFunction(RecordedOrderSource source, OrderFunctionKey key)
 {
-    if (m_recordsOfCodeBlocks) {
-        m_recordsOfCodeBlocks->set(&codeBlock, record);
+    Locker locker { m_lock };
+    if (m_isOver)
         return;
-    }
-    Locker locker { m_lock };
-    if (!m_hasStopped && m_seenFunctions.add(record).isNewEntry)
-        m_recorded.functions.append(record);
+    unsigned index = indexOf(source);
+    // Two bits of kind, 32 of start, 30 of source; the top two values are the table's own.
+    RELEASE_ASSERT(index < (1u << 30) - 1);
+    if (m_seenFunctions.add(static_cast<uint64_t>(index) << 34 | static_cast<uint64_t>(key.start) << 2 | static_cast<uint64_t>(key.kind)).isNewEntry)
+        m_recorded.functions.append({ index, key });
 }
 
-void BytecodeOrderRecorder::didDecodeModule(const void* record)
+void BytecodeOrderRecorder::didDecodeModule(RecordedOrderSource source)
 {
     Locker locker { m_lock };
-    if (!m_hasStopped && m_seenModules.add(record).isNewEntry)
-        m_recorded.modules.append(record);
+    if (m_isOver)
+        return;
+    unsigned index = indexOf(source);
+    if (!m_seenModules.set(index))
+        m_recorded.modules.append(index);
+}
+
+void BytecodeOrderRecorder::didRejectModule(RecordedOrderSource source)
+{
+    Locker locker { m_lock };
+    if (m_isOver)
+        return;
+    unsigned index = indexOf(source);
+    if (!m_seenRejectedModules.set(index))
+        m_recorded.rejectedModules.append(index);
 }
 
 void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
 {
     Locker locker { m_lock };
-    if (m_hasStopped || m_seenStrings.set(ordinal))
+    if (m_isOver || m_seenStrings.set(ordinal))
         return;
     // Ordinals mean something in one table only: a VM has one for as long as it records.
     RELEASE_ASSERT(m_recorded.stringOrdinals.isEmpty() || m_recorded.stringTable.data() == stringTable.data());
@@ -109,10 +134,13 @@ void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, 
     m_recorded.stringOrdinals.append(ordinal);
 }
 
-auto BytecodeOrderRecorder::snapshot() const -> Snapshot
+auto BytecodeOrderRecorder::take() -> Snapshot
 {
     Locker locker { m_lock };
-    return m_recorded;
+    m_isOver = true;
+    m_sources.clear();
+    m_seenFunctions.clear();
+    return std::exchange(m_recorded, { });
 }
 
 void PersistentBytecodePayloads::setLinkedPayload(std::span<const uint8_t> payload, const std::array<uint32_t, BytecodeLinkRegions::Count>& regionEnds)
@@ -126,8 +154,9 @@ BytecodeOrderRecorder& PersistentBytecodePayloads::enableOrderRecording()
 {
     if (!m_orderRecorder) {
         m_orderRecorder = BytecodeOrderRecorder::create();
-        // For the rest of the VM's life: a recording does not end before the VM does.
-        m_vm.keepUnlinkedCode();
+        // Each function's code is decoded once: a recording is the same whenever the collector runs.
+        if (!m_orderRecorder->isOver())
+            m_vm.keepUnlinkedCode();
     }
     return *m_orderRecorder;
 }

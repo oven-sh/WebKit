@@ -130,54 +130,56 @@ enum : unsigned { EarlyHeads, Hot, Unknown, LateHeads, Cold, ExpressionInfo, Cou
 // What one VM read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
 // while recording (PersistentBytecodePayloads::enableOrderRecording). Every recorder of the process stays registered,
 // whether or not its VM is still alive, and any thread may take a snapshot of it (the thread that writes the order file
-// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: functions
-// and modules are hashes, and strings are ordinals into a table whose bytes the embedder keeps for good.
+// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: a source is
+// where its payload is, and strings are ordinals into a table, both of which the embedder keeps for good.
 class BytecodeOrderRecorder final : public ThreadSafeRefCounted<BytecodeOrderRecorder> {
     WTF_MAKE_NONCOPYABLE(BytecodeOrderRecorder);
     WTF_MAKE_TZONE_ALLOCATED(BytecodeOrderRecorder);
 public:
     static Ref<BytecodeOrderRecorder> create();
     ~BytecodeOrderRecorder();
-    // In creation order.
-    static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
+    // Every recorder of the process, in creation order; one made from here on records nothing.
+    static Vector<Ref<BytecodeOrderRecorder>> endRecordingInProcess();
     // Null unless the VM records.
     static BytecodeOrderRecorder* ofVM(VM&);
 
-    // Recording ends when its file is written (BytecodeOrderFile): nothing is recorded from then on, so that what
-    // writing the file decodes, which is everything, does not count as the program's.
-    void stop();
-
-    // Code is known by where its record is in its payload: what an order file names it by takes more of the payload than
-    // the program has decoded (BytecodeOrderFile). So only code of payloads that outlive the program
-    // (CachedBytecode::payloadIsPersistent) is recorded; the callers see to that.
-    void didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock&);
-    void didDecodeModule(const void* record);
+    // Only code of payloads that outlive the program (CachedBytecode::payloadIsPersistent) is what a payload order file
+    // lays out, and can be known by where it is; the callers see to that.
+    void didDecodeFunction(RecordedOrderSource, OrderFunctionKey); // decoded in order to be run, whether or not it then runs
+    void didDecodeModule(RecordedOrderSource);
+    void didRejectModule(RecordedOrderSource); // it has bytecode, which is not for the source it is run from
     void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
 
-    // While set, on the VM's thread: every function code block that is decoded is told where its record is (for
-    // BytecodeOrderFile, after the recording has ended).
-    using RecordsOfCodeBlocks = UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, const void*>;
-    void setRecordsOfCodeBlocks(RecordsOfCodeBlocks* records) { m_recordsOfCodeBlocks = records; }
-
     struct Snapshot {
-        Vector<const void*> functions;
-        Vector<const void*> modules;
+        Vector<RecordedOrderSource> sources;
+        Vector<RecordedOrderFunction> functions;
+        Vector<unsigned> modules; // indices into `sources`
+        Vector<unsigned> rejectedModules;
         std::span<const uint8_t> stringTable; // DecoderStringTable's bytes
         Vector<uint32_t> stringOrdinals;
     };
-    Snapshot snapshot() const;
+    // What is decoded from here on is not recorded.
+    Snapshot take();
+    bool isOver() const
+    {
+        Locker locker { m_lock };
+        return m_isOver;
+    }
 
 private:
-    BytecodeOrderRecorder();
+    explicit BytecodeOrderRecorder(bool isOver);
+    unsigned indexOf(RecordedOrderSource) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
+    bool m_isOver WTF_GUARDED_BY_LOCK(m_lock);
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> m_sources WTF_GUARDED_BY_LOCK(m_lock);
+    unsigned m_lastSource WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     // A function is decoded again after its code was returned to the cache.
-    UncheckedKeyHashSet<const void*> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
-    UncheckedKeyHashSet<const void*> m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
+    OrderHashSet m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenRejectedModules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
-    bool m_hasStopped WTF_GUARDED_BY_LOCK(m_lock) { false };
-    RecordsOfCodeBlocks* m_recordsOfCodeBlocks { nullptr }; // the VM's thread only
 };
 #endif
 

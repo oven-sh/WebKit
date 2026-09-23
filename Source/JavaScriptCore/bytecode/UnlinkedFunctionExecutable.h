@@ -234,6 +234,12 @@ public:
     }
     bool isClass() const { return m_isClass; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Where classSource() starts and where the first of classElementDefinitions() is, for orderFunctionKey: read out
+    // of the cached record as they lie, so that nothing of a function that was decoded from a cache is materialized.
+    std::optional<uint32_t> classSourceStartWithoutMaterializing() const;
+    std::optional<uint32_t> firstClassElementOffsetWithoutMaterializing() const;
+#endif
 
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {

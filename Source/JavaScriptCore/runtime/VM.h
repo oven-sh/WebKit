@@ -1033,8 +1033,8 @@ public:
     // the code cache evicts by size and age, and a collection drops aged code that nothing roots.)
     // Who asks: a BytecodeLinkEncoder, which writes a function's record long after its module was added from what the
     // executable holds then, so that an emptied executable would silently leave the payload without the body; and a
-    // BytecodeOrderRecorder, so that the run it records decodes each record once, in the order the program first
-    // needs it. Neither is a program's steady state: a build, a recording run.
+    // run that records what it decodes (PersistentBytecodePayloads::enableOrderRecording). Neither is a program's
+    // steady state.
     // deleteAllCodeToGenerateItAgain() is not held back: see there.
     void keepUnlinkedCode() { ++m_unlinkedCodeKeepers; }
     void stopKeepingUnlinkedCode()
