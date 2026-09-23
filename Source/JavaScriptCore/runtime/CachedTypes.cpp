@@ -5865,11 +5865,11 @@ struct BytecodeOrderFile::Impl {
         }
     }
 
-    std::optional<uint64_t> add(VM& vm, OrderIdentities& identities, Naming& naming, UnlinkedFunctionExecutable& executable, const SourceCode& scope)
+    void add(VM& vm, OrderIdentities& identities, Naming& naming, UnlinkedFunctionExecutable& executable, const SourceCode& scope)
     {
         auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
         if (!forCall && !forConstruct)
-            return std::nullopt;
+            return;
         uint64_t identity = identities.of(executable, scope);
         functions.append(identity);
         SourceCode source = executable.linkedSourceCode(scope);
@@ -5880,7 +5880,6 @@ struct BytecodeOrderFile::Impl {
                 names.set(record, identity);
             addFunctionsIn(vm, identities, naming, *codeBlock, source);
         }
-        return identity;
     }
 };
 
@@ -5895,9 +5894,10 @@ bool BytecodeOrderFile::addModule(VM& vm, const SourceCode& source, bool isModul
 {
     Impl::Naming naming(vm);
     const void* record = cacheEntryOf(cachedBytecode.get());
-    m_impl->didAddPayload(cachedBytecode->span());
+    auto payload = cachedBytecode->span();
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
     UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
+    // A payload that is not `source`'s leaves nothing behind: it was not added, and nothing in it is expected to have a name.
     if (!codeBlock)
         return false;
     OrderIdentities identities(vm);
@@ -5905,6 +5905,7 @@ bool BytecodeOrderFile::addModule(VM& vm, const SourceCode& source, bool isModul
     m_impl->modules.append(identity);
     m_impl->names.set(record, identity);
     m_impl->addFunctionsIn(vm, identities, naming, *codeBlock, source);
+    m_impl->didAddPayload(payload);
     return true;
 }
 
@@ -5912,17 +5913,21 @@ bool BytecodeOrderFile::addBuiltinFunction(VM& vm, const SourceCode& source, uns
 {
     Impl::Naming naming(vm);
     const void* record = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
-    m_impl->didAddPayload(cachedBytecode->span());
+    auto payload = cachedBytecode->span();
     // Not recoverable, like addModule's: code that can be dropped and decoded again belongs to a slot of the VM's
     // persistent payloads, and one that the program's own code is in would hand this pass the program's executables,
     // whose code was decoded before anything here could learn where it is.
     UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp, Decoder::RecoverableCode::No);
-    OrderIdentities identities(vm);
-    auto identity = executable ? m_impl->add(vm, identities, naming, *executable, source) : std::nullopt;
-    if (!identity)
+    if (!executable)
         return false;
-    m_impl->modules.append(*identity);
-    m_impl->names.set(record, *identity);
+    // The module is named whether or not the function has code (the link encoder names it the same way); add() lists the
+    // function, and what is nested in it, if it has.
+    OrderIdentities identities(vm);
+    uint64_t identity = identities.of(*executable, source);
+    m_impl->add(vm, identities, naming, *executable, source);
+    m_impl->modules.append(identity);
+    m_impl->names.set(record, identity);
+    m_impl->didAddPayload(payload);
     return true;
 }
 
