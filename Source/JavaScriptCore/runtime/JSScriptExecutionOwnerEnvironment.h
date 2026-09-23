@@ -53,6 +53,11 @@ public:
     JSCell* embedderObject() { return embedderObjectSlot().get(); }
     void setEmbedderObject(VM& vm, JSCell* object) { embedderObjectSlot().set(vm, this, object); }
 
+    // Whether script may be made from a string (eval, the Function constructors) while this owner is the current one.
+    // JSGlobalObject::evalEnabled() is asked too: either can refuse.
+    bool evalEnabled() { return evalEnabledSlot(); }
+    void setEvalEnabled(bool enabled) { evalEnabledSlot() = enabled; }
+
 private:
     JSScriptExecutionOwnerEnvironment(VM&, Structure*, JSScope*, SymbolTable*, JSValue initialValue);
 
@@ -68,12 +73,23 @@ private:
 
     static size_t allocationSize(SymbolTable* symbolTable)
     {
+        return offsetOfEvalEnabled(symbolTable) + sizeof(EncodedJSValue);
+    }
+
+    // A whole word, so that the cell's size stays a multiple of one.
+    static size_t offsetOfEvalEnabled(SymbolTable* symbolTable)
+    {
         return offsetOfEmbedderObject(symbolTable) + sizeof(WriteBarrier<JSCell>);
     }
 
     WriteBarrierBase<JSCell>& embedderObjectSlot()
     {
         return *std::bit_cast<WriteBarrierBase<JSCell>*>(std::bit_cast<char*>(this) + offsetOfEmbedderObject(symbolTable()));
+    }
+
+    bool& evalEnabledSlot()
+    {
+        return *std::bit_cast<bool*>(std::bit_cast<char*>(this) + offsetOfEvalEnabled(symbolTable()));
     }
 };
 

@@ -161,6 +161,12 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
     }
 
     TopCallFrameSetter topCallFrame(vm, callFrame);
+#if USE(BUN_JSC_ADDITIONS)
+    if (!globalObject->currentScriptExecutionOwnerAllowsEval()) [[unlikely]] {
+        throwException(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+        return { };
+    }
+#endif
     if (!globalObject->evalEnabled() && globalObject->trustedTypesEnforcement() != TrustedTypesEnforcement::EnforcedWithEvalEnabled) [[unlikely]] {
         globalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(globalObject, programString->value(globalObject).data);
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));

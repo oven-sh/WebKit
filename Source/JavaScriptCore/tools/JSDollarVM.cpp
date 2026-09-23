@@ -2341,6 +2341,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner);
+static JSC_DECLARE_HOST_FUNCTION(functionSetScriptExecutionOwnerEvalEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionEnteredScriptExecutionOwnerCount);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
@@ -4293,6 +4294,21 @@ JSC_DEFINE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner, (JSGlobalObject*
         return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader()"_s);
     return JSValue::encode(jsBoolean(globalObject->m_asyncContextData.get()->getInternalField(1) == JSValue(loader->moduleScope())));
 }
+
+// $vm.setScriptExecutionOwnerEvalEnabled({ loader }, enabled): JSScriptExecutionOwnerEnvironment::setEvalEnabled() of
+// that loader's module scope.
+JSC_DEFINE_HOST_FUNCTION(functionSetScriptExecutionOwnerEvalEnabled, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSModuleLoader* loader = moduleLoaderFromHolder(vm, callFrame->argument(0));
+    auto* owner = loader ? dynamicDowncast<JSScriptExecutionOwnerEnvironment>(loader->moduleScope()) : nullptr;
+    if (!owner)
+        return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() made as a script execution owner"_s);
+    owner->setEvalEnabled(callFrame->argument(1).toBoolean(globalObject));
+    return JSValue::encode(jsUndefined());
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6119,6 +6135,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "enteredScriptExecutionOwnerCount"_s, functionEnteredScriptExecutionOwnerCount, 0);
     addFunction(vm, alwaysAllow, "setAsyncContextScriptExecutionOwner"_s, functionSetAsyncContextScriptExecutionOwner, 1);
     addFunction(vm, alwaysAllow, "isCurrentScriptExecutionOwner"_s, functionIsCurrentScriptExecutionOwner, 1);
+    addFunction(vm, alwaysAllow, "setScriptExecutionOwnerEvalEnabled"_s, functionSetScriptExecutionOwnerEvalEnabled, 2);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
