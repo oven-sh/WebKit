@@ -124,8 +124,9 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 
 void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames)
 {
-    // materializeErrorInfoIfNeeded() is formatting m_stackTrace right now (a callback of the
-    // hook replaces the frames of the error being read): the frames the hook reads stay.
+    // materializeErrorInfoIfNeeded() is formatting m_stackTrace right now: the hook set the flag
+    // and still reads the frames. A capture from inside the hook's callback (Error.prepareStackTrace)
+    // on the error being formatted keeps the frames the callback was given.
     if (m_errorInfoMaterialized && m_stackTrace)
         return;
 
