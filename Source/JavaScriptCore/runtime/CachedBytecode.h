@@ -166,8 +166,9 @@ public:
         RefPtr<BytecodeOrderRecorder> m_recorder;
     };
 
-    // Code is known by where its record is in its payload, which outlives the program (CachePayload::isPersistent): what
-    // an order file names it by takes more of the payload than the program has decoded (BytecodeOrderFile).
+    // Code is known by where its record is in its payload: what an order file names it by takes more of the payload than
+    // the program has decoded (BytecodeOrderFile). So only code of payloads that outlive the program
+    // (CachedBytecode::payloadIsPersistent) is recorded; the callers see to that.
     void didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock&);
     void didDecodeModule(const void* record);
     void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);

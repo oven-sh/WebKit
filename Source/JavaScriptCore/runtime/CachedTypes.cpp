@@ -4581,7 +4581,9 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
             payloads->didDecodeFunctionBody(decoder.ptrForOffsetFromBase(0), recordOffset, layout.recordOffsetInRegion + sizeof(Record));
     }
     if constexpr (std::is_same_v<CodeBlockType, UnlinkedFunctionCodeBlock>) {
-        if (auto* recorder = BytecodeOrderRecorder::ofVM(decoder.vm())) [[unlikely]]
+        // Only out of a payload that outlives the program: a recorder knows code by where its record is, and another
+        // payload's bytes may be freed and their addresses used again.
+        if (auto* recorder = decoder.canBorrowPayload() ? BytecodeOrderRecorder::ofVM(decoder.vm()) : nullptr) [[unlikely]]
             recorder->didDecodeFunction(this, static_cast<UnlinkedFunctionCodeBlock&>(codeBlock));
     }
     if (remembered.size() && remembered.size() == layout.functionDecls.count + layout.functionExprs.count) {
@@ -5557,18 +5559,18 @@ static const GenericCacheEntry* cacheEntryOf(const CachedBytecode& cachedBytecod
     return cacheEntryOf<CacheEntry<UnlinkedProgramCodeBlock>>(cachedBytecode);
 }
 
-UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp)
+UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp, Decoder::RecoverableCode recoverableCode)
 {
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
     unsigned sourceLength = provider.source().length();
-    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider);
+    Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
     DeferGC deferGC(vm);
     UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), sourceLength, embedderStamp);
 #if USE(BUN_JSC_ADDITIONS)
     // The builtin is the module; its code is recorded when it is decoded, like any function's.
-    if (auto* recorder = executable ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
+    if (auto* recorder = executable && decoder->canBorrowPayload() ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
         recorder->didDecodeModule(entry);
 #endif
     return executable;
@@ -5810,6 +5812,25 @@ struct BytecodeOrderFile::Impl {
     // Everything the payloads hold, in the order it was added.
     Vector<uint64_t> modules;
     Vector<uint64_t> functions;
+    // The payloads themselves: a record in one of them that a recorder saw decoded has a name. (The modules of a link
+    // all come with the link's one payload.)
+    struct Payload {
+        const uint8_t* begin;
+        const uint8_t* end;
+        bool operator==(const Payload&) const = default;
+    };
+    Vector<Payload> payloads;
+    void didAddPayload(std::span<const uint8_t> bytes)
+    {
+        Payload payload { bytes.data(), bytes.data() + bytes.size() };
+        if (payloads.isEmpty() || payloads.last() != payload)
+            payloads.append(payload);
+    }
+    bool holds(const void* record) const
+    {
+        auto* byte = static_cast<const uint8_t*>(record);
+        return payloads.containsIf([&](auto& payload) { return byte >= payload.begin && byte < payload.end; });
+    }
 
     // While alive nothing `vm` decodes counts as used by the program, and `records` learns where the code is.
     class Naming {
@@ -5874,6 +5895,7 @@ bool BytecodeOrderFile::addModule(VM& vm, const SourceCode& source, bool isModul
 {
     Impl::Naming naming(vm);
     const void* record = cacheEntryOf(cachedBytecode.get());
+    m_impl->didAddPayload(cachedBytecode->span());
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
     UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
     if (!codeBlock)
@@ -5890,7 +5912,11 @@ bool BytecodeOrderFile::addBuiltinFunction(VM& vm, const SourceCode& source, uns
 {
     Impl::Naming naming(vm);
     const void* record = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
-    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp);
+    m_impl->didAddPayload(cachedBytecode->span());
+    // Not recoverable, like addModule's: code that can be dropped and decoded again belongs to a slot of the VM's
+    // persistent payloads, and one that the program's own code is in would hand this pass the program's executables,
+    // whose code was decoded before anything here could learn where it is.
+    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp, Decoder::RecoverableCode::No);
     OrderIdentities identities(vm);
     auto identity = executable ? m_impl->add(vm, identities, naming, *executable, source) : std::nullopt;
     if (!identity)
@@ -5911,10 +5937,15 @@ CString BytecodeOrderFile::contents() const
         if (seen.add(hash).isNewEntry)
             out.printf("%c %016llx\n", kind, static_cast<unsigned long long>(hash));
     };
+    unsigned recordsWithoutName = 0;
     auto printNamed = [&](char kind, const void* record, OrderHashSet& seen) {
-        // Code of a payload the embedder did not add has no name.
-        if (auto it = m_impl->names.find(record); it != m_impl->names.end())
+        if (auto it = m_impl->names.find(record); it != m_impl->names.end()) {
             printLine(kind, it->value, seen);
+            return;
+        }
+        // Code of a payload the embedder did not add has no name. Any other record was decoded in full by add*().
+        if (m_impl->holds(record))
+            recordsWithoutName++;
     };
     // The first VM's first (a program's main thread), then each Worker's.
     for (auto& recorder : BytecodeOrderRecorder::allInProcess()) {
@@ -5933,13 +5964,17 @@ CString BytecodeOrderFile::contents() const
         printLine('N', identity, modules);
     for (uint64_t identity : m_impl->functions)
         printLine('K', identity, functions);
+    // What it would do: the next build lays code the program used out as code it did not use.
+    ASSERT(!recordsWithoutName);
+    if (recordsWithoutName)
+        out.print("# ", recordsWithoutName, " records the program decoded have no name\n");
     return out.toCString();
 }
 
 std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode)
 {
     BytecodeOrderRecorder::PauseScope notRecorded(vm);
-    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp);
+    UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp, Decoder::RecoverableCode::No);
     if (!executable)
         return std::nullopt;
     OrderHasher hasher;
@@ -6014,7 +6049,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         return nullptr;
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* recorder = BytecodeOrderRecorder::ifRecording(vm)) [[unlikely]]
+    if (auto* recorder = decoder->canBorrowPayload() ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
         recorder->didDecodeModule(cachedEntry);
 #endif
 
