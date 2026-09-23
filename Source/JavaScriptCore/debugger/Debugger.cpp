@@ -562,7 +562,7 @@ void Debugger::toggleBreakpoint(Breakpoint& breakpoint, Debugger::BreakpointStat
 
 void Debugger::recompileAllJSFunctions()
 {
-    m_vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+    m_vm.deleteAllCodeToGenerateItAgain(PreventCollectionAndDeleteAllCode);
 }
 
 DebuggerParseData& Debugger::debuggerParseData(SourceID sourceID, SourceProvider* provider)

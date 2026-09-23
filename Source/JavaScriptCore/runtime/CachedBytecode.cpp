@@ -74,10 +74,10 @@ BytecodeOrderRecorder* BytecodeOrderRecorder::ofVM(VM& vm)
     return payloads ? payloads->orderRecorder() : nullptr;
 }
 
-BytecodeOrderRecorder* BytecodeOrderRecorder::ifRecording(VM& vm)
+void BytecodeOrderRecorder::stop()
 {
-    auto* recorder = ofVM(vm);
-    return recorder && !recorder->m_pauseDepth ? recorder : nullptr;
+    Locker locker { m_lock };
+    m_hasStopped = true;
 }
 
 void BytecodeOrderRecorder::didDecodeFunction(const void* record, UnlinkedFunctionCodeBlock& codeBlock)
@@ -86,26 +86,22 @@ void BytecodeOrderRecorder::didDecodeFunction(const void* record, UnlinkedFuncti
         m_recordsOfCodeBlocks->set(&codeBlock, record);
         return;
     }
-    if (m_pauseDepth)
-        return;
     Locker locker { m_lock };
-    if (m_seenFunctions.add(record).isNewEntry)
+    if (!m_hasStopped && m_seenFunctions.add(record).isNewEntry)
         m_recorded.functions.append(record);
 }
 
 void BytecodeOrderRecorder::didDecodeModule(const void* record)
 {
     Locker locker { m_lock };
-    if (m_seenModules.add(record).isNewEntry)
+    if (!m_hasStopped && m_seenModules.add(record).isNewEntry)
         m_recorded.modules.append(record);
 }
 
 void BytecodeOrderRecorder::didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal)
 {
-    if (m_pauseDepth)
-        return;
     Locker locker { m_lock };
-    if (m_seenStrings.set(ordinal))
+    if (m_hasStopped || m_seenStrings.set(ordinal))
         return;
     // Ordinals mean something in one table only: a VM has one for as long as it records.
     RELEASE_ASSERT(m_recorded.stringOrdinals.isEmpty() || m_recorded.stringTable.data() == stringTable.data());
@@ -128,8 +124,11 @@ void PersistentBytecodePayloads::setLinkedPayload(std::span<const uint8_t> paylo
 
 BytecodeOrderRecorder& PersistentBytecodePayloads::enableOrderRecording()
 {
-    if (!m_orderRecorder)
+    if (!m_orderRecorder) {
         m_orderRecorder = BytecodeOrderRecorder::create();
+        // For the rest of the VM's life: a recording does not end before the VM does.
+        m_vm.keepUnlinkedCode();
+    }
     return *m_orderRecorder;
 }
 #endif

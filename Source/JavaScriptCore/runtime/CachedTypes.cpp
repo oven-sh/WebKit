@@ -339,8 +339,6 @@ static uint64_t orderSourceHash(StringView source, unsigned startOffset, unsigne
 // it is named by the fields it defines.
 static uint64_t orderHashOfClassFieldInitializer(const UnlinkedFunctionExecutable& executable)
 {
-    // Reading the definitions of an executable that came out of a cache decodes names the program does not read.
-    BytecodeOrderRecorder::PauseScope notRecorded(executable.vm());
     OrderHasher hasher;
     hasher.add(nestedFunctionToken);
     if (auto* definitions = executable.classElementDefinitions()) {
@@ -1279,6 +1277,10 @@ public:
         // may drop a function's code from a live executable (UnlinkedFunctionExecutable::codeBlockEdgeMayBeWeak), bodies
         // are queued long after they were generated, and expression info is encoded last.
         Vector<Strong<UnlinkedFunctionCodeBlock>> functionCodeBlocks;
+#if ASSERT_ENABLED
+        // The functions those are the code of: each still has it when its record is written (VM::keepsUnlinkedCode).
+        UncheckedKeyHashSet<const UnlinkedFunctionExecutable*> functionsWithCode;
+#endif
         uint64_t nextSequence { 0 };
         // What is being encoded right now: functions met there are its children.
         unsigned module { 0 };
@@ -1314,9 +1316,14 @@ public:
         m_link->rank = module;
         m_link->openRegion = m_link->linkClass;
     }
-    void rootUntilLinkEnds(UnlinkedFunctionCodeBlock* codeBlock)
+    void rootUntilLinkEnds(const UnlinkedFunctionExecutable& executable, UnlinkedFunctionCodeBlock* codeBlock)
     {
         m_link->functionCodeBlocks.append(Strong<UnlinkedFunctionCodeBlock>(m_vm, codeBlock));
+#if ASSERT_ENABLED
+        m_link->functionsWithCode.add(&executable);
+#else
+        UNUSED_PARAM(executable);
+#endif
     }
     void encodeLinkedBodies(LinkClass region)
     {
@@ -1482,6 +1489,7 @@ private:
     void deferLinkedBody(const UnlinkedFunctionExecutable& executable, UnlinkedFunctionCodeBlock* codeBlock, Function<void()>&& encodeBody)
     {
         LinkState& link = *m_link;
+        ASSERT(codeBlock || !link.functionsWithCode.contains(&executable));
         SourceCode source = executable.linkedSourceCode(link.scope);
         LinkClass linkClass = LinkClass::Cold;
         uint64_t rank = static_cast<uint64_t>(link.module) << 32 | static_cast<uint32_t>(source.startOffset());
@@ -5570,7 +5578,7 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), sourceLength, embedderStamp);
 #if USE(BUN_JSC_ADDITIONS)
     // The builtin is the module; its code is recorded when it is decoded, like any function's.
-    if (auto* recorder = executable && decoder->canBorrowPayload() ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
+    if (auto* recorder = executable && decoder->canBorrowPayload() ? BytecodeOrderRecorder::ofVM(vm) : nullptr) [[unlikely]]
         recorder->didDecodeModule(entry);
 #endif
     return executable;
@@ -5616,6 +5624,7 @@ struct BytecodeLinkEncoder::Impl {
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
     };
+    bool isFinished { false };
 
     Impl(VM& vm, EncoderStringTable* strings)
         : vm(vm)
@@ -5643,6 +5652,8 @@ struct BytecodeLinkEncoder::Impl {
 
     void add(Module&& module)
     {
+        // finish() lets go of the modules' roots: what is known about their code is not good for a second link.
+        RELEASE_ASSERT(!isFinished);
         // `root` does not keep its functions' code alive (LinkState::functionCodeBlocks).
         JSCell* root = module.root.get();
         if (root->classInfo() == UnlinkedFunctionExecutable::info())
@@ -5671,7 +5682,7 @@ struct BytecodeLinkEncoder::Impl {
         for (UnlinkedFunctionCodeBlock* codeBlock : { forCall, forConstruct }) {
             if (!codeBlock)
                 continue;
-            encoder.rootUntilLinkEnds(codeBlock);
+            encoder.rootUntilLinkEnds(executable, codeBlock);
             rootCodeOfFunctionsIn(*codeBlock);
         }
     }
@@ -5696,6 +5707,9 @@ BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hi
 {
     // Strings are numbered across the whole link, which only the shared table makes cheap for a module's Decoder.
     RELEASE_ASSERT(strings);
+    // A function's record is written long after its module was added (with the body of the function around it, or when
+    // the link is finished) from what its executable holds then.
+    vm.keepUnlinkedCode();
     m_impl->encoder.beginLink(hints.hotFunctions.span(), hints.knownFunctions.span());
     for (uint64_t hash : hints.notEvaluatedModules) {
         if (isValidOrderHash(hash))
@@ -5710,7 +5724,10 @@ BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hi
 
 VM& BytecodeLinkEncoder::vm() const { return m_impl->vm; }
 
-BytecodeLinkEncoder::~BytecodeLinkEncoder() = default;
+BytecodeLinkEncoder::~BytecodeLinkEncoder()
+{
+    m_impl->vm.stopKeepingUnlinkedCode();
+}
 
 void BytecodeLinkEncoder::addModule(const SourceCodeKey& key, UnlinkedCodeBlock* codeBlock, const SourceCode& source)
 {
@@ -5758,6 +5775,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     for (auto& module : m_impl->modules)
         result.entryOffsets.append(module.entryOffset);
     m_impl->modules.clear();
+    m_impl->isFinished = true;
     return result;
 }
 #endif
@@ -5832,12 +5850,11 @@ struct BytecodeOrderFile::Impl {
         return payloads.containsIf([&](auto& payload) { return byte >= payload.begin && byte < payload.end; });
     }
 
-    // While alive nothing `vm` decodes counts as used by the program, and `records` learns where the code is.
+    // While alive `records` learns where the code that `vm` decodes is.
     class Naming {
     public:
         explicit Naming(VM& vm)
-            : m_paused(vm)
-            , m_recorder(vm.persistentBytecodePayloads().orderRecorder())
+            : m_recorder(vm.persistentBytecodePayloads().orderRecorder())
         {
             if (m_recorder)
                 m_recorder->setRecordsOfCodeBlocks(&records);
@@ -5850,7 +5867,6 @@ struct BytecodeOrderFile::Impl {
         BytecodeOrderRecorder::RecordsOfCodeBlocks records;
 
     private:
-        BytecodeOrderRecorder::PauseScope m_paused;
         RefPtr<BytecodeOrderRecorder> m_recorder;
     };
 
@@ -5886,6 +5902,9 @@ struct BytecodeOrderFile::Impl {
 BytecodeOrderFile::BytecodeOrderFile()
     : m_impl(makeUnique<Impl>())
 {
+    // Recording ends here: naming the code decodes all of it.
+    for (auto& recorder : BytecodeOrderRecorder::allInProcess())
+        recorder->stop();
 }
 
 BytecodeOrderFile::~BytecodeOrderFile() = default;
@@ -5978,7 +5997,6 @@ CString BytecodeOrderFile::contents() const
 
 std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const SourceCode& source, unsigned embedderStamp, Ref<CachedBytecode> cachedBytecode)
 {
-    BytecodeOrderRecorder::PauseScope notRecorded(vm);
     UnlinkedFunctionExecutable* executable = decodeBuiltinFunction(vm, WTF::move(cachedBytecode), *source.provider(), embedderStamp, Decoder::RecoverableCode::No);
     if (!executable)
         return std::nullopt;
@@ -5992,7 +6010,6 @@ std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const Sourc
 
 std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode)
 {
-    BytecodeOrderRecorder::PauseScope notRecorded(vm);
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
     UnlinkedCodeBlock* codeBlock = decodeCodeBlockImpl(vm, key, WTF::move(cachedBytecode), Decoder::RecoverableCode::No);
     if (!codeBlock)
@@ -6054,7 +6071,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         return nullptr;
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* recorder = decoder->canBorrowPayload() ? BytecodeOrderRecorder::ifRecording(vm) : nullptr) [[unlikely]]
+    if (auto* recorder = decoder->canBorrowPayload() ? BytecodeOrderRecorder::ofVM(vm) : nullptr) [[unlikely]]
         recorder->didDecodeModule(cachedEntry);
 #endif
 

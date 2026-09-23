@@ -1025,6 +1025,28 @@ public:
     PersistentBytecodePayloads& persistentBytecodePayloads();
     PersistentBytecodePayloads* persistentBytecodePayloadsIfExists() { return m_persistentBytecodePayloads.get(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // While anybody asks, deleteAllCode(), shrinkFootprintNow() and whoever else goes through
+    // Heap::deleteAllUnlinkedCodeBlocks or ScriptExecutable::clearCode leave unlinked code where it is: executables
+    // keep their code blocks, code decoded from a bytecode cache is not returned to it, a program or module keeps its
+    // top-level code, and the code cache is not emptied. Linked code is dropped as ever. (Not covered, and not needed:
+    // the code cache evicts by size and age, and a collection drops aged code that nothing roots.)
+    // Who asks: a BytecodeLinkEncoder, which writes a function's record long after its module was added from what the
+    // executable holds then, so that an emptied executable would silently leave the payload without the body; and a
+    // BytecodeOrderRecorder, so that the run it records decodes each record once, in the order the program first
+    // needs it. Neither is a program's steady state: a build, a recording run.
+    // deleteAllCodeToGenerateItAgain() is not held back: see there.
+    void keepUnlinkedCode() { ++m_unlinkedCodeKeepers; }
+    void stopKeepingUnlinkedCode()
+    {
+        RELEASE_ASSERT(m_unlinkedCodeKeepers);
+        --m_unlinkedCodeKeepers;
+    }
+    bool keepsUnlinkedCode() const { return m_unlinkedCodeKeepers && !m_isDeletingAllCodeToGenerateItAgain; }
+#else
+    bool keepsUnlinkedCode() const { return false; }
+#endif
+
     // See LazyCallLinkInfo.
     CallSiteData* neverExecutedCallSiteData() { return m_neverExecutedCallSiteData; }
     CallSiteData* executedOnceCallSiteData() { return m_executedOnceCallSiteData; }
@@ -1044,6 +1066,10 @@ public:
     JS_EXPORT_PRIVATE void setStartupJITDeferralScale(double); // <= 1 ends the window
 
     JS_EXPORT_PRIVATE void deleteAllCode(DeleteAllCodeEffort);
+    // For code that has to be generated differently from now on (a debugger attached, a profiler turned on):
+    // functions that kept their unlinked code would go on running without the hooks, so keepsUnlinkedCode() does not
+    // hold this back. A recording made across it is less exact (code is decoded again); a link has no debugger.
+    JS_EXPORT_PRIVATE void deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
     void deleteAllRegExpCode();
 
@@ -1370,6 +1396,10 @@ private:
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
     std::unique_ptr<PersistentBytecodePayloads> m_persistentBytecodePayloads;
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_unlinkedCodeKeepers { 0 }; // the VM's thread only
+#endif
+    bool m_isDeletingAllCodeToGenerateItAgain { false };
     CallSiteData* m_neverExecutedCallSiteData { nullptr };
     CallSiteData* m_executedOnceCallSiteData { nullptr };
     CallSiteData* m_notExecutedTailCallSiteData { nullptr };

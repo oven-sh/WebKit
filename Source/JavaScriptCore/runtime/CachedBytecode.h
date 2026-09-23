@@ -140,31 +140,12 @@ public:
     ~BytecodeOrderRecorder();
     // In creation order.
     static Vector<Ref<BytecodeOrderRecorder>> allInProcess();
-    // Null unless the VM is recording, and while a PauseScope is alive on it.
-    static BytecodeOrderRecorder* ifRecording(VM&);
-    // Null unless the VM is recording.
+    // Null unless the VM records.
     static BytecodeOrderRecorder* ofVM(VM&);
 
-    // While one is alive on the recorder's VM (whose thread it belongs to) nothing is recorded: for code that decodes
-    // everything a payload holds rather than what a program uses.
-    class PauseScope {
-        WTF_MAKE_NONCOPYABLE(PauseScope);
-    public:
-        explicit PauseScope(VM& vm)
-            : m_recorder(ofVM(vm))
-        {
-            if (m_recorder)
-                m_recorder->m_pauseDepth++;
-        }
-        ~PauseScope()
-        {
-            if (m_recorder)
-                m_recorder->m_pauseDepth--;
-        }
-
-    private:
-        RefPtr<BytecodeOrderRecorder> m_recorder;
-    };
+    // Recording ends when its file is written (BytecodeOrderFile): nothing is recorded from then on, so that what
+    // writing the file decodes, which is everything, does not count as the program's.
+    void stop();
 
     // Code is known by where its record is in its payload: what an order file names it by takes more of the payload than
     // the program has decoded (BytecodeOrderFile). So only code of payloads that outlive the program
@@ -173,8 +154,8 @@ public:
     void didDecodeModule(const void* record);
     void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
 
-    // While set, on the VM's thread: nothing is recorded, and every function code block that is decoded is told where
-    // its record is.
+    // While set, on the VM's thread: every function code block that is decoded is told where its record is (for
+    // BytecodeOrderFile, after the recording has ended).
     using RecordsOfCodeBlocks = UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, const void*>;
     void setRecordsOfCodeBlocks(RecordsOfCodeBlocks* records) { m_recordsOfCodeBlocks = records; }
 
@@ -195,7 +176,7 @@ private:
     UncheckedKeyHashSet<const void*> m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<const void*> m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
-    unsigned m_pauseDepth { 0 }; // the VM's thread only
+    bool m_hasStopped WTF_GUARDED_BY_LOCK(m_lock) { false };
     RecordsOfCodeBlocks* m_recordsOfCodeBlocks { nullptr }; // the VM's thread only
 };
 #endif

@@ -335,7 +335,8 @@ JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
 // (PersistentBytecodePayloads::enableOrderRecording, DecoderStringTable::enableFirstUseRecording). A recorder knows the
 // code it saw decoded by where its record is; naming it takes all the code of its payload, so the embedder hands over
 // every payload the program has once the program is done, on a VM that records. Each is decoded in full (as
-// digestOfAllCachedCode does), none of which counts as something the program used.
+// digestOfAllCachedCode does), none of which counts as something the program used: creating one ends the recording,
+// in every VM of the process.
 class BytecodeOrderFile {
     WTF_MAKE_NONCOPYABLE(BytecodeOrderFile);
 public:
@@ -358,6 +359,7 @@ private:
 // For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
 // function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
 // instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
+// On a VM that is still recording (BytecodeOrderRecorder) all of that counts as used: digest after the order file.
 struct CachedCodeDigest {
     uint64_t digest { 0 };
     unsigned codeBlocks { 0 };
