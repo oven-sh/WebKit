@@ -44,6 +44,9 @@ namespace JSC {
 
 StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_vm = &vm;
+#endif
     CallFrame* topFrame = nullptr;
     if (startFrame) {
         ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
@@ -53,11 +56,7 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
             if (skipFirstFrame || topFrame->isZombieFrame()) {
-#if USE(BUN_JSC_ADDITIONS)
-                m_previousReturnPC = CommonSlowPaths::returnPCOf(topFrame);
-#else
                 m_previousReturnPC = topFrame->rawReturnPC();
-#endif
                 topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
                 if (startFrame == vm.topCallFrame)
@@ -111,11 +110,7 @@ inline CallFrame* StackVisitor::updatePreviousReturnPCIfNecessary(CallFrame* cal
 {
     if (m_frame.m_callFrame) {
         if (m_frame.m_callFrame != callFrame)
-#if USE(BUN_JSC_ADDITIONS)
-            m_previousReturnPC = CommonSlowPaths::returnPCOf(m_frame.m_callFrame);
-#else
             m_previousReturnPC = m_frame.m_callFrame->rawReturnPC();
-#endif
     }
     return callFrame;
 }
@@ -237,6 +232,11 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
         // While it can be pointing at the broken offset (e.g. all ARM64 instructions are 4-byte aligned), it is still fine since map is controlling pc with range.
+#if USE(BUN_JSC_ADDITIONS)
+        // (What this frame called returns through llint_script_execution_owner_return if it made its function's owner
+        // the current one: where it really returns, into this frame's code, is kept with what it puts back.)
+        m_frame.m_returnPC = CommonSlowPaths::returnPCOfCalleeOf(*m_vm, callFrame, m_frame.m_returnPC);
+#endif
         auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC)) - 1));
         RELEASE_ASSERT(callSiteIndexFromPC);
         CallSiteIndex callSiteIndex = callSiteIndexFromPC.value();

@@ -1278,6 +1278,18 @@ void CommonSlowPaths::enterScriptExecutionOwner(VM& vm, CallFrame* callFrame)
 
     InternalFieldTuple* asyncContextData = codeBlock->globalObject()->m_asyncContextData.get();
     ASSERT(asyncContextData->getInternalField(1) != JSValue(owner));
+    // A frame that a tail call handed on has its entry already (its return PC and its caller are the frame's that
+    // entered; so are those of the frame OSR exit makes for an inlined tail call): the frame has one thing to put back,
+    // however many owners' functions run in it, and a chain of tail calls between owners takes no more room than the
+    // one frame it runs in. (Another global object's function has its own slot to put back.)
+    if (returnsThroughScriptExecutionOwnerReturn(callFrame)) {
+        auto& entered = vm.enteredScriptExecutionOwners.last();
+        ASSERT(entered.callerFrame == callFrame->callerFrame());
+        if (entered.asyncContextData == asyncContextData) [[likely]] {
+            asyncContextData->putInternalField(vm, 1, owner);
+            return;
+        }
+    }
     vm.enteredScriptExecutionOwners.append({ asyncContextData, asyncContextData->getInternalField(1), callFrame->rawReturnPC(), callFrame->callerFrame() });
     asyncContextData->putInternalField(vm, 1, owner);
     callFrame->setReturnPC(scriptExecutionOwnerReturn());
@@ -1287,20 +1299,17 @@ void* CommonSlowPaths::leaveScriptExecutionOwner(VM& vm)
 {
     auto entered = vm.enteredScriptExecutionOwners.takeLast();
     entered.asyncContextData->putInternalField(vm, 1, entered.previousOwner);
+    // (As deep as the stack was: given back once nothing is entered.)
+    if (vm.enteredScriptExecutionOwners.isEmpty() && vm.enteredScriptExecutionOwners.capacity() > 1024) [[unlikely]]
+        vm.enteredScriptExecutionOwners.shrinkCapacity(0);
     return entered.returnPC;
 }
 
-void* CommonSlowPaths::returnPCOf(CallFrame* callFrame)
+void* CommonSlowPaths::returnPCOfCalleeOf(VM& vm, CallFrame* callerFrame, void* returnPC)
 {
-    void* returnPC = callFrame->rawReturnPC();
     if (returnPC != scriptExecutionOwnerReturn()) [[likely]]
         return returnPC;
-    // (The frame is of the function that entered, or of what it made a tail call of: script's or a host function's.)
-    if (callFrame->isNativeCalleeFrame())
-        return returnPC;
-    VM& vm = callFrame->callee().asCell()->vm();
-    // The oldest of what was entered in this frame replaced the return PC the frame was called with.
-    CallFrame* callerFrame = callFrame->callerFrame();
+    // The oldest of what was entered in that frame replaced the return PC it was called with.
     for (auto& entered : vm.enteredScriptExecutionOwners) {
         if (entered.callerFrame == callerFrame)
             return entered.returnPC;

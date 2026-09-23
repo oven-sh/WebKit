@@ -94,20 +94,22 @@ async function test() {
     }
     settled("calls whose arguments do not match the parameters");
 
-    // A tail call gives the frame away with where it returns to: what was entered in it is left when the frame goes.
+    // A tail call gives the frame away with where it returns to, and with what the frame puts back when it goes: a
+    // frame has one thing to put back, however many owners' functions run in it.
     for (let i = 0; i < n; ++i) {
         same(a.tail(c.state), ["A", 1], "a tail call of a function with no owner runs as the caller's");
         same(a.tail(a.state), ["A", 1], "a tail call within the owner");
-        same(a.tail(b.state), ["B", 2], "a tail call of another owner's function enters again in the same frame");
-        same(a.tailFixed(b.calls, a.state), ["A", 3], "and what that calls enters in its own");
-        same(a.tailFewer(b.fewer), ["B", 2, 1, null, null, null, null, null, 1], "a tail call with fewer arguments than parameters");
-        same(a.tailMore(b.more), ["B", 2, 12, 12], "a tail call with more arguments than the caller was given");
-        same(a.tail(b.tail, a.tail, b.state), ["B", 4], "a chain of tail calls across owners");
+        same(a.tail(b.state), ["B", 1], "a tail call of another owner's function runs as that owner, in the same frame");
+        same(a.tailFixed(b.calls, a.state), ["A", 2], "and what that calls enters in its own");
+        same(a.tailFewer(b.fewer), ["B", 1, 1, null, null, null, null, null, 1], "a tail call with fewer arguments than parameters");
+        same(a.tailMore(b.more), ["B", 1, 12, 12], "a tail call with more arguments than the caller was given");
+        same(a.tail(b.tail, a.tail, b.state), ["B", 1], "a chain of tail calls across owners");
         settled("tail calls");
     }
-    for (const hops of [1, 2, 7, 1000]) {
+    // However long the chain: it is one frame.
+    for (const hops of [1, 2, 7, 1000, 200000]) {
         const seen = [];
-        same(a.hop(hops, a, b, seen), [hops % 2 ? "B" : "A", hops + 1], hops + " hops");
+        same(a.hop(hops, a, b, seen), [hops % 2 ? "B" : "A", 1], hops + " hops");
         same([seen.length, seen[0], seen[1], seen[seen.length - 1]], [hops + 1, "A", "B", hops % 2 ? "B" : "A"], "who each hop ran as");
         settled(hops + " hops of tail calls between two owners");
     }

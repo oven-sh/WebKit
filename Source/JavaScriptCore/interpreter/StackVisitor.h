@@ -193,6 +193,9 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+    VM* m_vm { nullptr }; // For CommonSlowPaths::returnPCOfCalleeOf().
+#endif
     bool m_topEntryFrameIsEmpty { false };
 };
 

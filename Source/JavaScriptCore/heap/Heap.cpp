@@ -928,6 +928,12 @@ void Heap::assertMarkStacksEmpty()
 void Heap::gatherStackRoots(ConservativeRoots& roots)
 {
     m_machineThreads->gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks, m_currentThreadState, m_currentThread);
+#if USE(BUN_JSC_ADDITIONS)
+    // A frame that made its function's owner the current one returns to llint_script_execution_owner_return; where it
+    // really returns is here, not in the stack, and a stub that is executing is known by a return PC into it.
+    for (auto& entered : vm().enteredScriptExecutionOwners)
+        m_jitStubRoutines->mark(entered.returnPC);
+#endif
 #if ENABLE(C_LOOP)
     vm().cloopStack().gatherConservativeRoots(roots, *m_jitStubRoutines, *m_codeBlocks);
 #endif

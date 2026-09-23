@@ -61,9 +61,10 @@ void enterScriptExecutionOwner(VM&, CallFrame*);
 // Puts back what the newest function that entered replaced; returns where it was to return.
 void* leaveScriptExecutionOwner(VM&);
 bool returnsThroughScriptExecutionOwnerReturn(CallFrame*);
-// Where `callFrame` returns to, whether or not it goes there through llint_script_execution_owner_return: what a stack
-// walk that reads a frame's return PC wants (StackVisitor, for the call site in a caller that is optimized wasm).
-void* returnPCOf(CallFrame*);
+// `returnPC` is the return PC of the frame `callerFrame` called: where that frame returns to, whether or not it goes
+// there through llint_script_execution_owner_return. What a stack walk that reads a return PC wants (StackVisitor,
+// for the call site in a caller that is optimized wasm); nothing else looks.
+void* returnPCOfCalleeOf(VM&, CallFrame* callerFrame, void* returnPC);
 // For a frame that is unwound: everything that was entered in it (a tail call of a function with another owner enters
 // again in the frame it takes over, whose caller stays the same).
 void leaveScriptExecutionOwnersOf(VM&, CallFrame*);
