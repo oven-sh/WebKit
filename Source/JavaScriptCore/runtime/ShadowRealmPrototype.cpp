@@ -95,6 +95,12 @@ JSC_DEFINE_HOST_FUNCTION(evalInRealm, (JSGlobalObject* globalObject, CallFrame* 
     ASSERT(thisRealm);
     JSGlobalObject* realmGlobalObject = thisRealm->globalObject();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The owner that is current is one of the calling realm's, not of the realm the script is for.
+    if (!globalObject->currentScriptExecutionOwnerAllowsEval()) [[unlikely]]
+        return throwVMError(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+#endif
+
     JSValue evalArg = callFrame->argument(1);
     // eval code adapted from JSGlobalObjecFunctions::globalFuncEval
     auto script = asString(evalArg)->value(globalObject);

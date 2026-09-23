@@ -488,6 +488,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!globalObject->currentScriptExecutionOwnerAllowsEval()) [[unlikely]] {
+        throwException(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+        return { };
+    }
+#endif
+
     if (!globalObject->evalEnabled() && globalObject->trustedTypesEnforcement() != TrustedTypesEnforcement::EnforcedWithEvalEnabled) {
         globalObject->globalObjectMethodTable()->reportViolationForUnsafeEval(globalObject, programSource);
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));

@@ -51,6 +51,10 @@ public:
             if (m_evalWasDisabled)
                 globalObject->setEvalEnabled(true, globalObject->evalDisabledErrorMessage());
             globalObject->setTrustedTypesEnforcement(TrustedTypesEnforcement::None);
+#if USE(BUN_JSC_ADDITIONS)
+            m_scriptExecutionOwnerEvalDisabledWasIgnored = globalObject->scriptExecutionOwnerEvalDisabledIsIgnored();
+            globalObject->setScriptExecutionOwnerEvalDisabledIsIgnored(true);
+#endif
 #if ASSERT_ENABLED
             if (m_mode == Mode::EvalOnGlobalObjectAtDebuggerEntry)
                 globalObject->setGlobalObjectAtDebuggerEntry(globalObject);
@@ -65,6 +69,9 @@ public:
             if (m_evalWasDisabled)
                 globalObject->setEvalEnabled(false, globalObject->evalDisabledErrorMessage());
             globalObject->setTrustedTypesEnforcement(m_trustedTypesEnforcement);
+#if USE(BUN_JSC_ADDITIONS)
+            globalObject->setScriptExecutionOwnerEvalDisabledIsIgnored(m_scriptExecutionOwnerEvalDisabledWasIgnored);
+#endif
 #if ASSERT_ENABLED
             if (m_mode == Mode::EvalOnGlobalObjectAtDebuggerEntry)
                 globalObject->setGlobalObjectAtDebuggerEntry(nullptr);
@@ -76,6 +83,9 @@ private:
     JSGlobalObject* const m_globalObject;
     bool m_evalWasDisabled { false };
     TrustedTypesEnforcement m_trustedTypesEnforcement;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_scriptExecutionOwnerEvalDisabledWasIgnored { false };
+#endif
 #if ASSERT_ENABLED
     DebuggerEvalEnabler::Mode m_mode;
 #endif

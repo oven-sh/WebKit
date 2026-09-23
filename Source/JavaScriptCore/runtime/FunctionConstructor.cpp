@@ -199,6 +199,14 @@ JSObject* constructFunction(JSGlobalObject* globalObject, const ArgList& args, c
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!globalObject->currentScriptExecutionOwnerAllowsEval()) [[unlikely]] {
+        TRY_CLEAR_EXCEPTION(scope, nullptr);
+        throwException(globalObject, scope, createEvalError(globalObject, JSGlobalObject::scriptExecutionOwnerEvalDisabledErrorMessage()));
+        return nullptr;
+    }
+#endif
+
     if (!globalObject->evalEnabled()) [[unlikely]] {
         if (globalObject->trustedTypesEnforcement() != TrustedTypesEnforcement::EnforcedWithEvalEnabled) {
             TRY_CLEAR_EXCEPTION(scope, nullptr);

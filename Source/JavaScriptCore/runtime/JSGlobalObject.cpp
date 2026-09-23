@@ -3975,6 +3975,15 @@ void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
+bool JSGlobalObject::currentScriptExecutionOwnerAllowsEvalSlow() const
+{
+    if (m_scriptExecutionOwnerEvalDisabledIsIgnored)
+        return true;
+    JSValue owner = m_asyncContextData->getInternalField(1);
+    auto* environment = owner.isCell() ? dynamicDowncast<JSScriptExecutionOwnerEnvironment>(owner.asCell()) : nullptr;
+    return !environment || environment->evalEnabled();
+}
+
 void JSGlobalObject::didMakeScriptExecutionOwner(VM& vm)
 {
     if (hasScriptExecutionOwners()) [[likely]]

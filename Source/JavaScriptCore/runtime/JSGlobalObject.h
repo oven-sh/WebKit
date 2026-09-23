@@ -575,6 +575,8 @@ public:
     InlineWatchpointSet m_noScriptExecutionOwnerWatchpointSet { IsWatched };
     // The set's state, as the one byte C++ tests on paths every program runs.
     bool m_hasScriptExecutionOwners { false };
+    // The debugger evaluates what its user types whichever owner is current (DebuggerEvalEnabler).
+    bool m_scriptExecutionOwnerEvalDisabledIsIgnored { false };
 #endif
     InlineWatchpointSet m_mapIteratorProtocolWatchpointSet { IsWatched };
     InlineWatchpointSet m_setIteratorProtocolWatchpointSet { IsWatched };
@@ -820,6 +822,20 @@ public:
     InlineWatchpointSet& noScriptExecutionOwnerWatchpointSet() { return m_noScriptExecutionOwnerWatchpointSet; }
     bool hasScriptExecutionOwners() const { return m_hasScriptExecutionOwners; }
     JS_EXPORT_PRIVATE void didMakeScriptExecutionOwner(VM&);
+    // Whether the script execution owner that is current lets script be made from a string
+    // (JSScriptExecutionOwnerEnvironment::evalEnabled()); true when none is. What eval and the Function constructors
+    // ask next to evalEnabled(). The owner that is current is the one whose script is calling: a function of an
+    // owner's script runs with its owner current.
+    bool currentScriptExecutionOwnerAllowsEval() const
+    {
+        if (!m_hasScriptExecutionOwners) [[likely]]
+            return true;
+        return currentScriptExecutionOwnerAllowsEvalSlow();
+    }
+    JS_EXPORT_PRIVATE bool currentScriptExecutionOwnerAllowsEvalSlow() const;
+    static ASCIILiteral scriptExecutionOwnerEvalDisabledErrorMessage() { return "Code generation from strings disallowed for this context"_s; }
+    bool scriptExecutionOwnerEvalDisabledIsIgnored() const { return m_scriptExecutionOwnerEvalDisabledIsIgnored; }
+    void setScriptExecutionOwnerEvalDisabledIsIgnored(bool ignored) { m_scriptExecutionOwnerEvalDisabledIsIgnored = ignored; }
     // AsyncContextSwapScope::current() while there is a script execution owner: an
     // InternalFieldTuple of the two fields of m_asyncContextData, never written again.
     JS_EXPORT_PRIVATE JSValue currentAsyncContextWithScriptExecutionOwner(VM&);

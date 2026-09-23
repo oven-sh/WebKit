@@ -53,6 +53,7 @@ inline JSScriptExecutionOwnerEnvironment::JSScriptExecutionOwnerEnvironment(VM& 
     : Base(vm, structure, currentScope, symbolTable, initialValue)
 {
     embedderObjectSlot().clear();
+    evalEnabledSlot() = true;
 }
 
 template<typename Visitor>
