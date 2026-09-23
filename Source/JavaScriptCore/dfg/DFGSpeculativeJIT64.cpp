@@ -5123,6 +5123,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case CheckScriptExecutionOwner: {
+        compileCheckScriptExecutionOwner(node);
+        break;
+    }
+
     case AssertNotEmpty: {
         if (validationEnabled()) {
             JSValueOperand operand(this, node->child1());

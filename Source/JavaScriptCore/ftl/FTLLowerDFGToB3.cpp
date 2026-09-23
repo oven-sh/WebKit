@@ -972,6 +972,9 @@ private:
         case CheckNotEmpty:
             compileCheckNotEmpty();
             break;
+        case CheckScriptExecutionOwner:
+            compileCheckScriptExecutionOwner();
+            break;
         case AssertNotEmpty:
             compileAssertNotEmpty();
             codeGenerationResult = CodeGenerationResult::NotGenerated;
@@ -4342,6 +4345,11 @@ private:
     void compileCheckBadValue()
     {
         terminate(BadConstantValue);
+    }
+
+    void compileCheckScriptExecutionOwner()
+    {
+        speculate(BadScriptExecutionOwner, noValue(), nullptr, m_out.notEqual(lowCell(m_node->child1()), lowJSValue(m_node->child2())));
     }
 
     void compileCheckNotEmpty()

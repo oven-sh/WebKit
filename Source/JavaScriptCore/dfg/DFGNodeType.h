@@ -311,6 +311,7 @@ namespace JSC { namespace DFG {
     macro(CheckNotEmpty, NodeMustGenerate) \
     macro(AssertNotEmpty, NodeMustGenerate) \
     macro(CheckBadValue, NodeMustGenerate) \
+    macro(CheckScriptExecutionOwner, NodeMustGenerate) /* Bun: exits unless child1 (a function's owner) is child2 (the current one). */ \
     macro(AssertInBounds, NodeMustGenerate) \
     macro(CheckInBounds, NodeMustGenerate | NodeResultJS) \
     macro(CheckInBoundsInt52, NodeMustGenerate | NodeResultJS) \

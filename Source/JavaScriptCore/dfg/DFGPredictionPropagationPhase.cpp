@@ -1845,6 +1845,7 @@ private:
         case EnqueueAsyncGeneratorDriver:
         case CheckStructure:
         case CheckIsConstant:
+        case CheckScriptExecutionOwner:
         case CheckNotEmpty:
         case AssertNotEmpty:
         case CheckIdent:

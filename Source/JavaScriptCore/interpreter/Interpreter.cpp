@@ -641,19 +641,9 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     };
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool isTopFrame = true;
-#endif
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
-
-#if USE(BUN_JSC_ADDITIONS)
-        // A frame under another that is still at its op_enter is a function calling itself again with its script
-        // execution owner current (CommonSlowPaths::enterScriptExecutionOwner): the function's frame is that call's.
-        if (!std::exchange(isTopFrame, false) && visitor->codeBlock() && visitor->codeBlock()->scriptExecutionOwnerDepth() != CodeBlock::noScriptExecutionOwner && !visitor->bytecodeIndex().offset())
-            return IterationStatus::Continue;
-#endif
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;
@@ -1011,7 +1001,11 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     CatchInfo catchInfo;
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
+#if USE(BUN_JSC_ADDITIONS)
+    StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty, StackVisitor::VisitFramesEnteringScriptExecutionOwner>(callFrame, vm, functor);
+#else
     StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
+#endif
 
     if (seenRemoteFunction) {
         ASSERT(!vm.isTerminationException(exception));

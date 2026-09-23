@@ -2258,6 +2258,17 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// op_enter, the function's script execution owner not being the current one (CommonSlowPaths::prepareToEnterScriptExecutionOwner()).
+extern "C" UGPRPair SYSV_ABI llint_slow_path_enter_script_execution_owner(CallFrame* callFrame, const JSInstruction* pc, CallFrame* calleeFrame)
+{
+    LLINT_BEGIN();
+    CodePtr<JSEntryPtrTag> codePtr = CommonSlowPaths::prepareToEnterScriptExecutionOwner(globalObject, callFrame, calleeFrame);
+    auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+    LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+}
+#endif
+
 LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
 {
     LLINT_BEGIN_NO_SET_PC();

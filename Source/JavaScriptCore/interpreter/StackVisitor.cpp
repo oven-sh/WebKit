@@ -66,6 +66,35 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         gotoNextFrame();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool StackVisitor::hasEnteredScriptExecutionOwner(VM& vm)
+{
+    return vm.hasEnteredScriptExecutionOwner;
+}
+
+bool StackVisitor::isFrameOfBuiltinEnteringScriptExecutionOwner() const
+{
+    if (!m_frame.callee().isCell())
+        return false;
+    auto* function = dynamicDowncast<JSFunction>(m_frame.callee().asCell());
+    // (Which almost no frame's function is: its executable says so.)
+    if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Private)
+        return false;
+    JSGlobalObject* globalObject = function->globalObject();
+    return function == globalObject->linkTimeConstantConcurrently<JSFunction*>(LinkTimeConstant::callInScriptExecutionOwner)
+        || function == globalObject->linkTimeConstantConcurrently<JSFunction*>(LinkTimeConstant::constructInScriptExecutionOwner);
+}
+
+JSCell* StackVisitor::functionEnteringScriptExecutionOwner() const
+{
+    if (m_frame.isInlinedDFGFrame())
+        return nullptr;
+    // callInScriptExecutionOwner(owner, callee, thisValue, argumentValues)
+    JSValue function = m_frame.callFrame()->argument(1);
+    return function.isCell() ? function.asCell() : nullptr;
+}
+#endif
+
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;

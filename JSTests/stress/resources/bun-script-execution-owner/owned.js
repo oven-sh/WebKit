@@ -44,3 +44,66 @@ export function hot(n) {
 }
 export function hotRuns() { return runs; }
 export function callsInner(n) { let sum = 0; for (let i = 0; i < n; ++i) sum = inner(sum); return sum; }
+
+// A tail call of a function with the same code (which the FTL makes a jump back to the top) reaches another owner's.
+export function tail(n, other) { if (n === 0) return current(); return other(n - 1, other); }
+export function tailTurns(n, mine, theirs) { if (n === 0) return current(); return theirs(n - 1, theirs, mine); }
+export function countTailsNotRunningAs(name, mine, theirs, rounds) {
+    let wrong = 0;
+    for (let i = 0; i < rounds; ++i) {
+        if (mine(1, theirs) !== name)
+            ++wrong;
+    }
+    return wrong;
+}
+export function countTailTurnsNotRunningAs(name, mine, theirs, rounds) {
+    let wrong = 0;
+    for (let i = 0; i < rounds; ++i) {
+        if (mine(3, mine, theirs) !== name)
+            ++wrong;
+    }
+    return wrong;
+}
+
+// A small function its own owner's loop calls, which is then called from outside too.
+export function increment(x) { return x + 1; }
+export function label() { return "label"; }
+export function incrementLoop(n) { let sum = 0; for (let i = 0; i < n; ++i) sum = increment(sum); return sum; }
+
+// How deep two functions can call each other.
+export function descend(n, mine, theirs) {
+    try {
+        return theirs(n + 1, theirs, mine);
+    } catch (error) {
+        if (error instanceof RangeError)
+            return n;
+        throw error;
+    }
+}
+
+// A loop in one owner's function around a call of another's, whose result it goes on computing with.
+export function accumulate(other, n, start) { let sum = start; for (let i = 0; i < n; ++i) sum = other(sum); return sum; }
+export function half(x) { return x + 0.5; }
+export function wrap(x) { return { value: (x ? x.value : 0) + 1 }; }
+
+// What a stack trace shows of calls that enter owners.
+export function tailThrower() { return thrower(); }
+export function relay(next, last) { const result = next ? next(last) : last(); return result; }
+
+// Hot calls, inside an owner's code, of another function of the same module, that the DFG inlines where it cannot exit
+// (a varargs call has loaded its arguments by then): the callee's owner is checked in the callee's frame instead.
+const add = (a, b) => (a | 0) + (b | 0);
+class Sum { constructor(a, b) { this.sum = (a | 0) + (b | 0); } }
+class SumOfSpread extends Sum { constructor(...args) { super(...args); } }
+export const varargsShapes = {
+    spread(n) { const f = (...a) => add(...a); let s = 0; for (let i = 0; i < n; ++i) s += f(i, 1); return s; },
+    applyArguments(n) { function f() { return add.apply(null, arguments); } let s = 0; for (let i = 0; i < n; ++i) s += f(i, 1); return s; },
+    applyArray(n) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; ++i) s += add.apply(null, array); return s; },
+    newSpread(n) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; ++i) s += new Sum(...array).sum; return s; },
+    reflectApply(n) { let s = 0; for (let i = 0; i < n; ++i) s += Reflect.apply(add, null, [i, 1]); return s; },
+    forwardArguments(n) { function g() { return add(arguments[0], arguments[1]); } function f() { return g.apply(this, arguments); } let s = 0; for (let i = 0; i < n; ++i) s += f(i, 1); return s; },
+    superSpread(n) { let s = 0; for (let i = 0; i < n; ++i) s += new SumOfSpread(i, 1).sum; return s; },
+    crossingSpread(n, other) { const array = [1, 2]; let s = 0; for (let i = 0; i < n; ++i) s += other(...array); return s; },
+    current() { return current(); },
+};
+export function addOf(a, b) { return add(a, b); }

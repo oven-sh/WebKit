@@ -599,6 +599,7 @@ public:
         case CheckArrayOrEmpty:
         case CheckDetached:
         case CheckIsConstant:
+        case CheckScriptExecutionOwner:
         case CheckNotEmpty:
         case CheckBadValue:
         case CheckInBounds:

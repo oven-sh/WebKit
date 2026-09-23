@@ -10602,6 +10602,14 @@ void SpeculativeJIT::compileCheckIsConstant(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compileCheckScriptExecutionOwner(Node* node)
+{
+    SpeculateCellOperand owner(this, node->child1());
+    JSValueOperand current(this, node->child2());
+    speculationCheck(BadScriptExecutionOwner, JSValueSource(), nullptr, branch64(NotEqual, owner.gpr(), current.gpr()));
+    noResult(node);
+}
+
 void SpeculativeJIT::compileCheckNotEmpty(Node* node)
 {
     JSValueOperand operand(this, node->child1());

@@ -499,9 +499,17 @@ private:
     void emitArgumentPhantoms(int registerOffset, int argumentCountIncludingThis);
 #if USE(BUN_JSC_ADDITIONS)
     void handleEnterScriptExecutionOwner();
-    bool checkScriptExecutionOwnerAtCallSite(Node* callee, CallVariant, CodeBlock*);
+    // What inlineCall() found out, in the caller's frame, about the callee's script execution owner being the current one.
+    enum class ScriptExecutionOwnerAtCallSite : uint8_t {
+        NotChecked, // Exiting is not possible there (a varargs call has loaded its arguments): op_enter's handler checks.
+        Checked, // It is, or the code has exited: op_enter's handler has nothing left to do.
+        FoundAnother, // This call has exited because another was: op_enter's handler compiles entering the callee's.
+    };
+    ScriptExecutionOwnerAtCallSite checkScriptExecutionOwnerAtCallSite(Node* callee, CallVariant, CodeBlock*);
+    bool isBuiltinEnteringScriptExecutionOwner(CodeBlock*);
     Node* scriptExecutionOwnerOf(Node* callee, unsigned depth, JSFunction* knownCallee = nullptr);
     JSFunction* functionToEnterScriptExecutionOwnerWith(CodeBlock*);
+    bool hasFoundAnotherScriptExecutionOwnerCurrent(BytecodeIndex);
     void checkScriptExecutionOwnerIsCurrent(Node* owner, CodeBlock*);
 #endif
     Node* getArgumentCount();
@@ -1648,8 +1656,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         // While the call handleEnterScriptExecutionOwner() makes is being parsed.
         bool m_isEnteringScriptExecutionOwner { false };
-        // inlineCall() did what op_enter's handler would (checkScriptExecutionOwnerAtCallSite()).
-        bool m_scriptExecutionOwnerCheckedAtCallSite { false };
+        ScriptExecutionOwnerAtCallSite m_scriptExecutionOwnerAtCallSite { ScriptExecutionOwnerAtCallSite::NotChecked };
 #endif
         
         InlineStackEntry(
@@ -1852,6 +1859,12 @@ ByteCodeParser::Terminality ByteCodeParser::handleVarargsCall(const JSInstructio
     CallLinkStatus callLinkStatus = CallLinkStatus::computeFor(
         m_inlineStackTop->m_profiledBlock, currentCodeOrigin(),
         m_inlineStackTop->m_baselineMap, m_icContextStack);
+#if USE(BUN_JSC_ADDITIONS)
+    // The builtin a function enters its script execution owner through has one call, of that function, and every
+    // function that has entered an owner has made it: what it has seen says nothing about this one.
+    if (InlineStackEntry* entering = m_inlineStackTop->m_caller; entering && entering->m_isEnteringScriptExecutionOwner)
+        callLinkStatus = CallLinkStatus(CallVariant(entering->executable()));
+#endif
     refineStatically(callLinkStatus, callTarget);
     
     VERBOSE_LOG("    Varargs call link status at ", currentCodeOrigin(), ": ", callLinkStatus, "\n");
@@ -1974,8 +1987,21 @@ bool ByteCodeParser::handleRecursiveTailCall(Node* callTargetNode, CallVariant c
                 return false;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // The jump lands past op_enter, which is where a function finds out that its script execution owner is not the
+        // current one. Code that several owners have functions of has one function's tail call reach another's.
+        unsigned scriptExecutionOwnerDepth = stackEntry->m_codeBlock->scriptExecutionOwnerDepth();
+        if (scriptExecutionOwnerDepth != CodeBlock::noScriptExecutionOwner && hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex))
+            return false;
+#endif
+
         // We must add some check that the profiling information was correct and the target of this call is what we thought.
         emitFunctionCheckIfNeeded();
+#if USE(BUN_JSC_ADDITIONS)
+        // (An inlined frame that is not a closure call's is this very function's, whose owner is the current one.)
+        if (scriptExecutionOwnerDepth != CodeBlock::noScriptExecutionOwner && (!stackEntry->m_inlineCallFrame || stackEntry->m_inlineCallFrame->isClosureCall))
+            checkScriptExecutionOwnerIsCurrent(scriptExecutionOwnerOf(callTargetNode, scriptExecutionOwnerDepth, callVariant.function()), stackEntry->m_codeBlock);
+#endif
         // We flush everything, as if we were in the backedge of a loop (see treatment of op_jmp in parseBlock).
         flushForTerminal();
 
@@ -2151,7 +2177,7 @@ void ByteCodeParser::inlineCall(Node* callTargetNode, Operand result, CallVarian
     CodeBlock* codeBlock = callee.functionExecutable()->baselineCodeBlockFor(specializationKind);
     insertChecks(codeBlock);
 #if USE(BUN_JSC_ADDITIONS)
-    bool scriptExecutionOwnerCheckedAtCallSite = checkScriptExecutionOwnerAtCallSite(callTargetNode, callee, codeBlock);
+    ScriptExecutionOwnerAtCallSite scriptExecutionOwnerAtCallSite = checkScriptExecutionOwnerAtCallSite(callTargetNode, callee, codeBlock);
 #endif
 
     dataLogLnIf(Options::printEachDFGFTLInlineCall(), "[InlineCall][", m_graph.m_plan.jitType(), "] Callee: ", codeBlock->inferredNameWithHash(), " -> Caller: ", m_graph.m_codeBlock->inferredNameWithHash());
@@ -2227,7 +2253,7 @@ void ByteCodeParser::inlineCall(Node* callTargetNode, Operand result, CallVarian
         inlineCallFrameStart.virtualRegister(), argumentCountIncludingThis, kind, continuationBlock);
     inlineStackEntry.m_planSite = planSite;
 #if USE(BUN_JSC_ADDITIONS)
-    inlineStackEntry.m_scriptExecutionOwnerCheckedAtCallSite = scriptExecutionOwnerCheckedAtCallSite;
+    inlineStackEntry.m_scriptExecutionOwnerAtCallSite = scriptExecutionOwnerAtCallSite;
 #endif
 
     // This is where the actual inlining really happens.
@@ -7849,13 +7875,9 @@ Node* ByteCodeParser::scriptExecutionOwnerOf(Node* callee, unsigned depth, JSFun
     return scope;
 }
 
-// What a function that has found another owner current enters its own through, or null: until it has (as op_jneq_ptr
-// until it has jumped) the owner being the current one is only checked for, and the call is not compiled. The call
-// forwards the arguments, which would have every argument of the function kept boxed.
+// What a function that finds another owner current enters its own through. Null until one has.
 JSFunction* ByteCodeParser::functionToEnterScriptExecutionOwnerWith(CodeBlock* profiledBlock)
 {
-    if (!profiledBlock->hasEnteredScriptExecutionOwner())
-        return nullptr;
     bool isConstruct = profiledBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
     return profiledBlock->globalObject()->linkTimeConstantConcurrently<JSFunction*>(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
 }
@@ -7863,38 +7885,54 @@ JSFunction* ByteCodeParser::functionToEnterScriptExecutionOwnerWith(CodeBlock* p
 void ByteCodeParser::checkScriptExecutionOwnerIsCurrent(Node* owner, CodeBlock* codeBlock)
 {
     Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
-    if (owner->isCellConstant())
-        addToGraph(CheckIsConstant, OpInfo(owner->constant()), current);
-    else
-        addToGraph(CheckIsConstant, OpInfo(m_graph.freezeStrong(jsBoolean(true))), addToGraph(CompareStrictEq, owner, current));
+    addToGraph(CheckScriptExecutionOwner, owner, current);
+}
+
+// Until the code at `index` has exited because it found another owner current, the owner being the current one is only
+// checked for (as op_jneq_ptr's operand is until it has jumped), and entering it is not compiled: that forwards the
+// arguments, which has every argument of the function kept boxed, and its result is whatever the builtin has returned.
+// The exits are counted where they happen, so a function the host calls and its own graph calls too is entered where
+// the host calls it and only checked where its graph does.
+bool ByteCodeParser::hasFoundAnotherScriptExecutionOwnerCurrent(BytecodeIndex index)
+{
+    return m_inlineStackTop->m_exitProfile.hasExitSite(index, BadScriptExecutionOwner);
+}
+
+bool ByteCodeParser::isBuiltinEnteringScriptExecutionOwner(CodeBlock* codeBlock)
+{
+    JSGlobalObject* globalObject = codeBlock->globalObject();
+    for (LinkTimeConstant constant : { LinkTimeConstant::callInScriptExecutionOwner, LinkTimeConstant::constructInScriptExecutionOwner }) {
+        if (auto* function = globalObject->linkTimeConstantConcurrently<JSFunction*>(constant); function && function->executable() == codeBlock->ownerExecutable())
+            return true;
+    }
+    return false;
 }
 
 // For a callee that is being inlined, the check is of the callee, like the check of which function it is, and is made
 // where that one is: in the caller's frame, before the callee's. A node in the frame of a closure call reads the frame's
 // callee slot, which a loop around the call writes each time, so nothing in there is hoisted out of the loop; out here the
-// check is, when the callee does not change. It exits to the call. True if op_enter's handler has nothing left to do.
-bool ByteCodeParser::checkScriptExecutionOwnerAtCallSite(Node* callee, CallVariant variant, CodeBlock* codeBlock)
+// check is, when the callee does not change. It exits to the call.
+auto ByteCodeParser::checkScriptExecutionOwnerAtCallSite(Node* callee, CallVariant variant, CodeBlock* codeBlock) -> ScriptExecutionOwnerAtCallSite
 {
     unsigned depth = codeBlock->scriptExecutionOwnerDepth();
     if (depth == CodeBlock::noScriptExecutionOwner)
-        return true;
-    if (!callee)
-        return false;
-    // Called by the builtin a function enters its owner through, this is that function, and its owner is what the
-    // builtin has just made the current one.
-    if (m_inlineStackTop->m_caller && m_inlineStackTop->m_caller->m_isEnteringScriptExecutionOwner)
-        return true;
-    if (functionToEnterScriptExecutionOwnerWith(codeBlock))
-        return false;
+        return ScriptExecutionOwnerAtCallSite::Checked;
+    // The builtin a function enters its owner through calls that function, having made its owner the current one.
+    if (isBuiltinEnteringScriptExecutionOwner(m_inlineStackTop->m_codeBlock))
+        return ScriptExecutionOwnerAtCallSite::Checked;
+    if (hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex))
+        return ScriptExecutionOwnerAtCallSite::FoundAnother;
+    if (!m_exitOK)
+        return ScriptExecutionOwnerAtCallSite::NotChecked;
     // Which function it is has been checked, unless it is a closure call: then only which code it has.
     checkScriptExecutionOwnerIsCurrent(scriptExecutionOwnerOf(callee, depth, variant.function()), codeBlock);
-    return true;
+    return ScriptExecutionOwnerAtCallSite::Checked;
 }
 
 // op_enter has a function run with its script execution owner as the current one (CodeBlock::scriptExecutionOwnerDepth()).
 void ByteCodeParser::handleEnterScriptExecutionOwner()
 {
-    if (m_inlineStackTop->m_scriptExecutionOwnerCheckedAtCallSite)
+    if (m_inlineStackTop->m_scriptExecutionOwnerAtCallSite == ScriptExecutionOwnerAtCallSite::Checked)
         return;
     CodeBlock* codeBlock = m_inlineStackTop->m_codeBlock;
     unsigned depth = codeBlock->scriptExecutionOwnerDepth();
@@ -7902,7 +7940,12 @@ void ByteCodeParser::handleEnterScriptExecutionOwner()
         return;
 
     Node* owner = scriptExecutionOwnerOf(get(VirtualRegister(CallFrameSlot::callee)), depth);
-    JSFunction* enter = functionToEnterScriptExecutionOwnerWith(m_inlineStackTop->m_profiledBlock);
+    // A call that is compiled on its own has no caller to count for: the function having entered from anywhere is
+    // what is known (the tiers below set it).
+    bool entersOwner = inlineCallFrame()
+        ? m_inlineStackTop->m_scriptExecutionOwnerAtCallSite == ScriptExecutionOwnerAtCallSite::FoundAnother || hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex)
+        : m_inlineStackTop->m_profiledBlock->hasEnteredScriptExecutionOwner();
+    JSFunction* enter = entersOwner ? functionToEnterScriptExecutionOwnerWith(m_inlineStackTop->m_profiledBlock) : nullptr;
     if (!enter) {
         checkScriptExecutionOwnerIsCurrent(owner, codeBlock);
         return;
@@ -7964,8 +8007,12 @@ void ByteCodeParser::handleEnterScriptExecutionOwner()
                 flushForReturn();
             } else {
                 flushForReturn();
-                if (m_inlineStackTop->m_returnValue.isValid())
-                    setDirect(m_inlineStackTop->m_returnValue, returnValue, ImmediateSetWithFlush);
+                if (m_inlineStackTop->m_returnValue.isValid()) {
+                    // The call was effectful and nothing of this function's bytecode comes after it, so there is
+                    // nowhere to exit to for a type check on what it returned (as after a LoadVarargs).
+                    Node* setReturnValue = setDirect(m_inlineStackTop->m_returnValue, returnValue, ImmediateSetWithFlush);
+                    setReturnValue->variableAccessData()->mergeShouldNeverUnbox(true);
+                }
                 if (!m_inlineStackTop->m_continuationBlock)
                     m_inlineStackTop->m_continuationBlock = allocateUntargetableBlock();
                 addJumpTo(m_inlineStackTop->m_continuationBlock);

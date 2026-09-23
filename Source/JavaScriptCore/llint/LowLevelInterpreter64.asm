@@ -879,9 +879,23 @@ if BUN_JSC_ADDITIONS
     loadp JSGlobalObject::m_asyncContextData[t1], t1
     loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
     bqeq t0, t1, .opEnterInScriptExecutionOwner
-    callSlowPath(_slow_path_enter_script_execution_owner)
-    branchIfException(_llint_throw_from_slow_path_trampoline)
-    move r1, r0
+    // The same call again, through the builtin that makes the owner the current one, whose result is the function's
+    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner()). The builtin's frame goes under the function's registers.
+    subp (constexpr CommonSlowPaths::scriptExecutionOwnerEntryFrameSize) + maxFrameExtentForSlowPathCall, sp
+    prepareStateForCCall()
+    move cfr, a0
+    move PC, a1
+    leap maxFrameExtentForSlowPathCall[sp], a2
+    cCall3(_llint_slow_path_enter_script_execution_owner)
+    // r0: the code to call (having thrown, what throws); r1: the stack pointer to call it with.
+    btpz r1, .opEnterScriptExecutionOwnerCall
+    move r1, sp
+.opEnterScriptExecutionOwnerCall:
+    if C_LOOP
+        cloopCallJSFunction r0
+    else
+        call r0, JSEntrySlowPathPtrTag
+    end
     doReturn()
 .opEnterInScriptExecutionOwner:
     loadp CodeBlock[cfr], t2

@@ -69,7 +69,11 @@ public:
     // moduleScopeSymbolTables: the symbol tables of the lexical environments between
     // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
     // linked code embeds their variables' offsets too.
-    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker = nullptr, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
+    // moduleScopeScriptExecutionOwnerIndex: which of them is the first JSScriptExecutionOwnerEnvironment (none:
+    // noModuleScopeScriptExecutionOwner); linked code embeds how far up a function's scope chain it is
+    // (CodeBlock::scriptExecutionOwnerDepth()).
+    static constexpr unsigned noModuleScopeScriptExecutionOwner = UINT_MAX;
+    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker = nullptr, const Vector<SymbolTable*>& moduleScopeSymbolTables = { }, unsigned moduleScopeScriptExecutionOwnerIndex = noModuleScopeScriptExecutionOwner);
 
     static void destroy(JSCell*);
 
@@ -126,7 +130,7 @@ public:
     // A second record has taken this executable: its code now runs against more than one module environment.
     bool isShared() const { return m_isShared; }
     void didShare() { m_isShared = true; }
-    bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
+    bool hasModuleScope(const Vector<SymbolTable*>&, unsigned scriptExecutionOwnerIndex) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
     bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
 
@@ -154,7 +158,7 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, unsigned moduleScopeScriptExecutionOwnerIndex);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
@@ -165,6 +169,7 @@ private:
 #endif
     std::optional<ImportedBindings> m_linkerImportedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
+    unsigned m_moduleScopeScriptExecutionOwnerIndex;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
     unsigned m_recordsYetToFinishEvaluation { 0 };
     bool m_hasBeenEvaluated { false };

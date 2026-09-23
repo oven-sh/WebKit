@@ -53,8 +53,13 @@ namespace CommonSlowPaths {
 
 #if USE(BUN_JSC_ADDITIONS)
 // What op_enter does when the function's script execution owner is not the current one: the same call again, through
-// @callInScriptExecutionOwner / @constructInScriptExecutionOwner, whose result is the function's.
-JS_EXPORT_PRIVATE JSValue enterScriptExecutionOwner(JSGlobalObject*, CallFrame*);
+// @callInScriptExecutionOwner / @constructInScriptExecutionOwner, whose result is the function's. It is a call like the
+// ones the function's code makes, so entering an owner nests no native frames. None of the function's registers is in
+// use yet: op_enter moves the stack pointer this far under them, and this fills the builtin's frame there (`calleeFrame`)
+// with the owner, the function, its `this` (new.target, in a constructor) and its arguments. Returns the code to call
+// with the stack pointer CallerFrameAndPC above `calleeFrame`; null having thrown.
+static constexpr unsigned scriptExecutionOwnerEntryFrameSize = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), CallFrame::headerSizeInRegisters + 5) * sizeof(Register);
+CodePtr<JSEntryPtrTag> prepareToEnterScriptExecutionOwner(JSGlobalObject*, CallFrame*, CallFrame* calleeFrame);
 #endif
 
 ALWAYS_INLINE int numberOfStackPaddingSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
@@ -269,7 +274,6 @@ class CallFrame;
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter);
 #if USE(BUN_JSC_ADDITIONS)
-JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter_script_execution_owner);
 #endif
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_to_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_tdz);

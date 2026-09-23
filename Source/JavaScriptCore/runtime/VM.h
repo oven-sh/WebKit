@@ -444,6 +444,12 @@ private:
 
 public:
     bool didEnterVM { false };
+#if USE(BUN_JSC_ADDITIONS)
+    // A function has found another script execution owner current and entered its own
+    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner(), which every such function does first): until then no
+    // stack has a frame of that (StackVisitor).
+    bool hasEnteredScriptExecutionOwner { false };
+#endif
 
 private:
     bool m_isInService { false };

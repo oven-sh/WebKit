@@ -363,7 +363,6 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
     }
 #if USE(BUN_JSC_ADDITIONS)
     m_scriptExecutionOwnerDepth = other.m_scriptExecutionOwnerDepth;
-    m_hasEnteredScriptExecutionOwner = other.m_hasEnteredScriptExecutionOwner;
 #endif
 }
 
@@ -438,8 +437,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         unsigned depth = 0;
         for (JSScope* current = scope; current; current = current->next(), ++depth) {
             if (current->inherits<JSScriptExecutionOwnerEnvironment>()) {
-                // A scope chain is as deep as the parser's recursion let the source nest, far from this.
-                RELEASE_ASSERT(depth < noScriptExecutionOwner);
+                // (Source nests as deep as the parser's recursion lets it, far from this; a function an eval in a
+                // function made by an eval in a function… makes has a scope chain as long as script cares to make it.)
+                if (depth >= noScriptExecutionOwner) [[unlikely]] {
+                    throwException(scope->globalObject(), throwScope, createRangeError(scope->globalObject(), "The function's scope chain is too long."_s));
+                    return false;
+                }
                 m_scriptExecutionOwnerDepth = depth;
                 m_hasScriptExecutionOwner = true;
                 break;

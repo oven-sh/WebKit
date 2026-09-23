@@ -39,6 +39,7 @@
 #include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSPromise.h"
+#include "JSScriptExecutionOwnerEnvironment.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
@@ -546,9 +547,15 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     // which these differ links its own, which later records are then compared against.
     // Nothing about the imports is resolved for this until a second record for the key and module scope turns up
     // (resolvesImportsLike): a record that is the only one to link a module pays for the comparison nothing.
+    // (And how far up a function's scope chain its script execution owner is, which is which of the module scope's
+    // environments is the first one: CodeBlock::scriptExecutionOwnerDepth().)
     Vector<SymbolTable*> moduleScopeSymbolTables;
-    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next())
+    unsigned moduleScopeScriptExecutionOwnerIndex = ModuleProgramExecutable::noModuleScopeScriptExecutionOwner;
+    for (JSScope* moduleScope = moduleLoader()->moduleScope(); moduleScope != globalObject->globalLexicalEnvironment(); moduleScope = moduleScope->next()) {
+        if (moduleScopeScriptExecutionOwnerIndex == ModuleProgramExecutable::noModuleScopeScriptExecutionOwner && moduleScope->inherits<JSScriptExecutionOwnerEnvironment>())
+            moduleScopeScriptExecutionOwnerIndex = moduleScopeSymbolTables.size();
         moduleScopeSymbolTables.append(uncheckedDowncast<JSLexicalEnvironment>(moduleScope)->symbolTable());
+    }
     // Keyed by the module key's impl and the module scope's symbol table, so loaders with
     // different module scopes each keep their entry: a live entry whose key died and was
     // reused for another module fails the URL / source comparison and is replaced.
@@ -562,7 +569,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         // executable's code is in the mode of its first code, see getUnlinkedCodeBlock, which
         // has to be the one this record would ask for.)
         if (shared && (shared->unlinkedCodeBlock() || shared->hasReleasedUnlinkedCode()) && shared->codeGenerationMode() == globalObject->defaultCodeGenerationMode()
-            && shared->hasModuleScopeSymbolTables(moduleScopeSymbolTables)
+            && shared->hasModuleScope(moduleScopeSymbolTables, moduleScopeScriptExecutionOwnerIndex)
             && shared->source().provider()->sourceURL() == sourceCode().provider()->sourceURL() && shared->source().provider()->hash() == sourceCode().provider()->hash() && shared->source().view() == sourceCode().view()) {
             bool alike = resolvesImportsLike(globalObject, shared);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -579,7 +586,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         }
     }
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables);
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables, moduleScopeScriptExecutionOwnerIndex);
     RETURN_IF_EXCEPTION(scope, nullptr);
     executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);

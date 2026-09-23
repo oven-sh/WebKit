@@ -2604,6 +2604,12 @@ private:
             break;
         }
 
+        case CheckScriptExecutionOwner: {
+            // A scope, from the function's scope chain.
+            fixEdge<KnownCellUse>(node->child1());
+            break;
+        }
+
         case ObjectCreate: {
             if (node->child1()->shouldSpeculateObject()) {
                 fixEdge<ObjectUse>(node->child1());

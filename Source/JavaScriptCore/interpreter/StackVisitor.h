@@ -158,13 +158,47 @@ public:
         TerminateIfTopEntryFrameIsEmpty,
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A function that finds another script execution owner current calls itself again through a builtin
+    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner()). The frame it does that from is a call nobody made, still
+    // at its op_enter, with no scope yet, and the builtin's is the engine's: a walk of the script's calls (a stack
+    // trace, Function.prototype.caller, the debugger's call stack) sees neither. A walk of the stack's frames
+    // (unwinding) sees both. No stack has such frames until a function has entered an owner
+    // (VM::hasEnteredScriptExecutionOwner): until then a walk does what it did.
+    enum FramesEnteringScriptExecutionOwnerAction {
+        SkipFramesEnteringScriptExecutionOwner,
+        VisitFramesEnteringScriptExecutionOwner,
+    };
+
+    template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, FramesEnteringScriptExecutionOwnerAction enteringAction = SkipFramesEnteringScriptExecutionOwner, StackVisitorFunctor Functor>
+#else
     template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, StackVisitorFunctor Functor>
+#endif
     static void visit(CallFrame* startFrame, VM& vm, const Functor& functor, bool skipFirstFrame = false)
     {
         StackVisitor visitor(startFrame, vm, skipFirstFrame);
         if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
             return;
+#if USE(BUN_JSC_ADDITIONS)
+        const bool skipsFramesEnteringScriptExecutionOwner = enteringAction == SkipFramesEnteringScriptExecutionOwner && hasEnteredScriptExecutionOwner(vm);
+        // After the builtin's frame: the function it was called with, whose frame at op_enter called it.
+        JSCell* functionEntering = nullptr;
+#endif
         while (visitor->callFrame()) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (skipsFramesEnteringScriptExecutionOwner) [[unlikely]] {
+                JSCell* function = std::exchange(functionEntering, nullptr);
+                if (visitor.isFrameOfBuiltinEnteringScriptExecutionOwner()) {
+                    functionEntering = visitor.functionEnteringScriptExecutionOwner();
+                    visitor.gotoNextFrame();
+                    continue;
+                }
+                if (function && visitor.isFrameOfFunctionAtEnter(function)) {
+                    visitor.gotoNextFrame();
+                    continue;
+                }
+            }
+#endif
             IterationStatus status = functor(visitor);
             if (status != IterationStatus::Continue)
                 break;
@@ -179,6 +213,17 @@ public:
     bool topEntryFrameIsEmpty() const { return m_topEntryFrameIsEmpty; }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static bool hasEnteredScriptExecutionOwner(VM&);
+    // The frame is callInScriptExecutionOwner's or constructInScriptExecutionOwner's.
+    JS_EXPORT_PRIVATE bool isFrameOfBuiltinEnteringScriptExecutionOwner() const;
+    // The function that builtin was called with. (Null for an inlined frame: the DFG makes the call of the builtin a
+    // tail call, so the function's own frame is not there.)
+    JS_EXPORT_PRIVATE JSCell* functionEnteringScriptExecutionOwner() const;
+    // (The same function further down the stack, which called into another owner that called it back, is at a call.)
+    bool isFrameOfFunctionAtEnter(JSCell* function) const { return m_frame.callee().isCell() && m_frame.callee().asCell() == function && m_frame.codeBlock() && !m_frame.bytecodeIndex().offset(); }
+#endif
+
     JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame);
 
     JS_EXPORT_PRIVATE void gotoNextFrame();

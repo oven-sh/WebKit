@@ -1257,39 +1257,38 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_primitive)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSValue CommonSlowPaths::enterScriptExecutionOwner(JSGlobalObject* globalObject, CallFrame* callFrame)
+CodePtr<JSEntryPtrTag> CommonSlowPaths::prepareToEnterScriptExecutionOwner(JSGlobalObject* globalObject, CallFrame* callFrame, CallFrame* calleeFrame)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     CodeBlock* codeBlock = callFrame->codeBlock();
-    JSFunction* callee = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
-    JSScope* owner = callee->scope();
+    JSFunction* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
+    JSScope* owner = function->scope();
     for (unsigned depth = codeBlock->scriptExecutionOwnerDepth(); depth--;)
         owner = owner->next();
     codeBlock->setHasEnteredScriptExecutionOwner();
+    vm.hasEnteredScriptExecutionOwner = true;
 
     // In a constructor's frame `this` is new.target until the function makes its own.
     bool isConstruct = codeBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
-    JSValue enter = globalObject->linkTimeConstant(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
+    JSFunction* enter = uncheckedDowncast<JSFunction>(globalObject->linkTimeConstant(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner));
     JSObject* argumentValues = ClonedArguments::createWithMachineFrame(globalObject, callFrame, ArgumentsMode::Cloned);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(owner);
-    arguments.append(callee);
-    arguments.append(callFrame->thisValue());
-    arguments.append(argumentValues);
-    ASSERT(!arguments.hasOverflowed());
-    RELEASE_AND_RETURN(scope, call(globalObject, enter, jsUndefined(), arguments, "callInScriptExecutionOwner is a function"_s));
-}
+    calleeFrame->setArgumentCountIncludingThis(5);
+    calleeFrame->setCallee(enter);
+    calleeFrame->setThisValue(jsUndefined());
+    calleeFrame->setArgument(0, owner);
+    calleeFrame->setArgument(1, function);
+    calleeFrame->setArgument(2, callFrame->thisValue());
+    calleeFrame->setArgument(3, argumentValues);
 
-JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enter_script_execution_owner)
-{
-    BEGIN();
-    JSValue result = CommonSlowPaths::enterScriptExecutionOwner(globalObject, callFrame);
-    CHECK_EXCEPTION();
-    RETURN_TWO(pc, std::bit_cast<void*>(JSValue::encode(result)));
+    DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
+    FunctionExecutable* executable = enter->jsExecutable();
+    executable->prepareForExecution<FunctionExecutable>(vm, enter, enter->scope(), CodeSpecializationKind::CodeForCall, *calleeFrame->addressOfCodeBlock());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::ArityCheckNotRequired);
 }
 #endif
 

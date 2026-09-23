@@ -5237,6 +5237,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case CheckScriptExecutionOwner:
+        break;
+
     case CheckIsConstant: {
         AbstractValue& value = forNode(node->child1());
         if (value.value() == node->constant()->value() && !value.valueIsTop())

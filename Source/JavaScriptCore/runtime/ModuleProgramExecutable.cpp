@@ -39,10 +39,11 @@ namespace JSC {
 
 const ClassInfo ModuleProgramExecutable::s_info = { "ModuleProgramExecutable"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleProgramExecutable) };
 
-ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, unsigned moduleScopeScriptExecutionOwnerIndex)
     : Base(globalObject->vm().moduleProgramExecutableStructure.get(), globalObject->vm(), source, StrictModeLexicallyScopedFeature, DerivedContextType::None, false, false, EvalContextType::None, NoIntrinsic)
     , m_linker(linker)
     , m_moduleScopeSymbolTables(moduleScopeSymbolTables.size())
+    , m_moduleScopeScriptExecutionOwnerIndex(moduleScopeScriptExecutionOwnerIndex)
 {
     for (unsigned i = 0; i < moduleScopeSymbolTables.size(); ++i)
         m_moduleScopeSymbolTables[i].setWithoutWriteBarrier(moduleScopeSymbolTables[i]);
@@ -134,9 +135,9 @@ void ModuleProgramExecutable::setLinkerImportedBindings(std::optional<ImportedBi
     m_linker.clear();
 }
 
-bool ModuleProgramExecutable::hasModuleScopeSymbolTables(const Vector<SymbolTable*>& symbolTables) const
+bool ModuleProgramExecutable::hasModuleScope(const Vector<SymbolTable*>& symbolTables, unsigned scriptExecutionOwnerIndex) const
 {
-    if (m_moduleScopeSymbolTables.size() != symbolTables.size())
+    if (m_moduleScopeSymbolTables.size() != symbolTables.size() || m_moduleScopeScriptExecutionOwnerIndex != scriptExecutionOwnerIndex)
         return false;
     for (unsigned i = 0; i < symbolTables.size(); ++i) {
         if (m_moduleScopeSymbolTables[i].get() != symbolTables[i])
@@ -172,12 +173,12 @@ FunctionExecutable* ModuleProgramExecutable::linkFunctionDeclaration(VM& vm, uns
     return executable;
 }
 
-ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables)
+ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* globalObject, const SourceCode& source, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, unsigned moduleScopeScriptExecutionOwnerIndex)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
+    ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables, moduleScopeScriptExecutionOwnerIndex);
     executable->finishCreation(vm);
     if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
         return nullptr;

@@ -39,6 +39,9 @@ namespace LLInt {
 extern "C" UGPRPair SYSV_ABI llint_trace_operand(CallFrame*, const JSInstruction*, int fromWhere, int operand) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_trace_value(CallFrame*, const JSInstruction*, int fromWhere, VirtualRegister operand) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_default_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
+#if USE(BUN_JSC_ADDITIONS)
+extern "C" UGPRPair SYSV_ABI llint_slow_path_enter_script_execution_owner(CallFrame*, const JSInstruction*, CallFrame* calleeFrame) REFERENCED_FROM_ASM WTF_INTERNAL;
+#endif
 extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame*, CallLinkInfo*) REFERENCED_FROM_ASM WTF_INTERNAL;
 // What llint_unlinked_call() and operationUnlinkedCall() do: returns where the call goes, unless it threw.
 void* handleUnlinkedCall(VM&, CallFrame* calleeFrame);

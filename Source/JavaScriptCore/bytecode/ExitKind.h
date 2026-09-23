@@ -62,6 +62,9 @@ enum ExitKind : uint8_t {
     GenericUnwind, // We exited because we arrived at this OSR exit from genericUnwind.
     BigInt32Overflow, // We exited because of an BigInt32 overflow.
     UnexpectedResizableArrayBufferView, // We exited because we made an incorrect assumption about what type of ArrayBufferView we would see.
+#if USE(BUN_JSC_ADDITIONS)
+    BadScriptExecutionOwner, // We exited because a function's script execution owner was not the current one.
+#endif
 };
 
 bool NODELETE exitKindMayJettison(ExitKind);

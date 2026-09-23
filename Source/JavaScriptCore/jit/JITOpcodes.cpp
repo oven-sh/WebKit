@@ -32,6 +32,7 @@
 #include "BasicBlockLocation.h"
 #include "BinarySwitch.h"
 #include "BytecodeGenerator.h"
+#include "CommonSlowPaths.h"
 #include "Exception.h"
 #include "JITInlines.h"
 #include "JITThunks.h"
@@ -40,6 +41,7 @@
 #include "JSPropertyNameEnumerator.h"
 #include "JumpTable.h"
 #include "LinkBuffer.h"
+#include "MaxFrameExtentForSlowPathCall.h"
 #include "SuperSampler.h"
 #include "ThunkGenerators.h"
 #include "TypeLocation.h"
@@ -1551,19 +1553,26 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_script_execution_owner_handl
     jit.ret();
 
     enter.link(&jit);
-    // op_enter is always at bytecodeOffset 0.
-    jit.store32(TrustedImm32(0), highWordFor(CallFrameSlot::argumentCountIncludingThis));
-    jit.prepareCallOperation(vm);
-    loadGlobalObject(jit, argumentGPR0);
-    jit.setupArguments<decltype(operationEnterScriptExecutionOwner)>(argumentGPR0);
-    jit.callOperation<OperationPtrTag>(operationEnterScriptExecutionOwner);
-    jit.emitNonPatchableExceptionCheck(vm).linkThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>() }, &jit);
-
-    // What that returned is what the function returns: op_ret, from here.
+    // The same call again, through the builtin that makes the owner the current one, whose result is the function's
+    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner()). Nothing comes back here: the stack pointer is the
+    // function's again, and the builtin's frame goes under the function's registers.
     jit.emitCTIThunkEpilogue();
 #if CPU(X86_64)
     jit.addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister); // The return address into the function.
 #endif
+    jit.subPtr(TrustedImm32(CommonSlowPaths::scriptExecutionOwnerEntryFrameSize + maxFrameExtentForSlowPathCall), stackPointerRegister);
+    // op_enter is always at bytecodeOffset 0.
+    jit.store32(TrustedImm32(0), highWordFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.prepareCallOperation(vm);
+    loadGlobalObject(jit, argumentGPR0);
+    jit.addPtr(TrustedImm32(maxFrameExtentForSlowPathCall), stackPointerRegister, argumentGPR1);
+    jit.setupArguments<decltype(operationPrepareToEnterScriptExecutionOwner)>(argumentGPR0, argumentGPR1);
+    jit.callOperation<OperationPtrTag>(operationPrepareToEnterScriptExecutionOwner);
+    jit.emitNonPatchableExceptionCheck(vm).linkThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>() }, &jit);
+    jit.addPtr(TrustedImm32(maxFrameExtentForSlowPathCall + sizeof(CallerFrameAndPC)), stackPointerRegister);
+    jit.call(returnValueGPR, JSEntryPtrTag);
+
+    // What that returned is what the function returns: op_ret, from here.
     jit.jumpThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
