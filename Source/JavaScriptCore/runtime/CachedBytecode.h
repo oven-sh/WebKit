@@ -160,18 +160,16 @@ public:
     };
     // What is decoded from here on is not recorded.
     Snapshot take();
-    bool isOver() const
-    {
-        Locker locker { m_lock };
-        return m_isOver;
-    }
+    bool isOver() const { return m_isOver.load(); }
+    const std::atomic<bool>& isOverFlag() const { return m_isOver; }
 
 private:
     explicit BytecodeOrderRecorder(bool isOver);
     unsigned indexOf(RecordedOrderSource) WTF_REQUIRES_LOCK(m_lock);
 
-    mutable Lock m_lock;
-    bool m_isOver WTF_GUARDED_BY_LOCK(m_lock);
+    Lock m_lock;
+    std::atomic<bool> m_isOver; // set with m_lock held
+
     Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> m_sources WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_lastSource WTF_GUARDED_BY_LOCK(m_lock) { 0 };
@@ -227,7 +225,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE BytecodeOrderRecorder& enableOrderRecording();
-    BytecodeOrderRecorder* orderRecorder() { return m_orderRecorder.get(); }
+    // Null once the recording was taken (BytecodeOrderRecorder::take).
+    BytecodeOrderRecorder* orderRecorderIfRecording();
 
     // How well the order file a payload was laid out by (BytecodeLinkEncoder) matches what this VM runs: the function
     // bodies decoded out of the payload, by the region they lie in. A body decoded again after its code was returned to

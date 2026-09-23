@@ -1042,7 +1042,13 @@ public:
         RELEASE_ASSERT(m_unlinkedCodeKeepers);
         --m_unlinkedCodeKeepers;
     }
-    bool keepsUnlinkedCode() const { return m_unlinkedCodeKeepers && !m_isDeletingAllCodeToGenerateItAgain; }
+    // A run that records keeps it until its recording is taken, which any thread may do (BytecodeOrderRecorder::take).
+    void keepUnlinkedCodeUntil(const std::atomic<bool>& isOver) { m_unlinkedCodeIsKeptUntil = &isOver; }
+    bool keepsUnlinkedCode() const
+    {
+        bool isKept = m_unlinkedCodeKeepers || (m_unlinkedCodeIsKeptUntil && !m_unlinkedCodeIsKeptUntil->load());
+        return isKept && !m_isDeletingAllCodeToGenerateItAgain;
+    }
 #else
     bool keepsUnlinkedCode() const { return false; }
 #endif
@@ -1398,6 +1404,7 @@ private:
     std::unique_ptr<PersistentBytecodePayloads> m_persistentBytecodePayloads;
 #if USE(BUN_JSC_ADDITIONS)
     unsigned m_unlinkedCodeKeepers { 0 }; // the VM's thread only
+    const std::atomic<bool>* m_unlinkedCodeIsKeptUntil { nullptr }; // a BytecodeOrderRecorder's, which the process keeps for good
 #endif
     bool m_isDeletingAllCodeToGenerateItAgain { false };
     CallSiteData* m_neverExecutedCallSiteData { nullptr };
