@@ -50,6 +50,10 @@ public:
     const SourceCode& source() const LIFETIME_BOUND { return m_source; }
     SourceID sourceID() const { return m_source.providerID(); }
     const SourceOrigin& sourceOrigin() const LIFETIME_BOUND { return m_source.provider()->sourceOrigin(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // A ScriptFetcher's Weak handles can ask containsOpaqueRoot(fetcher) to live as long as its code.
+    template<typename Visitor> void visitSourceFetcher(Visitor& visitor) const { visitor.addOpaqueRoot(sourceOrigin().fetcher()); }
+#endif
     // This is NOT the path that should be used for computing relative paths from a script. Use SourceOrigin's URL for that, the values may or may not be the same... This should only be used for `error.sourceURL` and stack traces.
     const String& sourceURL() const LIFETIME_BOUND { return m_source.provider()->sourceURL(); }
     const String& sourceURLStripped() const LIFETIME_BOUND { return m_source.provider()->sourceURLStripped(); }
