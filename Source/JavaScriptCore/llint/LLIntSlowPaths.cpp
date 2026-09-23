@@ -2259,13 +2259,22 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// op_enter, the function's script execution owner not being the current one (CommonSlowPaths::prepareToEnterScriptExecutionOwner()).
-extern "C" UGPRPair SYSV_ABI llint_slow_path_enter_script_execution_owner(CallFrame* callFrame, const JSInstruction* pc, CallFrame* calleeFrame)
+// op_enter, the function's script execution owner not being the current one.
+extern "C" UGPRPair SYSV_ABI llint_slow_path_enter_script_execution_owner(CallFrame* callFrame, const JSInstruction* pc)
 {
-    LLINT_BEGIN();
-    CodePtr<JSEntryPtrTag> codePtr = CommonSlowPaths::prepareToEnterScriptExecutionOwner(globalObject, callFrame, calleeFrame);
-    auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
-    LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+    LLINT_BEGIN_NO_SET_PC();
+    UNUSED_VARIABLE(globalObject);
+    UNUSED_VARIABLE(throwScope);
+    CommonSlowPaths::enterScriptExecutionOwner(vm, callFrame);
+    LLINT_RETURN_TWO(pc, nullptr);
+}
+
+// llint_script_execution_owner_return. `returnedFrameArguments` is what the stack pointer is once the function that
+// entered has returned: the rest of its frame, above CallerFrameAndPC, whose callee says which VM this is.
+extern "C" void* SYSV_ABI llint_leave_script_execution_owner(Register* returnedFrameArguments)
+{
+    auto* returnedFrame = std::bit_cast<CallFrame*>(returnedFrameArguments - CallerFrameAndPC::sizeInRegisters);
+    return CommonSlowPaths::leaveScriptExecutionOwner(returnedFrame->callee().asCell()->vm());
 }
 #endif
 

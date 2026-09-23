@@ -1496,6 +1496,7 @@ op :fuzzer_return_early_from_loop_hint
 op :loop_osr_entry_gate
 op :llint_get_host_call_return_value
 op :llint_handle_uncaught_exception
+op :llint_script_execution_owner_return
 op :op_call_return_location
 op :op_call_ignore_result_return_location
 op :op_construct_return_location

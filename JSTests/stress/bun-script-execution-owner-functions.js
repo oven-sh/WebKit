@@ -20,8 +20,8 @@
 
 // A script execution owner is a module loader's scope that is a JSScriptExecutionOwnerEnvironment. A
 // function of script made under it runs with it current, whoever calls it (op_enter, CodeBlock::scriptExecutionOwnerDepth()): called
-// from outside, it calls @callInScriptExecutionOwner and returns what that does, which makes the call again with the
-// owner current and puts back what was. Here: every way of reaching such a function from outside; two owners that share code, so that a
+// from outside, it makes the owner the current one until its frame goes, which puts back what was
+// (CommonSlowPaths::enterScriptExecutionOwner(); bun-script-execution-owner-frames.js is about that frame). Here: every way of reaching such a function from outside; two owners that share code, so that a
 // function's owner is not a constant; functions with no owner; and every tier, before and after a function has first
 // been entered from outside.
 
@@ -239,13 +239,13 @@ async function test() {
         assert(current() === "none", "what was current is back after the combinators");
     }
 
-    // Entering an owner is a call like any other: two owners' functions calling each other get within a small factor
-    // as deep as one owner's function calling itself (each level is the function, the builtin and the function again).
+    // Entering an owner takes no stack: two owners' functions calling each other get about as deep as one owner's
+    // function calling itself (which the optimizing tiers inline into itself, and so fit more of).
     {
         const within = a.descend(0, a.descend, a.descend);
         const between = a.descend(0, a.descend, b.descend);
         assert(current() === "none", "what was current is back after running out of stack");
-        assert(between * 8 > within, "two owners calling each other got " + between + " deep, one owner " + within);
+        assert(between * 2 > within, "two owners calling each other got " + between + " deep, one owner " + within);
     }
 
     // Loaders whose module scopes have the same symbol table share code, which has the owner's depth linked in: not when

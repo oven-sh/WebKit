@@ -5123,6 +5123,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case EnterScriptExecutionOwner: {
+        compileEnterScriptExecutionOwner(node);
+        break;
+    }
+
     case CheckScriptExecutionOwner: {
         compileCheckScriptExecutionOwner(node);
         break;

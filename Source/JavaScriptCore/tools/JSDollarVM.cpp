@@ -2341,6 +2341,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner);
+static JSC_DECLARE_HOST_FUNCTION(functionEnteredScriptExecutionOwnerCount);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4272,6 +4273,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContextScriptExecutionOwner, (JSGlobalO
     return JSValue::encode(jsUndefined());
 }
 
+// $vm.enteredScriptExecutionOwnerCount(): how many functions on the stack made their script execution owner the current
+// one when they were called and have it to put back (VM::enteredScriptExecutionOwners).
+JSC_DEFINE_HOST_FUNCTION(functionEnteredScriptExecutionOwnerCount, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().enteredScriptExecutionOwners.size()));
+}
+
 // $vm.isCurrentScriptExecutionOwner({ loader }): whether the current owner is that loader's module scope (a scope is
 // not a value script may hold, so it is not what asyncContextScriptExecutionOwner() is for).
 JSC_DEFINE_HOST_FUNCTION(functionIsCurrentScriptExecutionOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6107,6 +6116,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, alwaysAllow, "asyncContextScriptExecutionOwner"_s, functionAsyncContextScriptExecutionOwner, 0);
+    addFunction(vm, alwaysAllow, "enteredScriptExecutionOwnerCount"_s, functionEnteredScriptExecutionOwnerCount, 0);
     addFunction(vm, alwaysAllow, "setAsyncContextScriptExecutionOwner"_s, functionSetAsyncContextScriptExecutionOwner, 1);
     addFunction(vm, alwaysAllow, "isCurrentScriptExecutionOwner"_s, functionIsCurrentScriptExecutionOwner, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);

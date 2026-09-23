@@ -503,12 +503,9 @@ private:
     enum class ScriptExecutionOwnerAtCallSite : uint8_t {
         NotChecked, // Exiting is not possible there (a varargs call has loaded its arguments): op_enter's handler checks.
         Checked, // It is, or the code has exited: op_enter's handler has nothing left to do.
-        FoundAnother, // This call has exited because another was: op_enter's handler compiles entering the callee's.
     };
     ScriptExecutionOwnerAtCallSite checkScriptExecutionOwnerAtCallSite(Node* callee, CallVariant, CodeBlock*);
-    bool isBuiltinEnteringScriptExecutionOwner(CodeBlock*);
     Node* scriptExecutionOwnerOf(Node* callee, unsigned depth, JSFunction* knownCallee = nullptr);
-    JSFunction* functionToEnterScriptExecutionOwnerWith(CodeBlock*);
     bool hasFoundAnotherScriptExecutionOwnerCurrent(BytecodeIndex);
     void checkScriptExecutionOwnerIsCurrent(Node* owner, CodeBlock*);
 #endif
@@ -1655,7 +1652,6 @@ private:
         InlineStackEntry* const m_caller;
 #if USE(BUN_JSC_ADDITIONS)
         // While the call handleEnterScriptExecutionOwner() makes is being parsed.
-        bool m_isEnteringScriptExecutionOwner { false };
         ScriptExecutionOwnerAtCallSite m_scriptExecutionOwnerAtCallSite { ScriptExecutionOwnerAtCallSite::NotChecked };
 #endif
         
@@ -1859,12 +1855,6 @@ ByteCodeParser::Terminality ByteCodeParser::handleVarargsCall(const JSInstructio
     CallLinkStatus callLinkStatus = CallLinkStatus::computeFor(
         m_inlineStackTop->m_profiledBlock, currentCodeOrigin(),
         m_inlineStackTop->m_baselineMap, m_icContextStack);
-#if USE(BUN_JSC_ADDITIONS)
-    // The builtin a function enters its script execution owner through has one call, of that function, and every
-    // function that has entered an owner has made it: what it has seen says nothing about this one.
-    if (InlineStackEntry* entering = m_inlineStackTop->m_caller; entering && entering->m_isEnteringScriptExecutionOwner)
-        callLinkStatus = CallLinkStatus(CallVariant(entering->executable()));
-#endif
     refineStatically(callLinkStatus, callTarget);
     
     VERBOSE_LOG("    Varargs call link status at ", currentCodeOrigin(), ": ", callLinkStatus, "\n");
@@ -2140,13 +2130,6 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
     unsigned recursion = 0;
     
     for (InlineStackEntry* entry = m_inlineStackTop; entry; entry = entry->m_caller) {
-#if USE(BUN_JSC_ADDITIONS)
-        // A function entering its script execution owner, and the builtin it does that through, are two frames of fixed
-        // size between a caller and the function it called (handleEnterScriptExecutionOwner()): the function's own
-        // code is the frame after them, and is as deep, and as recursive, as it is without them.
-        if (entry->m_isEnteringScriptExecutionOwner || (entry->m_caller && entry->m_caller->m_isEnteringScriptExecutionOwner))
-            continue;
-#endif
         ++depth;
         if (depth >= Options::maximumInliningDepth()) {
             VERBOSE_LOG("    Failing because depth exceeded.\n");
@@ -2162,6 +2145,17 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         }
     }
     
+#if USE(BUN_JSC_ADDITIONS)
+    // A function makes its script execution owner the current one for as long as its frame is there
+    // (CommonSlowPaths::enterScriptExecutionOwner()), and an inlined function has no frame: it is inlined where its
+    // owner is the current one, which is checked for (checkScriptExecutionOwnerAtCallSite()), and called where that
+    // check has failed.
+    if (codeBlock->hasScriptExecutionOwner() && (hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex) || codeBlock->unlinkedCodeBlock()->hasExitSite(DFG::FrequentExitSite(BytecodeIndex(0), BadScriptExecutionOwner)))) {
+        VERBOSE_LOG("    Failing because the callee's script execution owner has not been the current one here.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+#endif
+
     VERBOSE_LOG("    Inlining should be possible.\n");
     
     // It might be possible to inline.
@@ -7875,37 +7869,16 @@ Node* ByteCodeParser::scriptExecutionOwnerOf(Node* callee, unsigned depth, JSFun
     return scope;
 }
 
-// What a function that finds another owner current enters its own through. Null until one has.
-JSFunction* ByteCodeParser::functionToEnterScriptExecutionOwnerWith(CodeBlock* profiledBlock)
-{
-    bool isConstruct = profiledBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
-    return profiledBlock->globalObject()->linkTimeConstantConcurrently<JSFunction*>(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner);
-}
-
 void ByteCodeParser::checkScriptExecutionOwnerIsCurrent(Node* owner, CodeBlock* codeBlock)
 {
     Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
     addToGraph(CheckScriptExecutionOwner, owner, current);
 }
 
-// Until the code at `index` has exited because it found another owner current, the owner being the current one is only
-// checked for (as op_jneq_ptr's operand is until it has jumped), and entering it is not compiled: that forwards the
-// arguments, which has every argument of the function kept boxed, and its result is whatever the builtin has returned.
-// The exits are counted where they happen, so a function the host calls and its own graph calls too is entered where
-// the host calls it and only checked where its graph does.
+// Whether the code at `index` has exited because it found another owner current.
 bool ByteCodeParser::hasFoundAnotherScriptExecutionOwnerCurrent(BytecodeIndex index)
 {
     return m_inlineStackTop->m_exitProfile.hasExitSite(index, BadScriptExecutionOwner);
-}
-
-bool ByteCodeParser::isBuiltinEnteringScriptExecutionOwner(CodeBlock* codeBlock)
-{
-    JSGlobalObject* globalObject = codeBlock->globalObject();
-    for (LinkTimeConstant constant : { LinkTimeConstant::callInScriptExecutionOwner, LinkTimeConstant::constructInScriptExecutionOwner }) {
-        if (auto* function = globalObject->linkTimeConstantConcurrently<JSFunction*>(constant); function && function->executable() == codeBlock->ownerExecutable())
-            return true;
-    }
-    return false;
 }
 
 // For a callee that is being inlined, the check is of the callee, like the check of which function it is, and is made
@@ -7917,11 +7890,6 @@ auto ByteCodeParser::checkScriptExecutionOwnerAtCallSite(Node* callee, CallVaria
     unsigned depth = codeBlock->scriptExecutionOwnerDepth();
     if (depth == CodeBlock::noScriptExecutionOwner)
         return ScriptExecutionOwnerAtCallSite::Checked;
-    // The builtin a function enters its owner through calls that function, having made its owner the current one.
-    if (isBuiltinEnteringScriptExecutionOwner(m_inlineStackTop->m_codeBlock))
-        return ScriptExecutionOwnerAtCallSite::Checked;
-    if (hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex))
-        return ScriptExecutionOwnerAtCallSite::FoundAnother;
     if (!m_exitOK)
         return ScriptExecutionOwnerAtCallSite::NotChecked;
     // Which function it is has been checked, unless it is a closure call: then only which code it has.
@@ -7940,91 +7908,16 @@ void ByteCodeParser::handleEnterScriptExecutionOwner()
         return;
 
     Node* owner = scriptExecutionOwnerOf(get(VirtualRegister(CallFrameSlot::callee)), depth);
-    // A call that is compiled on its own has no caller to count for: the function having entered from anywhere is
-    // what is known (the tiers below set it).
-    bool entersOwner = inlineCallFrame()
-        ? m_inlineStackTop->m_scriptExecutionOwnerAtCallSite == ScriptExecutionOwnerAtCallSite::FoundAnother || hasFoundAnotherScriptExecutionOwnerCurrent(m_currentIndex)
-        : m_inlineStackTop->m_profiledBlock->hasEnteredScriptExecutionOwner();
-    JSFunction* enter = entersOwner ? functionToEnterScriptExecutionOwnerWith(m_inlineStackTop->m_profiledBlock) : nullptr;
-    if (!enter) {
+    // An inlined function has no frame to make its owner the current one for: it is only inlined where it is
+    // (inliningCost()). A function that is compiled on its own and has never found another owner current checks for
+    // that until it does, as op_jneq_ptr's operand is a constant until it has jumped; one that has, from anywhere,
+    // does what the tiers below do.
+    if (inlineCallFrame() || !m_inlineStackTop->m_profiledBlock->hasEnteredScriptExecutionOwner()) {
         checkScriptExecutionOwnerIsCurrent(owner, codeBlock);
         return;
     }
     Node* current = addToGraph(GetInternalField, OpInfo(1), OpInfo(SpecObjectOther | SpecOther), weakJSConstant(codeBlock->globalObject()->m_asyncContextData.get()));
-
-    BasicBlock* enterBlock = allocateUntargetableBlock();
-    BasicBlock* inOwnerBlock = allocateUntargetableBlock();
-    BranchData* branchData = m_graph.m_branchData.add();
-    branchData->taken = BranchTarget(inOwnerBlock);
-    branchData->notTaken = BranchTarget(enterBlock);
-    addToGraph(Branch, OpInfo(branchData), addToGraph(CompareStrictEq, owner, current));
-
-    {
-        // What CommonSlowPaths::enterScriptExecutionOwner() does, as a tail call: the same call again, through `enter`,
-        // whose result is the function's. There is no call in the bytecode; the frame is made past the last register
-        // in use, as for a getter's.
-        m_currentBlock = enterBlock;
-        clearCaches();
-
-        noticeArgumentsUse();
-        Node* callee = get(VirtualRegister(CallFrameSlot::callee));
-        Node* ownerToEnter = scriptExecutionOwnerOf(callee, depth);
-        Node* thisValue = get(VirtualRegister(CallFrameSlot::thisArgument));
-        Node* argumentValues = addToGraph(CreateClonedArguments);
-
-        int argumentCountIncludingThis = 5;
-        int registerOffset = virtualRegisterForLocal(m_inlineStackTop->m_profiledBlock->numCalleeLocals() - 1).offset();
-        registerOffset -= argumentCountIncludingThis + 1; // True return PC.
-        registerOffset -= CallFrame::headerSizeInRegisters;
-        registerOffset = -WTF::roundUpToMultipleOf(stackAlignmentRegisters(), -registerOffset);
-        ensureLocals(m_inlineStackTop->remapOperand(VirtualRegister(registerOffset)).toLocal());
-
-        int nextRegister = registerOffset + CallFrame::headerSizeInRegisters;
-        set(VirtualRegister(nextRegister++), jsConstant(jsUndefined()), ImmediateNakedSet);
-        set(VirtualRegister(nextRegister++), ownerToEnter, ImmediateNakedSet);
-        set(VirtualRegister(nextRegister++), callee, ImmediateNakedSet);
-        set(VirtualRegister(nextRegister++), thisValue, ImmediateNakedSet);
-        set(VirtualRegister(nextRegister++), argumentValues, ImmediateNakedSet);
-
-        // We've set some locals, but they are not user-visible. It's still OK to exit from here.
-        m_exitOK = true;
-        addToGraph(ExitOK);
-
-        // Nothing of this function's is used again, or has been set: its scope register holds what an inlined call
-        // returns.
-        Operand result = codeBlock->scopeRegister();
-        InlineStackEntry* entering = m_inlineStackTop;
-        entering->m_isEnteringScriptExecutionOwner = true;
-        Terminality terminality = handleCall(result, TailCall, InlineCallFrame::TailCall, nextOpcodeIndex(), weakJSConstant(enter), argumentCountIncludingThis, registerOffset, CallLinkStatus(CallVariant(enter)), SpecBytecodeTop, nullptr);
-        entering->m_isEnteringScriptExecutionOwner = false;
-        if (terminality == NonTerminal) {
-            // `enter` was inlined, or this function is: what op_ret does, in the instruction the call is in (the call's
-            // result is a queued SetLocal until the instruction ends).
-            processSetLocalQueue();
-            Node* returnValue = get(result);
-            if (!inlineCallFrame()) {
-                addToGraph(Return, returnValue);
-                flushForReturn();
-            } else {
-                flushForReturn();
-                if (m_inlineStackTop->m_returnValue.isValid()) {
-                    // The call was effectful and nothing of this function's bytecode comes after it, so there is
-                    // nowhere to exit to for a type check on what it returned (as after a LoadVarargs).
-                    Node* setReturnValue = setDirect(m_inlineStackTop->m_returnValue, returnValue, ImmediateSetWithFlush);
-                    setReturnValue->variableAccessData()->mergeShouldNeverUnbox(true);
-                }
-                if (!m_inlineStackTop->m_continuationBlock)
-                    m_inlineStackTop->m_continuationBlock = allocateUntargetableBlock();
-                addJumpTo(m_inlineStackTop->m_continuationBlock);
-            }
-        }
-    }
-
-    // As in op_enter before the check: exiting only runs op_enter again.
-    m_currentBlock = inOwnerBlock;
-    clearCaches();
-    m_exitOK = true;
-    addToGraph(ExitOK);
+    addToGraph(EnterScriptExecutionOwner, owner, current);
 }
 #endif
 

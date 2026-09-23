@@ -1592,6 +1592,7 @@ public:
     void compileCheckIsConstant(Node*);
     void compileCheckNotEmpty(Node*);
     void compileCheckScriptExecutionOwner(Node*);
+    void compileEnterScriptExecutionOwner(Node*);
     void compileCheckStructure(Node*);
     void emitStructureCheck(Node*, GPRReg cellGPR, GPRReg tempGPR);
     void compilePutAccessorById(Node*);

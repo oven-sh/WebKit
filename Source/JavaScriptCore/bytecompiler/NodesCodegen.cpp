@@ -1852,21 +1852,6 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putByValDirect(BytecodeGenerat
     return generator.move(dst, generator.emitDirectPutByVal(base.get(), index.get(), value.get()));
 }
 
-// @constructWithNewTarget(constructor, newTarget, argumentValues): Reflect.construct() of values already known to be
-// what it needs.
-RegisterID* BytecodeIntrinsicNode::emit_intrinsic_constructWithNewTarget(BytecodeGenerator& generator, RegisterID* dst)
-{
-    ArgumentListNode* node = m_args->m_listNode;
-    RefPtr<RegisterID> constructor = generator.emitNode(node);
-    node = node->m_next;
-    RefPtr<RegisterID> newTarget = generator.emitNode(node);
-    node = node->m_next;
-    RefPtr<RegisterID> argumentValues = generator.emitNode(node);
-    ASSERT(!node->m_next);
-
-    return generator.emitConstructVarargs(generator.finalDestination(dst), constructor.get(), newTarget.get(), argumentValues.get(), generator.newTemporary(), 0, divot(), divotStart(), divotEnd(), DebuggableCall::No);
-}
-
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {
     ArgumentListNode* node = m_args->m_listNode;

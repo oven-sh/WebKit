@@ -26,6 +26,8 @@
 #include "config.h"
 #include "StackVisitor.h"
 
+#include "CommonSlowPaths.h"
+
 #include "ClonedArguments.h"
 #include "DebuggerPrimitives.h"
 #include "ExecutableBaseInlines.h"
@@ -51,7 +53,11 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
             if (skipFirstFrame || topFrame->isZombieFrame()) {
+#if USE(BUN_JSC_ADDITIONS)
+                m_previousReturnPC = CommonSlowPaths::returnPCOf(topFrame);
+#else
                 m_previousReturnPC = topFrame->rawReturnPC();
+#endif
                 topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
                 if (startFrame == vm.topCallFrame)
@@ -65,35 +71,6 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
     while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
         gotoNextFrame();
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-bool StackVisitor::hasEnteredScriptExecutionOwner(VM& vm)
-{
-    return vm.hasEnteredScriptExecutionOwner;
-}
-
-bool StackVisitor::isFrameOfBuiltinEnteringScriptExecutionOwner() const
-{
-    if (!m_frame.callee().isCell())
-        return false;
-    auto* function = dynamicDowncast<JSFunction>(m_frame.callee().asCell());
-    // (Which almost no frame's function is: its executable says so.)
-    if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Private)
-        return false;
-    JSGlobalObject* globalObject = function->globalObject();
-    return function == globalObject->linkTimeConstantConcurrently<JSFunction*>(LinkTimeConstant::callInScriptExecutionOwner)
-        || function == globalObject->linkTimeConstantConcurrently<JSFunction*>(LinkTimeConstant::constructInScriptExecutionOwner);
-}
-
-JSCell* StackVisitor::functionEnteringScriptExecutionOwner() const
-{
-    if (m_frame.isInlinedDFGFrame())
-        return nullptr;
-    // callInScriptExecutionOwner(owner, callee, thisValue, argumentValues)
-    JSValue function = m_frame.callFrame()->argument(1);
-    return function.isCell() ? function.asCell() : nullptr;
-}
-#endif
 
 void StackVisitor::gotoNextFrame()
 {
@@ -134,7 +111,11 @@ inline CallFrame* StackVisitor::updatePreviousReturnPCIfNecessary(CallFrame* cal
 {
     if (m_frame.m_callFrame) {
         if (m_frame.m_callFrame != callFrame)
+#if USE(BUN_JSC_ADDITIONS)
+            m_previousReturnPC = CommonSlowPaths::returnPCOf(m_frame.m_callFrame);
+#else
             m_previousReturnPC = m_frame.m_callFrame->rawReturnPC();
+#endif
     }
     return callFrame;
 }

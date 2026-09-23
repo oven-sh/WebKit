@@ -126,6 +126,7 @@ class HeapProfiler;
 class IntlCache;
 enum Intrinsic : uint8_t;
 class JSDestructibleObjectHeapCellType;
+class InternalFieldTuple;
 class JSGlobalObject;
 class JSSentinel;
 struct CallSiteData;
@@ -445,10 +446,17 @@ private:
 public:
     bool didEnterVM { false };
 #if USE(BUN_JSC_ADDITIONS)
-    // A function has found another script execution owner current and entered its own
-    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner(), which every such function does first): until then no
-    // stack has a frame of that (StackVisitor).
-    bool hasEnteredScriptExecutionOwner { false };
+    // The functions on the stack that found another script execution owner current when they were called and made
+    // theirs the current one (CommonSlowPaths::enterScriptExecutionOwner()), oldest first: what each puts back when its
+    // frame goes, by returning (to llint_script_execution_owner_return, which its return PC was replaced with) or by
+    // being unwound. A frame is known by its caller's, which a tail call leaves as it is.
+    struct EnteredScriptExecutionOwner {
+        InternalFieldTuple* asyncContextData;
+        JSValue previousOwner;
+        void* returnPC;
+        CallFrame* callerFrame;
+    };
+    Vector<EnteredScriptExecutionOwner, 8> enteredScriptExecutionOwners;
 #endif
 
 private:

@@ -392,6 +392,23 @@ op(llint_handle_uncaught_exception, macro ()
     ret
 end)
 
+if BUN_JSC_ADDITIONS
+# What a function that made its script execution owner the current one returns to, in whatever tier it and its caller are
+# (CommonSlowPaths::enterScriptExecutionOwner()): puts the previous owner back and goes where the function was to return.
+# r0 is the function's result; the stack pointer is the caller's, at the rest of the frame that returned.
+op(llint_script_execution_owner_return, macro ()
+    # (r0 is a0 on ARM64: the result is put away before anything else.)
+    subp 16, sp
+    storeq r0, [sp]
+    leap 16[sp], a0
+    cCall2(_llint_leave_script_execution_owner)
+    move r0, t3
+    loadq [sp], r0
+    addp 16, sp
+    jmp t3, JSEntryPtrTag
+end)
+end
+
 op(llint_get_host_call_return_value, macro ()
     functionPrologue()
     loadp Callee[cfr], t0
@@ -879,24 +896,8 @@ if BUN_JSC_ADDITIONS
     loadp JSGlobalObject::m_asyncContextData[t1], t1
     loadq JSInternalFieldObjectImpl_internalFields + SlotSize[t1], t1
     bqeq t0, t1, .opEnterInScriptExecutionOwner
-    // The same call again, through the builtin that makes the owner the current one, whose result is the function's
-    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner()). The builtin's frame goes under the function's registers.
-    subp (constexpr CommonSlowPaths::scriptExecutionOwnerEntryFrameSize) + maxFrameExtentForSlowPathCall, sp
-    prepareStateForCCall()
-    move cfr, a0
-    move PC, a1
-    leap maxFrameExtentForSlowPathCall[sp], a2
-    cCall3(_llint_slow_path_enter_script_execution_owner)
-    // r0: the code to call (having thrown, what throws); r1: the stack pointer to call it with.
-    btpz r1, .opEnterScriptExecutionOwnerCall
-    move r1, sp
-.opEnterScriptExecutionOwnerCall:
-    if C_LOOP
-        cloopCallJSFunction r0
-    else
-        call r0, JSEntrySlowPathPtrTag
-    end
-    doReturn()
+    // It is the current one from here until the function's frame goes (CommonSlowPaths::enterScriptExecutionOwner()).
+    callSlowPath(_llint_slow_path_enter_script_execution_owner)
 .opEnterInScriptExecutionOwner:
     loadp CodeBlock[cfr], t2
     loadi CodeBlock::m_numberOfArgumentsToSkipAndCouldBeTainted[t2], t1

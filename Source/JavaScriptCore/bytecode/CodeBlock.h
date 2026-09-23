@@ -207,11 +207,12 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // A function's script execution owner is the JSScriptExecutionOwnerEnvironment its code was made under: this many
-    // scopes up from the callee's. op_enter has the function run
-    // with it as the current one (the second field of JSGlobalObject::m_asyncContextData): when another is, it calls
-    // the function again through @callInScriptExecutionOwner and returns what that returns.
+    // scopes up from the callee's. op_enter has the function run with it as the current one (the second field of
+    // JSGlobalObject::m_asyncContextData): when another is, it makes it that until the function's frame goes
+    // (CommonSlowPaths::enterScriptExecutionOwner()).
     static constexpr uint16_t noScriptExecutionOwner = std::numeric_limits<uint16_t>::max();
     uint16_t scriptExecutionOwnerDepth() const { return m_scriptExecutionOwnerDepth; }
+    bool hasScriptExecutionOwner() const { return m_scriptExecutionOwnerDepth != noScriptExecutionOwner; }
     static constexpr ptrdiff_t offsetOfScriptExecutionOwnerDepth() { return OBJECT_OFFSETOF(CodeBlock, m_scriptExecutionOwnerDepth); }
     // Whether op_enter ever found another owner current. Until then the DFG checks for that and exits.
     bool hasEnteredScriptExecutionOwner() const { return m_hasEnteredScriptExecutionOwner; }

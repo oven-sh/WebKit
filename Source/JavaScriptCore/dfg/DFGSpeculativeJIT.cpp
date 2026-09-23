@@ -10610,6 +10610,19 @@ void SpeculativeJIT::compileCheckScriptExecutionOwner(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compileEnterScriptExecutionOwner(Node* node)
+{
+    SpeculateCellOperand owner(this, node->child1());
+    JSValueOperand current(this, node->child2());
+    GPRReg ownerGPR = owner.gpr();
+    GPRReg currentGPR = current.gpr();
+    flushRegisters();
+    Jump isCurrent = branch64(Equal, ownerGPR, currentGPR);
+    callOperation(operationEnterScriptExecutionOwner, TrustedImmPtr(&vm()));
+    isCurrent.link(this);
+    noResult(node);
+}
+
 void SpeculativeJIT::compileCheckNotEmpty(Node* node)
 {
     JSValueOperand operand(this, node->child1());

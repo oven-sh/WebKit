@@ -127,6 +127,7 @@ bool doesGC(Graph& graph, Node* node)
     case PutGlobalVariable:
     case CheckIsConstant:
     case CheckScriptExecutionOwner:
+    case EnterScriptExecutionOwner:
     case CheckNotEmpty:
     case AssertNotEmpty:
     case CheckIdent:

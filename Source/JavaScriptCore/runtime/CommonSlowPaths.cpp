@@ -26,6 +26,8 @@
 #include "config.h"
 #include "CommonSlowPaths.h"
 
+#include "LLIntData.h"
+
 #include "ArithProfile.h"
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
@@ -1257,38 +1259,65 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_primitive)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-CodePtr<JSEntryPtrTag> CommonSlowPaths::prepareToEnterScriptExecutionOwner(JSGlobalObject* globalObject, CallFrame* callFrame, CallFrame* calleeFrame)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+#if CPU(ARM64E)
+#error "A return PC is signed with its frame on ARM64E: enterScriptExecutionOwner() and llint_script_execution_owner_return have to sign and authenticate the ones they replace."
+#endif
 
+static void* scriptExecutionOwnerReturn()
+{
+    return LLInt::getCodePtr<JSEntryPtrTag>(llint_script_execution_owner_return).taggedPtr();
+}
+
+void CommonSlowPaths::enterScriptExecutionOwner(VM& vm, CallFrame* callFrame)
+{
     CodeBlock* codeBlock = callFrame->codeBlock();
-    JSFunction* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
-    JSScope* owner = function->scope();
+    JSScope* owner = uncheckedDowncast<JSFunction>(callFrame->jsCallee())->scope();
     for (unsigned depth = codeBlock->scriptExecutionOwnerDepth(); depth--;)
         owner = owner->next();
     codeBlock->setHasEnteredScriptExecutionOwner();
-    vm.hasEnteredScriptExecutionOwner = true;
 
-    // In a constructor's frame `this` is new.target until the function makes its own.
-    bool isConstruct = codeBlock->specializationKind() == CodeSpecializationKind::CodeForConstruct;
-    JSFunction* enter = uncheckedDowncast<JSFunction>(globalObject->linkTimeConstant(isConstruct ? LinkTimeConstant::constructInScriptExecutionOwner : LinkTimeConstant::callInScriptExecutionOwner));
-    JSObject* argumentValues = ClonedArguments::createWithMachineFrame(globalObject, callFrame, ArgumentsMode::Cloned);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    InternalFieldTuple* asyncContextData = codeBlock->globalObject()->m_asyncContextData.get();
+    ASSERT(asyncContextData->getInternalField(1) != JSValue(owner));
+    vm.enteredScriptExecutionOwners.append({ asyncContextData, asyncContextData->getInternalField(1), callFrame->rawReturnPC(), callFrame->callerFrame() });
+    asyncContextData->putInternalField(vm, 1, owner);
+    callFrame->setReturnPC(scriptExecutionOwnerReturn());
+}
 
-    calleeFrame->setArgumentCountIncludingThis(5);
-    calleeFrame->setCallee(enter);
-    calleeFrame->setThisValue(jsUndefined());
-    calleeFrame->setArgument(0, owner);
-    calleeFrame->setArgument(1, function);
-    calleeFrame->setArgument(2, callFrame->thisValue());
-    calleeFrame->setArgument(3, argumentValues);
+void* CommonSlowPaths::leaveScriptExecutionOwner(VM& vm)
+{
+    auto entered = vm.enteredScriptExecutionOwners.takeLast();
+    entered.asyncContextData->putInternalField(vm, 1, entered.previousOwner);
+    return entered.returnPC;
+}
 
-    DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
-    FunctionExecutable* executable = enter->jsExecutable();
-    executable->prepareForExecution<FunctionExecutable>(vm, enter, enter->scope(), CodeSpecializationKind::CodeForCall, *calleeFrame->addressOfCodeBlock());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    return executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::ArityCheckNotRequired);
+void* CommonSlowPaths::returnPCOf(CallFrame* callFrame)
+{
+    void* returnPC = callFrame->rawReturnPC();
+    if (returnPC != scriptExecutionOwnerReturn()) [[likely]]
+        return returnPC;
+    // (The frame is of the function that entered, or of what it made a tail call of: script's or a host function's.)
+    if (callFrame->isNativeCalleeFrame())
+        return returnPC;
+    VM& vm = callFrame->callee().asCell()->vm();
+    // The oldest of what was entered in this frame replaced the return PC the frame was called with.
+    CallFrame* callerFrame = callFrame->callerFrame();
+    for (auto& entered : vm.enteredScriptExecutionOwners) {
+        if (entered.callerFrame == callerFrame)
+            return entered.returnPC;
+    }
+    return returnPC;
+}
+
+void CommonSlowPaths::leaveScriptExecutionOwnersOf(VM& vm, CallFrame* callFrame)
+{
+    CallFrame* callerFrame = callFrame->callerFrame();
+    while (!vm.enteredScriptExecutionOwners.isEmpty() && vm.enteredScriptExecutionOwners.last().callerFrame == callerFrame)
+        leaveScriptExecutionOwner(vm);
+}
+
+bool CommonSlowPaths::returnsThroughScriptExecutionOwnerReturn(CallFrame* callFrame)
+{
+    return callFrame->rawReturnPC() == scriptExecutionOwnerReturn();
 }
 #endif
 

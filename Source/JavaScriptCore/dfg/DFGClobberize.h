@@ -571,6 +571,13 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         def(PureValue(node));
         return;
 
+    case EnterScriptExecutionOwner:
+        // The second field of JSGlobalObject::m_asyncContextData, and the frame's return PC.
+        read(AbstractHeap(JSInternalFields, 1));
+        write(AbstractHeap(JSInternalFields, 1));
+        write(SideState);
+        return;
+
     case AssertInBounds:
     case AssertNotEmpty:
         write(SideState);

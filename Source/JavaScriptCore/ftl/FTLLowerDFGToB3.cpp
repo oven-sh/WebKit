@@ -972,6 +972,9 @@ private:
         case CheckNotEmpty:
             compileCheckNotEmpty();
             break;
+        case EnterScriptExecutionOwner:
+            compileEnterScriptExecutionOwner();
+            break;
         case CheckScriptExecutionOwner:
             compileCheckScriptExecutionOwner();
             break;
@@ -4350,6 +4353,19 @@ private:
     void compileCheckScriptExecutionOwner()
     {
         speculate(BadScriptExecutionOwner, noValue(), nullptr, m_out.notEqual(lowCell(m_node->child1()), lowJSValue(m_node->child2())));
+    }
+
+    void compileEnterScriptExecutionOwner()
+    {
+        LValue owner = lowCell(m_node->child1());
+        LValue current = lowJSValue(m_node->child2());
+        LBasicBlock enter = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(m_out.equal(owner, current), usually(continuation), rarely(enter));
+        LBasicBlock lastNext = m_out.appendTo(enter, continuation);
+        vmCall(Void, operationEnterScriptExecutionOwner, m_vmValue);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation, lastNext);
     }
 
     void compileCheckNotEmpty()

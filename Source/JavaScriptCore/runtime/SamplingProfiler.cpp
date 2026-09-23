@@ -28,7 +28,6 @@
 
 #if ENABLE(SAMPLING_PROFILER)
 
-#include "BuiltinNames.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
 #include "HeapIterationScope.h"
@@ -721,30 +720,6 @@ void SamplingProfiler::processUnverifiedStackTraces()
             if (!unprocessedStackFrame.cCodePC)
                 storeCalleeIntoLastFrame(unprocessedStackFrame);
         }
-
-#if USE(BUN_JSC_ADDITIONS)
-        // A sample is of the script's calls, as a stack trace is (StackVisitor::visit): not of the builtin a function
-        // enters its script execution owner through, nor of the frame, still at its op_enter, that called it.
-        if (m_vm.hasEnteredScriptExecutionOwner) {
-            auto isBuiltinEnteringScriptExecutionOwner = [&](const StackFrame& frame) {
-                auto* executable = frame.frameType == FrameType::Executable && frame.executable ? dynamicDowncast<FunctionExecutable>(frame.executable) : nullptr;
-                if (!executable || executable->implementationVisibility() != ImplementationVisibility::Private)
-                    return false;
-                const Identifier& name = executable->name();
-                auto& names = m_vm.propertyNames->builtinNames();
-                return name == names.callInScriptExecutionOwnerPublicName() || name == names.constructInScriptExecutionOwnerPublicName();
-            };
-            bool calledByBuiltin = false;
-            stackTrace.frames.removeAllMatching([&](const StackFrame& frame) {
-                bool isCallerAtEnter = std::exchange(calledByBuiltin, false) && frame.semanticLocation.hasBytecodeIndex() && !frame.semanticLocation.bytecodeIndex.offset();
-                if (isBuiltinEnteringScriptExecutionOwner(frame)) {
-                    calledByBuiltin = true;
-                    return true;
-                }
-                return isCallerAtEnter;
-            });
-        }
-#endif
     }
 
     m_unprocessedStackTraces.clear();

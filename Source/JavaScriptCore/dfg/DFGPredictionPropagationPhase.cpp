@@ -1846,6 +1846,7 @@ private:
         case CheckStructure:
         case CheckIsConstant:
         case CheckScriptExecutionOwner:
+        case EnterScriptExecutionOwner:
         case CheckNotEmpty:
         case AssertNotEmpty:
         case CheckIdent:

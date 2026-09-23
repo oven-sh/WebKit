@@ -3740,6 +3740,12 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::VMExceptions);
                 visitor.appendUnbarriered(vm.exception());
                 visitor.appendUnbarriered(vm.lastException());
+#if USE(BUN_JSC_ADDITIONS)
+                for (auto& entered : vm.enteredScriptExecutionOwners) {
+                    visitor.appendUnbarriered(entered.asyncContextData);
+                    visitor.appendUnbarriered(entered.previousOwner);
+                }
+#endif
 
                 // We're going to m_terminationException directly instead of going through
                 // the exception() getter because we want to assert in the getter that the

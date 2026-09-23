@@ -23,44 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// What op_enter calls when a function's script execution owner is not the current one
-// (CommonSlowPaths::enterScriptExecutionOwner(), ByteCodeParser::handleEnterScriptExecutionOwner()): the same call, made
-// with the owner current, whose result is the function's. The previous owner comes back however the call ends. The
-// async context is the caller's and stays what the function leaves it as (AsyncLocalStorage's enterWith()), as in a
-// call of a function with no owner.
-
-@linkTimeConstant
-function callInScriptExecutionOwner(owner, callee, thisValue, argumentValues)
-{
-    "use strict";
-
-    var asyncContextData = @asyncContextData;
-    var previousOwner = @getInternalField(asyncContextData, 1);
-    @putInternalField(asyncContextData, 1, owner);
-    // (A finally, not a catch that throws again: what is thrown stays the exception it was, with where it was thrown.)
-    try {
-        return callee.@apply(thisValue, argumentValues);
-    } finally {
-        @putInternalField(asyncContextData, 1, previousOwner);
-    }
-}
-
-@linkTimeConstant
-function constructInScriptExecutionOwner(owner, callee, newTarget, argumentValues)
-{
-    "use strict";
-
-    var asyncContextData = @asyncContextData;
-    var previousOwner = @getInternalField(asyncContextData, 1);
-    @putInternalField(asyncContextData, 1, owner);
-    // (A finally, not a catch that throws again: what is thrown stays the exception it was, with where it was thrown.)
-    try {
-        return @constructWithNewTarget(callee, newTarget, argumentValues);
-    } finally {
-        @putInternalField(asyncContextData, 1, previousOwner);
-    }
-}
-
 // The Promise constructor's executor call and resolving functions (PromiseConstructor.js) once the global object has
 // script execution owners: whoever calls them, the resolving functions settle the promise as the owner that was
 // current when it was made.

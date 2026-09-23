@@ -168,6 +168,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case StringLocaleCompare:
     case CheckIsConstant:
     case CheckScriptExecutionOwner:
+    case EnterScriptExecutionOwner:
     case CheckBadValue:
     case CheckNotEmpty:
     case AssertNotEmpty:

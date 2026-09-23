@@ -30,6 +30,8 @@
 #include "config.h"
 #include "Interpreter.h"
 
+#include "CommonSlowPaths.h"
+
 #include "AbortReason.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
@@ -903,6 +905,13 @@ public:
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // This frame goes without returning: what it would have put back on its way
+        // (CommonSlowPaths::enterScriptExecutionOwner()).
+        if (CommonSlowPaths::returnsThroughScriptExecutionOwnerReturn(m_callFrame)) [[unlikely]]
+            CommonSlowPaths::leaveScriptExecutionOwnersOf(m_vm, m_callFrame);
+#endif
+
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
 
@@ -1001,11 +1010,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     CatchInfo catchInfo;
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
-#if USE(BUN_JSC_ADDITIONS)
-    StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty, StackVisitor::VisitFramesEnteringScriptExecutionOwner>(callFrame, vm, functor);
-#else
     StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
-#endif
 
     if (seenRemoteFunction) {
         ASSERT(!vm.isTerminationException(exception));

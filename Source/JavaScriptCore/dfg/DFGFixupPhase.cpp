@@ -2604,7 +2604,8 @@ private:
             break;
         }
 
-        case CheckScriptExecutionOwner: {
+        case CheckScriptExecutionOwner:
+        case EnterScriptExecutionOwner: {
             // A scope, from the function's scope chain.
             fixEdge<KnownCellUse>(node->child1());
             break;

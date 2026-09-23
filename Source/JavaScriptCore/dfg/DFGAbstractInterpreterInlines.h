@@ -5252,6 +5252,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case CheckScriptExecutionOwner:
+    case EnterScriptExecutionOwner:
         break;
 
     case CheckIsConstant: {

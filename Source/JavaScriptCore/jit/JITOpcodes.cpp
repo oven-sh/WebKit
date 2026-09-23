@@ -1553,27 +1553,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_script_execution_owner_handl
     jit.ret();
 
     enter.link(&jit);
-    // The same call again, through the builtin that makes the owner the current one, whose result is the function's
-    // (CommonSlowPaths::prepareToEnterScriptExecutionOwner()). Nothing comes back here: the stack pointer is the
-    // function's again, and the builtin's frame goes under the function's registers.
-    jit.emitCTIThunkEpilogue();
-#if CPU(X86_64)
-    jit.addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister); // The return address into the function.
-#endif
-    jit.subPtr(TrustedImm32(CommonSlowPaths::scriptExecutionOwnerEntryFrameSize + maxFrameExtentForSlowPathCall), stackPointerRegister);
+    // It is the current one from here until the function's frame goes (CommonSlowPaths::enterScriptExecutionOwner()).
     // op_enter is always at bytecodeOffset 0.
     jit.store32(TrustedImm32(0), highWordFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    loadGlobalObject(jit, argumentGPR0);
-    jit.addPtr(TrustedImm32(maxFrameExtentForSlowPathCall), stackPointerRegister, argumentGPR1);
-    jit.setupArguments<decltype(operationPrepareToEnterScriptExecutionOwner)>(argumentGPR0, argumentGPR1);
-    jit.callOperation<OperationPtrTag>(operationPrepareToEnterScriptExecutionOwner);
-    jit.emitNonPatchableExceptionCheck(vm).linkThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>() }, &jit);
-    jit.addPtr(TrustedImm32(maxFrameExtentForSlowPathCall + sizeof(CallerFrameAndPC)), stackPointerRegister);
-    jit.call(returnValueGPR, JSEntryPtrTag);
-
-    // What that returned is what the function returns: op_ret, from here.
-    jit.jumpThunk(CodeLocationLabel { vm.getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
+    jit.setupArguments<decltype(operationEnterScriptExecutionOwner)>(TrustedImmPtr(&vm));
+    jit.callOperation<OperationPtrTag>(operationEnterScriptExecutionOwner);
+    jit.emitCTIThunkEpilogue();
+    jit.ret();
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "op_enter_script_execution_owner_handler"_s, "Baseline: op_enter_script_execution_owner_handler");
@@ -1837,7 +1824,6 @@ void JIT::emitSlow_op_enter(const JSInstruction*, Vector<SlowCaseEntry>::iterato
 {
 #if USE(BUN_JSC_ADDITIONS)
     if (m_unlinkedCodeBlock->codeType() == FunctionCode && !m_unlinkedCodeBlock->isBuiltinFunction()) {
-        // Comes back when the owner is the current one; otherwise the function returns from in there.
         linkSlowCase(iter);
         nearCallThunk(CodeLocationLabel { vm().getCTIStub(op_enter_script_execution_owner_handlerGenerator).retaggedCode<NoPtrTag>() });
         jump().linkTo(m_enterInScriptExecutionOwner, this);

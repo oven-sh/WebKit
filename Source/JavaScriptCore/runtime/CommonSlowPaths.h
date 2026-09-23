@@ -52,14 +52,21 @@ namespace JSC {
 namespace CommonSlowPaths {
 
 #if USE(BUN_JSC_ADDITIONS)
-// What op_enter does when the function's script execution owner is not the current one: the same call again, through
-// @callInScriptExecutionOwner / @constructInScriptExecutionOwner, whose result is the function's. It is a call like the
-// ones the function's code makes, so entering an owner nests no native frames. None of the function's registers is in
-// use yet: op_enter moves the stack pointer this far under them, and this fills the builtin's frame there (`calleeFrame`)
-// with the owner, the function, its `this` (new.target, in a constructor) and its arguments. Returns the code to call
-// with the stack pointer CallerFrameAndPC above `calleeFrame`; null having thrown.
-static constexpr unsigned scriptExecutionOwnerEntryFrameSize = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), CallFrame::headerSizeInRegisters + 5) * sizeof(Register);
-CodePtr<JSEntryPtrTag> prepareToEnterScriptExecutionOwner(JSGlobalObject*, CallFrame*, CallFrame* calleeFrame);
+// What op_enter does when the function's script execution owner is not the current one: makes it the current one (the
+// second field of JSGlobalObject::m_asyncContextData) for as long as the function's frame is there. The function goes on
+// in its own frame; what is put back, and where the function was to return, are kept in
+// VM::enteredScriptExecutionOwners, and the frame returns to llint_script_execution_owner_return, which does
+// leaveScriptExecutionOwner() and goes there. A frame that is unwound instead is the unwinder's to leave.
+void enterScriptExecutionOwner(VM&, CallFrame*);
+// Puts back what the newest function that entered replaced; returns where it was to return.
+void* leaveScriptExecutionOwner(VM&);
+bool returnsThroughScriptExecutionOwnerReturn(CallFrame*);
+// Where `callFrame` returns to, whether or not it goes there through llint_script_execution_owner_return: what a stack
+// walk that reads a frame's return PC wants (StackVisitor, for the call site in a caller that is optimized wasm).
+void* returnPCOf(CallFrame*);
+// For a frame that is unwound: everything that was entered in it (a tail call of a function with another owner enters
+// again in the frame it takes over, whose caller stays the same).
+void leaveScriptExecutionOwnersOf(VM&, CallFrame*);
 #endif
 
 ALWAYS_INLINE int numberOfStackPaddingSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)

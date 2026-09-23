@@ -823,6 +823,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case InitializeEntrypointArguments:
     case ValueNegate:
     case GetInternalField:
+    case EnterScriptExecutionOwner:
     case PutInternalField:
     case DataViewSet:
     case BufferWrite:

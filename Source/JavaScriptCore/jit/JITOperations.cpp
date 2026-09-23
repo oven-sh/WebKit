@@ -2967,13 +2967,13 @@ JSC_DEFINE_JIT_OPERATION(operationHandleTraps, UnusedPtr, (JSGlobalObject* globa
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSC_DEFINE_JIT_OPERATION(operationPrepareToEnterScriptExecutionOwner, void*, (JSGlobalObject* globalObject, CallFrame* calleeFrame))
+// op_enter, the function's script execution owner not being the current one (CommonSlowPaths::enterScriptExecutionOwner()).
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationEnterScriptExecutionOwner, void, (VM* vmPointer))
 {
-    VM& vm = globalObject->vm();
+    VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    OPERATION_RETURN(scope, CommonSlowPaths::prepareToEnterScriptExecutionOwner(globalObject, callFrame, calleeFrame).taggedPtr());
+    CommonSlowPaths::enterScriptExecutionOwner(vm, callFrame);
 }
 #endif
 
