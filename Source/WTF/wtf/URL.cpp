@@ -28,7 +28,6 @@
 #include <wtf/URL.h>
 
 #include <stdio.h>
-#include <unicode/uidna.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -490,32 +489,6 @@ bool URL::setProtocol(StringView newProtocol)
     return true;
 }
 
-// Appends the punycoded hostname identified by the given string and length to
-// the output buffer. The result will not be null terminated.
-// Return value of false means error in encoding.
-static bool appendEncodedHostname(Vector<char16_t, 512>& buffer, StringView string)
-{
-    // hostnameBuffer needs to be big enough to hold an IDN-encoded name.
-    // For host names bigger than this, we won't do IDN encoding, which is almost certainly OK.
-    if (string.length() > URLParser::hostnameBufferLength || string.containsOnlyASCII()) {
-        append(buffer, string);
-        return true;
-    }
-
-    std::array<char16_t, URLParser::hostnameBufferLength> hostnameBuffer;
-    UErrorCode error = U_ZERO_ERROR;
-    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    // struct UIDNA is forward declared in WTF/icu/unicode/uidna.h.
-    SUPPRESS_FORWARD_DECL_ARG int32_t numCharactersConverted = uidna_nameToASCII(&URLParser::internationalDomainNameTranscoder(),
-        string.upconvertedCharacters(), string.length(), hostnameBuffer.data(), hostnameBuffer.size(), &processingDetails, &error);
-
-    if (U_SUCCESS(error) && !(processingDetails.errors & ~URLParser::allowedNameToASCIIErrors) && numCharactersConverted) {
-        buffer.append(std::span { hostnameBuffer }.first(numCharactersConverted));
-        return true;
-    }
-    return false;
-}
-
 unsigned URL::hostStart() const
 {
     return (m_passwordEnd == m_userStart) ? m_passwordEnd : m_passwordEnd + 1;
@@ -556,15 +529,11 @@ bool URL::setHost(StringView newHost)
     if (newHost.contains(':') && !newHost.startsWith('['))
         return false;
 
-    Vector<char16_t, 512> encodedHostName;
-    if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, newHost))
-        return false;
-
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
     parse(makeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
-        hasSpecialScheme() ? StringView(encodedHostName.span()) : newHost,
+        newHost,
         StringView(m_string).substring(m_hostEnd)
     ));
 
@@ -634,15 +603,11 @@ void URL::setHostAndPort(StringView hostAndPort)
     if (!parseInteger<uint16_t>(portString))
         portString = { };
 
-    Vector<char16_t, 512> encodedHostName;
-    if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, hostName))
-        return;
-
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
     parse(makeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
-        hasSpecialScheme() ? StringView(encodedHostName.span()) : hostName,
+        hostName,
         portString.isEmpty() ? ""_s : ":"_s,
         portString,
         StringView(m_string).substring(pathStart())
