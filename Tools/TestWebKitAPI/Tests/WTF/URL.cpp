@@ -33,6 +33,7 @@
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
 #include <wtf/Vector.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
 
 namespace TestWebKitAPI {
@@ -190,6 +191,103 @@ TEST_F(WTF_URL, URLSetFragmentIdentifier)
     EXPECT_EQ(urlWithQuery.string(), urlWithQuery1.string());
     EXPECT_EQ(urlWithQuery.string(), urlWithQuery2.string());
     EXPECT_EQ(urlWithQuery.string(), urlWithQuery3.string());
+}
+
+// The host of a special URL is parsed once, by the host parser: tab and newline removal, percent-decoding, then
+// domain to ASCII. A value with no ASCII delimiter gives the host that the same text gives inside a URL. Domain to
+// ASCII never sees the value before that parse, so what it maps to a delimiter cannot become URL structure.
+struct SetHostTestCase {
+    std::u16string_view value;
+    ASCIILiteral expectedHost; // Null when the value is refused.
+};
+
+static constexpr std::array setHostTestCases {
+    SetHostTestCase { u"other.example", "other.example"_s },
+    SetHostTestCase { u"B\u00FCcher.example", "xn--bcher-kva.example"_s },
+    SetHostTestCase { u"\u05D0.example", "xn--4db.example"_s },
+    SetHostTestCase { u"\uFF45\uFF58\uFF41\uFF4D\uFF50\uFF4C\uFF45\u3002com", "example.com"_s },
+    SetHostTestCase { u"%C3%9F.de", "xn--zca.de"_s },
+    // Percent-decoding comes before domain to ASCII.
+    SetHostTestCase { u"\u00DF%41.de", "xn--a-pfa.de"_s },
+    SetHostTestCase { u"%C3%BC\u00FC.de", "xn--tdaa.de"_s },
+    SetHostTestCase { u"\u00DF%2e.de", "xn--zca..de"_s },
+    SetHostTestCase { u"\u00E9.%78n--a", { } },
+    SetHostTestCase { u"\u00E9%2Fx", { } },
+    // So does tab and newline removal.
+    SetHostTestCase { u"\t\u00DF.de", "xn--zca.de"_s },
+    SetHostTestCase { u"\u00DF\n.d\re", "xn--zca.de"_s },
+    // Domain to ASCII maps these to '/', '\\', '?', '#', '@', ':' and '%', which are forbidden in a host.
+    SetHostTestCase { u"a\uFF0Fb", { } },
+    SetHostTestCase { u"bad.c\u2100.good.com", { } },
+    SetHostTestCase { u"a\uFF3Cb", { } },
+    SetHostTestCase { u"a\uFF1Fb", { } },
+    SetHostTestCase { u"a\uFF03b", { } },
+    SetHostTestCase { u"a\uFF20b", { } },
+    SetHostTestCase { u"a\uFF1A81", { } },
+    SetHostTestCase { u"a\uFF0541", { } },
+    SetHostTestCase { u"\u00DF\uFF20b", { } },
+    // An IPv6 address is never mapped: a fullwidth digit or an ignored code point makes it invalid.
+    SetHostTestCase { u"[::1]", "[::1]"_s },
+    SetHostTestCase { u"[::\uFF11]", { } },
+    SetHostTestCase { u"[::\u00B9]", { } },
+    SetHostTestCase { u"[::1]\u00AD", { } },
+};
+
+template<typename Setter>
+static void testSetHost(const SetHostTestCase& test, ASCIILiteral expectedPort, const Setter& set)
+{
+    auto value16Bit = String(std::span { test.value });
+    Vector<String, 2> values { value16Bit };
+    if (value16Bit.containsOnlyLatin1())
+        values.append(String::make8Bit(std::span { test.value }));
+
+    for (auto& value : values) {
+        SCOPED_TRACE(testing::Message() << value.utf8().data() << (value.is8Bit() ? " (8-bit)" : " (16-bit)"));
+        URL original { "https://user:pass@example.com:444/p?q#f"_s };
+        URL parsed { makeString("https://user:pass@"_s, value, expectedPort, "/p?q#f"_s) };
+        URL url = original;
+        set(url, value);
+        if (test.expectedHost.isNull()) {
+            EXPECT_FALSE(parsed.isValid());
+            EXPECT_TRUE(!url.isValid() || url == original);
+            continue;
+        }
+        EXPECT_TRUE(url.isValid());
+        EXPECT_EQ(url.string(), makeString("https://user:pass@"_s, test.expectedHost, expectedPort, "/p?q#f"_s));
+        EXPECT_EQ(url.string(), parsed.string());
+        EXPECT_EQ(url.string().is8Bit(), parsed.string().is8Bit());
+    }
+}
+
+TEST_F(WTF_URL, URLSetHost)
+{
+    for (auto& test : setHostTestCases) {
+        testSetHost(test, ":444"_s, [&](URL& url, const String& value) {
+            EXPECT_EQ(url.setHost(value), !test.expectedHost.isNull());
+        });
+    }
+
+    // A fullwidth colon does not start a port.
+    URL withoutPort { "https://example.com/p"_s };
+    EXPECT_FALSE(withoutPort.setHost(String(std::span { std::u16string_view { u"a\uFF1A81" } })));
+    EXPECT_FALSE(withoutPort.isValid());
+
+    // A host that is not special is opaque: percent-encoded, never converted.
+    URL url { "foo://example.com/p"_s };
+    EXPECT_TRUE(url.setHost(String(std::span { std::u16string_view { u"\u00DF%41.de" } })));
+    EXPECT_EQ(url.string(), "foo://%C3%9F%41.de/p"_s);
+}
+
+TEST_F(WTF_URL, URLSetHostAndPort)
+{
+    for (auto& test : setHostTestCases) {
+        testSetHost(test, ":444"_s, [](URL& url, const String& value) {
+            url.setHostAndPort(value);
+        });
+        testSetHost(test, ":8080"_s, [](URL& url, const String& value) {
+            url.setHostAndPort(makeString(value, ":8080"_s));
+        });
+    }
 }
 
 TEST_F(WTF_URL, URLRemoveQueryAndFragmentIdentifier)
