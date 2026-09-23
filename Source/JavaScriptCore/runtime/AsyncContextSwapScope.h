@@ -154,6 +154,20 @@ public:
         return InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), asyncContext, scriptExecutionOwner);
     }
 
+    // What settles a promise without running script (a settlement passed on to a derived promise, a combinator's
+    // element) is given what was current when the reaction was registered, when that has a script execution owner: an
+    // unhandled rejection belongs to the owner whose script made the promise, which is who is current when the embedder's
+    // rejection tracker is told. With no owner there is nothing to tell apart, and such a job runs as it always has.
+    static ALWAYS_INLINE JSValue currentIfScriptExecutionOwner(VM& vm, JSGlobalObject* globalObject)
+    {
+        if (!vm.isAsyncContextTrackingEnabled() || globalObject->m_asyncContextData->getInternalField(1).isUndefined()) [[likely]]
+            return jsUndefined();
+        return current(vm, globalObject);
+    }
+
+    // Whether a captured value has a script execution owner.
+    static ALWAYS_INLINE bool hasScriptExecutionOwner(JSValue captured) { return isContextTuple(captured); }
+
     // The owner of a captured value.
     static ALWAYS_INLINE JSValue scriptExecutionOwnerOf(JSValue captured)
     {
@@ -213,6 +227,31 @@ private:
     InternalFieldTuple* m_entered { nullptr };
     JSGlobalObject* m_enteredIn { nullptr };
     InternalFieldTuple* m_restoreEntered { nullptr };
+};
+
+// What follows runs as `owner` (undefined: none, the global object's own), in whatever async context it is in: what
+// settles a promise for the owner whose script made it.
+class ScriptExecutionOwnerScope {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(ScriptExecutionOwnerScope);
+public:
+    ScriptExecutionOwnerScope(VM& vm, JSGlobalObject* globalObject, JSValue owner)
+        : m_vm(vm)
+        , m_data(globalObject->asyncContextData())
+        , m_previous(m_data->getInternalField(1))
+    {
+        m_data->putInternalField(vm, 1, owner);
+    }
+
+    ~ScriptExecutionOwnerScope()
+    {
+        m_data->putInternalField(m_vm, 1, m_previous);
+    }
+
+private:
+    VM& m_vm;
+    InternalFieldTuple* m_data;
+    JSValue m_previous;
 };
 
 } // namespace JSC

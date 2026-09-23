@@ -1676,8 +1676,17 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             break;
         }
         case InternalMicrotask::PromiseAllResolveJob:
+#if USE(BUN_JSC_ADDITIONS)
+        case InternalMicrotask::PromiseAllResolveJobAsRegistered:
+        case InternalMicrotask::PromiseAllSettledResolveJobAsRegistered:
+#endif
         case InternalMicrotask::PromiseAllSettledResolveJob: {
             JSCell* contextCell = cellOf(cell);
+#if USE(BUN_JSC_ADDITIONS)
+            // (An ...AsRegistered job's cell pairs the combinator's with what the job was registered with.)
+            if (auto* pair = contextCell ? dynamicDowncast<InternalFieldTuple>(contextCell) : nullptr)
+                contextCell = pair->getInternalField(0).isCell() ? pair->getInternalField(0).asCell() : nullptr;
+#endif
             if (auto* globalContext = contextCell ? dynamicDowncast<JSPromiseCombinatorsGlobalContext>(contextCell) : nullptr)
                 follow(globalContext->promise());
             break;
@@ -1688,6 +1697,10 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::PromiseResolveThenableJob:
         case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
         case InternalMicrotask::PromiseResolveWithoutHandlerJob:
+#if USE(BUN_JSC_ADDITIONS)
+        case InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered:
+        case InternalMicrotask::PromiseResolveThenableJobFastAsRegistered:
+#endif
         case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
         case InternalMicrotask::PromiseReactionJob:
         case InternalMicrotask::ModuleLoadStep:

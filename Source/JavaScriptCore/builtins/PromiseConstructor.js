@@ -52,13 +52,28 @@ function Promise(executor)
 
     var promise = @createPromise(this);
     var capturedPromise = promise;
+    // Bun: whoever calls them, a promise's resolving functions settle it as the script execution owner whose script
+    // made it (none: the global object's own): settling is what an embedder's rejection tracker sees, and an unhandled
+    // rejection is the owner's whose script made the promise, not the one's that happened to reject it. With no
+    // owners there is nothing to tell apart: while none has been made, the DFG and FTL compile these reads of
+    // @scriptExecutionOwnerState as the constant undefined (JSGlobalObject::noScriptExecutionOwnerWatchpointSet()).
+    var scriptExecutionOwnerState = @scriptExecutionOwnerState;
+    if (@getInternalField(scriptExecutionOwnerState, 0) !== @undefined)
+        return @runPromiseExecutorInScriptExecutionOwner(promise, executor);
 
     try {
         executor(
             (resolution) => {
+                // (The first owner can be made after this promise.)
+                var scriptExecutionOwnerState = @scriptExecutionOwnerState;
+                if (@getInternalField(scriptExecutionOwnerState, 0) !== @undefined)
+                    return @settlePromiseInScriptExecutionOwner(@undefined, capturedPromise, resolution, true);
                 return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
             },
             (reason) => {
+                var scriptExecutionOwnerState = @scriptExecutionOwnerState;
+                if (@getInternalField(scriptExecutionOwnerState, 0) !== @undefined)
+                    return @settlePromiseInScriptExecutionOwner(@undefined, capturedPromise, reason, false);
                 return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason);
             });
     } catch (error) {

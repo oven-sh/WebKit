@@ -60,3 +60,52 @@ function constructInScriptExecutionOwner(owner, callee, newTarget, argumentValue
         @putInternalField(asyncContextData, 1, previousOwner);
     }
 }
+
+// The Promise constructor's executor call and resolving functions (PromiseConstructor.js) once the global object has
+// script execution owners: whoever calls them, the resolving functions settle the promise as the owner that was
+// current when it was made.
+@linkTimeConstant
+function runPromiseExecutorInScriptExecutionOwner(promise, executor)
+{
+    "use strict";
+
+    var asyncContextData = @asyncContextData;
+    var madeBy = @getInternalField(asyncContextData, 1);
+
+    try {
+        executor(
+            (resolution) => {
+                return @settlePromiseInScriptExecutionOwner(madeBy, promise, resolution, true);
+            },
+            (reason) => {
+                return @settlePromiseInScriptExecutionOwner(madeBy, promise, reason, false);
+            });
+    } catch (error) {
+        @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, error);
+    }
+
+    return promise;
+}
+
+@linkTimeConstant
+function settlePromiseInScriptExecutionOwner(owner, promise, value, isResolve)
+{
+    "use strict";
+
+    var asyncContextData = @asyncContextData;
+    var previousOwner = @getInternalField(asyncContextData, 1);
+    if (previousOwner === owner) {
+        if (isResolve)
+            return @resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
+        return @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, value);
+    }
+
+    @putInternalField(asyncContextData, 1, owner);
+    try {
+        if (isResolve)
+            return @resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
+        return @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, value);
+    } finally {
+        @putInternalField(asyncContextData, 1, previousOwner);
+    }
+}

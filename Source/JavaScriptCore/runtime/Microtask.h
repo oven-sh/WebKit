@@ -91,6 +91,18 @@ enum class InternalMicrotask : uint8_t {
 #if USE(BUN_JSC_ADDITIONS)
     BunPerformMicrotaskJob, // Bun's performMicrotask function with async context
     BunInvokeJobWithArguments, // Invoke job function with up to 4 arguments
+    // Kinds of the promise jobs above, for a reaction registered while there was a script execution owner: the context slot is the
+    // job's own value paired with what was current then (AsyncContextSwapScope::wrap()), or for the two whose slot
+    // carries nothing (PromiseResolveWithoutHandlerJob, PromiseRaceResolveJob) just that. The job is run with it:
+    // settling is what an embedder's rejection tracker sees, and an unhandled rejection is the owner's whose script
+    // made the promise. Separate kinds, so that the jobs of a program with no owners test nothing.
+    PromiseAllResolveJobAsRegistered,
+    PromiseAllSettledResolveJobAsRegistered,
+    PromiseAnyResolveJobAsRegistered,
+    PromiseRaceResolveJobAsRegistered,
+    PromiseResolveWithoutHandlerJobAsRegistered,
+    PromiseResolveThenableJobFastAsRegistered,
+    // (After every other kind: the kinds a program with no script execution owners runs keep their numbers.)
 #endif
 };
 
@@ -126,8 +138,14 @@ constexpr bool promiseReactionPacksGlobalContextAndIndex(InternalMicrotask task)
 {
     static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAllSettledResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJob) + 1);
     static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJob) == static_cast<uint8_t>(InternalMicrotask::PromiseAllSettledResolveJob) + 1);
+#if USE(BUN_JSC_ADDITIONS)
+    static_assert(static_cast<uint8_t>(InternalMicrotask::PromiseAnyResolveJobAsRegistered) == static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJobAsRegistered) + 2);
+    if (task >= InternalMicrotask::PromiseAllResolveJobAsRegistered && task <= InternalMicrotask::PromiseAnyResolveJobAsRegistered)
+        return true;
+#endif
     return task >= InternalMicrotask::PromiseAllResolveJob && task <= InternalMicrotask::PromiseAnyResolveJob;
 }
+
 
 enum class QueuedTaskResult : uint8_t {
     Executed,

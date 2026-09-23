@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSPromiseConstructor.h"
 
+#include "AsyncContextSwapScope.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -159,6 +160,52 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncWithResolvers, (JSGlobalObject* g
 {
     JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
     return JSValue::encode(JSPromise::createNewPromiseCapability(globalObject, thisValue));
+}
+
+// The kind and cell of a combinator's element jobs, decided once per call so that an element costs a program with no
+// script execution owners nothing. With an owner current: the ...AsRegistered kind (Microtask.h), whose cell pairs
+// the combinator's with what is current, and which settles the combinator's promise as that owner: an unhandled
+// rejection is the owner's whose script made the promise.
+struct PromiseCombinatorElementJob {
+    InternalMicrotask task;
+    JSCell* cell;
+};
+
+static ALWAYS_INLINE PromiseCombinatorElementJob promiseCombinatorElementJob(VM& vm, JSGlobalObject* globalObject, InternalMicrotask task, JSPromiseCombinatorsGlobalContext* globalContext)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (globalObject->hasScriptExecutionOwners()) [[unlikely]] {
+        if (JSValue registeredWith = AsyncContextSwapScope::currentIfScriptExecutionOwner(vm, globalObject); !registeredWith.isUndefined()) {
+            constexpr auto asRegistered = static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJobAsRegistered) - static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJob);
+            return { static_cast<InternalMicrotask>(static_cast<uint8_t>(task) + asRegistered), InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), globalContext, registeredWith) };
+        }
+    }
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(globalObject);
+#endif
+    return { task, globalContext };
+}
+
+// The same for Promise.race, whose jobs' cell is the promise and whose context slot carries nothing: the
+// ...AsRegistered kind's is what is current.
+struct PromiseRaceElementJob {
+    InternalMicrotask task;
+    JSValue context;
+};
+
+static ALWAYS_INLINE PromiseRaceElementJob promiseRaceElementJob(VM& vm, JSGlobalObject* globalObject, JSPromise* promise)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (globalObject->hasScriptExecutionOwners()) [[unlikely]] {
+        if (JSValue registeredWith = AsyncContextSwapScope::currentIfScriptExecutionOwner(vm, globalObject); !registeredWith.isUndefined())
+            return { InternalMicrotask::PromiseRaceResolveJobAsRegistered, registeredWith };
+    }
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(globalObject);
+#endif
+    return { InternalMicrotask::PromiseRaceResolveJob, promise };
 }
 
 static bool NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)
@@ -303,12 +350,13 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
     JSValue iterable = callFrame->argument(0);
     JSFunction* resolve = nullptr;
     JSFunction* reject = nullptr;
+    auto elementJob = promiseRaceElementJob(vm, globalObject, promise);
     forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (canSkipIntermediatePromise(globalObject, value)) {
             scope.release();
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseRaceResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), promise, value, promise);
+            globalObject->queueMicrotask(vm, elementJob.task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), promise, value, elementJob.context);
             return;
         }
 
@@ -320,7 +368,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
             RETURN_IF_EXCEPTION(scope, void());
             if (constructor == globalObject->promiseConstructor()) [[likely]] {
                 scope.release();
-                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseRaceResolveJob, promise, promise);
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, elementJob.task, promise, elementJob.context);
                 return;
             }
         }
@@ -510,6 +558,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
     uint64_t index = 0;
     JSFunction* onRejected = nullptr;
 
+    auto elementJob = promiseCombinatorElementJob(vm, globalObject, InternalMicrotask::PromiseAllResolveJob, globalContext);
     forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -519,7 +568,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
             scope.release();
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, value, jsNumber(index));
+            globalObject->queueMicrotask(vm, elementJob.task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), elementJob.cell, value, jsNumber(index));
             ++index;
             return;
         }
@@ -534,7 +583,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
             RETURN_IF_EXCEPTION(scope, void());
             if (constructor == globalObject->promiseConstructor()) [[likely]] {
                 scope.release();
-                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, globalContext, jsNumber(index));
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, elementJob.task, elementJob.cell, jsNumber(index));
                 ++index;
                 return;
             }
@@ -818,6 +867,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
 
     uint64_t index = 0;
 
+    auto elementJob = promiseCombinatorElementJob(vm, globalObject, InternalMicrotask::PromiseAllSettledResolveJob, globalContext);
     forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -827,7 +877,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
             scope.release();
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllSettledResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, value, jsNumber(index));
+            globalObject->queueMicrotask(vm, elementJob.task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), elementJob.cell, value, jsNumber(index));
             ++index;
             return;
         }
@@ -842,7 +892,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
             RETURN_IF_EXCEPTION(scope, void());
             if (constructor == globalObject->promiseConstructor()) [[likely]] {
                 scope.release();
-                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllSettledResolveJob, globalContext, jsNumber(index));
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, elementJob.task, elementJob.cell, jsNumber(index));
                 ++index;
                 return;
             }
@@ -1271,6 +1321,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
 
     uint64_t index = 0;
 
+    auto elementJob = promiseCombinatorElementJob(vm, globalObject, InternalMicrotask::PromiseAnyResolveJob, globalContext);
     forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1280,7 +1331,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
         if (canSkipIntermediatePromise(globalObject, value)) {
             globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
             scope.release();
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAnyResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, value, jsNumber(index));
+            globalObject->queueMicrotask(vm, elementJob.task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), elementJob.cell, value, jsNumber(index));
             ++index;
             return;
         }
@@ -1295,7 +1346,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
             RETURN_IF_EXCEPTION(scope, void());
             if (constructor == globalObject->promiseConstructor()) [[likely]] {
                 scope.release();
-                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAnyResolveJob, globalContext, jsNumber(index));
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, elementJob.task, elementJob.cell, jsNumber(index));
                 ++index;
                 return;
             }

@@ -201,6 +201,44 @@ async function test() {
     }
     assert(current() === "none", "what was current is back after the varargs calls");
 
+    // A promise is settled as the owner whose script made it, whoever calls its resolving functions: resolved with a
+    // thenable, the job that calls the thenable's then() (a function with no owner, which runs as what is current) was
+    // queued by the settling. (An embedder's rejection tracker is told of a rejection by the settling too.)
+    for (let i = 0; i < 50; ++i) {
+        const seen = [];
+        const thenable = (tag) => ({ then(onFulfilled) { seen.push(tag + " as " + current()); onFulfilled(tag); } });
+        let resolveOfA, resolveOfB, resolveOfNone;
+        const made = [a.makePromise((resolve) => { resolveOfA = resolve; }), b.makePromise((resolve) => { resolveOfB = resolve; }), new Promise((resolve) => { resolveOfNone = resolve; })];
+        resolveOfA(thenable("A's, resolved from outside"));
+        a.callsBack(() => resolveOfB(thenable("B's, resolved by A")));
+        b.callsBack(() => resolveOfNone(thenable("no owner's, resolved by B")));
+        assert(current() === "none", "what was current is back after resolving");
+        await Promise.all(made);
+        same(seen.sort(), ["A's, resolved from outside as A", "B's, resolved by A as B", "no owner's, resolved by B as none"], "a promise is settled as the owner that made it");
+    }
+
+    // Promise.withResolvers() makes the same kind of resolving functions in C++.
+    for (let i = 0; i < 50; ++i) {
+        const seen = [];
+        const thenable = (tag) => ({ then(onFulfilled) { seen.push(tag + " as " + current()); onFulfilled(tag); } });
+        const ofA = a.makeWithResolvers(), ofNone = Promise.withResolvers();
+        b.callsBack(() => ofA.resolve(thenable("A's")));
+        a.callsBack(() => ofNone.resolve(thenable("no owner's")));
+        await Promise.all([ofA.promise, ofNone.promise]);
+        same(seen.sort(), ["A's as A", "no owner's as none"], "a Promise.withResolvers() promise is settled as the owner that made it");
+    }
+
+    // The combinators and settlements passed on, by an owner's script and by none's, give what they always gave.
+    const combined = JSON.stringify([[1, 1, 2], ["fulfilled", "rejected"], 1, 1, "all rejected", "AggregateError", "race rejected", 1, 1, "passed on"]);
+    for (let i = 0; i < 300; ++i) {
+        const rejected = Promise.reject(new Error("rejected")); rejected.catch(() => { });
+        const rejectedForB = Promise.reject(new Error("rejected")); rejectedForB.catch(() => { });
+        const results = await Promise.all([a.combine(Promise.resolve(1), rejected), b.combine(Promise.resolve(1), rejectedForB)]);
+        same(JSON.stringify(results[0]), combined, "the combinators, from A's script");
+        same(JSON.stringify(results[1]), combined, "the combinators, from B's script");
+        assert(current() === "none", "what was current is back after the combinators");
+    }
+
     // Entering an owner is a call like any other: two owners' functions calling each other get within a small factor
     // as deep as one owner's function calling itself (each level is the function, the builtin and the function again).
     {

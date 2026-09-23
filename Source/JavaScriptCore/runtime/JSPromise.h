@@ -43,6 +43,8 @@ class JSPromiseReaction;
 //       Lower 48 bits: payload cell pointer (may be null)
 //       Upper 16 bits: flags (see Flags layout below)
 //   m_slot: JSValue (as WriteBarrier<Unknown>)
+class JSFunctionWithFields;
+
 class JSPromise : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -74,7 +76,8 @@ public:
     //   bit 14:     payload cell is the reaction's captured async context, not
     //               the task's cell argument (only when kind == InternalMicrotask,
     //               USE(BUN_JSC_ADDITIONS))
-    //   bit 15:     reserved
+    //   bit 15:     its first resolving functions settle it as the script execution owner whose script made it
+    //               (USE(BUN_JSC_ADDITIONS); see isSettledAsItsMakerFlag)
 
     enum class Status : uint16_t {
         Pending = 0, // Making this as 0, so that, we can change the status from Pending to others without masking.
@@ -95,6 +98,13 @@ public:
     static constexpr uint16_t inlineReactionKindMask             = 0b0000000000110000;
     static constexpr uint16_t inlineReactionMicrotaskMask        = 0b0011111111000000;
     static constexpr uint16_t inlineReactionAsyncContextFlag     = 0b0100000000000000;
+    // Whoever calls them, the promise's first resolving functions (promiseFirstResolvingFunctionResolve / Reject)
+    // settle it as the script execution owner whose script made it (JSFunctionWithFields::Field::FirstResolvingMadeBy;
+    // empty: none, the global object's own): an unhandled rejection is that owner's. Set on a promise whose
+    // resolving functions are made while the global object has owners, and, when its first owner is made, on every
+    // promise there is (JSGlobalObject::didMakeScriptExecutionOwner()): the functions test it together with
+    // isFirstResolvingFunctionCalledFlag, so a program with no owners runs what it always ran.
+    static constexpr uint16_t isSettledAsItsMakerFlag            = 0b1000000000000000;
     static constexpr unsigned inlineReactionKindShift = 4;
     static constexpr unsigned inlineReactionMicrotaskShift = 6;
 
@@ -193,6 +203,10 @@ public:
 
     std::tuple<JSFunction*, JSFunction*> createResolvingFunctions(VM&, JSGlobalObject*);
     std::tuple<JSFunction*, JSFunction*> createFirstResolvingFunctions(VM&, JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    std::tuple<JSFunctionWithFields*, JSFunctionWithFields*> createFirstResolvingFunctionsWithNoScriptExecutionOwners(VM&, JSGlobalObject*);
+    void markAsSettledAsItsMaker() { setFlags(flags() | isSettledAsItsMakerFlag); }
+#endif
     JSFunction* createFirstResolveFunction(VM&, JSGlobalObject*);
     JSFunction* createFirstRejectFunction(VM&, JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)

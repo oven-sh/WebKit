@@ -113,3 +113,24 @@ export const varargsShapes = {
     current() { return current(); },
 };
 export function addOf(a, b) { return add(a, b); }
+
+// A promise this owner's script makes, whose resolving functions somebody else gets to call.
+export const makePromise = (give) => new Promise((resolve, reject) => { give(resolve, reject); });
+
+// The promise combinators and promises resolved with promises, from this owner's script: their element jobs and
+// settlement-passing jobs are the ...AsRegistered kinds (Microtask.h).
+export const makeWithResolvers = () => Promise.withResolvers();
+export const combine = async (pending, rejected) => {
+    const results = [];
+    results.push(await Promise.all([pending, 1, Promise.resolve(2)]));
+    results.push((await Promise.allSettled([pending, rejected])).map((entry) => entry.status));
+    results.push(await Promise.any([rejected, pending]));
+    results.push(await Promise.race([pending, new Promise(() => { })]));
+    results.push(await Promise.all([rejected]).then(() => "fulfilled", () => "all rejected"));
+    results.push(await Promise.any([rejected]).then(() => "fulfilled", (error) => error.constructor.name));
+    results.push(await Promise.race([rejected]).then(() => "fulfilled", () => "race rejected"));
+    results.push(await new Promise((resolve) => resolve(pending)));
+    results.push(await pending.then().then((value) => value));
+    results.push(await rejected.then((value) => value).then(undefined, () => "passed on"));
+    return results;
+};

@@ -1537,6 +1537,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 #undef CREATE_CONSTRUCTOR_FOR_SIMPLE_TYPE
 
     m_promiseConstructor.set(vm, this, promiseConstructor);
+    m_promiseConstructorWhileNoScriptExecutionOwners.set(vm, this, promiseConstructor);
     m_stringConstructor.set(vm, this, stringConstructor);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Promise)].set(vm, this, promiseConstructor);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::String)].set(vm, this, stringConstructor);
@@ -2163,6 +2164,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             init.set(JSFunction::create(init.vm, init.owner, 0, "moveFunctionToRealm"_s, moveFunctionToRealm, ImplementationVisibility::Private));
         });
 #if USE(BUN_JSC_ADDITIONS)
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::scriptExecutionOwnerState)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_scriptExecutionOwnerState.get());
+        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncContextData)].initLater([] (const Initializer<JSCell>& init) {
             init.set(init.owner->m_asyncContextData.get());
         });
@@ -2250,6 +2254,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     m_asyncContextData.set(vm, this, asyncContext);
+    m_scriptExecutionOwnerState.set(vm, this, InternalFieldTuple::create(vm, internalFieldTupleStructure(), jsUndefined(), jsUndefined()));
 
     m_ffiFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -3032,6 +3037,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContextData);
+    visitor.append(thisObject->m_scriptExecutionOwnerState);
     visitor.append(thisObject->m_internalFieldTupleStructure);
     thisObject->m_ffiFunctionStructure.visit(visitor);
     thisObject->m_ffiCallbackStructure.visit(visitor);
@@ -3060,6 +3066,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_functionConstructor);
     visitor.append(thisObject->m_iteratorConstructor);
     visitor.append(thisObject->m_promiseConstructor);
+    visitor.append(thisObject->m_promiseConstructorWhileNoScriptExecutionOwners);
     visitor.append(thisObject->m_stringConstructor);
 
     thisObject->m_defaultCollator.visit(visitor);
@@ -3968,6 +3975,35 @@ void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObject::didMakeScriptExecutionOwner(VM& vm)
+{
+    if (hasScriptExecutionOwners()) [[likely]]
+        return;
+    m_hasScriptExecutionOwners = true;
+    m_scriptExecutionOwnerState->putInternalField(vm, 0, jsBoolean(true));
+    m_promiseConstructorWhileNoScriptExecutionOwners.clear();
+    // The promises there already are were made by no owner, and their first resolving functions settle them as that
+    // from here on, whoever calls them (JSPromise::isSettledAsItsMakerFlag). As haveABadTime() does for the arrays
+    // there already are.
+    {
+        struct MarkPromises : MarkedBlock::VoidFunctor {
+            explicit MarkPromises(JSGlobalObject* globalObject) : globalObject(globalObject) { }
+            IterationStatus operator()(HeapCell* cell, HeapCell::Kind kind) const
+            {
+                if (isJSCellKind(kind)) {
+                    if (auto* promise = dynamicDowncast<JSPromise>(static_cast<JSCell*>(cell)); promise && promise->realm() == globalObject)
+                        promise->markAsSettledAsItsMaker();
+                }
+                return IterationStatus::Continue;
+            }
+            JSGlobalObject* globalObject;
+        } markPromises(this);
+        HeapIterationScope iterationScope(vm.heap);
+        vm.heap.objectSpace().forEachLiveCell(iterationScope, markPromises);
+    }
+    m_noScriptExecutionOwnerWatchpointSet.fireAll(vm, "A script execution owner was made");
+}
+
 JSValue JSGlobalObject::currentAsyncContextWithScriptExecutionOwner(VM& vm)
 {
     JSValue asyncContext = m_asyncContextData->getInternalField(0);

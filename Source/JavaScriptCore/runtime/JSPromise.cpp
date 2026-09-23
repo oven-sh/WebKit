@@ -110,6 +110,15 @@ std::tuple<JSObject*, JSObject*, JSObject*> JSPromise::newPromiseCapability(JSGl
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // (The same comparison as ever while the global object has no script execution owners; once it has, this one
+    // fails and the next makes resolving functions that settle the promise as its maker.)
+    if (constructor == globalObject->promiseConstructorWhileNoScriptExecutionOwners()) {
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        auto [resolve, reject] = promise->createFirstResolvingFunctionsWithNoScriptExecutionOwners(vm, globalObject);
+        return { promise, resolve, reject };
+    }
+#endif
     if (constructor == globalObject->promiseConstructor()) {
         auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         auto [resolve, reject] = promise->createFirstResolvingFunctions(vm, globalObject);
@@ -389,6 +398,13 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
     JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
     bool hasAsyncContext = !asyncContext.isUndefined();
     uint8_t payloadFlags = hasAsyncContext ? promiseReactionJobAsyncContextFlag : 0;
+    // What passes the settlement on when there is no handler for it: with a script execution owner current, the
+    // kind that settles the derived promise as that owner (Microtask.h).
+    auto queueWithoutHandlerJob = [&](Status status, JSValue settled) ALWAYS_INLINE_LAMBDA {
+        if (hasAsyncContext && AsyncContextSwapScope::hasScriptExecutionOwner(asyncContext)) [[unlikely]]
+            return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered, static_cast<uint8_t>(status), promiseOrCapability, settled, asyncContext);
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(status), promiseOrCapability, settled, jsUndefined());
+    };
 #endif
 
     switch (status()) {
@@ -443,7 +459,11 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
         else
+#if USE(BUN_JSC_ADDITIONS)
+            queueWithoutHandlerJob(Status::Rejected, settled);
+#else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+#endif
         markAsHandled();
         break;
     }
@@ -456,7 +476,11 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled);
 #endif
         else
+#if USE(BUN_JSC_ADDITIONS)
+            queueWithoutHandlerJob(Status::Fulfilled, settled);
+#else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+#endif
         break;
     }
     }
@@ -476,6 +500,12 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
     if (!asyncContext.isUndefined() || userContext.inherits<InternalFieldTuple>())
         context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), userContext, asyncContext);
+    auto withoutHandlerTask = InternalMicrotask::PromiseResolveWithoutHandlerJob;
+    JSValue withoutHandlerContext = jsUndefined();
+    if (AsyncContextSwapScope::hasScriptExecutionOwner(asyncContext)) [[unlikely]] {
+        withoutHandlerTask = InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered;
+        withoutHandlerContext = asyncContext;
+    }
 
     switch (status()) {
     case JSPromise::Status::Pending: {
@@ -494,7 +524,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (rejectedCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, withoutHandlerTask, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, withoutHandlerContext);
         markAsHandled();
         break;
     }
@@ -503,7 +533,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (fulfilledCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, onFulfilled, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, withoutHandlerTask, static_cast<uint8_t>(Status::Fulfilled), promiseOrCapability, settled, withoutHandlerContext);
         break;
     }
     }
@@ -759,7 +789,14 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         auto* promise = uncheckedDowncast<JSPromise>(resolutionObject);
         if (promise->isThenFastAndNonObservable()) {
 #if USE(BUN_JSC_ADDITIONS)
-            return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextSwapScope::current(vm, globalObject));
+            JSValue asyncContext = jsUndefined();
+            auto task = InternalMicrotask::PromiseResolveThenableJobFast;
+            if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
+                asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+                if (AsyncContextSwapScope::hasScriptExecutionOwner(asyncContext))
+                    task = InternalMicrotask::PromiseResolveThenableJobFastAsRegistered;
+            }
+            return promise->realm()->queueMicrotask(vm, task, 0, resolutionObject, this, asyncContext);
 #else
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, jsUndefined());
 #endif
@@ -831,13 +868,43 @@ JSC_DEFINE_HOST_FUNCTION(promiseResolvingFunctionReject, (JSGlobalObject* global
     return JSValue::encode(jsUndefined());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Whoever calls a promise's resolving function, the promise is settled as the script execution owner whose script made
+// it (JSPromise::isSettledAsItsMakerFlag): an unhandled rejection is that owner's, as in the Promise constructor
+// (builtins/PromiseConstructor.js). Out of line: the resolving functions of a program with no owners stay the leaf
+// functions they were.
+static NEVER_INLINE EncodedJSValue settleAsMadeBy(JSGlobalObject* globalObject, JSFunctionWithFields* callee, JSPromise* promise, JSValue argument, bool isResolve)
+{
+    VM& vm = globalObject->vm();
+    if (promise->flags() & JSPromise::isFirstResolvingFunctionCalledFlag)
+        return JSValue::encode(jsUndefined());
+    JSValue madeBy = callee->getField(JSFunctionWithFields::Field::FirstResolvingMadeBy);
+    ScriptExecutionOwnerScope madeByScope(vm, globalObject, madeBy.isEmpty() ? jsUndefined() : madeBy);
+    if (isResolve)
+        promise->resolve(globalObject, vm, argument);
+    else
+        promise->reject(vm, argument);
+    return JSValue::encode(jsUndefined());
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(promiseFirstResolvingFunctionResolve, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto* callee = uncheckedDowncast<JSFunctionWithFields>(callFrame->jsCallee());
     auto* promise = uncheckedDowncast<JSPromise>(callee->getField(JSFunctionWithFields::Field::FirstResolvingPromise));
     JSValue argument = callFrame->argument(0);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // JSPromise::resolve(), with its test of isFirstResolvingFunctionCalledFlag widened by one bit: a program with no
+    // script execution owners runs what it always ran.
+    uint16_t flags = promise->flags();
+    if (flags & (JSPromise::isFirstResolvingFunctionCalledFlag | JSPromise::isSettledAsItsMakerFlag)) [[unlikely]]
+        return settleAsMadeBy(globalObject, callee, promise, argument, true);
+    promise->setFlags(flags | JSPromise::isFirstResolvingFunctionCalledFlag);
+    promise->resolvePromise(globalObject, globalObject->vm(), argument);
+#else
     promise->resolve(globalObject, globalObject->vm(), argument);
+#endif
     return JSValue::encode(jsUndefined());
 }
 
@@ -847,7 +914,17 @@ JSC_DEFINE_HOST_FUNCTION(promiseFirstResolvingFunctionReject, (JSGlobalObject* g
     auto* promise = uncheckedDowncast<JSPromise>(callee->getField(JSFunctionWithFields::Field::FirstResolvingPromise));
     JSValue argument = callFrame->argument(0);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // JSPromise::reject(), with its test of isFirstResolvingFunctionCalledFlag widened by one bit: a program with no
+    // script execution owners runs what it always ran.
+    uint16_t flags = promise->flags();
+    if (flags & (JSPromise::isFirstResolvingFunctionCalledFlag | JSPromise::isSettledAsItsMakerFlag)) [[unlikely]]
+        return settleAsMadeBy(globalObject, callee, promise, argument, false);
+    promise->setFlags(flags | JSPromise::isFirstResolvingFunctionCalledFlag);
+    promise->rejectPromise(globalObject->vm(), argument);
+#else
     promise->reject(globalObject->vm(), argument);
+#endif
     return JSValue::encode(jsUndefined());
 }
 
@@ -929,10 +1006,28 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctions(VM& vm,
     return std::tuple { resolve, reject };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The promise's first resolving functions (either may be null), made while the global object has script execution
+// owners: they settle it as the one that is current now (JSPromise::isSettledAsItsMakerFlag).
+static NEVER_INLINE void setMadeBy(VM& vm, JSGlobalObject* globalObject, JSPromise* promise, JSFunctionWithFields* resolve, JSFunctionWithFields* reject)
+{
+    JSValue madeBy = globalObject->asyncContextData()->getInternalField(1);
+    if (resolve)
+        resolve->setField(vm, JSFunctionWithFields::Field::FirstResolvingMadeBy, madeBy);
+    if (reject)
+        reject->setField(vm, JSFunctionWithFields::Field::FirstResolvingMadeBy, madeBy);
+    promise->markAsSettledAsItsMaker();
+}
+#endif
+
 JSFunction* JSPromise::createFirstResolveFunction(VM& vm, JSGlobalObject* globalObject)
 {
     auto* resolve = JSFunctionWithFields::create(vm, globalObject, vm.promiseFirstResolvingFunctionResolveExecutable());
     resolve->setField(vm, JSFunctionWithFields::Field::FirstResolvingPromise, this);
+#if USE(BUN_JSC_ADDITIONS)
+    if (globalObject->hasScriptExecutionOwners()) [[unlikely]]
+        setMadeBy(vm, globalObject, this, resolve, nullptr);
+#endif
     return resolve;
 }
 
@@ -940,12 +1035,32 @@ JSFunction* JSPromise::createFirstRejectFunction(VM& vm, JSGlobalObject* globalO
 {
     auto* reject = JSFunctionWithFields::create(vm, globalObject, vm.promiseFirstResolvingFunctionRejectExecutable());
     reject->setField(vm, JSFunctionWithFields::Field::FirstResolvingPromise, this);
+#if USE(BUN_JSC_ADDITIONS)
+    if (globalObject->hasScriptExecutionOwners()) [[unlikely]]
+        setMadeBy(vm, globalObject, this, nullptr, reject);
+#endif
     return reject;
 }
 
 std::tuple<JSFunction*, JSFunction*> JSPromise::createFirstResolvingFunctions(VM& vm, JSGlobalObject* globalObject)
 {
-    return std::tuple { createFirstResolveFunction(vm, globalObject), createFirstRejectFunction(vm, globalObject) };
+    auto [resolve, reject] = createFirstResolvingFunctionsWithNoScriptExecutionOwners(vm, globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+    if (globalObject->hasScriptExecutionOwners()) [[unlikely]]
+        setMadeBy(vm, globalObject, this, resolve, reject);
+#endif
+    return std::tuple { resolve, reject };
+}
+
+// What newPromiseCapability() calls where it has already established that there are none (it compares the
+// constructor with JSGlobalObject::promiseConstructorWhileNoScriptExecutionOwners()).
+std::tuple<JSFunctionWithFields*, JSFunctionWithFields*> JSPromise::createFirstResolvingFunctionsWithNoScriptExecutionOwners(VM& vm, JSGlobalObject* globalObject)
+{
+    auto* resolve = JSFunctionWithFields::create(vm, globalObject, vm.promiseFirstResolvingFunctionResolveExecutable());
+    resolve->setField(vm, JSFunctionWithFields::Field::FirstResolvingPromise, this);
+    auto* reject = JSFunctionWithFields::create(vm, globalObject, vm.promiseFirstResolvingFunctionRejectExecutable());
+    reject->setField(vm, JSFunctionWithFields::Field::FirstResolvingPromise, this);
+    return std::tuple { resolve, reject };
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1023,9 +1138,18 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             // performPromiseThen normalizes non-callable sides to jsUndefined() when storing
             // an async context in a full reaction; cheap tag check instead of isCallable().
             if (handler.isUndefined()) {
+                // The settlement is passed on; when the reaction was registered while there was a script execution
+                // owner, as that owner (the reaction's async context, or the one paired with its context).
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
                 arg = jsUndefined();
+                JSValue registeredWith = fullReaction->context();
+                if (!fullReaction->contextIsAsyncContext())
+                    registeredWith = AsyncContextSwapScope::unwrapContextTuple(registeredWith);
+                if (AsyncContextSwapScope::hasScriptExecutionOwner(registeredWith)) [[unlikely]] {
+                    task = InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered;
+                    arg = registeredWith;
+                }
                 break;
             }
             JSValue context = fullReaction->context();

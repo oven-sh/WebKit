@@ -101,6 +101,7 @@ class JSGlobalObject;
     v(isConstructor, nullptr) \
     v(sameValue, nullptr) \
     v(asyncContextData, nullptr) \
+    v(scriptExecutionOwnerState, nullptr) \
     v(regExpProtoFlagsGetter, nullptr) \
     v(regExpProtoGlobalGetter, nullptr) \
     v(regExpProtoHasIndicesGetter, nullptr) \

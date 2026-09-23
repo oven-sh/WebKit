@@ -1643,6 +1643,10 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
     return;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static void runSettlingJobAsRegistered(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments>);
+#endif
+
 static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM& vm, JSValue capability, JSValue resolution, JSPromise::Status status)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1881,6 +1885,16 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         promiseResolveThenableJob(globalObject, promise, then, resolve, reject, microtaskCallCache);
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    case InternalMicrotask::PromiseResolveThenableJobFastAsRegistered:
+    case InternalMicrotask::PromiseAllResolveJobAsRegistered:
+    case InternalMicrotask::PromiseAllSettledResolveJobAsRegistered:
+    case InternalMicrotask::PromiseAnyResolveJobAsRegistered:
+    case InternalMicrotask::PromiseRaceResolveJobAsRegistered:
+    case InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered:
+        RELEASE_AND_RETURN(scope, runSettlingJobAsRegistered(globalObject, vm, task, payload, arguments));
+#endif
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
         RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
@@ -2354,6 +2368,50 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// The ...AsRegistered job kinds (Microtask.h): a job that settles a promise without running script, registered
+// while there was a script execution owner, runs with what was current then. Out of line, so that
+// runInternalMicrotask is what it was for every other job.
+static NEVER_INLINE void runSettlingJobAsRegistered(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments)
+{
+    if (task == InternalMicrotask::PromiseResolveThenableJobFastAsRegistered) {
+        // PromiseResolveThenableJobFast, queued while there was a script execution owner: what settles
+        // `promiseToResolve` later does so with what this job was queued with.
+        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
+        auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered, promiseToResolve, arguments[2]);
+        return;
+    }
+
+    // The job itself is run by runInternalMicrotask, as its plain kind and with the cell and context slot that has:
+    // each job function keeps its one caller there, and stays part of it.
+    JSValue cell = arguments[0];
+    JSValue context = arguments[2];
+    JSValue registeredWith;
+    InternalMicrotask plainTask;
+    if (promiseReactionPacksGlobalContextAndIndex(task)) {
+        // A combinator's element job: the cell pairs the combinator's with what it was registered with.
+        auto* pair = uncheckedDowncast<InternalFieldTuple>(cell);
+        cell = pair->getInternalField(0);
+        registeredWith = pair->getInternalField(1);
+        plainTask = static_cast<InternalMicrotask>(static_cast<uint8_t>(task) - (static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJobAsRegistered) - static_cast<uint8_t>(InternalMicrotask::PromiseAllResolveJob)));
+    } else if (task == InternalMicrotask::PromiseRaceResolveJobAsRegistered) {
+        registeredWith = std::exchange(context, cell);
+        plainTask = InternalMicrotask::PromiseRaceResolveJob;
+    } else {
+        ASSERT(task == InternalMicrotask::PromiseResolveWithoutHandlerJobAsRegistered);
+        registeredWith = std::exchange(context, jsUndefined());
+        plainTask = InternalMicrotask::PromiseResolveWithoutHandlerJob;
+    }
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, registeredWith);
+    std::array<JSValue, maxMicrotaskArguments> plain { cell, arguments[1], context, arguments[3] };
+    runInternalMicrotask(globalObject, vm, plainTask, payload, plain, nullptr);
+}
+#endif
 
 } // namespace JSC
 

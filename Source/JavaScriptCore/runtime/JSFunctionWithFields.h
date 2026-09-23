@@ -47,6 +47,11 @@ public:
         ResolvingOther = 1,
 
         FirstResolvingPromise = 0,
+#if USE(BUN_JSC_ADDITIONS)
+        // The script execution owner that was current when the promise was made (JSPromise::createFirstResolveFunction()).
+        // Empty: there were no owners yet, so none was.
+        FirstResolvingMadeBy = 1,
+#endif
 
         ResolvingWithInternalMicrotaskContext = 0,
         ResolvingWithInternalMicrotaskOther = 1,

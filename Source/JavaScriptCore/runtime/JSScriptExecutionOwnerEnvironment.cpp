@@ -40,6 +40,7 @@ const ClassInfo JSScriptExecutionOwnerEnvironment::s_info = { "JSScriptExecution
 
 JSScriptExecutionOwnerEnvironment* JSScriptExecutionOwnerEnvironment::create(VM& vm, JSGlobalObject* globalObject, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue)
 {
+    globalObject->didMakeScriptExecutionOwner(vm);
     // Made on first use: before the cell it is for.
     Structure* structure = globalObject->scriptExecutionOwnerEnvironmentStructure();
     auto* result = new (NotNull, allocateCell<JSScriptExecutionOwnerEnvironment>(vm, allocationSize(symbolTable)))

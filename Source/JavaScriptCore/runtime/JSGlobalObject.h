@@ -282,6 +282,10 @@ public:
     WriteBarrier<RegExpConstructor> m_regExpConstructor;
     WriteBarrier<FunctionConstructor> m_functionConstructor;
     WriteBarrier<JSPromiseConstructor> m_promiseConstructor;
+    // m_promiseConstructor until a script execution owner is made in this global object, null from then on: what
+    // JSPromise::newPromiseCapability() compares with first, so that it costs a program with no owners nothing to
+    // make other resolving functions for one that has them.
+    WriteBarrier<JSPromiseConstructor> m_promiseConstructorWhileNoScriptExecutionOwners;
     WriteBarrier<JSIteratorConstructor> m_iteratorConstructor;
     WriteBarrier<StringConstructor> m_stringConstructor;
 
@@ -531,6 +535,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // [async context, script execution owner]: what async code continues with (AsyncContextSwapScope).
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+    // Field 0: undefined until a script execution owner is made in this global object, true from then on
+    // (didMakeScriptExecutionOwner()). What builtins read to tell whether there are owners at all; see
+    // noScriptExecutionOwnerWatchpointSet().
+    WriteBarrier<InternalFieldTuple> m_scriptExecutionOwnerState;
     // The last value captured while there was an owner, which the next capture of the same two values
     // reuses. Weak: what keeps an owner alive is the jobs that captured it, not that it was captured.
     Weak<InternalFieldTuple> m_capturedAsyncContextWithScriptExecutionOwner;
@@ -563,6 +571,11 @@ public:
     // If this hasn't been invalidated, it means the array iterator protocol
     // is not observable to user code yet.
     InlineWatchpointSet m_arrayIteratorProtocolWatchpointSet { IsWatched };
+#if USE(BUN_JSC_ADDITIONS)
+    InlineWatchpointSet m_noScriptExecutionOwnerWatchpointSet { IsWatched };
+    // The set's state, as the one byte C++ tests on paths every program runs.
+    bool m_hasScriptExecutionOwners { false };
+#endif
     InlineWatchpointSet m_mapIteratorProtocolWatchpointSet { IsWatched };
     InlineWatchpointSet m_setIteratorProtocolWatchpointSet { IsWatched };
     InlineWatchpointSet m_stringIteratorProtocolWatchpointSet { IsWatched };
@@ -798,6 +811,15 @@ public:
             vm().setAsyncContextTrackingEnabled();
     }
     static constexpr ptrdiff_t offsetOfAsyncContextData() { return OBJECT_OFFSETOF(JSGlobalObject, m_asyncContextData); }
+    InternalFieldTuple* asyncContextData() const { return m_asyncContextData.get(); }
+    InternalFieldTuple* scriptExecutionOwnerState() const { return m_scriptExecutionOwnerState.get(); }
+    // Valid while no script execution owner has been made in this global object. While it is, the current owner
+    // (field 1 of m_asyncContextData) and field 0 of m_scriptExecutionOwnerState are undefined, and the DFG and FTL
+    // compile a read of either as that constant: a program with no owners pays nothing for what owners need of
+    // code every program runs (the Promise constructor).
+    InlineWatchpointSet& noScriptExecutionOwnerWatchpointSet() { return m_noScriptExecutionOwnerWatchpointSet; }
+    bool hasScriptExecutionOwners() const { return m_hasScriptExecutionOwners; }
+    JS_EXPORT_PRIVATE void didMakeScriptExecutionOwner(VM&);
     // AsyncContextSwapScope::current() while there is a script execution owner: an
     // InternalFieldTuple of the two fields of m_asyncContextData, never written again.
     JS_EXPORT_PRIVATE JSValue currentAsyncContextWithScriptExecutionOwner(VM&);
@@ -865,6 +887,7 @@ public:
     ObjectConstructor* objectConstructor() const LIFETIME_BOUND { return m_objectConstructor.get(); }
     FunctionConstructor* functionConstructor() const LIFETIME_BOUND { return m_functionConstructor.get(); }
     JSPromiseConstructor* promiseConstructor() const LIFETIME_BOUND { return m_promiseConstructor.get(); }
+    JSPromiseConstructor* promiseConstructorWhileNoScriptExecutionOwners() const { return m_promiseConstructorWhileNoScriptExecutionOwners.get(); }
     JSIteratorConstructor* iteratorConstructor() const LIFETIME_BOUND { return m_iteratorConstructor.get(); }
 
     IntlCollator* defaultCollator() const LIFETIME_BOUND { return m_defaultCollator.get(this); }

@@ -4492,6 +4492,20 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case GetInternalField: {
+#if USE(BUN_JSC_ADDITIONS)
+        // While no script execution owner has been made in the global object there is none to be current, and its
+        // state says there are none (JSGlobalObject::noScriptExecutionOwnerWatchpointSet()).
+        if (JSValue base = forNode(node->child1()).value(); base && base.isCell()) {
+            JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+            bool isCurrentOwner = base.asCell() == globalObject->asyncContextData() && node->internalFieldIndex() == 1;
+            bool isOwnerState = base.asCell() == globalObject->scriptExecutionOwnerState() && !node->internalFieldIndex();
+            if ((isCurrentOwner || isOwnerState) && globalObject->noScriptExecutionOwnerWatchpointSet().isStillValid()) {
+                m_graph.watchpoints().addLazily(globalObject->noScriptExecutionOwnerWatchpointSet());
+                setConstant(node, jsUndefined());
+                break;
+            }
+        }
+#endif
         AbstractValue& child = forNode(node->child1());
         if (child.m_type && !(child.m_type & ~SpecProxyObject)) {
             if (node->internalFieldIndex() == static_cast<unsigned>(ProxyObject::Field::Target)) {
