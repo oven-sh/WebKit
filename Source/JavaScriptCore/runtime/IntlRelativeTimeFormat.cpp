@@ -44,6 +44,10 @@ const ClassInfo IntlRelativeTimeFormat::s_info = { "Object"_s, &Base::s_info, nu
 namespace IntlRelativeTimeFormatInternal {
 }
 
+// Approximate size of URelativeDateTimeFormatter (including the UNumberFormat it adopts and the result and position objects
+// kept alongside it) for GC memory pressure reporting, measured empirically with ureldatefmt_open + format (ICU 78).
+static constexpr size_t estimatedURelativeDateTimeFormatterSize = 9000;
+
 IntlRelativeTimeFormat* IntlRelativeTimeFormat::create(VM& vm, Structure* structure)
 {
     auto* format = new (NotNull, allocateCell<IntlRelativeTimeFormat>(vm)) IntlRelativeTimeFormat(vm, structure);
@@ -68,6 +72,9 @@ void IntlRelativeTimeFormat::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
+
+    if (thisObject->m_relativeDateTimeFormatter)
+        visitor.reportExtraMemoryVisited(estimatedURelativeDateTimeFormatterSize);
 }
 
 DEFINE_VISIT_CHILDREN(IntlRelativeTimeFormat);
@@ -166,6 +173,7 @@ void IntlRelativeTimeFormat::initializeRelativeTimeFormat(JSGlobalObject* global
         throwTypeError(globalObject, scope, "failed to initialize RelativeTimeFormat"_s);
         return;
     }
+    vm.heap.reportExtraMemoryAllocated(this, estimatedURelativeDateTimeFormatterSize);
 
     m_formattedResult = std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>>(ureldatefmt_openResult(&status));
     if (U_FAILURE(status)) [[unlikely]] {

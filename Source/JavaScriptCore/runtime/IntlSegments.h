@@ -55,11 +55,14 @@ public:
     JSObject* createSegmentIterator(JSGlobalObject*);
 
     DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSCell*, VM&);
 
 private:
     IntlSegments(VM&, Structure*, std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&, Box<Vector<char16_t>>&&, IntlSegmenter::Granularity, JSString*);
 
-    DECLARE_DEFAULT_FINISH_CREATION;
+    void finishCreation(VM&);
+
+    size_t extraMemorySize() const { return estimatedClonedUBreakIteratorSize + m_buffer->sizeInBytes(); }
 
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
     Box<Vector<char16_t>> m_buffer;
