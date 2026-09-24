@@ -2,8 +2,8 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useConcurrentJIT=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--useSamplingProfiler=1", "--sampleInterval=30")
 //@ runBytecodeCache("--useConcurrentJIT=1", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--useSamplingProfiler=1", "--sampleInterval=30", "--reportCompileTimes=1")
 
-// Functions decoded from the bytecode cache keep their name in the cache payload until the mutator first asks for it
-// (useThinChildExecutables). Compiler threads print CodeBlock names when a plan completes (reportCompileTimes), and the
+// Functions decoded from the bytecode cache keep their name in the cache payload until the mutator first asks for
+// it. Compiler threads print CodeBlock names when a plan completes (reportCompileTimes), and the
 // sampling profiler resolves frame line/column when the collector visits it and frame names when it reports. None of
 // those may materialize (atomize) a deferred name off the mutator; they must either print a placeholder or go through
 // the WithoutGC/Concurrently accessors. Most functions below are only ever called, never introspected, so their names

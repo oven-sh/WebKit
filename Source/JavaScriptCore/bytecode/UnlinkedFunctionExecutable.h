@@ -132,7 +132,7 @@ public:
         m_isClass = !source.isNull();
     }
 
-    // Options::useThinChildExecutables(): an executable decoded from a bytecode cache leaves its ecmaName, parent scope
+    // An executable decoded from a bytecode cache leaves its ecmaName, parent scope
     // TDZ variables and rare data in the cache until something asks for them (name reflection, generating bytecode for
     // it, toString of a class, re-encoding). Only the mutator materializes; calling the function does not, so compiler
     // and GC threads use tryGetEcmaNameConcurrently() (FunctionExecutable::inferredNameForTools()).

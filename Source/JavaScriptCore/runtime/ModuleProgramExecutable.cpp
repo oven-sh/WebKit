@@ -221,7 +221,7 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
     // The environment's symbol table stays: environments already made from it and any code linked later must agree on
     // the one table.
     UnlinkedModuleProgramCodeBlock* unlinkedCode = unlinkedCodeBlock();
-    if (!hasFinishedEvaluation() || !unlinkedCode || !unlinkedCode->cachedPayloadIndex() || !Options::useCodeRecoveryFromBytecodeCache())
+    if (!hasFinishedEvaluation() || !unlinkedCode || !unlinkedCode->cachedPayloadIndex())
         return;
     vm.codeCache()->forgetUnlinkedModuleProgramCodeBlock(this, source(), unlinkedCode);
     m_hasReleasedUnlinkedCode = true;

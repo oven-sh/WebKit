@@ -135,7 +135,7 @@ public:
     String stringFor(uint32_t ordinal) const;
     template<typename Visitor> void visitStrongReferences(Visitor&, CollectionScope);
     void didFinishCollection();
-    // Options::useFastCachedAtoms(): unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
+    // Unaided, atomFor is two to four dependent cache misses (slot -> [cell ->] string
     // header, or slot -> offsets[] -> record -> atom-table bucket) and jsStringFor's miss is three. A caller about to
     // resolve a run of ordinals makes one pass per hop over the run first; each pass is a burst of independent loads, so
     // its misses overlap instead of queueing behind each other inside the decode:
@@ -230,13 +230,11 @@ public:
     // dropped and decoded again): for code that is private to one executable.
     enum class RecoverableCode : bool { No, Yes };
     static Ref<Decoder> create(VM&, Ref<CachedBytecode>, RefPtr<SourceProvider> = nullptr, RecoverableCode = RecoverableCode::Yes);
-    bool canBorrowPayload() const; // the embedder promised the payload outlives every use, so decoded objects may alias it
+    bool canBorrowPayload() const { return m_canBorrowPayload; } // the embedder promised the payload outlives every use, so decoded objects may alias it
     bool canDeferIntoPayload() const { return m_canDeferIntoPayload; } // the payload is owned by the CachedBytecode or persistent, so decoded cells may keep a reference to this Decoder plus pointers into the payload and finish decoding on first use
     // While a code block record is being decoded, its parsed varint tail, so the several accessors that need it share one parse.
     void setActiveCodeBlockTail(const void* record, const void* tail) { m_activeRecord = record; m_activeTail = tail; }
     const void* activeCodeBlockTail(const void* record) const { return m_activeRecord == record ? m_activeTail : nullptr; }
-    bool payloadContains(const void* start, size_t size) const;
-    std::span<const uint8_t> payloadSpan() const;
     // The atom each numbered string record decoded to so far (a +1 reference held until the decoder dies).
     AtomStringImpl* atomForOrdinal(uint32_t) const;
     void setAtomForOrdinal(uint32_t, AtomStringImpl&);
@@ -249,19 +247,19 @@ public:
     Ref<AtomStringImpl> atomForExternalString(uint32_t ordinal);
     JSString* jsStringForExternalString(uint32_t ordinal);
     String stringForExternalString(uint32_t ordinal); // DecoderStringTable::stringFor
-    // See DecoderStringTable::prefetchSlot. Null with useFastCachedAtoms off or no embedder table (a payload that then
-    // names a table string still fails in atomForExternalString, not here).
+    // See DecoderStringTable::prefetchSlot. Null with no embedder table (a payload that then names a table string still
+    // fails in atomForExternalString, not here).
     const DecoderStringTable* stringsToPrefetch();
 
     ~Decoder();
 
     VM& NODELETE vm() { return m_vm; }
-    size_t size() const;
+    size_t size() const { return m_payloadSize; }
 
-    ptrdiff_t offsetOf(const void*);
+    ptrdiff_t offsetOf(const void* ptr) const { return static_cast<const uint8_t*>(ptr) - m_payload; }
     void cacheOffset(ptrdiff_t, void*);
     std::optional<void*> cachedPtrForOffset(ptrdiff_t);
-    const void* ptrForOffsetFromBase(ptrdiff_t);
+    const void* ptrForOffsetFromBase(ptrdiff_t offset) const { return m_payload + offset; }
     CompactTDZEnvironmentMap::Handle handleForTDZEnvironment(CompactTDZEnvironment*) const;
     void setHandleForTDZEnvironment(CompactTDZEnvironment*, const CompactTDZEnvironmentMap::Handle&);
     void addLeafExecutable(const UnlinkedFunctionExecutable*, ptrdiff_t);
@@ -286,6 +284,8 @@ private:
 
     VM& m_vm;
     const Ref<CachedBytecode> m_cachedBytecode;
+    const uint8_t* m_payload { nullptr };
+    size_t m_payloadSize { 0 };
     Vector<AtomStringImpl*> m_atomsByOrdinal;
     DecoderStringTable* m_externalStrings { nullptr };
     bool m_lookedUpExternalStrings { false }; // stringsToPrefetch asked the embedder (m_externalStrings may still be null)
@@ -296,6 +296,7 @@ private:
     UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
     RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
+    bool m_canBorrowPayload { false };
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
@@ -324,12 +325,12 @@ JS_EXPORT_PRIVATE void decodeFunctionCodeBlock(Decoder&, int32_t cachedFunctionC
 // The same, given the offset of the code block's own record (UnlinkedCodeBlock::cachedRecordOffset()) instead of its owner's slot.
 void decodeFunctionCodeBlockFromRecord(Decoder&, uint32_t recordOffset, WriteBarrier<UnlinkedFunctionCodeBlock>&, const JSCell*);
 
-// Options::useLazySymbolTableConstants(): fill in the entries of a SymbolTable whose CachedSymbolTable record was left
+// Fill in the entries of a SymbolTable whose CachedSymbolTable record was left
 // undecoded (SymbolTable::materializeCachedEntries). Mutator only; allocates no GC cells.
 void decodeSymbolTableEntries(Decoder&, const CachedSymbolTable&, SymbolTable&, bool scopePartOnly);
-// Options::useLazyCachedExpressionInfo(): the ExpressionInfo for a CachedExpressionInfo record left unread in a persistent
-// payload that ends `payloadBytesLeft` past it (UnlinkedCodeBlock::expressionInfo). Any thread; allocates no GC cells.
-std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo, uint32_t payloadBytesLeft);
+// The ExpressionInfo for a CachedExpressionInfo record left unread in a persistent payload (UnlinkedCodeBlock::expressionInfo).
+// Any thread; allocates no GC cells.
+std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo);
 
 bool isCachedBytecodeStillValid(VM&, Ref<CachedBytecode>, const SourceCodeKey&, SourceCodeType);
 

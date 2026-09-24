@@ -72,7 +72,8 @@ MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAlloca
 }
 
 MarkedBlock::Handle::Handle(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator, void* blockSpace)
-    : m_alignedMemoryAllocator(alignedMemoryAllocator)
+    : m_markingVersionAtLastSweep(heap.objectSpace().markingVersion())
+    , m_alignedMemoryAllocator(alignedMemoryAllocator)
     , m_weakSet(heap.vm())
     , m_block(new (NotNull, blockSpace) MarkedBlock(heap.vm(), *this))
 {
@@ -491,7 +492,7 @@ Subspace* MarkedBlock::Handle::subspace() const
     return directory()->subspace();
 }
 
-void MarkedBlock::Handle::decommitUnusedPages()
+void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollection)
 {
 #if OS(WINDOWS)
     // OSAllocator::decommit makes the pages inaccessible there; this scheme relies on decommitted pages reading as zero.
@@ -510,9 +511,12 @@ void MarkedBlock::Handle::decommitUnusedPages()
     size_t pageSize = WTF::pageSize();
     if (pageSize >= blockSize || blockSize / pageSize > 16)
         return;
-    // Only after a full collection (the blocks an eden collection sweeps are the young ones, refilled straight away, so
-    // decommitting there mostly buys page faults) and only for blocks that are not mostly full anyway.
-    if (heap()->lastCollectionScope() != CollectionScope::Full && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
+    // Only for what a full collection left behind (the blocks an eden collection adds to the unswept set are the young
+    // ones, refilled straight away, so decommitting there mostly buys page faults) and only for blocks that are not
+    // mostly full anyway. The test is whether this sweep is the block's first since the last full collection began, not
+    // which collection finished last: an eden collection can run between the end of a full one and the incremental
+    // sweeper's timer slice that reaches the block, and the block is no younger for it.
+    if (!isFirstSweepSinceFullCollection && !Options::decommitUnusedMarkedBlockPagesAfterEdenCollections())
         return;
     m_directory->assertIsMutatorOrMutatorIsStopped();
     if (m_directory->isMarkingRetired(this))
@@ -634,6 +638,13 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
+    // marks have not caught up): it is not that collection's first sweep and must not count as it. An eden collection's
+    // marking leaves the version and the old blocks' marks alone, so a sweep during it counts like any other.
+    bool marksArePending = space()->isMarking() && heap()->collectionScope() == CollectionScope::Full;
+    bool isFirstSweepSinceFullCollection = !marksArePending && m_markingVersionAtLastSweep != space()->markingVersion();
+    if (!marksArePending)
+        m_markingVersionAtLastSweep = space()->markingVersion();
 
     m_weakSet.sweep();
 
@@ -642,7 +653,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     if (sweepMode == SweepOnly && !needsDestruction) {
         if (!isEmpty())
-            decommitUnusedPages();
+            decommitUnusedPages(isFirstSweepSinceFullCollection);
         Locker locker(m_directory->bitvectorLock());
         m_directory->setIsUnswept(this, false);
         return;
@@ -673,7 +684,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     if (needsDestruction) {
         subspace()->finishSweep(*this, freeList);
         if (sweepMode == SweepOnly && !isEmpty())
-            decommitUnusedPages();
+            decommitUnusedPages(isFirstSweepSinceFullCollection);
         return;
     }
     

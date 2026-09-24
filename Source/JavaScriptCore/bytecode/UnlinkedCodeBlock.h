@@ -170,9 +170,9 @@ public:
     void setHasTailCalls() { m_hasTailCalls = true; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
 
-    // Decoded on first use when the block came from a persistent bytecode cache (Options::useLazyCachedExpressionInfo()).
+    // Decoded on first use when the block came from a persistent bytecode cache.
     // Any thread, including the collector's end phase (ErrorInstance::computeErrorInfo): the first call takes m_lock
-    // around a bounds-checked read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
+    // around a read of the cache payload and one fastMalloc; no GC allocation, no safepoint.
     ExpressionInfo& expressionInfo()
     {
         if (m_expressionInfo) [[likely]]
@@ -535,7 +535,6 @@ private:
     std::unique_ptr<RareData> m_rareData;
     std::unique_ptr<ExpressionInfo> m_expressionInfo;
     const void* m_cachedExpressionInfo { nullptr }; // the CachedExpressionInfo record expressionInfoSlow() decodes m_expressionInfo from, while that is null
-    uint32_t m_cachedExpressionInfoBytes { 0 }; // from the record to the end of its payload (saturated): the decode reads nothing past it
     uint32_t m_cachedRecordOffset { 0 }; // of this block's own record in that payload, while m_cachedPayloadIndex is set
     std::unique_ptr<ValueAndArrayProfiles> m_valueAndArrayProfiles;
     FixedVector<BinaryArithProfile> m_binaryArithProfiles;

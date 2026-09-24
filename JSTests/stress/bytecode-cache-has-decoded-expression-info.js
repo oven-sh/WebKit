@@ -1,6 +1,5 @@
 //@ runBytecodeCache
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLazyCachedExpressionInfo=0")
 
 // UnlinkedCodeBlock::expressionInfoIfDecoded() lets a caller that cannot take a lock or allocate (a sampling hook that
 // runs inside malloc) know whether asking a code block for a source position would decode it from the cache payload.
@@ -15,7 +14,7 @@ asked(0);
 // Only code decoded from a persistent cache payload, with the lazy decode on, starts out undecoded: that is the second
 // run of the second configuration above.
 let options = jscOptions();
-let lazy = !!(options.forceDiskCache && options.diskCachePayloadIsPersistentForTesting && options.useLazyCachedExpressionInfo && options.useBorrowedBytecodeFromCache);
+let lazy = !!(options.forceDiskCache && options.diskCachePayloadIsPersistentForTesting);
 
 function expectDecoded(fn, expected, when) {
     let actual = $vm.hasDecodedExpressionInfo(fn);
@@ -29,7 +28,7 @@ expectDecoded(asked, !lazy, "before its position was resolved");
 
 // A position of `asked` is resolved when the stack is read. From then on its expression info is decoded.
 let line = /asked@.*:(\d+):\d+/.exec(asked(1).stack);
-if (!line || Number(line[1]) !== 10)
+if (!line || Number(line[1]) !== 9)
     throw new Error("unexpected stack: " + asked(1).stack);
 expectDecoded(asked, true, "after its position was resolved");
 

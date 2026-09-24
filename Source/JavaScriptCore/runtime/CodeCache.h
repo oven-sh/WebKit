@@ -200,6 +200,9 @@ private:
     static constexpr int64_t workingSetMaxBytes = 16000000;
     static constexpr size_t workingSetMaxEntries = 2000;
 
+    // How many random entries pruneSlowCase() looks at to pick the one it evicts.
+    static constexpr unsigned evictionSampleSize = 5;
+
     // This constant factor biases cache capacity toward recent activity. We
     // want to adapt to changing workloads.
     static constexpr int64_t recencyBias = 4;

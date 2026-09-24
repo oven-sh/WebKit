@@ -1,13 +1,10 @@
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useLeanBytecodeCacheDecoder=0")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useThinChildExecutables=0", "--useLazyCachedExpressionInfo=0")
-//@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1", "--useCodeRecoveryFromBytecodeCache=0")
 //@ runBytecodeCache
 
 // VM::shrinkFootprintWhenIdle(KeepCodeThatNeedsParsing) drops linked code and the unlinked code blocks that were decoded
 // from a persistent bytecode cache payload; a dropped function is decoded again, from the same record, when next called.
-// Functions whose code was generated from source (the run that fills the cache, a non-persistent cache, or
-// useCodeRecoveryFromBytecodeCache=0) keep their unlinked code. Either way everything must keep working: closures made
+// Functions whose code was generated from source (the run that fills the cache, or a non-persistent cache)
+// keep their unlinked code. Either way everything must keep working: closures made
 // before the drop, suspended generators and async functions, classes, names, positions in stack traces.
 
 function assert(condition, message) {
@@ -68,7 +65,7 @@ const childBefore = grandparent();
 assert(childBefore(1) === "child1", "child before the drop");
 
 const before = $vm.codeBlockCensus();
-const recovers = jscOptions().useCodeRecoveryFromBytecodeCache && jscOptions().useLeanBytecodeCacheDecoder && jscOptions().useBorrowedBytecodeFromCache && jscOptions().diskCachePayloadIsPersistentForTesting && jscOptions().forceDiskCache;
+const recovers = jscOptions().diskCachePayloadIsPersistentForTesting && jscOptions().forceDiskCache;
 
 $vm.shrinkFootprintWhenIdle();
 setTimeout(() => {

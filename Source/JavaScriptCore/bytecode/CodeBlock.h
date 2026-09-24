@@ -834,7 +834,7 @@ public:
         WTF::loadLoadFence();
         return prepared;
     }
-    // useLazySymbolTableConstants needs no hook and does not gate the prepared bit: SymbolTable::materializeCachedEntries
+    // Lazy SymbolTable constants need no hook and do not gate the prepared bit: SymbolTable::materializeCachedEntries
     // declines off the mutator and concurrent readers take a pending table as having no entries (SymbolTable.h).
     void ensureFunctionExecutablesMaterialized(); // m_functionDecls / m_functionExprs
     // The callees this block's call and accessor ICs (and, for an optimizing block, its recorded statuses) currently name,
