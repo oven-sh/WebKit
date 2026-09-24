@@ -2122,6 +2122,33 @@ private:
         m_errorMessage = String();
     }
 
+    // parseAssignmentExpression() parses the text of an arrow function with parenthesized parameters three times: as
+    // an expression, as parameters to see that they are parameters, then as the arrow function. Each pass reaches the
+    // candidates in that text, say in a default value, and they do the same to their own text: every level of nesting
+    // multiplied the work. The parser keeps the starts of the arrow functions it found and skips the expression pass
+    // for them, which never decides what they are.
+    ALWAYS_INLINE bool isKnownArrowFunctionStart(unsigned offset) const
+    {
+        // The parser is past every known start unless it parses text again.
+        if (offset >= m_knownArrowFunctionStartsEnd) [[likely]]
+            return false;
+        return std::ranges::binary_search(m_knownArrowFunctionStarts.span(), offset);
+    }
+
+    void addKnownArrowFunctionStart(unsigned offset)
+    {
+        // Sorted. An arrow function is found before the one that encloses it, so this is not always an append.
+        if (offset >= m_knownArrowFunctionStartsEnd) {
+            m_knownArrowFunctionStarts.append(offset);
+            m_knownArrowFunctionStartsEnd = offset + 1;
+            return;
+        }
+        auto starts = m_knownArrowFunctionStarts.span();
+        auto position = std::ranges::lower_bound(starts, offset);
+        if (*position != offset)
+            m_knownArrowFunctionStarts.insert(position - starts.begin(), offset);
+    }
+
     // Fields up to m_parserState are arranged according to access frequency and affinity;
     // do not rearrange without careful analysis.
     VM& m_vm;
@@ -2160,7 +2187,9 @@ private:
     JSParserScriptMode m_scriptMode;
     SuperBinding m_superBinding;
     bool m_hasStackOverflow;
+    unsigned m_knownArrowFunctionStartsEnd { 0 };
     ScopeStack m_scopeStack;
+    Vector<unsigned> m_knownArrowFunctionStarts;
 
     static void verifyLayout();
 };

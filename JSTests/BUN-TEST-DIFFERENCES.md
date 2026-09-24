@@ -126,6 +126,7 @@ Rules for an edit to an upstream test:
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
+| `stress/arrow-function-nested-in-arrow-function-parameters-parse-time.js` | `--useSourceProviderCache=true` in `requireOptions` | `no-cjit-validate-phases` runs with `--useSourceProviderCache=false`. Without that cache the parser cannot step over an arrow function it already parsed, so a nest of arrow functions in parameter default values is parsed twice per level and the depth the test uses does not finish |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 
