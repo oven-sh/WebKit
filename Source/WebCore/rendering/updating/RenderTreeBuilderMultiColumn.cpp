@@ -103,7 +103,8 @@ static bool isValidColumnSpanner(const RenderMultiColumnFlow& fragmentedFlow, co
     if (descendantBox->isLegend())
         return false;
 
-    if (!is<RenderBlockFlow>(descendantBox->parent()) && !is<RenderInline>(descendantBox->parent()))
+    auto* parent = descendantBox->parent();
+    if (!is<RenderBlockFlow>(parent) && !(parent && parent->isInlineBox()))
         return false;
 
     // We need to have the flow thread as the containing block. A spanner cannot break out of the flow thread.

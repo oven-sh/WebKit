@@ -1,8 +1,6 @@
 Title: Overview
 Slug: overview
 
-# Overview
-
 WPEPlatform is a GObject library that abstracts the platform layer for
 WPE WebKit. It is the successor to [libwpe](https://github.com/WebKit/libwpe)
 and the various out-of-tree backends written against it (notably
@@ -17,13 +15,19 @@ small set of GObject-based abstract classes that implementations
 subclass.
 
 WPEPlatform ships with three built-in platform implementations —
-**Wayland**, **DRM**, and **headless** — each exposed as an
-independently consumable library with its own `pkg-config` module. They
-are built by default but each one is individually optional at build
-time. Integrators are expected to choose between using a built-in
-implementation, subclassing one to extend it, or writing a new
-implementation from scratch. External implementations for other
-windowing systems already exist (notably for GTK4 and SDL).
+**Wayland**, **DRM**, and **headless**. All of them are compiled into
+the same shared library as the rest of WPE WebKit, but each one has its
+own headers and its own `pkg-config` module. They are built by default
+but each one is individually optional at build time. Integrators are
+expected to choose between using a built-in implementation or writing a
+new implementation from scratch. The built-in implementations can be
+extended by using their public API, which exposes the internal platform
+specific objects. For example the Wayland implementation exposes its
+underlying `wl_display`, `wl_compositor`, and `wl_surface` objects,
+which makes it possible to add support for a Wayland protocol
+that the built-in module does not implement. External implementations
+for other windowing systems already exist (notably for
+[GTK4](https://github.com/Igalia/wpe-platform-gtk)).
 
 <!-- TODO: uncomment once backend-model.md has landed:
 See [Backend model](backend-model.html) for how WPEPlatform discovers external modules.
@@ -44,7 +48,7 @@ See [Rendering model](rendering-model.html) for the buffer flow in detail.
 ## Audience
 
 WPEPlatform has three distinct kinds of consumer. The same API serves
-all three, but the surface each one uses is different — and recognising
+all three, but the surface each one uses is different — and recognizing
 this up front makes the rest of the documentation easier to navigate.
 
 **Browser-application developers.** Most browser applications never
@@ -83,7 +87,9 @@ Where the distinction matters it is called out in the [Input handling](input-han
 
 ## Class hierarchy
 
-The core of the API revolves around four abstract classes:
+The core of the API revolves around four base classes. [class@Display],
+[class@View], and [class@Buffer] are abstract - [class@Toplevel] can be
+instantiated but is normally subclassed by platform implementations:
 
 | Class | Role |
 |---|---|
@@ -124,9 +130,7 @@ specific built-in implementation by instantiating it directly with
 `wpe_display_wayland_new()` — in which case it passes the connected
 display to the web view on construction.
 
-<!-- TODO: uncomment once tutorial-browser.md has landed:
-The [Hello browser tutorial](tutorial-browser.html) walks through both paths.
--->
+The [browser tutorial](tutorial-browser.html) walks through both paths.
 
 ## How a platform implementation uses WPEPlatform
 
@@ -134,7 +138,7 @@ A platform implementation subclasses [class@Display] and overrides its
 virtual methods — at minimum [vfunc@Display.connect] and
 [vfunc@Display.create_view] — and
 similarly subclasses [class@View] and [class@Toplevel] for the
-platform-specific behaviour. It optionally subclasses [class@Keymap],
+platform-specific behavior. It optionally subclasses [class@Keymap],
 [class@Screen], [class@InputMethodContext], and others depending on the
 features the platform supports.
 
@@ -143,10 +147,12 @@ The implementation can be:
 - **Built as a module** and installed under `${LIB_INSTALL_DIR}/wpe-platform-${WPE_API_VERSION}/modules/`, in which case [func@Display.get_default] will pick it up automatically via the `wpe-platform-display` GIO extension point.
 - **Linked directly** by the embedder, in which case the embedder instantiates the display class explicitly.
 
-<!-- TODO: uncomment once tutorial-platform.md and backend-model.md have landed:
-The [Writing a platform tutorial](tutorial-platform.html) walks through
-implementing a minimal backend. The [Backend model](backend-model.html)
-concept page describes how WPEPlatform discovers and loads modules.
+The [Writing a WPE platform implementation](tutorial-platform.html)
+tutorial walks through implementing a backend.
+
+<!-- TODO: uncomment once backend-model.md has landed:
+The [Backend model](backend-model.html) concept page describes how
+WPEPlatform discovers and loads modules.
 -->
 
 ## Relationship to libwpe
@@ -156,24 +162,15 @@ deprecated. WPE WebKit can still be built against them while
 applications and platform integrators migrate, but new code should
 target WPEPlatform.
 
-<!-- TODO: uncomment once migration-mapping.md and migrating-from-libwpe.md have landed (restore the two entries below as a bulleted list):
-The migration table at [migration-mapping](migration-mapping.html) lists every libwpe and WPEBackend-fdo public symbol and points at the WPEPlatform equivalent (or marks it as gone).
-[Migrating from libwpe](migrating-from-libwpe.html) is a hands-on guide with before/after code for the common patterns.
--->
+- The [Migration mapping table](migration-mapping.html) lists every libwpe and WPEBackend-fdo public symbol and points at the WPEPlatform equivalent (or marks it as gone).
+- [Migrating from libwpe](migrating-from-libwpe.html) is a hands-on guide with before/after code for the common patterns.
 
 ## What is *not* covered by WPEPlatform
 
 A few things that lived in libwpe / WPEBackend-fdo do not have direct
 WPEPlatform equivalents:
 
-- **Process management** (libwpe's `wpe_process_provider_*` API, added in 1.14). Child-process launch is once again handled internally by WPE WebKit.
+- **Process management** (libwpe's `wpe_process_provider_*` API, added in 1.14). Child-process launch is once again handled internally by WPE WebKit. The exception is Android builds, where WPEPlatform ships a `WPEProcessManager` for this purpose.
 - **The `renderer-host`/`renderer-backend-egl` plumbing**. The new rendering model is built on buffer sharing through [class@Buffer] subclasses; there is no separate EGL renderer-target abstraction to wire up.
 - **WPEBackend-fdo's "exportable" view backend**. The "WebKit hands you rendered buffers via callbacks" pattern is replaced by subclassing [class@View] and implementing [vfunc@View.render_buffer].
-
-<!-- TODO: resolve before publishing — depends on the audio / video-plane
-successor decision, and on the migration guide landing:
-The extensions/audio.h (wpe_audio_source / wpe_audio_receiver) and
-extensions/video-plane-display-dmabuf.h APIs from WPEBackend-fdo have no
-visible counterpart in WPEPlatform headers. Confirm whether they have moved
-into the WebKit-level API, are still missing, or are intentionally dropped.
--->
+- **WPEBackend-fdo's audio and video-plane extensions**. See the [Migration mapping table](migration-mapping.html) for their status.

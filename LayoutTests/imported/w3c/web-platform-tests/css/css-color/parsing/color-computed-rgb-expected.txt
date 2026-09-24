@@ -1,16 +1,16 @@
 
 PASS Property color value 'rgb(none none none)'
 PASS Property color value 'rgb(none none none / none)'
-PASS Property color value 'rgb(128 none none)'
-PASS Property color value 'rgb(128 none none / none)'
+FAIL Property color value 'rgb(128 none none)' assert_equals: expected "color(srgb 0.50196078 none none)" but got "color(srgb 0.501961 none none)"
+FAIL Property color value 'rgb(128 none none / none)' assert_equals: expected "color(srgb 0.50196078 none none / none)" but got "color(srgb 0.501961 none none / none)"
 PASS Property color value 'rgb(none none none / .5)'
 PASS Property color value 'rgb(20% none none)'
 PASS Property color value 'rgb(20% none none / none)'
 PASS Property color value 'rgb(none none none / 50%)'
 PASS Property color value 'rgba(none none none)'
 PASS Property color value 'rgba(none none none / none)'
-PASS Property color value 'rgba(128 none none)'
-PASS Property color value 'rgba(128 none none / none)'
+FAIL Property color value 'rgba(128 none none)' assert_equals: expected "color(srgb 0.50196078 none none)" but got "color(srgb 0.501961 none none)"
+FAIL Property color value 'rgba(128 none none / none)' assert_equals: expected "color(srgb 0.50196078 none none / none)" but got "color(srgb 0.501961 none none / none)"
 PASS Property color value 'rgba(none none none / .5)'
 PASS Property color value 'rgba(20% none none)'
 PASS Property color value 'rgba(20% none none / none)'

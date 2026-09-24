@@ -239,8 +239,8 @@ TEST(RegionTests, FuzzOperationsIsValidShape)
                 ASSERT_TRUE(Shape::isValidShape(segments.span(), spans.span())) << commands.toString() << r.dataForTesting();
         }
         if (printPassed) {
-            WTFLogAlways("%s", commands.toString().utf8().data());
-            WTFLogAlways("Shape: %s", convertToString(r.dataForTesting()).utf8().data());
+            SAFE_WTFLOGALWAYS("%s", commands.toString().utf8());
+            SAFE_WTFLOGALWAYS("Shape: %s", convertToString(r.dataForTesting()).utf8());
         }
     }
 }

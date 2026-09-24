@@ -12,7 +12,7 @@ layer at (0,0) size 800x400
         RenderText {#text} at (0,0) size 0x0
         RenderText {#text} at (0,0) size 0x0
         RenderText {#text} at (0,0) size 0x0
-layer at (12,239) size 144x144 scrollWidth 120 scrollHeight 120
+layer at (12,239) size 144x144
   RenderSVGRoot {svg} at (0,0) size 144x144
 layer at (11.52,239.09) size 144x144
   RenderSVGViewportContainer at (0,0) size 144x144

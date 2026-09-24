@@ -32,6 +32,8 @@
 #include "config.h"
 #include "SourceBuffer.h"
 
+#include <wtf/text/TextStream.h>
+
 #if ENABLE(MEDIA_SOURCE)
 
 #include "AudioTrack.h"
@@ -1405,7 +1407,7 @@ void SourceBuffer::updateBuffered()
     //    of this attribute to intersection ranges.
     if (oldRanges != intersectionRanges) {
         m_buffered = TimeRanges::create(intersectionRanges);
-        LOG(Media, "SourceBuffer::updateBuffered(%p) - buffered = %s", this, toString(intersectionRanges).utf8().data());
+        LOG_WITH_STREAM(Media, stream << "SourceBuffer::updateBuffered("_s << this << ") - buffered = "_s << toString(intersectionRanges));
     }
 }
 

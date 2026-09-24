@@ -33,6 +33,7 @@
 #include <wtf/ReducedResolutionSeconds.h>
 #include <wtf/Seconds.h>
 #include <wtf/URL.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 namespace WTF {
@@ -131,9 +132,21 @@ TextStream& TextStream::operator<<(const AtomString& string)
     return *this;
 }
 
-TextStream& TextStream::operator<<(const CString& string)
+TextStream& TextStream::operator<<(const UTF8CString& string)
 {
-    m_text.append(string);
+    m_text.append(string.span());
+    return *this;
+}
+
+TextStream& TextStream::operator<<(const Latin1CString& string)
+{
+    m_text.append(string.span());
+    return *this;
+}
+
+TextStream& TextStream::operator<<(const ASCIICString& string)
+{
+    m_text.append(string.span());
     return *this;
 }
 

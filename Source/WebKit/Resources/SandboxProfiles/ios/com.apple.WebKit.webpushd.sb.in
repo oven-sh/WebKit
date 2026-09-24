@@ -25,7 +25,7 @@
 (deny default (with partial-symbolication))
 (allow system-audit file-read-metadata)
 
-(import "util.sb")
+(import "library.sb")
 
 (define (allow-read-write-directory-contents path)
     (if path

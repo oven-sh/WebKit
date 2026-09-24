@@ -34,6 +34,7 @@
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/NetscapePlugInStreamLoader.h>
 #include <WebCore/NetworkStateNotifier.h>
+#include <WebCore/NetworkingContext.h>
 #include <WebCore/PlatformStrategies.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SubresourceLoader.h>
@@ -112,9 +113,10 @@ void WebResourceLoadScheduler::loadResource(LocalFrame& frame, CachedResource& r
 
 void WebResourceLoadScheduler::loadResourceSynchronously(FrameLoader& frameLoader, ResourceLoaderIdentifier, const ResourceRequest& request, ClientCredentialPolicy, const FetchOptions& options, const HTTPHeaderMap&, ResourceError& error, ResourceResponse& response, Vector<uint8_t>& data)
 {
-    auto* document = frameLoader.frame().document();
-    auto* sourceOrigin = document ? &document->securityOrigin() : nullptr;
-    ResourceHandle::loadResourceSynchronously(frameLoader.networkingContext(), request, options.credentials == FetchOptions::Credentials::Omit ? StoredCredentialsPolicy::DoNotUse : StoredCredentialsPolicy::Use, sourceOrigin, error, response, data);
+    RefPtr document = frameLoader.frame().document();
+    RefPtr sourceOrigin = document ? &document->securityOrigin() : nullptr;
+    RefPtr networkingContext = frameLoader.networkingContext();
+    ResourceHandle::loadResourceSynchronously(networkingContext, request, options.credentials == FetchOptions::Credentials::Omit ? StoredCredentialsPolicy::DoNotUse : StoredCredentialsPolicy::Use, sourceOrigin.get(), error, response, data);
 }
 
 void WebResourceLoadScheduler::pageLoadCompleted(Page&)
@@ -140,12 +142,12 @@ void WebResourceLoadScheduler::scheduleLoad(ResourceLoader* resourceLoader)
 
 #if PLATFORM(IOS_FAMILY)
     // If there's a web archive resource for this URL, we don't need to schedule the load since it will never touch the network.
-    if (!isSuspendingPendingRequests() && resourceLoader->documentLoader()->archiveResourceForURL(resourceLoader->iOSOriginalRequest().url())) {
+    if (!isSuspendingPendingRequests() && protect(resourceLoader->documentLoader())->archiveResourceForURL(resourceLoader->iOSOriginalRequest().url())) {
         resourceLoader->startLoading();
         return;
     }
 #else
-    if (resourceLoader->documentLoader()->archiveResourceForURL(resourceLoader->request().url())) {
+    if (protect(resourceLoader->documentLoader())->archiveResourceForURL(resourceLoader->request().url())) {
         resourceLoader->start();
         return;
     }
@@ -215,7 +217,7 @@ void WebResourceLoadScheduler::isResourceLoadFinished(CachedResource& resource, 
         callback(true);
         return;
     }
-    bool didFinish = !hostForURL(resource.loader()->url());
+    bool didFinish = !hostForURL(protect(resource.loader())->url());
     callback(didFinish);
 }
 
@@ -276,7 +278,7 @@ void WebResourceLoadScheduler::servePendingRequests(CheckedRef<HostInformation>&
             // For named hosts - which are only http(s) hosts - we should always enforce the connection limit.
             // For non-named hosts - everything but http(s) - we should only enforce the limit if the document isn't done parsing 
             // and we don't know all stylesheets yet.
-            Document* document = resourceLoader->frameLoader() ? resourceLoader->frameLoader()->frame().document() : 0;
+            RefPtr document = resourceLoader->frameLoader() ? resourceLoader->frameLoader()->frame().document() : nullptr;
             bool shouldLimitRequests = !host->name().isNull() || (document && (document->parsing() || !document->haveStylesheetsLoaded()));
             if (shouldLimitRequests && host->limitRequests(priority))
                 return;
@@ -397,10 +399,11 @@ bool WebResourceLoadScheduler::HostInformation::limitRequests(ResourceLoadPriori
     return m_requestsLoading.size() >= (webResourceLoadScheduler().isSerialLoadingEnabled() ? 1 : m_maxRequestsInFlight);
 }
 
-void WebResourceLoadScheduler::startPingLoad(LocalFrame& frame, ResourceRequest& request, const HTTPHeaderMap&, const FetchOptions& options, ContentSecurityPolicyImposition, PingLoadCompletionHandler&& completionHandler)
+bool WebResourceLoadScheduler::startKeepAliveLoadForWebKitLegacy(FrameLoader& frameLoader, const ResourceRequest& request, const ResourceLoaderOptions& options, CompletionHandler<void(const ResourceError&, const ResourceResponse&)>&& completionHandler)
 {
-    // PingHandle manages its own lifetime, deleting itself when its purpose has been fulfilled.
-    PingHandle::start(frame.loader().networkingContext(), request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTF::move(completionHandler));
+    RefPtr networkingContext = frameLoader.networkingContext();
+    PingHandle::start(networkingContext, request, options.credentials != FetchOptions::Credentials::Omit, options.redirect == FetchOptions::Redirect::Follow, WTF::move(completionHandler));
+    return true;
 }
 
 bool WebResourceLoadScheduler::isOnLine() const

@@ -24,6 +24,7 @@
 
 #include "CSSContainerRule.h"
 #include "CSSCounterStyleRule.h"
+#include "CSSEnvironmentMapRule.h"
 #include "CSSFontFaceRule.h"
 #include "CSSFontFeatureValuesRule.h"
 #include "CSSFontPaletteValuesRule.h"
@@ -91,7 +92,7 @@ Ref<CSSRule> StyleRuleBase::createCSSOMWrapper() const
     return createCSSOMWrapper(nullptr, nullptr);
 }
 
-template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(Visitor&& visitor)
+template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(NOESCAPE Visitor&& visitor)
 {
     switch (type()) {
     case StyleRuleType::Style:
@@ -145,17 +146,29 @@ template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleFunction>(*this));
     case StyleRuleType::FunctionDeclarations:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleFunctionDeclarations>(*this));
+#if ENABLE(SPATIAL_PORTAL)
+    case StyleRuleType::EnvironmentMap:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<StyleRuleEnvironmentMap>(*this));
+#else
+    case StyleRuleType::EnvironmentMap:
+        break;
+#endif
     case StyleRuleType::Margin:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(Visitor&& visitor) const
+template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(NOESCAPE Visitor&& visitor) const
 {
     return const_cast<StyleRuleBase&>(*this).visitDerived([&](auto& value) {
         return std::invoke(std::forward<Visitor>(visitor), std::as_const(value));
     });
+}
+
+template<typename... F> requires (sizeof...(F) > 1) constexpr decltype(auto) StyleRuleBase::visitDerived(NOESCAPE F&&... f)
+{
+    return visitDerived(WTF::makeVisitor(std::forward<F>(f)...));
 }
 
 void StyleRuleBase::operator delete(StyleRuleBase* rule, std::destroying_delete_t)
@@ -179,7 +192,7 @@ Ref<StyleRuleBase> StyleRuleBase::copy() const
 Ref<CSSRule> StyleRuleBase::createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSRule* parentRule) const
 {
     // FIXME: const_cast is required here because a wrapper for a style rule can be used to *modify* the style rule's selector; use of const in the style system is thus inaccurate.
-    auto wrapper = const_cast<StyleRuleBase&>(*this).visitDerived(WTF::makeVisitor(
+    auto wrapper = const_cast<StyleRuleBase&>(*this).visitDerived(
         [&](StyleRule& rule) -> Ref<CSSRule> {
             return CSSStyleRule::create(rule, parentSheet);
         },
@@ -251,13 +264,18 @@ Ref<CSSRule> StyleRuleBase::createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSRu
         [&](StyleRuleFunctionDeclarations& rule) -> Ref<CSSRule> {
             return CSSFunctionDeclarations::create(rule, parentSheet);
         },
+#if ENABLE(SPATIAL_PORTAL)
+        [&](StyleRuleEnvironmentMap& rule) -> Ref<CSSRule> {
+            return CSSEnvironmentMapRule::create(rule, parentSheet);
+        },
+#endif
         [](StyleRuleCharset&) -> Ref<CSSRule> {
             RELEASE_ASSERT_NOT_REACHED();
         },
         [](StyleRuleKeyframe&) -> Ref<CSSRule> {
             RELEASE_ASSERT_NOT_REACHED();
         }
-    ));
+    );
     if (parentRule)
         wrapper->setParentRule(parentRule);
     return wrapper;

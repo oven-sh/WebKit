@@ -68,7 +68,7 @@ bool writeOriginToFile(const String& filePath, const ClientOrigin& origin)
     auto originFileHandle = FileSystem::openFile(filePath, FileSystem::FileOpenMode::ReadWrite);
 
     if (!originFileHandle) {
-        LOG_ERROR("writeOriginToFile: Failed to open origin file '%s'", filePath.utf8().data());
+        LOG_ERROR("writeOriginToFile: Failed to open origin file '%s'", filePath.utf8());
         return false;
     }
 
@@ -82,7 +82,7 @@ String encodeSecurityOriginForFileName(FileSystem::Salt salt, const SecurityOrig
 {
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
     auto originString = origin.toString().utf8();
-    crypto->addBytes(byteCast<uint8_t>(originString.span()));
+    crypto->addBytes(std::as_bytes(originString.span()));
     crypto->addBytes(salt);
     return base64URLEncodeToString(crypto->computeHash());
 }

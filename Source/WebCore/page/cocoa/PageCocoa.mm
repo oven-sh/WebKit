@@ -79,13 +79,13 @@ void Page::platformInitialize()
                 RefPtr localTopDocument = page.localTopDocument();
                 if (!localTopDocument)
                     return;
-                WTFLogAlways("Page %p with main document %p %s", &page, localTopDocument.get(), localTopDocument ? localTopDocument->url().string().utf8().data() : "");
+                SAFE_WTFLOGALWAYS("Page %p with main document %p %s", &page, localTopDocument.get(), localTopDocument ? localTopDocument->url().string().utf8() : ""_s);
             });
 
             WTFLogAlways("%u live documents:", Document::allDocuments().size());
             for (auto& document : Document::allDocuments()) {
-                const char* documentType = is<SVGDocument>(document.get()) ? "SVGDocument" : "Document";
-                WTFLogAlways("%s %p %" PRIu64 "-%s (refCount %d, referencingNodeCount %d) %s", documentType, document.ptr(), document->identifier().processIdentifier().toUInt64(), document->identifier().toString().utf8().data(), document->refCount(), document->referencingNodeCount(), document->url().string().utf8().data());
+                auto documentType = is<SVGDocument>(document.get()) ? "SVGDocument"_s : "Document"_s;
+                SAFE_WTFLOGALWAYS("%s %p %" PRIu64 "-%s (refCount %d, referencingNodeCount %d) %s", documentType, document.ptr(), document->identifier().processIdentifier().toUInt64(), document->identifier().toString().utf8(), document->refCount(), document->referencingNodeCount(), document->url().string().utf8());
             }
         });
     });

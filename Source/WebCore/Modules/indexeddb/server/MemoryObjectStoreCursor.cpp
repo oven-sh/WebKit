@@ -30,6 +30,7 @@
 #include "Logging.h"
 #include "MemoryObjectStore.h"
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -46,7 +47,7 @@ MemoryObjectStoreCursor::MemoryObjectStoreCursor(MemoryObjectStore& objectStore,
     , m_objectStore(objectStore)
     , m_remainingRange(info.range())
 {
-    LOG(IndexedDB, "MemoryObjectStoreCursor::MemoryObjectStoreCursor %s", info.range().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryObjectStoreCursor::MemoryObjectStoreCursor "_s << info.range().loggingString());
 
     auto* orderedKeys = objectStore.orderedKeys();
     if (!orderedKeys)
@@ -323,7 +324,7 @@ void MemoryObjectStoreCursor::incrementReverseIterator(IDBKeyDataSet& set, const
 
 void MemoryObjectStoreCursor::iterate(const IDBKeyData& key, const IDBKeyData& primaryKeyData, uint32_t count, IDBGetResult& outData)
 {
-    LOG(IndexedDB, "MemoryObjectStoreCursor::iterate to key %s", key.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "MemoryObjectStoreCursor::iterate to key "_s << key.loggingString());
 
     ASSERT_UNUSED(primaryKeyData, primaryKeyData.isNull());
 

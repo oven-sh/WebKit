@@ -62,7 +62,7 @@ public:
     // GraphicsContextGL overrides.
     void activeTexture(GCGLenum texture) final;
     void attachShader(PlatformGLObject program, PlatformGLObject shader) final;
-    void bindAttribLocation(PlatformGLObject, GCGLuint index, const CString& name) final;
+    void bindAttribLocation(PlatformGLObject, GCGLuint index, const UTF8CString& name) final;
     void bindBuffer(GCGLenum target, PlatformGLObject) final;
     void bindFramebuffer(GCGLenum target, PlatformGLObject) final;
     void bindRenderbuffer(GCGLenum target, PlatformGLObject) final;
@@ -126,12 +126,12 @@ public:
     GCGLint max3DTextureSize() final;
     GCGLint maxArrayTextureLayers() final;
     GCGLint getProgrami(PlatformGLObject program, GCGLenum pname) final;
-    CString getProgramInfoLog(PlatformGLObject) final;
+    UTF8CString getProgramInfoLog(PlatformGLObject) final;
     GCGLint getRenderbufferParameteri(GCGLenum target, GCGLenum pname) final;
     GCGLint getShaderi(PlatformGLObject, GCGLenum pname) final;
-    CString getShaderInfoLog(PlatformGLObject) final;
+    UTF8CString getShaderInfoLog(PlatformGLObject) final;
     void getShaderPrecisionFormat(GCGLenum shaderType, GCGLenum precisionType, std::span<GCGLint, 2> range, GCGLint* precision) final;
-    CString getString(GCGLenum name) final;
+    UTF8CString getString(GCGLenum name) final;
     GCGLfloat getTexParameterf(GCGLenum target, GCGLenum pname) final;
     GCGLint getTexParameteri(GCGLenum target, GCGLenum pname) final;
     void getUniformfv(PlatformGLObject program, GCGLint location, std::span<GCGLfloat> value) final;
@@ -155,7 +155,7 @@ public:
     void renderbufferStorage(GCGLenum target, GCGLenum internalformat, GCGLsizei width, GCGLsizei height) final;
     void sampleCoverage(GCGLclampf value, GCGLboolean invert) final;
     void scissor(GCGLint x, GCGLint y, GCGLsizei width, GCGLsizei height) final;
-    void shaderSource(PlatformGLObject, const CString&) final;
+    void shaderSource(PlatformGLObject, const UTF8CString&) final;
     void stencilFunc(GCGLenum func, GCGLint ref, GCGLuint mask) final;
     void stencilFuncSeparate(GCGLenum face, GCGLenum func, GCGLint ref, GCGLuint mask) final;
     void stencilMask(GCGLuint mask) final;
@@ -231,7 +231,7 @@ public:
     void compressedTexImage3D(GCGLenum target, GCGLint level, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLint border, GCGLsizei imageSize, GCGLintptr offset) final;
     void compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, std::span<const uint8_t> data) final;
     void compressedTexSubImage3D(GCGLenum target, GCGLint level, GCGLint xoffset, GCGLint yoffset, GCGLint zoffset, GCGLsizei width, GCGLsizei height, GCGLsizei depth, GCGLenum format, GCGLsizei imageSize, GCGLintptr offset) final;
-    GCGLint getFragDataLocation(PlatformGLObject program, const CString& name) final;
+    GCGLint getFragDataLocation(PlatformGLObject program, const UTF8CString& name) final;
     void uniform1ui(GCGLint location, GCGLuint v0) final;
     void uniform2ui(GCGLint location, GCGLuint v0, GCGLuint v1) final;
     void uniform3ui(GCGLint location, GCGLuint v0, GCGLuint v1, GCGLuint v2) final;
@@ -284,14 +284,14 @@ public:
     void bindTransformFeedback(GCGLenum target, PlatformGLObject id) final;
     void beginTransformFeedback(GCGLenum primitiveMode) final;
     void endTransformFeedback() final;
-    void transformFeedbackVaryings(PlatformGLObject program, const Vector<CString>& varyings, GCGLenum bufferMode) final;
+    void transformFeedbackVaryings(PlatformGLObject program, const Vector<UTF8CString>& varyings, GCGLenum bufferMode) final;
     std::optional<GCGLTransformFeedbackActiveInfo> getTransformFeedbackVarying(PlatformGLObject program, GCGLuint index) final;
     void pauseTransformFeedback() final;
     void resumeTransformFeedback() final;
     void bindBufferBase(GCGLenum target, GCGLuint index, PlatformGLObject buffer) final;
     void bindBufferRange(GCGLenum target, GCGLuint index, PlatformGLObject buffer, GCGLintptr offset, GCGLsizeiptr) final;
-    GCGLuint getUniformBlockIndex(PlatformGLObject program, const CString& uniformBlockName) final;
-    CString getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex) final;
+    GCGLuint getUniformBlockIndex(PlatformGLObject program, const UTF8CString& uniformBlockName) final;
+    UTF8CString getActiveUniformBlockName(PlatformGLObject program, GCGLuint uniformBlockIndex) final;
     void uniformBlockBinding(PlatformGLObject program, GCGLuint uniformBlockIndex, GCGLuint uniformBlockBinding) final;
     void getActiveUniformBlockiv(PlatformGLObject program, GCGLuint uniformBlockIndex, GCGLenum pname, std::span<GCGLint> params) final;
 #if ENABLE(WEBXR)
@@ -307,7 +307,7 @@ public:
     void multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLsizei, const GCGLsizei> countsOffsetsAndInstanceCounts, GCGLenum type) final;
     bool enableExtension(GCGLExtension) override;
     void drawBuffersEXT(std::span<const GCGLenum>) override;
-    CString getTranslatedShaderSourceANGLE(PlatformGLObject) override;
+    UTF8CString getTranslatedShaderSourceANGLE(PlatformGLObject) override;
     PlatformGLObject createQueryEXT() final;
     void deleteQueryEXT(PlatformGLObject query) final;
     GCGLboolean isQueryEXT(PlatformGLObject query) final;
@@ -423,9 +423,9 @@ protected:
     void setPackParameters(GCGLint alignment, GCGLint rowLength, GCGLboolean reverseRowOrder);
     bool NODELETE validateClearBufferv(GCGLenum buffer, size_t valuesSize);
 
-    HashSet<CString> m_allRequestableExtensions;
-    HashSet<CString> m_allEnabledRequestableExtensions;
-    HashSet<CString> m_extensions;
+    HashSet<UTF8CString> m_allRequestableExtensions;
+    HashSet<UTF8CString> m_allEnabledRequestableExtensions;
+    HashSet<UTF8CString> m_extensions;
     GCGLuint m_texture { 0 };
     GCGLuint m_fbo { 0 };
     GCGLuint m_depthStencilBuffer { 0 };

@@ -557,11 +557,14 @@ sub typeDescription
 {
     my $type = shift;
 
+    my @extendedAttributes = map { $_ . "=" . $type->extendedAttributes->{$_} } sort keys %{$type->extendedAttributes};
+    my $annotation = scalar @extendedAttributes ? "[" . join(", ", @extendedAttributes) . "] " : "";
+
     if (scalar @{$type->subtypes}) {
-        return $type->name . '<' . join(', ', map { typeDescription($_) } @{$type->subtypes}) . '>' . ($type->isNullable ? "?" : "");
+        return $annotation . $type->name . '<' . join(', ', map { typeDescription($_) } @{$type->subtypes}) . '>' . ($type->isNullable ? "?" : "");
     }
 
-    return $type->name . ($type->isNullable ? "?" : "");
+    return $annotation . $type->name . ($type->isNullable ? "?" : "");
 }
 
 sub cloneType
@@ -601,6 +604,17 @@ sub addBuiltinTypedefs()
     push(@{$bufferSourceType->subtypes}, makeSimpleType("ArrayBufferView"));
     push(@{$bufferSourceType->subtypes}, makeSimpleType("ArrayBuffer"));
     $typedefs{"BufferSource"} = IDLTypedef->new(type => $bufferSourceType);
+
+    # typedef (ArrayBuffer or SharedArrayBuffer or [AllowShared] ArrayBufferView) AllowSharedBufferSource;
+    #
+    # FIXME: SharedArrayBuffer is not a type of its own yet, so [AllowShared] on the
+    # whole union stands in for it.
+
+    my $allowSharedBufferSourceType = IDLType->new(name => "UNION", isUnion => 1);
+    push(@{$allowSharedBufferSourceType->subtypes}, makeSimpleType("ArrayBuffer"));
+    push(@{$allowSharedBufferSourceType->subtypes}, makeSimpleType("ArrayBufferView"));
+    $allowSharedBufferSourceType->extendedAttributes->{AllowShared} = "VALUE_IS_MISSING";
+    $typedefs{"AllowSharedBufferSource"} = IDLTypedef->new(type => $allowSharedBufferSourceType);
 
     # typedef unsigned long long EpochTimeStamp;
 
@@ -1620,7 +1634,7 @@ sub parseTypedef
         $self->assertTokenType($nameToken, IdentifierToken);
         $self->assertTokenValue($self->getToken(), ";", __LINE__);
         my $name = $nameToken->value();
-        die "typedef redefinition for " . $name . " at " . $self->{Line} if (exists $typedefs{$name} && $typedef->type->name ne $typedefs{$name}->type->name);
+        die "typedef redefinition for " . $name . " at " . $self->{Line} if exists $typedefs{$name} && typeDescription($typedef->type) ne typeDescription($typedefs{$name}->type);
         $typedefs{$name} = $typedef;
         return;
     }

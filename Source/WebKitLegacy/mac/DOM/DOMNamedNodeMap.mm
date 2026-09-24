@@ -37,7 +37,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL reinterpret_cast<WebCore::NamedNodeMap*>(_internal)
+#define IMPL protect(reinterpret_cast<WebCore::NamedNodeMap*>(_internal))
 
 @implementation DOMNamedNodeMap
 
@@ -68,10 +68,10 @@
     WebCore::JSMainThreadNullState state;
     if (!node)
         raiseTypeErrorException();
-    auto& coreNode = *core(node);
+    Ref coreNode = *core(node);
     if (!is<WebCore::Attr>(coreNode))
         raiseTypeErrorException();
-    return kit(raiseOnDOMError(IMPL->setNamedItem(downcast<WebCore::Attr>(coreNode))).get());
+    return kit(raiseOnDOMError(IMPL->setNamedItem(downcast<WebCore::Attr>(coreNode.get()))).get());
 }
 
 - (DOMNode *)removeNamedItem:(NSString *)name
@@ -119,7 +119,7 @@
 
 @end
 
-DOMNamedNodeMap *kit(WebCore::NamedNodeMap* value)
+SUPPRESS_NODELETE DOMNamedNodeMap *kit(WebCore::NamedNodeMap* value)
 {
     WebCoreThreadViolationCheckRoundOne();
     if (!value)

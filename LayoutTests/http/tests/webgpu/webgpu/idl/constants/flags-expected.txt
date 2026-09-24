@@ -16,6 +16,7 @@ PASS :TextureUsage,values:key="COPY_DST"
 PASS :TextureUsage,values:key="TEXTURE_BINDING"
 PASS :TextureUsage,values:key="STORAGE_BINDING"
 PASS :TextureUsage,values:key="RENDER_ATTACHMENT"
+PASS :TextureUsage,values:key="TRANSIENT_ATTACHMENT"
 PASS :ColorWrite,count:
 PASS :ColorWrite,values:key="RED"
 PASS :ColorWrite,values:key="GREEN"

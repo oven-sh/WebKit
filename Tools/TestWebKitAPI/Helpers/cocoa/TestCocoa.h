@@ -25,7 +25,7 @@
 
 #pragma once
 
-#ifdef __cplusplus
+#if defined(__cplusplus) && !defined(__swift__)
 
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
@@ -73,4 +73,4 @@ constexpr CGFloat whiteColorComponents[4] = { 1, 1, 1, 1 };
 
 #endif
 
-#endif // __cplusplus
+#endif // defined(__cplusplus) && !defined(__swift__)

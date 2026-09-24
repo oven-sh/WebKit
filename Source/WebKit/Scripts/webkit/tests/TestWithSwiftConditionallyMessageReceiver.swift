@@ -37,6 +37,52 @@ final class TestWithSwiftConditionallyWeakRef {
     func getMessageTarget() -> TestWithSwiftConditionally? {
         target
     }
+
+    @used
+    func dispatchTestAsyncMessage(
+        connection: IPC.Connection,
+        param: UInt32,
+        completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestAsyncMessageCompletionHandler
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testAsyncMessage(
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+            CompletionHandlers.TestWithSwiftConditionally.completeWithDefaultReply(completionHandler)
+        }
+    }
+
+    @used
+    func dispatchTestSyncMessage(
+        connection: IPC.Connection,
+        param: UInt32,
+        completionHandler: CompletionHandlers.TestWithSwiftConditionally.TestSyncMessageCompletionHandler
+    ) {
+        guard let target else {
+            return
+        }
+        do {
+            try mayThrowInvalidMessage(
+                target.testSyncMessage(
+                    connection: connection,
+                    param: param,
+                    completionHandler: completionHandler
+                )
+            )
+        } catch {
+            markMessageInvalid(error, on: connection)
+            CompletionHandlers.TestWithSwiftConditionally.completeWithDefaultReply(completionHandler)
+        }
+    }
 }
 
 extension WebKit.TestWithSwiftConditionallyMessageForwarder {

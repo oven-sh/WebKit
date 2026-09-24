@@ -327,7 +327,9 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =    largeReasonableLimit(),
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,
@@ -386,7 +388,9 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =    largeReasonableLimit(),
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,
@@ -445,7 +449,9 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
             .maxBindGroups =    maxBindGroups,
             .maxBindGroupsPlusVertexBuffers = 30,
             .maxBindingsPerBindGroup =  1000,
-            .maxDynamicUniformBuffersPerPipelineLayout =    largeReasonableLimit(),
+            // A dynamic uniform buffer is still a uniform buffer binding, so advertising more of them
+            // than a single stage can hold would let the two limits contradict each other.
+            .maxDynamicUniformBuffersPerPipelineLayout =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxDynamicStorageBuffersPerPipelineLayout =    largeReasonableLimit(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * tier2LimitForBuffersAndTextures,
             .maxSamplersPerShaderStage =    maxBindGroups * tier2LimitForSamplers,

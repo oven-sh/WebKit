@@ -91,7 +91,7 @@ bool ApplicationManifestLoader::startLoading()
     options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
     CachedResourceRequest request(WTF::move(resourceRequest), options);
 
-    auto cachedResource = protect(frame->document()->cachedResourceLoader())->requestApplicationManifest(WTF::move(request));
+    auto cachedResource = protect(protect(frame->document())->cachedResourceLoader())->requestApplicationManifest(WTF::move(request));
     if (cachedResource)
         m_resource = WTF::move(cachedResource.value());
     else
@@ -99,7 +99,7 @@ bool ApplicationManifestLoader::startLoading()
     if (RefPtr resource = m_resource)
         resource->addClient(*this);
     else {
-        LOG_ERROR("Failed to start load for application manifest at url %s (error: %s)", resourceRequestURL.string().ascii().data(), cachedResource.error().localizedDescription().utf8().data());
+        LOG_ERROR("Failed to start load for application manifest at url %s (error: %s)", resourceRequestURL.string().ascii().data(), cachedResource.error().localizedDescription().utf8());
         return false;
     }
 

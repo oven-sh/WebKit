@@ -161,7 +161,7 @@ bool CommandBuffer::waitForCompletion()
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuCommandBufferReference(WGPUCommandBuffer commandBuffer)
+void NODELETE wgpuCommandBufferAddRef(WGPUCommandBuffer commandBuffer)
 {
     WebGPU::fromAPI(commandBuffer).ref();
 }
@@ -171,7 +171,7 @@ void wgpuCommandBufferRelease(WGPUCommandBuffer commandBuffer)
     WebGPU::fromAPI(commandBuffer).deref();
 }
 
-void wgpuCommandBufferSetLabel(WGPUCommandBuffer commandBuffer, const char* label)
+void wgpuCommandBufferSetLabel(WGPUCommandBuffer commandBuffer, WGPUStringView label)
 {
     protect(WebGPU::fromAPI(commandBuffer))->setLabel(WebGPU::fromAPI(label));
 }

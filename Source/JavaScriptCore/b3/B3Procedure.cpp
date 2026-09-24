@@ -306,6 +306,11 @@ void Procedure::deleteVariable(Variable* variable)
     m_variables.remove(variable);
 }
 
+void Procedure::deleteAllVariables()
+{
+    m_variables.clearAll();
+}
+
 void Procedure::deleteValue(Value* value)
 {
     m_values.remove(value);
@@ -567,7 +572,7 @@ void Procedure::appendIonGraphPass(ASCIILiteral passName)
                 value->dumpMeta(comma, stream);
                 auto effects = value->effects();
                 {
-                    CString string = toCString(effects);
+                    auto string = toUTF8CString(effects);
                     if (string.length())
                         stream.print(comma, string);
                 }

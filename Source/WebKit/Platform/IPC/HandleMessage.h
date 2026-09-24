@@ -90,7 +90,7 @@ void logMessageImpl(const C& connection, MessageName messageName, void* object, 
     if (auto argumentDescriptions = messageArgumentDescriptions(messageName))
         (stream.dumpProperty((*argumentDescriptions)[ArgsIndex].name, ValueOrEllipsis(std::get<ArgsIndex>(args))), ...);
 
-    LOG(IPCMessages, "%s", stream.release().utf8().data());
+    LOG(IPCMessages, "%s", stream.release().utf8());
 #else
     UNUSED_PARAM(connection);
     UNUSED_PARAM(messageName);
@@ -120,7 +120,7 @@ void logReply(const C& connection, MessageName messageName, const T&... args)
     if (auto argumentDescriptions = messageReplyArgumentDescriptions(messageName))
         (stream.dumpProperty((*argumentDescriptions)[argIndex++].name, ValueOrEllipsis(args)), ...);
 
-    LOG(IPCMessages, "%s", stream.release().utf8().data());
+    LOG(IPCMessages, "%s", stream.release().utf8());
 #else
     UNUSED_PARAM(connection);
     UNUSED_PARAM(messageName);
@@ -551,7 +551,7 @@ void handleMessageAsync(C& connection, Decoder& decoder, T* object, MF U::* func
         }, MessageType::callbackThread));
     if constexpr (ValidationType::returnsVoid) {
         if constexpr (ValidationType::expectsConnectionArgument) {
-            callMemberFunction(object, function, connection, WTF::move(*arguments),
+            SUPPRESS_UNCOUNTED_ARG callMemberFunction(object, function, ValidationType::makeConnectionArgument(connection), WTF::move(*arguments),
                 ValidationType::unwrapCompletionHandler(std::forward<decltype(completionHandler)>(completionHandler)));
         } else
             callMemberFunction(object, function, WTF::move(*arguments),

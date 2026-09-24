@@ -225,12 +225,39 @@ extension WebPage {
         }
     }
 
+    /// Monitors wheel events while `body` runs, then suspends until the resulting scroll comes to rest.
+    ///
+    /// - Parameters:
+    ///   - expectingMomentumEnd: Whether to additionally wait for a momentum phase to end.
+    ///   - body: The work producing the scroll.
+    /// - Throws: Whatever `body` throws, without waiting for the scroll to come to rest.
+    public func withWheelEventMonitoring<Failure: Error>(
+        expectingMomentumEnd: Bool = false,
+        perform body: () async throws(Failure) -> Void
+    ) async throws(Failure) {
+        await backingWebView._startMonitoringWheelEventsForTesting()
+
+        try await body()
+
+        if expectingMomentumEnd {
+            await backingWebView._waitForWheelEventsAndMomentumToCompleteForTesting()
+        } else {
+            await backingWebView._waitForWheelEventsToCompleteForTesting()
+        }
+    }
+
     /// Copies the current selection to the system pasteboard and returns its string representation.
     public func copySelection() async -> String? {
         NSPasteboard.general.clearContents()
         NSApp.sendAction(#selector(NSText.copy(_:)), to: backingWebView, from: nil)
         await waitForNextPresentationUpdate()
         return NSPasteboard.general.string(forType: .string)
+    }
+
+    /// Selects the entire contents of the page.
+    public func selectAll() async {
+        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: backingWebView, from: nil)
+        await waitForNextPresentationUpdate()
     }
 
     private func mouseEvent(

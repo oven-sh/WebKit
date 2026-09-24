@@ -298,6 +298,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \
     v(Bool, dumpSizeClasses, false, Normal, nullptr) \
     v(Bool, stealEmptyBlocksFromOtherAllocators, true, Normal, nullptr) \
+    v(Unsigned, weakBlockPoolDivisor, 16, Normal, "MarkedBlocks per empty WeakBlock the Heap keeps pooled for reuse. 0 pools nothing.") \
     v(Bool, eagerlyUpdateTopCallFrame, false, Normal, nullptr) \
     v(Bool, dumpZappedCellCrashData, false, Normal, nullptr) \
     \
@@ -597,6 +598,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
     v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
     v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \
+    v(Bool, useB3SpecializeSelect, true, Normal, "turn Selects consumed by a nearby Check into control flow in B3"_s) \
     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
     \
     v(Bool, useDollarVM, false, Restricted, "installs the $vm debugging tool in global objects"_s) \
@@ -853,7 +855,7 @@ struct OptionsStorage {
     using Int32 = int32_t;
     using Size = size_t;
     using OptionRange = JSC::OptionRange;
-    using OptionString = const char*;
+    using OptionString = const char8_t*;
     using GCLogLevel = GCLogging::Level;
     using OSLogType = JSC::OSLogType;
 

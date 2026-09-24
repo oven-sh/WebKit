@@ -44,6 +44,10 @@ interface GPUTexture {
     readonly attribute GPUTextureDimension dimension;
     readonly attribute GPUTextureFormat format;
     readonly attribute GPUFlagsConstant usage;
+
+    // Typed any rather than GPUTextureViewDimension because the value has to be undefined outside of
+    // compatibility mode, and a nullable enumeration would read as null instead.
+    readonly attribute any textureBindingViewDimension;
 };
 GPUTexture includes GPUObjectBase;
 

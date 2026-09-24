@@ -231,6 +231,11 @@ class TextureGL : public TextureImpl
     angle::Result recreateNativeStoragePreservingLevels(const gl::Context *context);
     angle::Result useTempForNonZeroBaseLevelGenmipmap(const gl::Context *context);
 
+    angle::Result recreateTextureOnTexImage3DDepthIncreaseWorkaround(const gl::Context *context,
+                                                                     gl::TextureTarget target,
+                                                                     size_t level,
+                                                                     const gl::Extents &size);
+
     angle::Result setImageHelper(const gl::Context *context,
                                  gl::TextureTarget target,
                                  size_t level,
@@ -239,6 +244,17 @@ class TextureGL : public TextureImpl
                                  GLenum format,
                                  GLenum type,
                                  const uint8_t *pixels);
+    angle::Result setImageViaScratchUnpackBuffer(const gl::Context *context,
+                                                 gl::TextureTarget target,
+                                                 size_t level,
+                                                 GLenum internalFormat,
+                                                 const gl::Extents &size,
+                                                 GLenum format,
+                                                 GLenum type,
+                                                 const gl::PixelUnpackState &unpack,
+                                                 bool isCompressed,
+                                                 size_t imageSize,
+                                                 const uint8_t *pixels);
     // This changes the current pixel unpack state that will have to be reapplied.
     angle::Result reserveTexImageToBeFilled(const gl::Context *context,
                                             gl::TextureTarget target,

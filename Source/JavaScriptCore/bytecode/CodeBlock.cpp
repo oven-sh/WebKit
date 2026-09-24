@@ -112,13 +112,13 @@ const ClassInfo CodeBlock::s_info = {
     CREATE_METHOD_TABLE(CodeBlock)
 };
 
-CString CodeBlock::inferredName() const
+UTF8CString CodeBlock::inferredName() const
 {
     switch (codeType()) {
     case GlobalCode:
-        return "<global>"_span;
+        return "<global>"_s;
     case EvalCode:
-        return "<eval>"_span;
+        return "<eval>"_s;
     case FunctionCode:
         return uncheckedDowncast<FunctionExecutable>(ownerExecutable())->inferredNameForTools();
     case ModuleCode: {
@@ -130,11 +130,11 @@ CString CodeBlock::inferredName() const
         }
     }
 #endif
-        return "<module>"_span;
+        return "<module>"_s;
     }
     default: {
         CRASH();
-        return ""_span;
+        return ""_s;
     }
     }
 }
@@ -177,7 +177,7 @@ CodeBlockHash CodeBlock::hash() const
     return m_hash;
 }
 
-CString CodeBlock::sourceCodeForTools() const
+UTF8CString CodeBlock::sourceCodeForTools() const
 {
     if (codeType() != FunctionCode)
         return ownerExecutable()->source().toUTF8();
@@ -188,7 +188,7 @@ CString CodeBlock::sourceCodeForTools() const
         executable->parametersStartOffset() + executable->source().length()).utf8();
 }
 
-CString CodeBlock::sourceCodeOnOneLine() const
+UTF8CString CodeBlock::sourceCodeOnOneLine() const
 {
     return reduceWhitespace(sourceCodeForTools());
 }
@@ -1494,10 +1494,8 @@ void CodeBlock::visitChildren(Visitor& visitor)
 
     // Update profiles from concurrent markers to reduce the cost of update at the GC end phase as its execution is serialized.
     if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
-        if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType())) {
-            updateAllNonLazyValueProfilePredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::Keep : ValueProfileSamples::Record);
-            updateAllLazyValueProfilePredictions();
-        }
+        if (visitor.isFirstVisit() && JITCode::isBaselineCode(jitType()))
+            updatePredictionsConcurrently(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::Keep : ValueProfileSamples::Record);
     }
     
     Heap::CodeBlockSpaceAndSet::setFor(*subspace()).add(this);
@@ -2289,22 +2287,6 @@ void CodeBlock::getICStatusMap(ICStatusMap& result)
     getICStatusMap(locker, result);
 }
 
-#if ENABLE(JIT)
-PropertyInlineCache* CodeBlock::findPropertyCache(CodeOrigin codeOrigin)
-{
-    ConcurrentJSLocker locker(m_lock);
-    PropertyInlineCache* result = nullptr;
-    forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
-        if (propertyCache.codeOrigin == codeOrigin) {
-            result = &propertyCache;
-            return IterationStatus::Done;
-        }
-        return IterationStatus::Continue;
-    });
-    return result;
-}
-#endif
-
 template<typename Visitor>
 void CodeBlock::visitOSRExitTargets(const ConcurrentJSLocker&, Visitor& visitor)
 {
@@ -2594,18 +2576,15 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
-    auto lineColumn = m_unlinkedCode->lineColumnForBytecodeIndex(bytecodeIndex);
-    lineColumn.column += lineColumn.line ? 1 : firstLineColumnOffset();
-    lineColumn.line += ownerExecutable()->firstLine();
-    return lineColumn;
+    auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
+    unsigned divotInProvider = sourceOffset() + entry.divot;
+    return source().provider()->documentLineColumnForOffset(divotInProvider);
 }
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
     entry.divot += sourceOffset();
-    entry.lineColumn.column += entry.lineColumn.line ? 1 : firstLineColumnOffset();
-    entry.lineColumn.line += ownerExecutable()->firstLine();
     return entry;
 }
 
@@ -3670,9 +3649,15 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // readable, which means any time from marking up to the sweep that would free them.
 void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
 {
+    updatePredictionsConcurrently(samples);
+    // This reads Butterfly from JSObject to obtain vectorLength, which can be safe only from the main thread.
+    updateAllArrayAllocationProfilePredictions();
+}
+
+void CodeBlock::updatePredictionsConcurrently(ValueProfileSamples samples)
+{
     updateAllNonLazyValueProfilePredictions(samples);
     updateAllLazyValueProfilePredictions();
-    updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
 }
 
@@ -3687,8 +3672,8 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
     unsigned numberOfSamplesInProfiles;
     updateAllNonLazyValueProfilePredictionsAndCountLiveness(numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
     updateAllLazyValueProfilePredictions();
-    updateAllArrayAllocationProfilePredictions();
     updateAllArrayProfilePredictions();
+    updateAllArrayAllocationProfilePredictions();
 
     double livenessRate = 1.0;
     if (numberOfNonArgumentValueProfiles())
@@ -3760,19 +3745,18 @@ void CodeBlock::tallyFrequentExitSites()
     switch (jitType()) {
     case JITType::DFGJIT: {
         auto* jitCode = m_jitCode->dfg();
-        for (auto& exit : jitCode->m_osrExit)
-            exit.considerAddingAsFrequentExitSite(profiledBlock);
+        if (auto* jitData = dfgJITData()) {
+            for (auto& stub : jitData->exitStubs())
+                jitCode->m_osrExits.at(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
+        }
         break;
     }
 
 #if ENABLE(FTL_JIT)
     case JITType::FTLJIT: {
-        // There is no easy way to avoid duplicating this code since the FTL::JITCode::m_osrExit
-        // vector contains a totally different type, that just so happens to behave like
-        // DFG::JITCode::m_osrExit.
         auto* jitCode = m_jitCode->ftl();
-        for (auto& exit : jitCode->m_osrExit)
-            exit.considerAddingAsFrequentExitSite(profiledBlock);
+        for (auto& stub : jitCode->m_osrExitStubs)
+            jitCode->m_osrExit[stub.exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
         break;
     }
 #endif
@@ -4355,7 +4339,7 @@ void CodeBlock::dumpMathICStats()
 
 void setPrinter(Printer::PrintRecord& record, CodeBlock* codeBlock)
 {
-    Printer::setPrinter(record, toCString(codeBlock));
+    Printer::setPrinter(record, toUTF8CString(codeBlock));
 }
 
 } // namespace JSC

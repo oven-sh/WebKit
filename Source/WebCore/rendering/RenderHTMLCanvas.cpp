@@ -27,6 +27,7 @@
 #include "RenderHTMLCanvas.h"
 
 #include "CanvasRenderingContext.h"
+#include "DisplayListRecorderImpl.h"
 #include "Document.h"
 #include "GraphicsContext.h"
 #include "HTMLCanvasElement.h"
@@ -38,11 +39,13 @@
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderChildIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include <wtf/StackStats.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -64,12 +67,34 @@ HTMLCanvasElement& NODELETE RenderHTMLCanvas::canvasElement() const
     return downcast<HTMLCanvasElement>(nodeForNonAnonymous());
 }
 
+void RenderHTMLCanvas::setInnerRenderer(RenderBlock* innerRenderer)
+{
+    ASSERT(!m_innerRenderer || !innerRenderer);
+    m_innerRenderer = innerRenderer;
+}
+
 bool RenderHTMLCanvas::requiresLayer() const
 {
     if (RenderReplaced::requiresLayer())
         return true;
 
     return canvasCompositingStrategy(*this) != CanvasPaintedToEnclosingLayer;
+}
+
+bool RenderHTMLCanvas::canHaveChildren() const
+{
+    return settings().htmlInCanvasEnabled() && (protect(canvasElement())->layoutSubtree() || firstChild());
+}
+
+void RenderHTMLCanvas::layout()
+{
+    StackStats::LayoutCheckPoint layoutCheckPoint;
+    RenderReplaced::layout();
+
+    if (CheckedPtr innerRenderer = this->innerRenderer())
+        innerRenderer->layoutIfNeeded();
+
+    m_drawableRendererSnapshotRecorderMap.clear();
 }
 
 void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -110,6 +135,49 @@ void RenderHTMLCanvas::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& pa
     canvasEl->setIsSnapshotting(paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting));
     canvasEl->paint(context, paintRect);
     canvasEl->setIsSnapshotting(false);
+
+    CheckedPtr innerRenderer = this->innerRenderer();
+    if (!innerRenderer)
+        return;
+
+    for (CheckedRef child : childrenOfType<RenderElement>(*innerRenderer)) {
+        PaintInfo childPaintInfo(paintInfo);
+        auto& context = paintInfo.context();
+
+        auto addResult = m_drawableRendererSnapshotRecorderMap.ensure(child.get(), [&] {
+            auto initialState = context.state().clone(GraphicsContextState::Purpose::Initial);
+            auto boundingRect = child->absoluteBoundingBoxRect();
+            auto initialTransform = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
+            auto snapshotRecorder =  makeUniqueRef<DisplayList::RecorderImpl>(initialState, boundingRect, initialTransform, context.colorSpace());
+            snapshotRecorder->translate(-boundingRect.x(), -boundingRect.y());
+            return snapshotRecorder;
+        });
+
+        auto& snapshotRecorder = addResult.iterator->value.get();
+        childPaintInfo.setContext(snapshotRecorder);
+        child->paint(childPaintInfo, paintOffset);
+    }
+}
+
+std::optional<CanvasElementSnapshot> RenderHTMLCanvas::drawableRendererSnapshot(RenderElement& drawableRenderer) const
+{
+    if (auto* snapshotRecorder = m_drawableRendererSnapshotRecorderMap.get(drawableRenderer))
+        return { { snapshotRecorder->copyDisplayList(), snapshotRecorder->initialClip().size() } };
+    return std::nullopt;
+}
+
+bool RenderHTMLCanvas::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
+{
+    if (CheckedPtr innerRenderer = this->innerRenderer()) {
+        ASSERT(canHaveChildren());
+
+        for (CheckedRef child : childrenOfType<RenderElement>(*innerRenderer)) {
+            if (child->nodeAtPoint(request, result, locationInContainer, accumulatedOffset, hitTestAction))
+                return true;
+        }
+    }
+
+    return RenderReplaced::nodeAtPoint(request, result, locationInContainer, accumulatedOffset, hitTestAction);
 }
 
 void RenderHTMLCanvas::canvasSizeChanged()

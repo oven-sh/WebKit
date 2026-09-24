@@ -162,7 +162,7 @@ public:
         }
     }
     
-    explicit operator bool() { return !!m_data; }
+    explicit operator bool() const { return !!m_data; }
     
     void* data() const LIFETIME_BOUND { return m_data.getMayBeNull(); }
     void* dataWithoutPACValidation() const LIFETIME_BOUND { return m_data.getUnsafe(); }
@@ -210,7 +210,7 @@ public:
         return contents;
     }
 
-    JS_EXPORT_PRIVATE void shareWith(ArrayBufferContents&);
+    JS_EXPORT_PRIVATE void shareWith(ArrayBufferContents&) const;
 
 private:
     void reset()

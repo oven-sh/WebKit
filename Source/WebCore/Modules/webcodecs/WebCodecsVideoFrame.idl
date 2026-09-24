@@ -23,6 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// https://w3c.github.io/webcodecs/#videoframe
+
+// FIXME: Use HTML's CanvasImageSource, which includes VideoFrame, instead of the
+// separate constructor overload below. Typedefs are shared across IDL files, so the
+// name has to differ from it until then.
 typedef (HTMLImageElement
     or SVGImageElement
     or HTMLCanvasElement
@@ -34,9 +39,8 @@ typedef (HTMLImageElement
 #if defined(ENABLE_VIDEO) && ENABLE_VIDEO
     or HTMLVideoElement
 #endif
-) CanvasImageSource;
+) VideoFrameCanvasImageSource;
 
-// FIXME: Support Serializable and Transferable.
 [
     ExportMacro=WEBCORE_EXPORT,
     Conditional=WEB_CODECS,
@@ -45,9 +49,9 @@ typedef (HTMLImageElement
     InterfaceName=VideoFrame,
     ReportExtraMemoryCost,
 ] interface WebCodecsVideoFrame {
-    [CallWith=CurrentScriptExecutionContext] constructor(CanvasImageSource image, optional VideoFrameInit init = {});
+    [CallWith=CurrentScriptExecutionContext] constructor(VideoFrameCanvasImageSource image, optional VideoFrameInit init = {});
     [CallWith=CurrentScriptExecutionContext] constructor(WebCodecsVideoFrame image, optional VideoFrameInit init = {});
-    [CallWith=CurrentScriptExecutionContext] constructor([AllowShared] (ArrayBufferView or ArrayBuffer) data, VideoFrameBufferInit init);
+    [CallWith=CurrentScriptExecutionContext] constructor(AllowSharedBufferSource data, VideoFrameBufferInit init);
 
     readonly attribute VideoPixelFormat? format;
     readonly attribute unsigned long codedWidth;
@@ -61,7 +65,7 @@ typedef (HTMLImageElement
     readonly attribute VideoColorSpace colorSpace;
 
     unsigned long allocationSize(optional VideoFrameCopyToOptions options = {});
-    Promise<sequence<PlaneLayout>> copyTo([AllowShared] (ArrayBufferView or ArrayBuffer) destination, optional VideoFrameCopyToOptions options = {});
+    Promise<sequence<PlaneLayout>> copyTo(AllowSharedBufferSource destination, optional VideoFrameCopyToOptions options = {});
     [CallWith=CurrentScriptExecutionContext] WebCodecsVideoFrame clone();
     undefined close();
 };
@@ -96,6 +100,7 @@ typedef (HTMLImageElement
     [EnforceRange] unsigned long displayHeight;
 
     VideoColorSpaceInit colorSpace;
+    sequence<ArrayBuffer> transfer = [];
 };
 
 [

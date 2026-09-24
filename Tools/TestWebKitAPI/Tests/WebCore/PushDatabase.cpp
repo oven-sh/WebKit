@@ -28,6 +28,7 @@
 #include "Helpers/Utilities.h"
 #include <WebCore/PushDatabase.h>
 #include <WebCore/SQLiteDatabase.h>
+#include <WebCore/SQLiteStatement.h>
 #include <algorithm>
 #include <iterator>
 #include <ranges>
@@ -890,7 +891,9 @@ TEST(PushDatabase, ManyInFlightOps)
         PushRecord record {
             .subscriptionSetIdentifier = PushSubscriptionSetIdentifier { "com.apple.Safari"_s, emptyString(), std::nullopt },
             .securityOrigin = "https://www.webkit.org"_s,
+            .scope = { },
             .endpoint = "https://pushEndpoint1"_s,
+            .topic = { },
             .serverVAPIDPublicKey = { 0, 1 },
             .clientPublicKey = { 1, 2 },
             .clientPrivateKey = { 2, 3 },

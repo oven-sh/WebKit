@@ -26,7 +26,7 @@
 #include <gio/gio.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GSpanExtras.h>
-#include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/MakeString.h>
 
 #if PLATFORM(GTK)
 #define AUDIO_GRESOURCE_PATH "/org/webkitgtk/resources/audio"
@@ -36,10 +36,10 @@
 
 namespace WebCore {
 
-RefPtr<AudioBus> AudioBus::loadPlatformResource(const char* name, float sampleRate)
+RefPtr<AudioBus> AudioBus::loadPlatformResource(StringView name, float sampleRate)
 {
-    GUniquePtr<char> path(g_strdup_printf(AUDIO_GRESOURCE_PATH "/%s", name));
-    GRefPtr<GBytes> data = adoptGRef(g_resources_lookup_data(path.get(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
+    auto path = makeString(AUDIO_GRESOURCE_PATH "/"_s, name).utf8();
+    GRefPtr<GBytes> data = adoptGRef(g_resources_lookup_data(path.legacyCStringPointer(), G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr));
     ASSERT(data);
     return createBusFromInMemoryAudioFile(span(data), false, sampleRate);
 }

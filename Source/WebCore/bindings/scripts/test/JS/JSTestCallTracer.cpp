@@ -593,7 +593,7 @@ static inline void verifyVTable(TestCallTracer* ptr)
         // TestCallTracer has subclasses. If TestCallTracer has subclasses that get passed
         // to toJS() we currently require TestCallTracer you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

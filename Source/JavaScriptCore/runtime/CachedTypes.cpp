@@ -3718,20 +3718,12 @@ public:
     void encode(Encoder& encoder, const SourceCode& sourceCode)
     {
         Base::encode(encoder, sourceCode);
-        m_firstLine = sourceCode.firstLine().zeroBasedInt();
-        m_startColumn = sourceCode.startColumn().zeroBasedInt();
     }
 
     void decode(Decoder& decoder, SourceCode& sourceCode) const
     {
         Base::decode(decoder, sourceCode);
-        sourceCode.m_firstLine = OrdinalNumber::fromZeroBasedInt(m_firstLine);
-        sourceCode.m_startColumn = OrdinalNumber::fromZeroBasedInt(m_startColumn);
     }
-
-private:
-    int m_firstLine;
-    int m_startColumn;
 };
 
 class CachedTDZEnvironmentLink : public CachedObject<TDZEnvironmentLink> {
@@ -3758,22 +3750,18 @@ class CachedJSTextPosition : public CachedObject<JSTextPosition> {
 public:
     void encode(Encoder&, const JSTextPosition& position)
     {
-        m_line = position.line;
         m_offset = position.offset;
-        m_lineStartOffset = position.lineStartOffset;
     }
 
     JSTextPosition decode(Decoder&) const
     {
-        return JSTextPosition { m_line, m_offset, m_lineStartOffset };
+        return JSTextPosition { m_offset };
     }
 
     int offset() const { return m_offset; }
 
 private:
-    int m_line;
     int m_offset;
-    int m_lineStartOffset;
 };
 
 class CachedClassElementDefinition : public CachedObject<UnlinkedFunctionExecutable::ClassElementDefinition> {
@@ -3887,8 +3875,6 @@ public:
             source.m_provider = decoder.provider();
             source.m_startOffset = reader.u32();
             source.m_endOffset = source.m_startOffset + reader.u32();
-            source.m_firstLine = OrdinalNumber::fromZeroBasedInt(reader.i32());
-            source.m_startColumn = OrdinalNumber::fromZeroBasedInt(reader.i32());
         }
         return rareData;
     }
@@ -3929,8 +3915,6 @@ private:
         VarintWriter writer;
         writer.u32(source.startOffset());
         writer.u32(source.endOffset() - source.startOffset());
-        writer.i32(source.firstLine().zeroBasedInt());
-        writer.i32(source.startColumn().zeroBasedInt());
         return writer;
     }
 
@@ -3941,10 +3925,10 @@ static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 // Layout: a header word (what is present, parse mode), then only what is present, 4-byte slots first so they stay aligned:
 //   [mutable metadata 8]   updatable records (the jsc shell's disk cache patches them in place)
 //   [call slot][construct slot][name][TDZ link][rare data]
-//   varint tail, hot part (read when the cell is created): flags, lexically scoped features, parameter count, start
-//     offset, function start, source length, body start column, [first line offset]
+//   varint tail, hot part (read when the cell is created): flags, lexically scoped features, features, parameter count,
+//     start offset, function start, source length
 //   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::m_scalarsAreDeferred):
-//     features, parameters start, function end, body end column, [line count]
+//     parameters start, function end
 // A persistent payload (bun --compile) has no metadata row and only the slots it uses.
 class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
     friend struct CachedFunctionExecutableOffsets;
@@ -3960,19 +3944,14 @@ public:
         HasName = 1 << 2,
         HasTDZ = 1 << 3,
         HasRareData = 1 << 4,
-        HasLines = 1 << 5,
-        Updatable = 1 << 6, // implies both code block slots
-        HasCapturedVariables = 1 << 7,
-        IsClass = 1 << 8, // so isClass() never needs the rare data
+        Updatable = 1 << 5, // implies both code block slots
+        HasCapturedVariables = 1 << 6,
+        IsClass = 1 << 7, // so isClass() never needs the rare data
         ParseModeShift = 16, // 8 bits
     };
 
     struct Scalars {
-        unsigned firstLineOffset;
-        unsigned lineCount;
         unsigned unlinkedFunctionStart;
-        unsigned unlinkedBodyStartColumn;
-        unsigned unlinkedBodyEndColumn;
         unsigned startOffset;
         unsigned sourceLength;
         unsigned parametersStartOffset;
@@ -4257,8 +4236,6 @@ protected:
         m_features = codeBlock.m_features;
         m_lexicallyScopedFeatures = codeBlock.m_lexicallyScopedFeatures;
         m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
-        m_lineCount = codeBlock.m_lineCount;
-        m_endColumn = codeBlock.m_endColumn;
         m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
         m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
     }
@@ -4267,8 +4244,6 @@ protected:
         codeBlock.m_features = m_features;
         codeBlock.m_lexicallyScopedFeatures = m_lexicallyScopedFeatures;
         codeBlock.m_hasCapturedVariables = m_hasCapturedVariables;
-        codeBlock.m_lineCount = m_lineCount;
-        codeBlock.m_endColumn = m_endColumn;
         codeBlock.m_sourceURLDirective = m_sourceURLDirective.decode(decoder);
         codeBlock.m_sourceMappingURLDirective = m_sourceMappingURLDirective.decode(decoder);
     }
@@ -4277,8 +4252,6 @@ private:
     CodeFeatures m_features;
     LexicallyScopedFeatures m_lexicallyScopedFeatures;
     bool m_hasCapturedVariables;
-    unsigned m_lineCount;
-    unsigned m_endColumn;
     CachedRefPtr<CachedStringImpl> m_sourceURLDirective;
     CachedRefPtr<CachedStringImpl> m_sourceMappingURLDirective;
 };
@@ -4677,7 +4650,6 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
         | static_cast<uint32_t>(executable.m_isBuiltinFunction) << ExecutableIsBuiltinFunctionShift
         | static_cast<uint32_t>(executable.m_isBuiltinDefaultClassConstructor) << ExecutableIsBuiltinDefaultClassConstructorShift;
     executable.materializeDeferredScalarsIfNeeded();
-    bool hasLines = executable.m_firstLineOffset || executable.m_lineCount;
     // Hot part: what link() (the FunctionExecutable's SourceCode), JSFunction structure selection, the first call
     // (features, ScriptExecutable::newCodeBlockFor) and compiler threads (parameterCount) need. Source positions cluster
     // around the function's start, so all but the first are deltas.
@@ -4689,17 +4661,9 @@ void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& exe
     writer.u32(start);
     writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionStart - start));
     writer.u32(executable.m_sourceLength);
-    // Columns are offsets from a line start; on one line the two differ by the same constant, so the second is a delta of the first.
-    int32_t bodyStartColumnDelta = static_cast<int32_t>(executable.m_unlinkedBodyStartColumn - executable.m_unlinkedFunctionStart);
-    writer.i32(bodyStartColumnDelta);
-    if (hasLines)
-        writer.u32(executable.m_firstLineOffset);
     // Cold part (introspection only): see UnlinkedFunctionExecutable::materializeDeferredScalarsSlow().
     writer.i32(static_cast<int32_t>(executable.m_parametersStartOffset - start));
     writer.i32(static_cast<int32_t>(executable.m_unlinkedFunctionEnd - (start + executable.m_sourceLength)));
-    writer.i32(static_cast<int32_t>(executable.m_unlinkedBodyEndColumn - executable.m_unlinkedFunctionEnd) - bodyStartColumnDelta);
-    if (hasLines)
-        writer.u32(executable.m_lineCount);
 }
 
 Vector<uint8_t, 64> CachedFunctionExecutable::packedTail(const UnlinkedFunctionExecutable& executable)
@@ -4718,8 +4682,6 @@ uint32_t CachedFunctionExecutable::headerFor(const UnlinkedFunctionExecutable& e
     uint32_t header = static_cast<uint32_t>(executable.m_sourceParseMode) << ParseModeShift;
     if (executable.m_hasCapturedVariables)
         header |= HasCapturedVariables;
-    if (executable.m_firstLineOffset || executable.m_lineCount)
-        header |= HasLines;
     if (executable.isClass())
         header |= IsClass;
     if (!executable.ecmaName().isNull())
@@ -4794,16 +4756,10 @@ auto CachedFunctionExecutable::view(ScalarsToView scalarsToView) const -> View
     s.startOffset = reader.u32();
     s.unlinkedFunctionStart = s.startOffset + reader.i32();
     s.sourceLength = reader.u32();
-    int32_t bodyStartColumnDelta = reader.i32();
-    s.unlinkedBodyStartColumn = s.unlinkedFunctionStart + bodyStartColumnDelta;
-    s.firstLineOffset = (v.header & HasLines) ? reader.u32() : 0;
-    s.parametersStartOffset = s.unlinkedFunctionEnd = s.unlinkedBodyEndColumn = s.lineCount = 0;
+    s.parametersStartOffset = s.unlinkedFunctionEnd = 0;
     if (scalarsToView == AllScalars) {
         s.parametersStartOffset = s.startOffset + reader.i32();
         s.unlinkedFunctionEnd = s.startOffset + s.sourceLength + reader.i32();
-        s.unlinkedBodyEndColumn = s.unlinkedFunctionEnd + bodyStartColumnDelta + reader.i32();
-        if (v.header & HasLines)
-            s.lineCount = reader.u32();
     }
     if (v.metadata) {
         // The jsc shell's disk cache patches these after a lazily compiled function joins the cache.
@@ -4870,8 +4826,6 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     auto v = m_members.pending().record->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
     self->m_parametersStartOffset = v.scalars.parametersStartOffset;
     self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
-    self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
-    self->m_lineCount = v.scalars.lineCount;
     self->m_scalarsAreDeferred = false;
     if (!m_nameIsDeferred && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now
@@ -4998,10 +4952,10 @@ ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decod
 
 ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& cachedExecutable)
     : Base(decoder.vm(), decoder.vm().unlinkedFunctionExecutableStructure.get())
-    , m_isGeneratedFromCache(true)
     , m_hasCapturedVariables(false)
     , m_isCached(false)
     , m_singletonHasBeenInvalidated(false)
+    , m_isGeneratedFromCache(true)
     , m_features(0)
     , m_lexicallyScopedFeatures(NoLexicallyScopedFeatures)
     , m_isClass(false)
@@ -5035,13 +4989,9 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         m_members.live().rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
         ASSERT_WITH_MESSAGE(m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
-    m_firstLineOffset = scalars.firstLineOffset;
-    m_lineCount = scalars.lineCount;
     m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;
     m_isBuiltinFunction = scalars.isBuiltinFunction;
-    m_unlinkedBodyStartColumn = scalars.unlinkedBodyStartColumn;
     m_isBuiltinDefaultClassConstructor = scalars.isBuiltinDefaultClassConstructor;
-    m_unlinkedBodyEndColumn = scalars.unlinkedBodyEndColumn;
     m_constructAbility = scalars.constructAbility;
     m_startOffset = scalars.startOffset;
     m_scriptMode = scalars.scriptMode;
@@ -5334,7 +5284,9 @@ protected:
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
     // 10: GenericCacheEntry records the payload's size.
-    static constexpr uint32_t cachedTypesFormatRevision = 10;
+    // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
+    // scalars, a global code block, a class source or a JSTextPosition.
+    static constexpr uint32_t cachedTypesFormatRevision = 11;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5957,12 +5909,12 @@ static_assert(sizeof(CachedHashSet<CachedRefPtr<CachedUniquedStringImpl>, Identi
 static_assert(sizeof(CachedPrivateNameEnvironment) == 8);
 static_assert(sizeof(CachedBigInt) == 12);
 static_assert(sizeof(CachedBitVector) == 8);
-static_assert(sizeof(CachedClassElementDefinition) == 24);
+static_assert(sizeof(CachedClassElementDefinition) == 16);
 static_assert(sizeof(CachedCodeBlockExtras) == 4);
 static_assert(sizeof(CachedCodeBlockRareData) == 68);
 static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
-static_assert(sizeof(CachedEvalCodeBlock) == 40);
+static_assert(sizeof(CachedEvalCodeBlock) == 32);
 static_assert(sizeof(CachedExpressionInfo) == 4);
 static_assert(sizeof(CachedFunctionCodeBlock) == 4);
 static_assert(sizeof(CachedFunctionExecutable) == 4);
@@ -5970,11 +5922,11 @@ static_assert(sizeof(CachedFunctionExecutableRareData) == 4);
 static_assert(sizeof(CachedHandlerInfo) == 16);
 static_assert(sizeof(CachedIdentifier) == 4);
 static_assert(sizeof(CachedImmutableButterfly) == 12);
-static_assert(sizeof(CachedJSTextPosition) == 12);
+static_assert(sizeof(CachedJSTextPosition) == 4);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
-static_assert(sizeof(CachedModuleCodeBlock) == 56);
-static_assert(sizeof(CachedProgramCodeBlock) == 56);
+static_assert(sizeof(CachedModuleCodeBlock) == 48);
+static_assert(sizeof(CachedProgramCodeBlock) == 48);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);
 static_assert(sizeof(CachedSimpleJumpTable) == 20);

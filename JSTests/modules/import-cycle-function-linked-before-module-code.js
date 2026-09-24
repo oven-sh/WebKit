@@ -2,8 +2,6 @@ import { shouldBe } from "./resources/assert.js";
 import * as namespace from "./import-cycle-function-linked-before-module-code/1.js";
 import { lexical, hoisted, addLexical, readLexical, addLexicalThreeTimes, addHoisted, readHoisted } from "./import-cycle-function-linked-before-module-code/1.js";
 
-// 2.js called addLexical() and addHoisted() while 1.js was not evaluated yet, so both functions were linked
-// before the module code that declares the variables they write. Every read has to see every write, in every tier.
 for (let i = 0; i < testLoopCount; ++i) {
     let base = i * 4;
 

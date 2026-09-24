@@ -132,12 +132,15 @@
     case WebCore::TextAnimationType::Final:
         effect = adoptNS([PAL::alloc_WTReplaceDestinationTextEffectInstance() initWithChunk:chunk.get() effectView:_effectView.get()]);
 
-        effect.get().preCompletion = makeBlockPtr([weakWebView = WeakPtr<WebKit::WebViewImpl>(_webView), remainingID = *data.unanimatedRangeUUID] {
+        effect.get().preCompletion = makeBlockPtr([weakWebView = WeakPtr<WebKit::WebViewImpl>(_webView), remainingID = data.unanimatedRangeUUID] {
+            if (!remainingID)
+                return;
+
             if (CheckedPtr webView = weakWebView.get())
-                webView->page().updateUnderlyingTextVisibilityForTextAnimationID(remainingID, false);
+                webView->page().updateUnderlyingTextVisibilityForTextAnimationID(*remainingID, false);
         }).get();
 
-        effect.get().completion = makeBlockPtr([weakSelf = WeakObjCPtr<WKTextAnimationManager>(self), weakWebView = WeakPtr<WebKit::WebViewImpl>(_webView), remainingID = *data.unanimatedRangeUUID, uuid = RetainPtr(uuid), runMode = data.runMode, effect = WeakObjCPtr<id<_WTTextEffect>>(effect.get())] {
+        effect.get().completion = makeBlockPtr([weakSelf = WeakObjCPtr<WKTextAnimationManager>(self), weakWebView = WeakPtr<WebKit::WebViewImpl>(_webView), remainingID = data.unanimatedRangeUUID, uuid = RetainPtr(uuid), runMode = data.runMode, effect = WeakObjCPtr<id<_WTTextEffect>>(effect.get())] {
             if (auto strongEffect = effect.get())
                 [strongEffect setCompletion:nil];
 
@@ -158,7 +161,8 @@
 
             webView->page().didEndPartialIntelligenceTextAnimationImpl();
 
-            webView->page().updateUnderlyingTextVisibilityForTextAnimationID(remainingID, true);
+            if (remainingID)
+                webView->page().updateUnderlyingTextVisibilityForTextAnimationID(*remainingID, true);
             webView->page().callCompletionHandlerForAnimationID(*animationID, runMode);
         }).get();
 

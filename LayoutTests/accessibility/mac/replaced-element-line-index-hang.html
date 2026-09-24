@@ -54,9 +54,7 @@ function runTest() {
         // Post-fix: 10 (last line — J, after A B C D E [img] F G H I = lines 0-10).
         editableRange = editable.textMarkerRangeForElement(editable);
         endMarker = editable.endTextMarkerForTextMarkerRange(editableRange);
-        // FIXME: Both the live and isolated tree compute a line index of 9...but it should be 10 based on the visual layout?
-        //        Investigate and fix (or determine the behavior is correct and remove thid comment).
-        output += expect("editable.lineIndexForTextMarker(endMarker)", "9");
+        output += expect("editable.lineIndexForTextMarker(endMarker)", "10");
         output += "PASS: No hang.\n";
 
         debug(output);

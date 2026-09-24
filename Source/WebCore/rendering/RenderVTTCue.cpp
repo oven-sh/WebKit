@@ -545,7 +545,7 @@ RenderInline* RenderVTTCue::cueBox() const
 
     auto* firstChild = backdropBox->firstChild();
     ASSERT(firstChild);
-    ASSERT(is<RenderInline>(firstChild));
+    ASSERT(firstChild->isInlineBox());
     return dynamicDowncast<RenderInline>(firstChild);
 }
 

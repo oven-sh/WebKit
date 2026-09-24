@@ -249,7 +249,7 @@ static inline void verifyVTable(TestInterfaceLeadingUnderscore* ptr)
         // TestInterfaceLeadingUnderscore has subclasses. If TestInterfaceLeadingUnderscore has subclasses that get passed
         // to toJS() we currently require TestInterfaceLeadingUnderscore you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif

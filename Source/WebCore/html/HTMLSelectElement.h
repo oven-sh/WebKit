@@ -71,6 +71,7 @@ public:
     WEBCORE_EXPORT void setSelectedIndex(int);
 
     WEBCORE_EXPORT void optionSelectedByUser(int index, bool dispatchChangeEvent, bool allowMultipleSelection = false);
+    void pickOrToggleOption(HTMLOptionElement&);
 
     String validationMessage() const final;
     bool valueMissing() const final;
@@ -78,12 +79,18 @@ public:
     WEBCORE_EXPORT unsigned length() const;
 
     unsigned size() const { return m_size; }
+    unsigned NODELETE preferredSize() const;
+    bool NODELETE supportsPickerPseudoElement() const;
     bool multiple() const { return m_multiple; }
 
-    bool NODELETE usesMenuList() const;
+    // Without a style these read the one already committed, which is stale during style resolution.
+    enum class BoxType : bool { DropdownBox, ListBox };
+    BoxType NODELETE boxType(const Style::ComputedStyle* = nullptr) const;
+    bool NODELETE isDropdownBox(const Style::ComputedStyle* = nullptr) const;
+    bool NODELETE isBaseListBox(const Style::ComputedStyle* = nullptr) const;
 
-    // This method is deprecated because the return value doesn't match the rendering on iOS for multiple selects.
-    bool NODELETE usesMenuListDeprecated() const;
+    bool NODELETE usesMenuList() const;
+    bool NODELETE isSingleSelectDropdownBox() const;
 
     using OptionOrOptGroupElement = Variant<Ref<HTMLOptionElement>, Ref<HTMLOptGroupElement>>;
     using HTMLElementOrInt = Variant<Ref<HTMLElement>, int>;

@@ -63,6 +63,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -376,7 +377,7 @@ std::optional<bool> InspectorFrontendClientLocal::evaluationResultToBoolean(Insp
 
     auto valueOrException = result.value();
     if (!valueOrException) {
-        LOG(Inspector, "Encountered exception while evaluating upon the frontend: %s", valueOrException.error().message.utf8().data());
+        LOG_WITH_STREAM(Inspector, stream << "Encountered exception while evaluating upon the frontend: "_s << valueOrException.error().message);
         return std::nullopt;
     }
 

@@ -174,6 +174,8 @@ private:
 
     HTMLStackItem& NODELETE adjustedCurrentStackItem() LIFETIME_BOUND;
 
+    ALWAYS_INLINE void updateTokenizerForAdjustedCurrentNode();
+
     void callTheAdoptionAgency(AtomHTMLToken&);
 
     void closeTheCell();

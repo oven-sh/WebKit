@@ -47,7 +47,6 @@ using SpanConstChar = std::span<const char>;
 // These can't be inline due to rdar://162531519
 void doLog(const WTF::String& msg); // rdar://168139823
 void doLoadingReleaseLog(const WTF::String& msg); // rdar://168139823
-void messageCheckFailed(Ref<WebKit::WebProcessProxy>); // rdar://168139740
 
 // Workaround for rdar://162357139
 template<typename T>

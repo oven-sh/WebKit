@@ -31,6 +31,7 @@
 #include "CSSParserContext.h"
 #include "CSSParserIdioms.h"
 #include "CSSParserTokenRange.h"
+#include "CSSParserTokenRangeGuard.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPropertyParserConsumer+CSSPrimitiveValueResolver.h"
 #include "CSSPropertyParserConsumer+Ident.h"
@@ -40,6 +41,7 @@
 #include "CSSPropertyParserConsumer+String.h"
 #include "CSSPropertyParserState.h"
 #include "CSSPropertyParsing.h"
+#include "CSSSymbolsFunctionValue.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 #include "CSSValuePair.h"
@@ -56,15 +58,63 @@ bool isPredefinedCounterStyle(CSSValueID valueID)
     return valueID >= CSSValueDisc && valueID <= CSSValueEthiopicNumeric;
 }
 
+// <symbols-type> = cyclic | numeric | alphabetic | symbolic | fixed
+// https://drafts.csswg.org/css-counter-styles-3/#typedef-symbols-type
+static std::optional<CSS::SymbolsType> consumeUnresolvedSymbolsType(CSSParserTokenRange& range)
+{
+    return consumeSpecificUnresolvedIdent<CSS::SymbolsType>(range);
+}
+
+// symbols() = symbols( <symbols-type>? [ <string> | <image> ]+ )
+// https://drafts.csswg.org/css-counter-styles-3/#funcdef-symbols
+// FIXME: Add support for <image> symbols.
+static std::optional<CSS::SymbolsFunction> consumeUnresolvedSymbolsFunction(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    ASSERT(range.peek().functionId() == CSSValueSymbols);
+
+    if (!state.context.cssSymbolsFunctionEnabled)
+        return { };
+
+    CSSParserTokenRangeGuard guard { range };
+    auto args = consumeFunction(range);
+
+    auto system = consumeUnresolvedSymbolsType(args);
+
+    Vector<CSS::String> symbols;
+    while (auto symbol = consumeUnresolvedString(args))
+        symbols.append(WTF::move(*symbol));
+
+    if (symbols.isEmpty() || !args.atEnd())
+        return { };
+
+    // If the system is alphabetic or numeric, there must be at least two <string>s, or else the function is invalid.
+    bool isAlphabeticOrNumeric = system && (std::holds_alternative<CSS::Keyword::Alphabetic>(*system) || std::holds_alternative<CSS::Keyword::Numeric>(*system));
+    if (isAlphabeticOrNumeric && symbols.size() < 2)
+        return { };
+
+    guard.commit();
+
+    // `symbolic` is the default system, and is omitted from the serialization.
+    if (system && std::holds_alternative<CSS::Keyword::Symbolic>(*system))
+        system = std::nullopt;
+
+    return CSS::SymbolsFunction { system, WTF::move(symbols) };
+}
+
 std::optional<CSS::CounterStyle> consumeUnresolvedCounterStyle(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     // <counter-style> = <counter-style-name excluding=none> | <symbols()>
     // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style
 
-    // FIXME: Implement support for `symbols()`.
-
     if (isPredefinedCounterStyle(range.peek().id()))
         return CSS::CounterStyle { CSS::Keyword { range.consumeIncludingWhitespace().id() } };
+
+    if (range.peek().functionId() == CSSValueSymbols) {
+        auto symbolsFunction = consumeUnresolvedSymbolsFunction(range, state);
+        if (!symbolsFunction)
+            return { };
+        return CSS::CounterStyle { WTF::move(*symbolsFunction) };
+    }
 
     auto customIdent = consumeUnresolvedCustomIdentExcluding(range, state, { CSSValueNone });
     if (!customIdent)
@@ -78,9 +128,15 @@ RefPtr<CSSValue> consumeCounterStyle(CSSParserTokenRange& range, CSS::PropertyPa
     // <counter-style> = <counter-style-name excluding=none> | <symbols()>
     // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style
 
-    // FIXME: Implement support for `symbols()`.
     if (isPredefinedCounterStyle(range.peek().id()))
         return CSSKeywordValue::create(range.consumeIncludingWhitespace().id());
+
+    if (range.peek().functionId() == CSSValueSymbols) {
+        auto symbolsFunction = consumeUnresolvedSymbolsFunction(range, state);
+        if (!symbolsFunction)
+            return nullptr;
+        return CSSSymbolsFunctionValue::create(WTF::move(*symbolsFunction));
+    }
 
     return consumeCustomIdentExcluding(range, state, { CSSValueNone });
 }
@@ -138,6 +194,11 @@ RefPtr<CSSValue> consumeCounterStyleSystem(CSSParserTokenRange& range, CSS::Prop
             CSSValueInternalSimplifiedChineseFormal,
             CSSValueInternalTraditionalChineseInformal,
             CSSValueInternalTraditionalChineseFormal,
+            CSSValueInternalJapaneseInformal,
+            CSSValueInternalJapaneseFormal,
+            CSSValueInternalKoreanHangulFormal,
+            CSSValueInternalKoreanHanjaInformal,
+            CSSValueInternalKoreanHanjaFormal,
             CSSValueInternalEthiopicNumeric
         >(range);
         if (internalKeyword)

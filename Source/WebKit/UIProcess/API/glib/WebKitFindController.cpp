@@ -38,14 +38,14 @@ using namespace WebCore;
  * Controls text search in a #WebKitWebView.
  *
  * A #WebKitFindController is used to search text in a #WebKitWebView. You
- * can get a #WebKitWebView<!-- -->'s #WebKitFindController with
+ * can get a #WebKitWebView's #WebKitFindController with
  * webkit_web_view_get_find_controller(), and later use it to search
  * for text using webkit_find_controller_search(), or get the
  * number of matches using webkit_find_controller_count_matches(). The
  * operations are asynchronous and trigger signals when ready, such as
  * #WebKitFindController::found-text,
  * #WebKitFindController::failed-to-find-text or
- * #WebKitFindController::counted-matches<!-- -->.
+ * #WebKitFindController::counted-matches.
  *
  */
 
@@ -73,7 +73,7 @@ typedef enum {
 } WebKitFindControllerOperation;
 
 struct _WebKitFindControllerPrivate {
-    CString searchText;
+    UTF8CString searchText;
     OptionSet<WebKit::FindOptions> findOptions;
     unsigned maxMatchCount;
     WebKitWebView* webView;
@@ -229,7 +229,7 @@ static void webkit_find_controller_class_init(WebKitFindControllerClass* findCla
     /**
      * WebKitFindController:web-view:
      *
-     * The #WebKitWebView this controller is associated to.
+     * The #WebKitWebView this controller is associated with.
      */
     g_object_class_install_property(gObjectClass,
                                     PROP_WEB_VIEW,
@@ -310,7 +310,7 @@ const char* webkit_find_controller_get_search_text(WebKitFindController* findCon
 {
     g_return_val_if_fail(WEBKIT_IS_FIND_CONTROLLER(findController), 0);
 
-    return findController->priv->searchText.data();
+    return findController->priv->searchText.legacyCStringPointer();
 }
 
 /**
@@ -356,7 +356,7 @@ guint webkit_find_controller_get_max_match_count(WebKitFindController* findContr
  * webkit_find_controller_get_web_view:
  * @find_controller: the #WebKitFindController
  *
- * Gets the #WebKitWebView this find controller is associated to.
+ * Gets the #WebKitWebView this find controller is associated with.
  *
  * Do
  * not dereference the returned instance as it belongs to the
@@ -375,7 +375,7 @@ static void webKitFindControllerPerform(WebKitFindController* findController, We
 {
     WebKitFindControllerPrivate* priv = findController->priv;
     if (operation == CountOperation) {
-        getPage(findController).countStringMatches(String::fromUTF8(priv->searchText.data()),
+        getPage(findController).countStringMatches(String { priv->searchText },
             priv->findOptions, priv->maxMatchCount);
         return;
     }
@@ -391,12 +391,12 @@ static void webKitFindControllerPerform(WebKitFindController* findController, We
         // extra unmarkAllTextMatches() + markAllTextMatches()
         findOptions.add(WebKit::FindOptions::ShowHighlight);
 
-    getPage(findController).findString(String::fromUTF8(priv->searchText.data()), findOptions, priv->maxMatchCount);
+    getPage(findController).findString(String { priv->searchText }, findOptions, priv->maxMatchCount);
 }
 
 static inline void webKitFindControllerSetSearchData(WebKitFindController* findController, const gchar* searchText, guint32 findOptions, guint maxMatchCount)
 {
-    findController->priv->searchText = searchText;
+    findController->priv->searchText = UTF8CString { byteCast<char8_t>(searchText) };
     findController->priv->findOptions = toWebFindOptions(findOptions);
     findController->priv->maxMatchCount = maxMatchCount;
 }

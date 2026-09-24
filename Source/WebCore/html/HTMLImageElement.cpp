@@ -48,7 +48,7 @@
 #include "HTMLSourceElement.h"
 #include "HTMLSrcsetParser.h"
 #include "JSRequestPriority.h"
-#include "LazyLoadImageObserver.h"
+#include "LazyLoadElementObserver.h"
 #include "LocalFrameView.h"
 #include "Logging.h"
 #include "MIMETypeRegistry.h"
@@ -521,6 +521,14 @@ std::optional<float> HTMLImageElement::autoSizesLayoutWidth() const
     return box->contentBoxWidth().toFloat();
 }
 
+void HTMLImageElement::lazyLoadIntersectionCallbackInvoked(bool isIntersecting)
+{
+    if (!isIntersecting)
+        return;
+    loadDeferredImage();
+    LazyLoadElementObserver::unobserve(*this, protect(document()));
+}
+
 const AtomString& HTMLImageElement::altText() const
 {
     // lets figure out the alt text.. magic stuff
@@ -657,6 +665,14 @@ void HTMLImageElement::setPictureElement(HTMLPictureElement* pictureElement)
     m_pictureElement = pictureElement;
 }
     
+LayoutSize HTMLImageElement::naturalSize() const
+{
+    RefPtr image = m_imageLoader->image();
+    if (!image)
+        return { };
+    return image->unclampedImageSizeForRenderer(protect(renderer()).get(), 1.0f, CachedImage::IntrinsicSize, m_imageDevicePixelRatio);
+}
+
 unsigned HTMLImageElement::width()
 {
     if (inRenderedDocument())
@@ -664,13 +680,11 @@ unsigned HTMLImageElement::width()
 
     if (!renderer()) {
         // check the attribute first for an explicit pixel value
-        auto optionalWidth = parseHTMLNonNegativeInteger(attributeWithoutSynchronization(widthAttr));
-        if (optionalWidth)
+        if (auto optionalWidth = parseHTMLNonNegativeInteger(attributeWithoutSynchronization(widthAttr)))
             return optionalWidth.value();
 
-        // if the image is available, use its width
-        if (RefPtr image = m_imageLoader->image())
-            return image->imageSizeForRenderer(nullptr, 1.0f, CachedImage::IntrinsicSize).width().toUnsigned();
+        // otherwise fall back to what naturalWidth returns
+        return naturalSize().width().toUnsigned();
     }
 
     CheckedPtr box = renderBox();
@@ -687,13 +701,11 @@ unsigned HTMLImageElement::height()
 
     if (!renderer()) {
         // check the attribute first for an explicit pixel value
-        auto optionalHeight = parseHTMLNonNegativeInteger(attributeWithoutSynchronization(heightAttr));
-        if (optionalHeight)
+        if (auto optionalHeight = parseHTMLNonNegativeInteger(attributeWithoutSynchronization(heightAttr)))
             return optionalHeight.value();
 
-        // if the image is available, use its height
-        if (RefPtr image = m_imageLoader->image())
-            return image->imageSizeForRenderer(nullptr, 1.0f, CachedImage::IntrinsicSize).height().toUnsigned();
+        // otherwise fall back to what naturalHeight returns
+        return naturalSize().height().toUnsigned();
     }
 
     CheckedPtr box = renderBox();
@@ -705,18 +717,12 @@ unsigned HTMLImageElement::height()
 
 unsigned HTMLImageElement::naturalWidth() const
 {
-    RefPtr image = m_imageLoader->image();
-    if (!image)
-        return 0;
-    return image->unclampedImageSizeForRenderer(protect(renderer()).get(), 1.0f, CachedImage::IntrinsicSize, m_imageDevicePixelRatio).width().toUnsigned();
+    return naturalSize().width().toUnsigned();
 }
 
 unsigned HTMLImageElement::naturalHeight() const
 {
-    RefPtr image = m_imageLoader->image();
-    if (!image)
-        return 0;
-    return image->unclampedImageSizeForRenderer(protect(renderer()).get(), 1.0f, CachedImage::IntrinsicSize, m_imageDevicePixelRatio).height().toUnsigned();
+    return naturalSize().height().toUnsigned();
 }
 
 bool HTMLImageElement::isURLAttribute(const Attribute& attribute) const

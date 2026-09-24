@@ -5736,7 +5736,7 @@ static inline void verifyVTable(${implType}* ptr)
         // ${implType} has subclasses. If ${implType} has subclasses that get passed
         // to toJS() we currently require $interfaceName you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(actualVTablePointer == expectedVTablePointer);
     }
 }
 #endif
@@ -7870,7 +7870,18 @@ sub GetFlattenedMemberTypes
 
     foreach my $memberType (@{$idlUnionType->subtypes}) {
         if ($memberType->isUnion) {
-            push(@flattenedMemberTypes, GetFlattenedMemberTypes($memberType));
+            # A union cannot be annotated once flattened, so [AllowShared] on a nested
+            # union applies to each of its buffer source members instead.
+            # FIXME: Generalize this to any annotation, applied to each member it is
+            # applicable to.
+            my $allowShared = $memberType->extendedAttributes->{AllowShared};
+            foreach my $nestedMemberType (GetFlattenedMemberTypes($memberType)) {
+                if ($allowShared && $codeGenerator->IsBufferSourceType($nestedMemberType)) {
+                    $nestedMemberType = IDLParser::cloneType($nestedMemberType);
+                    $nestedMemberType->extendedAttributes->{AllowShared} = $allowShared;
+                }
+                push(@flattenedMemberTypes, $nestedMemberType);
+            }
         } else {
             push(@flattenedMemberTypes, $memberType);
         }
@@ -8013,7 +8024,14 @@ sub GetBaseIDLType
         my $promiseType = $type->extendedAttributes->{BypassDocumentFullyActiveCheck} ? "IDLPromiseIgnoringSuspension" : "IDLPromise";
         return "${promiseType}<" . GetIDLType($interface, @{$type->subtypes}[0]) . ">";
     }
-    return "IDLUnion<" . join(", ", GetIDLUnionMemberTypes($interface, $type)) . ">" if $type->isUnion;
+    if ($type->isUnion) {
+        my @subtypes = @{$type->subtypes};
+        if (scalar(@subtypes) == 2 && !grep { $_->isNullable || scalar(keys %{$_->extendedAttributes}) } @subtypes) {
+            my %names = map { $_->name => 1 } @subtypes;
+            return "IDLBufferSource" if $names{"ArrayBufferView"} && $names{"ArrayBuffer"};
+        }
+        return "IDLUnion<" . join(", ", GetIDLUnionMemberTypes($interface, $type)) . ">";
+    }
     return "IDLCallbackFunction<" . GetCallbackClassName($type->name) . ">" if $codeGenerator->IsCallbackFunction($type);
     return "IDLCallbackInterface<" . GetCallbackClassName($type->name) . ">" if $codeGenerator->IsCallbackInterface($type);
 

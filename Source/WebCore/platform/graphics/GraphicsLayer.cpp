@@ -732,14 +732,6 @@ String GraphicsLayer::animationNameForTransition(AnimatedProperty property)
     return makeString("-|transition"_s, static_cast<int>(property), '-');
 }
 
-void GraphicsLayer::suspendAnimations(MonotonicTime)
-{
-}
-
-void GraphicsLayer::resumeAnimations()
-{
-}
-
 void GraphicsLayer::setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose)
 {
 }
@@ -1174,14 +1166,14 @@ void showGraphicsLayerTree(const WebCore::GraphicsLayer* layer)
         return;
 
     String output = layer->layerTreeAsText(WebCore::AllLayerTreeAsTextOptions);
-    WTFLogAlways("%s\n", output.utf8().data());
+    SAFE_WTFLOGALWAYS("%s\n", output.utf8());
 
     // The tree is too large to print to the os log so save the tree output
     // to a file in case we don't have easy access to stderr.
     auto [tempFilePath, fileHandle] = FileSystem::openTemporaryFile("GraphicsLayerTree"_s);
     if (fileHandle) {
         fileHandle.write(byteCast<uint8_t>(output.utf8().span()));
-        WTFLogAlways("Saved GraphicsLayer Tree to %s", tempFilePath.utf8().data());
+        SAFE_WTFLOGALWAYS("Saved GraphicsLayer Tree to %s", tempFilePath.utf8());
     } else
         WTFLogAlways("Failed to open temporary file for saving the GraphicsLayer Tree.");
 }

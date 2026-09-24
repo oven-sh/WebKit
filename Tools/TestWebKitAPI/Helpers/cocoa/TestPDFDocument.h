@@ -34,10 +34,8 @@
 
 #if PLATFORM(IOS_FAMILY)
 @class UIColor;
-typedef UIColor CocoaColor;
 #else
 @class NSColor;
-typedef NSColor CocoaColor;
 #endif
 
 NS_ASSUME_NONNULL_BEGIN
@@ -50,6 +48,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) CGRect bounds;
 
 @property (nonatomic, readonly, nullable) NSURL *linkURL;
+
+- (instancetype)init NS_UNAVAILABLE;
 
 - (instancetype)initWithPDFAnnotation:(PDFAnnotation *)annotation;
 
@@ -66,13 +66,19 @@ NS_SWIFT_UI_ACTOR
 
 @property (nonatomic, readonly) NSInteger characterCount;
 
+- (instancetype)init NS_UNAVAILABLE;
+
 - (instancetype)initWithPDFPage:(PDFPage *)page;
 
 - (CGRect)rectForCharacterAtIndex:(NSInteger)index;
 
 - (NSInteger)characterIndexAtPoint:(CGPoint)point;
 
-- (CocoaColor *)colorAtPoint:(CGPoint)point;
+#if PLATFORM(IOS_FAMILY)
+- (UIColor *)colorAtPoint:(CGPoint)point;
+#else
+- (NSColor *)colorAtPoint:(CGPoint)point;
+#endif
 
 @end
 
@@ -82,6 +88,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) NSInteger pageCount;
 
 - (nullable TestPDFPage *)pageAtIndex:(NSInteger)index;
+
+- (instancetype)init NS_UNAVAILABLE;
 
 - (instancetype)initFromData:(NSData *)data;
 

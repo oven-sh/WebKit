@@ -44,6 +44,7 @@ struct WebKit::NavigationActionData {
     std::optional<WebCore::BackForwardItemIdentifier> sourceBackForwardItemIdentifier;
     WebCore::LockHistory lockHistory;
     WebCore::LockBackForwardList lockBackForwardList;
+    WebCore::NavigationHistoryBehavior navigationHistoryBehavior;
     String clientRedirectSourceForHistory;
     WebCore::SandboxFlags effectiveSandboxFlags;
     WebCore::ReferrerPolicy effectiveReferrerPolicy;
@@ -62,4 +63,5 @@ struct WebKit::NavigationActionData {
     [EncodeRequestBody] WebCore::ResourceRequest request;
     String invalidURLString;
     std::optional<WebCore::NavigationRequester> requester;
+    Markable<WebCore::PendingNavigateEventIdentifier> pendingNavigateEventID;
 };

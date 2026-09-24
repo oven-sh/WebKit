@@ -74,6 +74,7 @@
 #include "Path2D.h"
 #include "PixelBufferConversion.h"
 #include "PixelFormat.h"
+#include "PlatformVideoColorSpace.h"
 #include "RenderElement.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
@@ -592,6 +593,9 @@ void CanvasRenderingContext2DBase::beginLayer()
 {
     save();
     realizeSaves();
+
+    if (m_unrealizedSaveCount)
+        return;
 
     RefPtr<Filter> filter;
     if (!state().filter.isNone())
@@ -1576,6 +1580,20 @@ static inline FloatSize size(ImageBitmap& imageBitmap)
     return FloatSize { static_cast<float>(imageBitmap.width()), static_cast<float>(imageBitmap.height()) };
 }
 
+static inline FloatSize size(CanvasElementImageSource& source)
+{
+    return WTF::switchOn(source,
+        [&](Ref<Element>& element) -> FloatSize {
+            if (CheckedPtr renderer = element->renderer())
+                return renderer->absoluteBoundingBoxRect().size();
+            return FloatSize();
+        },
+        [&](Ref<CanvasElementImage>& elementImage) {
+            return elementImage->size();
+        }
+    );
+}
+
 #if ENABLE(VIDEO)
 
 static inline FloatSize size(HTMLVideoElement& video)
@@ -1738,8 +1756,14 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(WebCodecsVideoFrame& f
     else
         willUpdateContents(normalizedDstRect);
 
+    ImagePaintingOptions options = {
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        (isHDR() && usesITUR2100TF(internalFrame->colorSpace())) ? DrawsHDRContent::Yes : DrawsHDRContent::No
+#endif
+    };
+
     // FIXME: Add support for srcRect
-    context->drawVideoFrame(*internalFrame, dstRect, ImageOrientation::Orientation::None, frame.shoudlDiscardAlpha());
+    context->drawVideoFrame(*internalFrame, dstRect, frame.shoudlDiscardAlpha() ? ShouldDiscardAlpha::Yes : ShouldDiscardAlpha::No, options);
 
     return { };
 }
@@ -1788,6 +1812,9 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
     if (RefPtr bitmapImage = dynamicDowncast<BitmapImage>(*image)) {
         // Drawing an animated image to a canvas should draw the first frame (except for a few layout tests)
         if (image->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled()) {
+            // FIXME: This draws the SDR base image, so an animated HDR image loses its HDR
+            // content: the copy is backed by a NativeImageSource, which never reports a gain
+            // map and always prefers DecodingDestination::Base.
             bitmapImage = BitmapImage::create(image->nativeImage());
             if (!bitmapImage)
                 return { };
@@ -1803,6 +1830,11 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
         orientation,
         document.settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
         document.settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+        ,
+        (isHDR() && image->hasHDRContent()) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
+        document.settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No
+#endif
     };
 
     auto willUpdateContentsOptions = shouldPostProcess ? defaultWillUpdateContentsOptions() : defaultWillUpdateContentsOptionsWithoutPostProcessing();
@@ -1812,7 +1844,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
         c->drawImage(*image, normalizedDstRect, normalizedSrcRect, options);
     } else if (isFullCanvasCompositeMode(op)) {
         willUpdateEntireContents(willUpdateContentsOptions);
-        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, op);
+        fullCanvasCompositedDrawImage(*image, normalizedDstRect, normalizedSrcRect, op, options);
     } else if (op == CompositeOperator::Copy) {
         willUpdateEntireContents(willUpdateContentsOptions);
         clearCanvas();
@@ -2005,24 +2037,64 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(ImageBitmap& imageBitm
     return { };
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float dx, float dy)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { 0.0f, 0.0f, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, sourceSize.width(), sourceSize.height() });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { 0.0f, 0.0f, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, dwidth, dheight });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float sx, float sy, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    FloatSize sourceSize = size(source);
+    return drawElementImage(WTF::move(source), FloatRect { sx, sy, sourceSize.width(), sourceSize.height() }, FloatRect { dx, dy, dwidth, dheight });
 }
 
-ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&&, float, float, float, float, float, float, float, float)
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, float sx, float sy, float swidth, float sheight, float dx, float dy, float dwidth, float dheight)
 {
-    return Exception { ExceptionCode::NotSupportedError };
+    return drawElementImage(WTF::move(source), FloatRect { sx, sy, swidth, sheight }, FloatRect { dx, dy, dwidth, dheight });
+}
+
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawElementImage(CanvasElementImageSource&& source, const FloatRect& srcRect, const FloatRect& dstRect)
+{
+    return WTF::switchOn(source,
+        [&](Ref<Element>& element) -> ExceptionOr<Ref<DOMMatrix>> {
+            if (RefPtr canvasElement = dynamicDowncast<HTMLCanvasElement>(canvasBase())) {
+                if (auto snapshot = canvasElement->drawableElementSnapshot(element))
+                    return drawSnapshot(*snapshot, srcRect, dstRect);
+            }
+            return DOMMatrix::create(TransformationMatrix::identity, DOMMatrix::Is2D::Yes);
+        },
+        [&](Ref<CanvasElementImage>& elementImage) -> ExceptionOr<Ref<DOMMatrix>> {
+            return drawSnapshot(elementImage->snapshot(), srcRect, dstRect);
+        }
+    );
+}
+
+ExceptionOr<Ref<DOMMatrix>> CanvasRenderingContext2DBase::drawSnapshot(const CanvasElementSnapshot& snapshot, const FloatRect& srcRect, const FloatRect& dstRect)
+{
+    auto* c = effectiveDrawingContext();
+    if (!c)
+        return Exception { ExceptionCode::NotSupportedError };
+
+    auto snapshotRect = FloatRect { { }, snapshot.size };
+    auto normalizedSrcRect = normalizeRect(intersection(srcRect, snapshotRect));
+    auto normalizedDstRect = normalizeRect(dstRect);
+    auto scale = normalizedDstRect.size() / normalizedSrcRect.size();
+
+    c->save();
+    c->clip(normalizedDstRect);
+    c->translate(dstRect.location() - toFloatSize(normalizedSrcRect.location()) * scale);
+    c->scale(scale);
+    c->drawDisplayList(snapshot.displayList);
+    c->restore();
+
+    return DOMMatrix::create(TransformationMatrix::identity, DOMMatrix::Is2D::Yes);
 }
 
 void CanvasRenderingContext2DBase::clearCanvas()
@@ -2107,7 +2179,7 @@ static void drawImageToContext(NativeImage& image, GraphicsContext& context, con
     context.drawNativeImage(image, dest, src, options);
 }
 
-template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op)
+template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawImage(T& image, const FloatRect& dest, const FloatRect& src, CompositeOperator op, ImagePaintingOptions options)
 {
     ASSERT(isFullCanvasCompositeMode(op));
 
@@ -2133,7 +2205,7 @@ template<class T> void CanvasRenderingContext2DBase::fullCanvasCompositedDrawIma
     buffer->context().translate(-transformedAdjustedRect.location());
     buffer->context().translate(croppedOffset);
     buffer->context().concatCTM(effectiveTransform);
-    drawImageToContext(image, buffer->context(), adjustedDest, src, { CompositeOperator::SourceOver });
+    drawImageToContext(image, buffer->context(), adjustedDest, src, { options, CompositeOperator::SourceOver });
 
     compositeBuffer(*buffer, bufferRect, op);
 }

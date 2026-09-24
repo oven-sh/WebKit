@@ -167,14 +167,14 @@ PerfLog& PerfLog::singleton()
 PerfLog::PerfLog()
 {
     {
-        m_file = FileSystem::createDumpFile(makeString("jit-"_s, ProfilerSupport::getCurrentThreadID(), "-"_s, WTF::getCurrentProcessID()), ".dump"_s, String::fromUTF8(Options::jitDumpDirectory()));
+        m_file = FileSystem::createDumpFile(makeString("jit-"_s, ProfilerSupport::getCurrentThreadID(), "-"_s, WTF::getCurrentProcessID()), ".dump"_s, String { Options::jitDumpDirectory() });
         RELEASE_ASSERT(m_file);
 
         if (Options::useIRDump())
-            m_irDumpDirectory = Options::irDumpDirectory();
+            m_irDumpDirectory = UTF8CString { Options::irDumpDirectory() };
 
         if (Options::useSourceCodeDump())
-            m_sourceCodeDumpDirectory = Options::sourceCodeDumpDirectory();
+            m_sourceCodeDumpDirectory = UTF8CString { Options::sourceCodeDumpDirectory() };
 
 #if OS(LINUX)
         // Linux perf command records this mmap operation in perf.data as a metadata to the JIT perf annotations.
@@ -204,7 +204,7 @@ void PerfLog::flush(const AbstractLocker&)
     m_file.flush();
 }
 
-void PerfLog::log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> code, std::unique_ptr<IRDumpDebugInfo>&& irDebugInfo, std::unique_ptr<SourceCodeDumpDebugInfo>&& sourceCodeDebugInfo)
+void PerfLog::log(const UTF8CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> code, std::unique_ptr<IRDumpDebugInfo>&& irDebugInfo, std::unique_ptr<SourceCodeDumpDebugInfo>&& sourceCodeDebugInfo)
 {
     auto timestamp = ProfilerSupport::generateTimestamp();
     auto tid = ProfilerSupport::getCurrentThreadID();
@@ -217,13 +217,13 @@ void PerfLog::log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> c
             return;
         }
 
-        CString irFilePath;
+        UTF8CString irFilePath;
         Vector<std::pair<uint32_t, uint32_t>> lineEntries;
         struct SourceEntry {
             uint32_t codeOffset;
             uint32_t line;
             uint32_t column;
-            CString filePath;
+            UTF8CString filePath;
         };
         Vector<SourceEntry> sourceEntries;
 
@@ -232,25 +232,25 @@ void PerfLog::log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> c
 
             String filePath;
             FileSystem::FileHandle handle;
-            const CString& irDumpDir = logger.m_irDumpDirectory;
+            auto& irDumpDir = logger.m_irDumpDirectory;
             if (irDumpDir.isNull()) {
                 auto result = FileSystem::openTemporaryFile(baseName, ".txt"_s);
                 filePath = result.first;
                 handle = WTF::move(result.second);
             } else {
-                filePath = makeString(String::fromUTF8(irDumpDir.span()), FileSystem::pathSeparator, baseName, ".txt"_s);
+                filePath = makeString(irDumpDir, FileSystem::pathSeparator, baseName, ".txt"_s);
                 handle = FileSystem::openFile(filePath, FileSystem::FileOpenMode::Truncate);
             }
 
             if (handle) {
                 // Write sequential IR dump file from irLines.
                 for (auto& irLine : irDebugInfo->irLines) {
-                    CString line;
+                    UTF8CString line;
                     if (irLine.opName)
-                        line = toCString("  ", irLine.opName, "\n");
+                        line = toUTF8CString("  ", irLine.opName, "\n");
                     else
-                        line = toCString("BB#", irLine.blockIndex, "\n");
-                    handle.write(WTF::asByteSpan(line.span()));
+                        line = toUTF8CString("BB#", irLine.blockIndex, "\n");
+                    handle.write(asByteSpan(line.span()));
                 }
                 handle.flush();
                 irFilePath = FileSystem::fileSystemRepresentation(filePath);
@@ -262,9 +262,9 @@ void PerfLog::log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag> c
         }
 
         if (sourceCodeDebugInfo) {
-            const CString& sourceCodeDumpDir = logger.m_sourceCodeDumpDirectory;
+            auto& sourceCodeDumpDir = logger.m_sourceCodeDumpDirectory;
             for (auto& entry : sourceCodeDebugInfo->codeEntries) {
-                CString filePath = protect(entry.sourceProvider)->sourceCodeDumpFilePath(sourceCodeDumpDir);
+                auto filePath = protect(entry.sourceProvider)->sourceCodeDumpFilePath(sourceCodeDumpDir);
                 if (!filePath.isNull())
                     sourceEntries.append({ entry.codeOffset, entry.lineColumn.line, entry.lineColumn.column, WTF::move(filePath) });
             }

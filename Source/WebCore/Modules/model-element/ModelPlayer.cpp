@@ -175,8 +175,21 @@ void ModelPlayer::setCurrentTime(NodeIdentifier, Seconds, CompletionHandler<void
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
 
-void ModelPlayer::setEnvironmentMap(Ref<SharedBuffer>&&)
+void ModelPlayer::setEnvironmentMap(Ref<SharedBuffer>&&, const URL&)
 {
+}
+
+void ModelPlayer::disableEnvironmentMap()
+{
+}
+
+void ModelPlayer::enableSystemEnvironmentMap()
+{
+}
+
+String ModelPlayer::environmentMapForTesting() const
+{
+    return "auto"_s;
 }
 
 #endif
@@ -191,11 +204,15 @@ void ModelPlayer::setHasPortal(bool)
 
 #if ENABLE(SPATIAL_PORTAL)
 
-void ModelPlayer::setPortalTransform(PortalTransformKind)
+void ModelPlayer::setPortalTransform(const UsedPortalTransform&)
 {
 }
 
 void ModelPlayer::setPortalAction(PortalActionKind)
+{
+}
+
+void ModelPlayer::setAnchor(NodeIdentifier, std::optional<NodeIdentifier>, const String&)
 {
 }
 

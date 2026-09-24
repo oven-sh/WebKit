@@ -872,6 +872,26 @@ Ref<StringImpl> StringImpl::trim(CodeUnitMatchFunction predicate)
 
 template<typename CharacterType, class CodeUnitPredicate> inline Ref<StringImpl> StringImpl::simplifyMatchedCharactersToSpace(CodeUnitPredicate predicate)
 {
+    // Return *this without allocating unless simplification is actually needed.
+    {
+        auto characters = span<CharacterType>();
+        bool previousWasMatch = true; // Seeded true so a leading matched character counts as a run.
+        bool needsSimplification = false;
+        for (auto character : characters) {
+            if (predicate(character)) {
+                if (character != ' ' || previousWasMatch) {
+                    needsSimplification = true;
+                    break;
+                }
+                previousWasMatch = true;
+            } else
+                previousWasMatch = false;
+        }
+        // A trailing matched character (previousWasMatch still set) also needs simplification.
+        if (!needsSimplification && (!previousWasMatch || characters.empty()))
+            return *this;
+    }
+
     StringBuffer<CharacterType> data(m_length);
 
     auto from = span<CharacterType>();
@@ -1582,6 +1602,31 @@ size_t NODELETE StringImpl::sizeInBytes() const
     return size + sizeof(*this);
 }
 
+template<typename CharacterType> static ASCIICString asciiForCharactersInternal(std::span<const CharacterType> characters)
+{
+    // Printable ASCII characters 32..127 and the null character are
+    // preserved, characters outside of this range are converted to '?'.
+
+    std::span<char> characterBuffer;
+    auto result = ASCIICString::newUninitialized(characters.size(), characterBuffer);
+
+    size_t characterBufferIndex = 0;
+    for (auto character : characters)
+        characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : static_cast<char>(character);
+
+    return result;
+}
+
+ASCIICString StringImpl::asciiForCharacters(std::span<const Latin1Character> characters)
+{
+    return asciiForCharactersInternal(characters);
+}
+
+ASCIICString StringImpl::asciiForCharacters(std::span<const char16_t> characters)
+{
+    return asciiForCharactersInternal(characters);
+}
+
 std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const Latin1Character> source)
 {
     return tryGetUTF8ForCharacters([] (std::span<const char8_t> converted) {
@@ -1641,7 +1686,7 @@ std::expected<UTF8CString, UTF8ConversionError> StringImpl::tryGetUTF8(Conversio
     return utf8ForCharacters(span16(), mode);
 }
 
-CString StringImpl::utf8(ConversionMode mode) const
+UTF8CString StringImpl::utf8(ConversionMode mode) const
 {
     auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);

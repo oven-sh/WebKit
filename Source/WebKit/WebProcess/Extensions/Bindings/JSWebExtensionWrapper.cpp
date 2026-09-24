@@ -38,6 +38,7 @@
 #include <JavaScriptCore/JSClassRef.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObjectRef.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JSWeakObjectMapRefPrivate.h>
 #include <WebCore/JSDOMExceptionHandling.h>
 #include <WebCore/JSDOMGlobalObject.h>
@@ -123,7 +124,7 @@ JSValueRef callWithArguments(JSObjectRef callbackFunction, JSRetainPtr<JSGlobalC
     if (exception) {
         JSC::JSLockHolder lock(globalObject->vm());
         auto exceptionValue = toJS(globalObject, exception);
-        RELEASE_LOG_ERROR(Extensions, "Uncaught exception in extension callback: %" PUBLIC_LOG_STRING, exceptionValue.toWTFString(globalObject).utf8().data());
+        RELEASE_LOG_ERROR(Extensions, "Uncaught exception in extension callback: %" PUBLIC_LOG_STRING, exceptionValue.toWTFString(globalObject).utf8());
         WebCore::reportException(globalObject, exceptionValue);
     }
 
@@ -144,7 +145,7 @@ void WebExtensionCallbackHandler::reportError(const String& message)
     if (!m_rejectFunction)
         return;
 
-    RELEASE_LOG_ERROR(Extensions, "Promise rejected: %" PUBLIC_LOG_STRING, message.utf8().data());
+    RELEASE_LOG_ERROR(Extensions, "Promise rejected: %" PUBLIC_LOG_STRING, message.utf8());
 
     // This is a safer cpp false positive (rdar://163760990).
     SUPPRESS_UNCOUNTED_ARG JSValueRef messageValue = JSValueMakeString(m_globalContext.get(), toJSString(message).get());
@@ -230,9 +231,7 @@ String toString(JSStringRef string)
     if (!string)
         return nullString();
 
-    Vector<char> buffer(JSStringGetMaximumUTF8CStringSize(string));
-    JSStringGetUTF8CString(string, buffer.mutableSpan().data(), buffer.size());
-    return String::fromUTF8(buffer.span().data());
+    return String { utf8CString(string) };
 }
 
 JSValueRef toWindowObject(JSContextRef context, WebFrame& frame)
@@ -284,7 +283,7 @@ JSObjectRef toJSError(JSContextRef context, const String& string)
 {
     ASSERT(context);
 
-    RELEASE_LOG_ERROR(Extensions, "Exception thrown: %" PUBLIC_LOG_STRING, string.utf8().data());
+    RELEASE_LOG_ERROR(Extensions, "Exception thrown: %" PUBLIC_LOG_STRING, string.utf8());
 
     JSValueRef messageArgument = toJSValueRef(context, string, NullOrEmptyString::NullStringAsEmptyString);
 

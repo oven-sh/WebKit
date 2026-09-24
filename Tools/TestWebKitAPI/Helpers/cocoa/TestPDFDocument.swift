@@ -34,10 +34,8 @@ private import TestWebKitAPILibrary.Helpers.cocoa.TestPDFDocument
 
 #if WTF_PLATFORM_IOS_FAMILY
 import UIKit
-typealias CocoaColor = UIColor
 #else
 import AppKit
-typealias CocoaColor = NSColor
 #endif
 
 @objc

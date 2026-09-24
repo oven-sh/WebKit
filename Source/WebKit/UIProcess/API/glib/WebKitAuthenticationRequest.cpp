@@ -68,8 +68,8 @@ struct _WebKitAuthenticationRequestPrivate {
     bool privateBrowsingEnabled;
     bool persistentCredentialStorageEnabled;
     bool handledRequest;
-    CString host;
-    CString realm;
+    UTF8CString host;
+    UTF8CString realm;
     std::optional<WebCore::Credential> proposedCredential;
     std::optional<WebCore::Credential> acceptedCredential;
     std::optional<bool> canSaveCredentials;
@@ -320,7 +320,7 @@ const gchar* webkit_authentication_request_get_host(WebKitAuthenticationRequest*
 
     if (request->priv->host.isNull())
         request->priv->host = request->priv->authenticationChallenge->core().protectionSpace().host().utf8();
-    return request->priv->host.data();
+    return request->priv->host.legacyCStringPointer();
 }
 
 /**
@@ -395,7 +395,7 @@ const gchar* webkit_authentication_request_get_realm(WebKitAuthenticationRequest
 
     if (request->priv->realm.isNull())
         request->priv->realm = request->priv->authenticationChallenge->core().protectionSpace().realm().utf8();
-    return request->priv->realm.data();
+    return request->priv->realm.legacyCStringPointer();
 }
 
 /**
@@ -438,7 +438,7 @@ gboolean webkit_authentication_request_is_for_proxy(WebKitAuthenticationRequest*
  * webkit_authentication_request_is_retry:
  * @request: a #WebKitAuthenticationRequest
  *
- * Determine whether this this is a first attempt or a retry for this authentication challenge.
+ * Determine whether this is a first attempt or a retry for this authentication challenge.
  *
  * Returns: %TRUE if authentication attempt is a retry or %FALSE otherwise.
  *

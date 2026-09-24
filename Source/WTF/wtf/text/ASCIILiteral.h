@@ -79,7 +79,7 @@ public:
     constexpr std::span<const char> span() const { return m_charactersWithNullTerminator.first(length()); }
     std::span<const Latin1Character> span8() const { return byteCast<Latin1Character>(m_charactersWithNullTerminator.first(length())); }
     std::span<const char> spanIncludingNullTerminator() const { return m_charactersWithNullTerminator; }
-    bool isEmpty() const { return m_charactersWithNullTerminator.size() <= 1; }
+    constexpr bool isEmpty() const { return m_charactersWithNullTerminator.size() <= 1; }
 
     constexpr char operator[](size_t index) const { return m_charactersWithNullTerminator[index]; }
     constexpr char codeUnitAt(size_t index) const { return m_charactersWithNullTerminator[index]; }

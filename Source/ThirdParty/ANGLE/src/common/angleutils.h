@@ -35,9 +35,9 @@
 namespace angle
 {
 
-#if defined(ANGLE_ENABLE_D3D11)
+#if defined(ANGLE_PLATFORM_WINDOWS)
 using Microsoft::WRL::ComPtr;
-#endif  // defined(ANGLE_ENABLE_D3D11)
+#endif
 
 // Forward declaration. Implementation in system_utils.h
 using ThreadId = std::thread::id;
@@ -170,9 +170,13 @@ struct PerfMonitorTriplet
     FN(Wait)                                   \
     FN(Other)
 
-#define ANGLE_VK_API_PERF_COUNTER_TYPES_X(FN, ...) \
-    FN(WallTimeNs, ##__VA_ARGS__)                  \
-    FN(Samples, ##__VA_ARGS__)
+#define ANGLE_VK_API_PERF_COUNTER_TYPES_X(FN) \
+    FN(WallTimeNs)                            \
+    FN(Samples)
+
+#define ANGLE_VK_API_PERF_COUNTER_TYPES_WITH_PARAM_X(FN, PARAM) \
+    FN(WallTimeNs, PARAM)                                       \
+    FN(Samples, PARAM)
 
 #define ANGLE_DECLARE_PERF_COUNTER(COUNTER) uint64_t COUNTER;
 
@@ -245,26 +249,6 @@ class WrappedArray final : angle::NonCopyable
     const T *mArray = nullptr;
     size_t mSize    = 0;
 };
-
-template <typename T, unsigned int N>
-void SafeRelease(T (&resourceBlock)[N])
-{
-    for (unsigned int i = 0; i < N; i++)
-    {
-        // SAFETY: size deduced by compiler from template.
-        SafeRelease(ANGLE_UNSAFE_BUFFERS(resourceBlock[i]));
-    }
-}
-
-template <typename T>
-void SafeRelease(T &resource)
-{
-    if (resource)
-    {
-        resource->Release();
-        resource = nullptr;
-    }
-}
 
 template <typename T>
 void SafeDelete(T *&resource)

@@ -143,7 +143,7 @@ int main(int argc, char** argv)
     parseWPEArgs(argc, argv);
 #endif
 
-    g_set_prgname(FileSystem::currentExecutableName().data());
+    g_set_prgname(FileSystem::currentExecutableName().legacyCStringPointer());
     g_setenv("WEBKIT_EXEC_PATH", WEBKIT_EXEC_PATH, FALSE);
     g_setenv("WEBKIT_INJECTED_BUNDLE_PATH", WEBKIT_INJECTED_BUNDLE_PATH, FALSE);
     g_setenv("WEBKIT_INSPECTOR_RESOURCES_PATH", WEBKIT_INSPECTOR_RESOURCES_PATH, FALSE);

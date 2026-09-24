@@ -583,7 +583,7 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, nullptr);
     executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);
-    executables.set(key, Weak<ModuleProgramExecutable>(executable));
+    executables.set(key, executable);
     return executable;
 }
 

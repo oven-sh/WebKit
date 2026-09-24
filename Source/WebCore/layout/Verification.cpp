@@ -174,7 +174,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
     bool firstMismatchingRect = true;
     auto outputRect = [&] (ASCIILiteral prefix, const LayoutRect& rendererRect, const LayoutRect& layoutRect) {
         if (firstMismatchingRect) {
-            stream << (renderer.element() ? renderer.element()->nodeName().utf8().data() : "") << " " << renderer.renderName().characters() << "(" << &renderer << ") layoutBox(" << &layoutBox << ")";
+            stream << (renderer.element() ? renderer.element()->nodeName() : emptyString()) << " " << renderer.renderName() << "(" << &renderer << ") layoutBox(" << &layoutBox << ")";
             stream.nextLine();
             firstMismatchingRect = false;
         }
@@ -279,10 +279,10 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
     if (!areEssentiallyEqual(renderer.marginBoxRect(), renderBoxLikeMarginBox(boxGeometry))) {
         // In certain cases, like out-of-flow boxes with margin auto, marginBoxRect() returns 0. It's clearly incorrect,
         // so let's check the individual margin values instead (and at this point we know that all other boxes match).
-        auto marginsMatch = boxGeometry.marginBefore() == renderer.marginBefore()
-            && boxGeometry.marginAfter() == renderer.marginAfter()
-            && boxGeometry.marginStart() == renderer.marginStart()
-            && boxGeometry.marginEnd() == renderer.marginEnd();
+        auto marginsMatch = boxGeometry.marginBefore() == renderer.marginBefore(renderer.writingMode())
+            && boxGeometry.marginAfter() == renderer.marginAfter(renderer.writingMode())
+            && boxGeometry.marginStart() == renderer.marginStart(renderer.writingMode())
+            && boxGeometry.marginEnd() == renderer.marginEnd(renderer.writingMode());
 
         if (!marginsMatch) {
             outputRect("marginBox"_s, renderer.marginBoxRect(), renderBoxLikeMarginBox(boxGeometry));
@@ -352,7 +352,7 @@ void LayoutContext::verifyAndOutputMismatchingLayoutTree(const LayoutState& layo
     showRenderTree(&rootRenderer);
     showLayoutTree(downcast<InitialContainingBlock>(layoutRoot), &layoutState);
 #endif
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
     ASSERT_NOT_REACHED();
 }
 

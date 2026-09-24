@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/CSSCounterStyleDescriptors.h>
+#include <WebCore/StyleCounterStyle.h>
 #include <WebCore/WritingMode.h>
 #include <wtf/Forward.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
@@ -39,6 +40,7 @@ class StyleRuleCounterStyle;
 class CSSRegisteredCounterStyle : public RefCountedAndCanMakeWeakPtr<CSSRegisteredCounterStyle> {
 public:
     static Ref<CSSRegisteredCounterStyle> create(const CSSCounterStyleDescriptors&, bool isPredefinedCounterStyle);
+    static Ref<CSSRegisteredCounterStyle> create(const Style::SymbolsFunction&);
 
     bool operator==(const CSSRegisteredCounterStyle& other) const
     {
@@ -81,10 +83,15 @@ public:
     bool isExtendsSystem() const { return system() == CSSCounterStyleDescriptors::System::Extends; }
     void extendAndResolve(const CSSRegisteredCounterStyle&);
 
-    static String counterForSystemSimplifiedChineseInformal(int);
-    static String counterForSystemSimplifiedChineseFormal(int);
-    static String counterForSystemTraditionalChineseInformal(int);
-    static String counterForSystemTraditionalChineseFormal(int);
+    static String counterForSystemSimplifiedChineseInformal(unsigned);
+    static String counterForSystemSimplifiedChineseFormal(unsigned);
+    static String counterForSystemTraditionalChineseInformal(unsigned);
+    static String counterForSystemTraditionalChineseFormal(unsigned);
+    static String counterForSystemJapaneseInformal(unsigned);
+    static String counterForSystemJapaneseFormal(unsigned);
+    static String counterForSystemKoreanHangulFormal(unsigned);
+    static String counterForSystemKoreanHanjaInformal(unsigned);
+    static String counterForSystemKoreanHanjaFormal(unsigned);
     static String counterForSystemEthiopicNumeric(unsigned);
     static String counterForSystemDisclosureClosed(WritingMode);
     static String counterForSystemDisclosureOpen(WritingMode);

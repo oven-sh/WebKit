@@ -250,10 +250,6 @@ egl::Error DisplayCGL::initialize(egl::Display *display)
         return egl::Error(EGL_NOT_INITIALIZED, "OpenGL ES 2.0 is not supportable.");
     }
 
-    auto &attributes = display->getAttributeMap();
-    mDeviceContextIsVolatile =
-        attributes.get(EGL_PLATFORM_ANGLE_DEVICE_CONTEXT_VOLATILE_CGL_ANGLE, GL_FALSE);
-
     return DisplayGL::initialize(display);
 }
 
@@ -280,25 +276,6 @@ void DisplayCGL::terminate()
         mDiscreteGPUPixelFormat   = nullptr;
         mLastDiscreteGPUUnrefTime = 0.0;
     }
-}
-
-egl::Error DisplayCGL::prepareForCall()
-{
-    if (!mContext)
-    {
-        return egl::Error(EGL_NOT_INITIALIZED, "Context not allocated.");
-    }
-    auto threadId = angle::GetCurrentThreadUniqueId();
-    if (mDeviceContextIsVolatile ||
-        mThreadsWithCurrentContext.find(threadId) == mThreadsWithCurrentContext.end())
-    {
-        if (CGLSetCurrentContext(mContext) != kCGLNoError)
-        {
-            return egl::Error(EGL_BAD_ALLOC, "Could not make device CGL context current.");
-        }
-        mThreadsWithCurrentContext.insert(threadId);
-    }
-    return egl::NoError();
 }
 
 egl::Error DisplayCGL::releaseThread()
@@ -529,10 +506,7 @@ egl::Error DisplayCGL::waitNative(const gl::Context *context, EGLint engine)
 
 egl::Error DisplayCGL::waitUntilWorkScheduled()
 {
-    for (auto context : mState.contextMap)
-    {
-        context.second->flush();
-    }
+    mState.contextMap.forEach([](gl::Context *context) { context->flush(); });
     return egl::NoError();
 }
 

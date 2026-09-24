@@ -91,7 +91,7 @@ namespace IntlDateTimeFormatInternal {
 static constexpr bool verbose = false;
 }
 
-static std::unique_ptr<UDateFormat, UDateFormatDeleter> openDateFormat(const CString& dataLocale, const String& timeZone, std::span<const char16_t> pattern, UErrorCode& status)
+static std::unique_ptr<UDateFormat, UDateFormatDeleter> openDateFormat(const ASCIICString& dataLocale, const String& timeZone, std::span<const char16_t> pattern, UErrorCode& status)
 {
     auto timeZoneView = StringView(timeZone).upconvertedCharacters();
     auto* dateFormat = udat_open(UDAT_PATTERN, UDAT_PATTERN, dataLocale.data(), timeZoneView.get(), timeZone.length(), pattern.data(), pattern.size(), &status);
@@ -195,13 +195,13 @@ Vector<String> IntlDateTimeFormat::localeData(const String& locale, RelevantExte
     switch (key) {
     case RelevantExtensionKey::Ca: {
         UErrorCode status = U_ZERO_ERROR;
-        auto calendars = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_getKeywordValuesForLocale("calendar", locale.utf8().data(), false, &status));
+        auto calendars = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_getKeywordValuesForLocale("calendar", locale.ascii().data(), false, &status));
         ASSERT(U_SUCCESS(status));
 
         int32_t nameLength;
         while (const char* availableName = uenum_next(calendars.get(), &nameLength, &status)) {
             ASSERT(U_SUCCESS(status));
-            String calendar = String(unsafeMakeSpan(availableName, static_cast<size_t>(nameLength)));
+            String calendar = String::fromLatin1(unsafeMakeSpan(availableName, static_cast<size_t>(nameLength)));
             // Adding "islamicc" candidate for backward compatibility.
             if (calendar == "islamic-civil"_s)
                 keyLocaleData.append("islamicc"_s);
@@ -341,7 +341,6 @@ void IntlDateTimeFormat::setFormatsFromPattern(IntlDateTimeFormatImpl& impl, Str
             else if (count == 2)
                 impl.m_day = Day::TwoDigit;
             break;
-        case 'a':
         case 'b':
         case 'B':
             if (count <= 3)
@@ -846,8 +845,8 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
         if (!impl->m_numberingSystem.isNull())
             localeBuilder.append("-nu-"_s, impl->m_numberingSystem);
     }
-    impl->m_dataLocaleWithExtensions = localeBuilder.toString().utf8();
-    const CString& dataLocaleWithExtensions = impl->m_dataLocaleWithExtensions;
+    impl->m_dataLocaleWithExtensions = localeBuilder.toString().ascii();
+    const ASCIICString& dataLocaleWithExtensions = impl->m_dataLocaleWithExtensions;
 
     JSValue tzValue = jsUndefined();
     if (options) {
@@ -1752,7 +1751,7 @@ UDateIntervalFormat* IntlDateTimeFormat::createDateIntervalFormatIfNecessary(JSG
         if (m_impl->m_hourCycle != HourCycle::None)
             localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
     }
-    CString dataLocaleWithExtensions = localeBuilder.toString().utf8();
+    auto dataLocaleWithExtensions = localeBuilder.toString().ascii();
 
     UErrorCode status = U_ZERO_ERROR;
     String timeZoneForICU = m_impl->m_timeZone.toICUString();
@@ -2637,7 +2636,7 @@ IntlDateTimeFormat::createTemporalIntervalFormat(UDateFormat* tempFormat, Tempor
     localeBuilder.append(m_impl->m_dataLocale, "-u-ca-"_s, ensureCalendar(), "-nu-"_s, ensureNumberingSystem());
     if (m_impl->m_hourCycle != HourCycle::None)
         localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
-    CString localeWithExt = localeBuilder.toString().utf8();
+    auto localeWithExt = localeBuilder.toString().ascii();
 
     return std::unique_ptr<UDateIntervalFormat, UDateIntervalFormatDeleter>(
         udtitvfmt_open(localeWithExt.data(), tempSkeleton.span().data(), tempSkeleton.size(),

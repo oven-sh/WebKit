@@ -28,11 +28,12 @@
 #include "EventInit.h"
 #include "GPUError.h"
 #include "WebGPUUncapturedErrorEventInit.h"
+#include <wtf/Ref.h>
 
 namespace WebCore {
 
 struct GPUUncapturedErrorEventInit : public EventInit {
-    GPUError error;
+    Ref<GPUError> error;
 };
 
 }

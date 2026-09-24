@@ -64,7 +64,7 @@ std::optional<Exception> MockMediaSessionCoordinator::result() const
 
 void MockMediaSessionCoordinator::join(CompletionHandler<void(std::optional<Exception>&&)>&& callback)
 {
-    m_context->postTask([this, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
+    m_context->postTask([this, protectedThis = Ref { *this }, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
         callback(result());
     });
 }
@@ -76,7 +76,7 @@ void MockMediaSessionCoordinator::leave()
 void MockMediaSessionCoordinator::seekTo(double time, CompletionHandler<void(std::optional<Exception>&&)>&& callback)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, time);
-    m_context->postTask([this, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
+    m_context->postTask([this, protectedThis = Ref { *this }, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
         callback(result());
     });
 }
@@ -84,7 +84,7 @@ void MockMediaSessionCoordinator::seekTo(double time, CompletionHandler<void(std
 void MockMediaSessionCoordinator::play(CompletionHandler<void(std::optional<Exception>&&)>&& callback)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    m_context->postTask([this, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
+    m_context->postTask([this, protectedThis = Ref { *this }, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
         callback(result());
     });
 }
@@ -92,7 +92,7 @@ void MockMediaSessionCoordinator::play(CompletionHandler<void(std::optional<Exce
 void MockMediaSessionCoordinator::pause(CompletionHandler<void(std::optional<Exception>&&)>&& callback)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    m_context->postTask([this, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
+    m_context->postTask([this, protectedThis = Ref { *this }, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
         callback(result());
     });
 }
@@ -100,7 +100,7 @@ void MockMediaSessionCoordinator::pause(CompletionHandler<void(std::optional<Exc
 void MockMediaSessionCoordinator::setTrack(const String&, CompletionHandler<void(std::optional<Exception>&&)>&& callback)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    m_context->postTask([this, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
+    m_context->postTask([this, protectedThis = Ref { *this }, callback = WTF::move(callback)] (ScriptExecutionContext&) mutable {
         callback(result());
     });
 }
@@ -108,25 +108,25 @@ void MockMediaSessionCoordinator::setTrack(const String&, CompletionHandler<void
 void MockMediaSessionCoordinator::positionStateChanged(const std::optional<MediaPositionState>&)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    m_stateChangeListener->scheduleCallback(m_context.get(), "positionStateChanged"_s);
+    protect(m_stateChangeListener)->scheduleCallback(m_context.get(), "positionStateChanged"_s);
 }
 
 void MockMediaSessionCoordinator::readyStateChanged(MediaSessionReadyState state)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, state);
-    m_stateChangeListener->scheduleCallback(m_context.get(), "readyStateChanged"_s);
+    protect(m_stateChangeListener)->scheduleCallback(m_context.get(), "readyStateChanged"_s);
 }
 
 void MockMediaSessionCoordinator::playbackStateChanged(MediaSessionPlaybackState state)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, state);
-    m_stateChangeListener->scheduleCallback(m_context.get(), "playbackStateChanged"_s);
+    protect(m_stateChangeListener)->scheduleCallback(m_context.get(), "playbackStateChanged"_s);
 }
 
 void MockMediaSessionCoordinator::trackIdentifierChanged(const String& identifier)
 {
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, identifier);
-    m_stateChangeListener->scheduleCallback(m_context.get(), "trackIdentifierChanged"_s);
+    protect(m_stateChangeListener)->scheduleCallback(m_context.get(), "trackIdentifierChanged"_s);
 }
 
 WTFLogChannel& MockMediaSessionCoordinator::logChannel() const

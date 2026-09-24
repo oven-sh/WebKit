@@ -204,10 +204,10 @@ RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* c
     auto mimeType = parseMIMEType(contentType);
     if (auto multipartBoundary = parseMultipartBoundary(mimeType)) {
         auto boundaryWithDashes = makeString("--"_s, *multipartBoundary);
-        CString boundary = boundaryWithDashes.utf8();
+        auto boundary = boundaryWithDashes.utf8();
         size_t boundaryLength = boundary.length();
 
-        size_t currentBoundaryIndex = find(data, boundary.span());
+        size_t currentBoundaryIndex = find(data, byteCast<uint8_t>(boundary.span()));
         if (currentBoundaryIndex == notFound)
             return nullptr;
 
@@ -221,7 +221,7 @@ RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* c
             return nullptr;
 
         size_t nextBoundaryIndex;
-        while ((nextBoundaryIndex = find(data, boundary.span())) != notFound) {
+        while ((nextBoundaryIndex = find(data, byteCast<uint8_t>(boundary.span()))) != notFound) {
             parseMultipartPart(data.first(nextBoundaryIndex - oneNewLine.length()), form.get());
             currentBoundaryIndex = nextBoundaryIndex;
             skip(data, nextBoundaryIndex + boundaryLength);

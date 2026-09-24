@@ -31,6 +31,7 @@ set(libangle_common_headers
     "src/common/angleutils.h"
     "src/common/apple_platform_utils.h"
     "src/common/backtrace_utils.h"
+    "src/common/com_utils.h"
     "src/common/base/anglebase/base_export.h"
     "src/common/base/anglebase/containers/mru_cache.h"
     "src/common/base/anglebase/logging.h"
@@ -128,6 +129,13 @@ if(is_linux OR is_chromeos OR is_android OR is_fuchsia)
     list(APPEND libangle_common_sources
         "src/common/system_utils_linux.cpp"
         "src/common/system_utils_posix.cpp"
+    )
+endif()
+
+if(is_linux OR is_chromeos)
+    list(APPEND libangle_common_sources
+        "src/common/linux/window_system.cpp"
+        "src/common/linux/window_system.h"
     )
 endif()
 
@@ -298,6 +306,7 @@ set(libangle_headers
     "src/libANGLE/MemoryObject.h"
     "src/libANGLE/MemoryProgramCache.h"
     "src/libANGLE/MemoryShaderCache.h"
+    "src/libANGLE/ObjectMap.h"
     "src/libANGLE/Observer.h"
     "src/libANGLE/PixelLocalStorage.h"
     "src/libANGLE/Program.h"
@@ -586,6 +595,7 @@ set(libangle_mac_sources "src/libANGLE/renderer/driver_utils_mac.mm")
 
 list(APPEND libangle_sources
     "src/common/frame_capture_binary_data.h"
+    "src/common/frame_capture_shared.h"
     "src/common/frame_capture_utils.h"
     "src/common/frame_capture_utils_autogen.h"
     "src/common/gl_enum_utils.h"
