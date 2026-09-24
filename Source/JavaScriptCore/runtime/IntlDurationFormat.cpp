@@ -131,12 +131,13 @@ static IntlDurationFormat::UnitData intlDurationUnitOptions(JSGlobalObject* glob
             if (unit != TemporalUnit::Hour && unit != TemporalUnit::Minute && unit != TemporalUnit::Second)
                 displayDefault = IntlDurationFormat::Display::Auto;
             style = digitalBase;
+        } else if (prevStyle && (prevStyle.value() == IntlDurationFormat::UnitStyle::Numeric || prevStyle.value() == IntlDurationFormat::UnitStyle::TwoDigit)) {
+            if (unit != TemporalUnit::Minute && unit != TemporalUnit::Second)
+                displayDefault = IntlDurationFormat::Display::Auto;
+            style = IntlDurationFormat::UnitStyle::Numeric;
         } else {
             displayDefault = IntlDurationFormat::Display::Auto;
-            if (prevStyle && (prevStyle.value() == IntlDurationFormat::UnitStyle::Numeric || prevStyle.value() == IntlDurationFormat::UnitStyle::TwoDigit))
-                style = IntlDurationFormat::UnitStyle::Numeric;
-            else
-                style = static_cast<IntlDurationFormat::UnitStyle>(baseStyle);
+            style = static_cast<IntlDurationFormat::UnitStyle>(baseStyle);
         }
     }
 
