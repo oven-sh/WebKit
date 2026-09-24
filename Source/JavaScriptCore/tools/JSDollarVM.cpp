@@ -2264,6 +2264,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
+static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfCaller);
+static JSC_DECLARE_HOST_FUNCTION(functionNothing);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4210,6 +4212,28 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
+// $vm.ownerOfCaller(): the first of the `bindings` of the $vm.createModuleLoader() loader whose module the calling
+// script is of (undefined for the global object's own loader): what the script's scope chain ends in.
+JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    JSScope* outermost = nullptr;
+    for (JSScope* scope = CallFrame::scopeOfClosestScript(globalObject->vm()); scope && scope->type() != GlobalLexicalEnvironmentType && !scope->isGlobalObject(); scope = scope->next())
+        outermost = scope;
+    if (!outermost || outermost->type() != LexicalEnvironmentType)
+        return JSValue::encode(jsUndefined());
+    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(outermost);
+    if (!environment->symbolTable()->scopeSize())
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(environment->variableAt(ScopeOffset(0)).get());
+}
+
+// $vm.nothing(): a host function that does nothing, to measure the others against.
+JSC_DEFINE_HOST_FUNCTION(functionNothing, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -5964,6 +5988,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
+    addFunction(vm, allowIfNotFuzz, "ownerOfCaller"_s, functionOwnerOfCaller, 0);
+    addFunction(vm, allowIfNotFuzz, "nothing"_s, functionNothing, 0);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
