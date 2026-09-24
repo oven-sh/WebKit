@@ -20,3 +20,5 @@ export function calls(f) { const owner = f(); return owner; }
 export function small() { const owner = $vm.ownerOfCaller(); return owner; }
 export function bound() { return plain.bind(null); }
 export function directEval() { const owner = eval("$vm.ownerOfCaller()"); return owner; }
+// What is run as a job was not called by this script.
+export function runsAsJob(f) { const owner = $vm.runAsJob(f); return owner; }

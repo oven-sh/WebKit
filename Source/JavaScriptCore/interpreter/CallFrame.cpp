@@ -200,7 +200,8 @@ JSScope* CallFrame::scopeOfClosestScript(VM& vm)
         return codeBlock->codeType() != CodeType::FunctionCode || !static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->isBuiltinFunction();
     };
     EntryFrame* entryFrame = vm.topEntryFrame;
-    for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame(entryFrame)) {
+    CallFrame* startedTheJob = vm.frameThatStartedTheRunningJob();
+    for (CallFrame* frame = vm.topCallFrame; frame && frame != startedTheJob; frame = frame->callerFrame(entryFrame)) {
         if (frame->isNativeCalleeFrame())
             continue;
         CodeBlock* codeBlock = frame->codeBlock();

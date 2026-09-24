@@ -534,6 +534,7 @@ public:
     bool m_mightBeExecutingTaintedCode { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
+    CallFrame* m_frameThatStartedTheRunningJob { nullptr };
 #endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -669,6 +670,12 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
+    // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it
+    // said so: that frame and the ones that called it are not the script that is calling
+    // (CallFrame::scopeOfClosestScript()), what the job calls is. Null: every frame may be.
+    CallFrame* frameThatStartedTheRunningJob() const { return m_frameThatStartedTheRunningJob; }
+    // The embedder starts a job (returns what to put back when it has run), or puts back.
+    CallFrame* exchangeFrameThatStartedTheRunningJob(CallFrame* frame) { return std::exchange(m_frameThatStartedTheRunningJob, frame); }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }

@@ -10,6 +10,8 @@ const G = await import("./script-scope-of-caller/code.js");
 const all = [[A, "A"], [B, "B"], [G, undefined]];
 
 function globalAsks() { const owner = $vm.ownerOfCaller(); return owner; }
+// A script of no loader's that has scopes of its own: they are not taken for a loader's.
+const hostScriptAsks = (0, eval)("(function () { let captured = { }; return (() => { const owner = $vm.ownerOfCaller(); return [owner, captured][0]; })(); })");
 function globalCalls(f) { const owner = f(); return owner; }
 
 for (const [m, owner] of all)
@@ -35,6 +37,11 @@ for (let i = 0; i < testLoopCount; ++i) {
         shouldBe(B.calls(m.small), owner);
         shouldBe(m.calls(A.small), "A");
         shouldBe(m.calls(globalAsks), undefined);
+        shouldBe(m.calls(hostScriptAsks), undefined);
+        // A job's script is calling; what started the job is not.
+        shouldBe(m.runsAsJob(A.plain), "A");
+        shouldBe(m.runsAsJob(globalAsks), undefined);
+        shouldBe(m.runsAsJob($vm.ownerOfCaller), undefined);
     }
 }
 
