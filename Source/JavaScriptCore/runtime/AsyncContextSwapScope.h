@@ -54,12 +54,12 @@ namespace JSC {
 // (VM::isAsyncContextTrackingEnabled) nothing can have been captured, so every
 // entry point here reduces to that flag test.
 //
-// There are three of them. AsyncContextWithOwnerSwapScope is the one to use: it looks for an
-// owner once owners are tracked (VM::isAsyncContextOwnerTracked()). The other two are for what
-// runs a VM's jobs, which is one of two functions (VM::internalMicrotaskRunner()):
-// AsyncContextSwapScope knows nothing of owners, and is runInternalMicrotask()'s, which runs the
-// jobs until owners are tracked, so that what runs the jobs of a program that has no owner is
-// what ran them before there were owners; AsyncContextOwnedSwapScope is
+// There are three of them. AsyncContextSwapScope is the one to use: it looks for an owner once
+// owners are tracked (VM::isAsyncContextOwnerTracked()). The other two are for what runs a VM's
+// jobs, which is one of two functions (VM::internalMicrotaskRunner()):
+// AsyncContextSwapScopeWithoutOwner knows nothing of owners, and is runInternalMicrotask()'s,
+// which runs the jobs until owners are tracked, so that what runs the jobs of a program that has
+// no owner is what ran them before there were owners; AsyncContextSwapScopeWithOwner is
 // runInternalMicrotaskWithOwner()'s, which runs them from then on.
 enum class AsyncContextOwner : uint8_t {
     Never,
@@ -241,9 +241,9 @@ private:
     NO_UNIQUE_ADDRESS std::conditional_t<mayHaveOwner, JSValue, Nothing> m_restoreOwner;
 };
 
-using AsyncContextSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::Never>;
-using AsyncContextWithOwnerSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::IfTracked>;
-using AsyncContextOwnedSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::Tracked>;
+using AsyncContextSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::IfTracked>;
+using AsyncContextSwapScopeWithoutOwner = AsyncContextSwapScopeFor<AsyncContextOwner::Never>;
+using AsyncContextSwapScopeWithOwner = AsyncContextSwapScopeFor<AsyncContextOwner::Tracked>;
 
 } // namespace JSC
 

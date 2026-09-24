@@ -1333,7 +1333,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     // An embedder reports an exception nobody caught after the async context it was thrown in has
     // been restored. Rethrowing keeps the context of the first throw.
     if (isAsyncContextTrackingEnabled() && !exceptionToThrow->asyncContext())
-        exceptionToThrow->setAsyncContext(*this, AsyncContextWithOwnerSwapScope::current(*this, globalObject));
+        exceptionToThrow->setAsyncContext(*this, AsyncContextSwapScope::current(*this, globalObject));
 #endif
 
     setException(exceptionToThrow);

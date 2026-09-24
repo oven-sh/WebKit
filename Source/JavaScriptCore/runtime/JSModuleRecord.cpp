@@ -297,7 +297,7 @@ void JSModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capability
     // The first await of a module with top-level await captures the current async context
     // after the body returns (asyncModuleResolveEvaluation below), so the loader's context
     // spans that too; AsyncModuleExecutionResume then restores what each await captured.
-    std::optional<AsyncContextWithOwnerSwapScope> loaderAsyncContext;
+    std::optional<AsyncContextSwapScope> loaderAsyncContext;
     if (JSValue asyncContext = moduleLoader()->asyncContext())
         loaderAsyncContext.emplace(vm, globalObject, asyncContext);
 #endif

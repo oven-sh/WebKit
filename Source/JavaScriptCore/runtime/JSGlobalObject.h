@@ -784,7 +784,7 @@ public:
     DECLARE_EXPORT_INFO;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // What is captured (AsyncContextWithOwnerSwapScope::current()) when there are both an async context and an
+    // What is captured (AsyncContextSwapScope::current()) when there are both an async context and an
     // owner.
     JS_EXPORT_PRIVATE JSValue capturedAsyncContextWithOwner(VM&, JSValue asyncContext, JSValue owner);
     bool isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }

@@ -28,17 +28,14 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 // runInternalMicrotaskWithOwner(): what runs a VM's jobs once async code has owners
-// (VM::internalMicrotaskRunner()). It is runInternalMicrotask() with the scope that knows of owners, and is
-// made by compiling JSMicrotask.cpp again with that scope in place of the other, so that JSMicrotask.cpp itself,
+// (VM::internalMicrotaskRunner()). It is runInternalMicrotask() with the scope that knows of owners
+// (MicrotaskAsyncContextSwapScope), and is made by compiling JSMicrotask.cpp again, so that JSMicrotask.cpp itself,
 // which runs the jobs of every program that has no owner, is compiled to what it was before there were owners.
 // What else JSMicrotask.cpp defines is made again with it, under another name, for this one to call.
 
-#include "AsyncContextSwapScope.h"
 #include "JSMicrotask.h"
 
 #define JSC_MICROTASK_RUNNER_HAS_OWNER 1
-#define AsyncContextSwapScope AsyncContextOwnedSwapScope
-#define AsyncContextWithOwnerSwapScope AsyncContextOwnedSwapScope
 #define runInternalMicrotask runInternalMicrotaskWithOwner
 #define asyncGeneratorAwaitReturn asyncGeneratorAwaitReturnWithOwner
 #define asyncGeneratorResume asyncGeneratorResumeWithOwner
