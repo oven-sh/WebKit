@@ -1672,8 +1672,10 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
     call(globalObject, resolve, jsUndefined(), ArgList { arguments.data(), arguments.size() }, "resolve is not a function"_s);
 }
 
-static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status)
+// `madeFor`: the handler the reaction did have, that `then` made the promise for.
+static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status, const JSValue& madeFor)
 {
+    UNUSED_PARAM(madeFor);
     if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) [[likely]] {
         switch (status) {
         case JSPromise::Status::Pending:
@@ -1683,6 +1685,9 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
+#if USE(BUN_JSC_ADDITIONS)
+            promise->setMadeFor(vm, madeFor);
+#endif
             promise->rejectPromise(vm, resolution);
             break;
         }
@@ -1892,7 +1897,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
-        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload), arguments[2]));
     }
 
     case InternalMicrotask::PromiseFulfillWithoutHandlerJob: {
@@ -2005,6 +2010,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (error) {
             if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
                 scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+                // (`then` made the promise for the handler.)
+                promise->setMadeFor(vm, arguments[1]);
+#endif
                 promise->rejectPromise(vm, error);
                 return;
             }
@@ -2022,7 +2031,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
         if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
             scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+            promise->resolvePromiseOfReaction(vm, result, arguments[1]);
+#else
             promise->resolvePromise(promise->realm(), vm, result);
+#endif
             return;
         }
 

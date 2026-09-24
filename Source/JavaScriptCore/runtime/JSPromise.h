@@ -125,18 +125,26 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // The function this promise was made for, for the embedder to say whose a rejection that nothing handles is:
     // the executor it was constructed with, the handler `then`, `catch` or `finally` made it for, the async
-    // function it is of. Keeping it costs nothing: it is written where a promise that nothing has been done with
-    // would have nothing (m_slot, where its value will go), and rejectPromise() writes it where a rejected
-    // promise would have nothing (where its reactions were). A promise that has a reaction, or is fulfilled, or
-    // was made for no function (Promise.withResolvers(), the combinators, Promise.reject()) has none.
+    // function it is of. It is written where a promise that nothing has been done with would have nothing
+    // (m_slot, where its value will go), and rejectPromise() writes it where a rejected promise would have
+    // nothing (where its reactions were):
+    // - the executor, and the handler of `finally`, when the promise is made, as nothing will have them when it
+    //   is rejected,
+    // - the handler of `then` and `catch`, and an async function, by what is about to reject the promise, or to
+    //   resolve it with a thenable, and has the function at hand.
+    // A promise that has a reaction, or is fulfilled, or was made for no function (Promise.withResolvers(), the
+    // combinators, Promise.reject()) has none.
     JSCell* madeFor() const;
     JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);
+    static JSPromise* createMadeForInline(VM&, Structure*, JSValue function);
     // For what is about to reject a promise that was not made with its function, or to resolve it with a
     // promise. (A promise that something handles, or that has its function, keeps what it has.)
     void setMadeFor(VM&, JSValue function);
     // resolve(), for the promise of an async function whose body has returned. It takes what its caller has at
     // hand and nothing more, so that resolving costs what it did.
     static void resolveOfAsyncFunction(JSGlobalObject*, VM&, JSAsyncFunctionGenerator*, JSValue);
+    // resolvePromise(), for the promise `then` made for `handler`, when the handler has returned.
+    void resolvePromiseOfReaction(VM&, JSValue, const JSValue& handler);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)

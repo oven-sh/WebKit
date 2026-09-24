@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#include "JSPromiseInlines.h"
+
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
@@ -83,9 +85,7 @@ JSPromise::JSPromise(VM& vm, Structure* structure, JSValue madeFor)
 
 JSPromise* JSPromise::createMadeFor(VM& vm, Structure* structure, JSValue function)
 {
-    JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure, function);
-    promise->finishCreation(vm);
-    return promise;
+    return createMadeForInline(vm, structure, function);
 }
 
 JSCell* JSPromise::madeFor() const
@@ -482,7 +482,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, onFulfilled);
         markAsHandled();
         break;
     }
@@ -533,7 +533,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (rejectedCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, onFulfilled);
         markAsHandled();
         break;
     }
@@ -720,7 +720,7 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
     if (settledIsFulfilled == handlerIsFulfill)
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(newStatus), resultPromise, handler, argument);
     else
-        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, jsUndefined());
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, handler);
 }
 
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
@@ -866,6 +866,13 @@ void JSPromise::resolveOfAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSA
             promise.setMadeFor(vm, generator->next());
         });
     }
+}
+
+void JSPromise::resolvePromiseOfReaction(VM& vm, JSValue resolution, const JSValue& handler)
+{
+    resolvePromiseKnowingMadeFor(realm(), vm, resolution, [&](JSPromise& promise) {
+        promise.setMadeFor(vm, handler);
+    });
 }
 #endif
 
@@ -1088,7 +1095,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             else {
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
-                arg = jsUndefined();
+                arg = slimReaction->handlerOrContext();
             }
             break;
         }
@@ -1101,7 +1108,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             if (handler.isUndefined()) {
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
-                arg = jsUndefined();
+                arg = isResolved ? fullReaction->onRejected() : fullReaction->onFulfilled();
                 break;
             }
             JSValue context = fullReaction->context();
@@ -1344,11 +1351,7 @@ JSObject* JSPromise::then(JSGlobalObject* globalObject, JSValue onFulfilled, JSV
     JSObject* resultPromise;
     JSValue resultPromiseCapability;
     if (promiseSpeciesWatchpointIsValid(vm, this)) [[likely]] {
-#if USE(BUN_JSC_ADDITIONS)
-        resultPromise = JSPromise::createMadeFor(vm, globalObject->promiseStructure(), onFulfilled.isCell() ? onFulfilled : onRejected);
-#else
         resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
-#endif
         resultPromiseCapability = resultPromise;
     } else {
         auto* constructor = promiseSpeciesConstructor(globalObject, this);

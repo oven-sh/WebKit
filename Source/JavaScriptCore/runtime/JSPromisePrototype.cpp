@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSFunctionWithFields.h"
 #include "JSPromise.h"
+#include "JSPromiseInlines.h"
 #include "JSPromiseReaction.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
@@ -291,7 +292,9 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
 
         if (promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]] {
 #if USE(BUN_JSC_ADDITIONS)
-            JSPromise* resultPromise = JSPromise::createMadeFor(vm, globalObject->promiseStructure(), onFinally);
+            // The promise is made for onFinally (JSPromise::madeFor()), which it is given now: the context lets go
+            // of onFinally once it has been called, before the promise is rejected.
+            JSPromise* resultPromise = JSPromise::createMadeForInline(vm, globalObject->promiseStructure(), onFinally);
 #else
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
 #endif
