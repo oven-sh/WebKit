@@ -154,6 +154,27 @@ static_assert(sizeof(QueuedTask) <= 32, "Size of QueuedTask is critical for perf
 #endif
 static_assert(std::is_trivially_destructible_v<QueuedTask>);
 
+#if USE(BUN_JSC_ADDITIONS)
+} // namespace JSC
+
+namespace WTF {
+
+// A Vector buffer holds at most 2^31 - 1 bytes. For Deque<QueuedTask> that is a capacity of 2^25 tasks, and the
+// Deque calls CRASH() when it has to grow past it. Script reaches that count (2^25 reactions on one promise), and
+// MicrotaskQueue::enqueue() cannot fail. Allow every capacity that VectorBufferBase::m_capacity can hold:
+// Deque and VectorBufferBase::allocateBuffer() compute sizes in size_t.
+// This has to come before the first use of Deque<QueuedTask>.
+template<>
+constexpr inline bool isValidCapacityForVector<JSC::QueuedTask>(size_t capacity)
+{
+    return capacity <= std::min<size_t>(std::numeric_limits<unsigned>::max() >> 1, std::numeric_limits<size_t>::max() / sizeof(JSC::QueuedTask));
+}
+
+} // namespace WTF
+
+namespace JSC {
+#endif
+
 class MarkedMicrotaskDeque {
 public:
     friend class MicrotaskQueue;
@@ -208,6 +229,10 @@ public:
     DECLARE_VISIT_AGGREGATE;
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    // No CI configuration has the memory for the test of this, microtask-queue-more-than-2-25-tasks.js.
+    static_assert(WTF::isValidCapacityForVector<QueuedTask>(1 << 26), "The specialization of isValidCapacityForVector for QueuedTask has to come before MarkedMicrotaskDeque");
+#endif
     Deque<QueuedTask> m_queue;
     size_t m_markedBefore { 0 };
 };
