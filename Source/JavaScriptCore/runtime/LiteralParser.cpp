@@ -1062,6 +1062,14 @@ slowPathBegin:
                 case 'u':
                     if ((m_end - m_ptr) < 5) { 
                         m_lexErrorMessage = "\\u must be followed by 4 hex digits"_s;
+#if USE(BUN_JSC_ADDITIONS)
+                        // tryStreamingParse takes a failure at the end of the input to mean that the
+                        // input was cut short. Stop at the first character that cannot continue the
+                        // escape, which is the end of the input when the escape was cut short.
+                        do {
+                            ++m_ptr;
+                        } while (m_ptr < m_end && isASCIIHexDigit(*m_ptr));
+#endif
                         return TokError;
                     } // uNNNN == 5 characters
                     for (int i = 1; i < 5; i++) {
@@ -1175,6 +1183,19 @@ TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumber(LiteralParserTo
     auto result = WTF::parseJSONDouble(std::span { initial, m_end }, parsedLength);
     if (result) [[likely]] {
         m_ptr = initial + parsedLength;
+#if USE(BUN_JSC_ADDITIONS)
+        // parseJSONDouble accepts the digits in front of an exponent that has no digits ("1e", "1e-")
+        // and stops at the 'e'. That is a malformed number and not a number followed by an identifier.
+        // lexNumberError stops at the end of the input when the exponent was cut short, which
+        // tryStreamingParse relies on.
+        if (m_ptr < m_end && (*m_ptr == 'e' || *m_ptr == 'E')) [[unlikely]] {
+            auto* exponentDigits = m_ptr + 1;
+            if (exponentDigits < m_end && (*exponentDigits == '-' || *exponentDigits == '+'))
+                ++exponentDigits;
+            if (exponentDigits >= m_end || !isASCIIDigit(*exponentDigits))
+                return lexNumberError(token);
+        }
+#endif
         token.type = TokNumber;
         token.numberToken = result.value();
         return TokNumber;
