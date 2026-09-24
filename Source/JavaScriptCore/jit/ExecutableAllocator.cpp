@@ -40,6 +40,7 @@
 #include <wtf/MallocSpan.h>
 #include <wtf/PageReservation.h>
 #include <wtf/ProcessID.h>
+#include <wtf/RAMSize.h>
 #include <wtf/RedBlackTree.h>
 #include <wtf/Scope.h>
 #include <wtf/SequesteredMalloc.h>
@@ -570,6 +571,19 @@ static void registerJITUnwindInfo(PageReservation& pageReservation, void*& base,
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+// When the kernel refuses the default-size reservation, it is retried at half the size down to this.
+static constexpr size_t minimumFallbackExecutablePoolReservationSize = 16 * MB;
+
+static size_t defaultExecutablePoolReservationSize()
+{
+    // An address-space limit (RLIMIT_AS) charges the reservation whether or not it is committed. Under
+    // one the full-size pool either fails to reserve, which loses the JIT, or takes address space the
+    // heap needs later. Take at most a sixteenth of the limit (64 MB under a 1 GB limit).
+    if (size_t limit = addressSpaceLimit(); limit != std::numeric_limits<size_t>::max())
+        return std::min(fixedExecutableMemoryPoolSize, std::max(limit / 16, minimumFallbackExecutablePoolReservationSize));
+    return fixedExecutableMemoryPoolSize;
+}
+
 static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 {
     JITReservation reservation;
@@ -580,9 +594,10 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
     // Call pageSize() to run its assertions to enforce invariants that executablePageSize() relies on.
     WTF::pageSize();
 #endif
-    reservation.size = fixedExecutableMemoryPoolSize;
+    reservation.size = defaultExecutablePoolReservationSize();
 
-    if (Options::jitMemoryReservationSize()) {
+    bool sizeIsExplicit = !!Options::jitMemoryReservationSize();
+    if (sizeIsExplicit) {
         reservation.size = Options::jitMemoryReservationSize();
 #if ENABLE(LIBPAS_JIT_HEAP)
         if (reservation.size * executablePoolReservationFraction < minimumExecutablePoolReservationSize)
@@ -593,11 +608,6 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 
 #if !ENABLE(JUMP_ISLANDS)
     RELEASE_ASSERT(reservation.size <= MacroAssembler::nearJumpRange, "Executable pool size is too large for near jump/call without JUMP_ISLANDS");
-#endif
-
-#if ENABLE(LIBPAS_JIT_HEAP)
-    if (reservation.size < minimumPoolSizeForSegregatedHeap)
-        jit_heap_runtime_config.max_segregated_object_size = 0;
 #endif
 
     auto tryCreatePageReservation = [] (size_t reservationSize, void* hintAddress) {
@@ -617,6 +627,20 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
     reservation.pageReservation = tryCreatePageReservation(reservation.size, addressHint);
     if (addressHint)
         RELEASE_ASSERT(reservation.pageReservation.base() == addressHint && "Failed to accomodate JSC_jitMemoryReservationAddress");
+
+    if (!sizeIsExplicit) {
+        // The kernel can refuse a reservation this large (RLIMIT_AS, vm.overcommit_memory=2) and
+        // still grant a smaller one. Halve it before running without the JIT.
+        while (!reservation.pageReservation && reservation.size / 2 >= minimumFallbackExecutablePoolReservationSize) {
+            reservation.size = roundUpToMultipleOf(executablePageSize(), reservation.size / 2);
+            reservation.pageReservation = tryCreatePageReservation(reservation.size, nullptr);
+        }
+    }
+
+#if ENABLE(LIBPAS_JIT_HEAP)
+    if (reservation.size < minimumPoolSizeForSegregatedHeap)
+        jit_heap_runtime_config.max_segregated_object_size = 0;
+#endif
 
     if (Options::verboseExecutablePoolAllocation())
         dataLog(getpid(), ": Got executable pool reservation at ", RawPointer(reservation.pageReservation.base()), "...", RawPointer(reservation.pageReservation.end()), ", while I'm at ", RawPointer(reinterpret_cast<void*>(initializeJITPageReservation)), "\n");

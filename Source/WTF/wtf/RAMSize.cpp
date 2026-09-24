@@ -26,6 +26,7 @@
 #include "config.h"
 #include <wtf/RAMSize.h>
 
+#include <limits>
 #include <wtf/AvailableMemory.h>
 
 #if OS(WINDOWS)
@@ -37,6 +38,10 @@
 
 #if OS(DARWIN)
 #include <mach/mach.h>
+#endif
+
+#if OS(LINUX) || OS(FREEBSD)
+#include <sys/resource.h>
 #endif
 
 namespace WTF {
@@ -66,5 +71,19 @@ size_t ramSizeDisregardingJetsamLimit()
     return static_cast<size_t>(hostInfo.max_mem);
 }
 #endif
+
+size_t addressSpaceLimit()
+{
+    static size_t limit = [] {
+#if OS(LINUX) || OS(FREEBSD)
+        // Darwin has RLIMIT_AS too but does not enforce it for mmap.
+        struct rlimit limit;
+        if (!getrlimit(RLIMIT_AS, &limit) && limit.rlim_cur != RLIM_INFINITY && static_cast<uint64_t>(limit.rlim_cur) < std::numeric_limits<size_t>::max())
+            return static_cast<size_t>(limit.rlim_cur);
+#endif
+        return std::numeric_limits<size_t>::max();
+    }();
+    return limit;
+}
 
 } // namespace WTF
