@@ -10117,6 +10117,13 @@ IGNORE_CLANG_WARNINGS_END
     void compileNewPromise()
     {
         ASSERT(m_node->structure()->classInfoForCells() == JSPromise::info());
+#if USE(BUN_JSC_ADDITIONS)
+        // A promise that remembers its maker is made by JSPromise::create().
+        if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(m_origin.semantic)) {
+            setJSValue(vmCall(pointerType(), operationNewPromise, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get()))));
+            return;
+        }
+#endif
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
@@ -10548,6 +10555,13 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LValue callee = lowCell(m_node->child1());
+#if USE(BUN_JSC_ADDITIONS)
+        // A promise that remembers its maker is made by JSPromise::create().
+        if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(m_origin.semantic)) {
+            setJSValue(vmCall(Int64, operationCreatePromise, weakPointer(globalObject), callee));
+            return;
+        }
+#endif
 
         LBasicBlock derivedCase = m_out.newBlock();
         LBasicBlock isFunctionBlock = m_out.newBlock();

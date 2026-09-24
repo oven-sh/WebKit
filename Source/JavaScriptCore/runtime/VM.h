@@ -534,6 +534,9 @@ public:
     bool m_mightBeExecutingTaintedCode { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_promisesRememberTheirMaker { false };
+#endif
 #endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -668,6 +671,12 @@ public:
     // first AsyncLocalStorage); never cleared. Until then no async context can have
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether a promise is given the scope of the script that makes it (JSPromise::maker()). Turned on by
+    // JSGlobalObject::promisesRememberTheirMaker(), never off.
+    bool promisesRememberTheirMaker() const { return m_promisesRememberTheirMaker; }
+    void setPromisesRememberTheirMaker() { m_promisesRememberTheirMaker = true; }
+#endif
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }

@@ -9234,6 +9234,19 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
 {
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A promise that remembers its maker is made by JSPromise::create().
+    if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(node->origin.semantic)) {
+        SpeculateCellOperand callee(this, node->child1());
+        GPRReg calleeGPR = callee.gpr();
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        callOperation(operationCreatePromise, result.gpr(), LinkableConstant::globalObject(*this, node), calleeGPR);
+        cellResult(result.gpr(), node);
+        return;
+    }
+#endif
+
     SpeculateCellOperand callee(this, node->child1());
     GPRTemporary result(this);
     GPRTemporary structure(this);
@@ -9279,6 +9292,17 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
 
 void SpeculativeJIT::compileNewPromise(Node* node)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // A promise that remembers its maker is made by JSPromise::create().
+    if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(node->origin.semantic)) {
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        callOperation(operationNewPromise, result.gpr(), TrustedImmPtr(&vm()), TrustedImmPtr(m_graph.freezeStrong(node->structure().get())));
+        cellResult(result.gpr(), node);
+        return;
+    }
+#endif
+
     GPRTemporary result(this);
     GPRTemporary scratch1(this);
     GPRTemporary scratch2(this);

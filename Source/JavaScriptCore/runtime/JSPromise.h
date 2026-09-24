@@ -122,6 +122,15 @@ public:
     JSValue asyncStackTraceContext() const;
 
 #if USE(BUN_JSC_ADDITIONS)
+    // The scope of the script that made this promise (CallFrame::scopeOfClosestScript()), if promises remember
+    // it (VM::promisesRememberTheirMaker()) and script was calling: for the embedder to say whose an unhandled
+    // rejection is. A promise has one while nothing has been done with it, and once it is rejected with nothing
+    // handling it: a pending promise with no reaction keeps it where its value will go, and rejectPromise()
+    // moves it to where its reactions would have been.
+    JSScope* maker() const;
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
     void forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask, JSValue, JSValue)>&) const;
 #endif
 

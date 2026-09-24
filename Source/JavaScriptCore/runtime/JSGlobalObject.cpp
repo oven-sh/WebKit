@@ -980,6 +980,15 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObject::promisesRememberTheirMaker()
+{
+    VM& vm = this->vm();
+    vm.setPromisesRememberTheirMaker();
+    m_promisesHaveNoMakerWatchpointSet.fireAll(vm, "Promises remember their maker");
+}
+#endif
+
 JSGlobalObject::~JSGlobalObject()
 {
     clearWeakTickets();

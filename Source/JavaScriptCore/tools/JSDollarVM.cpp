@@ -2265,6 +2265,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfCaller);
+static JSC_DECLARE_HOST_FUNCTION(functionPromisesRememberTheirMaker);
+static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfMaker);
 static JSC_DECLARE_HOST_FUNCTION(functionNothing);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
@@ -4212,20 +4214,45 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
-// $vm.ownerOfCaller(): the first of the `bindings` of the $vm.createModuleLoader() loader whose module the calling
-// script is of (undefined for the global object's own loader): what the script's scope chain ends in.
+// The first of the `bindings` of the $vm.createModuleLoader() loader whose module's script `scope` is a scope of
+// (undefined for the global object's own loader): what that script's scope chain ends in.
+static JSValue ownerOfScope(JSScope* scope)
+{
+    JSScope* outermost = nullptr;
+    for (; scope && scope->type() != GlobalLexicalEnvironmentType && !scope->isGlobalObject(); scope = scope->next())
+        outermost = scope;
+    if (!outermost || outermost->type() != LexicalEnvironmentType)
+        return jsUndefined();
+    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(outermost);
+    if (!environment->symbolTable()->scopeSize())
+        return jsUndefined();
+    return environment->variableAt(ScopeOffset(0)).get();
+}
+
+// $vm.ownerOfCaller(): ownerOfScope() of the script that is calling.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
-    JSScope* outermost = nullptr;
-    for (JSScope* scope = CallFrame::scopeOfClosestScript(globalObject->vm()); scope && scope->type() != GlobalLexicalEnvironmentType && !scope->isGlobalObject(); scope = scope->next())
-        outermost = scope;
-    if (!outermost || outermost->type() != LexicalEnvironmentType)
-        return JSValue::encode(jsUndefined());
-    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(outermost);
-    if (!environment->symbolTable()->scopeSize())
-        return JSValue::encode(jsUndefined());
-    return JSValue::encode(environment->variableAt(ScopeOffset(0)).get());
+    return JSValue::encode(ownerOfScope(CallFrame::scopeOfClosestScript(globalObject->vm())));
+}
+
+// $vm.promisesRememberTheirMaker(): from now on they do.
+JSC_DEFINE_HOST_FUNCTION(functionPromisesRememberTheirMaker, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    globalObject->promisesRememberTheirMaker();
+    return JSValue::encode(jsUndefined());
+}
+
+// $vm.ownerOfMaker(promise): ownerOfScope() of the script that made the promise, "none" if the promise has no
+// maker (JSPromise::maker()).
+JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
+    JSScope* maker = promise ? promise->maker() : nullptr;
+    return JSValue::encode(maker ? ownerOfScope(maker) : JSValue(jsNontrivialString(vm, "none"_s)));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.
@@ -5989,6 +6016,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "ownerOfCaller"_s, functionOwnerOfCaller, 0);
+    addFunction(vm, allowIfNotFuzz, "promisesRememberTheirMaker"_s, functionPromisesRememberTheirMaker, 0);
+    addFunction(vm, allowIfNotFuzz, "ownerOfMaker"_s, functionOwnerOfMaker, 1);
     addFunction(vm, allowIfNotFuzz, "nothing"_s, functionNothing, 0);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 

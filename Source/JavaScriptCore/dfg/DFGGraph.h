@@ -1038,6 +1038,25 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::RegExpSpeciesWatchpointSet);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether this code may make a promise with no maker: until the global object's promises remember theirs.
+    bool isWatchingPromisesHaveNoMakerWatchpoint(const CodeOrigin& semanticOrigin)
+    {
+        JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);
+        InlineWatchpointSet& set = globalObject->promisesHaveNoMakerWatchpointSet();
+        if (m_plan.isUnlinked())
+            return false;
+        if (watchpoints().isWatched(set))
+            return true;
+        if (set.isStillValid()) {
+            freeze(globalObject);
+            watchpoints().addLazily(set);
+            return true;
+        }
+        return false;
+    }
+#endif
+
     bool isWatchingPromiseThenWatchpoint(const CodeOrigin& semanticOrigin)
     {
         JSGlobalObject* globalObject = globalObjectFor(semanticOrigin);

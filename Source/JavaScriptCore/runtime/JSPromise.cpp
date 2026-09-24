@@ -27,6 +27,7 @@
 #include "JSPromise.h"
 
 #include "BuiltinNames.h"
+#include "CallFrame.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
 #include "ErrorInstanceInlines.h"
@@ -51,10 +52,33 @@ namespace JSC {
 
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
+#if USE(BUN_JSC_ADDITIONS)
+JSScope* JSPromise::maker() const
+{
+    switch (status()) {
+    case Status::Pending:
+        if (inlineReactionKind() != InlineReactionKind::None || payloadCell())
+            return nullptr;
+        return m_slot.get() ? dynamicDowncast<JSScope>(m_slot.get()) : nullptr;
+    case Status::Rejected:
+        return dynamicDowncast<JSScope>(payloadCell());
+    case Status::Fulfilled:
+        break;
+    }
+    return nullptr;
+}
+#endif
+
 JSPromise* JSPromise::create(VM& vm, Structure* structure)
 {
     JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure);
     promise->finishCreation(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.promisesRememberTheirMaker()) [[unlikely]] {
+        if (JSScope* maker = CallFrame::scopeOfClosestScript(vm))
+            promise->m_slot.set(vm, promise, maker);
+    }
+#endif
     return promise;
 }
 
@@ -701,8 +725,16 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     case InlineReactionKind::None: {
         JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payloadCell());
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
+        JSCell* maker = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+        // Nothing handles this rejection: the promise keeps its maker (see maker()).
+        if (!(currentFlags & isHandledFlag) && !reactions) {
+            if (JSValue made = m_slot.get(); made && made.isCell())
+                maker = made.asCell();
+        }
+#endif
         setSlot(vm, argument);
-        setPackedCell(vm, settledFlags, nullptr);
+        setPackedCell(vm, settledFlags, maker);
 
         if (!isHandled())
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
