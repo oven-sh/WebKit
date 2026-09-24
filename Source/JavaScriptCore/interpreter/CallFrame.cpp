@@ -197,7 +197,7 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
 JSScope* CallFrame::scopeOfClosestScript(VM& vm)
 {
     auto isScript = [](CodeBlock* codeBlock) {
-        return codeBlock->codeType() != CodeType::FunctionCode || !static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->isBuiltinFunction();
+        return !codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
     };
     EntryFrame* entryFrame = vm.topEntryFrame;
     for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame(entryFrame)) {
@@ -208,9 +208,11 @@ JSScope* CallFrame::scopeOfClosestScript(VM& vm)
             continue;
 #if ENABLE(DFG_JIT)
         // Optimized code: the call is made by a function inlined in it, or by one inlined in that, or by its own.
-        if (codeBlock->hasCodeOrigins() && codeBlock->canGetCodeOrigin(frame->callSiteIndex())) {
+        if (codeBlock->hasCodeOrigins()) {
+            auto& codeOrigins = codeBlock->codeOrigins();
+            unsigned callSite = frame->callSiteIndex().bits();
             bool wasTailCalled = false;
-            for (auto* inlined = codeBlock->codeOrigin(frame->callSiteIndex()).inlineCallFrame(); inlined;) {
+            for (auto* inlined = callSite < codeOrigins.size() ? codeOrigins.get(callSite).inlineCallFrame() : nullptr; inlined;) {
                 if (isScript(inlined->baselineCodeBlock.get()))
                     return inlined->calleeForCallFrame(frame)->scope();
                 CodeOrigin* caller = inlined->getCallerSkippingTailCalls();

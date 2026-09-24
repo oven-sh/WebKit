@@ -1039,6 +1039,21 @@ public:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    // Where the script is that `origin` is in or was called by: `origin` itself, or where the builtin function
+    // it is in was called. As CallFrame::scopeOfClosestScript() finds it, for what is known when compiling.
+    // Nothing when that is not in this code (a builtin function is what is being compiled).
+    std::optional<CodeOrigin> originOfClosestScript(CodeOrigin origin)
+    {
+        while (baselineCodeBlockFor(origin)->unlinkedCodeBlock()->isBuiltinFunction()) {
+            auto* inlineCallFrame = origin.inlineCallFrame();
+            CodeOrigin* caller = inlineCallFrame ? inlineCallFrame->getCallerSkippingTailCalls() : nullptr;
+            if (!caller)
+                return std::nullopt;
+            origin = *caller;
+        }
+        return origin;
+    }
+
     // Whether this code may make a promise with no maker: until the global object's promises remember theirs.
     bool isWatchingPromisesHaveNoMakerWatchpoint(const CodeOrigin& semanticOrigin)
     {
