@@ -319,7 +319,7 @@ static ALWAYS_INLINE void settleDriverWithIteratorResult(JSGlobalObject* globalO
     JSGlobalObject* realm = producer->realm();
 #if USE(BUN_JSC_ADDITIONS)
     // AsyncGeneratorDriverResume runs the driver under the async context active now.
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = AsyncContextWithOwnerSwapScope::current(vm, globalObject);
 #define BUN_ASYNC_CONTEXT , asyncContext
 #else
     UNUSED_PARAM(globalObject);
@@ -386,7 +386,7 @@ static void asyncFromSyncIteratorContinueOrDone(JSGlobalObject* globalObject, VM
             promise->reject(vm, result);
         else
 #if USE(BUN_JSC_ADDITIONS)
-            JSPromise::rejectWithInternalMicrotask(vm, globalObject, result, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextSwapScope::current(vm, globalObject));
+            JSPromise::rejectWithInternalMicrotask(vm, globalObject, result, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextWithOwnerSwapScope::current(vm, globalObject));
 #else
             JSPromise::rejectWithInternalMicrotask(vm, globalObject, result, InternalMicrotask::AsyncGeneratorDriverResume, target);
 #endif
@@ -567,7 +567,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
     // resolveWithInternalMicrotask keeps resolvePromise's thenable check, matching a real Promise settlement.
     if (isThrow) {
 #if USE(BUN_JSC_ADDITIONS)
-        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextSwapScope::current(vm, globalObject));
+        JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target, AsyncContextWithOwnerSwapScope::current(vm, globalObject));
 #else
         JSPromise::rejectWithInternalMicrotask(vm, globalObject, value, InternalMicrotask::AsyncGeneratorDriverResume, target);
 #endif

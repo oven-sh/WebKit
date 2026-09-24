@@ -386,7 +386,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
 
 #if USE(BUN_JSC_ADDITIONS)
     // The handler must run under the async context active now (AsyncContextSwapScope).
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = AsyncContextWithOwnerSwapScope::current(vm, globalObject);
     bool hasAsyncContext = !asyncContext.isUndefined();
     uint8_t payloadFlags = hasAsyncContext ? promiseReactionJobAsyncContextFlag : 0;
 #endif
@@ -473,7 +473,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
     // when userContext is itself an InternalFieldTuple (e.g. the ReadableStream
     // async iterator's), which would otherwise be mistaken for that pair.
     JSValue context = userContext;
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = AsyncContextWithOwnerSwapScope::current(vm, globalObject);
     if (!asyncContext.isUndefined() || userContext.inherits<InternalFieldTuple>())
         context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), userContext, asyncContext);
 
@@ -759,7 +759,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         auto* promise = uncheckedDowncast<JSPromise>(resolutionObject);
         if (promise->isThenFastAndNonObservable()) {
 #if USE(BUN_JSC_ADDITIONS)
-            return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextSwapScope::current(vm, globalObject));
+            return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextWithOwnerSwapScope::current(vm, globalObject));
 #else
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, jsUndefined());
 #endif
@@ -787,7 +787,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         return fulfillPromise(vm, resolutionObject);
 
 #if USE(BUN_JSC_ADDITIONS)
-    return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(vm, globalObject));
+    return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextWithOwnerSwapScope::current(vm, globalObject));
 #else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this);
 #endif
@@ -1081,7 +1081,7 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
 {
 #if USE(BUN_JSC_ADDITIONS)
     // The continuation resumes under the async context active at the await.
-    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    JSValue asyncContext = AsyncContextWithOwnerSwapScope::current(vm, globalObject);
 #define BUN_ASYNC_CONTEXT , asyncContext
 #else
 #define BUN_ASYNC_CONTEXT
@@ -1110,7 +1110,7 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
                 context
                 BUN_ASYNC_CONTEXT
             } };
-            runInternalMicrotask(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), arguments);
+            vm.internalMicrotaskRunner()(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), arguments, nullptr);
             return;
         }
 

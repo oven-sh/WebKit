@@ -57,7 +57,11 @@ bool QueuedTask::isRunnable() const
 
 static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, QueuedTask& task, MicrotaskCallCache* microtaskCallCache)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    vm.internalMicrotaskRunner()(globalObject, vm, task.job(), task.payload(), task.arguments(), microtaskCallCache);
+#else
     runInternalMicrotask(globalObject, vm, task.job(), task.payload(), task.arguments(), microtaskCallCache);
+#endif
     if (auto* exception = catchScope.exception()) [[unlikely]] {
         if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
             return false;

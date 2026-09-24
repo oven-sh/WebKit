@@ -273,7 +273,7 @@ void driveAsyncFromSyncIteratorWithDriver(JSGlobalObject* globalObject, JSAsyncF
             if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
                 return;
 #if USE(BUN_JSC_ADDITIONS)
-            JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver, AsyncContextSwapScope::current(vm, globalObject));
+            JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver, AsyncContextWithOwnerSwapScope::current(vm, globalObject));
 #else
             JSPromise::rejectWithInternalMicrotask(vm, globalObject, error, InternalMicrotask::AsyncGeneratorDriverResume, driver);
 #endif

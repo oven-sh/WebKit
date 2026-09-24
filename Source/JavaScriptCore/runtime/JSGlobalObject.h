@@ -527,6 +527,9 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+    // [async context, owner]: the last value captured while there were both (AsyncContextSwapScope), which the
+    // next capture of the same two reuses. Weak: what keeps it alive is the jobs that captured it.
+    Weak<InternalFieldTuple> m_capturedAsyncContextWithOwner;
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
@@ -781,6 +784,9 @@ public:
     DECLARE_EXPORT_INFO;
 
 #if USE(BUN_JSC_ADDITIONS)
+    // What is captured (AsyncContextWithOwnerSwapScope::current()) when there are both an async context and an
+    // owner.
+    JS_EXPORT_PRIVATE JSValue capturedAsyncContextWithOwner(VM&, JSValue asyncContext, JSValue owner);
     bool isAsyncContextTrackingEnabled() const { return vm().isAsyncContextTrackingEnabled(); }
     void setAsyncContextTrackingEnabled(bool isEnabled)
     {

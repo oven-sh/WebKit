@@ -1073,6 +1073,20 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::ObjectPrototypeChainIsSaneWatchpointSet);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether this code may be what it would be if async code had no owner (VM::isAsyncContextOwnerTracked()).
+    bool isWatchingAsyncContextOwnerIsNotTracked()
+    {
+        if (m_plan.isUnlinked())
+            return false;
+        InlineWatchpointSet& set = m_vm.asyncContextOwnerIsNotTracked();
+        if (!set.isStillValid())
+            return false;
+        watchpoints().addLazily(set);
+        return true;
+    }
+#endif
+
     bool isWatchingPromiseSpeciesWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);

@@ -143,6 +143,9 @@ class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
+#if USE(BUN_JSC_ADDITIONS)
+using InternalMicrotaskRunner = void (*)(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, 4>, MicrotaskCallCache*);
+#endif
 namespace FFI { class CallbackEntryScope; }
 #endif
 class Debugger;
@@ -534,6 +537,8 @@ public:
     bool m_mightBeExecutingTaintedCode { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
+    bool m_asyncContextOwnerTracked { false };
+    InternalMicrotaskRunner m_internalMicrotaskRunner;
 #endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -669,6 +674,19 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
+
+    // Whether async code continues with the owner of the script that scheduled it as well as with its async
+    // context (AsyncContextSwapScope): turned on when the embedder first says there is an owner, never off.
+    // The owner is a number that means something to the embedder, in field 1 of
+    // JSGlobalObject::m_asyncContextData; undefined there is no owner. (Only asked where async contexts are
+    // tracked, which tracking owners turns on: what runs while they are not is what it was before owners.)
+    bool isAsyncContextOwnerTracked() const { return m_asyncContextOwnerTracked; }
+    JS_EXPORT_PRIVATE void trackAsyncContextOwner();
+    // What runs a job of this VM's: runInternalMicrotask() until owners are tracked, which has nothing of an
+    // owner in it, and runInternalMicrotaskWithOwner() from then on.
+    InternalMicrotaskRunner internalMicrotaskRunner() const { return m_internalMicrotaskRunner; }
+    // Valid until trackAsyncContextOwner(): while it is, optimized code is what it was before there were owners.
+    InlineWatchpointSet& asyncContextOwnerIsNotTracked() LIFETIME_BOUND { return m_asyncContextOwnerIsNotTracked; }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }
@@ -1387,6 +1405,9 @@ private:
     size_t m_sizeOfLastScratchBuffer { 0 };
     Vector<std::unique_ptr<CheckpointOSRExitSideState>, expectedMaxActiveSideStateCount> m_checkpointSideState;
     InlineWatchpointSet m_primitiveGigacageEnabled { IsWatched };
+#if USE(BUN_JSC_ADDITIONS)
+    InlineWatchpointSet m_asyncContextOwnerIsNotTracked { IsWatched };
+#endif
     FunctionHasExecutedCache m_functionHasExecutedCache;
     std::unique_ptr<ControlFlowProfiler> m_controlFlowProfiler;
     unsigned m_controlFlowProfilerEnabledCount { 0 };

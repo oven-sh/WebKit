@@ -37,6 +37,11 @@ class JSModuleRecord;
 class ThrowScope;
 
 void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>, MicrotaskCallCache* = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+// A VM's jobs are run by one of the two, which it says (VM::internalMicrotaskRunner()): see
+// JSMicrotaskWithOwner.cpp.
+void runInternalMicrotaskWithOwner(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>, MicrotaskCallCache* = nullptr);
+#endif
 
 void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRecord*, JSValue result);
 

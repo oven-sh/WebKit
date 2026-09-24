@@ -286,6 +286,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_defaultMicrotaskQueue(MicrotaskQueue::create(*this))
     , m_syncWaiter(adoptRef(*new Waiter(this)))
 {
+#if USE(BUN_JSC_ADDITIONS)
+    static_assert(maxMicrotaskArguments == 4, "InternalMicrotaskRunner (VM.h) takes that many");
+    m_internalMicrotaskRunner = runInternalMicrotask;
+#endif
     if (vmCreationShouldCrash || g_jscConfig.vmCreationDisallowed) [[unlikely]]
         CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMCreationDisallowed, "VM creation disallowed"_s, 0x4242424220202020, 0xbadbeef0badbeef, 0x1234123412341234, 0x1337133713371337);
 
@@ -735,6 +739,18 @@ void VM::primitiveGigacageDisabledCallback(void* argument)
 {
     static_cast<VM*>(argument)->primitiveGigacageDisabled();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void VM::trackAsyncContextOwner()
+{
+    if (isAsyncContextOwnerTracked())
+        return;
+    m_asyncContextTrackingEnabled = true;
+    m_asyncContextOwnerTracked = true;
+    m_internalMicrotaskRunner = runInternalMicrotaskWithOwner;
+    m_asyncContextOwnerIsNotTracked.fireAll(*this, "An async context owner was set");
+}
+#endif
 
 void VM::primitiveGigacageDisabled()
 {
@@ -1317,7 +1333,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     // An embedder reports an exception nobody caught after the async context it was thrown in has
     // been restored. Rethrowing keeps the context of the first throw.
     if (isAsyncContextTrackingEnabled() && !exceptionToThrow->asyncContext())
-        exceptionToThrow->setAsyncContext(*this, AsyncContextSwapScope::current(*this, globalObject));
+        exceptionToThrow->setAsyncContext(*this, AsyncContextWithOwnerSwapScope::current(*this, globalObject));
 #endif
 
     setException(exceptionToThrow);

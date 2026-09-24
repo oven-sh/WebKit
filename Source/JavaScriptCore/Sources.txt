@@ -942,6 +942,7 @@ runtime/JSLock.cpp
 runtime/JSMap.cpp
 runtime/JSMapIterator.cpp
 runtime/JSMicrotask.cpp
+runtime/JSMicrotaskWithOwner.cpp @no-unify // JSMicrotask.cpp again, with some of its names defined to be others.
 runtime/JSMicrotaskDispatcher.cpp
 runtime/JSModuleEnvironment.cpp
 runtime/JSModuleLoader.cpp

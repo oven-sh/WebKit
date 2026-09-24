@@ -44,6 +44,7 @@
 #include "SuppressedErrorConstructorInlines.h"
 #include "AggregateErrorPrototypeInlines.h"
 #include "ArrayConstructor.h"
+#include "AsyncContextSwapScope.h"
 #include "SuppressedErrorPrototypeInlines.h"
 #include "ArrayConstructorInlines.h"
 #include "ArrayIteratorPrototypeInlines.h"
@@ -3944,6 +3945,20 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
     setGlobalThis(vm, thisValue);
     ASSERT(type() == GlobalObjectType);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSValue JSGlobalObject::capturedAsyncContextWithOwner(VM& vm, JSValue asyncContext, JSValue owner)
+{
+    ASSERT(owner.isInt32());
+    ASSERT(!asyncContext.isUndefined());
+    InternalFieldTuple* captured = m_capturedAsyncContextWithOwner.get();
+    if (!captured || captured->getInternalField(0) != asyncContext || captured->getInternalField(1) != owner) {
+        captured = InternalFieldTuple::create(vm, internalFieldTupleStructure(), asyncContext, owner);
+        m_capturedAsyncContextWithOwner = Weak<InternalFieldTuple>(captured);
+    }
+    return captured;
+}
+#endif
 
 #ifdef JSC_GLIB_API_ENABLED
 void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)

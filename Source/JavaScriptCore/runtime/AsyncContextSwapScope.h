@@ -35,22 +35,52 @@
 
 namespace JSC {
 
-// RAII helper for Bun's AsyncLocalStorage. A job (microtask, timer, ...)
-// captures the value of JSGlobalObject::m_asyncContextData field 0 when it is
-// scheduled; constructing this scope with that captured value installs it for
-// the lifetime of the scope and restores the previous value on destruction.
+// RAII helper for Bun's AsyncLocalStorage. JSGlobalObject::m_asyncContextData holds what
+// async code continues with: field 0 is the async context (AsyncLocalStorage's data), and
+// field 1 the owner of the running script, a number, for an embedder that runs the script
+// of several owners in one global object (undefined: there is no owner). A job (microtask,
+// timer, ...) captures both when it is scheduled, with current(); constructing this scope
+// with the captured value installs both for the lifetime of the scope and restores the
+// previous values on destruction.
+//
+// A captured value is one JSValue, because one slot is what reactions and microtasks have
+// for it: undefined, the async context, the owner's number, or an InternalFieldTuple
+// [async context, owner] when there are both. (An async context is never a number.)
 //
 // A job that captured "no context" (undefined, or an empty JSValue for callers
-// that never capture) runs with no context: whatever an earlier job left in the
-// slot via AsyncLocalStorage.enterWith() is not inherited, and whatever the job
+// that never capture) runs with no context and no owner: whatever an earlier job left in
+// the slots via AsyncLocalStorage.enterWith() is not inherited, and whatever the job
 // itself leaves there does not outlive it. Until the VM has enabled tracking
 // (VM::isAsyncContextTrackingEnabled) nothing can have been captured, so every
 // entry point here reduces to that flag test.
-class AsyncContextSwapScope {
-    WTF_MAKE_NONCOPYABLE(AsyncContextSwapScope);
+//
+// There are three of them. AsyncContextWithOwnerSwapScope is the one to use: it looks for an
+// owner once owners are tracked (VM::isAsyncContextOwnerTracked()). The other two are for what
+// runs a VM's jobs, which is one of two functions (VM::internalMicrotaskRunner()):
+// AsyncContextSwapScope knows nothing of owners, and is runInternalMicrotask()'s, which runs the
+// jobs until owners are tracked, so that what runs the jobs of a program that has no owner is
+// what ran them before there were owners; AsyncContextOwnedSwapScope is
+// runInternalMicrotaskWithOwner()'s, which runs them from then on.
+enum class AsyncContextOwner : uint8_t {
+    Never,
+    IfTracked,
+    Tracked,
+};
+
+template<AsyncContextOwner ownerIs>
+class AsyncContextSwapScopeFor {
+    static constexpr bool mayHaveOwner = ownerIs != AsyncContextOwner::Never;
+    static ALWAYS_INLINE bool isOwnerTracked(VM& vm)
+    {
+        if constexpr (ownerIs == AsyncContextOwner::Tracked)
+            return true;
+        return vm.isAsyncContextOwnerTracked();
+    }
+
+    WTF_MAKE_NONCOPYABLE(AsyncContextSwapScopeFor);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    ALWAYS_INLINE AsyncContextSwapScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+    ALWAYS_INLINE AsyncContextSwapScopeFor(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
         : m_vm(vm)
     {
         if (!vm.isAsyncContextTrackingEnabled())
@@ -61,7 +91,7 @@ public:
     // For internal microtasks: the captured context is in the dedicated argument
     // when the fast paths filled it, otherwise in an InternalFieldTuple
     // [context, asyncContext] that contextArg is unwrapped from (see wrap()).
-    ALWAYS_INLINE AsyncContextSwapScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContextArg, JSValue& contextArg)
+    ALWAYS_INLINE AsyncContextSwapScopeFor(VM& vm, JSGlobalObject* globalObject, JSValue asyncContextArg, JSValue& contextArg)
         : m_vm(vm)
     {
         if (!vm.isAsyncContextTrackingEnabled()) {
@@ -76,7 +106,7 @@ public:
         enter(globalObject, asyncContext);
     }
 
-    ALWAYS_INLINE ~AsyncContextSwapScope()
+    ALWAYS_INLINE ~AsyncContextSwapScopeFor()
     {
         restoreEarly();
     }
@@ -89,6 +119,10 @@ public:
     {
         if (m_asyncContextData) {
             m_asyncContextData->putInternalField(m_vm, 0, m_restoreAsyncContext);
+            if constexpr (mayHaveOwner) {
+                if (m_restoreOwner) [[unlikely]]
+                    m_asyncContextData->internalField(InternalFieldTuple::Field::Slot1).setWithoutWriteBarrier(m_restoreOwner);
+            }
             m_asyncContextData = nullptr;
         }
     }
@@ -113,14 +147,41 @@ public:
         return tuple->getInternalField(1);
     }
 
-    // The async context to capture for a job being scheduled now: field 0 of
+    // What to capture for a job being scheduled now: the async context (and the owner) in
     // m_asyncContextData, or jsUndefined() when there is none.
     static ALWAYS_INLINE JSValue current(VM& vm, JSGlobalObject* globalObject)
     {
         if (!vm.isAsyncContextTrackingEnabled())
             return jsUndefined();
         ASSERT(globalObject->m_asyncContextData);
-        return globalObject->m_asyncContextData->getInternalField(0);
+        JSValue asyncContext = globalObject->m_asyncContextData->getInternalField(0);
+        if constexpr (mayHaveOwner) {
+            if (isOwnerTracked(vm)) [[unlikely]] {
+                JSValue owner = globalObject->m_asyncContextData->getInternalField(1);
+                if (asyncContext.isUndefined())
+                    return owner;
+                if (!owner.isUndefined()) [[unlikely]]
+                    return globalObject->capturedAsyncContextWithOwner(vm, asyncContext, owner);
+            }
+        }
+        return asyncContext;
+    }
+
+    // The two parts of a captured value.
+    static ALWAYS_INLINE JSValue asyncContextOf(JSValue captured)
+    {
+        if (captured.isEmpty() || captured.isInt32())
+            return jsUndefined();
+        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(0) : captured;
+    }
+
+    static ALWAYS_INLINE JSValue ownerOf(JSValue captured)
+    {
+        if (captured.isEmpty())
+            return jsUndefined();
+        if (captured.isInt32())
+            return captured;
+        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(1) : jsUndefined();
     }
 
     // Pair userContext with asyncContext in an InternalFieldTuple
@@ -151,14 +212,38 @@ private:
             asyncContext = jsUndefined();
         m_asyncContextData = globalObject->m_asyncContextData.get();
         m_restoreAsyncContext = m_asyncContextData->getInternalField(0);
+        if constexpr (mayHaveOwner) {
+            if (isOwnerTracked(m_vm)) [[unlikely]] {
+                // (Not empty: restoreEarly() takes it to say that there is an owner to put back.)
+                m_restoreOwner = m_asyncContextData->getInternalField(1);
+                JSValue owner = jsUndefined();
+                if (asyncContext.isInt32()) {
+                    owner = asyncContext;
+                    asyncContext = jsUndefined();
+                } else if (isContextTuple(asyncContext)) [[unlikely]] {
+                    auto* tuple = uncheckedDowncast<InternalFieldTuple>(asyncContext.asCell());
+                    asyncContext = tuple->getInternalField(0);
+                    owner = tuple->getInternalField(1);
+                }
+                // (A number or undefined.)
+                m_asyncContextData->internalField(InternalFieldTuple::Field::Slot1).setWithoutWriteBarrier(owner);
+            }
+        }
         if (m_restoreAsyncContext != asyncContext)
             m_asyncContextData->putInternalField(m_vm, 0, asyncContext);
     }
 
+    struct Nothing { };
+
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
+    NO_UNIQUE_ADDRESS std::conditional_t<mayHaveOwner, JSValue, Nothing> m_restoreOwner;
 };
+
+using AsyncContextSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::Never>;
+using AsyncContextWithOwnerSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::IfTracked>;
+using AsyncContextOwnedSwapScope = AsyncContextSwapScopeFor<AsyncContextOwner::Tracked>;
 
 } // namespace JSC
 
