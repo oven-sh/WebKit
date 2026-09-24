@@ -361,6 +361,12 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (auto* callback = dynamicDowncast<JSFFICallback>(cell)) {
+            // close() unroots the cell and the entrypoint is freed with the cell, so a native callee
+            // that keeps this pointer would call freed code. `ptr` is null after close() for the same reason.
+            if (callback->isClosed()) [[unlikely]] {
+                throwTypeError(globalObject, scope, "bun:ffi: cannot pass a JSCallback as a pointer because it was closed"_s);
+                return false;
+            }
             slotOut = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(callback->nativeEntrypoint()));
             return true;
         }

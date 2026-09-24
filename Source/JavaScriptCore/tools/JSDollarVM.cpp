@@ -5084,11 +5084,6 @@ static void* dollarVMFFIPointerFromJS(JSGlobalObject* globalObject, JSValue valu
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* callback = dynamicDowncast<JSFFICallback>(value); callback && callback->isClosed()) {
-        throwTypeError(globalObject, scope, "bun:ffi: the JSFFICallback has been closed"_s);
-        return nullptr;
-    }
-
     uint64_t slot = 0;
     FFI::writeSlotFromJSValue(globalObject, globalObject->ffiContext(), FFI::Type::Pointer, value, slot, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
