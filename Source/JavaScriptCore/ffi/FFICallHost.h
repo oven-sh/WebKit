@@ -34,11 +34,15 @@
 namespace JSC {
 
 class CallFrame;
+class JSFFIFunction;
 class JSGlobalObject;
+class ThrowScope;
 
 namespace FFI {
 
 JSC_DECLARE_HOST_FUNCTION(ffiHostCall);
+
+void throwClosedError(JSGlobalObject*, ThrowScope&, JSFFIFunction*);
 
 } // namespace FFI
 

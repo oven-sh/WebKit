@@ -61,6 +61,19 @@
 
 namespace JSC { namespace FFI {
 
+ICStubCode::ICStubCode(CodeRef<JSEntryPtrTag> code, CodeLocationLabel<JSInternalPtrTag> fastPath, CodeLocationLabel<JSInternalPtrTag> slowPath)
+    : DirectJITCode(code, code.code(), JITType::HostCallThunk, NoIntrinsic)
+    , m_fastPath(fastPath)
+    , m_slowPath(slowPath)
+{
+}
+
+void ICStubCode::close()
+{
+    dataLogLnIf(Options::verboseFFI(), "FFI: closing IC stub, ", RawPointer(m_fastPath.dataLocation()), " now jumps to ", RawPointer(m_slowPath.dataLocation()));
+    MacroAssembler::replaceWithJump(m_fastPath, m_slowPath);
+}
+
 #if !ENABLE(JIT_CAGE)
 
 namespace {
@@ -324,7 +337,7 @@ void emitBoxReturnValue(CCallHelpers& jit, VM& vm, JSGlobalObject* globalObject,
 
 } // anonymous namespace
 
-RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signature& signature, void* target)
+RefPtr<ICStubCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signature& signature, void* target)
 {
     ASSERT(!isCompilationThread());
 
@@ -367,6 +380,11 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     jit.storePtr(GPRInfo::callFrameRegister, &vm.topCallFrame);
 
+    // ICStubCode::close() writes a jump to the slow path here. The frame is already in the state every
+    // other jump to the slow path finds it in.
+    JIT_COMMENT(jit, "fast path");
+    CCallHelpers::Label fastPathLabel = jit.watchpointLabel();
+
     if (argumentCount) {
         JIT_COMMENT(jit, "arity check");
         slowPath.append(jit.branch32(CCallHelpers::Below, CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(argumentCount + 1)));
@@ -396,6 +414,7 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
 
     slowPath.link(&jit);
     JIT_COMMENT(jit, "slow path");
+    CCallHelpers::Label slowPathLabel = jit.label();
     jit.move(GPRInfo::callFrameRegister, GPRInfo::argumentGPR1);
     jit.move(CCallHelpers::TrustedImmPtr(globalObject), GPRInfo::argumentGPR0);
     jit.move(CCallHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationFFICallSlowPath)), callTargetGPR);
@@ -419,12 +438,14 @@ RefPtr<JITCode> generateICStubCode(VM& vm, JSGlobalObject* globalObject, Signatu
     if (linkBuffer.didFailToAllocate()) [[unlikely]]
         return nullptr;
     linkBuffer.setIsThunk();
+    auto fastPathLocation = linkBuffer.locationOf<JSInternalPtrTag>(fastPathLabel);
+    auto slowPathLocation = linkBuffer.locationOf<JSInternalPtrTag>(slowPathLabel);
     auto codeRef = FINALIZE_CODE_IF(Options::dumpDisassembly() || Options::dumpFFIDisassembly(), linkBuffer, JSEntryPtrTag, "FFI ic"_s, "FFI ic %s", signature.toString().utf8().data());
 
     g_ffiCompileCounts.icStub++;
     dataLogLnIf(Options::verboseFFI(), "FFI: generated IC stub ", signature.toString(), " target ", RawPointer(target), " code ", RawPointer(codeRef.code().taggedPtr()));
 
-    return adoptRef(new DirectJITCode(codeRef, codeRef.code(), JITType::HostCallThunk, NoIntrinsic));
+    return adoptRef(new ICStubCode(codeRef, fastPathLocation, slowPathLocation));
 }
 
 #endif // !ENABLE(JIT_CAGE)
