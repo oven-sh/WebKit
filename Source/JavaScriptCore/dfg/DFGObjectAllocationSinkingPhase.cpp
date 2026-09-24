@@ -1174,6 +1174,11 @@ private:
 
         case NewPromise: {
             ASSERT(node->structure()->classInfoForCells() == JSPromise::info());
+            // A promise that is made for a function is not sunk: it has more in it than its structure.
+            if (node->child1()) {
+                m_heap.escape(node->child1().node());
+                break;
+            }
             target = &m_heap.newAllocation(node, Allocation::Kind::Promise);
             writes.add(StructurePLoc, LazyNode(m_graph.freeze(node->structure().get())));
             break;

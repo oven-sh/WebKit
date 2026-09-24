@@ -554,8 +554,7 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
         // 6. throw completion -> reject.
         if (isThrow) {
 #if USE(BUN_JSC_ADDITIONS)
-            // The rejection is the generator function's doing.
-            promise->setMakerFromFunction(vm, generator->next());
+            promise->setMadeFor(vm, generator->next());
 #endif
             promise->reject(vm, value);
             return;
@@ -911,19 +910,9 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     }
 
     if (error) {
-#if USE(BUN_JSC_ADDITIONS)
-        // The promise is onFinally's: `finally` made it for it.
-        resultPromise->setMakerFromFunction(vm, context->handlerOrContext());
-#endif
         resultPromise->rejectPromise(vm, error);
         return;
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    // (And it will be rejected with what this promise was.)
-    if (status == JSPromise::Status::Rejected) [[unlikely]]
-        resultPromise->setMakerFromFunction(vm, context->handlerOrContext());
-#endif
 
     context->setHandlerOrContext(vm, valueOrReason);
     context->setPerCellBit(status == JSPromise::Status::Fulfilled);
@@ -1683,10 +1672,8 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
     call(globalObject, resolve, jsUndefined(), ArgList { arguments.data(), arguments.size() }, "resolve is not a function"_s);
 }
 
-// `madeFor`: the handler the reaction did have, that `then` made the promise for.
-static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status, const JSValue& madeFor)
+static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status)
 {
-    UNUSED_PARAM(madeFor);
     if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) [[likely]] {
         switch (status) {
         case JSPromise::Status::Pending:
@@ -1696,9 +1683,6 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
-#if USE(BUN_JSC_ADDITIONS)
-            promise->setMakerFromFunction(vm, madeFor);
-#endif
             promise->rejectPromise(vm, resolution);
             break;
         }
@@ -1769,8 +1753,7 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
     if (error) {
         auto* promise = uncheckedDowncast<JSPromise>(generator->context());
 #if USE(BUN_JSC_ADDITIONS)
-        // The promise is the async function's.
-        promise->setMakerFromFunction(vm, generator->next());
+        promise->setMadeFor(vm, generator->next());
 #endif
         promise->reject(vm, error);
         return;
@@ -1909,7 +1892,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
-        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload), arguments[2]));
+        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseFulfillWithoutHandlerJob: {
@@ -2022,10 +2005,6 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (error) {
             if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
                 scope.release();
-#if USE(BUN_JSC_ADDITIONS)
-                // The promise is the handler's: `then` made it for it.
-                promise->setMakerFromFunction(vm, arguments[1]);
-#endif
                 promise->rejectPromise(vm, error);
                 return;
             }
@@ -2043,11 +2022,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
         if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
             scope.release();
-#if USE(BUN_JSC_ADDITIONS)
-            promise->resolvePromiseOfReaction(vm, result, arguments[1]);
-#else
             promise->resolvePromise(promise->realm(), vm, result);
-#endif
             return;
         }
 

@@ -917,7 +917,10 @@ public:
     {
         ASSERT(m_op == CreatePromise);
         setOpAndDefaultFlags(NewPromise);
+        // (What is left is the function the promise is made for.)
+        Edge madeFor = child2();
         children.reset();
+        child1() = madeFor;
         m_opInfo = structure;
         m_opInfo2 = OpInfoWrapper();
     }

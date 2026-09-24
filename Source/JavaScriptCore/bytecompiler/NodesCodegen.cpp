@@ -2128,11 +2128,14 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_newArrayWithSpecies(JSC::Bytec
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_createPromise(JSC::BytecodeGenerator& generator, JSC::RegisterID* dst)
 {
+    // @createPromise(newTarget, madeFor): see JSPromise::madeFor().
     ArgumentListNode* node = m_args->m_listNode;
     RefPtr<RegisterID> newTarget = generator.emitNode(node);
+    node = node->m_next;
+    RefPtr<RegisterID> madeFor = generator.emitNode(node);
     ASSERT(!node->m_next);
 
-    return generator.emitCreatePromise(generator.finalDestination(dst), newTarget.get());
+    return generator.emitCreatePromise(generator.finalDestination(dst), newTarget.get(), madeFor.get());
 }
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_newPromise(JSC::BytecodeGenerator& generator, JSC::RegisterID* dst)

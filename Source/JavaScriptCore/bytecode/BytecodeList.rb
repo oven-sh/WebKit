@@ -387,6 +387,7 @@ op :create_promise,
     args: {
         dst: VirtualRegister,
         callee: VirtualRegister,
+        madeFor: VirtualRegister,
     },
     metadata: {
         cachedCallee: WriteBarrier[JSCell]

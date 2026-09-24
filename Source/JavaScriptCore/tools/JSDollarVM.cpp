@@ -54,6 +54,7 @@
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
 #include "JSAsyncGenerator.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSGenerator.h"
 #include "JSGlobalProxyInlines.h"
@@ -2265,7 +2266,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfCaller);
-static JSC_DECLARE_HOST_FUNCTION(functionPromisesRememberTheirMaker);
 static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfMaker);
 static JSC_DECLARE_HOST_FUNCTION(functionNothing);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
@@ -4236,26 +4236,19 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, C
     return JSValue::encode(ownerOfScope(CallFrame::scopeOfClosestScript(globalObject->vm())));
 }
 
-// $vm.promisesRememberTheirMaker(): from now on they do.
-JSC_DEFINE_HOST_FUNCTION(functionPromisesRememberTheirMaker, (JSGlobalObject* globalObject, CallFrame*))
-{
-    DollarVMAssertScope assertScope;
-    globalObject->promisesRememberTheirMaker();
-    return JSValue::encode(jsUndefined());
-}
-
-// $vm.ownerOfMaker(promise): ownerOfScope() of the script that made the promise, "none" if the promise has no
-// maker (JSPromise::maker()).
+// $vm.ownerOfMaker(promise): ownerOfScope() of the function the promise was made for (JSPromise::madeFor()),
+// "none" if it has none.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
-    JSCell* maker = promise ? promise->maker() : nullptr;
-    if (!maker)
+    auto* function = promise ? dynamicDowncast<JSFunction>(promise->madeFor()) : nullptr;
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = dynamicDowncast<JSFunction>(bound->targetFunction());
+    if (!function || function->isHostFunction() || function->jsExecutable()->isBuiltinFunction())
         return JSValue::encode(jsNontrivialString(vm, "none"_s));
-    auto* scope = dynamicDowncast<JSScope>(maker);
-    return JSValue::encode(scope ? ownerOfScope(scope) : JSValue(maker));
+    return JSValue::encode(ownerOfScope(function->scope()));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.
@@ -6019,7 +6012,6 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "ownerOfCaller"_s, functionOwnerOfCaller, 0);
-    addFunction(vm, allowIfNotFuzz, "promisesRememberTheirMaker"_s, functionPromisesRememberTheirMaker, 0);
     addFunction(vm, allowIfNotFuzz, "ownerOfMaker"_s, functionOwnerOfMaker, 1);
     addFunction(vm, allowIfNotFuzz, "nothing"_s, functionNothing, 0);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);

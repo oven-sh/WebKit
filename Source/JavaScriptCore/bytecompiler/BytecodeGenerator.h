@@ -757,7 +757,7 @@ namespace JSC {
         bool emitEqualityOpImpl(RegisterID* dst, RegisterID* src1, RegisterID* src2);
 
         RegisterID* emitCreateThis(RegisterID* dst);
-        RegisterID* emitCreatePromise(RegisterID* dst, RegisterID* newTarget);
+        RegisterID* emitCreatePromise(RegisterID* dst, RegisterID* newTarget, RegisterID* madeFor);
         RegisterID* emitCreateGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitCreateAsyncGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);

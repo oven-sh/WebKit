@@ -50,10 +50,8 @@ function Promise(executor)
     if (!@isCallable(executor))
         @throwTypeError("Promise constructor takes a function argument");
 
-    var promise = @createPromise(this);
+    var promise = @createPromise(this, executor);
     var capturedPromise = promise;
-    // The promise is made for the executor, which what rejects it says: see JSPromise::maker().
-    var madeFor = executor;
 
     try {
         executor(
@@ -61,10 +59,10 @@ function Promise(executor)
                 return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
             },
             (reason) => {
-                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason, madeFor);
+                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason);
             });
     } catch (error) {
-        @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, error, executor);
+        @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, error);
     }
 
     return promise;

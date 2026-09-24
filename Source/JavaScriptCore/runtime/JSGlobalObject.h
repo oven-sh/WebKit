@@ -568,7 +568,6 @@ public:
     InlineWatchpointSet m_mapSetWatchpointSet { IsWatched };
     InlineWatchpointSet m_setAddWatchpointSet { IsWatched };
     InlineWatchpointSet m_promiseThenWatchpointSet { IsWatched };
-
     InlineWatchpointSet m_promiseResolveWatchpointSet { IsWatched };
     InlineWatchpointSet m_promiseSpeciesWatchpointSet { ClearWatchpoint };
     InlineWatchpointSet m_setPrimordialPropertiesWatchpointSet { IsWatched };
@@ -655,11 +654,6 @@ public:
     InlineWatchpointSet& setAddWatchpointSet() LIFETIME_BOUND { return m_setAddWatchpointSet; }
     InlineWatchpointSet& setPrimordialPropertiesWatchpointSet() LIFETIME_BOUND { return m_setPrimordialPropertiesWatchpointSet; }
     InlineWatchpointSet& promiseThenWatchpointSet() LIFETIME_BOUND { return m_promiseThenWatchpointSet; }
-#if USE(BUN_JSC_ADDITIONS)
-    // From now on a promise that is rejected with nothing handling it says who made it (JSPromise::maker()),
-    // for the embedder to say whose the rejection is.
-    JS_EXPORT_PRIVATE void promisesRememberTheirMaker();
-#endif
     InlineWatchpointSet& promiseResolveWatchpointSet() LIFETIME_BOUND { return m_promiseResolveWatchpointSet; }
     InlineWatchpointSet& arraySpeciesWatchpointSet() LIFETIME_BOUND { return m_arraySpeciesWatchpointSet; }
     InlineWatchpointSet& regExpSpeciesWatchpointSet() LIFETIME_BOUND { return m_regExpSpeciesWatchpointSet; }

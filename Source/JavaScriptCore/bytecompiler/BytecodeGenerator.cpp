@@ -3230,9 +3230,9 @@ RegisterID* BytecodeGenerator::emitCreateThis(RegisterID* dst)
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitCreatePromise(RegisterID* dst, RegisterID* newTarget)
+RegisterID* BytecodeGenerator::emitCreatePromise(RegisterID* dst, RegisterID* newTarget, RegisterID* madeFor)
 {
-    OpCreatePromise::emit(this, dst, newTarget);
+    OpCreatePromise::emit(this, dst, newTarget, madeFor);
     return dst;
 }
 

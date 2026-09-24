@@ -10121,15 +10121,19 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock continuation = m_out.newBlock();
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
 
+        // The function the promise is made for (JSPromise::madeFor()) is written where nothing would be.
+        LValue madeFor = m_node->child1() ? lowJSValue(m_node->child1()) : nullptr;
         LValue object = allocateObject<JSPromise>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, object, m_heaps.JSPromise_packed);
-        m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), object, m_heaps.JSPromise_slot);
+        m_out.store64(madeFor ? madeFor : m_out.constInt64(JSValue::encode(JSValue())), object, m_heaps.JSPromise_slot);
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);
 
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(vmCall(pointerType(), operationNewPromise, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get()))));
+        ValueFromBlock slowResult = m_out.anchor(madeFor
+            ? vmCall(pointerType(), operationNewPromiseMadeFor, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get())), madeFor)
+            : vmCall(pointerType(), operationNewPromise, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get()))));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
@@ -10548,6 +10552,7 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LValue callee = lowCell(m_node->child1());
+        LValue madeFor = lowJSValue(m_node->child2());
 
         LBasicBlock derivedCase = m_out.newBlock();
         LBasicBlock isFunctionBlock = m_out.newBlock();
@@ -10584,13 +10589,13 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(fastAllocationCase, slowCase);
         LValue promise = allocateObject<JSPromise>(m_out.phi(pointerType(), promiseStructure, derivedStructure), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, promise, m_heaps.JSPromise_packed);
-        m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
+        m_out.store64(madeFor, promise, m_heaps.JSPromise_slot);
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(promise);
         m_out.jump(continuation);
 
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationCreatePromise, weakPointer(globalObject), callee));
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationCreatePromise, weakPointer(globalObject), callee, madeFor));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);

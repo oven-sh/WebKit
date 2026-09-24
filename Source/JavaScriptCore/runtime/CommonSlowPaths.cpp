@@ -209,7 +209,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_promise)
     {
         Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructorAsObject, globalObject->promiseConstructor());
         CHECK_EXCEPTION();
+#if USE(BUN_JSC_ADDITIONS)
+        result = JSPromise::createMadeFor(vm, structure, GET(bytecode.m_madeFor).jsValue());
+#else
         result = JSPromise::create(vm, structure);
+#endif
     }
 
     JSFunction* constructor = dynamicDowncast<JSFunction>(constructorAsObject);

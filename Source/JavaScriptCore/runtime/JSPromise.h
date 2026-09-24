@@ -123,44 +123,20 @@ public:
     JSValue asyncStackTraceContext() const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Who made this promise, for the embedder to say whose a rejection that nothing handles is: the scope of the
-    // function it was made for, or what the embedder gave it. Nothing is kept when a promise is made. It is
-    // given its maker when that may come to matter and the function is at hand: what rejects it, or resolves
-    // it with a promise, is the async function it is of, a reaction's handler, or the executor it was
-    // constructed with. (Promise.withResolvers() and the combinators have no such function: they give theirs
-    // the scope of the script that called them.) Only a promise that nothing has been done with has one, where
-    // its value will go; rejectPromise() moves it to where its reactions would have been.
-    // All of this only once VM::promisesRememberTheirMaker().
-    JSCell* maker() const;
-    void setMaker(VM&, JSCell*);
-    ALWAYS_INLINE void setMakerFromFunction(VM& vm, JSValue function)
-    {
-        if (vm.promisesRememberTheirMaker()) [[unlikely]]
-            setMakerFromFunctionSlow(vm, function);
-    }
-    ALWAYS_INLINE void setMakerFromCallingScript(VM& vm)
-    {
-        if (vm.promisesRememberTheirMaker()) [[unlikely]]
-            setMakerFromCallingScriptSlow(vm);
-    }
-    ALWAYS_INLINE void setMakerOfNewPromise(VM& vm)
-    {
-        if (vm.promisesRememberTheirMaker()) [[unlikely]]
-            setMakerOfNewPromiseFromCallingScript(vm);
-    }
-    // For what resolves this promise with another: `madeFor` if that is known, else the script that is calling.
-    ALWAYS_INLINE void setMakerWhileKnown(VM& vm, JSValue madeFor)
-    {
-        if (vm.promisesRememberTheirMaker()) [[unlikely]] {
-            setMakerFromFunctionSlow(vm, madeFor);
-            setMakerFromCallingScriptSlow(vm);
-        }
-    }
-    // What resolves the promise of an async function when its body has returned, and the promise `then` made
-    // when the reaction's handler has: resolve() and resolvePromise(), knowing who the promise was made for.
-    // They take what their callers have at hand and nothing more, so that resolving costs what it did.
+    // The function this promise was made for, for the embedder to say whose a rejection that nothing handles is:
+    // the executor it was constructed with, the handler `then`, `catch` or `finally` made it for, the async
+    // function it is of. Keeping it costs nothing: it is written where a promise that nothing has been done with
+    // would have nothing (m_slot, where its value will go), and rejectPromise() writes it where a rejected
+    // promise would have nothing (where its reactions were). A promise that has a reaction, or is fulfilled, or
+    // was made for no function (Promise.withResolvers(), the combinators, Promise.reject()) has none.
+    JSCell* madeFor() const;
+    JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);
+    // For what is about to reject a promise that was not made with its function, or to resolve it with a
+    // promise. (A promise that something handles, or that has its function, keeps what it has.)
+    void setMadeFor(VM&, JSValue function);
+    // resolve(), for the promise of an async function whose body has returned. It takes what its caller has at
+    // hand and nothing more, so that resolving costs what it did.
     static void resolveOfAsyncFunction(JSGlobalObject*, VM&, JSAsyncFunctionGenerator*, JSValue);
-    void resolvePromiseOfReaction(VM&, JSValue, const JSValue& handler);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -176,7 +152,6 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void resolve(JSGlobalObject*, VM&, JSValue);
-
     JS_EXPORT_PRIVATE void reject(VM&, JSValue);
     JS_EXPORT_PRIVATE void fulfill(VM&, JSValue);
     // Pipes its settlement to this promise via internal microtask. Otherwise directly
@@ -252,6 +227,10 @@ public:
 
 protected:
     JSPromise(VM&, Structure*);
+#if USE(BUN_JSC_ADDITIONS)
+    JSPromise(VM&, Structure*, JSValue madeFor);
+    template<typename MadeFor> void resolvePromiseKnowingMadeFor(JSGlobalObject*, VM&, JSValue, const MadeFor&);
+#endif
 
     DECLARE_DEFAULT_FINISH_CREATION;
 
@@ -305,13 +284,6 @@ public:
             vm.writeBarrier(this, cell);
     }
     void setSlot(VM& vm, JSValue value) { m_slot.set(vm, this, value); }
-#if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE void setMakerFromFunctionSlow(VM&, JSValue function);
-    JS_EXPORT_PRIVATE void setMakerFromCallingScriptSlow(VM&);
-    void setMakerOfNewPromiseFromCallingScript(VM&);
-    template<typename MadeFor> void resolvePromiseKnowingMaker(JSGlobalObject*, VM&, JSValue, const MadeFor&);
-    JSCell* makerFromCallingScript(VM&);
-#endif
     void clearSlot() { m_slot.clear(); }
 #if USE(BUN_JSC_ADDITIONS)
 private:

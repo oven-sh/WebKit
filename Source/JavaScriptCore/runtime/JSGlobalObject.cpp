@@ -844,10 +844,6 @@ JSC_DEFINE_HOST_FUNCTION(rejectPromiseWithFirstResolvingFunctionCallCheck, (JSGl
 {
     auto* promise = uncheckedDowncast<JSPromise>(callFrame->uncheckedArgument(0));
     JSValue argument = callFrame->uncheckedArgument(1);
-#if USE(BUN_JSC_ADDITIONS)
-    // The Promise constructor says whose executor the promise was made for.
-    promise->setMakerFromFunction(globalObject->vm(), callFrame->argument(2));
-#endif
     promise->reject(globalObject->vm(), argument);
     return encodedJSUndefined();
 }
@@ -983,13 +979,6 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_globalObjectMethodTable(globalObjectMethodTable ? globalObjectMethodTable : baseGlobalObjectMethodTable())
 {
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-void JSGlobalObject::promisesRememberTheirMaker()
-{
-    vm().setPromisesRememberTheirMaker();
-}
-#endif
 
 JSGlobalObject::~JSGlobalObject()
 {

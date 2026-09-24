@@ -535,7 +535,6 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_promisesRememberTheirMaker { false };
     CallFrame* m_frameThatStartedTheRunningJob { nullptr };
 #endif
 #endif
@@ -673,10 +672,6 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether a promise that may be rejected with nothing handling it is given its maker (JSPromise::maker()).
-    // Turned on by JSGlobalObject::promisesRememberTheirMaker(), never off.
-    bool promisesRememberTheirMaker() const { return m_promisesRememberTheirMaker; }
-    void setPromisesRememberTheirMaker() { m_promisesRememberTheirMaker = true; }
     // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it
     // said so: that frame and the ones that called it are not the script that is calling
     // (CallFrame::scopeOfClosestScript()), what the job calls is. Null: every frame may be.

@@ -5847,11 +5847,6 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case RejectPromiseWithFirstResolvingFunctionCallCheckIntrinsic: {
             if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
-#if USE(BUN_JSC_ADDITIONS)
-            // Told who the promise was made for (JSPromise::maker()), it is a call.
-            if (argumentCountIncludingThis > 3)
-                return CallOptimizationResult::DidNothing;
-#endif
 
             insertChecks();
             Node* promise = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
@@ -8450,6 +8445,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             auto bytecode = currentInstruction->as<OpCreatePromise>();
             Node* callee = get(VirtualRegister(bytecode.m_callee));
+            // (The function the promise is made for: see JSPromise::madeFor().)
+            Node* madeFor = get(VirtualRegister(bytecode.m_madeFor));
 
             bool alreadyEmitted = false;
 
@@ -8470,7 +8467,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 }
                 if (promiseConstructor) {
                     addToGraph(Phantom, callee);
-                    Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())));
+                    Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())), madeFor);
                     set(VirtualRegister(bytecode.m_dst), promise);
                     alreadyEmitted = true;
                 }
@@ -8505,7 +8502,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                                 m_graph.freeze(globalObject);
                                 m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
 
-                                Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(structure)));
+                                Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(structure)), madeFor);
                                 set(VirtualRegister(bytecode.m_dst), promise);
                                 // The callee is still live up to this point.
                                 addToGraph(Phantom, callee);
@@ -8515,7 +8512,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     }
                 }
                 if (!alreadyEmitted)
-                    set(VirtualRegister(bytecode.m_dst), addToGraph(CreatePromise, OpInfo(), OpInfo(), callee));
+                    set(VirtualRegister(bytecode.m_dst), addToGraph(CreatePromise, OpInfo(), OpInfo(), callee, madeFor));
             }
             NEXT_OPCODE(op_create_promise);
         }

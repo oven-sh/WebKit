@@ -9235,12 +9235,15 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
 
     SpeculateCellOperand callee(this, node->child1());
+    // The function the promise is made for (JSPromise::madeFor()): it is written where nothing would be.
+    JSValueOperand madeFor(this, node->child2());
     GPRTemporary result(this);
     GPRTemporary structure(this);
     GPRTemporary scratch1(this);
     GPRTemporary scratch2(this);
 
     GPRReg calleeGPR = callee.gpr();
+    GPRReg madeForGPR = madeFor.gpr();
     GPRReg resultGPR = result.gpr();
     GPRReg structureGPR = structure.gpr();
     GPRReg scratch1GPR = scratch1.gpr();
@@ -9269,10 +9272,10 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, structureGPR, butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
     store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
-    storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
+    store64(madeForGPR, Address(resultGPR, JSPromise::offsetOfSlot()));
     mutatorFence(vm());
 
-    addSlowPathGenerator(slowPathCall(slowCases, this, operationCreatePromise, resultGPR, LinkableConstant::globalObject(*this, node), calleeGPR));
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationCreatePromise, resultGPR, LinkableConstant::globalObject(*this, node), calleeGPR, madeForGPR));
 
     cellResult(resultGPR, node);
 }
@@ -9290,6 +9293,19 @@ void SpeculativeJIT::compileNewPromise(Node* node)
     JumpList slowCases;
     FrozenValue* structure = m_graph.freezeStrong(node->structure().get());
     auto butterfly = TrustedImmPtr(nullptr);
+    if (node->child1()) {
+        // The promise is made for a function (JSPromise::madeFor()): it is written where nothing would be.
+        JSValueOperand madeFor(this, node->child1());
+        GPRReg madeForGPR = madeFor.gpr();
+        emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
+        store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
+        store64(madeForGPR, Address(resultGPR, JSPromise::offsetOfSlot()));
+        mutatorFence(vm());
+
+        addSlowPathGenerator(slowPathCall(slowCases, this, operationNewPromiseMadeFor, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), madeForGPR));
+        cellResult(resultGPR, node);
+        return;
+    }
     emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
     store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
     storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));

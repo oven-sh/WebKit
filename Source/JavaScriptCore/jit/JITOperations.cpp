@@ -2898,6 +2898,16 @@ JSC_DEFINE_JIT_OPERATION(operationNewPromise, JSCell*, (VM* vmPointer, Structure
     OPERATION_RETURN(scope, JSPromise::create(vm, structure));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationNewPromiseMadeFor, JSCell*, (VM* vmPointer, Structure* structure, EncodedJSValue madeFor))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSPromise::createMadeFor(vm, structure, JSValue::decode(madeFor)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM* vmPointer, Structure* structure))
 {
     VM& vm = *vmPointer;

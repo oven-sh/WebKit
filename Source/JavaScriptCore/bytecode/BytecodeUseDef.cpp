@@ -214,7 +214,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpNewArrayWithSize, length)
     USES(OpNewArrayWithSpecies, length, array)
     USES(OpCreateThis, callee)
-    USES(OpCreatePromise, callee)
+    USES(OpCreatePromise, callee, madeFor)
     USES(OpCreateGenerator, callee)
     USES(OpCreateAsyncGenerator, callee)
     USES(OpDelById, base)

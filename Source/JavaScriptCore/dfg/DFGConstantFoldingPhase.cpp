@@ -2108,12 +2108,15 @@ private:
                                     m_interpreter.execute(indexInBlock);
                                     alreadyHandled = true;
 
-                                    auto* resultPromise = m_insertionSet.insertNode(indexInBlock, SpecPromiseObject, NewPromise, node->origin, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())));
-                                    m_insertionSet.insertNode(indexInBlock, SpecNone, ExitOK, node->origin);
-
                                     Edge onFulfilled = node->child2();
                                     Edge onRejected = node->child3();
-                                    if (auto kindOpt = classifyPerformPromiseThen(m_state.forNode(onFulfilled), m_state.forNode(onRejected))) {
+                                    auto kindOpt = classifyPerformPromiseThen(m_state.forNode(onFulfilled), m_state.forNode(onRejected));
+                                    // The promise is made for the handler: see JSPromise::madeFor().
+                                    Edge madeFor = kindOpt && *kindOpt == JSPromise::InlineReactionKind::RejectHandler ? onRejected : onFulfilled;
+                                    auto* resultPromise = m_insertionSet.insertNode(indexInBlock, SpecPromiseObject, NewPromise, node->origin, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())), Edge(madeFor.node()));
+                                    m_insertionSet.insertNode(indexInBlock, SpecNone, ExitOK, node->origin);
+
+                                    if (kindOpt) {
                                         Edge handlerEdge = (*kindOpt == JSPromise::InlineReactionKind::FulfillHandler) ? onFulfilled : onRejected;
 
                                         m_insertionSet.insertNode(indexInBlock, SpecNone, PerformPromiseThenOneHandler, node->origin,

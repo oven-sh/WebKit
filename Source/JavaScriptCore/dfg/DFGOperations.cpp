@@ -463,7 +463,7 @@ JSC_DEFINE_JIT_OPERATION(operationCreateThis, JSCell*, (JSGlobalObject* globalOb
     OPERATION_RETURN(scope, constructEmptyObject(functionGlobalObject));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationCreatePromise, JSCell*, (JSGlobalObject* globalObject, JSObject* constructor))
+JSC_DEFINE_JIT_OPERATION(operationCreatePromise, JSCell*, (JSGlobalObject* globalObject, JSObject* constructor, EncodedJSValue madeFor))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -471,7 +471,7 @@ JSC_DEFINE_JIT_OPERATION(operationCreatePromise, JSCell*, (JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructor, globalObject->promiseConstructor());
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    OPERATION_RETURN(scope, JSPromise::create(vm, structure));
+    OPERATION_RETURN(scope, JSPromise::createMadeFor(vm, structure, JSValue::decode(madeFor)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewResolvedPromise, JSCell*, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
