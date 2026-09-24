@@ -192,6 +192,9 @@ public:
     JS_EXPORT_PRIVATE static JSValue createNewPromiseCapability(JSGlobalObject*, JSValue constructor);
 
     DECLARE_VISIT_CHILDREN;
+#if USE(BUN_JSC_ADDITIONS)
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+#endif
 
     // This is abstract operations defined in the spec.
     void performPromiseThen(VM&, JSGlobalObject*, JSValue onFulfilled, JSValue onRejected, JSValue);
@@ -244,7 +247,6 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     JSPromise(VM&, Structure*, JSValue madeFor);
     template<typename MadeFor> void resolvePromiseKnowingMadeFor(JSGlobalObject*, VM&, JSValue, const MadeFor&);
-    template<typename Visitor> static void visitMadeFor(JSPromise*, Visitor&);
 #endif
 
     DECLARE_DEFAULT_FINISH_CREATION;

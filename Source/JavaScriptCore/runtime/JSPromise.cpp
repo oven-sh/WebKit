@@ -121,16 +121,16 @@ static JSScope* closestLiveScope(VM& vm, JSCell* cell)
     return nullptr;
 }
 
+// (Only the promises that were visited in this collection are in the set: one that was not has what it had, which
+// is as old as it is.)
 void JSPromise::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
+    vm.heap.promisesMadeForSet.remove(this);
     JSCell* cell = status() == Status::Pending ? madeFor() : nullptr;
-    if (cell && vm.heap.isMarked(cell))
+    if (!cell || vm.heap.isMarked(cell))
         return;
-    JSScope* scope = cell ? closestLiveScope(vm, cell) : nullptr;
-    if (cell)
-        m_slot.setWithoutWriteBarrier(scope ? JSValue(scope) : JSValue());
-    if (!scope)
-        vm.heap.promisesMadeForSet.remove(this);
+    JSScope* scope = closestLiveScope(vm, cell);
+    m_slot.setWithoutWriteBarrier(scope ? JSValue(scope) : JSValue());
 }
 
 void JSPromise::setMadeFor(VM& vm, JSValue function)
@@ -156,9 +156,12 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         return;
     // What a pending promise with no inline reaction has in m_slot is what it was made for (madeFor()), which it
     // does not keep alive.
+    // (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
     if (!(packed.type() & (stateMask | inlineReactionKindMask))) [[unlikely]] {
+        // If the promise is being settled with this cell right now, the two words were not read as one: the cell
+        // is looked at again once the mutator is stopped (visitOutputConstraints()).
         if (!payload)
-            visitMadeFor(thisObject, visitor);
+            visitor.vm().heap.promisesMadeForSet.add(thisObject);
         return;
     }
     visitor.appendUnbarriered(slot.asCell());
@@ -169,22 +172,26 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #endif
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-// (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
-template<typename Visitor>
-NEVER_INLINE void JSPromise::visitMadeFor(JSPromise* promise, Visitor& visitor)
-{
-    // Whether m_slot has what the promise was made for, or what it has just been settled with, can only be told
-    // from its two words together: so not while they may be changing.
-    if (!visitor.mutatorIsStopped()) {
-        visitor.didRace(promise, "JSPromise has what it was made for");
-        return;
-    }
-    visitor.vm().heap.promisesMadeForSet.add(promise);
-}
-#endif
-
 DEFINE_VISIT_CHILDREN(JSPromise);
+
+#if USE(BUN_JSC_ADDITIONS)
+// For a promise that was taken to have what it was made for in m_slot when it was visited: what is there now,
+// with the mutator stopped, if it is what the promise was settled with or a reaction's.
+template<typename Visitor>
+void JSPromise::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSPromise>(cell);
+    if (!visitor.mutatorIsStopped() || thisObject->madeFor())
+        return;
+    visitor.vm().heap.promisesMadeForSet.remove(thisObject);
+    if (JSCell* payload = thisObject->m_packed.pointer())
+        visitor.appendUnbarriered(payload);
+    if (thisObject->status() != Status::Pending || thisObject->inlineReactionKind() != InlineReactionKind::None)
+        visitor.append(thisObject->m_slot);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSPromise);
+#endif
 
 JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSValue constructor)
 {

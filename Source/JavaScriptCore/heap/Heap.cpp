@@ -3822,6 +3822,9 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakMapSpace);
                 add(*heap->m_weakMapSpace);
             }
+#if USE(BUN_JSC_ADDITIONS)
+            add(heap->promisesMadeForSet);
+#endif
         })),
         ConstraintVolatility::GreyedByMarking,
         ConstraintParallelism::Parallel);
