@@ -179,8 +179,7 @@ ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* glob
 
     ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
-    if (!executable->getUnlinkedCodeBlock(globalObject)) [[unlikely]] // This generates and binds unlinked code block.
-        return nullptr;
+    executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block. Null: it has thrown.
     RETURN_IF_EXCEPTION(scope, nullptr);
     return executable;
 }

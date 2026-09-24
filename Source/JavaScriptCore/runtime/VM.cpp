@@ -1126,13 +1126,24 @@ void VM::deleteAllRegExpCode()
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
     whenIdle([=, this] () {
-        m_codeCache->clear();
+        if (keepsUnlinkedCode())
+            m_codeCache->write(); // what clear() does first
+        else
+            m_codeCache->clear();
         m_builtinExecutables->clear();
         deleteAllRegExpCode();
         heap.deleteAllCodeBlocks(effort);
         // All of it: also what could be decoded again from a bytecode cache.
         heap.deleteAllUnlinkedCodeBlocks(effort, { UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
         heap.reportAbandonedObjectGraph();
+    });
+}
+
+void VM::deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort effort)
+{
+    whenIdle([=, this] () {
+        SetForScope generatingAgain(m_isDeletingAllCodeToGenerateItAgain, true);
+        deleteAllCode(effort); // runs now: the VM is idle
     });
 }
 
@@ -1162,7 +1173,8 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
         if (keepCodeInUse)
             unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
         heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
-        m_codeCache->clearCodeDecodedFromPersistentPayloads();
+        if (!keepsUnlinkedCode())
+            m_codeCache->clearCodeDecodedFromPersistentPayloads();
         if (!keepCodeInUse)
             deleteAllRegExpCode();
         else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {

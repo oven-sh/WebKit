@@ -79,8 +79,11 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
     m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
     m_jitCodeForConstructWithArityCheck = CodePtr<JSEntryPtrTag>();
 
+    bool keepsUnlinkedCode = vm().keepsUnlinkedCode();
     auto clearGlobalCode = [&](GlobalExecutable* executable, bool canDecodeAgain) {
         executable->m_codeBlock.clear();
+        if (keepsUnlinkedCode) [[unlikely]]
+            return;
         UnlinkedCodeBlock* unlinkedCodeBlock = executable->m_unlinkedCodeBlock.get();
         if (mode == ClearCode::All || (canDecodeAgain && unlinkedCodeBlock && unlinkedCodeBlock->cachedPayloadIndex()))
             executable->m_unlinkedCodeBlock.clear();
@@ -110,7 +113,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
             executable->m_hasReleasedUnlinkedCode = false;
         } else {
             executable->m_codeBlock.clear();
-            executable->releaseUnlinkedCodeIfRecoverable(vm());
+            if (!keepsUnlinkedCode)
+                executable->releaseUnlinkedCodeIfRecoverable(vm());
         }
         break;
     }

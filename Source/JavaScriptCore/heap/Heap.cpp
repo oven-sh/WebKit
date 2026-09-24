@@ -1205,6 +1205,9 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
         return;
 
     VM& vm = this->vm();
+    // Shared Baseline code, below, still goes.
+    if (vm.keepsUnlinkedCode()) [[unlikely]]
+        which.remove({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
     PreventCollectionScope preventCollectionScope(*this);
 
     RELEASE_ASSERT(!m_collectionScope);

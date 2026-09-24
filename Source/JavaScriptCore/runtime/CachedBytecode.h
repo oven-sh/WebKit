@@ -30,12 +30,17 @@
 #include "ParserModes.h"
 #include "Weak.h"
 #include "WeakGCHashTable.h"
-#include <wtf/HashMap.h>
+#include <array>
+#include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -43,6 +48,7 @@ namespace JSC {
 class Decoder;
 class SourceProvider;
 class UnlinkedCodeBlock;
+class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
 
@@ -84,6 +90,12 @@ public:
     // Where the root record starts within the payload (a function code block is written after its own arrays).
     size_t rootOffset() const { return m_rootOffset; }
     void setRootOffset(size_t offset) { m_rootOffset = offset; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Where this code's cache entry starts within the payload. Non-zero when several modules were encoded into one
+    // payload (BytecodeLinkEncoder): every offset a Decoder keeps stays relative to the start of the shared payload.
+    size_t entryOffset() const { return m_entryOffset; }
+    void setEntryOffset(size_t offset) { m_entryOffset = offset; }
+#endif
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
     bool hasUpdates() const { return !m_updates.isEmpty(); }
@@ -102,9 +114,72 @@ private:
     size_t m_size { 0 };
     CachePayload m_payload;
     size_t m_rootOffset { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_entryOffset { 0 };
+#endif
     LeafExecutableMap m_leafExecutables;
     Vector<CacheUpdate> m_updates;
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// The regions of a payload written by BytecodeLinkEncoder, in the order they lie in it.
+namespace BytecodeLinkRegions {
+enum : unsigned { EarlyHeads, Hot, Unknown, LateHeads, Cold, ExpressionInfo, Count };
+}
+
+// What one VM read out of its persistent payloads, in first-use order: the input of a payload order file. Exists only
+// while recording (PersistentBytecodePayloads::enableOrderRecording). Every recorder of the process stays registered,
+// whether or not its VM is still alive, and any thread may take a snapshot of it (the thread that writes the order file
+// when the process exits is not the thread of a Worker's VM), so what it remembers must not die with the VM: a source is
+// where its payload is, and strings are ordinals into a table, both of which the embedder keeps for good.
+class BytecodeOrderRecorder final : public ThreadSafeRefCounted<BytecodeOrderRecorder> {
+    WTF_MAKE_NONCOPYABLE(BytecodeOrderRecorder);
+    WTF_MAKE_TZONE_ALLOCATED(BytecodeOrderRecorder);
+public:
+    static Ref<BytecodeOrderRecorder> create();
+    ~BytecodeOrderRecorder();
+    // Every recorder of the process, in creation order; one made from here on records nothing.
+    static Vector<Ref<BytecodeOrderRecorder>> endRecordingInProcess();
+    // Null unless the VM records.
+    static BytecodeOrderRecorder* ofVM(VM&);
+
+    // Only code of payloads that outlive the program (CachedBytecode::payloadIsPersistent) is what a payload order file
+    // lays out, and can be known by where it is; the callers see to that.
+    void didDecodeFunction(RecordedOrderSource, OrderFunctionKey); // decoded in order to be run, whether or not it then runs
+    void didDecodeModule(RecordedOrderSource);
+    void didRejectModule(RecordedOrderSource); // it has bytecode, which is not for the source it is run from
+    void didReadString(std::span<const uint8_t> stringTable, uint32_t ordinal);
+
+    struct Snapshot {
+        Vector<RecordedOrderSource> sources;
+        Vector<RecordedOrderFunction> functions;
+        Vector<unsigned> modules; // indices into `sources`
+        Vector<unsigned> rejectedModules;
+        std::span<const uint8_t> stringTable; // DecoderStringTable's bytes
+        Vector<uint32_t> stringOrdinals;
+    };
+    // What is decoded from here on is not recorded.
+    Snapshot take();
+    bool isOver() const { return m_isOver.load(); }
+    const std::atomic<bool>& isOverFlag() const { return m_isOver; }
+
+private:
+    explicit BytecodeOrderRecorder(bool isOver);
+    unsigned indexOf(RecordedOrderSource) WTF_REQUIRES_LOCK(m_lock);
+
+    Lock m_lock;
+    std::atomic<bool> m_isOver; // set with m_lock held
+
+    Snapshot m_recorded WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> m_sources WTF_GUARDED_BY_LOCK(m_lock);
+    unsigned m_lastSource WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    // A function is decoded again after its code was returned to the cache.
+    OrderHashSet m_seenFunctions WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenModules WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenRejectedModules WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_seenStrings WTF_GUARDED_BY_LOCK(m_lock);
+};
+#endif
 
 // The persistent payloads (CachePayload::isPersistent) a VM has code from. An UnlinkedCodeBlock decoded from one
 // remembers its slot here and its record's offset, which is enough to decode it again after it was dropped
@@ -148,6 +223,40 @@ public:
     // Before the heap's last finalization takes the weak references' storage.
     void clearChildExecutables() { m_childExecutables.clear(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE BytecodeOrderRecorder& enableOrderRecording();
+    // Null once the recording was taken (BytecodeOrderRecorder::take).
+    BytecodeOrderRecorder* orderRecorderIfRecording();
+
+    // How well the order file a payload was laid out by (BytecodeLinkEncoder) matches what this VM runs: the function
+    // bodies decoded out of the payload, by the region they lie in. A body decoded again after its code was returned to
+    // the cache counts again. `bytes`: a body's own arrays and record, not what it shares with an identical earlier one.
+    struct LinkedPayloadStatistics {
+        struct Bodies {
+            uint64_t count { 0 };
+            uint64_t bytes { 0 };
+        };
+        std::array<uint32_t, BytecodeLinkRegions::Count> regionEnds { };
+        Bodies hot;
+        Bodies unknown;
+        Bodies cold;
+    };
+    // The embedder says which of its payloads is a linked one. Nothing is counted for any other payload.
+    JS_EXPORT_PRIVATE void setLinkedPayload(std::span<const uint8_t>, const std::array<uint32_t, BytecodeLinkRegions::Count>& regionEnds);
+    const LinkedPayloadStatistics* linkedPayloadStatistics() const { return m_linkedPayloadBase ? &m_linkedPayloadStatistics : nullptr; }
+    void didDecodeFunctionBody(const void* payloadBase, uint32_t recordOffset, uint32_t bytes)
+    {
+        if (payloadBase != m_linkedPayloadBase)
+            return;
+        auto& regionEnds = m_linkedPayloadStatistics.regionEnds;
+        auto& bodies = recordOffset < regionEnds[BytecodeLinkRegions::Hot] ? m_linkedPayloadStatistics.hot
+            : recordOffset < regionEnds[BytecodeLinkRegions::Unknown] ? m_linkedPayloadStatistics.unknown
+            : m_linkedPayloadStatistics.cold;
+        bodies.count++;
+        bodies.bytes += bytes;
+    }
+#endif
+
     // For diagnostics: what this and the Decoders it can reach hold on to.
     struct Statistics {
         size_t payloads { 0 };
@@ -176,6 +285,11 @@ private:
     UncheckedKeyHashMap<Identity, uint16_t> m_indices;
     VM& m_vm;
     UncheckedKeyHashMap<uint64_t, FixedVector<Weak<UnlinkedFunctionExecutable>>> m_childExecutables;
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<BytecodeOrderRecorder> m_orderRecorder;
+    const void* m_linkedPayloadBase { nullptr }; // never a Decoder's base while null
+    LinkedPayloadStatistics m_linkedPayloadStatistics;
+#endif
 };
 
 } // namespace JSC

@@ -33,15 +33,24 @@
 #include "VariableEnvironment.h"
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueArray.h>
 #include <wtf/text/AtomStringImpl.h>
+#include <array>
+#include <limits>
 #include <optional>
+#include <span>
+#include <wtf/Vector.h>
+#include <wtf/text/CString.h>
+#include <wtf/text/StringView.h>
 
 namespace JSC {
 
 class BytecodeCacheError;
+class BytecodeOrderRecorder;
 class CachedBytecode;
+class SourceCode;
 class SourceCodeKey;
 class SourceProvider;
 class CachedSymbolTable;
@@ -91,7 +100,9 @@ public:
     // The 4-byte slot a cached non-symbol string occupies (CachedPtr's encoding): a 1-3 character Latin-1 string inline,
     // else an ordinal into this table, or the empty sentinel. DecoderStringTable::atomForSlot reads it back.
     JS_EXPORT_PRIVATE uint32_t slotFor(const StringImpl&);
-    JS_EXPORT_PRIVATE Vector<uint8_t> serialize() const;
+    // `hotStringHashes` (bytecodeOrderStringHash values, hottest first; from a payload order file) moves those strings'
+    // records to the front, in that order; the rest follow in ordinal order. The offsets array stays indexed by ordinal.
+    JS_EXPORT_PRIVATE Vector<uint8_t> serialize(std::span<const uint64_t> hotStringHashes = { }) const;
     static constexpr uint32_t maxOrdinal = (1u << 30) - 1;
 private:
     UncheckedKeyHashMap<String, uint32_t> m_ordinals;
@@ -151,6 +162,13 @@ public:
     void prefetchSlot(uint32_t ordinal) const;
     template<PrefetchFor> void prefetchTarget(uint32_t ordinal) const;
     void prefetchLookup(AtomStringTable&, uint32_t ordinal) const;
+#if USE(BUN_JSC_ADDITIONS)
+    // Payload order file recording: from now on tell the recorder each ordinal whose record is read. The table's bytes
+    // must outlive the recorder, that is the process.
+    JS_EXPORT_PRIVATE void enableFirstUseRecording(BytecodeOrderRecorder&);
+    // bytecodeOrderStringHash of the string, from its record.
+    uint64_t orderHashFor(uint32_t ordinal) const;
+#endif
 private:
     static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
@@ -181,6 +199,9 @@ private:
     Vector<uint32_t> m_cellOrdinals WTF_GUARDED_BY_LOCK(m_cellsLock); // the slots that hold a cell, for visitStrongReferences
     size_t m_visitedCount WTF_GUARDED_BY_LOCK(m_cellsLock) { 0 };
     bool m_visitedThisCycle WTF_GUARDED_BY_LOCK(m_cellsLock) { false };
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<BytecodeOrderRecorder> m_recorder;
+#endif
 };
 
 class VariableLengthObjectBase {
@@ -221,6 +242,39 @@ protected:
 
     Offset m_offset;
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// A payload order file is about code, and JSC does not name code: its embedder does, however it likes, and says which
+// function a name is for by what JSC knows the function by. That is where it starts in its provider's text, in code units,
+// and which of the functions that may start there it is.
+enum class OrderFunctionKind : uint8_t {
+    Function, // starts where its parameters do (the start of the function's own SourceCode)
+    InnerBody, // what JSC makes of the body of an async function or of a generator; starts where that body does
+    ClassFields, // initializes a class's fields, and has no text but theirs; starts where the first of them does
+    DefaultConstructor, // of a class that does not write one: its text is a builtin's; starts where the class does
+};
+struct OrderFunctionKey {
+    uint32_t start { 0 };
+    OrderFunctionKind kind { OrderFunctionKind::Function };
+    friend auto operator<=>(const OrderFunctionKey&, const OrderFunctionKey&) = default;
+};
+// A table keyed by what an order file names something by reserves the top two values; names that come out of an order
+// file or from the embedder are checked (isValidOrderHash) before they go into one.
+using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+constexpr bool isValidOrderHash(uint64_t hash) { return hash <= std::numeric_limits<uint64_t>::max() - 2; }
+
+// What a BytecodeOrderRecorder saw decoded. It knows a source by the payload its code came out of, and where in it its
+// cache entry starts: a payload that is recorded outlives the program, so its address says which it is, for good.
+struct RecordedOrderSource {
+    const uint8_t* payload { nullptr };
+    uint32_t entryOffset { 0 }; // CachedBytecode::entryOffset
+    friend bool operator==(const RecordedOrderSource&, const RecordedOrderSource&) = default;
+};
+struct RecordedOrderFunction {
+    unsigned source; // an index into the list of sources it comes with
+    OrderFunctionKey key;
+};
+#endif
 
 class Decoder : public RefCounted<Decoder> {
     WTF_MAKE_NONCOPYABLE(Decoder);
@@ -267,6 +321,9 @@ public:
     // This decoder's payload in VM::persistentBytecodePayloads(), or 0: what a code block decoded from it needs to remember
     // (with its record's offset) to be decoded again later.
     uint16_t persistentPayloadIndex() const { return m_persistentPayloadIndex; }
+#if USE(BUN_JSC_ADDITIONS)
+    RecordedOrderSource orderSource() const;
+#endif
     void clearPersistentPayloadIndex() { m_persistentPayloadIndex = 0; }
     void addRetainedTableSizes(size_t& mappedPointers, size_t& atomsByOrdinal, size_t& finalizers) const
     {
@@ -303,13 +360,103 @@ private:
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
 
+#if USE(BUN_JSC_ADDITIONS)
+// What an order file names a string of a payload by.
+JS_EXPORT_PRIVATE uint64_t bytecodeOrderStringHash(const StringImpl&);
+// The SourceCode is the function's own (UnlinkedFunctionExecutable::linkedSourceCode). Nothing for a function there is
+// no telling the start of (it has no name then).
+JS_EXPORT_PRIVATE std::optional<OrderFunctionKey> orderFunctionKey(const UnlinkedFunctionExecutable&, const SourceCode&);
+
+// The embedder's names for the code of one source text.
+struct BytecodeOrderNames {
+    struct Function {
+        OrderFunctionKey key;
+        uint64_t name;
+    };
+    uint64_t module { std::numeric_limits<uint64_t>::max() }; // the top-level code's; not a name (isValidOrderHash) by default
+    std::span<const Function> functions; // sorted by key; the embedder's, for the length of the add* call
+    bool hasAny() const { return !functions.empty() || isValidOrderHash(module); }
+    std::optional<uint64_t> nameOf(OrderFunctionKey) const;
+};
+
+// What every VM of the process, alive or gone, read out of its persistent payloads: each list in first-use order, the
+// first VM's first (what two VMs both used is listed for each). The embedder makes an order file of it, in its names.
+struct BytecodeOrderRecording {
+    Vector<RecordedOrderSource> sources;
+    Vector<RecordedOrderFunction> functions; // decoded to be run
+    Vector<unsigned> evaluatedSources; // modules and builtins decoded: indices into `sources`
+    Vector<unsigned> rejectedSources; // modules whose bytecode was not for their source, in a VM: they ran from source there
+    Vector<uint64_t> strings; // bytecodeOrderStringHash of each string read
+};
+// Taking it ends the recording, for the process.
+JS_EXPORT_PRIVATE BytecodeOrderRecording bytecodeOrderRecording();
+
+// For checking one payload layout against another: decodes ALL the code `cachedBytecode` holds for `source` (every
+// function, however deeply nested, and each block's expression info) and digests, in tree order, each block's
+// instructions, constant count, identifiers and expression info size. Nullopt if the payload is not for `source`.
+// On a VM that records (BytecodeOrderRecorder) the module and every string count as used: digest after
+// bytecodeOrderRecording().
+struct CachedCodeDigest {
+    uint64_t digest { 0 };
+    unsigned codeBlocks { 0 };
+};
+JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedCode(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>);
+JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>);
+
+// `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
+// out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:
+//   0 heads (cache entry, key, top-level code, its functions' records) of modules the run evaluated, or did not know
+//   1 HOT bodies, in the order file's order   2 UNKNOWN bodies: functions the recorded build did not have
+//   3 heads of modules the run knew and did not evaluate   4 all other bodies, in source order   5 expression info.
+// So every offset is final when it is written: a reference to something earlier is a plain delta, and a function
+// record's body slots and a code block's expression-info slot are filled in when their target is written, as in a
+// single-module payload. Every module's unlinked code stays alive until finish().
+class BytecodeLinkEncoder {
+    WTF_MAKE_NONCOPYABLE(BytecodeLinkEncoder);
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
+public:
+    // What an order file says, in the names the embedder gives code (BytecodeOrderNames).
+    struct Hints {
+        Vector<uint64_t> hotFunctions; // in first-decode order
+        Vector<uint64_t> knownFunctions; // the other functions the recorded build had; empty = not recorded
+        Vector<uint64_t> evaluatedModules;
+        Vector<uint64_t> notEvaluatedModules;
+    };
+    static constexpr unsigned numberOfRegions = 6; // BytecodeLinkRegions::Count
+    struct Result {
+        RefPtr<CachedBytecode> payload;
+        Vector<uint32_t> entryOffsets; // per addModule call, in call order
+        unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
+        unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
+        unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover
+        std::array<uint32_t, numberOfRegions> regionEnds { };
+    };
+
+    // The shared string table is required. Destroy it, as it is used, on its VM's thread with the VM's lock held.
+    JS_EXPORT_PRIVATE BytecodeLinkEncoder(VM&, EncoderStringTable*, Hints&&);
+    JS_EXPORT_PRIVATE ~BytecodeLinkEncoder();
+    // `source` is the whole module, as given to the parser; the code block is a module's or a program's.
+    JS_EXPORT_PRIVATE void addModule(const SourceCodeKey&, UnlinkedCodeBlock*, const SourceCode&, const BytecodeOrderNames&);
+    // An embedder's builtin (what encodeBuiltinFunction takes), `source` being all of its source: decodeBuiltinFunction
+    // reads it back given the payload and the entry's offset. The builtin is a module, and a function of it.
+    JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames&);
+    JS_EXPORT_PRIVATE Result finish();
+    JS_EXPORT_PRIVATE VM& vm() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+};
+#endif
+
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
 
 // An embedder's JS builtin (a root UnlinkedFunctionExecutable from BuiltinExecutables::createExecutable), with its code
 // blocks generated recursively beforehand (see recursivelyGenerateUnlinkedCodeBlocksForFunction). `embedderStamp`
 // identifies the builtin source's contents; decode checks it and the source length instead of hashing the source.
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeBuiltinFunction(VM&, const UnlinkedFunctionExecutable*, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
-JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp);
+// RecoverableCode::No: for a pass over everything a payload holds, which must not share code with the program (see Decoder::create).
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* decodeBuiltinFunction(VM&, Ref<CachedBytecode>, SourceProvider&, unsigned embedderStamp, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);
 
 template<typename UnlinkedCodeBlockType>
 UnlinkedCodeBlockType* decodeCodeBlock(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)

@@ -261,8 +261,24 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
-    if (m_isCached)
+    if (m_isCached) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Code of a payload that outlives the program, about to be run: what a payload order file is about. (Not what
+        // codeBlocksDecodingCached decodes, for a link; the callers that generate code without running it, CodeCache's and
+        // the shell's, have executables that were just parsed.)
+        auto* recorder = BytecodeOrderRecorder::ofVM(vm);
+        std::optional<RecordedOrderSource> recordedSource;
+        if (recorder && m_decoder->canBorrowPayload()) [[unlikely]]
+            recordedSource = m_decoder->orderSource();
+#endif
         decodeCachedCodeBlocks(vm);
+#if USE(BUN_JSC_ADDITIONS)
+        if (recordedSource) [[unlikely]] {
+            if (auto key = orderFunctionKey(*this, source))
+                recorder->didDecodeFunction(*recordedSource, *key);
+        }
+#endif
+    }
     switch (specializationKind) {
     case CodeSpecializationKind::CodeForCall:
         if (UnlinkedFunctionCodeBlock* codeBlock = m_unlinkedCodeBlockForCall.get())
@@ -294,6 +310,15 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFunctionExecutable::codeBlocksDecodingCached(VM& vm)
+{
+    if (m_isCached)
+        decodeCachedCodeBlocks(vm);
+    return { m_unlinkedCodeBlockForCall.get(), m_unlinkedCodeBlockForConstruct.get() };
+}
+#endif
 
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 {

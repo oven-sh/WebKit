@@ -213,6 +213,11 @@ public:
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
     // The code blocks are still (or again) in the bytecode cache this was decoded from.
     bool isCached() const { return m_isCached; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The code blocks for call and construct as they are once whatever the bytecode cache holds for this function is
+    // decoded; never generates one (unlinkedCodeBlockFor does).
+    JS_EXPORT_PRIVATE std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> codeBlocksDecodingCached(VM&);
+#endif
     ConstructAbility constructAbility() const { return static_cast<ConstructAbility>(m_constructAbility); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
     bool isClassConstructorFunction() const
@@ -229,6 +234,12 @@ public:
     }
     bool isClass() const { return m_isClass; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Where classSource() starts and where the first of classElementDefinitions() is, for orderFunctionKey: read out
+    // of the cached record as they lie, so that nothing of a function that was decoded from a cache is materialized.
+    std::optional<uint32_t> classSourceStartWithoutMaterializing() const;
+    std::optional<uint32_t> firstClassElementOffsetWithoutMaterializing() const;
+#endif
 
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {
