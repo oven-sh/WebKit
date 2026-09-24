@@ -32,14 +32,6 @@
 
 namespace WTF {
 
-static constexpr unsigned maxCapacity = String::MaxLength;
-
-unsigned StringBuilder::expandedCapacity(unsigned capacity, unsigned requiredCapacity)
-{
-    static constexpr unsigned minimumCapacity = 16;
-    return std::max(requiredCapacity, std::max(minimumCapacity, std::min(capacity * 2, maxCapacity)));
-}
-
 void StringBuilder::didOverflow()
 {
     if (m_shouldCrashOnOverflow)
@@ -141,7 +133,7 @@ std::span<Latin1Character> StringBuilder::extendBufferForAppendingLatin1Characte
 std::span<char16_t> StringBuilder::extendBufferForAppendingWithUpconvert(unsigned requiredLength)
 {
     if (is8Bit()) {
-        allocateBuffer<char16_t>(span8(), expandedCapacity(capacity(), requiredLength));
+        allocateBuffer<char16_t>(span8(), expandedCapacity<char16_t>(capacity(), requiredLength));
         if (hasOverflowed()) [[unlikely]]
             return { };
         return spanConstCast<char16_t>(m_buffer->span16().subspan(std::exchange(m_length, requiredLength)));
