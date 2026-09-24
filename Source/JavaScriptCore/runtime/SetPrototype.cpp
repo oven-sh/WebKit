@@ -188,6 +188,9 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSize, (JSGlobalObject* globalObject, CallFr
 }
 
 // https://tc39.es/ecma262/#sec-getsetrecord ( Step 1 ~ Step 7 )
+// The spec's [[Size]] is an unbounded integer or +Infinity. Callers only compare it with JSSet::size(),
+// which stays far below UINT32_MAX (the storage is capped at IndexingHeader::maximumLength slots),
+// so clamping larger sizes to UINT32_MAX preserves every comparison.
 static uint32_t getSetSizeAsInt(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -212,7 +215,7 @@ static uint32_t getSetSizeAsInt(JSGlobalObject* globalObject, JSValue value)
     if (intOrInfSize < 0) [[unlikely]]
         return throwVMRangeError(globalObject, scope, "Set operation expects first argument to have non-negative 'size' property"_s);
 
-    if (std::isinf(intOrInfSize)) [[unlikely]]
+    if (intOrInfSize >= std::numeric_limits<uint32_t>::max()) [[unlikely]]
         return std::numeric_limits<uint32_t>::max();
     return static_cast<uint32_t>(intOrInfSize);
 }
