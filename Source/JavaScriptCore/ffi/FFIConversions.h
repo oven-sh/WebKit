@@ -42,7 +42,16 @@ class JSGlobalObject;
 
 namespace FFI {
 
+class Signature;
+
 JS_EXPORT_PRIVATE bool writeSlotFromJSValue(JSGlobalObject*, FFIContext&, Type, JSValue, uint64_t& slotOut, StringArena* arena);
+
+// True when writeSlotFromJSValue fills this slot off the live bytes of a TypedArray, a DataView,
+// or an ArrayBuffer: the address of those bytes for a pointer, how many of them there are for
+// 'buffer_length'. Such a write is a snapshot, and JS that runs after it can detach, transfer, or
+// resize that buffer. Then the address points at freed memory and the length describes bytes that
+// are gone. So a snapshot is always taken after the conversions that can run JS.
+JS_EXPORT_PRIVATE bool slotIsBufferSnapshot(Type, JSValue);
 
 JS_EXPORT_PRIVATE JSValue jsValueFromSlot(JSGlobalObject*, FFIContext&, Type, uint64_t slot);
 
@@ -57,6 +66,11 @@ JS_EXPORT_PRIVATE int64_t doubleToInt64(double);
 
 JSC_DECLARE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject*, uint32_t typeTag, uint64_t slot, int32_t exitArena));
 JSC_DECLARE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject*, FFI::FFIContext*, uint32_t typeTag, EncodedJSValue value, uint64_t* slot));
+// Writes argument `index`'s slot, whose address is `slot`, and then takes the buffer snapshot of
+// every earlier argument again. Use it instead of operationFFIWriteSlot when this conversion can
+// run JS and an earlier argument already took one. The earlier arguments come from the parked
+// JSValues above the slot buffer (see FFI::argumentValueOffset).
+JSC_DECLARE_JIT_OPERATION(operationFFIWriteSlotAndRetakeSnapshots, void, (JSGlobalObject*, FFI::Signature*, uint32_t index, EncodedJSValue value, uint64_t* slot));
 JSC_DECLARE_JIT_OPERATION(operationFFIArenaEnter, void, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationFFIArenaExit, void, (JSGlobalObject*));
 
