@@ -3861,7 +3861,7 @@ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPro
         break;
     }
     case JSC::JSPromiseRejectionOperation::Reject: {
-#if USE(BUN_JSC_ADDITIONS)
+#if USE(BUN_JSC_ADDITIONS) && BUN_ENABLE_JSDOLLARVM
         if (Options::useDollarVM()) [[unlikely]]
             JSDollarVM::promiseWasRejected(globalObject, promise);
 #endif
