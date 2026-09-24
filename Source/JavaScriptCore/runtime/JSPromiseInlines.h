@@ -27,7 +27,7 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#include "InternalFieldTuple.h"
+#include "AsyncContextSwapScope.h"
 #include "JSCellInlines.h"
 #include "JSGlobalObject.h"
 #include "JSPromise.h"
@@ -40,11 +40,8 @@ ALWAYS_INLINE JSPromise* JSPromise::createKeepingOwner(VM& vm, JSGlobalObject* g
 {
     JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure);
     promise->finishCreation(vm);
-    if (vm.isAsyncContextOwnerTracked()) [[unlikely]] {
-        JSValue owner = globalObject->m_asyncContextData->getInternalField(1);
-        if (owner.isInt32())
-            promise->m_slot.setWithoutWriteBarrier(owner);
-    }
+    if (vm.isAsyncContextOwnerTracked()) [[unlikely]]
+        promise->m_slot.setWithoutWriteBarrier(AsyncContextSwapScope::numberOfOwner(globalObject->m_asyncContextData->getInternalField(1)));
     return promise;
 }
 

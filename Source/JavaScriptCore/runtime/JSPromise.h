@@ -123,13 +123,15 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // The owner of the script that made this promise (field 1 of JSGlobalObject::m_asyncContextData when it was
-    // made: a number), for the embedder to say whose a rejection that nothing handles is when it is somebody
-    // else who rejects the promise. Kept by the promises whose reject function is handed out: those of
-    // `new Promise` and Promise.withResolvers(). (What rejects any other promise is a job.) It is a number, so it keeps nothing alive and the collector
-    // does not look at it; and it is where a promise that nothing has been done with has nothing (m_slot, where
-    // its value will go), so a promise has one until it is settled or has a reaction. While the embedder is told
-    // of a rejection that nothing handles, VM::ownerOfPromiseBeingRejected() has it.
-    // Empty if there is none, or none was kept.
+    // made), for the embedder to say whose a rejection that nothing handles is when it is somebody else who
+    // rejects the promise. Kept by the promises whose reject function is handed out, once owners are tracked:
+    // those of `new Promise` and Promise.withResolvers(). (What rejects any other promise is a job, which runs
+    // with the owner it was scheduled with.)
+    // What is kept is the owner's number, or undefined if there was no owner: so it keeps nothing alive and the
+    // collector does not look at it. It is kept where a promise that nothing has been done with has nothing
+    // (m_slot, where its value will go), so a promise has it until it is settled or has a reaction. While the
+    // embedder is told of a rejection that nothing handles, VM::ownerOfPromiseBeingRejected() has it.
+    // Empty if nothing was kept.
     JSValue ownerWhenMade() const;
     static JSPromise* createKeepingOwner(VM&, JSGlobalObject*, Structure*);
     // createNewPromiseCapability(), for Promise.withResolvers().

@@ -24,6 +24,7 @@
 
 #include "APICast.h"
 #include "ArrayBuffer.h"
+#include "AsyncContextSwapScope.h"
 #include "AtomicsObject.h"
 #include "BigIntConstructor.h"
 #include "BuiltinExecutableCreator.h"
@@ -1696,9 +1697,9 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromi
     VM& vm = globalObject->vm();
     if (Options::useDollarVM() && operation == JSPromiseRejectionOperation::Reject) {
         if (JSValue owner = vm.ownerOfPromiseBeingRejected())
-            promise->putDirect(vm, Identifier::fromString(vm, "ownerWhenRejected"_s), owner);
+            promise->putDirect(vm, Identifier::fromString(vm, "ownerWhenRejected"_s), owner.isUndefined() ? jsNull() : owner);
         if (vm.isAsyncContextOwnerTracked())
-            promise->putDirect(vm, Identifier::fromString(vm, "ownerCurrentWhenRejected"_s), globalObject->m_asyncContextData->getInternalField(1));
+            promise->putDirect(vm, Identifier::fromString(vm, "ownerCurrentWhenRejected"_s), AsyncContextSwapScope::numberOfOwner(globalObject->m_asyncContextData->getInternalField(1)));
     }
     JSGlobalObject::promiseRejectionTracker(globalObject, promise, operation);
 }

@@ -678,7 +678,7 @@ public:
 
     // Whether async code continues with the owner of the script that scheduled it as well as with its async
     // context (AsyncContextSwapScope): turned on when the embedder first says there is an owner, never off.
-    // The owner is a number that means something to the embedder, in field 1 of
+    // The owner is an InternalFieldTuple [what the embedder likes, a number] in field 1 of
     // JSGlobalObject::m_asyncContextData; undefined there is no owner. (Only asked where async contexts are
     // tracked, which tracking owners turns on: what runs while they are not is what it was before owners.)
     bool isAsyncContextOwnerTracked() const { return m_asyncContextOwnerTracked; }
@@ -687,8 +687,8 @@ public:
     // owner in it, and runInternalMicrotaskWithOwner() from then on.
     InternalMicrotaskRunner internalMicrotaskRunner() const { return m_internalMicrotaskRunner; }
     // While the embedder is told that a promise was rejected with nothing handling it
-    // (promiseRejectionTracker(), JSPromiseRejectionOperation::Reject): the owner that promise was made by, if it
-    // kept it (JSPromise::ownerWhenMade()). Empty otherwise.
+    // (promiseRejectionTracker(), JSPromiseRejectionOperation::Reject): what that promise kept of the owner that
+    // made it (JSPromise::ownerWhenMade()). Empty otherwise.
     JSValue ownerOfPromiseBeingRejected() const { return m_ownerOfPromiseBeingRejected; }
     void setOwnerOfPromiseBeingRejected(JSValue owner) { m_ownerOfPromiseBeingRejected = owner; }
     // Valid until trackAsyncContextOwner(): while it is, optimized code is what it was before there were owners.

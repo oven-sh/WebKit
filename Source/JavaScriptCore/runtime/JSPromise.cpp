@@ -81,7 +81,7 @@ JSValue JSPromise::ownerWhenMade() const
     if (status() != Status::Pending || inlineReactionKind() != InlineReactionKind::None || payloadCell())
         return { };
     JSValue owner = m_slot.get();
-    return owner && owner.isInt32() ? owner : JSValue();
+    return owner && !owner.isCell() ? owner : JSValue();
 }
 #endif
 
@@ -736,7 +736,7 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
             JSValue owner = m_slot.get();
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
-            vm.setOwnerOfPromiseBeingRejected(owner && owner.isInt32() ? owner : JSValue());
+            vm.setOwnerOfPromiseBeingRejected(owner && !owner.isCell() ? owner : JSValue());
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
             vm.setOwnerOfPromiseBeingRejected(JSValue());
         } else {

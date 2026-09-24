@@ -37,15 +37,21 @@ namespace JSC {
 
 // RAII helper for Bun's AsyncLocalStorage. JSGlobalObject::m_asyncContextData holds what
 // async code continues with: field 0 is the async context (AsyncLocalStorage's data), and
-// field 1 the owner of the running script, a number, for an embedder that runs the script
-// of several owners in one global object (undefined: there is no owner). A job (microtask,
-// timer, ...) captures both when it is scheduled, with current(); constructing this scope
-// with the captured value installs both for the lifetime of the scope and restores the
-// previous values on destruction.
+// field 1 the owner of the running script, for an embedder that runs the script of several
+// owners in one global object (undefined: there is no owner). A job (microtask, timer, ...)
+// captures both when it is scheduled, with current(); constructing this scope with the
+// captured value installs both for the lifetime of the scope and restores the previous
+// values on destruction.
+//
+// An owner is an InternalFieldTuple [what the embedder likes, a number]. What captures it
+// keeps it alive, as it does the async context. The number is what a promise keeps of it
+// (JSPromise::ownerWhenMade()), which keeps nothing alive.
 //
 // A captured value is one JSValue, because one slot is what reactions and microtasks have
-// for it: undefined, the async context, the owner's number, or an InternalFieldTuple
-// [async context, owner] when there are both. (An async context is never a number.)
+// for it: undefined, the async context, the owner, or an InternalFieldTuple
+// [async context, owner] when there are both. (An async context is never an
+// InternalFieldTuple, and what is second in an owner is a number where in a pair it is an
+// owner.)
 //
 // A job that captured "no context" (undefined, or an empty JSValue for callers
 // that never capture) runs with no context and no owner: whatever an earlier job left in
@@ -121,7 +127,7 @@ public:
             m_asyncContextData->putInternalField(m_vm, 0, m_restoreAsyncContext);
             if constexpr (mayHaveOwner) {
                 if (m_restoreOwner) [[unlikely]]
-                    m_asyncContextData->internalField(InternalFieldTuple::Field::Slot1).setWithoutWriteBarrier(m_restoreOwner);
+                    m_asyncContextData->putInternalField(m_vm, 1, m_restoreOwner);
             }
             m_asyncContextData = nullptr;
         }
@@ -170,18 +176,24 @@ public:
     // The two parts of a captured value.
     static ALWAYS_INLINE JSValue asyncContextOf(JSValue captured)
     {
-        if (captured.isEmpty() || captured.isInt32())
-            return jsUndefined();
-        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(0) : captured;
+        if (!isContextTuple(captured))
+            return captured.isEmpty() ? jsUndefined() : captured;
+        auto* tuple = uncheckedDowncast<InternalFieldTuple>(captured.asCell());
+        return tuple->getInternalField(1).isNumber() ? jsUndefined() : tuple->getInternalField(0);
     }
 
     static ALWAYS_INLINE JSValue ownerOf(JSValue captured)
     {
-        if (captured.isEmpty())
+        if (!isContextTuple(captured))
             return jsUndefined();
-        if (captured.isInt32())
-            return captured;
-        return isContextTuple(captured) ? uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(1) : jsUndefined();
+        JSValue second = uncheckedDowncast<InternalFieldTuple>(captured.asCell())->getInternalField(1);
+        return second.isNumber() ? captured : second;
+    }
+
+    // The number of an owner (what is in field 1 of m_asyncContextData); undefined if it is none.
+    static ALWAYS_INLINE JSValue numberOfOwner(JSValue owner)
+    {
+        return owner.isCell() ? uncheckedDowncast<InternalFieldTuple>(owner.asCell())->getInternalField(1) : jsUndefined();
     }
 
     // Pair userContext with asyncContext in an InternalFieldTuple
@@ -217,16 +229,19 @@ private:
                 // (Not empty: restoreEarly() takes it to say that there is an owner to put back.)
                 m_restoreOwner = m_asyncContextData->getInternalField(1);
                 JSValue owner = jsUndefined();
-                if (asyncContext.isInt32()) {
-                    owner = asyncContext;
-                    asyncContext = jsUndefined();
-                } else if (isContextTuple(asyncContext)) [[unlikely]] {
+                if (isContextTuple(asyncContext)) {
                     auto* tuple = uncheckedDowncast<InternalFieldTuple>(asyncContext.asCell());
-                    asyncContext = tuple->getInternalField(0);
-                    owner = tuple->getInternalField(1);
+                    JSValue second = tuple->getInternalField(1);
+                    if (second.isNumber()) [[likely]] {
+                        owner = asyncContext;
+                        asyncContext = jsUndefined();
+                    } else {
+                        owner = second;
+                        asyncContext = tuple->getInternalField(0);
+                    }
                 }
-                // (A number or undefined.)
-                m_asyncContextData->internalField(InternalFieldTuple::Field::Slot1).setWithoutWriteBarrier(owner);
+                if (m_restoreOwner != owner)
+                    m_asyncContextData->putInternalField(m_vm, 1, owner);
             }
         }
         if (m_restoreAsyncContext != asyncContext)

@@ -10587,9 +10587,19 @@ IGNORE_CLANG_WARNINGS_END
 #if USE(BUN_JSC_ADDITIONS)
         if (!m_graph.isWatchingAsyncContextOwnerIsNotTracked()) {
             // JSPromise::createKeepingOwner().
+            LBasicBlock hasOwner = m_out.newBlock();
+            LBasicBlock keepOwner = m_out.newBlock();
             LValue asyncContextData = m_out.loadPtr(m_out.absolute(reinterpret_cast<char*>(globalObject) + JSGlobalObject::offsetOfAsyncContextData()));
             LValue owner = m_out.load64(asyncContextData, m_heaps.JSInternalFieldObjectImpl_internalFields[1]);
-            m_out.store64(m_out.select(isInt32(owner), owner, m_out.constInt64(JSValue::encode(JSValue()))), promise, m_heaps.JSPromise_slot);
+            ValueFromBlock none = m_out.anchor(owner);
+            m_out.branch(isCell(owner), unsure(hasOwner), unsure(keepOwner));
+
+            LBasicBlock previousNext = m_out.appendTo(hasOwner, keepOwner);
+            ValueFromBlock number = m_out.anchor(m_out.load64(owner, m_heaps.JSInternalFieldObjectImpl_internalFields[1]));
+            m_out.jump(keepOwner);
+
+            m_out.appendTo(keepOwner, previousNext);
+            m_out.store64(m_out.phi(Int64, none, number), promise, m_heaps.JSPromise_slot);
         } else
             m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
 #else

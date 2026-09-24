@@ -3949,7 +3949,7 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
 #if USE(BUN_JSC_ADDITIONS)
 JSValue JSGlobalObject::capturedAsyncContextWithOwner(VM& vm, JSValue asyncContext, JSValue owner)
 {
-    ASSERT(owner.isInt32());
+    ASSERT(AsyncContextSwapScope::isContextTuple(owner));
     ASSERT(!asyncContext.isUndefined());
     InternalFieldTuple* captured = m_capturedAsyncContextWithOwner.get();
     if (!captured || captured->getInternalField(0) != asyncContext || captured->getInternalField(1) != owner) {

@@ -1,6 +1,6 @@
 //@ requireOptions("--useDollarVM=1")
 // A promise whose reject function is handed out keeps the owner that was current when it was made
-// ($vm.ownerWhenMade, a number), and the embedder is told of it when the promise is rejected with nothing
+// ($vm.ownerWhenMade: its number, or null if there was none), and the embedder is told of it when the promise is rejected with nothing
 // handling it, whoever rejects it (the shell records that as promise.ownerWhenRejected, and the owner that is
 // current then as promise.ownerCurrentWhenRejected).
 
@@ -44,7 +44,7 @@ for (let i = 0; i < 1e5; i++) {
     if (made(promise) !== own)
         throw new Error("new Promise #" + i + " expected " + own + " but got " + made(promise));
     if (!(i % 1000))
-        shouldBe(made(construct()), undefined, "new Promise with no owner current:");
+        shouldBe(made(construct()), null, "new Promise with no owner current:");
 }
 inside(7, () => {
     shouldBe(made(Promise.withResolvers().promise), 7, "withResolvers:");
@@ -89,10 +89,10 @@ inside(7, () => {
     inside(9, () => c.reject(new Error("withResolvers")));
     shouldBe(c.promise.ownerWhenRejected, 7, "withResolvers made by 7, rejected by 9:");
 
-    // Made with no owner current: the embedder is told of none, and takes the one that is current.
+    // Made with no owner current: the embedder is told so.
     const d = constructWithReject();
     inside(9, () => d.reject(new Error("made by nobody")));
-    shouldBe(d.promise.ownerWhenRejected, undefined, "made with no owner current:");
+    shouldBe(d.promise.ownerWhenRejected, null, "made with no owner current:");
 
     // A promise that kept nothing, rejected by a job: the embedder is told of no owner, and the one that is
     // current is the one the job was scheduled with.

@@ -29,6 +29,8 @@
 
 #include "JSDollarVM.h"
 
+#include "AsyncContextSwapScope.h"
+
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BlockDirectoryInlines.h"
@@ -4241,27 +4243,30 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext, (JSGlobalObject* globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-// The owner of the running script next to it (field 1): a number, or undefined. Captured and restored with the
-// async context once it has been set.
+// The number of the owner of the running script next to it (field 1), or undefined. Captured and restored with
+// the async context once it has been set.
 JSC_DEFINE_HOST_FUNCTION(functionAsyncContextOwner, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
-    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(1));
+    return JSValue::encode(AsyncContextSwapScope::numberOfOwner(globalObject->m_asyncContextData.get()->getInternalField(1)));
 }
 
+// Makes an owner with that number the current one; undefined: none.
 JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContextOwner, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
-    JSValue owner = callFrame->argument(0);
-    RELEASE_ASSERT(owner.isUndefined() || owner.isInt32());
+    JSValue number = callFrame->argument(0);
+    RELEASE_ASSERT(number.isUndefined() || number.isNumber());
     vm.setAsyncContextTrackingEnabled();
     vm.trackAsyncContextOwner();
+    JSValue owner = number.isUndefined() ? jsUndefined() : JSValue(InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsUndefined(), number));
     globalObject->m_asyncContextData.get()->putInternalField(vm, 1, owner);
     return JSValue::encode(jsUndefined());
 }
 
-// JSPromise::ownerWhenMade(), or undefined.
+// JSPromise::ownerWhenMade(): the number of the owner, null if it was made with no owner current, undefined if
+// nothing was kept.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerWhenMade, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4269,7 +4274,9 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerWhenMade, (JSGlobalObject*, CallFrame* cal
     if (!promise)
         return JSValue::encode(jsUndefined());
     JSValue owner = promise->ownerWhenMade();
-    return JSValue::encode(owner ? owner : jsUndefined());
+    if (!owner)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(owner.isUndefined() ? jsNull() : owner);
 }
 #endif
 
