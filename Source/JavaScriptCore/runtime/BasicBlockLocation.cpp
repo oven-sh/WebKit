@@ -28,6 +28,7 @@
 #include "BasicBlockLocation.h"
 
 #include "CCallHelpers.h"
+#include <algorithm>
 #include <climits>
 #include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -54,20 +55,15 @@ Vector<std::pair<int, int>> BasicBlockLocation::getExecutedRanges() const
 {
     Vector<Gap> result;
     Vector<Gap> gaps = m_gaps;
+    // Because we know that the Gaps inside m_gaps aren't enclosed within one another, it suffices to just check the first element to test ordering.
+    std::sort(gaps.begin(), gaps.end(), [](const Gap& a, const Gap& b) {
+        return a.first < b.first;
+    });
+    result.reserveInitialCapacity(gaps.size() + 1);
     int nextRangeStart = m_startOffset;
-    while (gaps.size()) {
-        Gap minGap(INT_MAX, 0);
-        unsigned minIdx = std::numeric_limits<unsigned>::max();
-        for (unsigned idx = 0; idx < gaps.size(); idx++) {
-            // Because we know that the Gaps inside m_gaps aren't enclosed within one another, it suffices to just check the first element to test ordering.
-            if (gaps[idx].first < minGap.first) {
-                minGap = gaps[idx];
-                minIdx = idx;
-            }
-        }
-        result.append(Gap(nextRangeStart, minGap.first - 1));
-        nextRangeStart = minGap.second + 1;
-        gaps.removeAt(minIdx);
+    for (const Gap& gap : gaps) {
+        result.append(Gap(nextRangeStart, gap.first - 1));
+        nextRangeStart = gap.second + 1;
     }
 
     result.append(Gap(nextRangeStart, m_endOffset));
