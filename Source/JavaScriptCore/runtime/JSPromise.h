@@ -122,14 +122,34 @@ public:
     JSValue asyncStackTraceContext() const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Who made this promise, if promises remember it (VM::promisesRememberTheirMaker()): the scope of the script
-    // that made it (CallFrame::scopeOfClosestScript()), or, made with no script calling, what the embedder
-    // keeps in the second field of JSGlobalObject::m_asyncContextData for the job that is running. For the
-    // embedder to say whose an unhandled rejection is. A promise has one while nothing has been done with it,
-    // and once it is rejected with nothing handling it: a pending promise with no reaction keeps it where its
-    // value will go, and rejectPromise() moves it to where its reactions would have been.
+    // Who made this promise, for the embedder to say whose a rejection that nothing handles is: the scope of the
+    // function it was made for, or what the embedder gave it. Nothing is kept when a promise is made. It is
+    // given its maker when that may come to matter and the function is at hand: what rejects it, or resolves
+    // it with a promise, is the async function it is of, a reaction's handler, or the executor it was
+    // constructed with. (Promise.withResolvers() and the combinators have no such function: they give theirs
+    // the scope of the script that called them.) Only a promise that nothing has been done with has one, where
+    // its value will go; rejectPromise() moves it to where its reactions would have been.
+    // All of this only once VM::promisesRememberTheirMaker().
     JSCell* maker() const;
-    JSPromise* rememberMaker(VM&);
+    void setMaker(VM&, JSCell*);
+    ALWAYS_INLINE void setMakerFromFunction(VM& vm, JSValue function)
+    {
+        if (vm.promisesRememberTheirMaker()) [[unlikely]]
+            setMakerFromFunctionSlow(vm, function);
+    }
+    ALWAYS_INLINE void setMakerFromCallingScript(VM& vm)
+    {
+        if (vm.promisesRememberTheirMaker()) [[unlikely]]
+            setMakerFromCallingScriptSlow(vm);
+    }
+    // For what resolves this promise with another: `madeFor` if that is known, else the script that is calling.
+    ALWAYS_INLINE void setMakerWhileKnown(VM& vm, JSValue madeFor)
+    {
+        if (vm.promisesRememberTheirMaker()) [[unlikely]] {
+            setMakerFromFunctionSlow(vm, madeFor);
+            setMakerFromCallingScriptSlow(vm);
+        }
+    }
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -145,6 +165,10 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void resolve(JSGlobalObject*, VM&, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    // resolve(), by what ran `madeFor` (see maker()).
+    void resolve(JSGlobalObject*, VM&, JSValue, JSValue madeFor);
+#endif
     JS_EXPORT_PRIVATE void reject(VM&, JSValue);
     JS_EXPORT_PRIVATE void fulfill(VM&, JSValue);
     // Pipes its settlement to this promise via internal microtask. Otherwise directly
@@ -179,7 +203,7 @@ public:
 #endif
     void rejectPromise(VM&, JSValue);
     void fulfillPromise(VM&, JSValue);
-    void resolvePromise(JSGlobalObject*, VM&, JSValue);
+    void resolvePromise(JSGlobalObject*, VM&, JSValue, JSValue madeFor = { });
 
     static void resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject*, VM&, JSValue resolution, InternalMicrotask, JSValue context);
 #if USE(BUN_JSC_ADDITIONS)
@@ -273,6 +297,11 @@ public:
             vm.writeBarrier(this, cell);
     }
     void setSlot(VM& vm, JSValue value) { m_slot.set(vm, this, value); }
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void setMakerFromFunctionSlow(VM&, JSValue function);
+    JS_EXPORT_PRIVATE void setMakerFromCallingScriptSlow(VM&);
+    JSCell* makerFromCallingScript(VM&);
+#endif
     void clearSlot() { m_slot.clear(); }
 #if USE(BUN_JSC_ADDITIONS)
 private:

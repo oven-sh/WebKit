@@ -33,6 +33,7 @@
 #include "ErrorInstanceInlines.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
+#include "JSBoundFunction.h"
 #include "JSFunctionWithFields.h"
 #include "JSMicrotask.h"
 #include "JSPromiseCombinatorsContext.h"
@@ -53,36 +54,6 @@ namespace JSC {
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
 #if USE(BUN_JSC_ADDITIONS)
-// Who is making a promise now: see JSPromise::maker().
-static ALWAYS_INLINE JSValue makerOfPromiseMadeNow(VM& vm, Structure* structure)
-{
-    // The usual case needs no search: the frame at hand is the script's, or that of a host function the
-    // script called, and the script is not optimized code (which makes its promises itself, or says where
-    // in it the call is made from) and not a builtin function.
-    if (CallFrame* frame = vm.topCallFrame; frame && frame != vm.frameThatStartedTheRunningJob() && !frame->isNativeCalleeFrame()) [[likely]] {
-        CodeBlock* codeBlock = frame->codeBlock();
-        if (!codeBlock) {
-            void* caller = frame->callerFrameOrEntryFrame();
-            frame = caller != vm.topEntryFrame && caller != vm.frameThatStartedTheRunningJob() ? static_cast<CallFrame*>(caller) : nullptr;
-            codeBlock = frame && !frame->isNativeCalleeFrame() ? frame->codeBlock() : nullptr;
-        }
-        if (codeBlock && !codeBlock->hasCodeOrigins() && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction()) [[likely]]
-            return uncheckedDowncast<JSCallee>(frame->jsCallee())->scope();
-    }
-    if (JSScope* maker = CallFrame::scopeOfClosestScript(vm))
-        return maker;
-    JSValue ofRunningJob = structure->realm()->m_asyncContextData->getInternalField(1);
-    return ofRunningJob.isCell() ? ofRunningJob : JSValue();
-}
-
-// (Out of line, and the last thing create() does: a VM whose promises do not remember their maker runs what it
-// ran before there was one, and one test.)
-NEVER_INLINE JSPromise* JSPromise::rememberMaker(VM& vm)
-{
-    m_slot.setWithoutWriteBarrier(makerOfPromiseMadeNow(vm, structure()));
-    return this;
-}
-
 JSCell* JSPromise::maker() const
 {
     switch (status()) {
@@ -99,16 +70,44 @@ JSCell* JSPromise::maker() const
     }
     return nullptr;
 }
+
+// (A promise that something handles, or that has a maker, keeps what it has.)
+void JSPromise::setMaker(VM& vm, JSCell* maker)
+{
+    if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
+        m_slot.set(vm, this, maker);
+}
+
+void JSPromise::setMakerFromFunctionSlow(VM& vm, JSValue value)
+{
+    auto* function = value ? dynamicDowncast<JSFunction>(value) : nullptr;
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = dynamicDowncast<JSFunction>(bound->targetFunction());
+    // (A host function or a builtin function is nobody's: the promise is whoever's the embedder says.)
+    if (!function || function->isHostFunction() || function->jsExecutable()->isBuiltinFunction())
+        return;
+    setMaker(vm, function->scope());
+}
+
+NEVER_INLINE JSCell* JSPromise::makerFromCallingScript(VM& vm)
+{
+    if (JSScope* scope = CallFrame::scopeOfClosestScript(vm))
+        return scope;
+    JSValue ofRunningJob = realm()->m_asyncContextData->getInternalField(1);
+    return ofRunningJob.isCell() ? ofRunningJob.asCell() : nullptr;
+}
+
+void JSPromise::setMakerFromCallingScriptSlow(VM& vm)
+{
+    if (JSCell* maker = makerFromCallingScript(vm))
+        setMaker(vm, maker);
+}
 #endif
 
 JSPromise* JSPromise::create(VM& vm, Structure* structure)
 {
     JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure);
     promise->finishCreation(vm);
-#if USE(BUN_JSC_ADDITIONS)
-    if (vm.promisesRememberTheirMaker()) [[unlikely]]
-        return promise->rememberMaker(vm);
-#endif
     return promise;
 }
 
@@ -147,6 +146,11 @@ JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSVa
 
     auto [promise, resolve, reject] = newPromiseCapability(globalObject, constructor);
     RETURN_IF_EXCEPTION(scope, { });
+#if USE(BUN_JSC_ADDITIONS)
+    // (Promise.withResolvers(): no function is at hand to say later who the promise was made for.)
+    if (auto* made = dynamicDowncast<JSPromise>(promise))
+        made->setMakerFromCallingScript(vm);
+#endif
     return createPromiseCapability(vm, globalObject, promise, resolve, reject);
 }
 
@@ -241,6 +245,17 @@ void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value)
         resolvePromise(globalObject, vm, value);
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value, JSValue madeFor)
+{
+    ASSERT(!value.inherits<Exception>());
+    if (!isFirstResolvingFunctionCalled()) {
+        setFlags(flags() | isFirstResolvingFunctionCalledFlag);
+        resolvePromise(globalObject, vm, value, madeFor);
+    }
+}
+#endif
 
 void JSPromise::reject(VM& vm, JSValue value)
 {
@@ -497,7 +512,7 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
 #endif
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, onFulfilled);
         markAsHandled();
         break;
     }
@@ -548,7 +563,7 @@ void JSPromise::performPromiseThenWithContext(VM& vm, JSGlobalObject* globalObje
         if (rejectedCallable)
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled, context);
         else
-            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, onFulfilled);
         markAsHandled();
         break;
     }
@@ -735,7 +750,7 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
     if (settledIsFulfilled == handlerIsFulfill)
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(newStatus), resultPromise, handler, argument);
     else
-        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, jsUndefined());
+        globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, handler);
 }
 
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
@@ -757,10 +772,13 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
         JSCell* maker = nullptr;
 #if USE(BUN_JSC_ADDITIONS)
-        // Nothing handles this rejection: the promise keeps its maker (see maker()).
+        // Nothing handles this rejection: the promise keeps its maker (see maker()). One that has not been
+        // given any is rejected by who made it, or by who it was handed to: the script that is calling.
         if (!(currentFlags & isHandledFlag) && !reactions) {
             if (JSValue made = m_slot.get(); made && made.isCell())
                 maker = made.asCell();
+            else if (vm.promisesRememberTheirMaker()) [[unlikely]]
+                maker = makerFromCallingScript(vm);
         }
 #endif
         setSlot(vm, argument);
@@ -805,8 +823,9 @@ void JSPromise::fulfillPromise(VM& vm, JSValue argument)
     }
 }
 
-void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue resolution)
+void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue resolution, JSValue madeFor)
 {
+    UNUSED_PARAM(madeFor);
     if (resolution == this) [[unlikely]] {
         Structure* errorStructure = globalObject->errorStructure(ErrorType::TypeError);
         auto* error = ErrorInstance::create(vm, errorStructure, "Cannot resolve a promise with itself"_s, jsUndefined(), nullptr, TypeNothing, ErrorType::TypeError, false);
@@ -821,6 +840,8 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         auto* promise = uncheckedDowncast<JSPromise>(resolutionObject);
         if (promise->isThenFastAndNonObservable()) {
 #if USE(BUN_JSC_ADDITIONS)
+            // What this promise comes to is that promise's doing from here on: who it was made for is known now.
+            setMakerWhileKnown(vm, madeFor);
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextSwapScope::current(vm, globalObject));
 #else
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, jsUndefined());
@@ -849,6 +870,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         return fulfillPromise(vm, resolutionObject);
 
 #if USE(BUN_JSC_ADDITIONS)
+    setMakerWhileKnown(vm, madeFor);
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(vm, globalObject));
 #else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this);
@@ -1074,7 +1096,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             else {
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
-                arg = jsUndefined();
+                arg = slimReaction->handlerOrContext();
             }
             break;
         }
@@ -1087,7 +1109,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             if (handler.isUndefined()) {
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
-                arg = jsUndefined();
+                arg = isResolved ? fullReaction->onRejected() : fullReaction->onFulfilled();
                 break;
             }
             JSValue context = fullReaction->context();

@@ -1,5 +1,5 @@
 // JSPromise::maker(): once promises remember their maker, a promise that is rejected with nothing handling it
-// names the script that made it, whoever rejected it, in every tier.
+// names the script it was made for, whoever rejected it, in every tier.
 import { shouldBe } from "./resources/assert.js";
 
 const before = Promise.withResolvers();
@@ -59,6 +59,6 @@ for (let i = 0; i < testLoopCount; ++i) {
     }
 }
 
-// A promise made before promises remembered their maker has none.
-before.reject(new Error("rejected"));
-shouldBe(await makerOf(before.promise), "none");
+// A promise that was given no maker is the script's that rejects it.
+A.callsReject(before.reject);
+shouldBe(await makerOf(before.promise), "A");

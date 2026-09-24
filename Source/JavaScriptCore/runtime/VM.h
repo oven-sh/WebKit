@@ -673,8 +673,8 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether a promise is given the scope of the script that makes it (JSPromise::maker()). Turned on by
-    // JSGlobalObject::promisesRememberTheirMaker(), never off.
+    // Whether a promise that may be rejected with nothing handling it is given its maker (JSPromise::maker()).
+    // Turned on by JSGlobalObject::promisesRememberTheirMaker(), never off.
     bool promisesRememberTheirMaker() const { return m_promisesRememberTheirMaker; }
     void setPromisesRememberTheirMaker() { m_promisesRememberTheirMaker = true; }
     // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it

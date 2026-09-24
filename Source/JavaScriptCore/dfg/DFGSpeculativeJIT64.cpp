@@ -9234,24 +9234,6 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
 {
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
 
-#if USE(BUN_JSC_ADDITIONS)
-    // A promise that remembers its maker is given the scope of the script that makes it: that of the function
-    // this code is of. When that is not known here, by JSPromise::create().
-    std::optional<CodeOrigin> maker;
-    if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(node->origin.semantic)) {
-        maker = m_graph.originOfClosestScript(node->origin.semantic);
-        if (!maker) {
-            SpeculateCellOperand callee(this, node->child1());
-            GPRReg calleeGPR = callee.gpr();
-            flushRegisters();
-            GPRFlushedCallResult result(this);
-            callOperation(operationCreatePromise, result.gpr(), LinkableConstant::globalObject(*this, node), calleeGPR);
-            cellResult(result.gpr(), node);
-            return;
-        }
-    }
-#endif
-
     SpeculateCellOperand callee(this, node->child1());
     GPRTemporary result(this);
     GPRTemporary structure(this);
@@ -9287,14 +9269,7 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, structureGPR, butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
     store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
-#if USE(BUN_JSC_ADDITIONS)
-    if (maker) {
-        emitGetCallee(*maker, scratch1GPR);
-        loadPtr(Address(scratch1GPR, JSCallee::offsetOfScopeChain()), scratch1GPR);
-        store64(scratch1GPR, Address(resultGPR, JSPromise::offsetOfSlot()));
-    } else
-#endif
-        storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
+    storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationCreatePromise, resultGPR, LinkableConstant::globalObject(*this, node), calleeGPR));
@@ -9304,22 +9279,6 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
 
 void SpeculativeJIT::compileNewPromise(Node* node)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // A promise that remembers its maker is given the scope of the script that makes it: that of the function
-    // this code is of. When that is not known here, by JSPromise::create().
-    std::optional<CodeOrigin> maker;
-    if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(node->origin.semantic)) {
-        maker = m_graph.originOfClosestScript(node->origin.semantic);
-        if (!maker) {
-            flushRegisters();
-            GPRFlushedCallResult result(this);
-            callOperation(operationNewPromise, result.gpr(), TrustedImmPtr(&vm()), TrustedImmPtr(m_graph.freezeStrong(node->structure().get())));
-            cellResult(result.gpr(), node);
-            return;
-        }
-    }
-#endif
-
     GPRTemporary result(this);
     GPRTemporary scratch1(this);
     GPRTemporary scratch2(this);
@@ -9333,14 +9292,7 @@ void SpeculativeJIT::compileNewPromise(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
     store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
-#if USE(BUN_JSC_ADDITIONS)
-    if (maker) {
-        emitGetCallee(*maker, scratch1GPR);
-        loadPtr(Address(scratch1GPR, JSCallee::offsetOfScopeChain()), scratch1GPR);
-        store64(scratch1GPR, Address(resultGPR, JSPromise::offsetOfSlot()));
-    } else
-#endif
-        storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
+    storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewPromise, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));

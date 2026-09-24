@@ -5847,6 +5847,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
         case RejectPromiseWithFirstResolvingFunctionCallCheckIntrinsic: {
             if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
+#if USE(BUN_JSC_ADDITIONS)
+            // Told who the promise was made for (JSPromise::maker()), it is a call.
+            if (argumentCountIncludingThis > 3)
+                return CallOptimizationResult::DidNothing;
+#endif
 
             insertChecks();
             Node* promise = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));

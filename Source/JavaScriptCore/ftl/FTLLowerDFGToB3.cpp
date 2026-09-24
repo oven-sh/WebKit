@@ -10117,30 +10117,13 @@ IGNORE_CLANG_WARNINGS_END
     void compileNewPromise()
     {
         ASSERT(m_node->structure()->classInfoForCells() == JSPromise::info());
-#if USE(BUN_JSC_ADDITIONS)
-        // A promise that remembers its maker is given the scope of the script that makes it: that of the
-        // function this code is of. When that is not known here, by JSPromise::create().
-        std::optional<CodeOrigin> maker;
-        if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(m_origin.semantic)) {
-            maker = m_graph.originOfClosestScript(m_origin.semantic);
-            if (!maker) {
-                setJSValue(vmCall(pointerType(), operationNewPromise, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get()))));
-                return;
-            }
-        }
-#endif
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
 
         LValue object = allocateObject<JSPromise>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, object, m_heaps.JSPromise_packed);
-#if USE(BUN_JSC_ADDITIONS)
-        if (maker)
-            m_out.store64(m_out.loadPtr(getCallee(*maker), m_heaps.JSCallee_scope), object, m_heaps.JSPromise_slot);
-        else
-#endif
-            m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), object, m_heaps.JSPromise_slot);
+        m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), object, m_heaps.JSPromise_slot);
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);
@@ -10565,18 +10548,6 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LValue callee = lowCell(m_node->child1());
-#if USE(BUN_JSC_ADDITIONS)
-        // A promise that remembers its maker is given the scope of the script that makes it: that of the
-        // function this code is of. When that is not known here, by JSPromise::create().
-        std::optional<CodeOrigin> maker;
-        if (!m_graph.isWatchingPromisesHaveNoMakerWatchpoint(m_origin.semantic)) {
-            maker = m_graph.originOfClosestScript(m_origin.semantic);
-            if (!maker) {
-                setJSValue(vmCall(Int64, operationCreatePromise, weakPointer(globalObject), callee));
-                return;
-            }
-        }
-#endif
 
         LBasicBlock derivedCase = m_out.newBlock();
         LBasicBlock isFunctionBlock = m_out.newBlock();
@@ -10613,12 +10584,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(fastAllocationCase, slowCase);
         LValue promise = allocateObject<JSPromise>(m_out.phi(pointerType(), promiseStructure, derivedStructure), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, promise, m_heaps.JSPromise_packed);
-#if USE(BUN_JSC_ADDITIONS)
-        if (maker)
-            m_out.store64(m_out.loadPtr(getCallee(*maker), m_heaps.JSCallee_scope), promise, m_heaps.JSPromise_slot);
-        else
-#endif
-            m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
+        m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(promise);
         m_out.jump(continuation);
@@ -20888,12 +20854,7 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue getCurrentCallee()
     {
-        return getCallee(m_origin.semantic);
-    }
-
-    LValue getCallee(CodeOrigin origin)
-    {
-        if (InlineCallFrame* frame = origin.inlineCallFrame()) {
+        if (InlineCallFrame* frame = m_origin.semantic.inlineCallFrame()) {
             if (frame->isClosureCall)
                 return m_out.loadPtr(addressFor(frame->calleeRecovery.virtualRegister()));
             return weakPointer(frame->calleeRecovery.constant().asCell());

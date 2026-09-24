@@ -291,6 +291,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRaceSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // No function is at hand to say later who this promise was made for: the script that is calling.
+    promise->setMakerFromCallingScript(vm);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -488,6 +492,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // No function is at hand to say later who this promise was made for: the script that is calling.
+    promise->setMakerFromCallingScript(vm);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -797,6 +805,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSettledSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // No function is at hand to say later who this promise was made for: the script that is calling.
+    promise->setMakerFromCallingScript(vm);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -1249,6 +1261,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAnySlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // No function is at hand to say later who this promise was made for: the script that is calling.
+    promise->setMakerFromCallingScript(vm);
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
