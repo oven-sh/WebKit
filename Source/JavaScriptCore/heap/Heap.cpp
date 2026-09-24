@@ -3214,7 +3214,11 @@ void Heap::didFinishCollection()
 
     if (HeapProfiler* heapProfiler = vm().heapProfiler()) {
         gatherExtraHeapData(*heapProfiler);
-        removeDeadHeapSnapshotNodes(*heapProfiler);
+        // The full collection that built a snapshot marked the cell of each of its nodes, and an
+        // eden collection keeps mark bits, so only a full collection can kill one of those cells.
+        // The walk visits every dead cell in the heap, which an eden collection must not pay for.
+        if (scope == CollectionScope::Full)
+            removeDeadHeapSnapshotNodes(*heapProfiler);
     }
 
     if (m_verifier) [[unlikely]]
