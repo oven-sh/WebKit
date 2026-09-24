@@ -488,13 +488,13 @@ public:
 
     ValueProfileRef valueProfileForOffset(unsigned profileOffset) { return m_metadata->valueProfileForOffset(profileOffset); }
 
-    ValueProfile* NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
-    ValueProfile& NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE tryGetValueProfileForBytecodeIndex(BytecodeIndex);
+    ValueProfileRef NODELETE valueProfileForBytecodeIndex(BytecodeIndex);
     // THREADS §5.7.4/§5.7.7: `specFailValue`, when non-null, points at a lazyValueProfiles()
     // speculation-failure bucket slot that is racily written by OSR-exit/JIT'd code and racily
     // read+cleared by DFG compiler threads (on 64-bit valueProfileLock() is NoLockingNecessaryTag,
     // so the locker does not serialize compiler threads). The slot is only ever accessed through
-    // ValueProfileBase::computeUpdatedPredictionForExtraValue, which uses relaxed atomics
+    // ValueProfileRef::computeUpdatedPredictionForExtraValue, which uses relaxed atomics
     // (64-bit) / the tag-payload concurrent protocol (32-bit); racy-profiling tolerance applies
     // (a lost sample only weakens speculation; emitted guards validate).
     SpeculatedType valueProfilePredictionForBytecodeIndex(BytecodeIndex, JSValue* specFailValue = nullptr);

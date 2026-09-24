@@ -64,6 +64,7 @@ static_assert(sizeof(OpcodeConfig) <= OpcodeConfigSizeToProtect);
 
 #if !ENABLE(C_LOOP)
 extern "C" void SYSV_ABI llint_entry(void*, void*, void*);
+extern "C" void SYSV_ABI llint_threaded_entry(void*, void*, void*);
 
 #endif // !ENABLE(C_LOOP)
 
@@ -165,6 +166,11 @@ void initialize()
 
     // Step 1: fill in opcodeMaps.
     llint_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+
+    // With the flag set the gated opcodes (get_by_id, put_by_id, the calls, ...) run their threaded bodies; a process without it
+    // runs `main`'s and executes no gate test.
+    if (Options::useJSThreads()) [[unlikely]]
+        llint_threaded_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
 
 #if ENABLE(WEBASSEMBLY)
     if (Options::useWasm())

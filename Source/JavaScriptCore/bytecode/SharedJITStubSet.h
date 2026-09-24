@@ -27,6 +27,7 @@
 
 #include "DOMJITGetterSetter.h"
 #include "PropertyInlineCache.h"
+#include "ThreadsModeAtomics.h"
 #include <wtf/Lock.h>
 
 namespace JSC {
@@ -140,13 +141,13 @@ public:
     // treats a zero-count entry as absent.
     void add(Hash::Key&& key)
     {
-        Locker locker { m_lock };
+        ThreadsModeLocker<Lock> locker { m_lock };
         m_stubs.add(WTF::move(key));
     }
 
     void remove(PolymorphicAccessJITStubRoutine* stub)
     {
-        Locker locker { m_lock };
+        ThreadsModeLocker<Lock> locker { m_lock };
         auto iter = m_stubs.find<PointerTranslator>(stub);
         if (iter != m_stubs.end())
             m_stubs.remove(iter);
@@ -154,7 +155,7 @@ public:
 
     RefPtr<PolymorphicAccessJITStubRoutine> find(const Searcher& searcher)
     {
-        Locker locker { m_lock };
+        ThreadsModeLocker<Lock> locker { m_lock };
         auto entry = m_stubs.find<SharedJITStubSet::Searcher::Translator>(searcher);
         if (entry == m_stubs.end())
             return nullptr;

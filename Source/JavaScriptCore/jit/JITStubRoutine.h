@@ -27,6 +27,7 @@
 
 #include "ExecutableAllocator.h"
 #include "MacroAssemblerCodeRef.h"
+#include "Options.h"
 #include "StructureID.h"
 #include <atomic>
 
@@ -104,15 +105,20 @@ public:
         return result;
     }
     
-    // SPEC-jit section 4.5: unconditionally atomic (covers all subclasses).
-    // Refs/derefs can race across mutators once handler chains are shared and
+    // SPEC-jit section 4.5 (covers all subclasses): with the flag on, refs and
+    // derefs can race across mutators once handler chains are shared and
     // retired chains drop their stub-routine refs at epoch expiry on the GC
-    // conductor (section 4.4). Relaxed increment; release decrement; acquire
+    // conductor (section 4.4): relaxed increment; release decrement; acquire
     // fence before observeZeroRefCount() so the zero-observing thread sees
-    // every prior release-decrementing thread's writes.
+    // every prior release-decrementing thread's writes. With the flag off the
+    // count is `main`'s: a load and a store, no locked instruction.
     void ref()
     {
-        m_refCount.fetch_add(1, std::memory_order_relaxed);
+        if (Options::useJSThreads()) [[unlikely]] {
+            m_refCount.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        m_refCount.store(m_refCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
     }
 
     // Takes a reference only while the count is non-zero, so a weak pointer
@@ -121,6 +127,12 @@ public:
     bool tryRef()
     {
         unsigned count = m_refCount.load(std::memory_order_relaxed);
+        if (!Options::useJSThreads()) [[likely]] {
+            if (!count)
+                return false;
+            m_refCount.store(count + 1, std::memory_order_relaxed);
+            return true;
+        }
         while (count) {
             if (m_refCount.compare_exchange_weak(count, count + 1, std::memory_order_relaxed))
                 return true;
@@ -130,9 +142,16 @@ public:
 
     void deref()
     {
-        if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)
-            return;
-        std::atomic_thread_fence(std::memory_order_acquire);
+        if (Options::useJSThreads()) [[unlikely]] {
+            if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)
+                return;
+            std::atomic_thread_fence(std::memory_order_acquire);
+        } else {
+            unsigned count = m_refCount.load(std::memory_order_relaxed) - 1;
+            m_refCount.store(count, std::memory_order_relaxed);
+            if (count)
+                return;
+        }
         observeZeroRefCount();
     }
     

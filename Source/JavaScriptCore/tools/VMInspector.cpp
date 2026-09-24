@@ -34,7 +34,10 @@
 #include "JSCInlines.h"
 #include "JSWebAssemblyModule.h"
 #include "MarkedSpaceInlines.h"
+#include "ModuleProgramExecutable.h"
+#include "ObjectConstructor.h"
 #include "Options.h"
+#include "RegExp.h"
 #include "StackVisitor.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedMetadataTableInlines.h"
@@ -745,6 +748,13 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 JSObject* VMInspector::codeBlockCensus(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    if (isGILOffProcessForInspection()) [[unlikely]] {
+        // Same residual as dumpRegisters (see the comment at the top of this file): the live-cell and code block
+        // iterations below are not safe against concurrently allocating mutators of a shared heap.
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, scope, "codeBlockCensus iterates the shared heap, which is not supported with the GIL off"_s);
+        return nullptr;
+    }
     Heap& heap = vm.heap;
     unsigned tiers[4] = { 0, 0, 0, 0 };
     unsigned types[4] = { 0, 0, 0, 0 };

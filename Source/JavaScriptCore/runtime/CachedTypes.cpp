@@ -274,7 +274,7 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     unsigned length = characters.size();
     if (length == 1)
         return vm.smallStrings.singleCharacterStringRep(characters[0]);
-    if (length == 2) {
+    if (length == 2 && !vm.gilOff()) { // GIL off: plain-store cache (AUDIT R9-5)
         unsigned first = identifierCharacterClasses[characters[0]];
         unsigned second = identifierCharacterClasses[characters[1]];
         if ((first | second) < 64) [[likely]] {
@@ -289,7 +289,7 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
     }
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::useFastCachedAtoms() && !vm.gilOff()) { // GIL off: plain-store cache (AUDIT R9-5)
-        uint32_t packed = characters[0] | characters[1] << 8 | characters[2] << 16;
+        uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
         AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
         if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
             auto cached = entry->span8();

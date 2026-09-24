@@ -395,7 +395,8 @@ public:
         {
         }
     };
-    ValueAndArrayProfiles* valueAndArrayProfiles() { return m_valueAndArrayProfiles.get(); }
+    // Published by ensureValueAndArrayProfiles() with a compare-and-swap when the flag is on: read with an acquire load (a plain one on x86-64).
+    ValueAndArrayProfiles* valueAndArrayProfiles() { return WTF::atomicLoad(std::bit_cast<ValueAndArrayProfiles**>(&m_valueAndArrayProfiles), std::memory_order_acquire); }
     void ensureValueAndArrayProfiles();
     unsigned numberOfValueProfiles() const { return numParameters() + (m_metadata->hasMetadata() ? m_metadata->numValueProfiles() : 0); }
     unsigned numberOfArrayProfiles() const { return m_numberOfArrayProfiles; }
@@ -465,7 +466,14 @@ private:
     bool m_quickFTLTierUp { false };
 
 public:
+    // Declared here, between the one-byte members and the 4-byte one, so that it takes the padding that the threads branch's
+    // one-byte age and tier-up hints leave (UnlinkedCodeBlock must not move up a size class).
     ConcurrentJSLock m_lock;
+
+private:
+    unsigned m_numberOfArrayProfiles { 0 };
+
+public:
 #if ENABLE(JIT)
     // UNGIL: with the GIL off, N mutators can finalize baseline plans of the same
     // UnlinkedCodeBlock concurrently (CodeBlock::setupWithUnlinkedBaselineCode), so the

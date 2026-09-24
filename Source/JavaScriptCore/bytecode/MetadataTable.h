@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ThreadsModeAtomics.h"
 #include "Instruction.h"
 #include "Opcode.h"
 #include "UnlinkedMetadataTable.h"
@@ -59,7 +60,21 @@ public:
     inline SpeculatedType computeUpdatedPrediction() const;
     inline void computeUpdatedPredictionForExtraValue(JSValue&) const;
 
-    unsigned numberOfSamples() const { return !!JSValue::decodeConcurrent(m_buckets); }
+    // The bucket is written by LLInt and Baseline code with plain 64-bit stores on any mutator, by C++ slow paths, and read and
+    // cleared by compiler threads: every C++ access is one relaxed atomic word access (see ValueProfileBase::loadBucketConcurrently).
+    EncodedJSValue loadBucketConcurrently(unsigned i) const
+    {
+        ASSERT(!i);
+        return WTF::atomicLoad(const_cast<EncodedJSValue*>(&m_buckets[i]), std::memory_order_relaxed);
+    }
+    void storeBucketConcurrently(unsigned i, EncodedJSValue value) const
+    {
+        ASSERT(!i);
+        // With the flag on, no store when the bucket already holds this value (write avoidance, sharedProfileWriteAvoidance()).
+        racyStoreProfileWord(m_buckets[i], value);
+    }
+
+    unsigned numberOfSamples() const { return !!JSValue::decode(loadBucketConcurrently(0)); }
     bool isSampledBefore() const { return prediction() != SpecNone; }
     unsigned totalNumberOfSamples() const { return numberOfSamples() + isSampledBefore(); }
 
@@ -73,7 +88,7 @@ public:
     void dump(PrintStream& out) const
     {
         out.print("sampled before = ", isSampledBefore(), " live samples = ", numberOfSamples(), " prediction = ", SpeculationDump(prediction()));
-        if (JSValue value = JSValue::decodeConcurrent(m_buckets))
+        if (JSValue value = JSValue::decode(WTF::atomicLoad(const_cast<EncodedJSValue*>(m_buckets), std::memory_order_relaxed)))
             out.print(": ", value);
     }
 
@@ -257,10 +272,12 @@ inline ValueProfileRef::ValueProfileRef(MetadataTable& table, unsigned profileOf
 
 inline SpeculatedType ValueProfileRef::prediction() const
 {
+    // The predictions are raced by every mutator and compiler thread that merges into or reads them: relaxed atomics, as for
+    // ValueProfileBase::m_prediction (profiles only select speculation; emitted guards validate).
     if (m_predictions)
-        return m_predictions[m_profileOffset - 1];
+        return WTF::atomicLoad(&m_predictions[m_profileOffset - 1], std::memory_order_relaxed);
     if (SpeculatedType* predictions = m_table->valueProfilePredictions())
-        return predictions[m_profileOffset - 1];
+        return WTF::atomicLoad(&predictions[m_profileOffset - 1], std::memory_order_relaxed);
     return SpecNone;
 }
 
@@ -269,30 +286,36 @@ inline void ValueProfileRef::mergePrediction(SpeculatedType prediction) const
     if (prediction == SpecNone)
         return;
     SpeculatedType* predictions = m_predictions ? m_predictions : m_table->ensureValueProfilePredictions();
-    mergeSpeculation(predictions[m_profileOffset - 1], prediction);
+    mergeSpeculationConcurrently(predictions[m_profileOffset - 1], prediction);
 }
 
 inline SpeculatedType ValueProfileRef::computeUpdatedPrediction() const
 {
-    if (JSValue value = JSValue::decodeConcurrent(m_buckets)) {
+    if (JSValue value = JSValue::decode(WTF::atomicLoad(m_buckets, std::memory_order_relaxed))) {
         mergePrediction(speculationFromValueForProfiling(value));
-        updateEncodedJSValueConcurrent(*m_buckets, JSValue::encode(JSValue()));
+        WTF::atomicStore(m_buckets, JSValue::encode(JSValue()), std::memory_order_relaxed);
     }
     return prediction();
 }
 
 inline void ValueProfileRef::computeUpdatedPredictionForExtraValue(JSValue& value) const
 {
-    if (value)
-        mergePrediction(speculationFromValueForProfiling(value));
-    value = JSValue();
+    // `value` aliases a CompressedLazyValueProfileHolder speculation-failure bucket slot, racily written by OSR-exit and
+    // JIT code and racily read and cleared by compiler threads (see ValueProfileBase::computeUpdatedPredictionForExtraValue).
+    static_assert(sizeof(JSValue) == sizeof(EncodedJSValue));
+    EncodedJSValue* slot = std::bit_cast<EncodedJSValue*>(&value);
+    if (JSValue observed = JSValue::decode(WTF::atomicLoad(slot, std::memory_order_relaxed)))
+        mergePrediction(speculationFromValueForProfiling(observed));
+    WTF::atomicStore(slot, JSValue::encode(JSValue()), std::memory_order_relaxed);
 }
 
 inline void UnlinkedValueProfile::update(ValueProfileRef& profile)
 {
-    SpeculatedType newType = profile.prediction() | m_prediction;
+    // Racy bidirectional merge, as UnlinkedValueProfile::update(ArgumentValueProfile&): shared by every CodeBlock linked from
+    // the same UnlinkedCodeBlock, so relaxed atomics; a lost merge only weakens speculation.
+    SpeculatedType newType = profile.prediction() | WTF::atomicLoad(&m_prediction, std::memory_order_relaxed);
     profile.mergePrediction(newType);
-    m_prediction = newType;
+    WTF::atomicStore(&m_prediction, newType, std::memory_order_relaxed);
 }
 
 } // namespace JSC

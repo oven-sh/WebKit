@@ -78,6 +78,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #endif
 
 #include "LineColumn.h"
+#include "ThreadsModeAtomics.h"
 
 #if ENABLE(REGEXP_TRACING)
 #include <wtf/ListHashSet.h>
@@ -364,7 +365,9 @@ public:
     // process (U0b) whose threads run without the GIL. Every unqualified
     // "gilOff" predicate in SPEC-ungil means THIS member (level (ii) of the
     // §A.1.3 two-level discriminator; r27/TERM1.4), not the process byte.
-    bool gilOff() const { return m_gilOff; }
+    // Decided on the frozen Config page first: a process that is not GIL-off answers false without reading m_gilOff, which is
+    // ordinary memory (a stray write to it cannot put such a process into a mixed state).
+    bool gilOff() const { return gilOffWithProcessGate(); }
 
     // C++-side equivalent of the derived JSCConfig gilOffProcess byte
     // (§A.1.3 level (i); the Config byte itself + the LLInt consumer land
@@ -1703,6 +1706,7 @@ public:
     // hold this back. A recording made across it is less exact (code is decoded again); a link has no debugger.
     JS_EXPORT_PRIVATE void deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort);
     JS_EXPORT_PRIVATE void deleteAllLinkedCode(DeleteAllCodeEffort);
+    void deleteAllRegExpCode();
 private:
     void whenIdleWithOtherThreadsStopped(DeleteAllCodeEffort, Function<void(bool deleteHeapCode)>&&);
     void clearCodeCaches();
@@ -1731,8 +1735,9 @@ public:
     JS_EXPORT_PRIVATE void shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> = { });
 
     // How often JS was entered from outside (not from JS): unchanged between two looks means none ran in between.
-    unsigned entryCountFromOutside() const { return m_entryCountFromOutside; }
-    void didEnterFromOutside() { ++m_entryCountFromOutside; }
+    // GIL off, threads enter concurrently: relaxed accesses, and a lost increment still leaves the count changed.
+    unsigned entryCountFromOutside() const { return WTF::atomicLoad(const_cast<unsigned*>(&m_entryCountFromOutside), std::memory_order_relaxed); }
+    void didEnterFromOutside() { WTF::atomicStore(&m_entryCountFromOutside, WTF::atomicLoad(&m_entryCountFromOutside, std::memory_order_relaxed) + 1, std::memory_order_relaxed); }
 
     WatchpointSet* ensureWatchpointSetForImpureProperty(UniquedStringImpl*);
     
@@ -1796,7 +1801,7 @@ public:
     void finalizeSynchronousJSExecution()
     {
         ASSERT(currentThreadIsHoldingAPILock());
-        m_currentWeakRefVersion.fetch_add(1, std::memory_order_relaxed);
+        threadsModeFetchAddRelaxed(m_currentWeakRefVersion, static_cast<uintptr_t>(1));
         // K4.II.15 (SPEC-ungil history, tenth round): GIL off the hint is per lite, so this clears the ending
         // thread's own and no other thread's. GIL on / flag off: the VM's byte, as on main.
         setMightBeExecutingTaintedCode(false);
@@ -2413,7 +2418,7 @@ inline Heap* WeakSet::heap() const
 }
 
 #if !ENABLE(C_LOOP)
-extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
+extern "C" void SYSV_ABI sanitizeStackForVMImpl(void** lastStackTopSlot);
 #endif
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);

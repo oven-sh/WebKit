@@ -235,6 +235,9 @@ class Assembler
             end
         elsif /\Allint_op_/.match(labelName)
             @outp.puts(formatDump("OFFLINE_ASM_OPCODE_LABEL(op_#{$~.post_match})", lastComment))
+        elsif /\Athreaded_llint_op_/.match(labelName)
+            # The threaded body of a gated opcode: its label carries the opcode's ID word like the opcode's own (Interpreter::getOpcodeID).
+            @outp.puts(formatDump("OFFLINE_ASM_THREADED_OPCODE_LABEL(op_#{$~.post_match})", lastComment))
         else
             if alignTo
                 @outp.puts(formatDump("OFFLINE_ASM_ALIGN_TRAP(#{alignTo})", lastComment))

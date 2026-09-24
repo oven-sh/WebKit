@@ -7588,7 +7588,14 @@ around plain accesses and are not atomic against the 1-, 4- and 8-byte atomics o
 
 #### N-D1. arm64 compare-and-swap emitters (closes N1)
 
-**Status: proposed**
+**Status: implemented, twelfth round (compile-checked for arm64, not run)**: `MacroAssemblerARM64` has
+`branchAtomicStrongCAS32/64` with the contract above, in the load-linked/store-conditional form on every arm64 (no LSE variant yet:
+`casal` is a later, optional speed-up; a failed compare stores nothing, and the store-conditional's status goes to the register that held
+the observed value, so no third scratch register is needed); the LLInt's length-raise loop has the `loadlinkacqi`/`storecondreli` form for
+targets other than x86-64. Checked by a syntax-only clang compile for `aarch64-linux-gnu` of the translation units that use the emitters
+(the host's headers, a shim for the word size and the x86 `regparm` attribute; no library is linked and nothing runs); `testmasm` cases for
+the two emitters need an arm64 machine or emulator. Flag off nothing of it executes.
+
 
 Rule. `MacroAssemblerARM64` gains `Jump branchAtomicStrongCAS32(StatusCondition, RegisterID expectedAndResult,
 RegisterID newValue, Address)` and the 64-bit twin with x86-64's contract: on return `expectedAndResult` holds the

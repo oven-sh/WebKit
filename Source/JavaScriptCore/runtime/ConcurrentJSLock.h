@@ -82,15 +82,20 @@ public:
 
     ~ConcurrentJSLockerBase()
     {
+#if ASSERT_ENABLED
+        // The depth is counted in builds with assertions only; elsewhere the member's destructor unlocks, as on `main`.
         unlockEarly();
+#endif
     }
     
     void unlockEarly() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         if (m_locker) {
             m_locker->unlockEarly();
+#if ASSERT_ENABLED
             m_locker = std::nullopt;
             willUnlock();
+#endif
         }
     }
 

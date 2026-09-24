@@ -167,6 +167,22 @@ void RegExpCache::deleteAllCode(VM& vm)
 // next match.
 void RegExpCache::deleteCodeNotUsedInCurrentFullCollectionCycle(VM& vm)
 {
+    if (Options::useJSThreads()) [[unlikely]] {
+        // deleteCode() takes the RegExp cellLock, which RegExp::compile holds when it calls addToStrongCache(): the order is
+        // cellLock -> m_lock, so it runs outside m_lock, on a snapshot (as deleteAllCode() does).
+        Vector<RegExp*> unused;
+        {
+            Locker locker { m_lock };
+            for (auto& [key, weakHandle] : m_weakCache) {
+                RegExp* regExp = weakHandle.get();
+                if (regExp && !regExp->wasUsedInCurrentFullCollectionCycle(vm))
+                    unused.append(regExp);
+            }
+        }
+        for (auto* regExp : unused)
+            regExp->deleteCode();
+        return;
+    }
     Locker locker { m_lock };
     for (auto& [key, weakHandle] : m_weakCache) {
         RegExp* regExp = weakHandle.get();

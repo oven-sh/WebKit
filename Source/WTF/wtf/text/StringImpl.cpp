@@ -173,6 +173,31 @@ void StringImpl::destroy(StringImpl* stringImpl)
     StringImplMalloc::free(stringImpl);
 }
 
+// The decrement of deref() when the atom string table is shared between threads (the JS threads flag).
+NEVER_INLINE void StringImpl::derefSharedAtomTable()
+{
+    // Shared-atom-table mode (SPEC-vmstate §4.4.3 / F3): the release
+    // decrement plus the acquire fence on the zero transition order every
+    // other thread's prior accesses to this string before its destruction
+    // (deliberately NOT seq_cst). Refcount 0 is final: tryRefAtom() fails
+    // at 0, so no table hit can revive the string and exactly one thread
+    // reaches the zero transition and destroys it.
+#if TSAN_ENABLED
+    // TSAN r12 (reports 1/2/5): TSAN does not model
+    // std::atomic_thread_fence, so the acquire fence below is invisible
+    // and the destroying thread's free() pairs against other threads'
+    // release decrements. acq_rel RMW under TSAN only; production keeps
+    // release + acquire-fence-on-zero (identical ordering guarantees).
+    auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_acq_rel);
+#else
+    auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_release);
+#endif
+    if (oldRefCount != s_refCountIncrement)
+        return;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    derefSharedZero();
+}
+
 NEVER_INLINE void StringImpl::derefSharedZero()
 {
     // Shared-atom-table mode only (SPEC-vmstate §4.4.3): the refcount just hit

@@ -2816,10 +2816,13 @@ void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const S
         segOOB.link(this);
         speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
         move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
-        Jump done = jump();
-        notEmpty.link(this);
-        speculateInt32LaneIfRelabellable(arrayMode, resultReg);
-        done.link(this);
+        if (needsInt32LaneSpeculation(arrayMode)) [[unlikely]] {
+            Jump done = jump();
+            notEmpty.link(this);
+            speculateInt32LaneIfRelabellable(arrayMode, resultReg);
+            done.link(this);
+        } else
+            notEmpty.link(this);
         jsValueResult(resultReg, node, format);
         return;
     }
@@ -3123,10 +3126,14 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
             slowCases.link(this);
             speculationCheck(NegativeIndex, JSValueSource(), nullptr, branch32(LessThan, propertyReg, TrustedImm32(0)));
             move(TrustedImm64(JSValue::encode(jsUndefined())), resultReg);
-            auto done = jump();
-            notEmpty.link(this);
-            speculateInt32LaneIfRelabellable(node->arrayMode(), resultReg);
-            done.link(this);
+            // Flag off there is nothing to speculate on the lane, and no jump over it (as in main).
+            if (needsInt32LaneSpeculation(node->arrayMode())) [[unlikely]] {
+                auto done = jump();
+                notEmpty.link(this);
+                speculateInt32LaneIfRelabellable(node->arrayMode(), resultReg);
+                done.link(this);
+            } else
+                notEmpty.link(this);
         } else {
             slowCases.append(branchIfEmpty(resultReg));
             addSlowPathGenerator(

@@ -154,7 +154,7 @@ void JITStubRoutineSet::deleteUnmarkedJettisonedStubRoutines(VM& vm)
 
     auto shouldRemove = [&](GCAwareJITStubRoutine* stub) {
         if (!stub->m_ownerIsDead)
-            stub->m_ownerIsDead = stub->removeDeadOwners(vm);
+            stub->m_ownerIsDead.store(stub->removeDeadOwners(vm), std::memory_order_release); // a plain store: an assignment to a std::atomic is a locked exchange
 
         // If the stub is running right now, we should keep it alive regardless of whether owner CodeBlock gets dead.
         // It is OK since we already marked all the related cells.

@@ -464,8 +464,7 @@ end
 #   T3 sites (PRE-call publication; a0/a1/a2 live, t3 not yet live --
 #   checkStackPointerAlignment uses it as a pure scratch afterwards):
 #     nativeCallTrampoline + internalFunctionCallTrampoline topCallFrame
-#     stores, _sanitizeStackForVMImpl (a0 = VM live; a1/a2 are the
-#     macro-local scratches).
+#     stores.
 #   T5 sites (doVMEntry; a0/a1/a2 = entry/vm/protoCallFrame live throughout,
 #   t3/t4 are the block-local scratches, t5 dead at all three insertion
 #   points -- the C_LOOP arm writes t5 only AFTER the prologue site):
@@ -1440,6 +1439,10 @@ macro callTargetFunction(opcodeName, size, opcodeStruct, dispatchAfterCall, valu
     restoreStackPointerAfterCall()
     dispatchAfterCall(size, opcodeStruct, valueProfileName, dstVirtualRegister, dispatch)
 
+    defineJSTrampolineLabels(opcodeName, size)
+end
+
+macro defineJSTrampolineLabels(opcodeName, size)
     if not ARM64E
         # The js_trampoline_* opcodes in BytecodeList.rb need a label on every
         # backend to fill the opcode map, but only ARM64E dispatches through
@@ -1458,6 +1461,11 @@ macro callTargetFunction(opcodeName, size, opcodeStruct, dispatchAfterCall, valu
         size(labelNarrow, labelWide16, labelWide32, macro (gen) gen() end)
         crash()
     end
+end
+
+# For the threaded twin of an opcode (gateVariants in LowLevelInterpreter64.asm), which must not define the same global labels again.
+macro defineJSTrampolineLabelsNone(opcodeName, size)
+    crash()
 end
 
 macro prepareForRegularCall(temp1, temp2, temp3, temp4, storeCodeBlock)
@@ -2368,24 +2376,15 @@ if ARM64E
 end
 
 if not C_LOOP
-    # void sanitizeStackForVMImpl(VM* vm)
+    # void sanitizeStackForVMImpl(void** lastStackTopSlot)
+    # UNGIL sec.A.1.3: m_lastStackTop is Group-3 state; sanitizeStackForVM() picks the slot in C++ (the VM's, or with the GIL off
+    # the running thread's lite's), so this routine is main's, with a pointer argument instead of a VM-relative displacement.
     global _sanitizeStackForVMImpl
     _sanitizeStackForVMImpl:
         tagReturnAddress sp
         const address = a1
         const scratch = a2
 
-        # UNGIL sec.A.1.3 (AB-1): m_lastStackTop is Group-3 state. a0 = VM is
-        # live (t6 == a0 on x86-64!), a1/a2 are the locals -- use t3.
-        branchIfGilOffGroup3ToT3(.sanitizeLiteLastStackTop)
-        move VM::m_lastStackTop, scratch
-        addp scratch, a0
-        if GILOFF_TLS
-            jmp .sanitizeHaveLastStackTopSlot
-        .sanitizeLiteLastStackTop:
-            leap VMLitePrimitives::m_lastStackTop[t3], a0
-        .sanitizeHaveLastStackTopSlot:
-        end
         loadp [a0], address
         move sp, scratch
         storep scratch, [a0]
@@ -2588,6 +2587,47 @@ end
 # Entry point for the llint to initialize.
 entry(llint, macro()
     include InitBytecodes
+end)
+
+# The threaded bodies of the gated opcodes (gateVariants in LowLevelInterpreter64.asm): what LLInt::initialize() installs over the
+# opcode maps, through _llint_threaded_entry, when the flag is set. The list is the set of opcodes defined inside a gateVariants group;
+# Tools/threads/lint-llint-threaded-entries.sh compares it with the labels the assembler emitted.
+macro setThreadedEntries(opcodeStruct, name)
+    setEntryAddress(constexpr %opcodeStruct%::opcodeID, _threaded_llint_%name%)
+    setEntryAddressWide16(constexpr %opcodeStruct%::opcodeID, _threaded_llint_%name%_wide16)
+    setEntryAddressWide32(constexpr %opcodeStruct%::opcodeID, _threaded_llint_%name%_wide32)
+end
+
+entry(llint_threaded, macro()
+    if not ARM64E
+        setThreadedEntries(OpAsyncIteratorNext, op_async_iterator_next)
+        setThreadedEntries(OpAsyncIteratorOpen, op_async_iterator_open)
+        setThreadedEntries(OpCallIgnoreResult, op_call_ignore_result)
+        setThreadedEntries(OpCall, op_call)
+        setThreadedEntries(OpCallVarargs, op_call_varargs)
+        setThreadedEntries(OpConstruct, op_construct)
+        setThreadedEntries(OpConstructVarargs, op_construct_varargs)
+        setThreadedEntries(OpEnumeratorGetByVal, op_enumerator_get_by_val)
+        setThreadedEntries(OpEnumeratorPutByVal, op_enumerator_put_by_val)
+        setThreadedEntries(OpGetByIdDirect, op_get_by_id_direct)
+        setThreadedEntries(OpGetById, op_get_by_id)
+        setThreadedEntries(OpGetByVal, op_get_by_val)
+        setThreadedEntries(OpGetFromScope, op_get_from_scope)
+        setThreadedEntries(OpGetLength, op_get_length)
+        setThreadedEntries(OpInstanceof, op_instanceof)
+        setThreadedEntries(OpIteratorNext, op_iterator_next)
+        setThreadedEntries(OpIteratorOpen, op_iterator_open)
+        setThreadedEntries(OpPutById, op_put_by_id)
+        setThreadedEntries(OpPutByValDirect, op_put_by_val_direct)
+        setThreadedEntries(OpPutByVal, op_put_by_val)
+        setThreadedEntries(OpPutPrivateName, op_put_private_name)
+        setThreadedEntries(OpPutToScope, op_put_to_scope)
+        setThreadedEntries(OpSetPrivateBrand, op_set_private_brand)
+        setThreadedEntries(OpSuperConstruct, op_super_construct)
+        setThreadedEntries(OpSuperConstructVarargs, op_super_construct_varargs)
+        setThreadedEntries(OpTailCall, op_tail_call)
+        setThreadedEntries(OpTailCallVarargs, op_tail_call_varargs)
+    end
 end)
 
 end // not C_LOOP
@@ -2945,12 +2985,17 @@ end)
 
 
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
+gateVariants(macro ()
 commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)
+end)
 
+gateVariants(macro ()
 commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
 end, dispatchAfterRegularCall)
+end)
 
+gateVariants(macro ()
 commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
     getu(m_argv, t1)
     lshifti 3, t1
@@ -2966,15 +3011,20 @@ commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invoke
     storep t1, OpSuperConstruct::Metadata::m_cachedCallee[t5]
 .done:
 end, dispatchAfterRegularCall)
+end)
 
+gateVariants(macro ()
 commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, prepareCallSiteForTailCall, macro (getu, metadata)
     checkSwitchToJITForEpilogue()
     # reload metadata since checkSwitchToJITForEpilogue() might have trashed t5
     metadata(t5, t0)
 end, dispatchAfterTailCall)
+end)
 
+gateVariants(macro ()
 commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCallIgnoreResult)
+end)
 
 macro branchIfException(exceptionTarget)
     loadp CodeBlock[cfr], t3
@@ -2993,20 +3043,26 @@ macro branchIfException(exceptionTarget)
 end
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_call_varargs, OpCallVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_call_varargs, size, get, OpCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_call_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
+end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_tail_call_varargs, OpTailCallVarargs, macro (size, get, dispatch, metadata, return)
     checkSwitchToJITForEpilogue()
     # We lie and perform the tail call instead of preparing it since we can't
     # prepare the frame for a call opcode
     doCallVarargs(op_tail_call_varargs, size, get, OpTailCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_tail_call_varargs, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, dispatchAfterTailCall)
 end)
+end)
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_construct_varargs, OpConstructVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_construct_varargs, size, get, OpConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
+end)
 end)
 
 # Eval is executed in one of two modes:
@@ -3231,26 +3287,32 @@ end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+byteGates(macro ()
 op(llint_virtual_call_trampoline, macro ()
     virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
+end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+byteGates(macro ()
 op(llint_virtual_construct_trampoline, macro ()
     virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
+end)
 
 # t0 is callee
 # t2 is CallLinkInfo*
+byteGates(macro ()
 op(llint_virtual_tail_call_trampoline, macro ()
     virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
+end)
 end)
 
 # t0 is callee

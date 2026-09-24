@@ -9389,3 +9389,31 @@ until the next thread that takes the lock binds. GIL off spawned threads never b
 embedder thread that exits while bound has the same exposure on `main`). Test:
 `vmstate/sampling-profiler-bound-thread-exits.js`.
 
+
+
+## Twelfth landing round: flag off executes `main`'s locks and counters; `VM::gilOff()` and `Heap::isSharedServer()` are decided on the Config page first
+
+The landing plan for the flag off (FLAG-OFF-LANDING.md) asks that a process that never sets `useJSThreads` execute nothing that
+`main` does not, unless that is argued. This entry records the rules of the unconditional locks and read-modify-writes that are
+made flag-dependent, and two predicates made safe against a stray write.
+
+**Locks taken only with the flag on.** `ThreadsModeLocker<Lock>` (`runtime/ThreadsModeAtomics.h`) takes its lock when
+`Options::useJSThreads()` and does nothing otherwise: `SharedJITStubSet::m_lock` (the nine accessors), the global-object's
+installed-watchpoints lock, and the membership lock on the refused-install path of `AdaptiveInferredPropertyValueWatchpointBase`.
+`SymbolRegistry`'s lock is taken when the shared atom string table is on (WTF has no options: the process latch the table's own
+code reads). `ConcurrentJSLockerBase`'s destructor unlocks early only in builds with assertions, where the lock depth is counted;
+elsewhere the member's destructor unlocks, as on `main`. `RegExpCache::deleteCodeNotUsedInCurrentFullCollectionCycle` deletes on a
+snapshot outside `m_lock` with the flag on (the order is cell lock, then `m_lock`); flag off it is upstream's loop.
+**Counters.** `VM::m_currentWeakRefVersion` and the microtask-delay scope counter use `threadsModeFetchAddRelaxed` and its siblings: a
+relaxed atomic RMW with the flag on, `main`'s load and store with it off.
+
+**Predicates.** `VM::gilOff()` is `gilOffWithProcessGate()` (the frozen Config byte, then the member) and `Heap::isSharedServer()` is
+`Options::useSharedGCHeap() && m_isSharedServer`. Both answered from ordinary memory (`VM::m_gilOff`, `Heap::m_isSharedServer`), so a
+stray write to either would have put a flag-off process into a mixed state, some paths on the flag-on protocols and the paths keyed on
+Config bytes on the flag-off ones. Now a process without the shared collector answers false without reading the word. No new cost:
+the same one predicted byte test.
+
+**GIL-off gaps of upstream's new run-once code release.** A program's or module's linked code is released when it has run
+(`useRunOnceCodeRelease`); with the GIL off another thread can be running that code, so both sites (`Interpreter::executeProgram`,
+`ModuleProgramExecutable::didFinishEvaluation`) skip it when `vm.gilOff()`. `CodeCache::forgetUnlinkedModuleProgramCodeBlock` takes the
+GIL-off compilation lock, as the cache's other writers do.

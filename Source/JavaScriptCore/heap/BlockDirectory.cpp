@@ -34,6 +34,7 @@
 #include "MarkedSpaceInlines.h"
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
+#include "ThreadsModeAtomics.h"
 #include "VMManager.h"
 
 #include <wtf/FunctionTraits.h>
@@ -71,7 +72,7 @@ void BlockDirectory::detachLocalAllocator(LocalAllocator& allocator)
     // GCThreadLocalCache::stopAllocatingForGood() with the server MSPL held
     // when the server is shared (lock order 7 -> 8).
     ASSERT(&allocator.directory() == this);
-    Locker locker { m_localAllocatorsLock };
+    SharedHeapModeLocker<Lock> locker { m_localAllocatorsLock };
     if (allocator.isOnList())
         allocator.remove();
 }
@@ -283,12 +284,12 @@ void BlockDirectory::stopAllocating()
     // (ranks 9/9b), and the appending ctor takes nothing inside rank 8. A
     // just-appended allocator is necessarily empty (its thread has never
     // allocated through it), so stopping it is a no-op — the lock is about
-    // list integrity, not allocator contents. Taken unconditionally: this is
-    // a collection-time path and the lock is uncontended single-threaded.
+    // list integrity, not allocator contents. Taken by the clients of a shared collector (SharedHeapModeLocker): a
+    // process without one has the one mutator that appends allocators, as on `main`, which takes no lock here.
     // Same reasoning for prepareForAllocation / resumeAllocating /
     // stopAllocatingForGood below.
     {
-        Locker locker { m_localAllocatorsLock };
+        SharedHeapModeLocker<Lock> locker { m_localAllocatorsLock };
         if (Options::validateFreeListStructure()) [[unlikely]]
             FreeList::setStructureValidationContext("dirflush"); // Conductor step-5 flush provenance.
         m_localAllocators.forEach(
@@ -314,7 +315,7 @@ void BlockDirectory::prepareForAllocation()
 {
     // SharedGC (review round 2): locked traversal — see stopAllocating().
     {
-        Locker locker { m_localAllocatorsLock };
+        SharedHeapModeLocker<Lock> locker { m_localAllocatorsLock };
         m_localAllocators.forEach(
             [&] (LocalAllocator* allocator) {
                 allocator->prepareForAllocation();
@@ -374,7 +375,7 @@ void BlockDirectory::resumeAllocating()
 {
     dataLogLnIf(BlockDirectoryInternal::verbose, RawPointer(this), ": BlockDirectory::resumeAllocating!");
     // SharedGC (review round 2): locked traversal — see stopAllocating().
-    Locker locker { m_localAllocatorsLock };
+    SharedHeapModeLocker<Lock> locker { m_localAllocatorsLock };
     m_localAllocators.forEach(
         [&] (LocalAllocator* allocator) {
             allocator->resumeAllocating();

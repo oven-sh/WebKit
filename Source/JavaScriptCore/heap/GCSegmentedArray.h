@@ -115,10 +115,10 @@ protected:
     // their call sites), but it is read concurrently by other threads' lock-free
     // heuristics (isEmpty()/size() during donation/stealing decisions). The
     // hand-off of mark-stack contents is fence-ordered elsewhere; these
-    // relaxed atomics only make the previously-plain word accesses
-    // well-defined C++. Codegen is identical to the plain accesses.
-    size_t loadTopRelaxed() const { return WTF::atomicLoad(const_cast<size_t*>(&m_top), std::memory_order_relaxed); }
-    void storeTopRelaxed(size_t value) { WTF::atomicStore(&m_top, value, std::memory_order_relaxed); }
+    // accesses are racy words (WTF::racyLoad/racyStore): plain, as on `main`, outside TSAN, where they are relaxed atomics. A plain word can be kept
+    // in a register across an append or a pop; a relaxed atomic cannot.
+    size_t loadTopRelaxed() const { return racyLoad(m_top); }
+    void storeTopRelaxed(size_t value) { racyStore(m_top, value); }
 
     void validatePrevious();
 

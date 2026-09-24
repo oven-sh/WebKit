@@ -135,16 +135,25 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterfly(Visitor& visitor)
     return result;
 }
 
+// The process-wide, finalize-time mode (SPEC-objectmodel G1: no butterfly word is ever visited in the other mode) selects one of two
+// instances at the entry, so that the untagged one is `main`'s function: no mode flag captured by the closure below, and the switch
+// over the indexing types is `main`'s.
 template<typename Visitor>
 ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visitor)
+{
+    if (Options::useTaggedButterflies()) [[unlikely]]
+        return visitButterflyForMode<Visitor, true>(visitor);
+    return visitButterflyForMode<Visitor, false>(visitor);
+}
+
+template<typename Visitor, bool jsThreads>
+ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyForMode(Visitor& visitor)
 {
     Butterfly* butterfly;
     Structure* structure;
     PropertyOffset maxOffset;
 
-    // Latched option (I22): load once per visit instead of three cross-DSO
-    // global loads per visited object per mark pass.
-    const bool jsThreads = Options::useTaggedButterflies();
+    ASSERT(Options::useTaggedButterflies() == jsThreads);
 
     auto visitElements = [&] (IndexingType indexingMode) {
         switch (indexingMode) {

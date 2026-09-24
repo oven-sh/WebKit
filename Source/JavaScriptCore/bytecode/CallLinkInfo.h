@@ -309,16 +309,18 @@ public:
     }
 
     // See LazyCallLinkInfo. Nothing may ever change such a CallLinkInfo.
-    bool isSharedByUnlinkedCallSites() const { return m_isSharedByUnlinkedCallSites; }
+    bool isSharedByUnlinkedCallSites() const { return m_flags.loadRelaxed() & isSharedByUnlinkedCallSitesFlag; }
 
     void clearSeen()
     {
-        m_flags.exchangeAnd(static_cast<uint8_t>(~hasSeenShouldRepatchFlag));
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
+        clearFlag(hasSeenShouldRepatchFlag);
     }
 
     void setSeen()
     {
-        m_flags.exchangeOr(hasSeenShouldRepatchFlag);
+        RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
+        setFlag(hasSeenShouldRepatchFlag);
     }
 
     bool hasSeenClosure()
@@ -328,7 +330,7 @@ public:
 
     void setHasSeenClosure()
     {
-        m_flags.exchangeOr(hasSeenClosureFlag);
+        setFlag(hasSeenClosureFlag);
     }
 
     bool clearedByGC()
@@ -338,7 +340,7 @@ public:
 
     void setClearedByGC()
     {
-        m_flags.exchangeOr(clearedByGCFlag);
+        setFlag(clearedByGCFlag);
     }
 
     bool clearedByVirtual()
@@ -348,7 +350,7 @@ public:
 
     void setClearedByVirtual()
     {
-        m_flags.exchangeOr(clearedByVirtualFlag);
+        setFlag(clearedByVirtualFlag);
     }
     
     void setCallType(CallType callType)
@@ -410,6 +412,11 @@ public:
     static constexpr ptrdiff_t offsetOfStub()
     {
         return OBJECT_OFFSETOF(CallLinkInfo, m_stub);
+    }
+
+    static constexpr ptrdiff_t offsetOfOwner()
+    {
+        return OBJECT_OFFSETOF(CallLinkInfo, m_owner);
     }
 
     static constexpr ptrdiff_t offsetOfRecord()
@@ -511,9 +518,10 @@ protected:
     // concurrent (locked) setStub()/setVirtualCall() mode update, and store
     // the stale mode back — a LOST mode publication, not just a TSAN report
     // (see CallLinkInfo.cpp publishRecord comment block). The monotone flags
-    // therefore live in their own relaxed-atomic byte (RMWs via
-    // exchangeOr/exchangeAnd, so visitWeak's writers cannot erase a racing
-    // slow-path setSeen and vice versa). The mode shares m_callTypeAndMode
+    // therefore live in their own relaxed-atomic byte, updated with a
+    // relaxed load and store (setFlag/clearFlag below: a flag that a racing
+    // writer of the same byte loses is set again by the next slow path that
+    // meets its condition). The mode shares m_callTypeAndMode
     // with the identity bits: every mode writer is serialized (the GIL, or
     // s_callLinkSerializationLock gilOff) and the identity bits are write-once
     // before this CallLinkInfo is reachable by other lites, so storeMode's
@@ -527,7 +535,25 @@ protected:
     static constexpr uint8_t hasSeenClosureFlag = 1 << 1;
     static constexpr uint8_t clearedByGCFlag = 1 << 2;
     static constexpr uint8_t clearedByVirtualFlag = 1 << 3;
+    // Write-once, before the CallLinkInfo is reachable: see LazyCallLinkInfo.
+    static constexpr uint8_t isSharedByUnlinkedCallSitesFlag = 1 << 4;
     Atomic<uint8_t> m_flags { 0 };
+    // The flags are heuristics that slow paths and the collector set racily: a relaxed load and a relaxed store, not a locked
+    // read-modify-write (a `lock or` on every call site's first calls, on x86-64). A flag lost to a racing writer is set again
+    // by the next slow path that meets its condition, and no flag is read for correctness (see LazyCallLinkInfo for the one
+    // written once before publication).
+    void setFlag(uint8_t flag)
+    {
+        uint8_t flags = m_flags.loadRelaxed();
+        if ((flags | flag) != flags)
+            m_flags.storeRelaxed(static_cast<uint8_t>(flags | flag));
+    }
+    void clearFlag(uint8_t flag)
+    {
+        uint8_t flags = m_flags.loadRelaxed();
+        if (flags & flag)
+            m_flags.storeRelaxed(static_cast<uint8_t>(flags & ~flag));
+    }
     // TSAN wave 5 (calllink, ruling: concurrent-accessor): m_callType (4 bits)
     // and m_type (1 bit) were plain bit-fields sharing this byte — every write
     // was a plain byte RMW racing the lock-free compiler-thread readers
@@ -633,7 +659,9 @@ public:
     void setExecutedOnce(VM&);
     bool hasExecutedOnce() const
     {
-        CallSiteData* data = m_data;
+        // GIL off a second thread can replace the shared CallSiteData while this reads it (setExecutedOnce(), ensureSlow()): a relaxed
+        // atomic load, which is the plain load flag off.
+        CallSiteData* data = WTF::atomicLoad(const_cast<CallSiteData**>(&m_data), std::memory_order_acquire);
         return data && data->m_callLinkInfo.isSharedByUnlinkedCallSites() && data->m_callLinkInfo.seenOnce();
     }
 
@@ -671,6 +699,7 @@ private:
         if (!data)
             return nullptr;
         data = dependency.consume(data);
+        TSAN_ANNOTATE_HAPPENS_AFTER(data); // ThreadSanitizer does not model the address dependency.
         if (!data->m_callLinkInfo.owner())
             return nullptr;
         return data;

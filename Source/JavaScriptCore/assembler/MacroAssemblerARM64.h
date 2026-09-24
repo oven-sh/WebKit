@@ -6131,6 +6131,20 @@ public:
     {
         atomicStrongCAS<64>(cond, expectedAndResult, newValue, address, result);
     }
+
+    // The contract of MacroAssemblerX86_64's emitters of the same names: `expectedAndResult` holds the value that was in memory on
+    // return, and the jump is taken on `cond` (Success: the compare was equal and the store happened). Acquire-release. A failed
+    // compare stores nothing. The threads work's generated code (transitions claimed by compare-and-swap, the generator claim) is
+    // emitted through these, and only with the flag on; they are here so that the code compiles on this target.
+    Jump branchAtomicStrongCAS32(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, Address address)
+    {
+        return branchAtomicStrongCASImpl<32>(cond, expectedAndResult, newValue, address);
+    }
+
+    Jump branchAtomicStrongCAS64(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, Address address)
+    {
+        return branchAtomicStrongCASImpl<64>(cond, expectedAndResult, newValue, address);
+    }
     
     template<typename AddressType>
     void atomicRelaxedStrongCAS8(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, AddressType address, RegisterID result)
@@ -8108,6 +8122,37 @@ protected:
         return branch32(cond, left, right);
     }
     
+    template<int datasize>
+    Jump branchAtomicStrongCASImpl(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, Address address)
+    {
+        zeroExtend<datasize>(expectedAndResult, expectedAndResult);
+
+        RegisterID simpleAddress = extractSimpleAddress(address);
+        RegisterID tmp = getCachedDataTempRegisterIDAndInvalidate();
+
+        Label reloop = label();
+        loadLinkAcq<datasize>(simpleAddress, tmp);
+        Jump failure = branch<datasize>(NotEqual, expectedAndResult, tmp);
+
+        // The store-conditional's status goes to the register that held the observed value: on success that value is the expected
+        // one, which the caller has. A lost reservation retries.
+        storeCondRel<datasize>(newValue, simpleAddress, tmp);
+        branchTest32(NonZero, tmp).linkTo(reloop, this);
+
+        if (cond == Success) {
+            Jump taken = jump();
+            failure.link(this);
+            move(tmp, expectedAndResult);
+            return taken;
+        }
+        Jump done = jump();
+        failure.link(this);
+        move(tmp, expectedAndResult);
+        Jump taken = jump();
+        done.link(this);
+        return taken;
+    }
+
     template<int datasize>
     void atomicStrongCAS(StatusCondition cond, RegisterID expectedAndResult, RegisterID newValue, Address address, RegisterID result)
     {

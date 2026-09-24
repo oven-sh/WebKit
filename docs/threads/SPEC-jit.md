@@ -67,7 +67,7 @@ Obligations: **(a)** JIT'd code holds no retired-data pointer across a safepoint
 
 ### 4.5 Atomic refcounts
 
-Plain today (G11), mutated cross-thread under §4.4(b)/§5.8. `InlineCacheHandler` (+`WithJSCall`)->`ThreadSafeRefCounted`; `JITStubRoutine::m_refCount`->`std::atomic<unsigned>` (relaxed inc, release dec, acquire RMW pre-`observeZeroRefCount()`; covers subclasses). **Unconditionally atomic** (C++ state; I1 unaffected). Task 3 audits shared counters/lists reachable through these into I17's table (`addOwner`/`removeOwner` stay under `m_lock`).
+Plain today (G11), mutated cross-thread under §4.4(b)/§5.8. `InlineCacheHandler` (+`WithJSCall`)->`ThreadSafeRefCounted`; `JITStubRoutine::m_refCount`->`std::atomic<unsigned>` (relaxed inc, release dec, acquire RMW pre-`observeZeroRefCount()`; covers subclasses). **Atomic when the flag is on, `main`'s plain count when it is off** (`ThreadsModeRefCounted`; C++ state, the mode is a frozen Config byte; twelfth round, history §59; earlier: unconditionally atomic). Task 3 audits shared counters/lists reachable through these into I17's table (`addOwner`/`removeOwner` stay under `m_lock`).
 
 ## 5. Protocols
 
@@ -88,7 +88,7 @@ Writers (`addAccessCase`, `InlineCacheCompiler`): unchanged locking (`m_lock` vi
 
 ### 5.4 LLInt metadata+flag gate
 
-Reads/writes per §4.3 (single u64, no fences; stale values fail the id compare). **Gate**: interpreter compiles once=>runtime gating: **M4a (PREP-PHASE)** adds `uint8_t useJSThreads` to `JSCConfig` (set at options-finalize); offlineasm `ifJSThreadsBranch(label)`=one `_g_config` byte-load+branch, ONCE per affected fast path (§4.3/§5.5 hang off it; §10). Flag-off cost=one not-taken branch per opcode; `--useJIT=0` bench gate (Task 13).
+Reads/writes per §4.3 (single u64, no fences; stale values fail the id compare). **Gate**: interpreter compiles once=>runtime gating: **M4a (PREP-PHASE)** adds `uint8_t useJSThreads` to `JSCConfig` (set at options-finalize); offlineasm `ifJSThreadsBranch(label)`=one `_g_config` byte-load+branch, ONCE per affected fast path (§4.3/§5.5 hang off it; §10). Flag-off cost=zero (twelfth round, history §59): the gated opcodes have two bodies, `main`'s and the threaded one under `_threaded_<label>`, installed over the opcode maps by `LLInt::initialize()` when the flag is set; `--useJIT=0` bench gate (Task 13). Earlier: one not-taken branch per opcode.
 
 ### 5.5 TID/SW checks per tier
 
@@ -133,7 +133,7 @@ All "tolerate, don't synchronize" except tier-up:
 2. **Tier-up CAS**: per-CodeBlock `std::atomic<uint8_t> m_tierUpInFlight` per tier-up edge; threshold slow paths (`operationOptimize`; LLInt tier-up; owned DFG->FTL triggers) enqueue only after a 0->1 CAS win, cleared on complete/cancel; losers defer, stay in tier.
 3. **Worklist dedup backstop**: `JITWorklist::enqueue` replaces the `:187` assert: key present under `*m_lock`->cancel, `CompilationDeferred` (not flag-gated). Tenth round (history §49): the synchronous path (`useConcurrentJIT=false`) takes part flag on - it claims the key in `m_finalizingPlans` under `*m_lock` for the whole compile-and-finalize and cancels a plan whose key is claimed - and is admitted GIL on; GIL off `useConcurrentJIT` stays forced on (a mutator compiling synchronously holds heap access with no poll until it finishes, so every stop waits for it and a lock it blocks on in the compiler is not a safepoint), and turning it off there is the fail-stop.
 4. `ValueProfile` buckets: aligned 64-bit stores word-atomic, never torn; guards validate (I12); TSAN annotations.
-5. `ArrayProfile`-style flag merges: relaxed atomic OR where compiler-read; lost bit benign (I12).
+5. `ArrayProfile`-style flag merges: relaxed load and a relaxed store of the OR where compiler-read (no locked RMW, in every mode; twelfth round, history §59); lost bit benign (I12).
 6. Multi-word Status snapshots stay under `ConcurrentJSLocker` on `m_lock` (G8); IC-state writers also hold `m_lock` (§5.1); Task 12 audits every `computeFor*` entry (verify only).
 7. A datum stays plain iff <=8B word-aligned AND advisory to every consumer; multi-word reads under `m_lock`.
 

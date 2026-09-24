@@ -300,6 +300,9 @@ UnlinkedModuleProgramCodeBlock* CodeCache::getUnlinkedModuleProgramCodeBlock(VM&
 
 void CodeCache::forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable* executable, const SourceCode& source, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock)
 {
+    // The cache is read and written by parsers of other threads under the GIL-off compilation lock.
+    VM& vm = executable->vm();
+    GILOffCompilationLocker compilationLocker(vm, vm.gilOffWithProcessGate());
     SourceCodeKey key(
         source, String(), SourceCodeType::ModuleType, executable->lexicallyScopedFeatures(), JSParserScriptMode::Module,
         executable->derivedContextType(), EvalContextType::None, executable->isArrowFunctionContext(), unlinkedCodeBlock->codeGenerationMode(),

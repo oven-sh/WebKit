@@ -378,10 +378,18 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
 void UnlinkedCodeBlock::ensureValueAndArrayProfiles()
 {
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
-    if (m_valueAndArrayProfiles || isBuiltinFunction())
+    if (valueAndArrayProfiles() || isBuiltinFunction())
         return;
     auto profiles = ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles);
     WTF::storeStoreFence(); // The collector and the compiler threads read m_valueAndArrayProfiles without a lock.
+    if (Options::useJSThreads()) [[unlikely]] {
+        // Threads that run the same UnlinkedCodeBlock can both get here: the first to publish wins, the other's is destroyed.
+        static_assert(sizeof(m_valueAndArrayProfiles) == sizeof(ValueAndArrayProfiles*));
+        auto** slot = std::bit_cast<ValueAndArrayProfiles**>(&m_valueAndArrayProfiles);
+        if (!WTF::atomicCompareExchangeStrong(slot, static_cast<ValueAndArrayProfiles*>(nullptr), profiles.get()))
+            profiles.release();
+        return;
+    }
     m_valueAndArrayProfiles = WTF::move(profiles);
 }
 

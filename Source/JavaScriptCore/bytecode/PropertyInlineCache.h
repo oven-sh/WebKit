@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ThreadsModeAtomics.h"
 #include "CacheableIdentifier.h"
 #include "CodeBlock.h"
 #include "CodeOrigin.h"
@@ -208,13 +209,15 @@ public:
 
     ALWAYS_INLINE ICRacyCell& operator=(T value)
     {
-        // Write-avoidance (SPEC-ungil §5.7, seventh round): these advisory
-        // cells sit in ICs shared by every thread running the CodeBlock; the
-        // operations set them (tookSlowPath = true, countdown, ...) on every
-        // call, mostly to the value they already hold. Store only a change so
-        // the IC's line - and whatever shares it - stays clean across cores.
-        if (icConcurrentRelaxedLoad(m_value) != value)
-            icConcurrentRelaxedStore(m_value, value);
+        // These advisory cells sit in ICs shared by every thread running the CodeBlock; the operations set them (tookSlowPath =
+        // true, countdown, ...) on every call, mostly to the value they already hold. With the flag on only a change is stored so
+        // the IC's line, and whatever shares it, stays clean across cores (sharedProfileWriteAvoidance()); flag off the store is
+        // `main`'s unconditional one.
+        if (sharedProfileWriteAvoidance()) [[unlikely]] {
+            if (icConcurrentRelaxedLoad(m_value) == value)
+                return *this;
+        }
+        icConcurrentRelaxedStore(m_value, value);
         return *this;
     }
 

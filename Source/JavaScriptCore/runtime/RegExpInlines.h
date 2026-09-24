@@ -128,7 +128,7 @@ template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE void RegExp::noteUse(VM& vm)
 {
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
-        m_lastUseEpoch = currentUseEpoch(vm);
+        WTF::atomicStore(&m_lastUseEpoch, currentUseEpoch(vm), std::memory_order_relaxed); // THREADS: every mutator of a GIL-off VM is "the VM's thread".
 }
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
@@ -209,6 +209,7 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     if (s.length() - startOffset < minimumSize())
         return -1;
 
+    noteUse<matchFrom>(vm);
     // AUD1.N2 residual (A): only the mutator compiles here. CompilerThread
     // entries come from matchConcurrently, which verified hasCodeFor UNDER
     // the cellLock it still holds — calling compileIfNecessary would
@@ -406,6 +407,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     if (s.length() - startOffset < minimumSize())
         return MatchResult::failed();
 
+    noteUse<matchFrom>(vm);
     // AUD1.N2 residual (A): mutator-only compile — same rationale as the
     // span-overload matchInline above (matchConcurrently holds the cellLock).
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread)

@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# run-corpus-tsan.sh — one full TSAN corpus snapshot run (FULL JIT, GIL-off).
+# run-corpus-tsan.sh [output dir] — one full TSAN corpus snapshot run (FULL JIT), GIL off by default, GIL on with MODE=gilon.
+# ROOT (the checkout, default: this one) and JSC (default: WebKitBuild/TSanJIT/bin/jsc under it) can be set in the environment.
 # Saves every TSAN report verbatim (per-test logs + concatenated reports log).
 set -u
-ROOT=/root/WebKit
-JSC=$ROOT/WebKitBuild/TSan/bin/jsc
+ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
+JSC=${JSC:-$ROOT/WebKitBuild/TSanJIT/bin/jsc}
 OUT=${1:-$ROOT/Tools/threads/tsan/r0}
 mkdir -p "$OUT"
-export JSC_useThreadGIL=false JSC_useVMLite=true JSC_useSharedAtomStringTable=true \
-       JSC_useSharedGCHeap=true JSC_useThreadGILOffUnsafe=true
+if [ "${MODE:-giloff}" = gilon ]; then
+  export JSC_useThreadGIL=true
+else
+  export JSC_useThreadGIL=false JSC_useVMLite=true JSC_useSharedAtomStringTable=true \
+         JSC_useSharedGCHeap=true JSC_useThreadGILOffUnsafe=true
+fi
 export TSAN_OPTIONS="suppressions=$ROOT/Tools/tsan/suppressions.txt halt_on_error=0 history_size=7 second_deadlock_stack=1"
 
 run_one() {

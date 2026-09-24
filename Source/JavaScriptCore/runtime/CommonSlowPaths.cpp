@@ -865,6 +865,14 @@ ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObj
     case IterationMode::FastArray: {
         // We should be good to go.
         CommonSlowPaths::mergeIterationModeSeenModesConcurrently(metadata.m_iterationMetadata, IterationMode::FastArray); // THREADS §5.7.7
+        if (Options::useUnboxedFastArrayIteration()) {
+            // No iterator object: op_iterator_next finds the array in its iterable operand and keeps the next index in m_next.
+            // op_iterator_close_check makes a real iterator from these should IteratorClose ever become observable.
+            GET(bytecode.m_next) = jsNumber(0);
+            iterator = vm.fastArrayUnboxedSentinel();
+            PROFILE_VALUE_IN(iterator.jsValue(), m_iteratorValueProfile);
+            return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
+        }
         GET(bytecode.m_next) = vm.fastArrayValuesSentinel();
         auto* iteratedObject = uncheckedDowncast<JSObject>(iterable);
         iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), iteratedObject, IterationKind::Values);

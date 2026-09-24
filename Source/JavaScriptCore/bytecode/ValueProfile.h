@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include "ThreadsModeAtomics.h"
 #include "ConcurrentJSLock.h"
 #include "SpeculatedType.h"
 #include "Structure.h"
@@ -87,14 +88,8 @@ struct ValueProfileBase {
     void storeBucketConcurrently(unsigned i, EncodedJSValue value)
     {
         ASSERT(i < totalNumberOfBuckets);
-        // Write-avoidance (SPEC-ungil §5.7, seventh round): with several
-        // threads running one CodeBlock's lower tiers, an unconditional store
-        // keeps the profile's cache line bouncing between cores even when it
-        // records nothing new; skip the store when the bucket already holds
-        // this value. One compare flag-off.
-        if (WTF::atomicLoad(&m_buckets[i], std::memory_order_relaxed) == value)
-            return;
-        WTF::atomicStore(&m_buckets[i], value, std::memory_order_relaxed);
+        // With the flag on, no store when the bucket already holds this value (write avoidance, sharedProfileWriteAvoidance()).
+        racyStoreProfileWord(m_buckets[i], value);
     }
 
     void clearBuckets()
@@ -146,6 +141,7 @@ struct ValueProfileBase {
     }
 
     bool isSampledBefore() const { return predictionConcurrently() != SpecNone; }
+    SpeculatedType prediction() const { return predictionConcurrently(); }
     
     UTF8CString briefDescription()
     {
@@ -319,12 +315,7 @@ public:
     // the same UnlinkedCodeBlock, so it races with itself across threads too). Lost
     // merges are tolerated; every access must be a relaxed atomic. Relaxed = plain
     // moves on x86-64/arm64, so flag-off codegen is unchanged.
-    void update(ValueProfile& profile)
-    {
-        SpeculatedType newType = profile.predictionConcurrently() | WTF::atomicLoad(&m_prediction, std::memory_order_relaxed);
-        profile.storePredictionConcurrently(newType);
-        WTF::atomicStore(&m_prediction, newType, std::memory_order_relaxed);
-    }
+    inline void update(ValueProfileRef&);
 
     void update(ArgumentValueProfile& profile)
     {

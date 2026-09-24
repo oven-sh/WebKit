@@ -71,6 +71,10 @@ void VMEntryScope::setUpSlow()
     } else
         m_vm.entryScope = this;
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_vm.didEnterFromOutside();
+#endif
+
 #if ASSERT_ENABLED
     // SPEC-vmstate I14: an installed VMLite always belongs to the VM whose
     // JSLock this thread holds.

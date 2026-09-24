@@ -127,11 +127,16 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock)
 {
     // THREADS §5.7.5/§5.7.7 (SPEC-jit Task 12): the structure-ID words are advisory;
     // C++ accesses use relaxed word-atomics (JIT'd stores stay plain per §5.7.1). A racing
-    // exchange can at worst re-merge or drop one observation, which is benign (I12).
-    if (auto structureID = WTF::atomicExchange(&m_lastSeenStructureID, StructureID(), std::memory_order_relaxed))
+    // take can at worst merge one observation twice or drop it, which is benign (I12). A
+    // load and a store, not an exchange (a locked instruction on x86-64, executed for every profile at every tier-up check).
+    if (auto structureID = WTF::atomicLoad(&m_lastSeenStructureID, std::memory_order_relaxed)) {
+        WTF::atomicStore(&m_lastSeenStructureID, StructureID(), std::memory_order_relaxed);
         computeUpdatedPrediction(codeBlock, structureID.decode());
-    if (auto structureID = WTF::atomicExchange(&m_speculationFailureStructureID, StructureID(), std::memory_order_relaxed))
+    }
+    if (auto structureID = WTF::atomicLoad(&m_speculationFailureStructureID, std::memory_order_relaxed)) {
+        WTF::atomicStore(&m_speculationFailureStructureID, StructureID(), std::memory_order_relaxed);
         computeUpdatedPrediction(codeBlock, structureID.decode());
+    }
 }
 
 void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* lastSeenStructure)
@@ -140,7 +145,7 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* las
     // is a word-atomic last-writer-wins store (heuristic only; a racing OR that loses a
     // bit, or a stale pruned value, never breaks soundness — profiles select, guards
     // validate, I12).
-    WTF::atomicExchangeOr(&m_observedArrayModes, arrayModesFromStructure(lastSeenStructure), std::memory_order_relaxed);
+    orRelaxedNoLockedRMW(&m_observedArrayModes, arrayModesFromStructure(lastSeenStructure));
 
     auto flagsSnapshot = OptionSet<ArrayProfileFlag>::fromRaw(WTF::atomicLoad(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), std::memory_order_relaxed));
     if (!flagsSnapshot.contains(ArrayProfileFlag::DidPerformFirstRunPruning)

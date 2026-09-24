@@ -2098,3 +2098,15 @@ finding as well: signal 11 in 7 of 40 runs before the readers' check, `undefined
 object" in 2 of 60 with the check alone and 13 of 60 with dictionaries refused, 0 of 120 with the store moved);
 the CVE test above, amplified with each run pinned to one core: 16 crashes in 2,400 runs before, 0 in 2,400 after.
 
+
+
+## §42. Twelfth landing round: `visitButterflyImpl` is instantiated per butterfly-word mode (G1; flag off runs `main`'s function)
+
+`JSObjectWithButterfly::visitButterflyImpl` tested `Options::useTaggedButterflies()` once and captured the answer in the closure
+that visits the elements; the switch over the indexing types gained an arm that only GIL off takes (Int32 lanes value-visited). Per
+visited object flag off that was 18 instructions instead of 2 (a closure frame of 0x58 bytes against 0x38, a range test that had
+become a cascade of three bit tests): 8 of the 13 extra instructions per marked cell that the collector paid. The mode is
+process-wide and fixed at options finalization (G1), so an object is never visited by the instance of the other mode. Rule: the
+function is `visitButterflyForMode<Visitor, jsThreads>`, selected once at its entry; in the untagged instance every `jsThreads`
+conjunct is a constant false. `ASSERT(Options::useTaggedButterflies() == jsThreads)` at the top of each instance. The tagged
+instance is the previous function unchanged.

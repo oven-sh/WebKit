@@ -704,7 +704,7 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
 
 bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
 {
-    return m_lastUseEpoch == currentUseEpoch(vm);
+    return WTF::atomicLoad(const_cast<uint8_t*>(&m_lastUseEpoch), std::memory_order_relaxed) == currentUseEpoch(vm);
 }
 
 void RegExp::deleteCode()
@@ -716,7 +716,8 @@ void RegExp::deleteCode()
     m_state = NotCompiled;
     m_publishedCodeGILOff.store(0); // deleteAllCode only: world-stopped GIL off.
     setMinimumSize(0);
-    WTF::atomicStore(&m_specificPattern, Yarr::SpecificPattern::None, std::memory_order_relaxed); // THREADS: see specificPattern().
+    // m_atom and m_specificPattern stay: they describe the pattern (every compile sets them to the same values), the fast paths that
+    // use them never run the code, and RegExpCachedResult needs the atom of a one-character match it has yet to reify.
 #if ENABLE(YARR_JIT)
     if (m_regExpJITCode)
         m_regExpJITCode->clear(locker);

@@ -29,6 +29,7 @@
 #include "JSCJSValue.h"
 #include "ResultType.h"
 #include "TagRegistersMode.h"
+#include "ThreadsModeAtomics.h"
 #include <wtf/Atomics.h>
 
 namespace JSC {
@@ -124,40 +125,30 @@ public:
     { }
     ALWAYS_INLINE ArithProfileBits& operator=(const ArithProfileBits& other)
     {
-        m_bits.storeRelaxed(other.loadRelaxed());
+        WTF::racyStore(m_bits, other.loadRelaxed());
         return *this;
     }
+    // The observe* paths recompute the whole word on every profiled operation. With the flag on a store of an unchanged word is
+    // skipped (write avoidance, see sharedProfileWriteAvoidance); without it this is `main`'s plain store.
     ALWAYS_INLINE ArithProfileBits& operator=(BitfieldType bits)
     {
-        // Write-avoidance (SPEC-ungil §5.7, seventh round): the observe*
-        // paths recompute the whole word on every profiled operation; storing
-        // it back unchanged is what made a shared CodeBlock's arith profiles a
-        // contended cache line under several threads. Store only a change.
-        if (m_bits.loadRelaxed() != bits)
-            m_bits.storeRelaxed(bits);
+        racyStoreProfileWord(m_bits, bits);
         return *this;
     }
+    // Deliberately a relaxed load and a relaxed store, NOT an atomic RMW: an RMW (even relaxed) compiles to `lock or` on x86-64 and
+    // an exclusive or LSE loop on ARM64, a full fence on unconditional slow paths (profiled arithmetic in the LLInt, Baseline and
+    // DFG). A lost cross-thread merge is tolerated by SPEC-jit section 5.7.7, and JIT-emitted code ORs into this word with a plain
+    // `or` anyway. A plain access is a relaxed atomic under ThreadSanitizer (WTF::racyLoad).
     ALWAYS_INLINE ArithProfileBits& operator|=(BitfieldType mask)
     {
-        // Deliberately a relaxed load + relaxed store, NOT an atomic RMW: an
-        // RMW (even relaxed) compiles to `lock or` on x86-64 / an exclusive
-        // or LSE loop on ARM64 — a full fence on unconditional flag-off slow
-        // paths (LLInt/baseline/DFG profiled arith operations). Lost
-        // cross-thread bit-merges are explicitly tolerated by SPEC-jit
-        // §5.7.7 (and JIT-emitted code ORs into this word with a plain
-        // non-atomic `or` anyway, so an RMW here would buy no real
-        // guarantee). This matches the family convention used by
-        // mergeSpeculationConcurrently, ValueProfile, and ArrayProfile.
-        BitfieldType bits = m_bits.loadRelaxed();
-        if ((bits | mask) != bits)
-            m_bits.storeRelaxed(bits | mask);
+        racyOrProfileWord(m_bits, mask);
         return *this;
     }
     ALWAYS_INLINE operator BitfieldType() const { return loadRelaxed(); }
-    ALWAYS_INLINE BitfieldType loadRelaxed() const { return m_bits.loadRelaxed(); }
+    ALWAYS_INLINE BitfieldType loadRelaxed() const { return WTF::racyLoad(m_bits); }
 
 private:
-    WTF::Atomic<BitfieldType> m_bits { 0 };
+    BitfieldType m_bits { 0 };
 };
 
 template <typename BitfieldType>

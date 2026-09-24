@@ -2811,3 +2811,15 @@ NORMATIVE:
    non-empty conductor CMS surviving the site AND the
    non-conductor hard-assert (a deliberately corrupted
    non-conductor CMS in the harness must still abort).
+
+
+## ANNEX CGD9 — twelfth landing round: the marker's counters and the mark stack's top are racy words (E-D1)
+
+The visit counters (`m_visitCount`, `m_bytesVisited`) and the mark stack's `m_top` were relaxed atomics in every build. Each has
+one writer, the visitor's own thread (the shared stacks' writers are serialized by the heap's locks, as `MarkStack.h` says);
+the cross-thread readers are heuristics (`isEmpty()`/`size()` in donation and stealing decisions, `visitCount()` and `bytesVisited()`
+sums after the markers have joined). A relaxed atomic word is the same instruction as a plain one on x86-64 and arm64, but the compiler
+may not merge the loads, keep the word in a register across an append or fold `m_bytesVisited += size`: 5 of the 13 extra instructions
+per visited cell (the comment in `GCSegmentedArray.h` that codegen is identical was wrong). Rule: they are `WTF::racyLoad` and
+`racyStore`, which are plain accesses outside ThreadSanitizer builds (where they stay relaxed atomics, so the detector sees the intent)
+and are what `main` has. `m_mutatorIsStopped`, which the collector polls in a loop, keeps its atomic accesses.

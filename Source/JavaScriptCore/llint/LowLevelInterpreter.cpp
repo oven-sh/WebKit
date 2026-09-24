@@ -501,6 +501,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     OFFLINE_ASM_OPCODE_DEBUG_LABEL(llint_##__opcode) \
     OFFLINE_ASM_LOCAL_LABEL(llint_##__opcode)
 
+#define OFFLINE_ASM_THREADED_OPCODE_LABEL(__opcode) \
+    EMBED_OPCODE_ID_IF_NEEDED(__opcode) \
+    OFFLINE_ASM_OPCODE_DEBUG_LABEL(threaded_llint_##__opcode) \
+    OFFLINE_ASM_LOCAL_LABEL(threaded_llint_##__opcode)
+
 #define OFFLINE_ASM_GLUE_LABEL(__opcode) \
     OFFLINE_ASM_OPCODE_DEBUG_LABEL(__opcode) \
     OFFLINE_ASM_LOCAL_LABEL(__opcode)

@@ -1305,6 +1305,12 @@ void Options::notifyOptionsChanged()
     Options::useTaggedButterflies() = Options::useJSThreads()
         && (!Options::useThreadGIL() || !Options::useJSThreadsSingleOwnerWithGIL() || Options::forceSegmentedButterflies() || Options::forceButterflySWBit());
 
+    // for-of and destructuring over an Array without an Array Iterator object keep the index in the frame and read the array's
+    // butterfly word directly in the LLInt, Baseline and the DFG. Those loads do not know tagged butterfly words (GIL off), so
+    // such a process uses the iterator object protocol, whose accesses go through the tag-aware paths.
+    if (Options::useTaggedButterflies())
+        Options::useUnboxedFastArrayIteration() = false;
+
     if (Options::alwaysUseShadowChicken())
         Options::maximumInliningDepth() = 1;
         
@@ -1437,8 +1443,10 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
             // "JSC_". An embedder with its own configuration surface can opt
             // out with Config::disableEnvironmentOptions().
             if (!g_jscConfig.environmentOptionsDisabled) {
+                bool hasJSCEnvironment = true; // Unless the scan of the environment below finds no JSC_ variable at all.
 #if PLATFORM(COCOA) || OS(LINUX)
                 bool hasBadOptions = false;
+                hasJSCEnvironment = false;
 #if PLATFORM(COCOA)
                 char** envp = *_NSGetEnviron();
 #else
@@ -1448,6 +1456,7 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
                 for (; *envp; envp++) {
                     const char* env = *envp;
                     if (!strncmp("JSC_", env, 4)) {
+                        hasJSCEnvironment = true;
                         if (!Options::setOption(&env[4])) {
                             dataLog("ERROR: invalid option: ", *envp, "\n");
                             hasBadOptions = true;
@@ -1459,17 +1468,20 @@ void Options::initializeWithOptionsCustomization(const ScopedLambda<void()>& opt
 #endif // PLATFORM(COCOA) || OS(LINUX)
 
 #if !PLATFORM(COCOA)
+                // One getenv() per option scans the whole environment: with no JSC_ variable in it every one of them returns null.
+                if (hasJSCEnvironment) {
 #define OVERRIDE_OPTION_WITH_HEURISTICS(type_, name_, defaultValue_, availability_, description_) \
-                overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
-                FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
+                    overrideOptionWithHeuristic(name_(), name_##ID, "JSC_" #name_, Availability::availability_);
+                    FOR_EACH_JSC_OPTION(OVERRIDE_OPTION_WITH_HEURISTICS)
 #undef OVERRIDE_OPTION_WITH_HEURISTICS
 
 #define OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS(aliasedName_, unaliasedName_, equivalence_) \
-                overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
-                FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
+                    overrideAliasedOptionWithHeuristic("JSC_" #aliasedName_);
+                    FOR_EACH_JSC_ALIASED_OPTION(OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS)
 #undef OVERRIDE_ALIASED_OPTION_WITH_HEURISTICS
-
+                }
 #endif // !PLATFORM(COCOA)
+                UNUSED_VARIABLE(hasJSCEnvironment);
             }
 
 #if 0

@@ -106,7 +106,9 @@ ALWAYS_INLINE bool iteratorNextWithIndexInFrame(JSGlobalObject* globalObject, Me
 {
     bool hasNext = JSArrayIterator::nextValueWithIndexInFrame(globalObject, iterable, indexInFrame, value);
     metadata.m_iterableProfile.observeStructureID(iterable.asCell()->structureID());
-    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
+    // Profiling state that a DFG compiler thread snapshots (CommonSlowPaths::mergeIterationModeSeenModesConcurrently): a relaxed load and store.
+    uint16_t seenModes = WTF::atomicLoad(&metadata.m_iterationMetadata.seenModes, std::memory_order_relaxed);
+    WTF::atomicStore(&metadata.m_iterationMetadata.seenModes, static_cast<uint16_t>(seenModes | static_cast<uint16_t>(IterationMode::FastArray)), std::memory_order_relaxed);
     return hasNext;
 }
 

@@ -36,6 +36,7 @@
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "ThreadObject.h"
+#include "ThreadsModeAtomics.h"
 #include "InternalFieldTuple.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "FFIContext.h"
@@ -4321,7 +4322,7 @@ void JSGlobalObject::installObjectAdaptiveStructureWatchpoint(const ObjectProper
 {
     auto watchpoint = makeUniqueRef<ObjectAdaptiveStructureWatchpoint>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
-    Locker locker { m_installedWatchpointsLock };
+    ThreadsModeLocker<Lock> locker { m_installedWatchpointsLock };
     m_installedObjectAdaptiveStructureWatchpoints.append(WTF::move(watchpoint));
 }
 
@@ -4329,7 +4330,7 @@ void JSGlobalObject::installObjectPropertyChangeAdaptiveWatchpoint(const ObjectP
 {
     auto watchpoint = makeUniqueRef<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>(this, key, watchpointSet);
     watchpoint->install(*m_vm);
-    Locker locker { m_installedWatchpointsLock };
+    ThreadsModeLocker<Lock> locker { m_installedWatchpointsLock };
     m_installedObjectPropertyChangeAdaptiveWatchpoints.append(WTF::move(watchpoint));
 }
 
@@ -4337,7 +4338,7 @@ void JSGlobalObject::installChainedWatchpoint(InlineWatchpointSet& from, InlineW
 {
     auto watchpoint = makeUniqueRef<ChainedWatchpoint>(this, to);
     watchpoint->install(from, *m_vm);
-    Locker locker { m_installedWatchpointsLock };
+    ThreadsModeLocker<Lock> locker { m_installedWatchpointsLock };
     m_installedChainedWatchpoints.append(WTF::move(watchpoint));
 }
 

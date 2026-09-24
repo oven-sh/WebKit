@@ -68,6 +68,7 @@
 #include "JSAsyncGenerator.h"
 #include "JSFinalizationRegistry.h"
 #include "JSThreadsSafepoint.h"
+#include "JSFunctionInlines.h"
 #include "JSFunctionWithFields.h"
 #include "JSGenerator.h"
 #include "JSIterator.h"
@@ -960,7 +961,7 @@ bool Heap::unprotect(JSValue k)
     return m_protectedValues.remove(k.asCell());
 }
 
-void Heap::addReference(JSCell* cell, ArrayBuffer* buffer)
+void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
         collectIfNecessaryOrDefer();
@@ -1569,10 +1570,10 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsPar
         return;
 
     PreventCollectionScope preventCollectionScope(*this);
-    deleteAllCodeBlocksWithCollectionPrevented();
+    deleteAllCodeBlocksWithCollectionPrevented(keepWhatNeedsParsing);
 }
 
-void Heap::deleteAllCodeBlocksWithCollectionPrevented()
+void Heap::deleteAllCodeBlocksWithCollectionPrevented(bool keepWhatNeedsParsing)
 {
     // Reached only through VM::deleteAllCode and VM::deleteAllLinkedCode. For
     // a GIL-off VM they call this inside a stop window in which no thread of
@@ -1596,7 +1597,7 @@ void Heap::deleteAllCodeBlocksWithCollectionPrevented()
                 set.forEachLiveCell(
                     [&] (HeapCell* cell, HeapCell::Kind) {
                         ScriptExecutable* executable = static_cast<ScriptExecutable*>(cell);
-                        executable->clearCode(set);
+                        executable->clearCode(set, keepWhatNeedsParsing ? ScriptExecutable::ClearCode::KeepWhatNeedsParsing : ScriptExecutable::ClearCode::All);
                     });
             });
     });
@@ -1630,28 +1631,88 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
         return;
 
     PreventCollectionScope preventCollectionScope(*this);
-    deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+    deleteAllUnlinkedCodeBlocksWithCollectionPrevented(which);
 }
 
-void Heap::deleteAllUnlinkedCodeBlocksWithCollectionPrevented()
+void Heap::deleteAllUnlinkedCodeBlocksWithCollectionPrevented(OptionSet<UnlinkedCodeToDelete> which)
 {
     // Same callers and the same stop window as deleteAllCodeBlocksWithCollectionPrevented().
     VM& vm = this->vm();
 
     RELEASE_ASSERT(!m_collectionScope);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Compiler threads read unlinked code blocks through the CodeBlocks they compile: either those keep theirs, or
+    // there are none left to compile. Finishing the compilations that are ready allocates (DFG::LazyJSValue), so that
+    // happens before the heap is prepared for iteration, as in deleteAllCodeBlocks().
+    // What they allocate must not start a collection either (this thread could still start one): returning code to its
+    // cache rewrites an executable's code block slots into something a marker must not see half done.
+    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache) && Options::useCodeRecoveryFromBytecodeCache();
+    UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
+    std::optional<DeferGC> deferGC;
+    if (returnsCodeToCache) {
+        deferGC.emplace(vm);
+        if (which.contains(UnlinkedCodeToDelete::OnlyWithoutLinkedCode)) {
+            forEachCodeBlock([&](CodeBlock* codeBlock) {
+                linkedAgainst.add(codeBlock->unlinkedCodeBlock());
+            });
+        } else
+            completeAllJITPlans();
+        RELEASE_ASSERT(!m_collectionScope);
+    }
+#endif
+
     runWithOtherClientsStopped([&] {
         HeapIterationScope heapIterationScope(*this);
-        unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
-            [&] (HeapCell* cell, HeapCell::Kind) {
-                UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
-                executable->clearCode(vm);
-            });
-        clearUnlinkedBaselineCodeCaches();
+#if USE(BUN_JSC_ADDITIONS)
+        if (returnsCodeToCache) {
+            // A generator or an async function that is suspended resumes in the code it is suspended in: its CodeBlock may have
+            // been jettisoned for old age, so nothing links against that code now, but it is about to be linked again, and
+            // decoding it again first would only hand the resumed activation new copies of everything it already has.
+            // Suspended, or not started yet: the state is a resume point (not negative). One that is running has a CodeBlock,
+            // and one that has finished is Completed, or for an async function, which never gets there, still Executing.
+            UncheckedKeyHashSet<UnlinkedFunctionExecutable*> suspended;
+            auto addIfSuspended = [&] (JSValue state, JSValue next) {
+                if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
+                    return;
+                auto* function = dynamicDowncast<JSFunction>(next);
+                if (!function || function->isHostOrBuiltinFunction())
+                    return;
+                suspended.add(function->jsExecutable()->unlinkedExecutable());
+            };
+            auto addSuspendedIn = [&]<typename GeneratorType>(IsoSubspace* space) {
+                if (!space)
+                    return;
+                space->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind) {
+                    auto* generator = static_cast<GeneratorType*>(cell);
+                    addIfSuspended(generator->internalField(GeneratorType::Field::State).get(), generator->internalField(GeneratorType::Field::Next).get());
+                });
+            };
+            addSuspendedIn.template operator()<JSGenerator>(m_generatorSpace.get());
+            addSuspendedIn.template operator()<JSAsyncGenerator>(m_asyncGeneratorSpace.get());
+            addSuspendedIn.template operator()<JSAsyncFunctionGenerator>(m_asyncFunctionGeneratorSpace.get());
+
+            // Executables decoded from a cache are not in the set below; it only tracks the ones holding generated code.
+            unlinkedFunctionExecutableSpaceAndSet.space.forEachLiveCell(
+                [&] (HeapCell* cell, HeapCell::Kind) {
+                    auto* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                    if (!suspended.contains(executable))
+                        executable->returnCodeToCache(vm, linkedAgainst);
+                });
+        }
+#endif
+        if (which.contains(UnlinkedCodeToDelete::Generated)) {
+            unlinkedFunctionExecutableSpaceAndSet.set.forEachLiveCell(
+                [&] (HeapCell* cell, HeapCell::Kind) {
+                    UnlinkedFunctionExecutable* executable = static_cast<UnlinkedFunctionExecutable*>(cell);
+                    executable->clearCode(vm);
+                });
+        }
+        clearUnlinkedBaselineCodeCaches(which);
     });
 }
 
-void Heap::clearUnlinkedBaselineCodeCaches()
+void Heap::clearUnlinkedBaselineCodeCaches(OptionSet<UnlinkedCodeToDelete> which)
 {
 #if ENABLE(JIT)
     // Shareable Baseline JIT code is cached on UnlinkedCodeBlock::m_unlinkedBaselineCode (populated by
@@ -1674,6 +1735,8 @@ void Heap::clearUnlinkedBaselineCodeCaches()
                 space->forEachLiveCell(clearUnlinkedBaselineCode);
         }
     }
+#else
+    UNUSED_PARAM(which);
 #endif
 }
 
@@ -1985,6 +2048,10 @@ ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
     VM& vm = this->vm();
     if (!Options::useGC())
         return "the collector is off"_s;
+    // The butterfly protocols of the threads modes (tagged words, segmented spines, concurrent length raises) are not
+    // something this function knows how to move storage under.
+    if (Options::useJSThreads()) [[unlikely]]
+        return "the JS threads flag is on"_s;
 #if ENABLE(C_LOOP)
     return "the CLoop stack is not scanned"_s;
 #endif
@@ -4683,6 +4750,9 @@ void Heap::updateAllocationLimits()
         m_fullActivityCallback->setEnabled(true);
 #endif
     dataLogLnIf(verbose, "sizeAfterLastCollect = ", m_sizeAfterLastCollect);
+#if USE(BUN_JSC_ADDITIONS)
+    m_bytesAllocatedInPastCycles += totalBytesAllocatedThisCycle();
+#endif
     // I7: we are at a safepoint (world stopped); the relaxed counters are
     // exact here.
     m_nonOversizedBytesAllocatedThisCycle.store(0, std::memory_order_relaxed);
@@ -6262,7 +6332,9 @@ void Heap::allowCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
         }
         m_sharedGCPreventGateRaised = false;
     }
-
+#if USE(BUN_JSC_ADDITIONS)
+    m_isCollectionPrevented = false;
+#endif
     m_collectContinuouslyLock.unlock();
 }
 

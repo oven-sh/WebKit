@@ -1412,9 +1412,13 @@ public:
     // SPEC-jit §5.5 Read row / OM I41: GIL-off, a lane loaded under an Int32
     // array mode may hold any JSValue (its owner can relabel Int32->Contiguous
     // without a stop); verify it before it is typed Int32. No-op otherwise.
+    static bool needsInt32LaneSpeculation(ArrayMode mode)
+    {
+        return mode.type() == Array::Int32 && Options::useJSThreads() && !Options::useThreadGIL();
+    }
     void speculateInt32LaneIfRelabellable(ArrayMode mode, GPRReg laneGPR)
     {
-        if (mode.type() == Array::Int32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+        if (needsInt32LaneSpeculation(mode)) [[unlikely]]
             speculationCheck(BadType, JSValueSource(), nullptr, branchIfNotInt32(laneGPR));
     }
     JITCompiler::JumpList emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, GPRReg indexingScratchGPR, const ThreadedButterflyPlan&);

@@ -1428,3 +1428,12 @@ behind the option for a round; the rest of this round's battery (Debug, TSAN, th
 Test: `gc-stress/eden-reclaims-young-garbage-with-parked-thread-gil-off.js` (a second thread leaves 2,000 dead young
 objects behind `WeakRef`s and parks; the main thread conducts one Eden collection): 1,506 reclaimed with the constraint
 on, 3 runs of 3 (the parked thread's current blocks are kept, with what they reach), at least 1,800 with it off.
+
+
+## §25. Twelfth landing round: `Heap::isSharedServer()` is decided on the Config page first
+
+`isSharedServer()` returned `m_isSharedServer`, ordinary memory of the heap, read on hot paths (`MutatorSlowPathLocker`, the
+allocation-client resolver, 236 uses). A heap becomes a shared server only by the flip a second GC client performs, which needs
+`useSharedGCHeap`. It is now `Options::useSharedGCHeap() && m_isSharedServer`: a process without the shared collector answers false
+without reading the word, and a stray write to it cannot put such a process into a mixed state. One predicted byte test, as before
+(the option is on the frozen Config page).

@@ -177,7 +177,7 @@ void PolymorphicAccessJITStubRoutine::addGCAwareWatchpoint()
 
 void PolymorphicAccessJITStubRoutine::addedToSharedJITStubSet()
 {
-    m_isInSharedJITStubSet = true;
+    m_isInSharedJITStubSet.store(true, std::memory_order_release); // a plain store: an assignment to a std::atomic is a locked exchange
 }
 
 bool PolymorphicAccessJITStubRoutine::reconcileWeakReferencesAtGCEndImpl(VM& vm)

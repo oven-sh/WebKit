@@ -78,6 +78,10 @@ private:
     // it under m_lock, readers use a relaxed load (monotonic-ish advisory
     // counter for GC pacing; a momentarily stale value is harmless).
     Atomic<size_t> m_bytes;
+    // m_bytes and m_vector.size() as the last sweep left them. The objects added since then are the ones past that
+    // size, and they are the only ones that an eden collection can find dead. Only sweep() (world stopped) touches them.
+    size_t m_bytesAfterLastSweep { 0 };
+    size_t m_sizeAfterLastSweep { 0 };
 };
 
 } // namespace JSC

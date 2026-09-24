@@ -726,12 +726,14 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             const Identifier& ident = identifier(bytecode.m_var);
             const ResolveOp& op = resolveRead(bytecode.m_localScopeDepth, ident, bytecode.m_getPutInfo.resolveType());
 
-            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), op.type, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == ModuleVar)
-                metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), ClosureVar, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
-            if (op.type == GlobalVar || op.type == GlobalVarWithVarInjectionChecks || op.type == GlobalLexicalVar || op.type == GlobalLexicalVarWithVarInjectionChecks)
-                metadata.m_watchpointSet = op.watchpointSet;
-            else if (op.structure) {
+            ResolveType linkedType = op.type;
+            if (linkedType == ModuleVar)
+                linkedType = closureVarType;
+            else if ((linkedType == ClosureVar || linkedType == ClosureVarWithVarInjectionChecks) && op.lexicalEnvironment->type() == ModuleEnvironmentType
+                && uncheckedDowncast<JSModuleEnvironment>(op.lexicalEnvironment)->isFunctionDeclarationSlot(ScopeOffset(op.operand)))
+                linkedType = makeType(LazyClosureVar, needsVarInjectionChecks(linkedType));
+            metadata.m_getPutInfo = GetPutInfo(bytecode.m_getPutInfo.resolveMode(), linkedType, bytecode.m_getPutInfo.initializationMode(), bytecode.m_getPutInfo.ecmaMode());
+            if (op.structure) {
                 // SPEC-jit §5.5 (review round 1): flag-on, the GlobalProperty
                 // structure cache is never armed (m_structureID stays null, so
                 // loadScopeWithStructureCheck always misses and the access
@@ -1570,7 +1572,7 @@ size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)
     CodeBlock* thisObject = uncheckedDowncast<CodeBlock>(cell);
     size_t extraMemoryAllocated = 0;
     if (thisObject->m_metadata)
-        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC();
+        extraMemoryAllocated += thisObject->m_metadata->sizeInBytesForGC() + thisObject->sizeOfOwnCallSiteDatas();
     RefPtr<JSC::JITCode> jitCode = thisObject->m_jitCode.get();
     if (jitCode && !jitCode->isShared())
         extraMemoryAllocated += jitCode->size();

@@ -210,7 +210,8 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
     // executables (and so their CodeBlocks and JIT code) only as long as the linked code they belong to does.
     if (m_isShared)
         return;
-    if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
+    // GIL off, another thread can be running the same code (or code created by it) while this thread frees it.
+    if (!Options::useRunOnceCodeRelease() || vm.gilOff() || !canReleaseLinkedCodeNow(vm))
         return;
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
 }

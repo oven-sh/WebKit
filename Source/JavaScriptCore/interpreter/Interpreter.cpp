@@ -1321,7 +1321,12 @@ failedJSONP:
     // Execute the code:
     throwScope.release();
     ASSERT(vm.gilOff() || jitCode == program->generatedJITCode().ptr());
-    return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+    JSValue result = JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+    // This executable was made for this one run; only the functions it created still refer to it. GIL off, another thread
+    // can be running the same code: it stays.
+    if (Options::useRunOnceCodeRelease() && !vm.gilOff() && program->canReleaseLinkedCodeNow(vm))
+        program->clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*program->subspace()));
+    return result;
 }
 
 JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell* context, const ArgList& args)

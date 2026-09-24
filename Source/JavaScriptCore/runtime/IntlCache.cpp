@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "IntlCache.h"
+#include "ThreadsModeAtomics.h"
 
 #include "IntlDateTimeFormat.h"
 #include "IntlObject.h"
@@ -73,7 +74,7 @@ Vector<char16_t, 32> IntlCache::getBestDateTimePattern(const ASCIICString& local
     // THREADS: hold m_lock across the ICU generator USE too — a sibling
     // Thread's cacheSharedPatternGenerator would udatpg_close the generator
     // under us otherwise (see the m_lock comment in the header).
-    Locker locker { m_lock };
+    ThreadsModeLocker<Lock> locker { m_lock };
     // Always use ICU date format generator, rather than our own pattern list and matcher.
     auto sharedGenerator = getSharedPatternGenerator(locale, status);
     if (U_FAILURE(status))
@@ -87,7 +88,7 @@ Vector<char16_t, 32> IntlCache::getBestDateTimePattern(const ASCIICString& local
 
 Vector<char16_t, 32> IntlCache::getFieldDisplayName(const ASCIICString& locale, UDateTimePatternField field, UDateTimePGDisplayWidth width, UErrorCode& status)
 {
-    Locker locker { m_lock }; // THREADS: see getBestDateTimePattern.
+    ThreadsModeLocker<Lock> locker { m_lock }; // THREADS: see getBestDateTimePattern.
     auto sharedGenerator = getSharedPatternGenerator(locale, status);
     if (U_FAILURE(status))
         return { };
@@ -114,7 +115,7 @@ String IntlCache::canonicalizeUnicodeLocaleID(const String& languageTag)
     // Thread; see the m_lock comment in the header. The ICU canonicalization
     // below deliberately runs under the lock too — it is rare (cold miss)
     // and keeps the find/insert atomic.
-    Locker locker { m_lock };
+    ThreadsModeLocker<Lock> locker { m_lock };
     auto cached = m_cachedCanonicalizedLocaleIDs.find(languageTag);
     if (cached != m_cachedCanonicalizedLocaleIDs.end())
         return cached->value;

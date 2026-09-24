@@ -313,12 +313,20 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         ASSERT(!substringBase()->isRope());
         // TSAN family rope-stringimpl: snapshot the base's published impl via
         // the annotated relaxed load; a plain String read of the base's
-        // m_fiber races a concurrent swapToAtomString republish. The local
-        // String costs one extra ref/deref pair on this (cold) resolution
-        // path only; semantics are identical in both flag states.
-        String base { substringBase()->getValueImpl() };
-        auto newImpl = base.substringSharingImpl(substringOffset(), length());
-        convertToNonRope(function(newImpl.releaseImpl().releaseNonNull()));
+        // m_fiber races a concurrent swapToAtomString republish, which can drop the
+        // impl this reads. GIL off the snapshot is therefore held with a reference for the
+        // duration; otherwise the base cell keeps its impl alive, and a reference is two locked
+        // instructions per resolution (substring ropes are what String.prototype.substring makes).
+        StringImpl* baseImpl = substringBase()->getValueImpl();
+        RefPtr<StringImpl> baseKeepAlive;
+        if (vm.gilOff()) [[unlikely]]
+            baseKeepAlive = baseImpl;
+        // String::substringSharingImpl(), on the impl.
+        unsigned baseLength = baseImpl->length();
+        unsigned substringPosition = std::min(substringOffset(), baseLength);
+        unsigned substringLength = std::min(length(), baseLength - substringPosition);
+        Ref<StringImpl> newImpl = (!substringPosition && substringLength == baseLength) ? Ref<StringImpl> { *baseImpl } : StringImpl::createSubstringSharingImpl(*baseImpl, substringPosition, substringLength);
+        convertToNonRope(function(WTF::move(newImpl)));
         return valueInternal();
     }
 

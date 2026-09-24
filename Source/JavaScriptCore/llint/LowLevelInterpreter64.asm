@@ -1845,7 +1845,7 @@ end
 # (same load shape as loadBoolJSCOption). When SPEC-jit M4a's dedicated
 # JSC::Config::useJSThreads gate byte lands, only the field expression below
 # changes (see docs/threads/INTEGRATE-jit.md, Task 6).
-macro ifJSThreadsBranch(scratch, label)
+macro ifJSThreadsBranchByte(scratch, label)
     leap _g_config, scratch
     bbneq JSCConfigOffset + JSC::Config::options + OptionsStorage::useJSThreads[scratch], 0, label
 end
@@ -1855,9 +1855,113 @@ end
 # flag off, or the GIL on with one owner - runs main's fast paths on main's
 # metadata caches (LLIntSlowPaths.cpp publishes the matching form); the
 # threaded blocks serve tagged words (GIL off, or GIL on with per-thread tags).
-macro ifTaggedButterfliesBranch(scratch, label)
+macro ifTaggedButterfliesBranchByte(scratch, label)
     leap _g_config, scratch
     bbneq JSCConfigOffset + JSC::Config::options + OptionsStorage::useTaggedButterflies[scratch], 0, label
+end
+
+# The GIL-off process: the GIL-off arms of the fast paths that a GIL-on process with the flag set must not take.
+macro ifGILOffProcessBranchByte(scratch, label)
+    leap _g_config, scratch
+    bbneq JSCConfigOffset + JSC::Config::gilOffProcess[scratch], 0, label
+end
+
+# ===========================================================================
+# Two bodies per gated opcode. The gates above are one byte test per executed opcode: two to four instructions in
+# every property access and call of the interpreter, in a process that never sets the flag. The bodies of the gated opcodes are
+# therefore defined twice, by gateVariants(): once as `main`'s (every gate expands to nothing) under the opcode's usual label, and
+# once as the threaded body (the flag is known to be set, so the gates on it are jumps; the gates on tagged butterfly words keep their byte test, as the
+# GIL-on process with one owner has untagged words with the flag set) under the same label with a `_threaded_` prefix (a label that starts with llint_op_ would be an opcode label to the assembler generator). LLInt::initialize() installs the
+# threaded labels into the opcode maps through _llint_threaded_entry when the flag is set; a process without it never executes a
+# gate. The body of an opcode names the gates and the label macros as parameters of the group (offlineasm resolves a macro name in
+# the environment of the call, so the macros the body calls, callHelper, performGetByIDHelper and the like, see the same ones).
+# The C loop and ARM64E (which dispatches through the js_trampoline labels, and where the flag is not supported) have one body, with the
+# gates as byte tests.
+# ===========================================================================
+
+macro gateNever(scratch, label)
+end
+
+macro gateAlways(scratch, label)
+    jmp label
+end
+
+macro defineReturnLabelNone(opcodeName, size)
+end
+
+macro commonOpThreaded(label, prologue, fn)
+_threaded_%label%:
+    prologue()
+    fn(narrow)
+    if ASSERT_ENABLED
+        break
+        break
+    end
+
+_threaded_%label%_wide16:
+    prologue()
+    fn(wide16)
+    if ASSERT_ENABLED
+        break
+        break
+    end
+
+_threaded_%label%_wide32:
+    prologue()
+    fn(wide32)
+    if ASSERT_ENABLED
+        break
+        break
+    end
+end
+
+# The virtual call trampolines are entered by address from C++ (VM::getCTIVirtualCall), not through the opcode map, so they have one
+# body, with the gates as byte tests.
+macro byteGates(body)
+    macro ifTaggedButterfliesBranch(scratch, label)
+        ifTaggedButterfliesBranchByte(scratch, label)
+    end
+    macro ifJSThreadsBranch(scratch, label)
+        ifJSThreadsBranchByte(scratch, label)
+    end
+    macro ifGILOffProcessBranch(scratch, label)
+        ifGILOffProcessBranchByte(scratch, label)
+    end
+    body()
+end
+
+macro gateVariants(body)
+    # The gate macros, the opcode-label macro and the return-label macro are defined again in the environment of the body, under the
+    # names that the macros the body calls (callHelper, performGetByIDHelper, llintOp, ...) use: offlineasm resolves a macro name in the
+    # environment of the call. Defining them here, in the instance's own scope, is what makes the two instances differ.
+    macro instance(groupCommonOp, groupTagged, groupJS, groupGILOff, groupReturnLabel, groupJSTrampolineLabels)
+        macro commonOp(label, prologue, fn)
+            groupCommonOp(label, prologue, fn)
+        end
+        macro ifTaggedButterfliesBranch(scratch, label)
+            groupTagged(scratch, label)
+        end
+        macro ifJSThreadsBranch(scratch, label)
+            groupJS(scratch, label)
+        end
+        macro ifGILOffProcessBranch(scratch, label)
+            groupGILOff(scratch, label)
+        end
+        macro defineReturnLabel(opcodeName, size)
+            groupReturnLabel(opcodeName, size)
+        end
+        macro defineJSTrampolineLabels(opcodeName, size)
+            groupJSTrampolineLabels(opcodeName, size)
+        end
+        body()
+    end
+
+    if C_LOOP or ARM64E
+        instance(commonOp, ifTaggedButterfliesBranchByte, ifJSThreadsBranchByte, ifGILOffProcessBranchByte, defineReturnLabel, defineJSTrampolineLabels)
+    else
+        instance(commonOp, gateNever, gateNever, gateNever, defineReturnLabel, defineJSTrampolineLabels)
+        instance(commonOpThreaded, ifTaggedButterfliesBranchByte, gateAlways, ifGILOffProcessBranchByte, defineReturnLabelNone, defineJSTrampolineLabelsNone)
+    end
 end
 
 # ===========================================================================
@@ -2030,6 +2134,7 @@ macro storePropertyAtVariableOffsetThreaded(propertyOffsetAsInt, objectAndStorag
     storeq value, (firstOutOfLineOffset - 2) * 8[objectAndStorage, propertyOffsetAsInt, 8]
 end
 
+gateVariants(macro ()
 llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
     get(m_base, t0)
@@ -2063,6 +2168,7 @@ llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, disp
     getterSetterOSRExitReturnPoint(op_get_by_id_direct, size)
     valueProfile(size, OpGetByIdDirect, m_valueProfile, r0, t2)
     return(r0)
+end)
 end)
 
 # The base object is expected in t3
@@ -2149,6 +2255,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
 
 end
 
+gateVariants(macro ()
 llintOpWithMetadata(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetByIdSlow)
@@ -2164,8 +2271,10 @@ llintOpWithMetadata(op_get_by_id, OpGetById, macro (size, get, dispatch, metadat
     valueProfile(size, OpGetById, m_valueProfile, r0, t2)
     return(r0)
 end)
+end)
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
@@ -2181,6 +2290,7 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     getterSetterOSRExitReturnPoint(op_get_length, size)
     valueProfile(size, OpGetLength, m_valueProfile, r0, t2)
     return(r0)
+end)
 end)
 
 
@@ -2208,6 +2318,7 @@ llintOpWithProfile(op_get_prototype_of, OpGetPrototypeOf, macro (size, get, disp
 end)
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opPutByIdSlow)
@@ -2309,8 +2420,10 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
     dispatch()
 
 end)
+end)
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     macro finishGetByVal(result, scratch)
         get(m_dst, scratch)
@@ -2426,6 +2539,7 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     valueProfile(size, OpGetByVal, m_valueProfile, r0, t5)
     return(r0)
 end)
+end)
 
 llintOpWithMetadata(op_get_private_name, OpGetPrivateName, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
@@ -2452,6 +2566,7 @@ llintOpWithMetadata(op_get_private_name, OpGetPrivateName, macro (size, get, dis
     dispatch()
 end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opPutPrivateNameSlow)
@@ -2499,7 +2614,9 @@ llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dis
     callSlowPath(_llint_slow_path_put_private_name)
     dispatch()
 end)
+end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opSetPrivateBrandSlow)
@@ -2523,6 +2640,7 @@ llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, d
 .opSetPrivateBrandSlow:
     callSlowPath(_llint_slow_path_set_private_brand)
     dispatch()
+end)
 end)
 
 llintOpWithMetadata(op_check_private_brand, OpCheckPrivateBrand, macro (size, get, dispatch, metadata, return)
@@ -2558,8 +2676,7 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
             loadi %opcodeStruct%::Metadata::m_arrayProfile.m_arrayProfileFlags[t5], t2
             ori constexpr ArrayProfileFlag::MayStoreHole, t2
             storei t2, %opcodeStruct%::Metadata::m_arrayProfile.m_arrayProfileFlags[t5]
-            leap _g_config, t2
-            bbneq JSCConfigOffset + JSC::Config::gilOffProcess[t2], 0, .casMaxLength
+            ifGILOffProcessBranch(t2, .casMaxLength)
             addi 1, t3, t2
             storei t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0]
             jmp .storeResult
@@ -2570,10 +2687,20 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
             # callback reloads t1): x86's cmpxchg takes the expected value in t0.
             move t0, t1
             addi 1, t3, t2
+            if X86_64
         .casMaxLengthRetry:
-            loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t0
-            biaeq t0, t2, .casMaxLengthDone
-            batomicweakcasi t0, t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .casMaxLengthRetry
+                loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t0
+                biaeq t0, t2, .casMaxLengthDone
+                batomicweakcasi t0, t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .casMaxLengthRetry
+            else
+                # Load-linked and store-conditional, where there is no compare-and-swap instruction the assembler knows: the same loop.
+                leap -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t9
+        .casMaxLengthRetry:
+                loadlinkacqi [t9], t0
+                biaeq t0, t2, .casMaxLengthDone
+                storecondreli t10, t2, [t9]
+                bineq t10, 0, .casMaxLengthRetry
+            end
         .casMaxLengthDone:
             move t1, t0
             jmp .storeResult
@@ -2678,16 +2805,20 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
     end)
 end
 
+gateVariants(macro ()
 putByValOp(put_by_val, OpPutByVal, macro (size, dispatch)
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_put_by_val, size)
     dispatch()
 end)
+end)
 
+gateVariants(macro ()
 putByValOp(put_by_val_direct, OpPutByValDirect, macro (size, dispatch)
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_put_by_val_direct, size)
     dispatch()
+end)
 end)
 
 macro llintJumpTrueOrFalseOp(opcodeName, opcodeStruct, miscConditionOp, truthyCellConditionOp)
@@ -3052,8 +3183,12 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
     move t3, sp
     addp CallerFrameAndPCSize, sp
 
+    loadp %opcodeStruct%::Metadata::m_callLinkInfo + LazyCallLinkInfo::m_data[t5], t5 # CallLinkInfo* in t5
+    prepareCallSite()
+
     ifJSThreadsBranch(t1, .opCallThreadedRecord)
-    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_callee[t5], t1
+.opCallMirror:
+    loadp CallLinkInfo::m_callee[t5], t1
     btpz t1, (constexpr CallLinkInfo::polymorphicCalleeMask), .notPolymorphic
     prepareCall(t2, t3, t4, t1, macro(address)
         loadp CallLinkInfo::m_codeBlock[t5], t2
@@ -3091,8 +3226,13 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
     # the empty-record semantics (default-call thunk, null codeBlock).
     # Flag-off: one not-taken branch (ifJSThreadsBranch above), mirror path
     # byte-identical.
-    loadp %opcodeStruct%::Metadata::m_callLinkInfo.m_record[t5], t1
-    btpz t1, .opCallSlow
+    # t5 is the call site's CallLinkInfo*, as in the mirror path (LazyCallLinkInfo::m_data):
+    # a site that has not run twice yet shares one CallSiteData with all such
+    # sites; its CallLinkInfo has no owner, never changes and never has a record,
+    # so it takes the mirror path, which is immutable for it and is where the
+    # unlinked call thunk is (upstream's behaviour, as flag-off).
+    loadp CallLinkInfo::m_record[t5], t1
+    btpz t1, .opCallThreadedNoRecord
     loadp CallLinkRecord::comparand[t1], t2
     btpnz t2, (constexpr CallLinkInfo::polymorphicCalleeMask), .opCallThreadedRecordHit
     bqneq t0, t2, .opCallSlow
@@ -3109,10 +3249,14 @@ macro callHelper(opcodeName, opcodeStruct, dispatchAfterCall, valueProfileName, 
         loadp CallLinkRecord::codeBlockToTransfer[t6], t2
         storep t2, address
     end)
-    addp %opcodeStruct%::Metadata::m_callLinkInfo, t5, t2 # CallLinkInfo* in t2; reads t5 (metadata) BEFORE the target overwrites it.
+    move t5, t2 # CallLinkInfo* in t2; t5 is overwritten by the target below.
     callLinkInfoDependsOnRecord(t6, t2, t3) # t3 is dead after prepareCall.
     loadp CallLinkRecord::target[t6], t5
     jmp .dispatch
+
+.opCallThreadedNoRecord:
+    btpz CallLinkInfo::m_owner[t5], .opCallMirror
+    jmp .opCallSlow
 
 .opCallSlow:
     # t0 is callee
@@ -3710,6 +3854,7 @@ macro loadScopeWithStructureCheck(opcodeStruct, get, metadata, scope, scratch, s
     bineq scratch, %opcodeStruct%::Metadata::m_structureID[metadata], slowPath
 end
 
+gateVariants(macro ()
 llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -3816,8 +3961,10 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     callSlowPath(_llint_slow_path_get_from_scope)
     dispatch()
 end)
+end)
 
 
+gateVariants(macro ()
 llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, return)
     macro putProperty()
         # Flag-on the store goes through the WRITE choke point (the global
@@ -3962,6 +4109,7 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     callSlowPath(_llint_slow_path_put_to_scope)
     dispatch()
 end)
+end)
 
 
 llintOpWithProfile(op_get_from_arguments, OpGetFromArguments, macro (size, get, dispatch, return)
@@ -3989,6 +4137,7 @@ llintOpWithReturn(op_get_parent_scope, OpGetParentScope, macro (size, get, dispa
     return(t0)
 end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_super_construct_varargs, OpSuperConstructVarargs, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
     get(m_thisValue, t0)
@@ -4002,6 +4151,7 @@ llintOpWithMetadata(op_super_construct_varargs, OpSuperConstructVarargs, macro (
     storep t1, OpSuperConstructVarargs::Metadata::m_cachedCallee[t5]
 .done:
     doCallVarargs(op_super_construct_varargs, size, get, OpSuperConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_super_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
+end)
 end)
 
 
@@ -4054,6 +4204,7 @@ llintOpWithMetadata(op_profile_control_flow, OpProfileControlFlow, macro (size, 
     dispatch()
 end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
 
     macro getAndLoadConstantOrVariable(fieldName, index, value)
@@ -4133,6 +4284,7 @@ llintOpWithMetadata(op_instanceof, OpInstanceof, macro (size, get, dispatch, met
     store(ValueFalse, m_dst)
     dispatch()
 end)
+end)
 
 macro iteratorOpenGenericImpl(size, get, dispatch, metadata, opcodeStruct, opcodeName, tryFastNarrow, tryFastWide16, tryFastWide32, getNextSlowPath, updateArrayProfile)
     macro fastNarrow()
@@ -4191,6 +4343,7 @@ macro iteratorOpenGenericImpl(size, get, dispatch, metadata, opcodeStruct, opcod
     jmp _llint_throw_from_slow_path_trampoline
 end
 
+gateVariants(macro ()
 llintOpWithMetadata(op_iterator_open, OpIteratorOpen, macro (size, get, dispatch, metadata, return)
     macro updateArrayProfile(get, metadata)
         metadata(t5, t0)
@@ -4202,7 +4355,9 @@ llintOpWithMetadata(op_iterator_open, OpIteratorOpen, macro (size, get, dispatch
     end
     iteratorOpenGenericImpl(size, get, dispatch, metadata, OpIteratorOpen, op_iterator_open, _iterator_open_try_fast_narrow, _iterator_open_try_fast_wide16, _iterator_open_try_fast_wide32, _llint_slow_path_iterator_open_get_next, updateArrayProfile)
 end)
+end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
 
     loadVariable(get, m_next, t0)
@@ -4349,6 +4504,7 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
     callSlowPath(_llint_slow_path_iterator_next_get_value)
     dispatch()
 end)
+end)
 
 llintOpWithMetadata(op_new_reg_exp_shared, OpNewRegExpShared, macro (size, get, dispatch, metadata, return)
     # RegExpObject::literalAsReceiver(): the site's object, if it has one that is still in its initial state and the watchpoint
@@ -4402,6 +4558,7 @@ llintOpWithJump(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get,
     jump(m_targetLabel)
 end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, get, dispatch, metadata, return)
     loadVariable(get, m_next, t0)
     btqnz t0, notCellMask, .asyncIteratorNextGeneric
@@ -4429,12 +4586,15 @@ llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, ge
     storeh t0, OpAsyncIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
     callHelper(op_async_iterator_next, OpAsyncIteratorNext, dispatchAfterRegularCall, m_valueProfile, m_dst, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
 end)
+end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_async_iterator_open, OpAsyncIteratorOpen, macro (size, get, dispatch, metadata, return)
     macro updateArrayProfile(get, metadata)
         metadata(t5, t0)
     end
     iteratorOpenGenericImpl(size, get, dispatch, metadata, OpAsyncIteratorOpen, op_async_iterator_open, _async_iterator_open_try_fast_narrow, _async_iterator_open_try_fast_wide16, _async_iterator_open_try_fast_wide32, _llint_slow_path_async_iterator_open_get_next, updateArrayProfile)
+end)
 end)
 
 llintOpWithReturn(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dispatch, return)
@@ -4492,6 +4652,7 @@ llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
     dispatch()
 end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -4561,7 +4722,9 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     valueProfile(size, OpEnumeratorGetByVal, m_valueProfile, r0, t5)
     return(r0)
 end)
+end)
 
+gateVariants(macro ()
 llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -4637,6 +4800,7 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_enumerator_put_by_val, size)
     dispatch()
+end)
 end)
 
 macro hasPropertyImpl(opcodeStruct, size, get, dispatch, metadata, return, slowPath)

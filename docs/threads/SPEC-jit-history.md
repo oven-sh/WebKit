@@ -1768,3 +1768,115 @@ thread that is not doing collector work and an owner the last End phase did not 
 variants with one CodeBlock). Flag off and GIL on: `main`'s in-place rewrite, unchanged.
 Test: `jit/polymorphic-call-site-keeps-its-history-across-callee-tier-up-gil-off.js`.
 
+
+
+## 59. Twelfth landing round: flag off, the interpreter runs `main`'s bodies, and profile updates, flag bytes and reference counts take `main`'s form (§4.5, §5.4, §5.7, §5.8)
+
+Flag off differs from `main` where a difference is not needed: the flag-on path is behind a gate, and the gate costs something in
+a process that never sets the flag. This entry lists the jit-side rules that change so that a flag-off process executes `main`'s
+instructions there; the ledger of code that runs flag off (`FLAG-OFF-LEDGER.tsv`) has the rows, and PERF-RESULTS 6.14 the effect.
+
+**Interpreter bodies (§5.4).** The gate of §5.4 was one `_g_config` byte load and a branch per property or call opcode, two to
+four instructions in every executed `get_by_id`, `put_by_id`, `get_by_val`, `put_by_val`, `get_from_scope`, `put_to_scope`,
+`instanceof`, enumerator, iterator and call opcode: 4 to 5 % of the interpreter's cycles on every test, measured with
+`--useJIT=0`. Rule: the 27 gated opcodes are defined twice (`gateVariants` in `LowLevelInterpreter64.asm`): `main`'s body under
+the usual label, in which the gates expand to nothing, and the threaded body under `_threaded_<label>`, in which the gate on the
+flag is a jump and the gate on tagged butterfly words keeps its byte test (a GIL-on process with one owner has the flag set and
+untagged words). `LLInt::initialize()` installs the threaded labels over the opcode maps through `_llint_threaded_entry` when
+`useJSThreads` is set; the maps are frozen afterwards, as before. Flag off, no opcode executes a gate test. The 29 Group-3 sites
+(VM entry and exit, unwinding, host-call return values) are per entry into or out of the VM, not per opcode, and keep their one
+byte test. The virtual-call trampolines are entered by address from C++, not through the map: they keep one body with byte tests.
+The C loop and ARM64E (where the flag is unsupported) have one body with byte tests. `Tools/threads/lint-llint-threaded-entries.sh`
+compares the twins the assembler emitted with the entries installed. Text +115 KB (the dead threaded arms in `main`'s bodies are
+unreferenced).
+
+**Profiles (§5.7 items 4 and 5, §5.8).** Merges into `ArrayProfile`'s modes and flags, the take of its last-seen structure IDs, the
+call-link flag byte and the unlinked-profile update were relaxed atomic read-modify-writes: a `lock or` or an `xchg` per profile
+per tier-up check, per observation and per call site's first calls, on x86-64. They are a relaxed load and, if a bit is missing,
+a relaxed store, in every mode (`orRelaxedNoLockedRMW`, `setFlag`/`clearFlag`, a load and a store for the take). A racing writer of
+the same word can lose a bit or the observation; the next observation of the same array or the next slow path meeting the same
+condition sets it again, profiles select speculation and emitted guards validate (I12), and `ArithProfile` was already written this
+way. Flag off this is `main`'s `or` and `mov`; flag on it is the same relaxed accesses as before minus the lock prefix.
+
+**Reference counts (§4.5).** `InlineCacheHandler` (`ThreadSafeRefCounted`) and `JITStubRoutine` (`std::atomic`, release decrement,
+acquire fence) counted atomically in every mode "unconditionally". The atomic form is needed when mutators of different
+threads or the collector's conductor reference a handler or a routine concurrently, which requires the flag. The count is now a
+`ThreadsModeRefCounted` (and the same shape in `JITStubRoutine`): plain load and store with the flag off, atomic with it on. The
+mode is a frozen Config byte, fixed before any object exists: an object is never counted both ways.
+
+**Tier-up triggers (DFG-1).** `setTierUpEntryTrigger` and the outer-loop walk of `tierUpCommon` looked the key up and
+`RELEASE_ASSERT`ed it (a fail-stop `main` does not have) where `main` calls `set()`. Flag off they call `set()` again (a missing
+key is inserted, which does not happen: `tierUpInLoopHierarchy` values are OSR-entry sites); flag on the key must exist, because an
+insertion would rehash under the trigger addresses generated code holds.
+
+**Call sites' lazy data (upstream, §5.8).** `main` now gives a call site its `CallLinkInfo` when the site runs for the second time
+(`LazyCallLinkInfo`, `CallSiteData`): sites that have not run twice share three per-VM objects that never change and have no owner.
+Rules for the flag on: the threaded Baseline fast path sends an ownerless `CallLinkInfo` (no record, ever) to the mirror sequence
+that ends in the unlinked-call thunk, as flag off does; GIL off two threads can run a site a second time at once, so the transition
+"never executed" to "executed once" is a compare-and-swap, the first publication of a site's own data wins and the loser's is
+deleted, and `handleUnlinkedCall` links through data another thread has just installed. `UnlinkedCodeBlock`'s lazily created value
+and array profiles are published the same way. The unboxed array iteration (`useUnboxedFastArrayIteration`), which reads the
+butterfly word directly, is off when butterfly words are tagged.
+
+**`CallLinkInfo::unlinkOrUpgradeImpl` (flag-off Debug regression).** The monomorphic-upgrade arm evaluated `m_callee.get()` as the
+argument of `publishRecord()`, which returns at once with the flag off; a build with assertions validates the cell `get()`
+returns, and a weak callee that the collector has not yet cleared can name a swept cell (`ASSERTION FAILED: decontaminate()`; 3
+plans of 12,900 in a Debug+ASAN sample of the stress suite, 1.7 % of runs under load). The bits are a comparand only: `unvalidatedGet()`.
+Test: `Tools/threads/repro-call-link-weak-callee.sh` over `stress/generator-yield-star.js` and
+`stress/async-stack-trace-promise-all-basic.js` (dfg-eager with collectContinuously).
+
+**Addendum, twelfth round (second batch): forms that only the flag-on protocols need, made out of line or mode-dependent.** Found by
+comparing the flag-off binary with `main`'s function by function (the tools of `Tools/threads/perf/flagoff`: per-function
+instruction counts with layout numbers blanked, a census of locked instructions, per-symbol cycle and locked-load samples):
+- A plain assignment to a `std::atomic` is a locked exchange on x86-64. `GCAwareJITStubRoutine`'s two flags (`m_ownerIsDead` at every
+  collection end, `m_isInSharedJITStubSet`) are release stores.
+- A `String` copy of the substring base in `JSRopeString::resolveRopeWithFunction` was a reference pair (two locked instructions) per
+  resolution; the reference is taken GIL off only, where the base's impl can be republished under the reader, and `createSubstringSharingImpl`
+  is called on the impl otherwise.
+- The ownership arms of the shared atom string table (`StringImpl::deref()`'s decrement with the acquire fence and the zero transition) are one
+  out-of-line function: inlined at every `Ref<>` destructor, they changed the inlining of the code around them (`Ref<AtomStringImpl>`'s destructor
+  as a call, the string joiner's entry vector, the lexer's identifier paths). `setNeverAtomize()` is `main`'s store without the shared table.
+- `Butterfly::optimalContiguousVectorLength`'s shared-heap sizing is out of line (`optimalContiguousVectorLengthForSharedHeap`).
+- Two more locks are taken only with the flag: the TDZ environments' interning map (with its and `TDZEnvironmentLink`'s counts:
+  `ThreadsModeRefCounted`) and `IntlCache`; `BlockDirectory::m_localAllocatorsLock` in `stopAllocating`, `prepareForAllocation`,
+  `resumeAllocating` and `detachLocalAllocator` (the collection-time paths `main` runs unlocked).
+- The `op_put_by_val` and `op_put_by_val_direct` length-raise CAS is behind a gate group of the same kind as the others
+  (`ifGILOffProcessBranch`, nothing in `main`'s body) and has the portable load-linked/store-conditional form on targets without
+  `batomicweakcasi`; `Tools/threads/lint-llint-flagoff-bodies.py` fails when a flag-off body of any opcode contains a test of the flag, the
+  tagged-butterfly option or the process byte other than the Group-3 discriminator.
+
+**Addendum, twelfth round (third batch): profile words, shared-heap locks, the twin bodies' opcode IDs, and what the sanitizers and the golden compare found.**
+- *Profile-word write avoidance is a flag-on form.* `ArithProfile`'s bits, `ArrayProfile`'s and `ValueProfile`'s words and the inline-cache counters
+  test before they store, and store with a relaxed atomic, only where `sharedProfileWriteAvoidance()` (`useJSThreads` and
+  `useSharedProfileWriteAvoidance`) says so; flag off they are `main`'s plain `or` and `mov` through `WTF::racyLoad` / `racyStore`
+  (`ThreadsModeAtomics.h`). `ArithProfileBits` is a plain integer with those operations.
+- *`SharedHeapModeLocker`.* A process with `useSharedGCHeap` and without `useJSThreads` (the shared-heap test harness, `--useSharedGCHeap=1
+  --useDollarVM=1`) runs several collector threads over one directory, so `BlockDirectory`'s four locks are taken when either option is on. The first
+  form (`useJSThreads` only) hung `stress/heap-client-churn.js` in 5 % of runs of that lane; 300 of 300 pass. That test is the regression test.
+- *`Options.cpp` reads the environment once.* The per-option `getenv` loops ran for every option in every process; they run only when a variable
+  with the `JSC_` prefix exists (the Linux and Cocoa scans already find them). This is an improvement over `main`, not a restoration: the
+  start-up instruction count is 10 % below `main`'s with it (+2.7 % without), and the start-up figures in FLAG-OFF-LANDING say which they mean.
+- *The twin bodies carry the opcode ID.* A build with assertions embeds the opcode ID in the word before each opcode's code
+  (`LLINT_EMBEDDED_OPCODE_ID`) and `Interpreter::getOpcodeID` reads it; the threaded twins (`threaded_llint_op_*`) were glue labels without it, and
+  the first Debug run with the flag on failed `ASSERTION FAILED: opcodeID < NUMBER_OF_BYTECODE_IDS`. `OFFLINE_ASM_THREADED_OPCODE_LABEL` gives them the
+  word; `lint-llint-flagoff-bodies.py` recognises the label. Release builds do not embed the ID, which is why no earlier Release lane could see it.
+- *GIL on and off, TSan.* The merged corpus under TSanJIT (459 tests) reported 418 races GIL off and 131 GIL on in the code the rebase brought in and this
+  round's changes touched: `LazyCallLinkInfo::m_data` was read with plain loads while `setExecutedOnce` and `ensureSlow` publish it by compare-and-swap
+  (`hasNeverExecuted`, `hasExecutedOnce` are relaxed and acquire loads; `setNeverExecuted`, `setTailCallNotExecuted`, `setExecutedOnce`,
+  `ensureSlow`'s flag-off arm are atomic stores; `ownData()`'s address dependency and `ensureSlow`'s publication carry `TSAN_ANNOTATE_HAPPENS_AFTER`
+  and `_BEFORE`); `UnlinkedCodeBlock::valueAndArrayProfiles()` is an acquire load of the word `ensureValueAndArrayProfiles` publishes by
+  compare-and-swap; the fast-array iteration merge of `seenModes`, `JIT::emitIteratorOpenGeneric`'s read of the get-by-id mode and the untagged put_by_id
+  cache clears and stores use the relaxed accessors their compiler-thread readers already used. All are plain moves on x86-64: flag-off code is unchanged.
+  After: 0 reports GIL on and, GIL off, the two that the `cve/` suite pins (`mc-tear-date-cache`, `mc-safe-gcwait-vs-classa-stop`; both known families).
+- *Flag-off DFG code (golden compare).* `Tools/threads/golden-compare.py` compares the code the two binaries generate for the same programs
+  (concurrent JIT off, three option sets, fixed random seeds, addresses and immediates blanked, alignment padding ignored). It found one flag-off
+  difference in generated code: the out-of-bounds sane-chain contiguous `GetByVal` emitted a jump over `speculateInt32LaneIfRelabellable`, which
+  emits nothing flag off (a `jmp` to the next instruction, 24 of 44,014 DFG blocks and 20 of 43,864 FTL-eager blocks of 653 stress programs).
+  `needsInt32LaneSpeculation()` decides both, and flag off the shape is `main`'s. After: 0 such blocks. Test: the tool itself, on the same 653 programs.
+  What is left, after fixed seeds and the exclusion of blocks that also differ between two runs of `main`: Baseline 28,799 of 28,807 blocks
+  identical, DFG 43,982 of 44,014, FTL 43,825 of 43,864; the differing ones are operand order of commutative operations and the choice of a scratch
+  register, of the kind `main` shows against itself (19 DFG and 25 FTL blocks). Constant blinding draws its randomness from a per-assembler seed that
+  starts at a cryptographic number, so unseeded runs differ everywhere; the fixed seed is a change to the comparison builds only.
+- *`CallLinkInfo::unlinkOrUpgradeImpl` verified.* Debug build, `stress/generator-yield-star.js` with dfg-eager and collectContinuously,
+  1,000 runs at 48 in parallel: 15 failures (`decontaminate()`) with the previous round's build, 0 with this one. The other file of
+  the script does not finish in 900 s in a Debug build under that load and is an option (`FILES=`) instead of part of the default.

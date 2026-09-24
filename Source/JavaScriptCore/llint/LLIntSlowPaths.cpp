@@ -813,6 +813,11 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
     functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
+    if (vm.gilOff()) [[unlikely]] {
+        // As in setUpCall: the entrypoint comes through the CodeBlock stored in the callee frame, not through the executable's
+        // independently republished copy, which a tier-up on another thread may have moved on from that CodeBlock.
+        return (*codeBlockSlot)->jitCodeRawPtr()->addressForCall(arity).taggedPtr();
+    }
     return functionExecutable->entrypointFor(kind, arity).taggedPtr();
 }
 
@@ -851,10 +856,15 @@ void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
     }
     LazyCallLinkInfo& lazyCallLinkInfo = *site;
     RELEASE_ASSERT(callType != CallLinkInfo::TailCall);
-    RELEASE_ASSERT(!lazyCallLinkInfo.get());
+    DataOnlyCallLinkInfo* ownCallLinkInfo = nullptr;
+    if (vm.gilOff()) [[unlikely]] {
+        // Another thread can give the site a CallLinkInfo of its own between the caller's load of the shared one and here.
+        ownCallLinkInfo = lazyCallLinkInfo.get();
+    } else
+        RELEASE_ASSERT(!lazyCallLinkInfo.get());
     calleeFrame->setCodeBlock(nullptr);
     void* callTarget;
-    if (lazyCallLinkInfo.hasNeverExecuted(vm)) {
+    if (!ownCallLinkInfo && lazyCallLinkInfo.hasNeverExecuted(vm)) {
         lazyCallLinkInfo.setExecutedOnce(vm);
         callTarget = firstCallToJSFunction(vm, calleeFrame, CallLinkInfo::specializationKindFor(callType));
         if (!callTarget && !scope.exception()) {
@@ -865,7 +875,7 @@ void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
             callTarget = virtualForWithFunction(vm, owner, calleeFrame, &callLinkInfo, calleeAsFunctionCellIgnored);
         }
     } else {
-        auto& callLinkInfo = lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex });
+        auto& callLinkInfo = ownCallLinkInfo ? *ownCallLinkInfo : lazyCallLinkInfo.ensure(vm, owner, callType, CodeOrigin { bytecodeIndex });
         // Both tiers have noted the structure of |this| in the ArrayProfile of the CallSiteData the site had until now, which
         // nobody reads (compiler threads only ever look at a site's own: LazyCallLinkInfo::arrayProfile()).
         if (JSValue thisValue = calleeFrame->thisValue(); thisValue.isCell())
@@ -1380,6 +1390,14 @@ LLINT_SLOW_PATH_DECL(slow_path_instanceof)
     LLINT_RETURN(jsBoolean(result));
 }
 
+// A StructureID word of a put_by_id metadata cache: compiler threads read it with a relaxed atomic load, so the mutator's store is one too
+// (a plain move).
+static ALWAYS_INLINE void storeLLIntPutByIdCacheWord(StructureID* location, StructureID value)
+{
+    static_assert(sizeof(StructureID) == sizeof(uint32_t));
+    WTF::atomicStore(std::bit_cast<uint32_t*>(location), std::bit_cast<uint32_t>(value), std::memory_order_relaxed);
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
 {
     LLINT_BEGIN();
@@ -1423,9 +1441,10 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
 
         // Start out by clearing out the old cache.
         if (useUnthreadedLLIntPropertyCaches()) {
-            metadata.m_oldStructureID = StructureID();
-            metadata.m_offset = 0;
-            metadata.m_newStructureID = StructureID();
+            // Read by compiler threads with relaxed atomic loads (PutByStatus::computeFromLLInt): relaxed stores, plain moves.
+            storeLLIntPutByIdCacheWord(&metadata.m_oldStructureID, StructureID());
+            WTF::atomicStore(&metadata.m_offset, static_cast<decltype(metadata.m_offset)>(0), std::memory_order_relaxed);
+            storeLLIntPutByIdCacheWord(&metadata.m_newStructureID, StructureID());
             metadata.m_structureChain.clear();
         } else {
             // SPEC-jit §4.3 (Task 6): flag-on, {m_oldStructureID, m_offset} is the
@@ -1465,9 +1484,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                             }
 
                             ConcurrentJSLocker locker(codeBlock->m_lock);
-                            metadata.m_oldStructureID = oldStructure->id();
-                            metadata.m_offset = slot.cachedOffset();
-                            metadata.m_newStructureID = newStructure->id();
+                            storeLLIntPutByIdCacheWord(&metadata.m_oldStructureID, oldStructure->id());
+                            WTF::atomicStore(&metadata.m_offset, static_cast<decltype(metadata.m_offset)>(slot.cachedOffset()), std::memory_order_relaxed);
+                            storeLLIntPutByIdCacheWord(&metadata.m_newStructureID, newStructure->id());
                             if (chain)
                                 metadata.m_structureChain.set(vm, codeBlock, chain);
                             vm.writeBarrier(codeBlock);
@@ -1500,8 +1519,8 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                     newStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
                     {
                         ConcurrentJSLocker locker(codeBlock->m_lock);
-                        metadata.m_oldStructureID = newStructure->id();
-                        metadata.m_offset = slot.cachedOffset();
+                        storeLLIntPutByIdCacheWord(&metadata.m_oldStructureID, newStructure->id());
+                        WTF::atomicStore(&metadata.m_offset, static_cast<decltype(metadata.m_offset)>(slot.cachedOffset()), std::memory_order_relaxed);
                     }
                     vm.writeBarrier(codeBlock);
                 } else if (useThreadedLLIntPropertyCaches() && !newStructure->isDictionary()) {
@@ -2536,6 +2555,14 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     assertIsTaggedWith<JSEntryPtrTag>(codePtr.taggedPtr());
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
+{
+    LLINT_BEGIN_NO_SET_PC();
+    UNUSED_VARIABLE(globalObject);
+    UNUSED_VARIABLE(throwScope);
+    LLINT_RETURN_TWO(pc, &codeBlock->ensureCallLinkInfoAt(pc));
 }
 
 // GIL-off only: a thread-local echo of the {calleeFrame, varargsLength} pair

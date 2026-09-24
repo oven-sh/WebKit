@@ -184,7 +184,7 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
     if (Options::useJSThreads()) [[unlikely]]
         threadsLocker.emplace(m_linkLock);
 
-    unsigned valueProfileSize = m_numValueProfiles * sizeof(ValueProfile);
+    unsigned valueProfileSize = m_numValueProfiles * sizeof(EncodedJSValue);
     unsigned totalSize;
     std::array<Offset32, s_offsetTableEntries> expanded;
     bool expandsSteps = m_isBackedBySteps && !m_isLinked;

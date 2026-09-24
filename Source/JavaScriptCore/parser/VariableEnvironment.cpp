@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "VariableEnvironment.h"
+#include "ThreadsModeAtomics.h"
 #include "VariableEnvironmentInlines.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/HexNumber.h>
@@ -310,7 +311,7 @@ CompactTDZEnvironmentMap::Handle CompactTDZEnvironmentMap::get(const TDZEnvironm
 CompactTDZEnvironmentMap::Handle CompactTDZEnvironmentMap::get(CompactTDZEnvironment* environment, bool& isNewEntry)
 {
     CompactTDZEnvironmentKey key { *environment };
-    Locker locker { m_lock };
+    ThreadsModeLocker<Lock> locker { m_lock };
     auto addResult = m_map.add(key, 1);
     isNewEntry = addResult.isNewEntry;
     if (addResult.isNewEntry)
@@ -331,7 +332,7 @@ CompactTDZEnvironmentMap::Handle::~Handle()
     RELEASE_ASSERT(m_environment);
     bool isLastReference;
     {
-        Locker locker { m_map->m_lock };
+        ThreadsModeLocker<Lock> locker { m_map->m_lock };
         auto iter = m_map->m_map.find(CompactTDZEnvironmentKey { *m_environment });
         RELEASE_ASSERT(iter != m_map->m_map.end());
         --iter->value;
@@ -350,7 +351,7 @@ CompactTDZEnvironmentMap::Handle::Handle(const CompactTDZEnvironmentMap::Handle&
     , m_map(other.m_map)
 {
     if (m_map) {
-        Locker locker { m_map->m_lock };
+        ThreadsModeLocker<Lock> locker { m_map->m_lock };
         auto iter = m_map->m_map.find(CompactTDZEnvironmentKey { *m_environment });
         RELEASE_ASSERT(iter != m_map->m_map.end());
         ++iter->value;
@@ -361,7 +362,7 @@ bool CompactTDZEnvironmentMap::Handle::contains(UniquedStringImpl* impl) const
 {
     if (m_environment->isInflated())
         return m_environment->toTDZEnvironment().contains(impl);
-    Locker locker { m_map->m_lock };
+    ThreadsModeLocker<Lock> locker { m_map->m_lock };
     return m_environment->toTDZEnvironment().contains(impl);
 }
 

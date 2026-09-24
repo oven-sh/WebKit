@@ -100,6 +100,10 @@ void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope) 
     // those objects since, and is precise about the objects added after it: the dead ones among them stop counting.
     if (collectionScope == CollectionScope::Full)
         m_bytes.storeRelaxed(preciseBytes);
+    else
+        m_bytes.storeRelaxed(m_bytesAfterLastSweep + preciseBytesAddedSinceLastSweep);
+    m_bytesAfterLastSweep = m_bytes.loadRelaxed();
+    m_sizeAfterLastSweep = m_vector.size();
 }
 
 } // namespace JSC

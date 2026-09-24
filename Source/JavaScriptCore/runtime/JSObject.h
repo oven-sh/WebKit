@@ -1681,6 +1681,7 @@ public:
     // Visits the butterfly unless there is a race. Returns the structure if there was no race.
     template<typename Visitor> Structure* visitButterfly(Visitor&);
     template<typename Visitor> Structure* visitButterflyImpl(Visitor&);
+    template<typename Visitor, bool jsThreads> Structure* visitButterflyForMode(Visitor&);
     template<typename Visitor> void markAuxiliaryAndVisitOutOfLineProperties(Visitor&, Butterfly*, Structure*, PropertyOffset maxOffset);
 
 protected:

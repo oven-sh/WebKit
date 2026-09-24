@@ -185,11 +185,11 @@ public:
     // m_visitCount is written only by the owning visitor thread but read
     // cross-thread by MarkingConstraintSolver::didVisitSomething() during
     // converge; a stale-low read only causes an extra convergence iteration
-    // (never premature fixpoint). Relaxed atomics remove the plain-access UB
-    // with unchanged codegen (single-writer counter, no RMW needed).
-    size_t visitCount() const { return WTF::atomicLoad(const_cast<size_t*>(&m_visitCount), std::memory_order_relaxed); }
+    // (never premature fixpoint). A racy word (WTF::racyLoad/racyStore): plain,
+    // as on `main`, outside TSAN, where it is a relaxed atomic.
+    size_t visitCount() const { return racyLoad(m_visitCount); }
 
-    void addToVisitCount(size_t value) { WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + value, std::memory_order_relaxed); }
+    void addToVisitCount(size_t value) { racyStore(m_visitCount, racyLoad(m_visitCount) + value); }
 
     virtual void addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>>) = 0;
     virtual void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) = 0;

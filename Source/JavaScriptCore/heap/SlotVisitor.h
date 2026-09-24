@@ -130,7 +130,7 @@ public:
     void NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return WTF::atomicLoad(const_cast<size_t*>(&m_bytesVisited), std::memory_order_relaxed); } // Single-writer counter; cross-thread readers tolerate staleness (see AbstractSlotVisitor::visitCount()).
+    size_t bytesVisited() const { return racyLoad(m_bytesVisited); } // Single-writer counter; cross-thread readers tolerate staleness (see AbstractSlotVisitor::visitCount()).
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());

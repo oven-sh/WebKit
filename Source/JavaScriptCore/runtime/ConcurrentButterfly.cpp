@@ -97,6 +97,50 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+// The sizing of a contiguous vector when the heap is shared (the arm of Butterfly::optimalContiguousVectorLength that a process
+// without the shared collector never takes).
+NEVER_INLINE unsigned Butterfly::optimalContiguousVectorLengthForSharedHeap(size_t propertyCapacity, unsigned vectorLength)
+{
+    // T3-segmented-born-fullcoverage (SPEC-objectmodel §4.2/§4.4-T2): round
+    // every freshly-sized contiguous flat vectorLength to (1+VL) % 4 == 0
+    // (i.e. VL == butterflyFragmentSlots*k - 1). The §4.2 conversion
+    // computes its aliased indexed fragment count from this VL (C2), so an
+    // aligned VL makes the published spine FULL-COVERAGE at birth
+    // (spine->vectorLength == indexedFragmentCount*4 - 1) and the very
+    // first tryGrowSegmentedVectorLength takes the lock-free mode-(a) CAS
+    // instead of a mode-(b) per-event STW. The literal alternative —
+    // hole-filling the aliased tail at conversion — is UNSAFE in general:
+    // availableContiguousVectorLength back-computes VL to fill the size
+    // class exactly, so the tail bytes are PAST the heap cell. Aligning
+    // here instead requests a cell that already covers the whole last
+    // fragment. Round-up the request first, then round the size-class
+    // back-computed value down to the same residue; both are monotone, so
+    // the result is still >= the original request. At most
+    // (butterflyFragmentSlots-1) slots of extra capacity. Gate is
+    // useSharedGCHeap (not useJSThreads): segmented conversion is the
+    // shared-heap concurrent object model, and U0 forces GIL-on without
+    // it; under GIL-on the mode-(b) STW is single-mutator-cheap and the
+    // alignment cost (changed size-class selection on every contiguous
+    // allocation) showed as a +9% bench.js W=1 wall regression. Flag-off
+    // untouched (the option gate is the only added branch).
+    static_assert(hasOneBitSet(butterflyFragmentSlots), "bitwise round-up below");
+    unsigned alignedRequest = vectorLength | static_cast<unsigned>(butterflyFragmentSlots - 1);
+    // Callers clamp the request to MAX_STORAGE_VECTOR_LENGTH and every
+    // result reaches IndexingHeader::setVectorLength, which RELEASE_ASSERTs
+    // that cap; a request at the cap cannot round up, so it keeps the
+    // unaligned sizing.
+    if (alignedRequest > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+        return availableContiguousVectorLength(propertyCapacity, vectorLength);
+    unsigned result = availableContiguousVectorLength(propertyCapacity, alignedRequest);
+    unsigned excess = (result + 1) & static_cast<unsigned>(butterflyFragmentSlots - 1);
+    ASSERT(result >= excess);
+    result -= excess;
+    ASSERT(result >= vectorLength); // alignedRequest is the smallest aligned value >= vectorLength, and the round-down picks the largest aligned value <= the size-class back-computed result (which is >= alignedRequest).
+    ASSERT(!((result + 1) % butterflyFragmentSlots));
+    return result;
+}
+
+
 // ===== §9.3 spine/fragment accessors (layout = Butterfly.h) =====
 
 WriteBarrierBase<Unknown>* segmentedOutOfLineSlot(ButterflySpine* spine, PropertyOffset offset)

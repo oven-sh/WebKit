@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ThreadsModeAtomics.h"
 #include "Structure.h"
 #include <wtf/Atomics.h>
 #include <wtf/OptionSet.h>
@@ -221,6 +222,17 @@ enum class ArrayProfileFlag : uint32_t {
     MayBeSegmentedButterfly = 1 << 8,
 };
 
+// A monotone OR of `bits` into a word that mutators and compiler threads update racily: a relaxed load and a relaxed store, and with
+// the flag on no store at all when every bit is already there (racyOrProfileWord). Not a locked read-modify-write (a `lock or` on
+// x86-64, executed for every profile at every tier-up check and for every observation of a new mode): a racing OR can lose a bit,
+// which the next observation of the same array puts back; profiles select speculation and emitted guards validate (I12), as for
+// ArithProfile. Flag off it is `main`'s plain `or`.
+template<typename T>
+ALWAYS_INLINE void orRelaxedNoLockedRMW(T* location, T bits)
+{
+    racyOrProfileWord(*location, bits);
+}
+
 class ArrayProfile {
     friend class CodeBlock;
     friend class UnlinkedArrayProfile;
@@ -249,13 +261,9 @@ public:
     void addArrayProfileFlagsConcurrently(OptionSet<ArrayProfileFlag> flags)
     {
         static_assert(sizeof(m_arrayProfileFlags) == sizeof(uint32_t));
-        // Write-avoidance (SPEC-ungil §5.7, seventh round): the flags saturate
-        // quickly; test before the locked OR so steady-state observations from
-        // several threads are reads of a shared line, not a bouncing RMW.
-        uint32_t bits = flags.toRaw();
-        if ((WTF::atomicLoad(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), std::memory_order_relaxed) & bits) == bits)
-            return;
-        WTF::atomicExchangeOr(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), bits, std::memory_order_relaxed);
+        // The flags saturate quickly: no store once they are all there (write-avoidance, SPEC-ungil §5.7, seventh round), and
+        // no locked OR (see orRelaxedNoLockedRMW).
+        orRelaxedNoLockedRMW(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), flags.toRaw());
     }
 
     OptionSet<ArrayProfileFlag> arrayProfileFlagsConcurrently() const
@@ -291,8 +299,7 @@ public:
     // advisory to every consumer (I12).
     void observeStructureID(StructureID structureID)
     {
-        if (WTF::atomicLoad(&m_lastSeenStructureID, std::memory_order_relaxed) != structureID) // write-avoidance, as above
-            WTF::atomicStore(&m_lastSeenStructureID, structureID, std::memory_order_relaxed);
+        racyStoreProfileWord(m_lastSeenStructureID, structureID); // write avoidance with the flag on, as above
     }
     void observeStructure(Structure* structure) { observeStructureID(structure->id()); }
 
@@ -301,8 +308,7 @@ public:
     
     void observeArrayMode(ArrayModes mode) // THREADS §5.7.5; write-avoidance as above
     {
-        if ((WTF::atomicLoad(&m_observedArrayModes, std::memory_order_relaxed) & mode) != mode)
-            WTF::atomicExchangeOr(&m_observedArrayModes, mode, std::memory_order_relaxed);
+        orRelaxedNoLockedRMW(&m_observedArrayModes, mode);
     }
     void NODELETE observeIndexedRead(JSCell*, unsigned index);
 
@@ -359,8 +365,8 @@ public:
 
         ArrayModes linkedModes = WTF::atomicLoad(&arrayProfile.m_observedArrayModes, std::memory_order_relaxed);
         ArrayModes newModes = linkedModes | WTF::atomicLoad(&m_observedArrayModes, std::memory_order_relaxed);
-        WTF::atomicExchangeOr(&m_observedArrayModes, newModes, std::memory_order_relaxed);
-        WTF::atomicExchangeOr(&arrayProfile.m_observedArrayModes, newModes, std::memory_order_relaxed);
+        orRelaxedNoLockedRMW(&m_observedArrayModes, newModes);
+        orRelaxedNoLockedRMW(&arrayProfile.m_observedArrayModes, newModes);
 
         auto unlinkedFlagsSnapshot = OptionSet<ArrayProfileFlag>::fromRaw(
             WTF::atomicLoad(reinterpret_cast<uint32_t*>(&m_arrayProfileFlags), std::memory_order_relaxed));

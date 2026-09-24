@@ -177,6 +177,7 @@ public:
     static unsigned availableContiguousVectorLength(Structure*, unsigned vectorLength);
     
     ALWAYS_INLINE static unsigned optimalContiguousVectorLength(size_t propertyCapacity, unsigned vectorLength);
+    NEVER_INLINE static unsigned optimalContiguousVectorLengthForSharedHeap(size_t propertyCapacity, unsigned vectorLength);
     static unsigned optimalContiguousVectorLength(Structure*, unsigned vectorLength);
     
     // This method is here not just because it's handy, but to remind you that

@@ -183,6 +183,12 @@ public:
         vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
     }
 
+    // If every code block this holds was decoded from a persistent bytecode cache payload, lets go of them and goes
+    // back to naming their records in that payload, as before the first call; the next unlinkedCodeBlockFor() decodes
+    // them again. Only with no collection and no compiler thread running (Heap::deleteAllUnlinkedCodeBlocks).
+    // (Not if one of them is in `linkedAgainst`.)
+    bool returnCodeToCache(VM&, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst);
+
     // recordParse on the parsing thread races readers (isInStrictContext() etc.) on other threads, so the two feature
     // sets share one 16-bit word written with one relaxed store, and m_hasCapturedVariables is a dedicated byte, like
     // the ScriptExecutable copies of the same fields.

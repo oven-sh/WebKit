@@ -2412,25 +2412,9 @@ JSC_DEFINE_JIT_OPERATION(operationRegExpSearch, UCPUStrictInt32, (JSGlobalObject
     auto strView = string->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
-    MatchResult result = threadRegExpGlobalData(globalObject).performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
+    MatchResult result = globalObject->regExpGlobalData().performMatch(globalObject, regExpObject->regExp(), string, strView, 0);
 
     OPERATION_RETURN(scope, result ? toUCPUStrictInt32(result.start) : toUCPUStrictInt32(-1));
-}
-
-// The operation*HeapBigInt stubs below compute two non-negative single-digit
-// operands in registers and allocate the result with JSBigInt::createFromDigit,
-// skipping the JSBigInt::* dispatch, the *Impl ThrowScope, the HeapBigIntImpl
-// wrapper and the scratch Vector of the general path. The result digits are
-// bit-identical to the general path's, and createFromDigit throws the same
-// OutOfMemoryError on allocation failure, which OPERATION_RETURN delivers through
-// scope.exception() exactly as for the general path. Independent of useJSThreads.
-static ALWAYS_INLINE bool bothNonNegativeSingleDigitHeapBigInt(JSBigInt* l, JSBigInt* r, JSBigInt::Digit& ld, JSBigInt::Digit& rd)
-{
-    if (l->length() > 1 || r->length() > 1 || l->sign() || r->sign())
-        return false;
-    ld = l->length() ? l->digit(0) : 0;
-    rd = r->length() ? r->digit(0) : 0;
-    return true;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSubHeapBigInt, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* op1, JSCell* op2))
@@ -2439,19 +2423,10 @@ JSC_DEFINE_JIT_OPERATION(operationSubHeapBigInt, EncodedJSValue, (JSGlobalObject
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
+    
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
-            if (ld >= rd)
-                OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld - rd, 0, false)));
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, rd - ld, 0, true)));
-        }
-    }
-
+    
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::sub(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2476,14 +2451,6 @@ JSC_DEFINE_JIT_OPERATION(operationMulHeapBigInt, EncodedJSValue, (JSGlobalObject
 
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
-            UInt128 product = static_cast<UInt128>(ld) * static_cast<UInt128>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(product), static_cast<JSBigInt::Digit>(product >> 64), false)));
-        }
-    }
 
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::multiply(globalObject, leftOperand, rightOperand)));
 }
@@ -2537,12 +2504,6 @@ JSC_DEFINE_JIT_OPERATION(operationBitAndHeapBigInt, EncodedJSValue, (JSGlobalObj
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
 
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld & rd, 0, false)));
-    }
-
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseAnd(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2556,16 +2517,6 @@ JSC_DEFINE_JIT_OPERATION(operationBitLShiftHeapBigInt, EncodedJSValue, (JSGlobal
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
 
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd) && rd < JSBigInt::digitBits) [[likely]] {
-            // rd in [0, 63]: result fits in two digits. rd >= 64 falls through
-            // so the general path can produce wider results / range-check.
-            UInt128 r = static_cast<UInt128>(ld) << static_cast<unsigned>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(r), static_cast<JSBigInt::Digit>(r >> 64), false)));
-        }
-    }
-
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::leftShift(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2578,15 +2529,7 @@ JSC_DEFINE_JIT_OPERATION(operationAddHeapBigInt, EncodedJSValue, (JSGlobalObject
     
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
-            UInt128 sum = static_cast<UInt128>(ld) + static_cast<UInt128>(rd);
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, static_cast<JSBigInt::Digit>(sum), static_cast<JSBigInt::Digit>(sum >> 64), false)));
-        }
-    }
-
+    
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::add(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2599,17 +2542,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitRShiftHeapBigInt, EncodedJSValue, (JSGlobal
     
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]] {
-            // Non-negative >> non-negative is a plain logical shift; once the
-            // whole digit is shifted out the result is exactly zero.
-            JSBigInt::Digit q = rd >= JSBigInt::digitBits ? 0 : (ld >> static_cast<unsigned>(rd));
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, q, 0, false)));
-        }
-    }
-
+    
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::signedRightShift(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2622,13 +2555,7 @@ JSC_DEFINE_JIT_OPERATION(operationBitOrHeapBigInt, EncodedJSValue, (JSGlobalObje
     
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld | rd, 0, false)));
-    }
-
+    
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseOr(globalObject, leftOperand, rightOperand)));
 }
 
@@ -2641,12 +2568,6 @@ JSC_DEFINE_JIT_OPERATION(operationBitXorHeapBigInt, EncodedJSValue, (JSGlobalObj
 
     JSBigInt* leftOperand = uncheckedDowncast<JSBigInt>(op1);
     JSBigInt* rightOperand = uncheckedDowncast<JSBigInt>(op2);
-
-    if constexpr (sizeof(JSBigInt::Digit) == 8) {
-        JSBigInt::Digit ld, rd;
-        if (bothNonNegativeSingleDigitHeapBigInt(leftOperand, rightOperand, ld, rd)) [[likely]]
-            OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFromDigit(globalObject, vm, ld ^ rd, 0, false)));
-    }
 
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bitwiseXor(globalObject, leftOperand, rightOperand)));
 }
@@ -7047,7 +6968,14 @@ static char* tierUpCommon(VM& vm, CallFrame* callFrame, BytecodeIndex originByte
                 BytecodeIndex osrEntryCandidate = *iter;
 
                 auto candidateTrigger = jitCode->tierUpEntryTriggers.find(osrEntryCandidate);
-                RELEASE_ASSERT(candidateTrigger != jitCode->tierUpEntryTriggers.end()); // tierUpInLoopHierarchy values are guaranteed OSR-entry trigger sites (DFGJITCode.h:322).
+                if (candidateTrigger == jitCode->tierUpEntryTriggers.end()) [[unlikely]] {
+                    // tierUpInLoopHierarchy values are guaranteed OSR-entry trigger sites (DFGJITCode.h:322), so this does not
+                    // happen. With the flag on inserting here would rehash under the trigger addresses generated code holds;
+                    // with it off the entry is inserted, as on `main`.
+                    RELEASE_ASSERT(!Options::useJSThreads());
+                    jitCode->tierUpEntryTriggers.set(osrEntryCandidate, JITCode::TriggerReason::StartCompilation);
+                    return true;
+                }
                 if (WTF::atomicLoad(&candidateTrigger->value, std::memory_order_relaxed) == JITCode::TriggerReason::StartCompilation) { // THREADS: see relaxed-trigger note in tierUpCommon.
                     // This means that we already asked this loop to compile. If we've reached here, it
                     // means program control has not yet reached that loop. So it's taking too long to compile.

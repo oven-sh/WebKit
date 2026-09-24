@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Identifier.h"
+#include "ThreadsModeRefCounted.h"
 #include <atomic>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -34,7 +35,6 @@
 #include <wtf/Lock.h>
 #include <wtf/PackedRefPtr.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
 
@@ -450,8 +450,10 @@ namespace JSC {
 // codegen on any thread interns into it, and a Handle dies wherever its owning executable
 // is swept, which with shared-heap threads is whichever thread refilled an allocator. The
 // refcounts of the map and of TDZEnvironmentLink are therefore atomic, and m_lock
-// serializes the table and the lazy inflation of the environments it interns.
-class CompactTDZEnvironmentMap : public ThreadSafeRefCounted<CompactTDZEnvironmentMap> {
+// serializes the table and the lazy inflation of the environments it interns; both are so
+// with the JS threads flag on (ThreadsModeRefCounted, ThreadsModeLocker), and `main`'s
+// plain count and no lock without it.
+class CompactTDZEnvironmentMap : public ThreadsModeRefCounted<CompactTDZEnvironmentMap> {
 public:
     class Handle {
         friend class CachedCompactTDZEnvironmentMapHandle;
@@ -503,7 +505,7 @@ private:
     UncheckedKeyHashMap<CompactTDZEnvironmentKey, unsigned> m_map;
 };
 
-class TDZEnvironmentLink : public ThreadSafeRefCounted<TDZEnvironmentLink> {
+class TDZEnvironmentLink : public ThreadsModeRefCounted<TDZEnvironmentLink> {
     // Defined in VariableEnvironmentInlines.h.
     TDZEnvironmentLink(CompactTDZEnvironmentMap::Handle handle, RefPtr<TDZEnvironmentLink> parent);
 

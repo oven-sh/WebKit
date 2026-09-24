@@ -442,6 +442,15 @@ public:
     bool setNeverAtomize()
     {
         unsigned old = hashAndFlags();
+        // Without the shared table one thread owns the string's flags, as on `main`: a plain store, not a locked compare-and-swap.
+        if (!sharedAtomStringTableEnabledRacy()) [[likely]] {
+            if (old & s_hashFlagStringKindIsAtom) [[unlikely]] {
+                ASSERT_NOT_REACHED(); // The historical caller bug (marking a live atom), reported through the return value.
+                return false;
+            }
+            m_hashAndFlags.store(old | s_hashFlagNeverAtomize, std::memory_order_relaxed);
+            return true;
+        }
         while (true) {
             if (old & s_hashFlagStringKindIsAtom) {
                 // Legacy mode (per-thread tables): no legal cross-thread race
@@ -722,6 +731,7 @@ private:
     // Shared-atom-table mode only (SPEC-vmstate §4.4.3): zero-transition tail
     // of deref(); routes live-table atoms through AtomStringImpl::removeDeadAtom().
     WTF_EXPORT_PRIVATE NEVER_INLINE void derefSharedZero();
+    WTF_EXPORT_PRIVATE NEVER_INLINE void derefSharedAtomTable();
     Ref<StringImpl> convertToUppercaseWithoutLocaleUpconvert();
     Ref<StringImpl> convertToUppercaseWithoutLocale16Bit(std::span<const char16_t> source, unsigned failingIndex);
 
@@ -1433,27 +1443,11 @@ inline void StringImpl::deref()
     // forbids this load from reading a stale 'false'; threads created after
     // the latch get the edge from thread creation itself. Full argument: F4
     // comment at sharedAtomStringTableEnabled() in SharedAtomStringTable.h.
+    // The shared-table arm is out of line: this function is inlined at every Ref<> destructor, and with the arm's body in it the
+    // inlining decisions of a process that never shares the table differ from `main`'s (Ref<AtomStringImpl>::~Ref, the string joiner's
+    // entries, the lexer's identifier paths).
     if (sharedAtomStringTableEnabledRacy()) [[unlikely]] {
-        // Shared-atom-table mode (SPEC-vmstate §4.4.3 / F3): the release
-        // decrement plus the acquire fence on the zero transition order every
-        // other thread's prior accesses to this string before its destruction
-        // (deliberately NOT seq_cst). Refcount 0 is final: tryRefAtom() fails
-        // at 0, so no table hit can revive the string and exactly one thread
-        // reaches the zero transition and destroys it.
-#if TSAN_ENABLED
-        // TSAN r12 (reports 1/2/5): TSAN does not model
-        // std::atomic_thread_fence, so the acquire fence below is invisible
-        // and the destroying thread's free() pairs against other threads'
-        // release decrements. acq_rel RMW under TSAN only; production keeps
-        // release + acquire-fence-on-zero (identical ordering guarantees).
-        auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_acq_rel);
-#else
-        auto oldRefCount = m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_release);
-#endif
-        if (oldRefCount != s_refCountIncrement)
-            return;
-        std::atomic_thread_fence(std::memory_order_acquire);
-        derefSharedZero();
+        derefSharedAtomTable();
         return;
     }
 

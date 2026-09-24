@@ -1818,6 +1818,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ThreadLocalObject.h
     runtime/ThreadManager.h
     runtime/ThreadObject.h
+    runtime/ThreadsModeAtomics.h
+    runtime/ThreadsModeRefCounted.h
     runtime/ThrowScope.h
     runtime/ToNativeFromValue.h
     runtime/TypeError.h

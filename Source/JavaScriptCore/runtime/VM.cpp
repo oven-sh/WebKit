@@ -150,6 +150,7 @@
 #include "SymbolTableInlines.h"
 #include "TerminationDeadline.h"
 #include "TestRunnerUtils.h"
+#include "ThreadsModeAtomics.h"
 #include "ThreadManager.h"
 #include "ThunkGenerators.h"
 #include "TypeProfiler.h"
@@ -421,6 +422,9 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     // Idempotent across VM constructions; see runtime/RaceAmplifier.h.
     RaceAmplifier::initialize();
     JSThreadsCounters::registerDumpAtExit();
+    m_neverExecutedCallSiteData = CallSiteData::createShared(false);
+    m_executedOnceCallSiteData = CallSiteData::createShared(true);
+    m_notExecutedTailCallSiteData = CallSiteData::createSharedForTailCalls();
 
     // Set up lazy initializers.
     {
@@ -1216,6 +1220,8 @@ VM::~VM()
     // stopAllocatingForGood inside heap.lastChanceToFinalize() below.
     if (deferredOwnCarrierLite) [[unlikely]]
         detachDeferredOwnCarrierClientForVMDestruction(*this, deferredOwnCarrierLite);
+    if (m_persistentBytecodePayloads)
+        m_persistentBytecodePayloads->clearChildExecutables();
     heap.lastChanceToFinalize();
 
     if (Options::useVMLite()) [[unlikely]] {
@@ -1680,8 +1686,19 @@ MacroAssemblerCodeRef<JITStubRoutinePtrTag> VM::getCTIVirtualCall(CallMode callM
 
 PersistentBytecodePayloads& VM::persistentBytecodePayloads()
 {
-    if (!m_persistentBytecodePayloads)
-        m_persistentBytecodePayloads = makeUnique<PersistentBytecodePayloads>(*this);
+    if (!m_persistentBytecodePayloads) {
+        if (m_gilOff) [[unlikely]] {
+            // Two threads can ask for the payloads at once. Create them once, and publish them only after they are built.
+            static Lock creationLock;
+            Locker locker { creationLock };
+            if (!m_persistentBytecodePayloads) {
+                auto payloads = makeUnique<PersistentBytecodePayloads>(*this);
+                WTF::storeStoreFence();
+                m_persistentBytecodePayloads = WTF::move(payloads);
+            }
+        } else
+            m_persistentBytecodePayloads = makeUnique<PersistentBytecodePayloads>(*this);
+    }
     return *m_persistentBytecodePayloads;
 }
 
@@ -1799,7 +1816,7 @@ void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
 
 void VM::deleteAllRegExpCode()
 {
-    m_regExpCache->deleteAllCode();
+    m_regExpCache->deleteAllCode(*this);
     // The RegExp interpreter's backtracking pools past its first page are only a cache
     // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
     // compiler threads that interpret take this lock.
@@ -1814,7 +1831,8 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
             clearCodeCaches();
             if (deleteHeapCode) {
                 heap.deleteAllCodeBlocksWithCollectionPrevented();
-                heap.deleteAllUnlinkedCodeBlocksWithCollectionPrevented();
+                // All of it: also what could be decoded again from a bytecode cache.
+                heap.deleteAllUnlinkedCodeBlocksWithCollectionPrevented({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
             }
             heap.reportAbandonedObjectGraph();
         });
@@ -1833,17 +1851,68 @@ void VM::clearCodeCaches()
 {
     m_codeCache->clear(*this);
     m_builtinExecutables->clear();
-    m_regExpCache->deleteAllCode(*this);
-    {
-        // The RegExp interpreter's backtracking pools past its first page are only a cache
-        // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
-        // compiler threads that interpret take this lock.
-        Locker locker { m_regExpAllocatorLock };
-        m_regExpAllocator.releaseRetainedPools();
-    }
+    deleteAllRegExpCode();
 }
 
-void VM::shrinkFootprintWhenIdle()
+bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
+{
+    // Not under JS, and not from inside the collector (a finalizer, a heap observer): deleting code waits for a
+    // collection that is under way to finish.
+    if (isEntered() || heap.currentThreadIsDoingGCWork())
+        return false;
+
+    MonotonicTime before;
+    if (Options::logGC()) [[unlikely]]
+        before = MonotonicTime::now();
+    auto logTime = makeScopeExit([&] {
+        dataLogLnIf(Options::logGC(), "[shrinkFootprint: ", (MonotonicTime::now() - before).milliseconds(), " ms]");
+    });
+    sanitizeStackForVM(*this);
+    // The last exception thrown keeps the code on its captured stack alive (linked code, and through it the unlinked code
+    // that is about to be dropped and would then exist twice). No JS is running, so nobody is looking at it.
+    clearLastException();
+    bool keepCodeInUse = mode.contains(ShrinkFootprint::KeepCodeInUse);
+    // GIL off, code is only deleted inside deleteAllCode's stop window (other threads may be mid-match or mid-call in code
+    // the selective modes would delete under them), so every mode takes the branch below; it deletes only while no thread is
+    // entered.
+    if (!m_gilOff && (keepCodeInUse || mode.contains(ShrinkFootprint::KeepCodeThatNeedsParsing))) {
+        // Linked code first: that finishes the compiler threads' plans, and optimized code may call RegExp code directly.
+        if (!keepCodeInUse)
+            heap.deleteAllCodeBlocks(PreventCollectionAndDeleteAllCode, true);
+        OptionSet<UnlinkedCodeToDelete> unlinkedCode { UnlinkedCodeToDelete::RecoverableFromCache };
+        if (keepCodeInUse)
+            unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+        heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
+        if (Options::useCodeRecoveryFromBytecodeCache())
+            m_codeCache->clearCodeDecodedFromPersistentPayloads();
+        if (!keepCodeInUse)
+            deleteAllRegExpCode();
+        else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {
+            // (A compiler thread may be inlining a RegExp's code, see DFG::SpeculativeJIT::compileRegExpTestInline.)
+            m_regExpCache->deleteCodeNotUsedInCurrentFullCollectionCycle(*this);
+        }
+        heap.reportAbandonedObjectGraph();
+    } else {
+        // This mode does not wait for a collection: if one is under way the code stays and the caller is told so.
+        if (heap.collectionScope())
+            return false;
+        deleteAllCode(DeleteAllCodeIfNotCollecting);
+    }
+    {
+        // Parsers of other threads use the cache under this lock (addSourceProviderCache).
+        GILOffCompilationLocker compilationLocker(*this, gilOffWithProcessGate());
+        clearSourceProviderCaches();
+    }
+    if (mode.contains(ShrinkFootprint::LeaveCollectionToCaller))
+        return true;
+    heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    // FIXME: Consider stopping various automatic threads here.
+    // https://bugs.webkit.org/show_bug.cgi?id=185447
+    WTF::releaseFastMallocFreeMemory();
+    return true;
+}
+
+void VM::shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> mode)
 {
     whenIdle([=, this] () {
         shrinkFootprintNow(mode);
@@ -2288,7 +2357,7 @@ void VM::forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* e
         for (auto* scratchBuffer : m_scratchBuffers) {
             if (scratchBuffer->activeLength()) {
                 void* bufferStart = scratchBuffer->dataBuffer();
-                conservativeRoots.add(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
+                func(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
             }
         }
     }
@@ -2311,7 +2380,7 @@ void VM::forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* e
             for (auto* scratchBuffer : lite->scratchBuffers) {
                 if (scratchBuffer->activeLength()) {
                     void* bufferStart = scratchBuffer->dataBuffer();
-                    conservativeRoots.add(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
+                    func(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
                 }
             }
         }
@@ -2331,6 +2400,13 @@ void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
 void VM::forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>& func)
 {
     forEachActiveScratchBuffer(func);
+    // As scanSideState(): GIL off the vector is lock-guarded.
+    if (gilOff()) [[unlikely]] {
+        Locker locker { m_checkpointSideStateLock };
+        for (const auto& sideState : m_checkpointSideState)
+            func(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);
+        return;
+    }
     for (const auto& sideState : m_checkpointSideState)
         func(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);
 }
@@ -3073,7 +3149,7 @@ void sanitizeStackForVM(VM& vm)
 #if ENABLE(C_LOOP)
     vm.cloopStack().sanitizeStack();
 #else
-    sanitizeStackForVMImpl(&vm);
+    sanitizeStackForVMImpl(&vm.group3Primitives().m_lastStackTop);
 #endif
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
 }
@@ -3082,13 +3158,18 @@ void sanitizeStackForVM(VM& vm)
 // bounds come from the lock rather than from the two thread-local lookups sanitizeStackForVM() makes. Same checks.
 void sanitizeStackForVMInCallSlowPath(VM& vm)
 {
+    // GIL off, the API lock has no single owner thread to take the stack bounds from.
+    if (vm.gilOffWithProcessGate()) [[unlikely]] {
+        sanitizeStackForVM(vm);
+        return;
+    }
     logSanitizeStack(vm);
 #if ENABLE(C_LOOP)
     vm.cloopStack().sanitizeStack();
 #else
     auto& stack = vm.apiLock().ownerThreadWhileHoldingLock().stack();
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa30, vm.lastStackTop(), stack.origin(), stack.end());
-    sanitizeStackForVMImpl(&vm);
+    sanitizeStackForVMImpl(&vm.group3Primitives().m_lastStackTop);
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa40, vm.lastStackTop(), stack.origin(), stack.end());
 #endif
 }
@@ -3993,7 +4074,7 @@ void VM::DrainMicrotaskDelayScope::increment()
         ++lite->drainMicrotaskDelayScopeCount;
         return;
     }
-    m_vm->m_drainMicrotaskDelayScopeCount.fetch_add(1, std::memory_order_relaxed);
+    threadsModeFetchAddRelaxed(m_vm->m_drainMicrotaskDelayScopeCount, static_cast<uint64_t>(1));
 }
 
 void VM::DrainMicrotaskDelayScope::decrement()
@@ -4009,7 +4090,7 @@ void VM::DrainMicrotaskDelayScope::decrement()
         return;
     }
     ASSERT(m_vm->m_drainMicrotaskDelayScopeCount.load(std::memory_order_relaxed));
-    if (m_vm->m_drainMicrotaskDelayScopeCount.fetch_sub(1, std::memory_order_relaxed) == 1) {
+    if (threadsModeFetchSubRelaxed(m_vm->m_drainMicrotaskDelayScopeCount, static_cast<uint64_t>(1)) == 1) {
         JSLockHolder locker(*m_vm);
         m_vm->drainMicrotasks();
     }
@@ -4032,12 +4113,12 @@ AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
             static Lock creationLock;
             Locker locker { creationLock };
             if (!m_cachedBytecodeTwoCharacterAtoms) {
-                auto table = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+                auto table = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>>();
                 WTF::storeStoreFence();
                 m_cachedBytecodeTwoCharacterAtoms = WTF::move(table);
             }
         } else
-            m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+            m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>>();
     }
     return m_cachedBytecodeTwoCharacterAtoms->data();
 }

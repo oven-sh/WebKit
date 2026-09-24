@@ -27,6 +27,7 @@
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 
 #include "JSCInlines.h"
+#include "ThreadsModeAtomics.h"
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -79,7 +80,7 @@ bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
     // Flag-on only: the replacement set fired between the two links, or is
     // not there. Leave nothing linked, so a refused install never leaves a
     // half-armed pair.
-    Locker locker { g_watchpointMembershipLock };
+    ThreadsModeLocker<Lock> locker { g_watchpointMembershipLock };
     if (m_structureWatchpoint.isOnList())
         m_structureWatchpoint.remove();
     return false;

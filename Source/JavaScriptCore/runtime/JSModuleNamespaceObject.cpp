@@ -199,6 +199,8 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         // GIL off the thread that published the namespace writes the *namespace* slot after the field (AUDIT R9-15).
         if (!value && targetNamespace) [[unlikely]]
             value = targetNamespace;
+        if (!value) [[unlikely]]
+            value = environment->readVariable(vm, scopeOffset);
 #if USE(BUN_JSC_ADDITIONS)
         if (!value) [[unlikely]] {
             // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on

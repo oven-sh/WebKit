@@ -27,7 +27,9 @@
 #include "config.h"
 #include <wtf/text/SymbolRegistry.h>
 
+#include <optional>
 #include <wtf/Lock.h>
+#include <wtf/Locker.h>
 #include <wtf/text/SymbolImpl.h>
 
 namespace WTF {
@@ -75,6 +77,21 @@ namespace WTF {
 // never uses a destroyed lock.
 static Lock s_symbolRegistryLock;
 
+// The registry is reached from several threads only when the process shares its atom string table (the JS threads flag): the lock is taken
+// then and only then, as the table itself is shared. A process without it has one thread per registry, as on `main`.
+class SymbolRegistryLocker {
+    WTF_MAKE_NONCOPYABLE(SymbolRegistryLocker);
+public:
+    SymbolRegistryLocker()
+    {
+        if (sharedAtomStringTableEnabledRacy()) [[unlikely]]
+            m_locker.emplace(s_symbolRegistryLock);
+    }
+
+private:
+    std::optional<Locker<Lock>> m_locker;
+};
+
 SymbolRegistry::SymbolRegistry(Type type)
     : m_symbolType(type)
 {
@@ -87,7 +104,7 @@ SymbolRegistry::~SymbolRegistry()
     // itself is destroyed, after this body returns — i.e. OUTSIDE the lock —
     // so the ~StringImpl runs it triggers see a null symbolRegistry() and
     // never re-enter remove() (no self-deadlock, no use of a destroyed lock).
-    Locker locker { s_symbolRegistryLock };
+    SymbolRegistryLocker locker;
     for (auto& key : m_table)
         SUPPRESS_UNCOUNTED_ARG downcast<SymbolImpl>(key.get())->asRegisteredSymbolImpl()->clearSymbolRegistry();
 }
@@ -100,7 +117,7 @@ Ref<RegisteredSymbolImpl> SymbolRegistry::symbolForKey(const String& rep)
     // only; RegisteredSymbolImpl::create takes no lock). The table holds a
     // strong reference (see StringImpl::derefSharedZero's symbol arm), so an
     // entry found here can never be mid-destruction.
-    Locker locker { s_symbolRegistryLock };
+    SymbolRegistryLocker locker;
 
     auto addResult = m_table.add(rep.impl());
     if (!addResult.isNewEntry)
@@ -134,7 +151,7 @@ void SymbolRegistry::remove(RegisteredSymbolImpl& uid)
     // at an object whose destructor is the caller; pointer-identity removal
     // (no string-equality probe of the destructing key) keeps that shape
     // exactly as landed.
-    Locker locker { s_symbolRegistryLock };
+    SymbolRegistryLocker locker;
     ASSERT(uid.symbolRegistry() == this);
     auto iterator = m_table.find<SymbolRegistryTableRemovalHashTranslator>(&uid);
     ASSERT_WITH_MESSAGE(iterator != m_table.end(), "The string being removed is registered in the string table of another thread!");

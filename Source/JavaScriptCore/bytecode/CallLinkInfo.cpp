@@ -32,6 +32,7 @@
 #include "DFGJITCode.h"
 #include "DisallowMacroScratchRegisterUsage.h"
 #include "FunctionCodeBlock.h"
+#include "JITOperations.h"
 #include "HeapInlines.h"
 #include "JITThunks.h"
 #include "JSCellInlines.h"
@@ -46,6 +47,7 @@
 #include <mutex>
 #include <wtf/Atomics.h>
 #include <wtf/ListDump.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace JSC {
@@ -258,6 +260,7 @@ void CallLinkInfo::clearStub()
 
 void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     // AB18-D: this runs on a LIVE mutator via the tier-up install path
     // (ScriptExecutable::installCode -> CodeBlock::unlinkOrUpgradeIncomingCalls
     // per-node drain) — only jettison is STW. The remove(), the upgrade-arm
@@ -292,7 +295,9 @@ void CallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBloc
             // NEW record (same callee comparand, new target/codeBlock). A
             // racing reader either uses the complete old record (calling the
             // old, still-valid entrypoint) or the complete new one.
-            publishRecord(vm, std::bit_cast<uintptr_t>(m_callee.get()), target, newCodeBlock);
+            // The bits of m_callee are only the record's comparand, never dereferenced: a weak callee that the collector has
+            // not cleared yet can name a swept cell, which get() would validate in a build with assertions.
+            publishRecord(vm, std::bit_cast<uintptr_t>(m_callee.unvalidatedGet()), target, newCodeBlock);
             newCodeBlock->linkIncomingCall(nullptr, this); // This is just relinking. So owner and caller frame can be nullptr.
             return;
         }
@@ -353,6 +358,7 @@ void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee,
 
 void CallLinkInfo::clearCallee()
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     if (Options::useJSThreads()) [[unlikely]] {
         // AB18-D (amended per review; same shape as clearStub's flag-on rule).
         // AB17f note: flag-on fast paths no longer read these mirrors (see
@@ -387,6 +393,7 @@ JSObject* CallLinkInfo::callee()
 
 void CallLinkInfo::setLastSeenCallee(VM& vm, const JSCell* owner, JSObject* callee)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     if (Options::useJSThreads()) [[unlikely]] {
         // TSAN wave 4 (calllink, SPEC-jit 5.8 / object-model blessed cell-slot
         // race): the READER side of m_lastSeenCallee is already relaxed-atomic
@@ -543,16 +550,15 @@ void DataOnlyCallLinkInfo::initializeAsSharedByUnlinkedCallSites(CodePtr<JSEntry
     ASSERT(!m_owner);
     m_callee.clear();
     *std::bit_cast<uintptr_t*>(m_callee.slot()) = polymorphicCalleeMask;
-    m_hasSeenShouldRepatch = executedOnce;
     m_monomorphicCallDestination = unlinkedCallThunk;
-    m_isSharedByUnlinkedCallSites = true;
+    m_flags.storeRelaxed(static_cast<uint8_t>(isSharedByUnlinkedCallSitesFlag | (executedOnce ? hasSeenShouldRepatchFlag : 0)));
 }
 
 void DataOnlyCallLinkInfo::initializeAsSharedByTailCallSites()
 {
     ASSERT(!m_owner);
     ASSERT(!m_callee);
-    m_isSharedByUnlinkedCallSites = true;
+    m_flags.storeRelaxed(isSharedByUnlinkedCallSitesFlag);
 }
 
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CallSiteData);
@@ -584,24 +590,30 @@ LazyCallLinkInfo::~LazyCallLinkInfo()
 void LazyCallLinkInfo::setNeverExecuted(VM& vm)
 {
     ASSERT(!m_data);
-    m_data = vm.neverExecutedCallSiteData();
+    WTF::atomicStore(&m_data, vm.neverExecutedCallSiteData(), std::memory_order_relaxed);
 }
 
 void LazyCallLinkInfo::setTailCallNotExecuted(VM& vm)
 {
     ASSERT(!m_data);
-    m_data = vm.notExecutedTailCallSiteData();
+    WTF::atomicStore(&m_data, vm.notExecutedTailCallSiteData(), std::memory_order_relaxed);
 }
 
 bool LazyCallLinkInfo::hasNeverExecuted(VM& vm) const
 {
-    return m_data == vm.neverExecutedCallSiteData();
+    return WTF::atomicLoad(const_cast<CallSiteData**>(&m_data), std::memory_order_relaxed) == vm.neverExecutedCallSiteData();
 }
 
 void LazyCallLinkInfo::setExecutedOnce(VM& vm)
 {
+    if (vm.gilOff()) [[unlikely]] {
+        // Another thread may have run the site a second time already, and given it a CallSiteData of its own: only the shared
+        // "never executed" one is replaced.
+        WTF::atomicCompareExchangeStrong(&m_data, vm.neverExecutedCallSiteData(), vm.executedOnceCallSiteData());
+        return;
+    }
     ASSERT(m_data == vm.neverExecutedCallSiteData());
-    m_data = vm.executedOnceCallSiteData();
+    WTF::atomicStore(&m_data, vm.executedOnceCallSiteData(), std::memory_order_relaxed);
 }
 
 DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)
@@ -613,7 +625,23 @@ DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, Cal
 
     // Compiler threads walk the metadata for CallLinkInfos and ArrayProfiles. They get to see this one when it is ready.
     WTF::storeStoreFence();
-    m_data = data;
+    TSAN_ANNOTATE_HAPPENS_BEFORE(data);
+    if (vm.gilOff()) [[unlikely]] {
+        // Two threads can give the same call site its CallSiteData at once: the first to publish wins and the other one's is
+        // deleted.
+        CallSiteData* current = WTF::atomicLoad(&m_data, std::memory_order_acquire);
+        for (;;) {
+            if (current && current->m_callLinkInfo.owner()) {
+                delete data;
+                return current->m_callLinkInfo;
+            }
+            CallSiteData* previous = WTF::atomicCompareExchangeStrong(&m_data, current, data, std::memory_order_acq_rel);
+            if (previous == current)
+                break;
+            current = previous;
+        }
+    } else
+        WTF::atomicStore(&m_data, data, std::memory_order_release);
     if (!(owner->metadataTable()->didAllocateCallSiteData() % MetadataTable::callSiteDatasPerReport))
         vm.heap.reportExtraMemoryAllocated(owner, MetadataTable::callSiteDatasPerReport * sizeof(CallSiteData));
     return data->m_callLinkInfo;
@@ -632,6 +660,7 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
 
 void CallLinkInfo::reset(VM& vm)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     // SPEC-jit section 5.8: unlink the record FIRST (single nullptr store) so
     // flag-on fast paths fall back to the default call before the legacy
     // mirrors below are torn down.
@@ -656,6 +685,7 @@ void CallLinkInfo::revertCall(VM& vm)
 
 void CallLinkInfo::setVirtualCall(VM& vm)
 {
+    RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     // AB17c F4 (precondition 11): not every caller is a locked linker —
     // RepatchInlines.h linkFor's mode switch calls this directly with no
     // lock held, and reset() below remove()s this node from an
@@ -798,6 +828,11 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
     if (callLinkInfo)
         jit.move(CCallHelpers::TrustedImmPtr(callLinkInfo), BaselineJITRegisters::Call::callLinkInfoGPR);
 
+    // Flag-on Baseline code (no callLinkInfo yet): a call site that has not run twice yet has one of the VM's shared
+    // CallSiteDatas (see LazyCallLinkInfo). Such a CallLinkInfo has no owner, no record and never changes: its calls take the
+    // sequence below, through its polymorphic-looking mirror fields, which ends in the unlinked call thunk, as flag off.
+    CCallHelpers::JumpList sharedCallLinkInfo;
+    CCallHelpers::Jump doneWithRecordPath;
     if (Options::useJSThreads()) [[unlikely]] {
         // SPEC-jit section 5.8 frozen fast path (all tiers/flavors flag-on):
         //   load r = m_record; if (!r) r = empty record (default call);
@@ -825,6 +860,8 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
             found.append(jit.branchTestPtr(CCallHelpers::NonZero, scratchGPR, CCallHelpers::TrustedImm32(polymorphicCalleeMask)));
         }
         haveNoRecord.link(&jit);
+        if (!callLinkInfo)
+            sharedCallLinkInfo.append(jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::Address(BaselineJITRegisters::Call::callLinkInfoGPR, offsetOfOwner())));
         jit.move(CCallHelpers::TrustedImmPtr(emptyCallLinkRecord()), BaselineJITRegisters::Call::callTargetGPR);
 
         found.link(&jit);
@@ -854,7 +891,11 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
             jit.loadPtr(CCallHelpers::Address(BaselineJITRegisters::Call::callTargetGPR, CallLinkRecord::offsetOfTarget()), BaselineJITRegisters::Call::callTargetGPR);
             jit.call(BaselineJITRegisters::Call::callTargetGPR, JSEntryPtrTag);
         }
-        return;
+        if (!sharedCallLinkInfo.empty()) {
+            doneWithRecordPath = jit.jump();
+            sharedCallLinkInfo.link(&jit);
+        } else
+            return;
     }
 
     // For RISCV64, scratch register usage here collides with MacroAssembler's internal usage
@@ -899,7 +940,8 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
         jit.transferPtr(CCallHelpers::Address(BaselineJITRegisters::Call::callLinkInfoGPR, offsetOfCodeBlock()), CCallHelpers::calleeFrameCodeBlockBeforeCall());
         jit.call(BaselineJITRegisters::Call::callTargetGPR, JSEntryPtrTag);
     }
-    return;
+    if (doneWithRecordPath.isSet())
+        doneWithRecordPath.link(&jit);
 }
 
 void CallLinkInfo::emitDataICFastPath(CCallHelpers& jit)

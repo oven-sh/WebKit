@@ -125,7 +125,7 @@ void SlotVisitor::didStartMarking()
 void SlotVisitor::reset()
 {
     AbstractSlotVisitor::reset();
-    WTF::atomicStore(&m_bytesVisited, static_cast<size_t>(0), std::memory_order_relaxed);
+    racyStore(m_bytesVisited, static_cast<size_t>(0));
     m_heapAnalyzer = nullptr;
     RELEASE_ASSERT(!m_currentCell);
 }
@@ -294,8 +294,8 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
 
     container.noteMarked();
     
-    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counters; see AbstractSlotVisitor::visitCount().
-    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + container.cellSize(), std::memory_order_relaxed);
+    racyStore(m_visitCount, racyLoad(m_visitCount) + 1); // Single-writer counters; see AbstractSlotVisitor::visitCount().
+    racyStore(m_bytesVisited, racyLoad(m_bytesVisited) + container.cellSize());
 
     m_collectorStack.append(cell);
 }
@@ -325,10 +325,10 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     container.assertValidCell(vm(), cell);
     container.noteMarked();
     
-    WTF::atomicStore(&m_visitCount, WTF::atomicLoad(&m_visitCount, std::memory_order_relaxed) + 1, std::memory_order_relaxed); // Single-writer counter; see AbstractSlotVisitor::visitCount().
+    racyStore(m_visitCount, racyLoad(m_visitCount) + 1); // Single-writer counter; see AbstractSlotVisitor::visitCount().
 
     size_t cellSize = container.cellSize();
-    WTF::atomicStore(&m_bytesVisited, WTF::atomicLoad(&m_bytesVisited, std::memory_order_relaxed) + cellSize, std::memory_order_relaxed);
+    racyStore(m_bytesVisited, racyLoad(m_bytesVisited) + cellSize);
     m_nonCellVisitCount += cellSize;
 }
 
