@@ -276,6 +276,7 @@ public:
 
 #if ASSERT_ENABLED
     // Points to the original block this one was cloned from during loop unrolling.
+    // Graph::killBlock() clears it when that block leaves the graph.
     BasicBlock* cloneSource { nullptr };
 #endif
 
