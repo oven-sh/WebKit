@@ -27,6 +27,7 @@
 #include "JSPromiseConstructor.h"
 
 #include "AggregateError.h"
+#include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "GetterSetter.h"
@@ -291,6 +292,11 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRaceSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job that runs no script.
+    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
+        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -488,6 +494,11 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAllSlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job that runs no script.
+    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
+        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();
@@ -1249,6 +1260,11 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseAnySlow(globalObject, callFrame, thisValue)));
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects it is a job that runs no script.
+    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
+        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+#endif
 
     auto callReject = [&]() -> void {
         Exception* exception = scope.exception();

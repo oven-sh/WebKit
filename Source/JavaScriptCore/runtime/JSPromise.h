@@ -151,8 +151,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // Once VM::unhandledRejectionsAreReportedInAsyncContext(), for a pending promise that a job which runs no
-    // script is going to settle: one that was resolved with a native promise, or that then() or finally()
-    // returned.
+    // script is going to settle: one that was resolved with a native promise, or that then(), finally() or a
+    // combinator returned.
     // Such a job does not run in the async context it was scheduled in, because nothing it does can see one,
     // with one exception: if it rejects the promise and nothing handles that, the embedder is told
     // (promiseRejectionTracker), and the embedder asks what the async context is.

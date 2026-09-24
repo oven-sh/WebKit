@@ -56,6 +56,11 @@ const forms = {
     "finally() of a rejected promise": () => alreadyRejected().finally(noop),
     "a chain of then() with no handler for the rejection": () => alreadyRejected().then(noop).then(noop).then(noop),
 
+    "Promise.all() of a promise that rejects": () => Promise.all([Promise.resolve(1), rejecting()]),
+    "Promise.all() of a promise that rejects later": () => Promise.all([rejectedLater()]),
+    "Promise.race() of a promise that rejects": () => Promise.race([rejecting()]),
+    "Promise.race() of a then() whose handler is an async function that throws": () => Promise.race([Promise.resolve().then(async () => { throw error(); })]),
+    "Promise.any() of promises that reject": () => Promise.any([rejecting(), rejectedLater()]),
 };
 
 const rejectedAtOnce = ["Promise.reject()", "new Promise, rejected by its executor", "async function that throws"];
@@ -99,6 +104,9 @@ function checkValues(round) {
         const passedOn = Promise.resolve("passed on").then(undefined, noop);
         passedOn.then(value => seen.push(value));
         (async () => seen.push(await new Promise(resolve => resolve(Promise.resolve("awaited")))))();
+        Promise.all([Promise.resolve("all")]).then(values => seen.push(values[0]));
+        Promise.race([Promise.resolve("race")]).then(value => seen.push(value));
+        Promise.any([Promise.resolve("any")]).then(value => seen.push(value));
 
         for (const [name, form] of Object.entries(forms)) {
             // (Those are rejected before anything can handle them.)
@@ -113,7 +121,7 @@ function checkValues(round) {
         Promise.resolve().then(() => caughtLater.catch(reason => seen.push(reason.message)));
     });
     drainMicrotasks();
-    shouldBe(seen.sort().join(), "adopted,awaited,passed on,rejected", `values (${round})`);
+    shouldBe(seen.sort().join(), "adopted,all,any,awaited,passed on,race,rejected", `values (${round})`);
     for (const promise of handled)
         shouldBe(asyncContextsWhenRejected.has(promise), false, `a handled rejection is not reported (${round})`);
 }
