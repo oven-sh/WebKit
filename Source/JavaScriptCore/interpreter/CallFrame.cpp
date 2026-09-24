@@ -194,6 +194,39 @@ SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFram
     return static_cast<CallFrame*>(unsafeCallerFrameOrEntryFrame());
 }
 
+JSScope* CallFrame::scopeOfClosestScript(VM& vm)
+{
+    auto isScript = [](CodeBlock* codeBlock) {
+        return codeBlock->codeType() != CodeType::FunctionCode || !static_cast<FunctionExecutable*>(codeBlock->ownerExecutable())->isBuiltinFunction();
+    };
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame(entryFrame)) {
+        if (frame->isNativeCalleeFrame())
+            continue;
+        CodeBlock* codeBlock = frame->codeBlock();
+        if (!codeBlock)
+            continue;
+#if ENABLE(DFG_JIT)
+        // Optimized code: the call is made by a function inlined in it, or by one inlined in that, or by its own.
+        if (codeBlock->hasCodeOrigins() && codeBlock->canGetCodeOrigin(frame->callSiteIndex())) {
+            bool wasTailCalled = false;
+            for (auto* inlined = codeBlock->codeOrigin(frame->callSiteIndex()).inlineCallFrame(); inlined;) {
+                if (isScript(inlined->baselineCodeBlock.get()))
+                    return inlined->calleeForCallFrame(frame)->scope();
+                CodeOrigin* caller = inlined->getCallerSkippingTailCalls();
+                wasTailCalled = !caller;
+                inlined = caller ? caller->inlineCallFrame() : nullptr;
+            }
+            if (wasTailCalled)
+                continue;
+        }
+#endif
+        if (isScript(codeBlock))
+            return uncheckedDowncast<JSCallee>(frame->jsCallee())->scope();
+    }
+    return nullptr;
+}
+
 SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
 {
     RELEASE_ASSERT(callee().isCell());

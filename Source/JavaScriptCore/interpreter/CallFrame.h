@@ -335,6 +335,10 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         void setReturnPC(void* value) { callerFrameAndPC().returnPC = value; }
 
         JS_EXPORT_PRIVATE static JSGlobalObject* globalObjectOfClosestCodeBlock(VM&, CallFrame*);
+        // The scope that the script that is calling was made in: its function's, or its module's. For a host
+        // function, a custom accessor, or what they call. Host functions and builtin functions are not
+        // script. Null when no script is calling.
+        JS_EXPORT_PRIVATE static JSScope* scopeOfClosestScript(VM&);
         String friendlyFunctionName();
 
         void dump(PrintStream&) const;
