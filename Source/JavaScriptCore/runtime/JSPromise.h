@@ -135,11 +135,11 @@ public:
     // A promise that has a reaction, or is fulfilled, or was made for no function (Promise.withResolvers(), the
     // combinators, Promise.reject()) has none.
     //
-    // The promise does not keep the function alive. When a collection finds it dead, the promise is given the
-    // closest scope the function was made in that is alive in its place, or nothing: so this is a function or a
-    // scope. A rejected promise only has it while the embedder is told of the rejection
-    // (promiseRejectionTracker(), JSPromiseRejectionOperation::Reject).
-    JSCell* madeFor() const;
+    // The promise does not keep the function alive, and the collector looks at it once: the first collection that
+    // sees the promise gives it what the embedder keeps of the function in its place (VM::whoseScript()), which
+    // is not a cell. So this is a function, or that. A rejected promise has none: the embedder asks
+    // VM::madeForOfPromiseBeingRejected() while it is told of the rejection.
+    JSValue madeFor() const;
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
     JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);
     static JSPromise* createMadeForInline(VM&, Structure*, JSValue function);

@@ -536,6 +536,9 @@ public:
     bool m_asyncContextTrackingEnabled { false };
 #if USE(BUN_JSC_ADDITIONS)
     CallFrame* m_frameThatStartedTheRunningJob { nullptr };
+    JSValue (*m_whoseScript)(VM&, JSCell*) { nullptr };
+    // (On the stack of what is rejecting the promise, where the collector finds it.)
+    const JSValue* m_madeForOfPromiseBeingRejected { nullptr };
 #endif
 #endif
     ClientData* clientData { nullptr };
@@ -672,6 +675,18 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
 #if USE(BUN_JSC_ADDITIONS)
+    // What the embedder keeps of a function a promise was made for (JSPromise::madeFor()), once a collection has
+    // seen the promise: a value that is not a cell, for the collector to have nothing to look at, which says to the
+    // embedder whose the function is. It is asked at the end of a collection, so it only reads: `functionOrScope`
+    // may be dead, and is as it was when it was alive. None set: nothing is kept.
+    using WhoseScript = JSValue (*)(VM&, JSCell* functionOrScope);
+    WhoseScript whoseScript() const { return m_whoseScript; }
+    void setWhoseScript(WhoseScript whoseScript) { m_whoseScript = whoseScript; }
+    // What the promise the embedder is being told was rejected (promiseRejectionTracker(), Reject) was made for:
+    // what JSPromise::madeFor() said until then.
+    JSValue madeForOfPromiseBeingRejected() const { return m_madeForOfPromiseBeingRejected ? *m_madeForOfPromiseBeingRejected : JSValue(); }
+    const JSValue* exchangeMadeForOfPromiseBeingRejected(const JSValue* madeFor) { return std::exchange(m_madeForOfPromiseBeingRejected, madeFor); }
+
     // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it
     // said so: that frame and the ones that called it are not the script that is calling
     // (CallFrame::scopeOfClosestScript()), what the job calls is. Null: every frame may be.

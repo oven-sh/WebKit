@@ -4236,17 +4236,30 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, C
     return JSValue::encode(ownerOfScope(CallFrame::scopeOfClosestScript(globalObject->vm())));
 }
 
-static JSValue ownerOfMadeFor(VM& vm, JSPromise* promise)
+// Whose script `functionOrScope` is, as ownerOfScope() says, for a test's loaders whose owner is not a cell (a
+// number): what VM::whoseScript() is in the shell. "none" is a cell, so nothing is kept for what is nobody's.
+static JSValue whoseScript(VM&, JSCell* functionOrScope)
 {
-    JSCell* madeFor = promise->madeFor();
-    if (auto* scope = dynamicDowncast<JSScope>(madeFor))
-        return ownerOfScope(scope);
-    auto* function = dynamicDowncast<JSFunction>(madeFor);
+    auto* scope = dynamicDowncast<JSScope>(functionOrScope);
+    auto* function = dynamicDowncast<JSFunction>(functionOrScope);
     while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
         function = dynamicDowncast<JSFunction>(bound->targetFunction());
-    if (!function || function->isHostFunction() || function->jsExecutable()->isBuiltinFunction())
+    if (function && !function->isHostFunction() && !function->jsExecutable()->isBuiltinFunction())
+        scope = function->scope();
+    if (!scope)
+        return { };
+    JSValue owner = ownerOfScope(scope);
+    return owner.isCell() ? JSValue() : owner;
+}
+
+static JSValue ownerOfMadeFor(VM& vm, JSValue madeFor)
+{
+    if (!madeFor)
         return jsNontrivialString(vm, "none"_s);
-    return ownerOfScope(function->scope());
+    if (!madeFor.isCell())
+        return madeFor;
+    JSValue whose = whoseScript(vm, madeFor.asCell());
+    return whose ? whose : JSValue(jsNontrivialString(vm, "none"_s));
 }
 
 static Identifier ownerWhenRejected(VM& vm)
@@ -4259,7 +4272,7 @@ static Identifier ownerWhenRejected(VM& vm)
 void JSDollarVM::promiseWasRejected(JSGlobalObject* globalObject, JSPromise* promise)
 {
     VM& vm = globalObject->vm();
-    promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, promise));
+    promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, vm.madeForOfPromiseBeingRejected()));
 }
 
 // $vm.ownerOfMaker(promise): ownerOfScope() of what the promise was made for (JSPromise::madeFor()), "none" if it
@@ -4273,7 +4286,7 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, Ca
         return JSValue::encode(jsNontrivialString(vm, "none"_s));
     if (JSValue whenRejected = promise->getDirect(vm, ownerWhenRejected(vm)))
         return JSValue::encode(whenRejected);
-    return JSValue::encode(ownerOfMadeFor(vm, promise));
+    return JSValue::encode(ownerOfMadeFor(vm, promise->madeFor()));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.
@@ -5884,6 +5897,9 @@ void JSDollarVM::finishCreation(VM& vm)
 {
     DollarVMAssertScope assertScope;
     Base::finishCreation(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    vm.setWhoseScript(whoseScript);
+#endif
 
     JSGlobalObject* globalObject = this->realm();
 

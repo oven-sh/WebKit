@@ -449,9 +449,6 @@ Heap::Heap(VM& vm, HeapType heapType)
     , functionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, FunctionExecutable) // Hash:0xbcb36268
     , programExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, ProgramExecutable) // Hash:0x4c9208f7
     , unlinkedFunctionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, UnlinkedFunctionExecutable) // Hash:0x3ba0f4e1
-#if USE(BUN_JSC_ADDITIONS)
-    , promisesMadeForSet(promiseSpace)
-#endif
 
 {
     if (Options::forceFencedBarrier()) {
@@ -823,7 +820,12 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
     reconcileWeakReferencesInMarkedCells<SymbolTable>(symbolTableSpace, collectionScope);
 #if USE(BUN_JSC_ADDITIONS)
-    reconcileWeakReferencesInMarkedCells<JSPromise>(promisesMadeForSet, collectionScope);
+    {
+        Locker locker { m_promisesMadeForFunctionsLock };
+        for (JSPromise* promise : m_promisesMadeForFunctions)
+            promise->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+        m_promisesMadeForFunctions.shrink(0);
+    }
 #endif
 
     forEachCodeBlockSpace(
@@ -3823,7 +3825,11 @@ void Heap::addCoreConstraints()
                 add(*heap->m_weakMapSpace);
             }
 #if USE(BUN_JSC_ADDITIONS)
-            add(heap->promisesMadeForSet);
+            {
+                Locker locker { heap->m_promisesMadeForFunctionsLock };
+                for (JSPromise* promise : heap->m_promisesMadeForFunctions)
+                    callOutputConstraint(visitor, promise, HeapCell::JSCell);
+            }
 #endif
         })),
         ConstraintVolatility::GreyedByMarking,

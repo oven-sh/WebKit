@@ -89,53 +89,28 @@ JSPromise* JSPromise::createMadeFor(VM& vm, Structure* structure, JSValue functi
     return createMadeForInline(vm, structure, function);
 }
 
-JSCell* JSPromise::madeFor() const
+JSValue JSPromise::madeFor() const
 {
-    switch (status()) {
-    case Status::Pending: {
-        if (inlineReactionKind() != InlineReactionKind::None || payloadCell())
-            return nullptr;
-        JSValue function = m_slot.get();
-        return function && function.isCell() ? function.asCell() : nullptr;
-    }
-    case Status::Rejected:
-        return payloadCell();
-    case Status::Fulfilled:
-        break;
-    }
-    return nullptr;
+    if (status() != Status::Pending || inlineReactionKind() != InlineReactionKind::None || payloadCell())
+        return { };
+    return m_slot.get();
 }
 
-// The closest scope `cell` (a function, or a scope) was made in that is alive. (`cell` is dead, and as it was when
-// it was alive: nothing has been swept.)
-static JSScope* closestLiveScope(VM& vm, JSCell* cell)
-{
-    auto* function = dynamicDowncast<JSFunction>(cell);
-    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
-        function = dynamicDowncast<JSFunction>(bound->targetFunction());
-    JSScope* scope = function ? (function->isHostFunction() ? nullptr : function->scope()) : dynamicDowncast<JSScope>(cell);
-    for (; scope; scope = scope->next()) {
-        if (vm.heap.isMarked(scope))
-            return scope;
-    }
-    return nullptr;
-}
-
-// (Only the promises that were visited in this collection are in the set: one that was not has what it had, which
-// is as old as it is.)
+// (For the promises that were visited in this collection, and for each of them once: what it has from here on is
+// not a cell.)
 void JSPromise::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
-    vm.heap.promisesMadeForSet.remove(this);
-    JSCell* cell = status() == Status::Pending ? madeFor() : nullptr;
-    if (!cell || vm.heap.isMarked(cell))
+    JSValue function = madeFor();
+    if (!function || !function.isCell())
         return;
-    JSScope* scope = closestLiveScope(vm, cell);
-    m_slot.setWithoutWriteBarrier(scope ? JSValue(scope) : JSValue());
+    JSValue whose = vm.whoseScript() ? vm.whoseScript()(vm, function.asCell()) : JSValue();
+    ASSERT(!whose || !whose.isCell());
+    m_slot.setWithoutWriteBarrier(whose);
 }
 
 void JSPromise::setMadeFor(VM& vm, JSValue function)
 {
-    if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
+    if (function && function.isCell() && status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
         m_slot.set(vm, this, function);
 }
 #endif
@@ -161,7 +136,7 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         // If the promise is being settled with this cell right now, the two words were not read as one: the cell
         // is looked at again once the mutator is stopped (visitOutputConstraints()).
         if (!payload)
-            visitor.vm().heap.promisesMadeForSet.add(thisObject);
+            visitor.vm().heap.didVisitPromiseMadeForFunction(thisObject);
         return;
     }
     visitor.appendUnbarriered(slot.asCell());
@@ -183,7 +158,6 @@ void JSPromise::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSPromise>(cell);
     if (!visitor.mutatorIsStopped() || thisObject->madeFor())
         return;
-    visitor.vm().heap.promisesMadeForSet.remove(thisObject);
     if (JSCell* payload = thisObject->m_packed.pointer())
         visitor.appendUnbarriered(payload);
     if (thisObject->status() != Status::Pending || thisObject->inlineReactionKind() != InlineReactionKind::None)
@@ -810,13 +784,15 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
 #if USE(BUN_JSC_ADDITIONS)
         if (!(currentFlags & isHandledFlag)) {
-            // Nothing handles this rejection: the promise keeps the function it was made for (see madeFor()).
-            // The embedder is told, and can ask what the promise was made for while it is (see madeFor()).
-            JSValue function = m_slot.get();
+            // Nothing handles this rejection: the embedder is told, and can ask what the promise was made for while
+            // it is (VM::madeForOfPromiseBeingRejected()).
+            JSValue madeFor = reactions ? JSValue() : m_slot.get();
             setSlot(vm, argument);
-            setPackedCell(vm, settledFlags, !reactions && function && function.isCell() ? function.asCell() : nullptr);
+            setPackedCell(vm, settledFlags, nullptr);
+            const JSValue* outer = vm.exchangeMadeForOfPromiseBeingRejected(&madeFor);
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-            m_packed.setPointer(nullptr);
+            vm.exchangeMadeForOfPromiseBeingRejected(outer);
+            ensureStillAliveHere(madeFor);
         } else {
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
