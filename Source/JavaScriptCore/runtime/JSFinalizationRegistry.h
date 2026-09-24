@@ -78,7 +78,8 @@ public:
 
     bool unregister(VM&, JSCell* token);
     // token should be a JSObject, Symbol, or undefined.
-    void registerTarget(VM&, JSCell* target, JSValue holdings, JSValue token);
+    // Returns false, and registers nothing, when the list of registrations cannot grow.
+    [[nodiscard]] bool registerTarget(VM&, JSCell* target, JSValue holdings, JSValue token);
 
     struct LiveRegistration {
         JSCell* target;
