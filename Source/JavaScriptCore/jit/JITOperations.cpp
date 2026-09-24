@@ -389,6 +389,11 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reload it again since static-class-table can cause transition. But this transition only affects on this Structure.
+        // The static-class-table lookup may also have run a PropertyCallback builder, which can
+        // throw (setUpStaticFunctionSlot then reports a miss). Stop here in that case, before
+        // the miss is recorded in the megamorphic cache for baseObject's structure.
+        if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()))
+            RETURN_IF_EXCEPTION(scope, { });
         if (!structure->propertyAccessesAreCacheable()) {
             shouldGiveUp = true;
             cacheable = false;
@@ -730,6 +735,11 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reload it again since static-class-table can cause transition. But this transition only affects on this Structure.
+        // The static-class-table lookup may also have run a PropertyCallback builder, which can
+        // throw (setUpStaticFunctionSlot then reports a miss). Stop here in that case, before
+        // the miss is recorded in the megamorphic cache for baseObject's structure.
+        if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()))
+            RETURN_IF_EXCEPTION(scope, { });
         if (!structure->propertyAccessesAreCacheable()) {
             shouldGiveUp = true;
             cacheable = false;
@@ -920,6 +930,11 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reload it again since static-class-table can cause transition. But this transition only affects on this Structure.
+        // The static-class-table lookup may also have run a PropertyCallback builder, which can
+        // throw (setUpStaticFunctionSlot then reports a miss). Stop here in that case, before
+        // the miss is recorded in the megamorphic cache for baseObject's structure.
+        if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()))
+            RETURN_IF_EXCEPTION(scope, { });
         if (!structure->propertyAccessesAreCacheable()) {
             cacheable = false;
             shouldGiveUp = true;
@@ -3779,6 +3794,11 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reload it again since static-class-table can cause transition. But this transition only affects on this Structure.
+        // The static-class-table lookup may also have run a PropertyCallback builder, which can
+        // throw (setUpStaticFunctionSlot then reports a miss). Stop here in that case, before
+        // the miss is recorded in the megamorphic cache for baseObject's structure.
+        if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()))
+            RETURN_IF_EXCEPTION(scope, { });
         if (!structure->propertyAccessesAreCacheable()) {
             cacheable = false;
             shouldGiveUp = true;
