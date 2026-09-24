@@ -28,6 +28,10 @@
 #include "JSCBuiltins.h"
 #include <cstdint>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSCPrimordials.h"
+#endif
+
 namespace JSC {
 
 class CodeBlock;
@@ -163,10 +167,21 @@ class JSGlobalObject;
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {
     JSC_FOREACH_LINK_TIME_CONSTANTS(DECLARE_LINK_TIME_CONSTANT)
+#if USE(BUN_JSC_ADDITIONS)
+#define DECLARE_PRIMORDIAL_LINK_TIME_CONSTANT(name, key, kind) name,
+    JSC_FOREACH_PRIMORDIAL_NAME(DECLARE_PRIMORDIAL_LINK_TIME_CONSTANT)
+#undef DECLARE_PRIMORDIAL_LINK_TIME_CONSTANT
+#endif
 };
 #undef DECLARE_LINK_TIME_CONSTANT
 #define COUNT_LINK_TIME_CONSTANT(name, code) 1 +
+#if USE(BUN_JSC_ADDITIONS)
+#define COUNT_PRIMORDIAL_LINK_TIME_CONSTANT(name, key, kind) 1 +
+static constexpr unsigned numberOfLinkTimeConstants = JSC_FOREACH_LINK_TIME_CONSTANTS(COUNT_LINK_TIME_CONSTANT) JSC_FOREACH_PRIMORDIAL_NAME(COUNT_PRIMORDIAL_LINK_TIME_CONSTANT) 0;
+#undef COUNT_PRIMORDIAL_LINK_TIME_CONSTANT
+#else
 static constexpr unsigned numberOfLinkTimeConstants = JSC_FOREACH_LINK_TIME_CONSTANTS(COUNT_LINK_TIME_CONSTANT) 0;
+#endif
 #undef COUNT_LINK_TIME_CONSTANT
 
 } // namespace JSC
