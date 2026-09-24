@@ -1248,6 +1248,14 @@ bool VM::cancelTermination()
     return wasPending;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void VM::setWhoseScript(WhoseScript whoseScript)
+{
+    m_whoseScript = whoseScript;
+    m_promisesAreMadeForNothing.fireAll(*this, "Promises are made for functions");
+}
+#endif
+
 void VM::setException(Exception* exception)
 {
     ASSERT(!isTerminationException(exception) || hasTerminationRequest());

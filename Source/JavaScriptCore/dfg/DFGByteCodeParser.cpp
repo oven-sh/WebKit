@@ -8445,8 +8445,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             auto bytecode = currentInstruction->as<OpCreatePromise>();
             Node* callee = get(VirtualRegister(bytecode.m_callee));
-            // (The function the promise is made for: see JSPromise::madeFor().)
-            Node* madeFor = get(VirtualRegister(bytecode.m_madeFor));
+            // (The function the promise is made for, if promises are: see JSPromise::madeFor().)
+            Node* madeFor = m_graph.isWatchingPromisesAreMadeForNothingWatchpoint() ? nullptr : get(VirtualRegister(bytecode.m_madeFor));
 
             bool alreadyEmitted = false;
 

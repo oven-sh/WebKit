@@ -2,7 +2,10 @@
 // made for once the function is gone.
 import { shouldBe } from "./resources/assert.js";
 
-const first = $vm.createModuleLoader({ owner: "A" });
+$vm.promisesAreMadeForOwners();
+
+// (The owners are numbers: what is kept of a function once a collection has seen its promise is not a cell.)
+const first = $vm.createModuleLoader({ owner: 1 });
 const A = await $vm.moduleLoaderImport(first, "./promise-maker/code.js");
 const G = await import("./promise-maker/code.js");
 
@@ -16,7 +19,7 @@ async function collect() {
     await task();
 }
 
-for (const [maker, owner] of [[A, "A"], [G, undefined]]) {
+for (const [maker, owner] of [[A, 1], [G, undefined]]) {
     // Something only the executor has is collected while the promise is pending: with nothing done with the
     // promise, and with reactions. (Not every time: what has just run can be kept by what ran it.)
     for (const react of [false, true]) {

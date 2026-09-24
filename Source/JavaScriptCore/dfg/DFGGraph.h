@@ -926,6 +926,24 @@ public:
         return false;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether this code may make a promise for nothing: until the embedder keeps what promises are made for
+    // (VM::setWhoseScript()).
+    bool isWatchingPromisesAreMadeForNothingWatchpoint()
+    {
+        InlineWatchpointSet& set = m_vm.promisesAreMadeForNothingWatchpointSet();
+        if (m_plan.isUnlinked())
+            return false;
+        if (watchpoints().isWatched(set))
+            return true;
+        if (set.isStillValid()) {
+            watchpoints().addLazily(set);
+            return true;
+        }
+        return false;
+    }
+#endif
+
     bool isWatchingHavingABadTimeWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);

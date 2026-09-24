@@ -10552,7 +10552,7 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LValue callee = lowCell(m_node->child1());
-        LValue madeFor = lowJSValue(m_node->child2());
+        LValue madeFor = m_node->child2() ? lowJSValue(m_node->child2()) : m_out.constInt64(JSValue::encode(JSValue()));
 
         LBasicBlock derivedCase = m_out.newBlock();
         LBasicBlock isFunctionBlock = m_out.newBlock();

@@ -294,7 +294,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
 #if USE(BUN_JSC_ADDITIONS)
             // The promise is made for onFinally (JSPromise::madeFor()), which it is given now: the context lets go
             // of onFinally once it has been called, before the promise is rejected.
-            JSPromise* resultPromise = JSPromise::createMadeForInline(vm, globalObject->promiseStructure(), onFinally);
+            JSPromise* resultPromise = JSPromise::createMadeForInline(vm, globalObject->promiseStructure(), vm.whoseScript() ? onFinally : JSValue());
 #else
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
 #endif

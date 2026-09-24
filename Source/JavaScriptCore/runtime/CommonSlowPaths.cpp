@@ -215,7 +215,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_promise)
             structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructorAsObject, globalObject->promiseConstructor());
             CHECK_EXCEPTION();
         }
-        result = JSPromise::createMadeForInline(vm, structure, GET(bytecode.m_madeFor).jsValue());
+        result = JSPromise::createMadeForInline(vm, structure, vm.whoseScript() ? GET(bytecode.m_madeFor).jsValue() : JSValue());
 #else
         Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructorAsObject, globalObject->promiseConstructor());
         CHECK_EXCEPTION();

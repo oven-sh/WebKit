@@ -2,12 +2,19 @@
 // whoever rejected it, in every tier.
 import { shouldBe } from "./resources/assert.js";
 
-const first = $vm.createModuleLoader({ owner: "A" });
+// Until the embedder keeps something of the functions promises are made for, they are made for nothing.
+let rejectBefore;
+const before = new Promise((_, reject) => { rejectBefore = reject; });
+shouldBe($vm.ownerOfMaker(before), "none");
+$vm.promisesAreMadeForOwners();
+
+// (The owners are numbers: what is kept of a function once a collection has seen its promise is not a cell.)
+const first = $vm.createModuleLoader({ owner: 1 });
 const A = await $vm.moduleLoaderImport(first, "./promise-maker/code.js");
 // The same code as A's: the two loaders' modules share executables.
-const B = await $vm.moduleLoaderImport($vm.createModuleLoader({ owner: "B" }, first), "./promise-maker/code.js");
+const B = await $vm.moduleLoaderImport($vm.createModuleLoader({ owner: 2 }, first), "./promise-maker/code.js");
 const G = await import("./promise-maker/code.js");
-const all = [[A, "A"], [B, "B"], [G, undefined]];
+const all = [[A, 1], [B, 2], [G, undefined]];
 
 // What a rejected promise that nothing handles says about who it was made for, after the jobs that reject it
 // have run.
@@ -70,3 +77,6 @@ for (let i = 0; i < testLoopCount; ++i) {
         shouldBe($vm.ownerOfMaker(Promise.resolve(1)), "none");
     }
 }
+
+rejectBefore(new Error("rejected"));
+shouldBe(await makerOf(before), "none");

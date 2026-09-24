@@ -103,13 +103,15 @@ void JSPromise::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
     JSValue function = madeFor();
     if (!function || !function.isCell())
         return;
-    JSValue whose = vm.whoseScript() ? vm.whoseScript()(vm, function.asCell()) : JSValue();
+    JSValue whose = vm.whoseScript()(vm, function.asCell());
     ASSERT(!whose || !whose.isCell());
     m_slot.setWithoutWriteBarrier(whose);
 }
 
 void JSPromise::setMadeFor(VM& vm, JSValue function)
 {
+    if (!vm.whoseScript())
+        return;
     if (function && function.isCell() && status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
         m_slot.set(vm, this, function);
 }

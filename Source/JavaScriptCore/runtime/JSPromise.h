@@ -139,6 +139,9 @@ public:
     // sees the promise gives it what the embedder keeps of the function in its place (VM::whoseScript()), which
     // is not a cell. So this is a function, or that. A rejected promise has none: the embedder asks
     // VM::madeForOfPromiseBeingRejected() while it is told of the rejection.
+    //
+    // All of this only once the embedder keeps something (VM::setWhoseScript()). Until then every promise is made
+    // for nothing.
     JSValue madeFor() const;
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
     JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);

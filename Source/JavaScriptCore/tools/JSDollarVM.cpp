@@ -2266,6 +2266,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
 static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfCaller);
+static JSC_DECLARE_HOST_FUNCTION(functionPromisesAreMadeForOwners);
 static JSC_DECLARE_HOST_FUNCTION(functionOwnerOfMaker);
 static JSC_DECLARE_HOST_FUNCTION(functionNothing);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
@@ -4275,6 +4276,15 @@ void JSDollarVM::promiseWasRejected(JSGlobalObject* globalObject, JSPromise* pro
     promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, vm.madeForOfPromiseBeingRejected()));
 }
 
+// $vm.promisesAreMadeForOwners(): from now on promises are made for functions, and what is kept of a function is
+// whose it is (whoseScript()).
+JSC_DEFINE_HOST_FUNCTION(functionPromisesAreMadeForOwners, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    globalObject->vm().setWhoseScript(whoseScript);
+    return JSValue::encode(jsUndefined());
+}
+
 // $vm.ownerOfMaker(promise): ownerOfScope() of what the promise was made for (JSPromise::madeFor()), "none" if it
 // has none.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -5897,9 +5907,6 @@ void JSDollarVM::finishCreation(VM& vm)
 {
     DollarVMAssertScope assertScope;
     Base::finishCreation(vm);
-#if USE(BUN_JSC_ADDITIONS)
-    vm.setWhoseScript(whoseScript);
-#endif
 
     JSGlobalObject* globalObject = this->realm();
 
@@ -6053,6 +6060,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
     addFunction(vm, allowIfNotFuzz, "ownerOfCaller"_s, functionOwnerOfCaller, 0);
+    addFunction(vm, allowIfNotFuzz, "promisesAreMadeForOwners"_s, functionPromisesAreMadeForOwners, 0);
     addFunction(vm, allowIfNotFuzz, "ownerOfMaker"_s, functionOwnerOfMaker, 1);
     addFunction(vm, allowIfNotFuzz, "nothing"_s, functionNothing, 0);
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);

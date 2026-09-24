@@ -9235,15 +9235,21 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
 
     SpeculateCellOperand callee(this, node->child1());
-    // The function the promise is made for (JSPromise::madeFor()): it is written where nothing would be.
-    JSValueOperand madeFor(this, node->child2());
+    // The function the promise is made for (JSPromise::madeFor()), if it is made for one: it is written where
+    // nothing would be.
+    std::optional<JSValueOperand> madeFor;
+    if (node->child2())
+        madeFor.emplace(this, node->child2());
+    GPRTemporary madeForNothing(this);
     GPRTemporary result(this);
     GPRTemporary structure(this);
     GPRTemporary scratch1(this);
     GPRTemporary scratch2(this);
 
     GPRReg calleeGPR = callee.gpr();
-    GPRReg madeForGPR = madeFor.gpr();
+    GPRReg madeForGPR = madeFor ? madeFor->gpr() : madeForNothing.gpr();
+    if (!madeFor)
+        move(TrustedImm64(JSValue::encode(JSValue())), madeForGPR);
     GPRReg resultGPR = result.gpr();
     GPRReg structureGPR = structure.gpr();
     GPRReg scratch1GPR = scratch1.gpr();

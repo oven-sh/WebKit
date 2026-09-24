@@ -537,6 +537,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     CallFrame* m_frameThatStartedTheRunningJob { nullptr };
     JSValue (*m_whoseScript)(VM&, JSCell*) { nullptr };
+    InlineWatchpointSet m_promisesAreMadeForNothing { IsWatched };
     // (On the stack of what is rejecting the promise, where the collector finds it.)
     const JSValue* m_madeForOfPromiseBeingRejected { nullptr };
 #endif
@@ -679,9 +680,13 @@ public:
     // seen the promise: a value that is not a cell, for the collector to have nothing to look at, which says to the
     // embedder whose the function is. It is asked at the end of a collection, so it only reads: `functionOrScope`
     // may be dead, and is as it was when it was alive. None set: nothing is kept.
+    // Until the embedder sets one, promises are made for nothing: they are made, rejected and collected as if
+    // none of this was there.
     using WhoseScript = JSValue (*)(VM&, JSCell* functionOrScope);
     WhoseScript whoseScript() const { return m_whoseScript; }
-    void setWhoseScript(WhoseScript whoseScript) { m_whoseScript = whoseScript; }
+    JS_EXPORT_PRIVATE void setWhoseScript(WhoseScript);
+    // Valid until setWhoseScript(): while it is, optimized code makes promises as it always has.
+    InlineWatchpointSet& promisesAreMadeForNothingWatchpointSet() LIFETIME_BOUND { return m_promisesAreMadeForNothing; }
     // What the promise the embedder is being told was rejected (promiseRejectionTracker(), Reject) was made for:
     // what JSPromise::madeFor() said until then.
     JSValue madeForOfPromiseBeingRejected() const { return m_madeForOfPromiseBeingRejected ? *m_madeForOfPromiseBeingRejected : JSValue(); }
