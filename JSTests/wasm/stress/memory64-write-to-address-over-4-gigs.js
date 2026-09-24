@@ -19,7 +19,8 @@ const {write, read} = instance.exports;
 const writeAddr = BigInt(Number.MAX_SAFE_INTEGER + 1);
 const outOfBoundsError = [
     WebAssembly.RuntimeError,
-    "Out of bounds memory access (evaluating 'func(...args)')",
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+    "Out of bounds memory access",
 ];
 
 function test() {
