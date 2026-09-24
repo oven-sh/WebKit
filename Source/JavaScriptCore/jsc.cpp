@@ -50,6 +50,7 @@
 #include "JSArrayBuffer.h"
 #include "JSBasePrivate.h"
 #include "JSBigInt.h"
+#include "JSDollarVM.h"
 #include "JSFinalizationRegistry.h"
 #include "JSFunction.h"
 #include "JSFunctionInlines.h"
@@ -1059,7 +1060,7 @@ private:
     static JSPromise* moduleLoaderFetch(JSGlobalObject*, JSModuleLoader*, JSValue, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     static JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, RefPtr<ScriptFetcher>);
 
-#if ENABLE(FUZZILLI)
+#if ENABLE(FUZZILLI) || USE(BUN_JSC_ADDITIONS)
     static void promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
 #endif
 
@@ -1684,6 +1685,17 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
         Fuzzilli::numPendingRejectedPromises -= 1;
         break;
     }
+}
+
+#elif USE(BUN_JSC_ADDITIONS)
+
+// A rejected promise only says what it was made for (JSPromise::madeFor()) while the embedder is told of the
+// rejection: $vm notes it then, for $vm.ownerOfMaker().
+void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
+{
+    if (operation == JSPromiseRejectionOperation::Reject && Options::useDollarVM())
+        JSDollarVM::promiseWasRejected(globalObject, promise);
+    JSGlobalObject::promiseRejectionTracker(globalObject, promise, operation);
 }
 
 #endif // ENABLE(FUZZILLI)
