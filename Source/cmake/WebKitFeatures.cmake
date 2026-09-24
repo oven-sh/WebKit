@@ -334,6 +334,8 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(USE_SYSTEM_MALLOC "Toggle system allocator instead of WebKit's custom allocator" PRIVATE ${USE_SYSTEM_MALLOC_DEFAULT})
     WEBKIT_OPTION_DEFINE(USE_MIMALLOC "Toggle mimalloc instead of WebKit's custom allocator" PRIVATE ${USE_MIMALLOC_DEFAULT})
     WEBKIT_OPTION_DEFINE(USE_EXTERNAL_MIMALLOC "Compile against mimalloc headers but leave mi_* symbols unresolved in the static archives (caller links its own mimalloc). Requires USE_MIMALLOC." PRIVATE OFF)
+    # Bun: USE_MIMALLOC needs this. See Source/bmalloc/mimalloc/CMakeLists.txt.
+    set(MIMALLOC_SOURCE_DIR "" CACHE PATH "A checkout of https://github.com/oven-sh/mimalloc at the commit in mimalloc/source.json")
     WEBKIT_OPTION_DEFINE(USE_PGO_PROFILE "Use PGO profile data for optimization (set PGO_PROFILE_PATH)" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(USE_WOFF2 "Toggle support for WOFF2 Web Fonts through libwoff2" PRIVATE ON)
 

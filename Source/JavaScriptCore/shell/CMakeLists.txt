@@ -21,7 +21,8 @@ endif ()
 if (USE_EXTERNAL_MIMALLOC)
     # The shipped static archives intentionally leave mi_* unresolved so the
     # consumer links its own mimalloc. The jsc shell still needs a working
-    # allocator, so link the vendored mimalloc object library here only.
+    # allocator, so link mimalloc-obj here only: Bun's mimalloc with Bun's
+    # settings (Source/bmalloc/mimalloc/CMakeLists.txt).
     list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
 endif ()
 
@@ -93,7 +94,7 @@ if (USE_BUN_JSC_ADDITIONS)
     if (USE_EXTERNAL_MIMALLOC)
         # Same as jsc above: the shipped static archives leave mi_* unresolved
         # under USE_EXTERNAL_MIMALLOC, so any executable that links the
-        # framework must supply the vendored mimalloc objects itself.
+        # framework must supply the mimalloc objects itself.
         list(APPEND testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
     endif ()
 

@@ -93,6 +93,13 @@ RUN mkdir -p /icu-host && cd /icu-host \
        ./configure --disable-shared --enable-static --disable-samples --disable-tests \
     && make -j$(nproc)
 
+# Bun's mimalloc (mimalloc/source.json): what a lane built with USE_MIMALLOC compiles against and what its jsc links.
+ARG MIMALLOC_REPO
+ARG MIMALLOC_COMMIT
+ARG MIMALLOC_SHA256
+ADD --checksum=sha256:${MIMALLOC_SHA256} https://github.com/${MIMALLOC_REPO}/archive/${MIMALLOC_COMMIT}.tar.gz /mimalloc.tgz
+RUN mkdir /mimalloc && tar -xzf /mimalloc.tgz --strip-components=1 -C /mimalloc && rm /mimalloc.tgz && test -f /mimalloc/src/static.c && test -f /mimalloc/include/mimalloc.h
+
 # ───────────────────────────────────────────────────────────────────────────
 # ICU — cross-compiled. ICU's autoconf build runs generated tools (gennorm2,
 # etc.) at build time, so a host build is required first; the target build
@@ -190,6 +197,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DUSE_BUN_EVENT_LOOP=ON \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DMIMALLOC_SOURCE_DIR=/mimalloc \
     -DENABLE_FTL_JIT=ON \
     -DENABLE_API_TESTS=OFF \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
