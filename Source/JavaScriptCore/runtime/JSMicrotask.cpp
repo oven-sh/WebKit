@@ -1883,6 +1883,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
+#if defined(JSC_MICROTASK_RUNNER_HAS_OWNER)
+        // If this rejects a promise that nothing handles, it is the owner's that the reaction captured.
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+#endif
         RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
     }
 

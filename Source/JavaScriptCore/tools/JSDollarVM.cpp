@@ -2338,6 +2338,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContextOwner);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContextOwner);
+static JSC_DECLARE_HOST_FUNCTION(functionOwnerWhenMade);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4259,6 +4260,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContextOwner, (JSGlobalObject* globalOb
     globalObject->m_asyncContextData.get()->putInternalField(vm, 1, owner);
     return JSValue::encode(jsUndefined());
 }
+
+// JSPromise::ownerWhenMade(), or undefined.
+JSC_DEFINE_HOST_FUNCTION(functionOwnerWhenMade, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
+    if (!promise)
+        return JSValue::encode(jsUndefined());
+    JSValue owner = promise->ownerWhenMade();
+    return JSValue::encode(owner ? owner : jsUndefined());
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6083,6 +6095,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, alwaysAllow, "asyncContextOwner"_s, functionAsyncContextOwner, 0);
     addFunction(vm, alwaysAllow, "setAsyncContextOwner"_s, functionSetAsyncContextOwner, 1);
+    addFunction(vm, alwaysAllow, "ownerWhenMade"_s, functionOwnerWhenMade, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

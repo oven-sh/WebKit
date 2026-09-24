@@ -158,7 +158,11 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncReject, (JSGlobalObject* globalOb
 JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncWithResolvers, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSValue thisValue = callFrame->thisValue().toThis(globalObject, ECMAMode::strict());
+#if USE(BUN_JSC_ADDITIONS)
+    return JSValue::encode(JSPromise::createNewPromiseCapabilityKeepingOwner(globalObject, thisValue));
+#else
     return JSValue::encode(JSPromise::createNewPromiseCapability(globalObject, thisValue));
+#endif
 }
 
 static bool NODELETE isFastPromiseConstructor(JSGlobalObject* globalObject, JSValue value)

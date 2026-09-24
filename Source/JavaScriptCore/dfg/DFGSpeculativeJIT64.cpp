@@ -9270,6 +9270,17 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, structureGPR, butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
     store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
     storeTrustedValue(JSValue(), Address(resultGPR, JSPromise::offsetOfSlot()));
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_graph.isWatchingAsyncContextOwnerIsNotTracked()) {
+        // JSPromise::createKeepingOwner().
+        loadLinkableConstant(LinkableConstant::globalObject(*this, node), scratch1GPR);
+        loadPtr(Address(scratch1GPR, JSGlobalObject::offsetOfAsyncContextData()), scratch1GPR);
+        load64(Address(scratch1GPR, JSInternalFieldObjectImpl<>::offsetOfInternalField(1)), scratch1GPR);
+        Jump noOwner = branchIfNotInt32(scratch1GPR);
+        store64(scratch1GPR, Address(resultGPR, JSPromise::offsetOfSlot()));
+        noOwner.link(this);
+    }
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationCreatePromise, resultGPR, LinkableConstant::globalObject(*this, node), calleeGPR));

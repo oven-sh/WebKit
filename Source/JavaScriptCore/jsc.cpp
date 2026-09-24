@@ -1059,7 +1059,7 @@ private:
     static JSPromise* moduleLoaderFetch(JSGlobalObject*, JSModuleLoader*, JSValue, const String&, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     static JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSModuleLoader*, JSValue, JSModuleRecord*, RefPtr<ScriptFetcher>);
 
-#if ENABLE(FUZZILLI)
+#if ENABLE(FUZZILLI) || USE(BUN_JSC_ADDITIONS)
     static void promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromiseRejectionOperation);
 #endif
 
@@ -1687,6 +1687,22 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 }
 
 #endif // ENABLE(FUZZILLI)
+
+#if USE(BUN_JSC_ADDITIONS) && !ENABLE(FUZZILLI)
+// For tests: what the embedder is told of the owner of a promise that is rejected with nothing handling it
+// (VM::ownerOfPromiseBeingRejected()), and the owner that is current then.
+void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
+{
+    VM& vm = globalObject->vm();
+    if (Options::useDollarVM() && operation == JSPromiseRejectionOperation::Reject) {
+        if (JSValue owner = vm.ownerOfPromiseBeingRejected())
+            promise->putDirect(vm, Identifier::fromString(vm, "ownerWhenRejected"_s), owner);
+        if (vm.isAsyncContextOwnerTracked())
+            promise->putDirect(vm, Identifier::fromString(vm, "ownerCurrentWhenRejected"_s), globalObject->m_asyncContextData->getInternalField(1));
+    }
+    JSGlobalObject::promiseRejectionTracker(globalObject, promise, operation);
+}
+#endif
 
 static UTF8CString toCString(JSGlobalObject* globalObject, ThrowScope& scope, std::expected<UTF8CString, UTF8ConversionError> expectedString)
 {

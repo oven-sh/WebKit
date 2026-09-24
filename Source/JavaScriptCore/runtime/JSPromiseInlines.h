@@ -23,30 +23,31 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
+#pragma once
 
 #if USE(BUN_JSC_ADDITIONS)
 
-// runInternalMicrotaskWithOwner(): what runs a VM's jobs once async code has owners
-// (VM::internalMicrotaskRunner()). It is runInternalMicrotask() with the scope that knows of owners, and is
-// made by compiling JSMicrotask.cpp again with that scope in place of the other, so that JSMicrotask.cpp itself,
-// which runs the jobs of every program that has no owner, is compiled to what it was before there were owners.
-// What else JSMicrotask.cpp defines is made again with it, under another name, for this one to call.
+#include "InternalFieldTuple.h"
+#include "JSCellInlines.h"
+#include "JSGlobalObject.h"
+#include "JSPromise.h"
 
-#include "AsyncContextSwapScope.h"
-#include "JSMicrotask.h"
+namespace JSC {
 
-#define JSC_MICROTASK_RUNNER_HAS_OWNER 1
-#define AsyncContextSwapScope AsyncContextOwnedSwapScope
-#define AsyncContextWithOwnerSwapScope AsyncContextOwnedSwapScope
-#define runInternalMicrotask runInternalMicrotaskWithOwner
-#define asyncGeneratorAwaitReturn asyncGeneratorAwaitReturnWithOwner
-#define asyncGeneratorResume asyncGeneratorResumeWithOwner
-#define enqueueAsyncGeneratorDriver enqueueAsyncGeneratorDriverWithOwner
-#define asyncIteratorNextWithDriver asyncIteratorNextWithDriverWithOwner
-#define asyncModuleResolveEvaluation asyncModuleResolveEvaluationWithOwner
-#define asyncFunctionDrive asyncFunctionDriveWithOwner
+// JSPromise::create(), for a promise whose reject function is handed out (see ownerWhenMade()). In its caller, so
+// that making one costs a program that has no owner no more than it did.
+ALWAYS_INLINE JSPromise* JSPromise::createKeepingOwner(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+{
+    JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure);
+    promise->finishCreation(vm);
+    if (vm.isAsyncContextOwnerTracked()) [[unlikely]] {
+        JSValue owner = globalObject->m_asyncContextData->getInternalField(1);
+        if (owner.isInt32())
+            promise->m_slot.setWithoutWriteBarrier(owner);
+    }
+    return promise;
+}
 
-#include "JSMicrotask.cpp"
+} // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)

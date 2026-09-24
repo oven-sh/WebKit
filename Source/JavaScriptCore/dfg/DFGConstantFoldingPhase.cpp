@@ -1019,6 +1019,11 @@ private:
             }
 
             case CreatePromise: {
+#if USE(BUN_JSC_ADDITIONS)
+                // (NewPromise does not keep the owner: JSPromise::ownerWhenMade().)
+                if (!m_graph.isWatchingAsyncContextOwnerIsNotTracked())
+                    break;
+#endif
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
                 if (JSValue base = m_state.forNode(node->child1()).m_value) {
                     if (base == globalObject->promiseConstructor()) {

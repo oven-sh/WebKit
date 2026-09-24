@@ -538,6 +538,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
     bool m_asyncContextOwnerTracked { false };
+    JSValue m_ownerOfPromiseBeingRejected;
     InternalMicrotaskRunner m_internalMicrotaskRunner;
 #endif
     ClientData* clientData { nullptr };
@@ -685,6 +686,11 @@ public:
     // What runs a job of this VM's: runInternalMicrotask() until owners are tracked, which has nothing of an
     // owner in it, and runInternalMicrotaskWithOwner() from then on.
     InternalMicrotaskRunner internalMicrotaskRunner() const { return m_internalMicrotaskRunner; }
+    // While the embedder is told that a promise was rejected with nothing handling it
+    // (promiseRejectionTracker(), JSPromiseRejectionOperation::Reject): the owner that promise was made by, if it
+    // kept it (JSPromise::ownerWhenMade()). Empty otherwise.
+    JSValue ownerOfPromiseBeingRejected() const { return m_ownerOfPromiseBeingRejected; }
+    void setOwnerOfPromiseBeingRejected(JSValue owner) { m_ownerOfPromiseBeingRejected = owner; }
     // Valid until trackAsyncContextOwner(): while it is, optimized code is what it was before there were owners.
     InlineWatchpointSet& asyncContextOwnerIsNotTracked() LIFETIME_BOUND { return m_asyncContextOwnerIsNotTracked; }
 #endif

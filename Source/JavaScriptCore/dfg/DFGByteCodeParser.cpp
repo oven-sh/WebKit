@@ -8447,8 +8447,15 @@ void ByteCodeParser::parseBlock(unsigned limit)
             Node* callee = get(VirtualRegister(bytecode.m_callee));
 
             bool alreadyEmitted = false;
+#if USE(BUN_JSC_ADDITIONS)
+            // Once async code has owners, the promise keeps the one that is current (JSPromise::ownerWhenMade()),
+            // which is CreatePromise's to do.
+            bool keepsOwner = !m_graph.isWatchingAsyncContextOwnerIsNotTracked();
+#else
+            bool keepsOwner = false;
+#endif
 
-            {
+            if (!keepsOwner) {
                 // Attempt to convert to NewPromise first in easy case.
                 JSPromiseConstructor* promiseConstructor = callee->dynamicCastConstant<JSPromiseConstructor*>();
                 if (promiseConstructor == globalObject->promiseConstructor()) {
@@ -8473,8 +8480,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             // Derived function case.
             if (!alreadyEmitted) {
-                JSFunction* function = callee->dynamicCastConstant<JSFunction*>();
-                if (!function) {
+                JSFunction* function = keepsOwner ? nullptr : callee->dynamicCastConstant<JSFunction*>();
+                if (!function && !keepsOwner) {
                     JSCell* cachedFunction = bytecode.metadata(codeBlock).m_cachedCallee.unvalidatedGet();
                     if (cachedFunction
                         && cachedFunction != JSCell::seenMultipleCalleeObjects()

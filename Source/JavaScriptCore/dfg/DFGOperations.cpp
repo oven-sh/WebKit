@@ -74,6 +74,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSMicrotask.h"
 #include "JSPromise.h"
+#include "JSPromiseInlines.h"
 #include "JSPromiseConstructor.h"
 #include "JSPromiseReaction.h"
 #include "JSPropertyNameEnumeratorInlines.h"
@@ -471,7 +472,11 @@ JSC_DEFINE_JIT_OPERATION(operationCreatePromise, JSCell*, (JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructor, globalObject->promiseConstructor());
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    OPERATION_RETURN(scope, JSPromise::createKeepingOwner(vm, globalObject, structure));
+#else
     OPERATION_RETURN(scope, JSPromise::create(vm, structure));
+#endif
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewResolvedPromise, JSCell*, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))

@@ -10584,7 +10584,17 @@ IGNORE_CLANG_WARNINGS_END
         m_out.appendTo(fastAllocationCase, slowCase);
         LValue promise = allocateObject<JSPromise>(m_out.phi(pointerType(), promiseStructure, derivedStructure), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, promise, m_heaps.JSPromise_packed);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_graph.isWatchingAsyncContextOwnerIsNotTracked()) {
+            // JSPromise::createKeepingOwner().
+            LValue asyncContextData = m_out.loadPtr(m_out.absolute(reinterpret_cast<char*>(globalObject) + JSGlobalObject::offsetOfAsyncContextData()));
+            LValue owner = m_out.load64(asyncContextData, m_heaps.JSInternalFieldObjectImpl_internalFields[1]);
+            m_out.store64(m_out.select(isInt32(owner), owner, m_out.constInt64(JSValue::encode(JSValue()))), promise, m_heaps.JSPromise_slot);
+        } else
+            m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
+#else
         m_out.store64(m_out.constInt64(JSValue::encode(JSValue())), promise, m_heaps.JSPromise_slot);
+#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(promise);
         m_out.jump(continuation);

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#include "JSPromiseInlines.h"
+
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
@@ -73,6 +75,16 @@ JSPromise::JSPromise(VM& vm, Structure* structure)
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSValue JSPromise::ownerWhenMade() const
+{
+    if (status() != Status::Pending || inlineReactionKind() != InlineReactionKind::None || payloadCell())
+        return { };
+    JSValue owner = m_slot.get();
+    return owner && owner.isInt32() ? owner : JSValue();
+}
+#endif
+
 template<typename Visitor>
 void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -95,6 +107,22 @@ JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSVa
     RETURN_IF_EXCEPTION(scope, { });
     return createPromiseCapability(vm, globalObject, promise, resolve, reject);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+JSValue JSPromise::createNewPromiseCapabilityKeepingOwner(JSGlobalObject* globalObject, JSValue constructor)
+{
+    VM& vm = globalObject->vm();
+    if (constructor == globalObject->promiseConstructor()) [[likely]] {
+        auto* promise = createKeepingOwner(vm, globalObject, globalObject->promiseStructure());
+        auto* resolve = promise->createFirstResolveFunction(vm, globalObject);
+        auto* reject = promise->createFirstRejectFunction(vm, globalObject);
+        return createPromiseCapability(vm, globalObject, promise, resolve, reject);
+    }
+
+    // (A derived constructor makes its promise with `super(executor)`, which keeps the owner as `new Promise` does.)
+    return createNewPromiseCapability(globalObject, constructor);
+}
+#endif
 
 JSValue JSPromise::createPromiseCapability(VM& vm, JSGlobalObject* globalObject, JSObject* promise, JSObject* resolve, JSObject* reject)
 {
@@ -701,11 +729,27 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     case InlineReactionKind::None: {
         JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payloadCell());
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!(currentFlags & isHandledFlag)) {
+            // Nothing handles this rejection. The embedder is told, and while it is, of the owner the promise was
+            // made by if it kept it (ownerWhenMade()).
+            JSValue owner = m_slot.get();
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+            vm.setOwnerOfPromiseBeingRejected(owner && owner.isInt32() ? owner : JSValue());
+            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            vm.setOwnerOfPromiseBeingRejected(JSValue());
+        } else {
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+        }
+#else
         setSlot(vm, argument);
         setPackedCell(vm, settledFlags, nullptr);
 
         if (!isHandled())
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+#endif
 
         if (!reactions)
             return;
@@ -1023,10 +1067,10 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
             // performPromiseThen normalizes non-callable sides to jsUndefined() when storing
             // an async context in a full reaction; cheap tag check instead of isCallable().
             if (handler.isUndefined()) {
-                task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
-                handler = argument;
-                arg = jsUndefined();
-                break;
+                // (With what the reaction captured: the job may reject a promise that nothing handles, which is
+                // the captured owner's. runInternalMicrotaskWithOwner() looks at it.)
+                globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(status), promise, argument, jsUndefined(), fullReaction->contextIsAsyncContext() ? fullReaction->context() : jsUndefined());
+                return;
             }
             JSValue context = fullReaction->context();
             if (fullReaction->contextIsAsyncContext()) {

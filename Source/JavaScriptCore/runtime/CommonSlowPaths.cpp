@@ -51,6 +51,7 @@
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSPromise.h"
+#include "JSPromiseInlines.h"
 #include "JSPromiseConstructor.h"
 #include "JSPropertyNameEnumeratorInlines.h"
 #include "JSSentinel.h"
@@ -207,9 +208,19 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_create_promise)
 
     JSPromise* result = nullptr;
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // (Only a derived constructor's structure can throw.)
+        Structure* structure = globalObject->promiseStructure();
+        if (constructorAsObject != globalObject->promiseConstructor()) [[unlikely]] {
+            structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructorAsObject, globalObject->promiseConstructor());
+            CHECK_EXCEPTION();
+        }
+        result = JSPromise::createKeepingOwner(vm, globalObject, structure);
+#else
         Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, constructorAsObject, globalObject->promiseConstructor());
         CHECK_EXCEPTION();
         result = JSPromise::create(vm, structure);
+#endif
     }
 
     JSFunction* constructor = dynamicDowncast<JSFunction>(constructorAsObject);
