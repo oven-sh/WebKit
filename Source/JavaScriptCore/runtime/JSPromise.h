@@ -149,6 +149,24 @@ public:
     // https://webidl.spec.whatwg.org/#mark-a-promise-as-handled
     void markAsHandled() { m_packed.setType(flags() | isHandledFlag); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Once VM::unhandledRejectionsAreReportedInAsyncContext(), for a pending promise that a job which runs no
+    // script is going to settle: one that was resolved with a native promise, or that then() or finally()
+    // returned.
+    // Such a job does not run in the async context it was scheduled in, because nothing it does can see one,
+    // with one exception: if it rejects the promise and nothing handles that, the embedder is told
+    // (promiseRejectionTracker), and the embedder asks what the async context is.
+    // This keeps `asyncContext`, the one the job is scheduled in, for that: where the promise's value will go,
+    // which holds nothing while nothing has been done with the promise. A promise that has a reaction does
+    // not keep it and does not need it, because a rejection of it is handled. Only rejectPromise() reads it.
+    ALWAYS_INLINE void keepAsyncContextForUnhandledRejection(VM& vm, JSValue asyncContext)
+    {
+        ASSERT(vm.unhandledRejectionsAreReportedInAsyncContext());
+        if (asyncContext && asyncContext.isCell() && status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell())
+            setSlot(vm, asyncContext);
+    }
+#endif
+
     struct DeferredData {
         WTF_FORBID_HEAP_ALLOCATION;
     public:

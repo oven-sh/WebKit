@@ -1,0 +1,125 @@
+//@ requireOptions("--useDollarVM=1")
+// A promise that a job which runs no script rejects, with nothing handling the rejection: the embedder is
+// told (promiseRejectionTracker) in the async context that job was scheduled in, once it has asked for that
+// (VM::reportUnhandledRejectionsInAsyncContext()). The shell's tracker notes the async context it is called
+// in, for the promise, in the Map `asyncContextsWhenRejected`.
+
+function shouldBe(actual, expected, message) {
+    if (actual !== expected)
+        throw new Error(message + ": expected " + String(expected) + " but got " + String(actual));
+}
+
+$vm.reportUnhandledRejectionsInAsyncContext();
+globalThis.asyncContextsWhenRejected = new Map();
+
+const get = () => $vm.asyncContext();
+const set = value => $vm.setAsyncContext(value);
+function inContext(context, fn) {
+    const previous = get();
+    set(context);
+    try {
+        return fn();
+    } finally {
+        set(previous);
+    }
+}
+
+const noop = () => { };
+const error = () => new Error("rejected");
+const rejecting = () => (async () => { throw error(); })();
+const rejectedLater = () => new Promise((_, reject) => { Promise.resolve().then(() => reject(error())); });
+function alreadyRejected() {
+    const promise = Promise.reject(error());
+    promise.catch(noop);
+    return promise;
+}
+
+// Each returns the promise that ends up rejected with nothing handling it.
+const forms = {
+    "Promise.reject()": () => Promise.reject(error()),
+    "new Promise, rejected by its executor": () => new Promise((_, reject) => reject(error())),
+    "async function that throws": () => rejecting(),
+    "async function that throws after an await": () => (async () => { await null; throw error(); })(),
+    "then() whose handler throws": () => Promise.resolve().then(() => { throw error(); }),
+
+    "new Promise resolved with a promise that rejects": () => new Promise(resolve => resolve(rejecting())),
+    "new Promise resolved with a promise that rejects later": () => new Promise(resolve => resolve(rejectedLater())),
+    "async function that returns a promise that rejects": () => (async () => rejecting())(),
+    "then() whose handler returns a promise that rejects": () => Promise.resolve().then(() => rejecting()),
+    "then() whose handler is an async function that throws": () => Promise.resolve().then(async () => { throw error(); }),
+    "catch() whose handler is an async function that throws": () => alreadyRejected().catch(async () => { throw error(); }),
+    "finally() whose handler is an async function that throws": () => Promise.resolve().finally(async () => { throw error(); }),
+
+    "then() with no handler for the rejection, of a pending promise": () => rejectedLater().then(noop),
+    "then() with no handler for the rejection, of a rejected promise": () => alreadyRejected().then(noop),
+    "then() with no handlers, of a rejected promise": () => alreadyRejected().then(),
+    "finally() of a rejected promise": () => alreadyRejected().finally(noop),
+    "a chain of then() with no handler for the rejection": () => alreadyRejected().then(noop).then(noop).then(noop),
+
+};
+
+const rejectedAtOnce = ["Promise.reject()", "new Promise, rejected by its executor", "async function that throws"];
+// Those are rejected by a job that runs script, in the async context it was scheduled in, even if that is none.
+const rejectedByScript = ["async function that throws after an await", "then() whose handler throws", "finally() of a rejected promise"];
+
+const A = { name: "A" };
+const B = { name: "B" };
+
+// then() with no handler for a rejection, called on a promise that is already rejected, keeps nothing: the
+// rejection is reported in whatever is current when the job runs, as a rejection scheduled in no async context
+// is.
+const keepsNothing = [
+    "then() with no handler for the rejection, of a rejected promise",
+    "then() with no handlers, of a rejected promise",
+];
+
+function check(round) {
+    for (const [name, form] of Object.entries(forms)) {
+        for (const context of [A, B, undefined]) {
+            asyncContextsWhenRejected.clear();
+            const promise = inContext(context, form);
+            // What is current when the jobs run is not what counts.
+            const whenTheJobsRun = context === A ? B : A;
+            inContext(whenTheJobsRun, drainMicrotasks);
+            shouldBe(asyncContextsWhenRejected.has(promise), true, `${name}: the embedder is told (${round})`);
+            const expected = context && !keepsNothing.includes(name) ? context : rejectedAtOnce.includes(name) || rejectedByScript.includes(name) ? context : whenTheJobsRun;
+            shouldBe(asyncContextsWhenRejected.get(promise)?.name, expected?.name, `${name}, in ${context?.name}: the async context the embedder is told in (${round})`);
+        }
+    }
+}
+
+// What is kept is not seen by anything else: values arrive, and a rejection that is handled is not reported.
+function checkValues(round) {
+    asyncContextsWhenRejected.clear();
+    const seen = [];
+    const handled = [];
+    inContext(A, () => {
+        const adopted = new Promise(resolve => resolve(Promise.resolve("adopted")));
+        adopted.then(value => seen.push(value));
+        const passedOn = Promise.resolve("passed on").then(undefined, noop);
+        passedOn.then(value => seen.push(value));
+        (async () => seen.push(await new Promise(resolve => resolve(Promise.resolve("awaited")))))();
+
+        for (const [name, form] of Object.entries(forms)) {
+            // (Those are rejected before anything can handle them.)
+            if (rejectedAtOnce.includes(name))
+                continue;
+            const promise = form();
+            promise.catch(noop);
+            handled.push(promise);
+        }
+        const caughtLater = new Promise(resolve => resolve(rejectedLater()));
+        handled.push(caughtLater);
+        Promise.resolve().then(() => caughtLater.catch(reason => seen.push(reason.message)));
+    });
+    drainMicrotasks();
+    shouldBe(seen.sort().join(), "adopted,awaited,passed on,rejected", `values (${round})`);
+    for (const promise of handled)
+        shouldBe(asyncContextsWhenRejected.has(promise), false, `a handled rejection is not reported (${round})`);
+}
+
+for (let round = 0; round < 200; round++) {
+    check(round);
+    checkValues(round);
+}
+shouldBe(get(), undefined, "nothing is left current");

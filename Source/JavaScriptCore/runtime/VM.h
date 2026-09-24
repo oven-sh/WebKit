@@ -534,6 +534,7 @@ public:
     bool m_mightBeExecutingTaintedCode { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
+    bool m_unhandledRejectionsAreReportedInAsyncContext { false };
 #endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -669,6 +670,15 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
+    // For an embedder that decides whose an unhandled rejection is by the async context it is told of it in
+    // (promiseRejectionTracker): from here on, a promise that a job which runs no script rejects is reported in
+    // the async context that job was scheduled in. See JSPromise::keepAsyncContextForUnhandledRejection().
+    bool unhandledRejectionsAreReportedInAsyncContext() const { return m_unhandledRejectionsAreReportedInAsyncContext; }
+    void reportUnhandledRejectionsInAsyncContext()
+    {
+        m_asyncContextTrackingEnabled = true;
+        m_unhandledRejectionsAreReportedInAsyncContext = true;
+    }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }

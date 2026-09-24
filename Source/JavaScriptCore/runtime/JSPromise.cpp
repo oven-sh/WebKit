@@ -684,6 +684,15 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, jsUndefined());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// keepAsyncContextForUnhandledRejection().
+static NEVER_INLINE void reportUnhandledRejectionInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* promise, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, JSPromiseRejectionOperation::Reject);
+}
+#endif
+
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
 {
     ASSERT(status() == Status::Pending);
@@ -701,11 +710,28 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     case InlineReactionKind::None: {
         JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payloadCell());
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!(currentFlags & isHandledFlag)) {
+            // Nothing handles it: the embedder is told, in the async context the promise kept for that
+            // (keepAsyncContextForUnhandledRejection()).
+            JSValue keptAsyncContext = m_slot.get();
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+            if (keptAsyncContext) [[unlikely]]
+                reportUnhandledRejectionInAsyncContext(vm, globalObject, this, keptAsyncContext);
+            else
+                globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+        } else {
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
+        }
+#else
         setSlot(vm, argument);
         setPackedCell(vm, settledFlags, nullptr);
 
         if (!isHandled())
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+#endif
 
         if (!reactions)
             return;
@@ -975,6 +1001,19 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
     return std::tuple { resolve, reject };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// then() was called with no handler for a rejection, in an async context, and returned `promiseOrCapability`:
+// what rejects that is a job that runs no script. (keepAsyncContextForUnhandledRejection())
+static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
+{
+    auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability);
+    if (!promise)
+        return;
+    JSValue context = reaction->context();
+    promise->keepAsyncContextForUnhandledRejection(vm, reaction->contextIsAsyncContext() ? context : AsyncContextSwapScope::unwrapContextTuple(context));
+}
+#endif
+
 void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, Status status, JSPromiseReaction* head, JSValue argument)
 {
     bool isResolved = status == JSPromise::Status::Fulfilled;
@@ -1026,6 +1065,8 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
                 arg = jsUndefined();
+                if (!isResolved && vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
+                    keepAsyncContextOfThen(vm, promise, fullReaction);
                 break;
             }
             JSValue context = fullReaction->context();
