@@ -29,6 +29,7 @@
 #if USE(BUN_JSC_ADDITIONS)
 
 #include <bit>
+#include <bmalloc/Gigacage.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -350,6 +351,11 @@ uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p)
 {
     cb();
     return *p;
+}
+
+void ffi_free_external_bytes(void* bytes)
+{
+    Gigacage::free(Gigacage::Primitive, bytes);
 }
 
 #if CPU(X86_64)
@@ -778,6 +784,7 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_call_cb_ret_cstring),
         FFI_FIXTURE(ffi_call_cb_ret_ptr),
         FFI_FIXTURE(ffi_call_cb_then_read_u32),
+        FFI_FIXTURE(ffi_free_external_bytes),
         FFI_FIXTURE(ffi_canary_call),
         FFI_FIXTURE(ffi_sum_i32_x10),
         FFI_FIXTURE(ffi_call_cb_from_thread),
