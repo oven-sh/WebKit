@@ -28,7 +28,8 @@
 #include <cstdint>
 #include <wtf/ExportMacros.h>
 
-#if PLATFORM(COCOA)
+// OS(DARWIN), not PLATFORM(COCOA): the JSCOnly port builds cocoa/MemoryFootprintCocoa.cpp on Apple targets too.
+#if OS(DARWIN)
 #include <mach/port.h>
 #endif
 
@@ -36,7 +37,7 @@ namespace WTF {
 
 WTF_EXPORT_PRIVATE size_t memoryFootprint();
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
 WTF_EXPORT_PRIVATE size_t memoryFootprint(mach_port_t);
 #endif
 
