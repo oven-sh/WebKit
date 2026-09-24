@@ -53,6 +53,36 @@ namespace JSC {
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
 #if USE(BUN_JSC_ADDITIONS)
+// Who is making a promise now: see JSPromise::maker().
+static ALWAYS_INLINE JSValue makerOfPromiseMadeNow(VM& vm, Structure* structure)
+{
+    // The usual case needs no search: the frame at hand is the script's, or that of a host function the
+    // script called, and the script is not optimized code (which makes its promises itself, or says where
+    // in it the call is made from) and not a builtin function.
+    if (CallFrame* frame = vm.topCallFrame; frame && frame != vm.frameThatStartedTheRunningJob() && !frame->isNativeCalleeFrame()) [[likely]] {
+        CodeBlock* codeBlock = frame->codeBlock();
+        if (!codeBlock) {
+            void* caller = frame->callerFrameOrEntryFrame();
+            frame = caller != vm.topEntryFrame && caller != vm.frameThatStartedTheRunningJob() ? static_cast<CallFrame*>(caller) : nullptr;
+            codeBlock = frame && !frame->isNativeCalleeFrame() ? frame->codeBlock() : nullptr;
+        }
+        if (codeBlock && !codeBlock->hasCodeOrigins() && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction()) [[likely]]
+            return uncheckedDowncast<JSCallee>(frame->jsCallee())->scope();
+    }
+    if (JSScope* maker = CallFrame::scopeOfClosestScript(vm))
+        return maker;
+    JSValue ofRunningJob = structure->realm()->m_asyncContextData->getInternalField(1);
+    return ofRunningJob.isCell() ? ofRunningJob : JSValue();
+}
+
+// (Out of line, and the last thing create() does: a VM whose promises do not remember their maker runs what it
+// ran before there was one, and one test.)
+NEVER_INLINE JSPromise* JSPromise::rememberMaker(VM& vm)
+{
+    m_slot.setWithoutWriteBarrier(makerOfPromiseMadeNow(vm, structure()));
+    return this;
+}
+
 JSCell* JSPromise::maker() const
 {
     switch (status()) {
@@ -76,12 +106,8 @@ JSPromise* JSPromise::create(VM& vm, Structure* structure)
     JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure);
     promise->finishCreation(vm);
 #if USE(BUN_JSC_ADDITIONS)
-    if (vm.promisesRememberTheirMaker()) [[unlikely]] {
-        if (JSScope* maker = CallFrame::scopeOfClosestScript(vm))
-            promise->m_slot.set(vm, promise, maker);
-        else if (JSValue ofRunningJob = structure->realm()->m_asyncContextData->getInternalField(1); ofRunningJob.isCell())
-            promise->m_slot.set(vm, promise, ofRunningJob);
-    }
+    if (vm.promisesRememberTheirMaker()) [[unlikely]]
+        return promise->rememberMaker(vm);
 #endif
     return promise;
 }

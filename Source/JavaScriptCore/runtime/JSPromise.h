@@ -129,6 +129,7 @@ public:
     // and once it is rejected with nothing handling it: a pending promise with no reaction keeps it where its
     // value will go, and rejectPromise() moves it to where its reactions would have been.
     JSCell* maker() const;
+    JSPromise* rememberMaker(VM&);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
