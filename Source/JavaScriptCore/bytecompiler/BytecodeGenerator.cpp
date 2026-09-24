@@ -915,7 +915,11 @@ IGNORE_GCC_WARNINGS_END
                 if (privateBrandRequirement() == PrivateBrandRequirement::Needed)
                     emitInstallPrivateBrand(&m_thisRegister);
 
-                emitInstanceFieldInitializationIfNeeded(&m_thisRegister, &m_calleeRegister, m_scopeNode->position(), m_scopeNode->position(), m_scopeNode->position());
+                {
+                    // The fields are initialized where the constructor starts. position() is where it ends.
+                    JSTextPosition constructorStart(m_scopeNode->startStartOffset());
+                    emitInstanceFieldInitializationIfNeeded(&m_thisRegister, &m_calleeRegister, constructorStart, constructorStart, constructorStart);
+                }
                 break;
             case ConstructorKind::Extends:
                 moveEmptyValue(&m_thisRegister);
