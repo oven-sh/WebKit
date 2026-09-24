@@ -1153,6 +1153,20 @@ WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyO
     ASSERT(!isCompilationThread());
     auto* structure = this;
     auto* watchpointSet = structure->ensurePropertyReplacementWatchpointSet(vm, offset);
+    // Fire the per-Structure set here (not in didReplacePropertySlow) so that
+    // didCachePropertyReplacement also invalidates it before a Replace IC is
+    // installed; otherwise an IC cached before the embedder opts in would
+    // write to the slot without ever reaching didReplaceProperty.
+    if (auto* rareData = structure->tryRareData()) {
+        if (rareData->anyPropertyReplacedWatchpointSet().state() == IsWatched) {
+            rareData->anyPropertyReplacedWatchpointSet().fireAll(vm, reason);
+            if (rareData->m_anyPropertyReplacedWatchpointEnsured) {
+                rareData->m_anyPropertyReplacedWatchpointEnsured = false;
+                if (!rareData->decrementActiveReplacementWatchpointSet())
+                    structure->setIsWatchingReplacement(false);
+            }
+        }
+    }
     if (watchpointSet && watchpointSet->state() == IsWatched) {
         StructureRareData* rareData = structure->rareData();
         watchpointSet->fireAll(vm, reason);
@@ -1167,6 +1181,22 @@ void Structure::startWatchingPropertyForReplacements(VM& vm, PropertyName proper
     ASSERT(!isUncacheableDictionary());
     
     startWatchingPropertyForReplacements(vm, get(vm, propertyName));
+}
+
+InlineWatchpointSet& Structure::ensureAnyPropertyReplacementWatchpointSet(VM& vm)
+{
+    ASSERT(!isCompilationThread());
+    ASSERT(!isUncacheableDictionary());
+    if (!hasRareData())
+        allocateRareData(vm);
+    StructureRareData* rareData = this->rareData();
+    InlineWatchpointSet& set = rareData->anyPropertyReplacedWatchpointSet();
+    if (!rareData->m_anyPropertyReplacedWatchpointEnsured && set.state() == IsWatched) {
+        rareData->m_anyPropertyReplacedWatchpointEnsured = true;
+        rareData->incrementActiveReplacementWatchpointSet();
+        setIsWatchingReplacement(true);
+    }
+    return set;
 }
 
 void Structure::didReplacePropertySlow(PropertyOffset offset)
