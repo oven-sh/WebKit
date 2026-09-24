@@ -125,29 +125,38 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 #if USE(BUN_JSC_ADDITIONS)
     auto packed = thisObject->m_packed;
-    JSCell* payload = packed.pointer();
-    if (payload)
+    if (JSCell* payload = packed.pointer())
         visitor.appendUnbarriered(payload);
     JSValue slot = thisObject->m_slot.get();
-    if (!slot || !slot.isCell())
+    if (!slot.isCell())
         return;
-    // What a pending promise with no inline reaction has in m_slot is what it was made for (madeFor()), which it
-    // does not keep alive.
-    // (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
-    if (!(packed.type() & (stateMask | inlineReactionKindMask))) [[unlikely]] {
-        // If the promise is being settled with this cell right now, the two words were not read as one: the cell
-        // is looked at again once the mutator is stopped (visitOutputConstraints()).
-        if (!payload)
-            visitor.vm().heap.didVisitPromiseMadeForFunction(thisObject);
+    JSCell* held = slot.asCell();
+    if (!held)
         return;
-    }
-    visitor.appendUnbarriered(slot.asCell());
+    // A pending promise with no inline reaction has what it was made for there (madeFor()), which it does not
+    // keep alive.
+    if (!(packed.type() & (stateMask | inlineReactionKindMask))) [[unlikely]]
+        return visitMadeFor(thisObject, visitor, packed.pointer());
+    visitor.appendUnbarriered(held);
 #else
     if (JSCell* payload = thisObject->m_packed.pointer())
         visitor.appendUnbarriered(payload);
     visitor.append(thisObject->m_slot);
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+template<typename Visitor>
+NEVER_INLINE void JSPromise::visitMadeFor(JSPromise* promise, Visitor& visitor, JSCell* reactions)
+{
+    // (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
+    if (reactions)
+        return;
+    // If the promise is being settled with this cell right now, the two words were not read as one: the cell is
+    // looked at again once the mutator is stopped (visitOutputConstraints()).
+    visitor.vm().heap.didVisitPromiseMadeForFunction(promise, !visitor.mutatorIsStopped());
+}
+#endif
 
 DEFINE_VISIT_CHILDREN(JSPromise);
 
@@ -767,8 +776,32 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, handler);
 }
 
-void JSPromise::rejectPromise(VM& vm, JSValue argument)
+#if USE(BUN_JSC_ADDITIONS)
+// The rejection of a promise that nothing handles, when the embedder keeps what promises are made for: the embedder
+// is told, and can ask what the promise was made for while it is (VM::madeForOfPromiseBeingRejected()). That is
+// what the promise has, or `function`, which what is rejecting it had at hand.
+NEVER_INLINE void JSPromise::rejectTellingWhatItWasMadeFor(VM& vm, JSGlobalObject* globalObject, JSValue argument, uint16_t settledFlags, JSPromiseReaction* reactions, JSValue function)
 {
+    JSValue madeFor = reactions ? JSValue() : m_slot.get();
+    if (!madeFor && function && function.isCell())
+        madeFor = function;
+    setSlot(vm, argument);
+    setPackedCell(vm, settledFlags, nullptr);
+    const JSValue* outer = vm.exchangeMadeForOfPromiseBeingRejected(&madeFor);
+    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+    vm.exchangeMadeForOfPromiseBeingRejected(outer);
+    ensureStillAliveHere(madeFor);
+    if (reactions)
+        triggerPromiseReactions(vm, globalObject, Status::Rejected, reactions, argument);
+}
+#endif
+
+// `function` is only asked for the function this promise was made for when nothing handles the rejection and the
+// embedder keeps what promises are made for.
+template<typename Function>
+ALWAYS_INLINE void JSPromise::rejectPromiseKnowingMadeFor(VM& vm, JSValue argument, const Function& function)
+{
+    UNUSED_PARAM(function);
     ASSERT(status() == Status::Pending);
     JSGlobalObject* globalObject = realm();
     uint16_t currentFlags = flags();
@@ -786,15 +819,11 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
 #if USE(BUN_JSC_ADDITIONS)
         if (!(currentFlags & isHandledFlag)) {
-            // Nothing handles this rejection: the embedder is told, and can ask what the promise was made for while
-            // it is (VM::madeForOfPromiseBeingRejected()).
-            JSValue madeFor = reactions ? JSValue() : m_slot.get();
+            if (vm.whoseScript()) [[unlikely]]
+                return rejectTellingWhatItWasMadeFor(vm, globalObject, argument, settledFlags, reactions, function());
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
-            const JSValue* outer = vm.exchangeMadeForOfPromiseBeingRejected(&madeFor);
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-            vm.exchangeMadeForOfPromiseBeingRejected(outer);
-            ensureStillAliveHere(madeFor);
         } else {
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
@@ -814,6 +843,37 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     }
     }
 }
+
+void JSPromise::rejectPromise(VM& vm, JSValue argument)
+{
+    rejectPromiseKnowingMadeFor(vm, argument, [] { return JSValue(); });
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::rejectPromiseMadeFor(VM& vm, JSValue argument, const JSValue& function)
+{
+    rejectPromiseKnowingMadeFor(vm, argument, [&] { return function; });
+}
+
+void JSPromise::rejectMadeFor(VM& vm, JSValue argument, const JSValue& function)
+{
+    ASSERT(!argument.inherits<Exception>());
+    if (!isFirstResolvingFunctionCalled()) {
+        setFlags(flags() | isFirstResolvingFunctionCalledFlag);
+        rejectPromiseKnowingMadeFor(vm, argument, [&] { return function; });
+    }
+}
+
+void JSPromise::rejectOfAsyncFunction(VM& vm, JSAsyncFunctionGenerator* generator, JSValue argument)
+{
+    ASSERT(!argument.inherits<Exception>());
+    auto* promise = uncheckedDowncast<JSPromise>(generator->context());
+    if (!promise->isFirstResolvingFunctionCalled()) {
+        promise->setFlags(promise->flags() | isFirstResolvingFunctionCalledFlag);
+        promise->rejectPromiseKnowingMadeFor(vm, argument, [&] { return generator->next(); });
+    }
+}
+#endif
 
 void JSPromise::fulfillPromise(VM& vm, JSValue argument)
 {

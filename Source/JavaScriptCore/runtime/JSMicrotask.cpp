@@ -554,9 +554,10 @@ static void asyncGeneratorCompleteStep(JSGlobalObject* globalObject, JSAsyncGene
         // 6. throw completion -> reject.
         if (isThrow) {
 #if USE(BUN_JSC_ADDITIONS)
-            promise->setMadeFor(vm, generator->next());
-#endif
+            promise->rejectMadeFor(vm, value, generator->next());
+#else
             promise->reject(vm, value);
+#endif
             return;
         }
 
@@ -910,9 +911,29 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
     }
 
     if (error) {
+#if USE(BUN_JSC_ADDITIONS)
+        // (`finally` made the promise for onFinally.)
+        resultPromise->rejectPromiseMadeFor(vm, error, context->handlerOrContext());
+#else
         resultPromise->rejectPromise(vm, error);
+#endif
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The context lets go of onFinally here. The promise is given it if it may still be rejected: with what this
+    // promise was rejected with, or by what onFinally returned.
+    if (!result.isObject()) [[likely]] {
+        if (status != JSPromise::Status::Fulfilled) [[unlikely]]
+            resultPromise->setMadeFor(vm, context->handlerOrContext());
+        context->setHandlerOrContext(vm, valueOrReason);
+        context->setPerCellBit(status == JSPromise::Status::Fulfilled);
+        scope.release();
+        promiseFinallyAwaitJob(globalObject, vm, result, context, JSPromise::Status::Fulfilled);
+        return;
+    }
+    resultPromise->setMadeFor(vm, context->handlerOrContext());
+#endif
 
     context->setHandlerOrContext(vm, valueOrReason);
     context->setPerCellBit(status == JSPromise::Status::Fulfilled);
@@ -1686,9 +1707,10 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             break;
         case JSPromise::Status::Rejected:
 #if USE(BUN_JSC_ADDITIONS)
-            promise->setMadeFor(vm, madeFor);
-#endif
+            promise->rejectPromiseMadeFor(vm, resolution, madeFor);
+#else
             promise->rejectPromise(vm, resolution);
+#endif
             break;
         }
         return;
@@ -1756,11 +1778,11 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
     }
 
     if (error) {
-        auto* promise = uncheckedDowncast<JSPromise>(generator->context());
 #if USE(BUN_JSC_ADDITIONS)
-        promise->setMadeFor(vm, generator->next());
+        JSPromise::rejectOfAsyncFunction(vm, generator, error);
+#else
+        uncheckedDowncast<JSPromise>(generator->context())->reject(vm, error);
 #endif
-        promise->reject(vm, error);
         return;
     }
 
@@ -2012,9 +2034,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                 scope.release();
 #if USE(BUN_JSC_ADDITIONS)
                 // (`then` made the promise for the handler.)
-                promise->setMadeFor(vm, arguments[1]);
-#endif
+                promise->rejectPromiseMadeFor(vm, error, arguments[1]);
+#else
                 promise->rejectPromise(vm, error);
+#endif
                 return;
             }
 

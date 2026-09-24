@@ -825,6 +825,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         for (JSPromise* promise : m_promisesMadeForFunctions)
             promise->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
         m_promisesMadeForFunctions.shrink(0);
+        m_promisesMadeForFunctionsVisitedWhileMutatorRan.shrink(0);
     }
 #endif
 
@@ -3827,7 +3828,7 @@ void Heap::addCoreConstraints()
 #if USE(BUN_JSC_ADDITIONS)
             {
                 Locker locker { heap->m_promisesMadeForFunctionsLock };
-                for (JSPromise* promise : heap->m_promisesMadeForFunctions)
+                for (JSPromise* promise : heap->m_promisesMadeForFunctionsVisitedWhileMutatorRan)
                     callOutputConstraint(visitor, promise, HeapCell::JSCell);
             }
 #endif

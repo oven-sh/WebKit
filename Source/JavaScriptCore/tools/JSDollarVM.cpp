@@ -4270,17 +4270,23 @@ static Identifier ownerWhenRejected(VM& vm)
 
 // A rejected promise only says what it was made for while the embedder is told of the rejection: kept for
 // $vm.ownerOfMaker().
+static bool s_ownersOfRejectedPromisesAreKept;
+
 void JSDollarVM::promiseWasRejected(JSGlobalObject* globalObject, JSPromise* promise)
 {
     VM& vm = globalObject->vm();
+    if (!s_ownersOfRejectedPromisesAreKept)
+        return;
     promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, vm.madeForOfPromiseBeingRejected()));
 }
 
-// $vm.promisesAreMadeForOwners(): from now on promises are made for functions, and what is kept of a function is
-// whose it is (whoseScript()).
-JSC_DEFINE_HOST_FUNCTION(functionPromisesAreMadeForOwners, (JSGlobalObject* globalObject, CallFrame*))
+// $vm.promisesAreMadeForOwners(forMeasuring = false): from now on promises are made for functions, and what is
+// kept of a function is whose it is (whoseScript()). Unless it is for measuring, $vm.ownerOfMaker() also says
+// whose a rejected promise was, which costs every rejection.
+JSC_DEFINE_HOST_FUNCTION(functionPromisesAreMadeForOwners, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
+    s_ownersOfRejectedPromisesAreKept = !callFrame->argument(0).toBoolean(globalObject);
     globalObject->vm().setWhoseScript(whoseScript);
     return JSValue::encode(jsUndefined());
 }

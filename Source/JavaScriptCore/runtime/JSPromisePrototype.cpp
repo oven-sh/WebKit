@@ -31,7 +31,6 @@
 #include "JSCInlines.h"
 #include "JSFunctionWithFields.h"
 #include "JSPromise.h"
-#include "JSPromiseInlines.h"
 #include "JSPromiseReaction.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "AsyncContextSwapScope.h"
@@ -291,13 +290,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
             RELEASE_AND_RETURN(scope, JSValue::encode(promise->then(globalObject, onFinally, onFinally)));
 
         if (promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]] {
-#if USE(BUN_JSC_ADDITIONS)
-            // The promise is made for onFinally (JSPromise::madeFor()), which it is given now: the context lets go
-            // of onFinally once it has been called, before the promise is rejected.
-            JSPromise* resultPromise = JSPromise::createMadeForInline(vm, globalObject->promiseStructure(), vm.whoseScript() ? onFinally : JSValue());
-#else
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
-#endif
             auto* context = JSSlimPromiseReaction::create(vm, resultPromise, onFinally, /* isFulfill */ false, /* next */ nullptr);
 #if USE(BUN_JSC_ADDITIONS)
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, nullptr, context, AsyncContextSwapScope::current(vm, globalObject));
