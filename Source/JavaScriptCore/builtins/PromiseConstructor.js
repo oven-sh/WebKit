@@ -52,15 +52,16 @@ function Promise(executor)
 
     var promise = @createPromise(this);
     var capturedPromise = promise;
+    // The promise is made for the executor, which what rejects it says: see JSPromise::maker().
+    var madeFor = executor;
 
-    // (The promise is made for the executor, which what rejects it says: see JSPromise::maker().)
     try {
         executor(
             (resolution) => {
                 return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
             },
             (reason) => {
-                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason, executor);
+                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason, madeFor);
             });
     } catch (error) {
         @rejectPromiseWithFirstResolvingFunctionCallCheck(promise, error, executor);

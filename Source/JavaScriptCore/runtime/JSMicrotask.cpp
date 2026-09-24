@@ -910,16 +910,20 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    // The promise is onFinally's: `finally` made it for it. (It is rejected if onFinally throws, or with what
-    // this promise was rejected with.)
-    if (error || status == JSPromise::Status::Rejected)
-        resultPromise->setMakerFromFunction(vm, onFinally);
-#endif
     if (error) {
+#if USE(BUN_JSC_ADDITIONS)
+        // The promise is onFinally's: `finally` made it for it.
+        resultPromise->setMakerFromFunction(vm, context->handlerOrContext());
+#endif
         resultPromise->rejectPromise(vm, error);
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // (And it will be rejected with what this promise was.)
+    if (status == JSPromise::Status::Rejected) [[unlikely]]
+        resultPromise->setMakerFromFunction(vm, context->handlerOrContext());
+#endif
 
     context->setHandlerOrContext(vm, valueOrReason);
     context->setPerCellBit(status == JSPromise::Status::Fulfilled);
@@ -1679,8 +1683,10 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
     call(globalObject, resolve, jsUndefined(), ArgList { arguments.data(), arguments.size() }, "resolve is not a function"_s);
 }
 
-static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status)
+// `madeFor`: the handler the reaction did have, that `then` made the promise for.
+static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm, JSValue promiseOrCapability, JSValue resolution, JSPromise::Status status, const JSValue& madeFor)
 {
+    UNUSED_PARAM(madeFor);
     if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) [[likely]] {
         switch (status) {
         case JSPromise::Status::Pending:
@@ -1690,6 +1696,9 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
+#if USE(BUN_JSC_ADDITIONS)
+            promise->setMakerFromFunction(vm, madeFor);
+#endif
             promise->rejectPromise(vm, resolution);
             break;
         }
@@ -1761,19 +1770,18 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
         auto* promise = uncheckedDowncast<JSPromise>(generator->context());
 #if USE(BUN_JSC_ADDITIONS)
         // The promise is the async function's.
-        promise->setMakerFromFunction(vm, next);
+        promise->setMakerFromFunction(vm, generator->next());
 #endif
         promise->reject(vm, error);
         return;
     }
 
     if (generator->state() == static_cast<int32_t>(JSGenerator::State::Executing)) {
-        auto* promise = uncheckedDowncast<JSPromise>(generator->context());
         scope.release();
 #if USE(BUN_JSC_ADDITIONS)
-        promise->resolve(generatorGlobalObject, vm, value, next);
+        JSPromise::resolveOfAsyncFunction(generatorGlobalObject, vm, generator, value);
 #else
-        promise->resolve(generatorGlobalObject, vm, value);
+        uncheckedDowncast<JSPromise>(generator->context())->resolve(generatorGlobalObject, vm, value);
 #endif
         return;
     }
@@ -1901,14 +1909,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
-#if USE(BUN_JSC_ADDITIONS)
-        // The settlement is passed on to a promise `then` made for the reaction's handler (arguments[2]).
-        if (static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected) {
-            if (auto* promise = dynamicDowncast<JSPromise>(arguments[0])) [[likely]]
-                promise->setMakerFromFunction(vm, arguments[2]);
-        }
-#endif
-        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload), arguments[2]));
     }
 
     case InternalMicrotask::PromiseFulfillWithoutHandlerJob: {
@@ -2023,7 +2024,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
                 scope.release();
 #if USE(BUN_JSC_ADDITIONS)
                 // The promise is the handler's: `then` made it for it.
-                promise->setMakerFromFunction(vm, handler);
+                promise->setMakerFromFunction(vm, arguments[1]);
 #endif
                 promise->rejectPromise(vm, error);
                 return;
@@ -2042,7 +2043,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
         if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability)) {
             scope.release();
-            promise->resolvePromise(promise->realm(), vm, result, handler);
+#if USE(BUN_JSC_ADDITIONS)
+            promise->resolvePromiseOfReaction(vm, result, arguments[1]);
+#else
+            promise->resolvePromise(promise->realm(), vm, result);
+#endif
             return;
         }
 

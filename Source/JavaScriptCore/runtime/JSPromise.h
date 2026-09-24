@@ -35,6 +35,7 @@
 
 namespace JSC {
 
+class JSAsyncFunctionGenerator;
 class JSPromiseConstructor;
 class JSPromiseReaction;
 
@@ -142,6 +143,11 @@ public:
         if (vm.promisesRememberTheirMaker()) [[unlikely]]
             setMakerFromCallingScriptSlow(vm);
     }
+    ALWAYS_INLINE void setMakerOfNewPromise(VM& vm)
+    {
+        if (vm.promisesRememberTheirMaker()) [[unlikely]]
+            setMakerOfNewPromiseFromCallingScript(vm);
+    }
     // For what resolves this promise with another: `madeFor` if that is known, else the script that is calling.
     ALWAYS_INLINE void setMakerWhileKnown(VM& vm, JSValue madeFor)
     {
@@ -150,6 +156,11 @@ public:
             setMakerFromCallingScriptSlow(vm);
         }
     }
+    // What resolves the promise of an async function when its body has returned, and the promise `then` made
+    // when the reaction's handler has: resolve() and resolvePromise(), knowing who the promise was made for.
+    // They take what their callers have at hand and nothing more, so that resolving costs what it did.
+    static void resolveOfAsyncFunction(JSGlobalObject*, VM&, JSAsyncFunctionGenerator*, JSValue);
+    void resolvePromiseOfReaction(VM&, JSValue, const JSValue& handler);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -165,10 +176,7 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void resolve(JSGlobalObject*, VM&, JSValue);
-#if USE(BUN_JSC_ADDITIONS)
-    // resolve(), by what ran `madeFor` (see maker()).
-    void resolve(JSGlobalObject*, VM&, JSValue, JSValue madeFor);
-#endif
+
     JS_EXPORT_PRIVATE void reject(VM&, JSValue);
     JS_EXPORT_PRIVATE void fulfill(VM&, JSValue);
     // Pipes its settlement to this promise via internal microtask. Otherwise directly
@@ -203,7 +211,7 @@ public:
 #endif
     void rejectPromise(VM&, JSValue);
     void fulfillPromise(VM&, JSValue);
-    void resolvePromise(JSGlobalObject*, VM&, JSValue, JSValue madeFor = { });
+    void resolvePromise(JSGlobalObject*, VM&, JSValue);
 
     static void resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject*, VM&, JSValue resolution, InternalMicrotask, JSValue context);
 #if USE(BUN_JSC_ADDITIONS)
@@ -300,6 +308,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE void setMakerFromFunctionSlow(VM&, JSValue function);
     JS_EXPORT_PRIVATE void setMakerFromCallingScriptSlow(VM&);
+    void setMakerOfNewPromiseFromCallingScript(VM&);
+    template<typename MadeFor> void resolvePromiseKnowingMaker(JSGlobalObject*, VM&, JSValue, const MadeFor&);
     JSCell* makerFromCallingScript(VM&);
 #endif
     void clearSlot() { m_slot.clear(); }

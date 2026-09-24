@@ -293,7 +293,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // No function is at hand to say later who this promise was made for: the script that is calling.
-    promise->setMakerFromCallingScript(vm);
+    promise->setMakerOfNewPromise(vm);
 #endif
 
     auto callReject = [&]() -> void {
@@ -494,7 +494,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // No function is at hand to say later who this promise was made for: the script that is calling.
-    promise->setMakerFromCallingScript(vm);
+    promise->setMakerOfNewPromise(vm);
 #endif
 
     auto callReject = [&]() -> void {
@@ -807,7 +807,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAllSettled, (JSGlobalObject* glob
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // No function is at hand to say later who this promise was made for: the script that is calling.
-    promise->setMakerFromCallingScript(vm);
+    promise->setMakerOfNewPromise(vm);
 #endif
 
     auto callReject = [&]() -> void {
@@ -1263,7 +1263,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // No function is at hand to say later who this promise was made for: the script that is calling.
-    promise->setMakerFromCallingScript(vm);
+    promise->setMakerOfNewPromise(vm);
 #endif
 
     auto callReject = [&]() -> void {

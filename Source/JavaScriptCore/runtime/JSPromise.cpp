@@ -33,6 +33,7 @@
 #include "ErrorInstanceInlines.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
+#include "JSAsyncFunctionGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSFunctionWithFields.h"
 #include "JSMicrotask.h"
@@ -102,6 +103,16 @@ void JSPromise::setMakerFromCallingScriptSlow(VM& vm)
     if (JSCell* maker = makerFromCallingScript(vm))
         setMaker(vm, maker);
 }
+
+// (A promise that was just made: nothing has been done with it.)
+void JSPromise::setMakerOfNewPromiseFromCallingScript(VM& vm)
+{
+    ASSERT(status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get());
+    if (JSScope* scope = CallFrame::scopeOfClosestScript(vm)) [[likely]]
+        m_slot.set(vm, this, scope);
+    else if (JSValue ofRunningJob = realm()->m_asyncContextData->getInternalField(1); ofRunningJob.isCell())
+        m_slot.set(vm, this, ofRunningJob);
+}
 #endif
 
 JSPromise* JSPromise::create(VM& vm, Structure* structure)
@@ -148,8 +159,10 @@ JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSVa
     RETURN_IF_EXCEPTION(scope, { });
 #if USE(BUN_JSC_ADDITIONS)
     // (Promise.withResolvers(): no function is at hand to say later who the promise was made for.)
-    if (auto* made = dynamicDowncast<JSPromise>(promise))
-        made->setMakerFromCallingScript(vm);
+    if (vm.promisesRememberTheirMaker()) [[unlikely]] {
+        if (auto* made = dynamicDowncast<JSPromise>(promise))
+            made->setMakerOfNewPromiseFromCallingScript(vm);
+    }
 #endif
     return createPromiseCapability(vm, globalObject, promise, resolve, reject);
 }
@@ -245,17 +258,6 @@ void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value)
         resolvePromise(globalObject, vm, value);
     }
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-void JSPromise::resolve(JSGlobalObject* globalObject, VM& vm, JSValue value, JSValue madeFor)
-{
-    ASSERT(!value.inherits<Exception>());
-    if (!isFirstResolvingFunctionCalled()) {
-        setFlags(flags() | isFirstResolvingFunctionCalledFlag);
-        resolvePromise(globalObject, vm, value, madeFor);
-    }
-}
-#endif
 
 void JSPromise::reject(VM& vm, JSValue value)
 {
@@ -823,7 +825,9 @@ void JSPromise::fulfillPromise(VM& vm, JSValue argument)
     }
 }
 
-void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue resolution, JSValue madeFor)
+// `madeFor` is only asked who this promise was made for when the promise is resolved with a thenable.
+template<typename MadeFor>
+ALWAYS_INLINE void JSPromise::resolvePromiseKnowingMaker(JSGlobalObject* globalObject, VM& vm, JSValue resolution, const MadeFor& madeFor)
 {
     UNUSED_PARAM(madeFor);
     if (resolution == this) [[unlikely]] {
@@ -841,7 +845,7 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         if (promise->isThenFastAndNonObservable()) {
 #if USE(BUN_JSC_ADDITIONS)
             // What this promise comes to is that promise's doing from here on: who it was made for is known now.
-            setMakerWhileKnown(vm, madeFor);
+            setMakerWhileKnown(vm, madeFor());
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, AsyncContextSwapScope::current(vm, globalObject));
 #else
             return promise->realm()->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJobFast, 0, resolutionObject, this, jsUndefined());
@@ -870,12 +874,34 @@ void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue res
         return fulfillPromise(vm, resolutionObject);
 
 #if USE(BUN_JSC_ADDITIONS)
-    setMakerWhileKnown(vm, madeFor);
+    setMakerWhileKnown(vm, madeFor());
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this, AsyncContextSwapScope::current(vm, globalObject));
 #else
     return globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveThenableJob, 0, resolutionObject, then, this);
 #endif
 }
+
+void JSPromise::resolvePromise(JSGlobalObject* globalObject, VM& vm, JSValue resolution)
+{
+    resolvePromiseKnowingMaker(globalObject, vm, resolution, [] { return JSValue(); });
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::resolveOfAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value)
+{
+    ASSERT(!value.inherits<Exception>());
+    auto* promise = uncheckedDowncast<JSPromise>(generator->context());
+    if (!promise->isFirstResolvingFunctionCalled()) {
+        promise->setFlags(promise->flags() | isFirstResolvingFunctionCalledFlag);
+        promise->resolvePromiseKnowingMaker(globalObject, vm, value, [&] { return generator->next(); });
+    }
+}
+
+void JSPromise::resolvePromiseOfReaction(VM& vm, JSValue resolution, const JSValue& handler)
+{
+    resolvePromiseKnowingMaker(realm(), vm, resolution, [&] { return handler; });
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(promiseResolvingFunctionResolve, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
