@@ -151,6 +151,7 @@
 #include "JSCustomSetterFunctionInlines.h"
 #include "JSDataView.h"
 #include "JSDataViewPrototype.h"
+#include "JSDollarVM.h"
 #include "JSDisposableStack.h"
 #include "JSDisposableStackInlines.h"
 #include "JSFinalizationRegistry.h"
@@ -3860,6 +3861,10 @@ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPro
         break;
     }
     case JSC::JSPromiseRejectionOperation::Reject: {
+#if USE(BUN_JSC_ADDITIONS)
+        if (Options::useDollarVM()) [[unlikely]]
+            JSDollarVM::promiseWasRejected(globalObject, promise);
+#endif
         globalObject->vm().promiseRejected(promise);
         break;
     }

@@ -1352,6 +1352,11 @@ public:
     using UnlinkedFunctionExecutableSpaceAndSet = SpaceAndSet;
     UnlinkedFunctionExecutableSpaceAndSet unlinkedFunctionExecutableSpaceAndSet;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The promises that have the function they were made for (JSPromise::madeFor()), which they do not keep alive.
+    IsoCellSet promisesMadeForSet;
+#endif
+
 #undef DYNAMIC_SPACE_AND_SET_DEFINE_MEMBER
 
 #define DEFINE_NON_ISO_SUBSPACE_MEMBER(name, heapCellType, type, SubspaceType) \

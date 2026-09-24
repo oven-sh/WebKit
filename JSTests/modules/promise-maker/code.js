@@ -25,3 +25,17 @@ export function asyncAwaiting(promise) { const derived = (async () => { await pr
 export function asyncReturning(promise) { const derived = (async () => { await null; return promise; })(); return derived; }
 export async function* generator() { await null; throw error(); }
 export function generatorNext() { const promise = generator().next(); return promise; }
+// A promise nothing has been done with, what rejects it, and something only its executor has.
+export function constructedHolding() {
+    let reject;
+    const held = { held: true };
+    const promise = new Promise((_, r) => { reject = r; held.executorRan = true; });
+    return { promise, reject, held: new WeakRef(held) };
+}
+// The promise `finally` made, while it waits for what its handler returned, and something only the handler has.
+export function finallyHolding(source) {
+    const held = { held: true };
+    const returned = Promise.withResolvers();
+    const promise = source.finally(() => { held.handlerRan = true; return returned.promise; });
+    return { promise, returned, held: new WeakRef(held) };
+}

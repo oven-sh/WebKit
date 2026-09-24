@@ -36,8 +36,12 @@ struct DollarVMAssertScope {
     ~DollarVMAssertScope() { RELEASE_ASSERT(Options::useDollarVM()); }
 };
 
+class JSPromise;
+
 class JSDollarVM final : public JSNonFinalObject {
 public:
+    // (Promises say what they were made for when they are rejected: see $vm.ownerOfMaker().)
+    static void promiseWasRejected(JSGlobalObject*, JSPromise*);
     typedef JSNonFinalObject Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertyNames;
 

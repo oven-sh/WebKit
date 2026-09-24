@@ -4236,19 +4236,44 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, C
     return JSValue::encode(ownerOfScope(CallFrame::scopeOfClosestScript(globalObject->vm())));
 }
 
-// $vm.ownerOfMaker(promise): ownerOfScope() of the function the promise was made for (JSPromise::madeFor()),
-// "none" if it has none.
+static JSValue ownerOfMadeFor(VM& vm, JSPromise* promise)
+{
+    JSCell* madeFor = promise->madeFor();
+    if (auto* scope = dynamicDowncast<JSScope>(madeFor))
+        return ownerOfScope(scope);
+    auto* function = dynamicDowncast<JSFunction>(madeFor);
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = dynamicDowncast<JSFunction>(bound->targetFunction());
+    if (!function || function->isHostFunction() || function->jsExecutable()->isBuiltinFunction())
+        return jsNontrivialString(vm, "none"_s);
+    return ownerOfScope(function->scope());
+}
+
+static Identifier ownerWhenRejected(VM& vm)
+{
+    return Identifier::fromString(vm, "ownerOfMakerWhenRejected"_s);
+}
+
+// A rejected promise only says what it was made for while the embedder is told of the rejection: kept for
+// $vm.ownerOfMaker().
+void JSDollarVM::promiseWasRejected(JSGlobalObject* globalObject, JSPromise* promise)
+{
+    VM& vm = globalObject->vm();
+    promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, promise));
+}
+
+// $vm.ownerOfMaker(promise): ownerOfScope() of what the promise was made for (JSPromise::madeFor()), "none" if it
+// has none.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
-    auto* function = promise ? dynamicDowncast<JSFunction>(promise->madeFor()) : nullptr;
-    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
-        function = dynamicDowncast<JSFunction>(bound->targetFunction());
-    if (!function || function->isHostFunction() || function->jsExecutable()->isBuiltinFunction())
+    if (!promise)
         return JSValue::encode(jsNontrivialString(vm, "none"_s));
-    return JSValue::encode(ownerOfScope(function->scope()));
+    if (JSValue whenRejected = promise->getDirect(vm, ownerWhenRejected(vm)))
+        return JSValue::encode(whenRejected);
+    return JSValue::encode(ownerOfMadeFor(vm, promise));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.

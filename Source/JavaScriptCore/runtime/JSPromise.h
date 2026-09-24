@@ -134,7 +134,13 @@ public:
     //   resolve it with a thenable, and has the function at hand.
     // A promise that has a reaction, or is fulfilled, or was made for no function (Promise.withResolvers(), the
     // combinators, Promise.reject()) has none.
+    //
+    // The promise does not keep the function alive. When a collection finds it dead, the promise is given the
+    // closest scope the function was made in that is alive in its place, or nothing: so this is a function or a
+    // scope. A rejected promise only has it while the embedder is told of the rejection
+    // (promiseRejectionTracker(), JSPromiseRejectionOperation::Reject).
     JSCell* madeFor() const;
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
     JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);
     static JSPromise* createMadeForInline(VM&, Structure*, JSValue function);
     // For what is about to reject a promise that was not made with its function, or to resolve it with a
@@ -238,6 +244,7 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     JSPromise(VM&, Structure*, JSValue madeFor);
     template<typename MadeFor> void resolvePromiseKnowingMadeFor(JSGlobalObject*, VM&, JSValue, const MadeFor&);
+    template<typename Visitor> static void visitMadeFor(JSPromise*, Visitor&);
 #endif
 
     DECLARE_DEFAULT_FINISH_CREATION;

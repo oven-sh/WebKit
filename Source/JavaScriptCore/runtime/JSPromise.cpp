@@ -35,6 +35,7 @@
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
 #include "JSAsyncFunctionGenerator.h"
+#include "JSBoundFunction.h"
 #include "JSFunctionWithFields.h"
 #include "JSMicrotask.h"
 #include "JSPromiseCombinatorsContext.h"
@@ -105,6 +106,33 @@ JSCell* JSPromise::madeFor() const
     return nullptr;
 }
 
+// The closest scope `cell` (a function, or a scope) was made in that is alive. (`cell` is dead, and as it was when
+// it was alive: nothing has been swept.)
+static JSScope* closestLiveScope(VM& vm, JSCell* cell)
+{
+    auto* function = dynamicDowncast<JSFunction>(cell);
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = dynamicDowncast<JSFunction>(bound->targetFunction());
+    JSScope* scope = function ? (function->isHostFunction() ? nullptr : function->scope()) : dynamicDowncast<JSScope>(cell);
+    for (; scope; scope = scope->next()) {
+        if (vm.heap.isMarked(scope))
+            return scope;
+    }
+    return nullptr;
+}
+
+void JSPromise::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
+{
+    JSCell* cell = status() == Status::Pending ? madeFor() : nullptr;
+    if (cell && vm.heap.isMarked(cell))
+        return;
+    JSScope* scope = cell ? closestLiveScope(vm, cell) : nullptr;
+    if (cell)
+        m_slot.setWithoutWriteBarrier(scope ? JSValue(scope) : JSValue());
+    if (!scope)
+        vm.heap.promisesMadeForSet.remove(this);
+}
+
 void JSPromise::setMadeFor(VM& vm, JSValue function)
 {
     if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
@@ -118,10 +146,43 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSPromise>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+#if USE(BUN_JSC_ADDITIONS)
+    auto packed = thisObject->m_packed;
+    JSCell* payload = packed.pointer();
+    if (payload)
+        visitor.appendUnbarriered(payload);
+    JSValue slot = thisObject->m_slot.get();
+    if (!slot || !slot.isCell())
+        return;
+    // What a pending promise with no inline reaction has in m_slot is what it was made for (madeFor()), which it
+    // does not keep alive.
+    if (!(packed.type() & (stateMask | inlineReactionKindMask))) [[unlikely]] {
+        if (!payload)
+            visitMadeFor(thisObject, visitor);
+        return;
+    }
+    visitor.appendUnbarriered(slot.asCell());
+#else
     if (JSCell* payload = thisObject->m_packed.pointer())
         visitor.appendUnbarriered(payload);
     visitor.append(thisObject->m_slot);
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
+template<typename Visitor>
+NEVER_INLINE void JSPromise::visitMadeFor(JSPromise* promise, Visitor& visitor)
+{
+    // Whether m_slot has what the promise was made for, or what it has just been settled with, can only be told
+    // from its two words together: so not while they may be changing.
+    if (!visitor.mutatorIsStopped()) {
+        visitor.didRace(promise, "JSPromise has what it was made for");
+        return;
+    }
+    visitor.vm().heap.promisesMadeForSet.add(promise);
+}
+#endif
 
 DEFINE_VISIT_CHILDREN(JSPromise);
 
@@ -743,10 +804,12 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
 #if USE(BUN_JSC_ADDITIONS)
         if (!(currentFlags & isHandledFlag)) {
             // Nothing handles this rejection: the promise keeps the function it was made for (see madeFor()).
+            // The embedder is told, and can ask what the promise was made for while it is (see madeFor()).
             JSValue function = m_slot.get();
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, !reactions && function && function.isCell() ? function.asCell() : nullptr);
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            m_packed.setPointer(nullptr);
         } else {
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);

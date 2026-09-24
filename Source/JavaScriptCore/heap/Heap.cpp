@@ -78,6 +78,7 @@
 #include "JSSentinel.h"
 #include "JSVirtualMachineInternal.h"
 #include "JSWeakMap.h"
+#include "JSPromise.h"
 #include "JSWeakObjectRef.h"
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
@@ -448,6 +449,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , functionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, FunctionExecutable) // Hash:0xbcb36268
     , programExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, ProgramExecutable) // Hash:0x4c9208f7
     , unlinkedFunctionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, UnlinkedFunctionExecutable) // Hash:0x3ba0f4e1
+#if USE(BUN_JSC_ADDITIONS)
+    , promisesMadeForSet(promiseSpace)
+#endif
 
 {
     if (Options::forceFencedBarrier()) {
@@ -818,6 +822,9 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     }
 
     reconcileWeakReferencesInMarkedCells<SymbolTable>(symbolTableSpace, collectionScope);
+#if USE(BUN_JSC_ADDITIONS)
+    reconcileWeakReferencesInMarkedCells<JSPromise>(promisesMadeForSet, collectionScope);
+#endif
 
     forEachCodeBlockSpace(
         [&] (auto& space) {
