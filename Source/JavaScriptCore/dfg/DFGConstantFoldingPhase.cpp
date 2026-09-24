@@ -152,6 +152,9 @@ private:
             return false;
 
         bool changed = false;
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<std::pair<unsigned, Node*>, 2> promisesMadeForFunctions;
+#endif
         m_state.beginBasicBlock(block);
         for (unsigned indexInBlock = 0; indexInBlock < block->size(); ++indexInBlock) {
             if (!m_state.isValid())
@@ -1017,6 +1020,16 @@ private:
                 }
                 break;
             }
+
+#if USE(BUN_JSC_ADDITIONS)
+            case NewPromise:
+                // (Here as well as in strength reduction: what made the function is only seen to be the promise's
+                // child once local common subexpression elimination has run. Once the block has been gone
+                // through: the abstract state has nothing for the nodes that are added.)
+                if (node->child1() && node->promiseChildIsFunction())
+                    promisesMadeForFunctions.append({ indexInBlock, node });
+                break;
+#endif
 
             case CreatePromise: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
@@ -2257,6 +2270,12 @@ private:
         if (m_graph.m_form == SSA || m_graph.m_form == ThreadedCPS)
             m_state.endBasicBlock();
         m_state.reset();
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& [indexInBlock, promise] : promisesMadeForFunctions) {
+            if (m_graph.givePromiseWhoseItIs(m_insertionSet, indexInBlock, promise))
+                changed = true;
+        }
+#endif
         m_insertionSet.execute(block);
         
         return changed;

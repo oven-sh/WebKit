@@ -362,6 +362,7 @@ JSC_DECLARE_JIT_OPERATION(operationAsyncIteratorNextWithDriver, EncodedJSValue, 
 JSC_DECLARE_JIT_OPERATION(operationNewObject, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewPromise, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewPromiseMadeFor, JSCell*, (VM*, Structure*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationNewPromiseKeeping, JSCell*, (VM*, Structure*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncFunctionGenerator, JSCell*, (VM*, Structure*));
 JSC_DECLARE_JIT_OPERATION(operationNewAsyncGenerator, JSCell*, (VM*, Structure*));

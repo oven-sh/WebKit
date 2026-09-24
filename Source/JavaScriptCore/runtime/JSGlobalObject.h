@@ -373,6 +373,9 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_withScopeStructure;
     LazyProperty<JSGlobalObject, Structure> m_strictEvalActivationStructure;
     LazyProperty<JSGlobalObject, Structure> m_moduleEnvironmentStructure;
+#if USE(BUN_JSC_ADDITIONS)
+    LazyProperty<JSGlobalObject, Structure> m_scriptOwnerScopeStructure;
+#endif
     LazyProperty<JSGlobalObject, Structure> m_callbackConstructorStructure;
     LazyProperty<JSGlobalObject, Structure> m_callbackFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_callbackObjectStructure;
@@ -961,6 +964,13 @@ public:
     Structure* strictEvalActivationStructure() const { return m_strictEvalActivationStructure.get(this); }
     Structure* activationStructure() const { return m_lexicalEnvironmentStructure.get(); }
     Structure* moduleEnvironmentStructure() const { return m_moduleEnvironmentStructure.get(this); }
+#if USE(BUN_JSC_ADDITIONS)
+    // The structure of the scopes that say whose the scripts made under them are
+    // (JSLexicalEnvironment::createScriptOwnerScope()): what they are told from any other scope by.
+    Structure* scriptOwnerScopeStructure() const { return m_scriptOwnerScopeStructure.get(this); }
+    // (Nothing until there is such a scope.)
+    Structure* scriptOwnerScopeStructureIfThereIsOne() const { return m_scriptOwnerScopeStructure.getConcurrently(); }
+#endif
     Structure* directArgumentsStructure() const { return m_directArgumentsStructure.get(); }
     Structure* scopedArgumentsStructure() const { return m_scopedArgumentsStructure.get(); }
     Structure* clonedArgumentsStructure() const { return m_clonedArgumentsStructure.get(); }

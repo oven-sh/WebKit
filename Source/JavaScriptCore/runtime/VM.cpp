@@ -1249,10 +1249,12 @@ bool VM::cancelTermination()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void VM::setWhoseScript(WhoseScript whoseScript)
+void VM::keepWhosePromisesAre()
 {
-    m_whoseScript = whoseScript;
-    m_promisesAreMadeForNothing.fireAll(*this, "Promises are made for functions");
+    if (m_promisesKeepWhose)
+        return;
+    m_promisesKeepWhose = true;
+    m_promisesAreMadeForNothing.fireAll(*this, "Promises keep whose they are");
 }
 #endif
 

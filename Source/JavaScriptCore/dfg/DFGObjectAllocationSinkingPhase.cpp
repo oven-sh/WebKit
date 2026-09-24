@@ -1174,7 +1174,7 @@ private:
 
         case NewPromise: {
             ASSERT(node->structure()->classInfoForCells() == JSPromise::info());
-            // A promise that is made for a function is not sunk: it has more in it than its structure.
+            // A promise that keeps whose it is is not sunk: it has more in it than its structure.
             if (node->child1()) {
                 m_heap.escape(node->child1().node());
                 break;

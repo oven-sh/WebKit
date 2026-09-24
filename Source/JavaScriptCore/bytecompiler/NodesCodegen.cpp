@@ -2128,7 +2128,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_newArrayWithSpecies(JSC::Bytec
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_createPromise(JSC::BytecodeGenerator& generator, JSC::RegisterID* dst)
 {
-    // @createPromise(newTarget, madeFor): see JSPromise::madeFor().
+    // @createPromise(newTarget, madeFor): the function the promise is made for, see JSPromise::whose().
     ArgumentListNode* node = m_args->m_listNode;
     RefPtr<RegisterID> newTarget = generator.emitNode(node);
     node = node->m_next;

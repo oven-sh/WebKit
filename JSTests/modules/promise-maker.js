@@ -1,20 +1,23 @@
-// JSPromise::madeFor(): a promise that is rejected with nothing handling it names the function it was made for,
-// whoever rejected it, in every tier.
+// JSPromise::whose(): a promise that is rejected with nothing handling it says whose the function it was made for
+// is, whoever rejected it, in every tier.
 import { shouldBe } from "./resources/assert.js";
 
-// Until the embedder keeps something of the functions promises are made for, they are made for nothing.
+// Until the embedder asks for it, promises keep nothing.
 let rejectBefore;
 const before = new Promise((_, reject) => { rejectBefore = reject; });
 shouldBe($vm.ownerOfMaker(before), "none");
 $vm.promisesAreMadeForOwners();
 
-// (The owners are numbers: what is kept of a function once a collection has seen its promise is not a cell.)
+// (The owners are numbers: what a promise keeps is not a cell.)
 const first = $vm.createModuleLoader({ owner: 1 });
 const A = await $vm.moduleLoaderImport(first, "./promise-maker/code.js");
 // The same code as A's: the two loaders' modules share executables.
 const B = await $vm.moduleLoaderImport($vm.createModuleLoader({ owner: 2 }, first), "./promise-maker/code.js");
 const G = await import("./promise-maker/code.js");
 const all = [[A, 1], [B, 2], [G, undefined]];
+
+// A script under no scope that says whose it is: its own scopes are not taken for one.
+const makeInHostScript = (0, eval)("(function () { let captured = { }; return new Promise(() => captured); })");
 
 // What a rejected promise that nothing handles says about who it was made for, after the jobs that reject it
 // have run.
@@ -28,7 +31,9 @@ async function makerOf(promise) {
 
 for (let i = 0; i < testLoopCount; ++i) {
     for (const [maker, owner] of all) {
-        for (const [rejecter] of all) {
+        for (const [rejecter, rejecterOwner] of all) {
+            // A promise is whose its executor is, whoever's script constructs it.
+            shouldBe(await makerOf(maker.constructedWith(rejecter.rejectingExecutor)), rejecterOwner);
             // Rejected by another loader's script, through the promise's own reject function.
             {
                 const made = maker.byConstructor();
@@ -66,6 +71,11 @@ for (let i = 0; i < testLoopCount; ++i) {
         shouldBe(await makerOf(maker.asyncThatThrowsAfterAwait()), owner);
         shouldBe(await makerOf(maker.generatorNext()), owner);
         shouldBe(await makerOf(maker.constructedThatThrows()), owner);
+        shouldBe(await makerOf(maker.constructedOneScopeDown()), owner);
+        shouldBe(await makerOf(maker.constructedTwoScopesDown()), owner);
+        shouldBe(await makerOf(maker.constructedWithGiven()), owner);
+        shouldBe(await makerOf(maker.constructedWithBound()), owner);
+        shouldBe(await makerOf(maker.constructedByDerived()), owner);
         shouldBe(await makerOf(maker.rejected()), "none");
         // A promise nothing has been done with says who it was made for; one with a reaction, or fulfilled, says
         // nothing.
@@ -77,6 +87,9 @@ for (let i = 0; i < testLoopCount; ++i) {
         shouldBe($vm.ownerOfMaker(Promise.resolve(1)), "none");
     }
 }
+
+for (let i = 0; i < testLoopCount; ++i)
+    shouldBe($vm.ownerOfMaker(makeInHostScript()), undefined);
 
 rejectBefore(new Error("rejected"));
 shouldBe(await makerOf(before), "none");

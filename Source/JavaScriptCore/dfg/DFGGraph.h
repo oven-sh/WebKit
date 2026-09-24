@@ -65,6 +65,8 @@ enum class FirstCharacterFilterPosition : uint8_t;
 
 namespace DFG {
 
+class InsertionSet;
+
 class BackwardsCFG;
 class BackwardsDominators;
 class CFG;
@@ -927,8 +929,14 @@ public:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    // For a NewPromise whose child is the function the promise is made for: makes the child whose the function is
+    // (JSPromise::whose()) when that can be read from what this code has. It is in the scope that says, which is
+    // a known number of scopes from the one a function is made in, and the code that makes the function has that
+    // one. Whether it did.
+    bool givePromiseWhoseItIs(InsertionSet&, unsigned nodeIndex, Node* promise);
+
     // Whether this code may make a promise for nothing: until the embedder keeps what promises are made for
-    // (VM::setWhoseScript()).
+    // (VM::keepWhosePromisesAre()).
     bool isWatchingPromisesAreMadeForNothingWatchpoint()
     {
         InlineWatchpointSet& set = m_vm.promisesAreMadeForNothingWatchpointSet();

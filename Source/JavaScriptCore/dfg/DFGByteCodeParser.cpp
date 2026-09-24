@@ -8445,7 +8445,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             auto bytecode = currentInstruction->as<OpCreatePromise>();
             Node* callee = get(VirtualRegister(bytecode.m_callee));
-            // (The function the promise is made for, if promises are: see JSPromise::madeFor().)
+            // (The function the promise is made for, if promises keep whose they are: see JSPromise::whose().)
             Node* madeFor = m_graph.isWatchingPromisesAreMadeForNothingWatchpoint() ? nullptr : get(VirtualRegister(bytecode.m_madeFor));
 
             bool alreadyEmitted = false;
@@ -8467,7 +8467,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 }
                 if (promiseConstructor) {
                     addToGraph(Phantom, callee);
-                    Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())), madeFor);
+                    Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(globalObject->promiseStructure())), OpInfo(static_cast<uint32_t>(!!madeFor)), madeFor);
                     set(VirtualRegister(bytecode.m_dst), promise);
                     alreadyEmitted = true;
                 }
@@ -8502,7 +8502,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                                 m_graph.freeze(globalObject);
                                 m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
 
-                                Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(structure)), madeFor);
+                                Node* promise = addToGraph(NewPromise, OpInfo(m_graph.registerStructure(structure)), OpInfo(static_cast<uint32_t>(!!madeFor)), madeFor);
                                 set(VirtualRegister(bytecode.m_dst), promise);
                                 // The callee is still live up to this point.
                                 addToGraph(Phantom, callee);

@@ -311,6 +311,20 @@ public:
         unsigned m_functionEnd { UINT_MAX };
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // How many scopes the scope a function of this executable is made in is from the one that says whose the script
+    // is (JSLexicalEnvironment::createScriptOwnerScope()): every function of one executable is made at the same
+    // place in the same code, so it is the same for all of them. Found by the first that asks
+    // (JSPromise::whoseFunction()).
+    static constexpr uint8_t hopsToOwnerScopeAreUnknown = 0xff;
+    static constexpr uint8_t thereIsNoOwnerScope = 0xfe;
+    // (A built-in's functions are nobody's.)
+    static constexpr uint8_t functionsAreNobodys = 0xfd;
+    static constexpr uint8_t maxHopsToOwnerScope = 0xfc;
+    uint8_t hopsToOwnerScope() const { return m_hopsToOwnerScope; }
+    void setHopsToOwnerScope(uint8_t hops) { m_hopsToOwnerScope = hops; }
+#endif
+
 private:
     friend class ExecutableBase;
     FunctionExecutable(VM&, ScriptExecutable* topLevelExecutable, const SourceCode&, UnlinkedFunctionExecutable*, Intrinsic, bool isInsideOrdinaryFunction);
@@ -328,6 +342,10 @@ private:
     RareData& ensureRareDataSlow();
 
     JSString* toStringSlow(JSGlobalObject*);
+
+#if USE(BUN_JSC_ADDITIONS)
+    uint8_t m_hopsToOwnerScope { hopsToOwnerScopeAreUnknown };
+#endif
 
     // FIXME: We can merge rareData pointer and top-level executable pointer. First time, setting parent.
     // If RareData is required, materialize RareData, swap it, and store top-level executable pointer inside RareData.

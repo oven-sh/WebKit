@@ -31,11 +31,11 @@
 namespace JSC {
 
 #if USE(BUN_JSC_ADDITIONS)
-// JSPromise::createMadeFor(), for the slow path of op_create_promise: in its caller, so that making the promise
-// for a function costs the interpreter and the baseline JIT no more than making it did.
-ALWAYS_INLINE JSPromise* JSPromise::createMadeForInline(VM& vm, Structure* structure, JSValue function)
+// JSPromise::createKeeping(), for the slow path of op_create_promise: in its caller, so that making the promise
+// costs the interpreter and the baseline JIT no more than it did.
+ALWAYS_INLINE JSPromise* JSPromise::createKeepingInline(VM& vm, Structure* structure, JSValue whose)
 {
-    JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure, function);
+    JSPromise* promise = new (NotNull, allocateCell<JSPromise>(vm)) JSPromise(vm, structure, whose);
     promise->finishCreation(vm);
     return promise;
 }

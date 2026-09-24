@@ -4150,9 +4150,11 @@ JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectCount, (JSGlobalObject* globalObjec
 
 // $vm.createModuleLoader(bindings?, sharing?): another module loader for this global object,
 // as { loader }. With `bindings`, the loader's modules see that object's own enumerable
-// properties as variables of a lexical environment between them and the global scope. With
-// `sharing` (an earlier result made with the same property names), that environment reuses
-// the symbol table of sharing.loader's, so the two loaders' modules share executables.
+// properties as variables of a lexical environment between them and the global scope, which
+// is a script owner scope (JSLexicalEnvironment::createScriptOwnerScope()) that says the
+// scripts are `bindings.owner`'s. With `sharing` (an earlier result made with the same
+// property names), that environment reuses the symbol table of sharing.loader's, so the two
+// loaders' modules share executables.
 static JSModuleLoader* moduleLoaderFromHolder(VM& vm, JSValue value)
 {
     JSObject* holder = value.getObject();
@@ -4174,7 +4176,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
         if (!callFrame->argument(1).isUndefined()) {
             JSModuleLoader* sharing = moduleLoaderFromHolder(vm, callFrame->argument(1));
             auto* sharingScope = sharing ? dynamicDowncast<JSLexicalEnvironment>(sharing->moduleScope()) : nullptr;
-            if (!sharingScope || sharingScope->symbolTable()->scopeSize() != names.size())
+            if (!sharingScope || sharingScope->symbolTable()->scopeSize() != names.size() + 1)
                 return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
             symbolTable = sharingScope->symbolTable();
             for (auto& name : names) {
@@ -4182,11 +4184,14 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateModuleLoader, (JSGlobalObject* globalObje
                     return throwVMTypeError(globalObject, scope, "expected the result of $vm.createModuleLoader() with the same bindings"_s);
             }
         } else {
-            symbolTable = SymbolTable::create(vm);
+            symbolTable = JSLexicalEnvironment::createScriptOwnerScopeSymbolTable(vm);
             for (auto& name : names)
                 symbolTable->add(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(symbolTable->takeNextScopeOffset(NoLockingNecessary))));
         }
-        JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject, moduleScope, symbolTable, jsUndefined());
+        // The scripts of the loader are its `owner`'s, which promises can keep when it is not a cell (a number).
+        JSValue owner = bindings->get(globalObject, Identifier::fromString(vm, "owner"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSLexicalEnvironment* environment = JSLexicalEnvironment::createScriptOwnerScope(vm, globalObject, moduleScope, symbolTable, owner.isCell() ? jsUndefined() : owner);
         for (auto& name : names) {
             JSValue value = bindings->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, {});
@@ -4215,19 +4220,16 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
-// The first of the `bindings` of the $vm.createModuleLoader() loader whose module's script `scope` is a scope of
-// (undefined for the global object's own loader): what that script's scope chain ends in.
+// The `owner` of the `bindings` of the $vm.createModuleLoader() loader whose module's script `scope` is a scope of
+// (undefined for the global object's own loader).
 static JSValue ownerOfScope(JSScope* scope)
 {
-    JSScope* outermost = nullptr;
-    for (; scope && scope->type() != GlobalLexicalEnvironmentType && !scope->isGlobalObject(); scope = scope->next())
-        outermost = scope;
-    if (!outermost || outermost->type() != LexicalEnvironmentType)
+    unsigned hops;
+    JSLexicalEnvironment* environment = JSLexicalEnvironment::scriptOwnerScopeOf(scope, hops);
+    if (!environment)
         return jsUndefined();
-    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(outermost);
-    if (!environment->symbolTable()->scopeSize())
-        return jsUndefined();
-    return environment->variableAt(ScopeOffset(0)).get();
+    auto entry = environment->symbolTable()->get(Identifier::fromString(environment->vm(), "owner"_s).impl());
+    return entry.isNull() ? jsUndefined() : environment->variableAt(entry.scopeOffset()).get();
 }
 
 // $vm.ownerOfCaller(): ownerOfScope() of the script that is calling.
@@ -4237,29 +4239,8 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfCaller, (JSGlobalObject* globalObject, C
     return JSValue::encode(ownerOfScope(CallFrame::scopeOfClosestScript(globalObject->vm())));
 }
 
-// Whose script `functionOrScope` is, as ownerOfScope() says, for a test's loaders whose owner is not a cell (a
-// number): what VM::whoseScript() is in the shell. "none" is a cell, so nothing is kept for what is nobody's.
-static JSValue whoseScript(VM&, JSCell* functionOrScope)
+static JSValue ownerOfWhose(VM& vm, JSValue whose)
 {
-    auto* scope = dynamicDowncast<JSScope>(functionOrScope);
-    auto* function = dynamicDowncast<JSFunction>(functionOrScope);
-    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
-        function = dynamicDowncast<JSFunction>(bound->targetFunction());
-    if (function && !function->isHostFunction() && !function->jsExecutable()->isBuiltinFunction())
-        scope = function->scope();
-    if (!scope)
-        return { };
-    JSValue owner = ownerOfScope(scope);
-    return owner.isCell() ? JSValue() : owner;
-}
-
-static JSValue ownerOfMadeFor(VM& vm, JSValue madeFor)
-{
-    if (!madeFor)
-        return jsNontrivialString(vm, "none"_s);
-    if (!madeFor.isCell())
-        return madeFor;
-    JSValue whose = whoseScript(vm, madeFor.asCell());
     return whose ? whose : JSValue(jsNontrivialString(vm, "none"_s));
 }
 
@@ -4277,22 +4258,21 @@ void JSDollarVM::promiseWasRejected(JSGlobalObject* globalObject, JSPromise* pro
     VM& vm = globalObject->vm();
     if (!s_ownersOfRejectedPromisesAreKept)
         return;
-    promise->putDirect(vm, ownerWhenRejected(vm), ownerOfMadeFor(vm, vm.madeForOfPromiseBeingRejected()));
+    promise->putDirect(vm, ownerWhenRejected(vm), ownerOfWhose(vm, vm.whosePromiseBeingRejectedIs()));
 }
 
-// $vm.promisesAreMadeForOwners(forMeasuring = false): from now on promises are made for functions, and what is
-// kept of a function is whose it is (whoseScript()). Unless it is for measuring, $vm.ownerOfMaker() also says
-// whose a rejected promise was, which costs every rejection.
+// $vm.promisesAreMadeForOwners(forMeasuring = false): from now on promises keep whose they are
+// (VM::keepWhosePromisesAre()), which for a test's loaders is their owner when it is not a cell (a number). Unless
+// it is for measuring, $vm.ownerOfMaker() also says whose a rejected promise was, which costs every rejection.
 JSC_DEFINE_HOST_FUNCTION(functionPromisesAreMadeForOwners, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     s_ownersOfRejectedPromisesAreKept = !callFrame->argument(0).toBoolean(globalObject);
-    globalObject->vm().setWhoseScript(whoseScript);
+    globalObject->vm().keepWhosePromisesAre();
     return JSValue::encode(jsUndefined());
 }
 
-// $vm.ownerOfMaker(promise): ownerOfScope() of what the promise was made for (JSPromise::madeFor()), "none" if it
-// has none.
+// $vm.ownerOfMaker(promise): whose the promise is (JSPromise::whose()), "none" if it does not say.
 JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4302,7 +4282,7 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, Ca
         return JSValue::encode(jsNontrivialString(vm, "none"_s));
     if (JSValue whenRejected = promise->getDirect(vm, ownerWhenRejected(vm)))
         return JSValue::encode(whenRejected);
-    return JSValue::encode(ownerOfMadeFor(vm, promise->madeFor()));
+    return JSValue::encode(ownerOfWhose(vm, promise->whose()));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.

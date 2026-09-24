@@ -1689,7 +1689,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 
 #elif USE(BUN_JSC_ADDITIONS)
 
-// A rejected promise only says what it was made for (JSPromise::madeFor()) while the embedder is told of the
+// Whose a rejected promise is (VM::whosePromiseBeingRejectedIs()) is only said while the embedder is told of the
 // rejection: $vm notes it then, for $vm.ownerOfMaker().
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {

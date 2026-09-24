@@ -536,10 +536,10 @@ public:
     bool m_asyncContextTrackingEnabled { false };
 #if USE(BUN_JSC_ADDITIONS)
     CallFrame* m_frameThatStartedTheRunningJob { nullptr };
-    JSValue (*m_whoseScript)(VM&, JSCell*) { nullptr };
+    bool m_promisesKeepWhose { false };
     InlineWatchpointSet m_promisesAreMadeForNothing { IsWatched };
-    // (On the stack of what is rejecting the promise, where the collector finds it.)
-    const JSValue* m_madeForOfPromiseBeingRejected { nullptr };
+    // (Not a cell.)
+    JSValue m_whosePromiseBeingRejectedIs;
 #endif
 #endif
     ClientData* clientData { nullptr };
@@ -676,21 +676,19 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
 #if USE(BUN_JSC_ADDITIONS)
-    // What the embedder keeps of a function a promise was made for (JSPromise::madeFor()), once a collection has
-    // seen the promise: a value that is not a cell, for the collector to have nothing to look at, which says to the
-    // embedder whose the function is. It is asked at the end of a collection, so it only reads: `functionOrScope`
-    // may be dead, and is as it was when it was alive. None set: nothing is kept.
-    // Until the embedder sets one, promises are made for nothing: they are made, rejected and collected as if
-    // none of this was there.
-    using WhoseScript = JSValue (*)(VM&, JSCell* functionOrScope);
-    WhoseScript whoseScript() const { return m_whoseScript; }
-    JS_EXPORT_PRIVATE void setWhoseScript(WhoseScript);
-    // Valid until setWhoseScript(): while it is, optimized code makes promises as it always has.
+    // Whose a script is: what the script owner scope it is made under says
+    // (JSLexicalEnvironment::createScriptOwnerScope()), which is not a cell. Undefined for a script under no such
+    // scope.
+    // Once the embedder asks for it, a promise keeps whose the function it was made for is (JSPromise::whose()).
+    // Until then promises are made, rejected and collected as if none of this was there.
+    bool promisesKeepWhose() const { return m_promisesKeepWhose; }
+    JS_EXPORT_PRIVATE void keepWhosePromisesAre();
+    // Valid until keepWhosePromisesAre(): while it is, optimized code makes promises as it always has.
     InlineWatchpointSet& promisesAreMadeForNothingWatchpointSet() LIFETIME_BOUND { return m_promisesAreMadeForNothing; }
-    // What the promise the embedder is being told was rejected (promiseRejectionTracker(), Reject) was made for:
-    // what JSPromise::madeFor() said until then.
-    JSValue madeForOfPromiseBeingRejected() const { return m_madeForOfPromiseBeingRejected ? *m_madeForOfPromiseBeingRejected : JSValue(); }
-    const JSValue* exchangeMadeForOfPromiseBeingRejected(const JSValue* madeFor) { return std::exchange(m_madeForOfPromiseBeingRejected, madeFor); }
+    // Whose the promise is that the embedder is being told was rejected (promiseRejectionTracker(), Reject): what
+    // JSPromise::whose() said until then, or whose the function is that what rejected the promise had at hand.
+    JSValue whosePromiseBeingRejectedIs() const { return m_whosePromiseBeingRejectedIs; }
+    JSValue exchangeWhosePromiseBeingRejectedIs(JSValue whose) { return std::exchange(m_whosePromiseBeingRejectedIs, whose); }
 
     // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it
     // said so: that frame and the ones that called it are not the script that is calling

@@ -123,30 +123,26 @@ public:
     JSValue asyncStackTraceContext() const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The function this promise was made for, for the embedder to say whose a rejection that nothing handles is:
-    // the executor it was constructed with, the handler `then`, `catch` or `finally` made it for, the async
-    // function it is of. It is written where a promise that nothing has been done with would have nothing
-    // (m_slot, where its value will go), and rejectPromise() writes it where a rejected promise would have
-    // nothing (where its reactions were):
-    // - the executor when the promise is made, as nothing will have it when the promise is rejected,
-    // - a handler or an async function by what is about to reject the promise, or to resolve it with a thenable,
-    //   and has the function at hand.
-    // A promise that has a reaction, or is fulfilled, or was made for no function (Promise.withResolvers(), the
-    // combinators, Promise.reject()) has none.
-    //
-    // The promise does not keep the function alive, and the collector looks at it once: the first collection that
-    // sees the promise gives it what the embedder keeps of the function in its place (VM::whoseScript()), which
-    // is not a cell. So this is a function, or that. A rejected promise has none: the embedder asks
-    // VM::madeForOfPromiseBeingRejected() while it is told of the rejection.
-    //
-    // All of this only once the embedder keeps something (VM::setWhoseScript()). Until then every promise is made
-    // for nothing.
-    JSValue madeFor() const;
-    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
+    // Whose this promise is (VM::promisesKeepWhose()), for the embedder to give a rejection that nothing handles to:
+    // whose the function is that the promise was made for, which is the executor it was constructed with, the
+    // handler `then`, `catch` or `finally` made it for, or the async function it is of. It is not a cell, so the
+    // promise keeps nothing alive and the collector has nothing to look at.
+    // It is written where a promise that nothing has been done with would have nothing (m_slot, where its value
+    // will go):
+    // - when the promise is constructed, as nothing will have the executor when the promise is rejected,
+    // - for a handler or an async function, when the promise is resolved with a thenable. When the promise is
+    //   rejected, what rejects it has the function at hand, and nothing is written.
+    // A promise that has a reaction, or is settled, or was made for no function (Promise.withResolvers(), the
+    // combinators, Promise.reject()) has none. For a promise that is being rejected the embedder asks
+    // VM::whosePromiseBeingRejectedIs().
+    JSValue whose() const;
+    // Whose `function` is: undefined for a script under no scope that says, nothing for what is nobody's.
+    JS_EXPORT_PRIVATE static JSValue whoseFunction(VM&, JSValue function);
     JS_EXPORT_PRIVATE static JSPromise* createMadeFor(VM&, Structure*, JSValue function);
-    static JSPromise* createMadeForInline(VM&, Structure*, JSValue function);
-    // For what is about to resolve a promise that was not made with its function with a promise. (A promise that
-    // something handles, or that has its function, keeps what it has.)
+    JS_EXPORT_PRIVATE static JSPromise* createKeeping(VM&, Structure*, JSValue whose);
+    static JSPromise* createKeepingInline(VM&, Structure*, JSValue whose);
+    // For what is about to resolve a promise that was made for `function` with a promise. (A promise that something
+    // handles, or that keeps whose it is, keeps what it has.)
     void setMadeFor(VM&, JSValue function);
     // rejectPromise() and reject(), by what has the function the promise was made for at hand.
     void rejectPromiseMadeFor(VM&, JSValue, const JSValue& function);
@@ -200,9 +196,6 @@ public:
     JS_EXPORT_PRIVATE static JSValue createNewPromiseCapability(JSGlobalObject*, JSValue constructor);
 
     DECLARE_VISIT_CHILDREN;
-#if USE(BUN_JSC_ADDITIONS)
-    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
-#endif
 
     // This is abstract operations defined in the spec.
     void performPromiseThen(VM&, JSGlobalObject*, JSValue onFulfilled, JSValue onRejected, JSValue);
@@ -253,11 +246,10 @@ public:
 protected:
     JSPromise(VM&, Structure*);
 #if USE(BUN_JSC_ADDITIONS)
-    JSPromise(VM&, Structure*, JSValue madeFor);
+    JSPromise(VM&, Structure*, JSValue whose);
     template<typename MadeFor> void resolvePromiseKnowingMadeFor(JSGlobalObject*, VM&, JSValue, const MadeFor&);
     template<typename Function> void rejectPromiseKnowingMadeFor(VM&, JSValue, const Function&);
-    void rejectTellingWhatItWasMadeFor(VM&, JSGlobalObject*, JSValue, uint16_t settledFlags, JSPromiseReaction*, JSValue function);
-    template<typename Visitor> static void visitMadeFor(JSPromise*, Visitor&, JSCell* reactions);
+    void rejectTellingWhoseItIs(VM&, JSGlobalObject*, JSValue, uint16_t settledFlags, JSPromiseReaction*, JSValue function);
 #endif
 
     DECLARE_DEFAULT_FINISH_CREATION;

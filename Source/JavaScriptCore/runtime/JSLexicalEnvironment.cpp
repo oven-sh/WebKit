@@ -31,6 +31,7 @@
 
 #include "HeapAnalyzer.h"
 #include "JSCInlines.h"
+#include "JSLexicalEnvironmentInlines.h"
 
 namespace JSC {
 
@@ -138,5 +139,39 @@ bool JSLexicalEnvironment::deleteProperty(JSCell* cell, JSGlobalObject* globalOb
 
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+SymbolTable* JSLexicalEnvironment::createScriptOwnerScopeSymbolTable(VM& vm)
+{
+    SymbolTable* symbolTable = SymbolTable::create(vm);
+    ScopeOffset offset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+    ASSERT_UNUSED(offset, offset == whoseOffset());
+    return symbolTable;
+}
+
+JSLexicalEnvironment* JSLexicalEnvironment::createScriptOwnerScope(VM& vm, JSGlobalObject* globalObject, JSScope* currentScope, SymbolTable* symbolTable, JSValue whose)
+{
+    ASSERT(whose && !whose.isCell());
+    ASSERT(symbolTable->scopeSize());
+    JSLexicalEnvironment* scope = create(vm, globalObject->scriptOwnerScopeStructure(), currentScope, symbolTable, jsUndefined());
+    scope->variableAt(whoseOffset()).setWithoutWriteBarrier(whose);
+    return scope;
+}
+
+JSLexicalEnvironment* JSLexicalEnvironment::scriptOwnerScopeOf(JSScope* scope, unsigned& hops)
+{
+    hops = 0;
+    if (!scope)
+        return nullptr;
+    Structure* structure = scope->structure()->realm()->scriptOwnerScopeStructureIfThereIsOne();
+    if (!structure)
+        return nullptr;
+    for (; scope; scope = scope->next(), ++hops) {
+        if (scope->structure() == structure)
+            return uncheckedDowncast<JSLexicalEnvironment>(scope);
+    }
+    return nullptr;
+}
+#endif
 
 } // namespace JSC

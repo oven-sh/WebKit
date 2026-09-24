@@ -87,7 +87,6 @@ class IncrementalSweeper;
 class JITStubRoutine;
 class JITStubRoutineSet;
 class JSCell;
-class JSPromise;
 class JSCellButterfly;
 class JSRopeString;
 class JSString;
@@ -968,11 +967,6 @@ private:
     bool m_reenableFullActivityCallback { false };
 #endif
     Lock m_raceMarkStackLock;
-#if USE(BUN_JSC_ADDITIONS)
-    Lock m_promisesMadeForFunctionsLock;
-    Vector<JSPromise*> m_promisesMadeForFunctions WTF_GUARDED_BY_LOCK(m_promisesMadeForFunctionsLock);
-    Vector<JSPromise*> m_promisesMadeForFunctionsVisitedWhileMutatorRan WTF_GUARDED_BY_LOCK(m_promisesMadeForFunctionsLock);
-#endif
 
     MarkedSpace m_objectSpace;
     GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
@@ -1357,22 +1351,6 @@ public:
 
     using UnlinkedFunctionExecutableSpaceAndSet = SpaceAndSet;
     UnlinkedFunctionExecutableSpaceAndSet unlinkedFunctionExecutableSpaceAndSet;
-
-#if USE(BUN_JSC_ADDITIONS)
-    // The promises this collection has visited that have the function they were made for (JSPromise::madeFor()),
-    // which they do not keep alive: each is given what the embedder keeps of the function when the collection is
-    // over, and is not looked at again. (A list, not an IsoCellSet: going through one of those costs every
-    // promise of a block that ever had one in the set.)
-    // `whileMutatorRuns`: whether what the promise has may have changed while it was visited (it is looked at
-    // again when the mutator is stopped: JSPromise::visitOutputConstraints()).
-    void didVisitPromiseMadeForFunction(JSPromise* promise, bool whileMutatorRuns)
-    {
-        Locker locker { m_promisesMadeForFunctionsLock };
-        m_promisesMadeForFunctions.append(promise);
-        if (whileMutatorRuns)
-            m_promisesMadeForFunctionsVisitedWhileMutatorRan.append(promise);
-    }
-#endif
 
 #undef DYNAMIC_SPACE_AND_SET_DEFINE_MEMBER
 

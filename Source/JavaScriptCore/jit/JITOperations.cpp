@@ -2908,6 +2908,16 @@ JSC_DEFINE_JIT_OPERATION(operationNewPromiseMadeFor, JSCell*, (VM* vmPointer, St
     OPERATION_RETURN(scope, JSPromise::createMadeFor(vm, structure, JSValue::decode(madeFor)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationNewPromiseKeeping, JSCell*, (VM* vmPointer, Structure* structure, EncodedJSValue whose))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSPromise::createKeeping(vm, structure, JSValue::decode(whose)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationNewGenerator, JSCell*, (VM* vmPointer, Structure* structure))
 {
     VM& vm = *vmPointer;

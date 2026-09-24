@@ -114,6 +114,13 @@ private:
     void handleNode()
     {
         switch (m_node->op()) {
+#if USE(BUN_JSC_ADDITIONS)
+        case NewPromise:
+            if (m_graph.givePromiseWhoseItIs(m_insertionSet, m_nodeIndex, m_node))
+                m_changed = true;
+            break;
+#endif
+
         case Branch:
         case PurifyNaN:
         case DoubleAsInt32:

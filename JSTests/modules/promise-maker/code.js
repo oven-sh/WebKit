@@ -5,6 +5,19 @@ export function withResolvers() { const made = Promise.withResolvers(); return m
 export function byConstructor() { let reject; const promise = new Promise((_, r) => { reject = r; }); return { promise, reject }; }
 export function constructedThatThrows() { const promise = new Promise(() => { throw error(); }); return promise; }
 export function constructedResolvedWith(promise) { const made = new Promise(resolve => { resolve(promise); }); return made; }
+// The executor is made one and two scopes down from the module's, and is not made where the promise is.
+export function constructedOneScopeDown() { const captured = error(); const promise = new Promise((_, reject) => { reject(captured); }); return promise; }
+export function constructedTwoScopesDown() {
+    let count = 0;
+    const make = () => { const captured = error(); count++; return new Promise((_, reject) => { reject(captured); }); };
+    return make();
+}
+export const rejectingExecutor = (_, reject) => { reject(error()); };
+export function constructedWithGiven() { const promise = new Promise(rejectingExecutor); return promise; }
+export function constructedWithBound() { const promise = new Promise(rejectingExecutor.bind(null)); return promise; }
+class Derived extends Promise { }
+export function constructedByDerived() { const promise = new Derived((_, reject) => { reject(error()); }); return promise; }
+export function constructedWith(executor) { const promise = new Promise(executor); return promise; }
 export function pending() { const promise = new Promise(() => { }); return promise; }
 export function fulfilled() { const promise = new Promise(resolve => { resolve(1); }); return promise; }
 export function rejected() { const promise = Promise.reject(error()); return promise; }

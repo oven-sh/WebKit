@@ -10117,11 +10117,16 @@ IGNORE_CLANG_WARNINGS_END
     void compileNewPromise()
     {
         ASSERT(m_node->structure()->classInfoForCells() == JSPromise::info());
+        if (m_node->child1() && m_node->promiseChildIsFunction()) {
+            // Whose the function is that the promise is made for could not be found in what made the function.
+            setJSValue(vmCall(pointerType(), operationNewPromiseMadeFor, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get())), lowJSValue(m_node->child1())));
+            return;
+        }
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
 
-        // The function the promise is made for (JSPromise::madeFor()) is written where nothing would be.
+        // What the promise keeps (JSPromise::whose()) is written where nothing would be.
         LValue madeFor = m_node->child1() ? lowJSValue(m_node->child1()) : nullptr;
         LValue object = allocateObject<JSPromise>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.store64(m_out.int64Zero, object, m_heaps.JSPromise_packed);
@@ -10132,7 +10137,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(slowCase, continuation);
         ValueFromBlock slowResult = m_out.anchor(madeFor
-            ? vmCall(pointerType(), operationNewPromiseMadeFor, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get())), madeFor)
+            ? vmCall(pointerType(), operationNewPromiseKeeping, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get())), madeFor)
             : vmCall(pointerType(), operationNewPromise, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get()))));
         m_out.jump(continuation);
 
@@ -10552,7 +10557,12 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LValue callee = lowCell(m_node->child1());
-        LValue madeFor = m_node->child2() ? lowJSValue(m_node->child2()) : m_out.constInt64(JSValue::encode(JSValue()));
+        if (m_node->child2()) {
+            // The promise is made for a function: whose it is (JSPromise::whose()) is found as the promise is made.
+            setJSValue(vmCall(Int64, operationCreatePromise, weakPointer(globalObject), callee, lowJSValue(m_node->child2())));
+            return;
+        }
+        LValue madeFor = m_out.constInt64(JSValue::encode(JSValue()));
 
         LBasicBlock derivedCase = m_out.newBlock();
         LBasicBlock isFunctionBlock = m_out.newBlock();

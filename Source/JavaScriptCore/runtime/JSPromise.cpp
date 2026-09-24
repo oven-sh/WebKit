@@ -37,6 +37,7 @@
 #include "JSAsyncFunctionGenerator.h"
 #include "JSBoundFunction.h"
 #include "JSFunctionWithFields.h"
+#include "JSLexicalEnvironment.h"
 #include "JSMicrotask.h"
 #include "JSPromiseCombinatorsContext.h"
 #include "JSPromiseConstructor.h"
@@ -78,42 +79,83 @@ JSPromise::JSPromise(VM& vm, Structure* structure)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-JSPromise::JSPromise(VM& vm, Structure* structure, JSValue madeFor)
+JSPromise::JSPromise(VM& vm, Structure* structure, JSValue whose)
     : Base(vm, structure)
-    , m_slot(madeFor, WriteBarrierEarlyInit)
+    , m_slot(whose, WriteBarrierEarlyInit)
 {
 }
 
 JSPromise* JSPromise::createMadeFor(VM& vm, Structure* structure, JSValue function)
 {
-    return createMadeForInline(vm, structure, function);
+    return createKeepingInline(vm, structure, whoseFunction(vm, function));
 }
 
-JSValue JSPromise::madeFor() const
+JSPromise* JSPromise::createKeeping(VM& vm, Structure* structure, JSValue whose)
+{
+    return createKeepingInline(vm, structure, whose);
+}
+
+JSValue JSPromise::whose() const
 {
     if (status() != Status::Pending || inlineReactionKind() != InlineReactionKind::None || payloadCell())
         return { };
     return m_slot.get();
 }
 
-// (For the promises that were visited in this collection, and for each of them once: what it has from here on is
-// not a cell.)
-void JSPromise::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
+// whoseFunction(), the first time it is asked of a function of its executable, or of what is not a script's function.
+static NEVER_INLINE JSValue whoseFunctionSlow(JSValue value)
 {
-    JSValue function = madeFor();
-    if (!function || !function.isCell())
-        return;
-    JSValue whose = vm.whoseScript()(vm, function.asCell());
-    ASSERT(!whose || !whose.isCell());
-    m_slot.setWithoutWriteBarrier(whose);
+    auto* function = value && value.isCell() ? dynamicDowncast<JSFunction>(value.asCell()) : nullptr;
+    while (auto* bound = dynamicDowncast<JSBoundFunction>(function))
+        function = dynamicDowncast<JSFunction>(bound->targetFunction());
+    if (!function || function->isHostFunction())
+        return { };
+    FunctionExecutable* executable = function->jsExecutable();
+    if (executable->isBuiltinFunction()) {
+        executable->setHopsToOwnerScope(FunctionExecutable::functionsAreNobodys);
+        return { };
+    }
+    unsigned hops;
+    JSLexicalEnvironment* owner = JSLexicalEnvironment::scriptOwnerScopeOf(function->scope(), hops);
+    if (!owner) {
+        executable->setHopsToOwnerScope(FunctionExecutable::thereIsNoOwnerScope);
+        return jsUndefined();
+    }
+    // (Further than can be remembered: asked here every time.)
+    if (hops < FunctionExecutable::maxHopsToOwnerScope)
+        executable->setHopsToOwnerScope(hops);
+    return owner->whose();
+}
+
+JSValue JSPromise::whoseFunction(VM&, JSValue value)
+{
+    if (value && value.isCell() && value.asCell()->type() == JSFunctionType) [[likely]] {
+        auto* function = uncheckedDowncast<JSFunction>(value.asCell());
+        ExecutableBase* executable = function->executable();
+        if (executable->type() == FunctionExecutableType) [[likely]] {
+            uint8_t hops = uncheckedDowncast<FunctionExecutable>(executable)->hopsToOwnerScope();
+            if (hops < FunctionExecutable::maxHopsToOwnerScope) [[likely]] {
+                JSScope* scope = function->scope();
+                for (; hops; --hops)
+                    scope = scope->next();
+                ASSERT(scope->structure() == scope->structure()->realm()->scriptOwnerScopeStructure());
+                return uncheckedDowncast<JSLexicalEnvironment>(scope)->whose();
+            }
+            if (hops == FunctionExecutable::thereIsNoOwnerScope)
+                return jsUndefined();
+            if (hops == FunctionExecutable::functionsAreNobodys)
+                return { };
+        }
+    }
+    return whoseFunctionSlow(value);
 }
 
 void JSPromise::setMadeFor(VM& vm, JSValue function)
 {
-    if (!vm.whoseScript())
+    if (!vm.promisesKeepWhose())
         return;
-    if (function && function.isCell() && status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
-        m_slot.set(vm, this, function);
+    if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell() && !m_slot.get())
+        m_slot.setWithoutWriteBarrier(whoseFunction(vm, function));
 }
 #endif
 
@@ -123,60 +165,12 @@ void JSPromise::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSPromise>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-#if USE(BUN_JSC_ADDITIONS)
-    auto packed = thisObject->m_packed;
-    if (JSCell* payload = packed.pointer())
-        visitor.appendUnbarriered(payload);
-    JSValue slot = thisObject->m_slot.get();
-    if (!slot.isCell())
-        return;
-    JSCell* held = slot.asCell();
-    if (!held)
-        return;
-    // A pending promise with no inline reaction has what it was made for there (madeFor()), which it does not
-    // keep alive.
-    if (!(packed.type() & (stateMask | inlineReactionKindMask))) [[unlikely]]
-        return visitMadeFor(thisObject, visitor, packed.pointer());
-    visitor.appendUnbarriered(held);
-#else
     if (JSCell* payload = thisObject->m_packed.pointer())
         visitor.appendUnbarriered(payload);
     visitor.append(thisObject->m_slot);
-#endif
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-template<typename Visitor>
-NEVER_INLINE void JSPromise::visitMadeFor(JSPromise* promise, Visitor& visitor, JSCell* reactions)
-{
-    // (With a list of reactions, what the promise was made for no longer matters, and is not looked at again.)
-    if (reactions)
-        return;
-    // If the promise is being settled with this cell right now, the two words were not read as one: the cell is
-    // looked at again once the mutator is stopped (visitOutputConstraints()).
-    visitor.vm().heap.didVisitPromiseMadeForFunction(promise, !visitor.mutatorIsStopped());
-}
-#endif
 
 DEFINE_VISIT_CHILDREN(JSPromise);
-
-#if USE(BUN_JSC_ADDITIONS)
-// For a promise that was taken to have what it was made for in m_slot when it was visited: what is there now,
-// with the mutator stopped, if it is what the promise was settled with or a reaction's.
-template<typename Visitor>
-void JSPromise::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSPromise>(cell);
-    if (!visitor.mutatorIsStopped() || thisObject->madeFor())
-        return;
-    if (JSCell* payload = thisObject->m_packed.pointer())
-        visitor.appendUnbarriered(payload);
-    if (thisObject->status() != Status::Pending || thisObject->inlineReactionKind() != InlineReactionKind::None)
-        visitor.append(thisObject->m_slot);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSPromise);
-#endif
 
 JSValue JSPromise::createNewPromiseCapability(JSGlobalObject* globalObject, JSValue constructor)
 {
@@ -777,20 +771,19 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// The rejection of a promise that nothing handles, when the embedder keeps what promises are made for: the embedder
-// is told, and can ask what the promise was made for while it is (VM::madeForOfPromiseBeingRejected()). That is
-// what the promise has, or `function`, which what is rejecting it had at hand.
-NEVER_INLINE void JSPromise::rejectTellingWhatItWasMadeFor(VM& vm, JSGlobalObject* globalObject, JSValue argument, uint16_t settledFlags, JSPromiseReaction* reactions, JSValue function)
+// The rejection of a promise that nothing handles, when promises keep whose they are: the embedder is told, and
+// can ask whose the promise is while it is (VM::whosePromiseBeingRejectedIs()). That is what the promise kept, or
+// whose `function` is, which what is rejecting the promise had at hand.
+NEVER_INLINE void JSPromise::rejectTellingWhoseItIs(VM& vm, JSGlobalObject* globalObject, JSValue argument, uint16_t settledFlags, JSPromiseReaction* reactions, JSValue function)
 {
-    JSValue madeFor = reactions ? JSValue() : m_slot.get();
-    if (!madeFor && function && function.isCell())
-        madeFor = function;
+    JSValue whose = reactions ? JSValue() : m_slot.get();
+    if (!whose)
+        whose = whoseFunction(vm, function);
     setSlot(vm, argument);
     setPackedCell(vm, settledFlags, nullptr);
-    const JSValue* outer = vm.exchangeMadeForOfPromiseBeingRejected(&madeFor);
+    JSValue outer = vm.exchangeWhosePromiseBeingRejectedIs(whose);
     globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-    vm.exchangeMadeForOfPromiseBeingRejected(outer);
-    ensureStillAliveHere(madeFor);
+    vm.exchangeWhosePromiseBeingRejectedIs(outer);
     if (reactions)
         triggerPromiseReactions(vm, globalObject, Status::Rejected, reactions, argument);
 }
@@ -819,8 +812,8 @@ ALWAYS_INLINE void JSPromise::rejectPromiseKnowingMadeFor(VM& vm, JSValue argume
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
 #if USE(BUN_JSC_ADDITIONS)
         if (!(currentFlags & isHandledFlag)) {
-            if (vm.whoseScript()) [[unlikely]]
-                return rejectTellingWhatItWasMadeFor(vm, globalObject, argument, settledFlags, reactions, function());
+            if (vm.promisesKeepWhose()) [[unlikely]]
+                return rejectTellingWhoseItIs(vm, globalObject, argument, settledFlags, reactions, function());
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);

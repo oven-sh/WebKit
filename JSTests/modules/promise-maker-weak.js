@@ -1,10 +1,10 @@
-// JSPromise::madeFor(): a promise does not keep the function it was made for alive, and still names who it was
-// made for once the function is gone.
+// JSPromise::whose(): a promise does not keep the function it was made for alive, and still says whose it is
+// once the function is gone.
 import { shouldBe } from "./resources/assert.js";
 
 $vm.promisesAreMadeForOwners();
 
-// (The owners are numbers: what is kept of a function once a collection has seen its promise is not a cell.)
+// (The owners are numbers: what a promise keeps is not a cell.)
 const first = $vm.createModuleLoader({ owner: 1 });
 const A = await $vm.moduleLoaderImport(first, "./promise-maker/code.js");
 const G = await import("./promise-maker/code.js");

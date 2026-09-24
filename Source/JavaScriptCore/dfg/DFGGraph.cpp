@@ -26,6 +26,8 @@
 #include "config.h"
 #include "DFGGraph.h"
 
+#include "DFGInsertionSet.h"
+
 #if ENABLE(DFG_JIT)
 
 #include "ArrayPrototype.h"
@@ -2357,6 +2359,42 @@ UncheckedKeyHashMap<Node*, uint32_t> Graph::collectIRDumpDebugInfo(IRDumpDebugIn
     }
     return nodeToLineIndex;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool Graph::givePromiseWhoseItIs(InsertionSet& insertionSet, unsigned nodeIndex, Node* promise)
+{
+    ASSERT(promise->op() == NewPromise);
+    if (!promise->child1() || !promise->promiseChildIsFunction())
+        return false;
+    Node* function = promise->child1().node();
+    Node* whose = nullptr;
+    switch (function->op()) {
+    case NewFunction:
+    case NewGeneratorFunction:
+    case NewAsyncFunction:
+    case NewAsyncGeneratorFunction: {
+        auto* executable = function->castOperand<FunctionExecutable*>();
+        uint8_t hops = executable->hopsToOwnerScope();
+        if (hops != FunctionExecutable::thereIsNoOwnerScope && hops >= FunctionExecutable::maxHopsToOwnerScope)
+            return false;
+        if (hops == FunctionExecutable::thereIsNoOwnerScope) {
+            whose = insertionSet.insertConstant(nodeIndex, promise->origin, jsUndefined());
+            break;
+        }
+        Node* scope = function->child1().node();
+        for (unsigned hop = 0; hop < hops; ++hop)
+            scope = insertionSet.insertNode(nodeIndex, SpecObjectOther, SkipScope, promise->origin, Edge(scope, KnownCellUse));
+        whose = insertionSet.insertNode(nodeIndex, SpecBytecodeTop, GetClosureVar, promise->origin, OpInfo(JSLexicalEnvironment::whoseOffset().offset()), OpInfo(SpecBytecodeTop), Edge(scope, KnownCellUse));
+        break;
+    }
+    default:
+        return false;
+    }
+    promise->child1() = Edge(whose);
+    promise->setPromiseChildIsFunction(false);
+    return true;
+}
+#endif
 
 } } // namespace JSC::DFG
 

@@ -9235,11 +9235,17 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
 
     SpeculateCellOperand callee(this, node->child1());
-    // The function the promise is made for (JSPromise::madeFor()), if it is made for one: it is written where
-    // nothing would be.
-    std::optional<JSValueOperand> madeFor;
-    if (node->child2())
-        madeFor.emplace(this, node->child2());
+    if (node->child2()) {
+        // The promise is made for a function: whose it is (JSPromise::whose()) is found as the promise is made.
+        JSValueOperand function(this, node->child2());
+        GPRReg calleeGPR = callee.gpr();
+        GPRReg functionGPR = function.gpr();
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        callOperation(operationCreatePromise, result.gpr(), LinkableConstant::globalObject(*this, node), calleeGPR, functionGPR);
+        cellResult(result.gpr(), node);
+        return;
+    }
     GPRTemporary madeForNothing(this);
     GPRTemporary result(this);
     GPRTemporary structure(this);
@@ -9247,9 +9253,8 @@ void SpeculativeJIT::compileCreatePromise(Node* node)
     GPRTemporary scratch2(this);
 
     GPRReg calleeGPR = callee.gpr();
-    GPRReg madeForGPR = madeFor ? madeFor->gpr() : madeForNothing.gpr();
-    if (!madeFor)
-        move(TrustedImm64(JSValue::encode(JSValue())), madeForGPR);
+    GPRReg madeForGPR = madeForNothing.gpr();
+    move(TrustedImm64(JSValue::encode(JSValue())), madeForGPR);
     GPRReg resultGPR = result.gpr();
     GPRReg structureGPR = structure.gpr();
     GPRReg scratch1GPR = scratch1.gpr();
@@ -9299,16 +9304,25 @@ void SpeculativeJIT::compileNewPromise(Node* node)
     JumpList slowCases;
     FrozenValue* structure = m_graph.freezeStrong(node->structure().get());
     auto butterfly = TrustedImmPtr(nullptr);
+    if (node->child1() && node->promiseChildIsFunction()) {
+        // Whose the function is that the promise is made for could not be found in what made the function.
+        JSValueOperand function(this, node->child1());
+        GPRReg functionGPR = function.gpr();
+        flushRegisters();
+        callOperation(operationNewPromiseMadeFor, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), functionGPR);
+        cellResult(resultGPR, node);
+        return;
+    }
     if (node->child1()) {
-        // The promise is made for a function (JSPromise::madeFor()): it is written where nothing would be.
-        JSValueOperand madeFor(this, node->child1());
-        GPRReg madeForGPR = madeFor.gpr();
+        // What the promise keeps (JSPromise::whose()) is written where nothing would be.
+        JSValueOperand whose(this, node->child1());
+        GPRReg whoseGPR = whose.gpr();
         emitAllocateJSObjectWithKnownSize<JSPromise>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSPromise), SlowAllocationResult::UndefinedBehavior);
         store64(TrustedImm64(0), Address(resultGPR, JSPromise::offsetOfPacked()));
-        store64(madeForGPR, Address(resultGPR, JSPromise::offsetOfSlot()));
+        store64(whoseGPR, Address(resultGPR, JSPromise::offsetOfSlot()));
         mutatorFence(vm());
 
-        addSlowPathGenerator(slowPathCall(slowCases, this, operationNewPromiseMadeFor, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), madeForGPR));
+        addSlowPathGenerator(slowPathCall(slowCases, this, operationNewPromiseKeeping, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), whoseGPR));
         cellResult(resultGPR, node);
         return;
     }

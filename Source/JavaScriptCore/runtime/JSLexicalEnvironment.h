@@ -93,6 +93,21 @@ public:
     static JSLexicalEnvironment* create(VM&, Structure*, JSScope* currentScope, SymbolTable*, JSValue initialValue);
     static JSLexicalEnvironment* create(VM&, JSGlobalObject*, JSScope* currentScope, SymbolTable*, JSValue initialValue);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A scope that says whose the scripts made under it are, for an embedder to give a module loader as its module
+    // scope (JSModuleLoader::moduleScope()), or to make any script under. `whose` is not a cell. The scope is told
+    // from any other by its structure (JSGlobalObject::scriptOwnerScopeStructure()), and keeps `whose` in its
+    // first variable, which has no name: `symbolTable` is one createScriptOwnerScopeSymbolTable() made, to which
+    // the embedder has added the names it wants the scope to have.
+    JS_EXPORT_PRIVATE static JSLexicalEnvironment* createScriptOwnerScope(VM&, JSGlobalObject*, JSScope* currentScope, SymbolTable*, JSValue whose);
+    JS_EXPORT_PRIVATE static SymbolTable* createScriptOwnerScopeSymbolTable(VM&);
+    static constexpr ScopeOffset whoseOffset() { return ScopeOffset(0); }
+    // Whose the scripts made under a script owner scope are.
+    JSValue whose() { return variableAt(whoseOffset()).get(); }
+    // The script owner scope `scope` is under, or is, if any. `hops`: how many scopes it is from `scope`.
+    JS_EXPORT_PRIVATE static JSLexicalEnvironment* scriptOwnerScopeOf(JSScope*, unsigned& hops);
+#endif
+
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 

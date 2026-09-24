@@ -78,7 +78,6 @@
 #include "JSSentinel.h"
 #include "JSVirtualMachineInternal.h"
 #include "JSWeakMap.h"
-#include "JSPromise.h"
 #include "JSWeakObjectRef.h"
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
@@ -819,15 +818,6 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     }
 
     reconcileWeakReferencesInMarkedCells<SymbolTable>(symbolTableSpace, collectionScope);
-#if USE(BUN_JSC_ADDITIONS)
-    {
-        Locker locker { m_promisesMadeForFunctionsLock };
-        for (JSPromise* promise : m_promisesMadeForFunctions)
-            promise->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
-        m_promisesMadeForFunctions.shrink(0);
-        m_promisesMadeForFunctionsVisitedWhileMutatorRan.shrink(0);
-    }
-#endif
 
     forEachCodeBlockSpace(
         [&] (auto& space) {
@@ -3825,13 +3815,6 @@ void Heap::addCoreConstraints()
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::WeakMapSpace);
                 add(*heap->m_weakMapSpace);
             }
-#if USE(BUN_JSC_ADDITIONS)
-            {
-                Locker locker { heap->m_promisesMadeForFunctionsLock };
-                for (JSPromise* promise : heap->m_promisesMadeForFunctionsVisitedWhileMutatorRan)
-                    callOutputConstraint(visitor, promise, HeapCell::JSCell);
-            }
-#endif
         })),
         ConstraintVolatility::GreyedByMarking,
         ConstraintParallelism::Parallel);

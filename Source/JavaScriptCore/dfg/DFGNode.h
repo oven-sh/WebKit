@@ -923,6 +923,21 @@ public:
         child1() = madeFor;
         m_opInfo = structure;
         m_opInfo2 = OpInfoWrapper();
+        setPromiseChildIsFunction(!!madeFor);
+    }
+
+    // NewPromise has the function the promise is made for as its child, or, once whose the function is has been
+    // found in what made the function, that, which is what the promise keeps (JSPromise::whose()).
+    bool promiseChildIsFunction()
+    {
+        ASSERT(m_op == NewPromise);
+        return !!m_opInfo2.as<uint32_t>();
+    }
+
+    void setPromiseChildIsFunction(bool isFunction)
+    {
+        ASSERT(m_op == NewPromise);
+        m_opInfo2 = static_cast<uint32_t>(isFunction);
     }
 
     void convertToPhantomNewPromise()
