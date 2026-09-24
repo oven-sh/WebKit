@@ -157,7 +157,7 @@ void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size
     {
         Locker locker { cellLock() };
 
-        size_t limit = globalObject->stackTraceLimit().value();
+        size_t limit = globalObject->stackTraceLimit().value_or(0);
         std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
         vm.interpreter.getStackTrace(this, *stackTrace, framesToSkip, limit);
 
