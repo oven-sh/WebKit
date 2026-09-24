@@ -164,6 +164,24 @@ public:
 
     unsigned callArgAreaSizeInBytes() const { return m_callArgAreaSize; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Set when the code moves the stack pointer at run time (C's alloca). Stack slots then have
+    // to be addressed from the frame pointer: their distance from the stack pointer is not fixed.
+    bool hasDynamicStackAllocation() const { return m_hasDynamicStackAllocation; }
+    void setHasDynamicStackAllocation() { m_hasDynamicStackAllocation = true; }
+
+    // Set when the code makes a call that can return a second time (C's setjmp, which longjmp goes back to). What
+    // was spilled before that call is read after its second return, which comes after code the control flow graph
+    // says cannot lead there; so no two spill slots share their bytes, whatever liveness says.
+    bool hasCallThatReturnsTwice() const { return m_hasCallThatReturnsTwice; }
+    void setHasCallThatReturnsTwice() { m_hasCallThatReturnsTwice = true; }
+
+    // The most the frame sets aside for outgoing arguments. A CallArg past it is the business of the code that
+    // uses it, which moved the stack pointer down to make the room (and set hasDynamicStackAllocation).
+    unsigned maximumCallArgAreaSizeInBytes() const { return m_maximumCallArgAreaSize; }
+    void setMaximumCallArgAreaSizeInBytes(unsigned size) { m_maximumCallArgAreaSize = size; }
+#endif
+
     // You can call this before code generation to force a minimum call arg area size.
     void requestCallArgAreaSizeInBytes(unsigned size)
     {
@@ -245,6 +263,13 @@ public:
     
     // This just tells you what the callee saves are.
     RegisterSet calleeSaveRegisters() const { return m_calleeSaveRegisters; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // General-purpose registers this code must also leave as it found them: what the convention its
+    // callers follow preserves and RegisterSet::calleeSaveRegisters() (the JIT's own) does not.
+    void setAdditionalCalleeSaveRegisters(RegisterSet registers) { m_additionalCalleeSaveRegisters = registers; }
+    RegisterSet additionalCalleeSaveRegisters() const { return m_additionalCalleeSaveRegisters; }
+#endif
 
     // Recomputes predecessors and deletes unreachable blocks.
     JS_EXPORT_PRIVATE void resetReachability();
@@ -402,9 +427,17 @@ private:
     unsigned m_callArgAreaSize { 0 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_stackIsAllocated { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_hasDynamicStackAllocation { false };
+    bool m_hasCallThatReturnsTwice { false };
+    unsigned m_maximumCallArgAreaSize { std::numeric_limits<unsigned>::max() };
+#endif
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
     RegisterSet m_calleeSaveRegisters;
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet m_additionalCalleeSaveRegisters;
+#endif
     StackSlot* m_calleeSaveStackSlot { nullptr };
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.

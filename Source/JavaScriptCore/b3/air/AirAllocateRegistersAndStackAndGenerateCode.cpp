@@ -387,7 +387,11 @@ ALWAYS_INLINE bool GenerateAndAllocateRegisters::isDisallowedRegister(Reg reg)
 void GenerateAndAllocateRegisters::prepareForGeneration()
 {
     // We pessimistically assume we use all callee saves.
-    handleCalleeSaves(m_code, RegisterSet::calleeSaveRegisters());
+    RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
+#if USE(BUN_JSC_ADDITIONS)
+    calleeSaves.merge(m_code.additionalCalleeSaveRegisters());
+#endif
+    handleCalleeSaves(m_code, calleeSaves);
     allocateEscapedStackSlots(m_code);
 
     insertBlocksForFlushAfterTerminalPatchpoints();
@@ -433,6 +437,11 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
             };
 
             auto flushToFreeList = [&] {
+#if USE(BUN_JSC_ADDITIONS)
+                // See Code::hasCallThatReturnsTwice(): a slot is not given to another Tmp when its own is dead.
+                if (m_code.hasCallThatReturnsTwice())
+                    toFree.clear();
+#endif
                 for (auto* stackSlot : toFree)
                     freeSlots.append(stackSlot);
                 toFree.clear();

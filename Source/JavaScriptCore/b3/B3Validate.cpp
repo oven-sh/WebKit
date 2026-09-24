@@ -1085,6 +1085,10 @@ private:
         SlotBaseValue* slotBase = value->lastChild()->as<SlotBaseValue>();
         if (!slotBase)
             return;
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_procedure.hasCodeFromC())
+            return;
+#endif
 
         VALIDATE(memory->offset() >= 0, ("At ", *value));
     }

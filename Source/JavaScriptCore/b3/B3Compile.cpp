@@ -49,6 +49,22 @@ Compilation compile(Procedure& proc)
     return Compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
 }
 
+std::optional<Compilation> tryCompile(Procedure& proc, CString&& name)
+{
+    CompilerTimingScope timingScope("Total B3+Air"_s, "compile"_s);
+
+    prepareForGeneration(proc);
+
+    CCallHelpers jit;
+    generate(proc, jit);
+    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::Uncategorized, JITCompilationCanFail);
+    if (linkBuffer.didFailToAllocate())
+        return std::nullopt;
+    linkBuffer.setNameForJITDump(WTF::move(name));
+
+    return Compilation(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
+}
+
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)

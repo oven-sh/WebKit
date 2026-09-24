@@ -133,6 +133,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if USE(BUN_JSC_ADDITIONS)
 #include "BunFFI.h"
+#include "BIRToB3.h"
+#include "CModule.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
@@ -144,6 +146,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <bit>
 #include <cmath>
 #include <cstring>
+#if !OS(WINDOWS)
+#include <dlfcn.h>
+#endif
 #include <optional>
 #endif
 
@@ -2338,6 +2343,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
+static JSC_DECLARE_HOST_FUNCTION(functionCModule);
+static JSC_DECLARE_HOST_FUNCTION(functionCModuleHost);
+static JSC_DECLARE_HOST_FUNCTION(functionCModuleArgumentLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
 static JSC_DECLARE_HOST_FUNCTION(functionFFISignatureString);
@@ -5285,6 +5293,95 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunction, (JSGlobalObject* globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), target, name, owner, hooks)));
 }
 
+// $vm.cModuleHost() -> [arch, os]: the target bytes a BIR module needs in its header to load here. null where none loads.
+JSC_DEFINE_HOST_FUNCTION(functionCModuleHost, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto host = FFI::CModule::hostTarget();
+    if (!host)
+        return JSValue::encode(jsNull());
+    auto [arch, os] = *host;
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    result->putDirectIndex(globalObject, 0, jsNumber(arch));
+    RETURN_IF_EXCEPTION(scope, { });
+    result->putDirectIndex(globalObject, 1, jsNumber(os));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(result);
+}
+
+// $vm.cModuleArgumentLayout(birBytes, signatureIndex, [anonymous argument types]) -> where a call in a module for that
+// target (any target: the module is decoded, not loaded) passes each argument. See BIRToB3::argumentLayoutForTesting.
+JSC_DEFINE_HOST_FUNCTION(functionCModuleArgumentLayout, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(B3_JIT)
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: expected a typed array of BIR bytes"_s);
+    auto decoded = FFI::BIR::Module::decode(view->span());
+    if (!decoded)
+        return throwVMTypeError(globalObject, scope, decoded.error());
+    uint32_t signatureIndex = callFrame->argument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (signatureIndex >= decoded.value()->signatures.size())
+        return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: no such signature"_s);
+    Vector<FFI::BIR::Type> anonymous;
+    if (auto* array = dynamicDowncast<JSArray>(callFrame->argument(2))) {
+        for (unsigned i = 0; i < array->length(); ++i) {
+            uint32_t type = array->getIndex(globalObject, i).toUInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!type || type > static_cast<uint32_t>(FFI::BIR::Type::V128))
+                return throwVMTypeError(globalObject, scope, "$vm.cModuleArgumentLayout: bad type"_s);
+            anonymous.append(static_cast<FFI::BIR::Type>(type));
+        }
+    }
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned index = 0;
+    for (const String& where : FFI::BIRToB3::argumentLayoutForTesting(*decoded.value(), signatureIndex, anonymous.span())) {
+        result->putDirectIndex(globalObject, index++, jsString(vm, where));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+#else
+    return throwVMTypeError(globalObject, scope, "compiling C requires the FTL JIT backend"_s);
+#endif
+}
+
+// $vm.cModule(birBytes) -> { exportName: function }. Externs resolve through dlsym; the constructors have run.
+JSC_DEFINE_HOST_FUNCTION(functionCModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    if (!view)
+        return throwVMTypeError(globalObject, scope, "$vm.cModule: expected a typed array of BIR bytes"_s);
+
+    auto module = FFI::CModule::tryCreate(view->span(), [](const CString& name, FFI::CModule::ExternScope scope) -> void* {
+        // This shell's own definition of one name, which the C library has too: where it is found says in what order
+        // the search went.
+        if (scope == FFI::CModule::ExternScope::Own)
+            return !strcmp(name.data(), "quick_exit") ? reinterpret_cast<void*>(+[](int) { }) : nullptr;
+#if OS(WINDOWS)
+        return nullptr;
+#else
+        return dlsym(RTLD_DEFAULT, name.data());
+#endif
+    });
+    if (!module)
+        return throwVMTypeError(globalObject, scope, module.error());
+    module.value()->runConstructors();
+    RELEASE_AND_RETURN(scope, JSValue::encode(module.value()->createExportsObject(globalObject)));
+}
+
 static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
 JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -5475,6 +5572,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFFICompileCounts, (JSGlobalObject* globalObject
     counts->putDirect(vm, Identifier::fromString(vm, "icStub"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.icStub.load())));
     counts->putDirect(vm, Identifier::fromString(vm, "dfgCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.dfgCallFFI.load())));
     counts->putDirect(vm, Identifier::fromString(vm, "ftlCallFFI"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlCallFFI.load())));
+    counts->putDirect(vm, Identifier::fromString(vm, "ftlInlineC"_s), jsNumber(static_cast<double>(FFI::g_ffiCompileCounts.ftlInlineC.load())));
     return JSValue::encode(counts);
 }
 
@@ -6060,6 +6158,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
+    addFunction(vm, allowIfNotFuzz, "cModule"_s, functionCModule, 1);
+    addFunction(vm, allowIfNotFuzz, "cModuleHost"_s, functionCModuleHost, 0);
+    addFunction(vm, allowIfNotFuzz, "cModuleArgumentLayout"_s, functionCModuleArgumentLayout, 3);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);

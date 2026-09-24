@@ -116,7 +116,14 @@ void Code::emitDefaultPrologue(CCallHelpers& jit)
 
 void Code::emitEpilogue(CCallHelpers& jit)
 {
-    if (frameSize()) {
+#if USE(BUN_JSC_ADDITIONS)
+    // Code that moved the stack pointer needs it restored from the frame pointer even when the
+    // fixed part of the frame is empty.
+    bool mustRestoreStackPointer = frameSize() || hasDynamicStackAllocation();
+#else
+    bool mustRestoreStackPointer = frameSize();
+#endif
+    if (mustRestoreStackPointer) {
         // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
         // the macro assembler might assert scratch register usage on load operations emitted by emitRestore.
         AllowMacroScratchRegisterUsageIf allowScratch(jit, isARM64());

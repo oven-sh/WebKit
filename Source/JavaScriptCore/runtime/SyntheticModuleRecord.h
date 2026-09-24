@@ -28,6 +28,7 @@
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
 #include "SourceCode.h"
+#include "SourceProvider.h"
 
 namespace JSC {
 
@@ -60,7 +61,16 @@ public:
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    // Runs the evaluation steps the first time, and returns undefined. If they threw, throws what they threw, this
+    // time and every time after: whatever imports the module fails with the error the first importer saw.
+    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
+
+    using EvaluationSteps = SyntheticSourceProvider::SharedSyntheticSourceEvaluator;
+    void setEvaluationSteps(EvaluationSteps* steps) { m_evaluationSteps = steps; }
+#else
     JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
@@ -103,6 +113,8 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
+    RefPtr<EvaluationSteps> m_evaluationSteps; // Null once they have run.
+    WriteBarrier<Unknown> m_evaluationError;
     RefPtr<SyntheticSourceProvider> m_deferredGenerator;
     WriteBarrier<Unknown> m_deferredGeneratorError;
 #endif

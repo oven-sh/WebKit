@@ -389,6 +389,12 @@ void SpeculativeJIT::compileCallFFI(Node* node)
     }
 
     case FFI::Type::Uint32: {
+        if (node->hasInt52Result()) {
+            GPRTemporary value(this);
+            load64(returnSlot, value.gpr()); // The slot holds the zero-extended value.
+            strictInt52Result(value.gpr(), node);
+            break;
+        }
         GPRTemporary result(this);
         GPRTemporary value(this);
         FPRTemporary fpValue(this);

@@ -42,6 +42,7 @@
 #include "B3Const64Value.h"
 #include "B3ConstPtrValue.h"
 #include "B3Effects.h"
+#include "B3EliminateCommonSubexpressions.h"
 #include "B3FenceValue.h"
 #include "B3FixSSA.h"
 #include "B3Generate.h"
@@ -52,6 +53,7 @@
 #include "B3NativeTraits.h"
 #include "B3Procedure.h"
 #include "B3ReduceStrength.h"
+#include "B3RematerializeStackAddresses.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3SwitchValue.h"
@@ -1517,6 +1519,19 @@ void testFCCmpLessThanAndDouble(double, double, double, double);
 void testFCCmpGreaterEqualOrDouble(double, double, double, double);
 void testFCCmpNaN(double, double, double, double);
 void testFCCmpNegatedAndDouble(double, double, double, double);
+void testPureValueAfterForwardedLoadInLoop();
+void testMoveConstantsWithManyLargeAddends();
+void testStoreOfTheAddressItIsStoredAt();
+void testCompareAndSwapIsNotMovedPastALoad();
+#if USE(BUN_JSC_ADDITIONS)
+void testLoadEliminationByAddress();
+void testLoadEliminationAcrossStackSlots();
+void testLoadEliminationAfterManyStores();
+void testRematerializeStackAddresses();
+void testStackAddressInAUserThatLowersToALoop();
+void testAccessBelowAStackSlot();
+void testRegistersACallerInAnotherConventionExpectsKept();
+#endif
 
 // SIMD XOR+rotate pattern matching
 void testVectorXorRotateRight64();

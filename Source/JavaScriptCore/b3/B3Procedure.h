@@ -323,6 +323,22 @@ public:
     void setUsesWasmGCArrayAllocations(bool flag = true) { m_usesWasmGCArrayAllocations = flag; }
     bool usesWasmGCArrayAllocations() const { return m_usesWasmGCArrayAllocations; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Set for a procedure that has code lowered from C in it (ffi/BIRToB3): a C function, or a JavaScript
+    // function the FTL inlined a C function into. C has no abstract heaps to give its memory accesses,
+    // keeps its locals in stack slots whose addresses it uses freely, and may compute any address from
+    // them, so in such a procedure:
+    //   - load elimination also tells two accesses apart by their addresses: the same pointer value at
+    //     offsets that do not overlap, or two different stack slots (eliminateCommonSubexpressions);
+    //   - every user of a stack slot's address gets a SlotBase of its own, so the address is folded into
+    //     the user or computed next to it rather than kept in a register (rematerializeStackAddresses);
+    //   - an access at a negative offset from a stack slot is the program's business, not a sign of a
+    //     bug in the client (validate).
+    // Code generated for every other procedure is unchanged.
+    void setHasCodeFromC() { m_hasCodeFromC = true; }
+    bool hasCodeFromC() const { return m_hasCodeFromC; }
+#endif
+
     void setUsesColdCCall(bool flag) { m_usesColdCCall = flag; }
     bool usesColdCCall() const { return m_usesColdCCall; }
     void setUsesShuffle(bool flag) { m_usesShuffle = flag; }
@@ -368,6 +384,9 @@ private:
     bool m_usesColdCCall : 1 { false };
     bool m_usesShuffle : 1 { false };
     bool m_usesEntrySwitch : 1 { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_hasCodeFromC : 1 { false };
+#endif
 };
     
 } } // namespace JSC::B3
