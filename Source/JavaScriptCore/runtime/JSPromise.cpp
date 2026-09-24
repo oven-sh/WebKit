@@ -53,15 +53,17 @@ namespace JSC {
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
 
 #if USE(BUN_JSC_ADDITIONS)
-JSScope* JSPromise::maker() const
+JSCell* JSPromise::maker() const
 {
     switch (status()) {
-    case Status::Pending:
+    case Status::Pending: {
         if (inlineReactionKind() != InlineReactionKind::None || payloadCell())
             return nullptr;
-        return m_slot.get() ? dynamicDowncast<JSScope>(m_slot.get()) : nullptr;
+        JSValue maker = m_slot.get();
+        return maker && maker.isCell() ? maker.asCell() : nullptr;
+    }
     case Status::Rejected:
-        return dynamicDowncast<JSScope>(payloadCell());
+        return payloadCell();
     case Status::Fulfilled:
         break;
     }
@@ -77,6 +79,8 @@ JSPromise* JSPromise::create(VM& vm, Structure* structure)
     if (vm.promisesRememberTheirMaker()) [[unlikely]] {
         if (JSScope* maker = CallFrame::scopeOfClosestScript(vm))
             promise->m_slot.set(vm, promise, maker);
+        else if (JSValue ofRunningJob = structure->realm()->m_asyncContextData->getInternalField(1); ofRunningJob.isCell())
+            promise->m_slot.set(vm, promise, ofRunningJob);
     }
 #endif
     return promise;

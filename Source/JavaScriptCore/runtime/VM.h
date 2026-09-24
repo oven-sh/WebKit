@@ -536,6 +536,7 @@ public:
     bool m_asyncContextTrackingEnabled { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_promisesRememberTheirMaker { false };
+    CallFrame* m_frameThatStartedTheRunningJob { nullptr };
 #endif
 #endif
     ClientData* clientData { nullptr };
@@ -676,6 +677,12 @@ public:
     // JSGlobalObject::promisesRememberTheirMaker(), never off.
     bool promisesRememberTheirMaker() const { return m_promisesRememberTheirMaker; }
     void setPromisesRememberTheirMaker() { m_promisesRememberTheirMaker = true; }
+    // The frame that was the top one (topCallFrame) when the embedder started the job that is running, if it
+    // said so: that frame and the ones that called it are not the script that is calling
+    // (CallFrame::scopeOfClosestScript()), what the job calls is. Null: every frame may be.
+    CallFrame* frameThatStartedTheRunningJob() const { return m_frameThatStartedTheRunningJob; }
+    // The embedder starts a job (returns what to put back when it has run), or puts back.
+    CallFrame* exchangeFrameThatStartedTheRunningJob(CallFrame* frame) { return std::exchange(m_frameThatStartedTheRunningJob, frame); }
 #endif
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
 #endif

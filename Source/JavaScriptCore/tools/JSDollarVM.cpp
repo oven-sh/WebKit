@@ -4251,8 +4251,11 @@ JSC_DEFINE_HOST_FUNCTION(functionOwnerOfMaker, (JSGlobalObject* globalObject, Ca
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto* promise = dynamicDowncast<JSPromise>(callFrame->argument(0));
-    JSScope* maker = promise ? promise->maker() : nullptr;
-    return JSValue::encode(maker ? ownerOfScope(maker) : JSValue(jsNontrivialString(vm, "none"_s)));
+    JSCell* maker = promise ? promise->maker() : nullptr;
+    if (!maker)
+        return JSValue::encode(jsNontrivialString(vm, "none"_s));
+    auto* scope = dynamicDowncast<JSScope>(maker);
+    return JSValue::encode(scope ? ownerOfScope(scope) : JSValue(maker));
 }
 
 // $vm.nothing(): a host function that does nothing, to measure the others against.
