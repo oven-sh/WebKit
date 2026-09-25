@@ -235,6 +235,23 @@ TEST_F(WTF_URLParser, Idempotence)
     checkURL("v:/.//.."_s, { "v"_s, ""_s, ""_s, ""_s, 0, "/"_s, ""_s, ""_s, "v:/"_s });
     checkURL("w:/.//..//"_s, { "w"_s, ""_s, ""_s, ""_s, 0, "//"_s, ""_s, ""_s, "w:/.//"_s });
     checkURL("x:/.//../a"_s, { "x"_s, ""_s, ""_s, ""_s, 0, "/a"_s, ""_s, ""_s, "x:/a"_s });
+    // "/." is only a serialization artifact in front of a path starting with "//". A first path segment that
+    // merely starts with "." is part of the path.
+    checkURL("y:/.a"_s, { "y"_s, ""_s, ""_s, ""_s, 0, "/.a"_s, ""_s, ""_s, "y:/.a"_s });
+    checkURL("z:/.a/b"_s, { "z"_s, ""_s, ""_s, ""_s, 0, "/.a/b"_s, ""_s, ""_s, "z:/.a/b"_s });
+    checkURL("aa:/..a"_s, { "aa"_s, ""_s, ""_s, ""_s, 0, "/..a"_s, ""_s, ""_s, "aa:/..a"_s });
+    checkURL("ab:/.a?q#f"_s, { "ab"_s, ""_s, ""_s, ""_s, 0, "/.a"_s, "q"_s, "f"_s, "ab:/.a?q#f"_s });
+    checkURL("ac:/.a//b"_s, { "ac"_s, ""_s, ""_s, ""_s, 0, "/.a//b"_s, ""_s, ""_s, "ac:/.a//b"_s });
+    checkURL("ad:/.%2Fa"_s, { "ad"_s, ""_s, ""_s, ""_s, 0, "/.%2Fa"_s, ""_s, ""_s, "ad:/.%2Fa"_s });
+    checkURL("ae:/.//.a"_s, { "ae"_s, ""_s, ""_s, ""_s, 0, "//.a"_s, ""_s, ""_s, "ae:/.//.a"_s });
+    checkURL("af:/./.a"_s, { "af"_s, ""_s, ""_s, ""_s, 0, "/.a"_s, ""_s, ""_s, "af:/.a"_s });
+    checkURL("ag:/.well-known/x"_s, { "ag"_s, ""_s, ""_s, ""_s, 0, "/.well-known/x"_s, ""_s, ""_s, "ag:/.well-known/x"_s });
+    checkURL("ah://host/.a"_s, { "ah"_s, ""_s, ""_s, "host"_s, 0, "/.a"_s, ""_s, ""_s, "ah://host/.a"_s });
+    checkURL("ai:///.a"_s, { "ai"_s, ""_s, ""_s, ""_s, 0, "/.a"_s, ""_s, ""_s, "ai:///.a"_s });
+    checkRelativeURL("x"_s, "aj:/.a/b"_s, { "aj"_s, ""_s, ""_s, ""_s, 0, "/.a/x"_s, ""_s, ""_s, "aj:/.a/x"_s });
+    checkRelativeURL("../y"_s, "ak:/.a/b/c"_s, { "ak"_s, ""_s, ""_s, ""_s, 0, "/.a/y"_s, ""_s, ""_s, "ak:/.a/y"_s });
+    checkRelativeURL("/.a"_s, "al:/.//b"_s, { "al"_s, ""_s, ""_s, ""_s, 0, "/.a"_s, ""_s, ""_s, "al:/.a"_s });
+    checkRelativeURL("//b"_s, "am:/.a"_s, { "am"_s, ""_s, ""_s, "b"_s, 0, ""_s, ""_s, ""_s, "am://b"_s });
     checkURL("http://host/./"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/"_s, ""_s, ""_s, "http://host/"_s });
     checkURL("http://host/../"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/"_s, ""_s, ""_s, "http://host/"_s });
     checkURL("http://host/.../"_s, { "http"_s, ""_s, ""_s, "host"_s, 0, "/.../"_s, ""_s, ""_s, "http://host/.../"_s });
