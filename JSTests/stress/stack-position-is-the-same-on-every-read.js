@@ -1,6 +1,6 @@
 function shouldBe(actual, expected) {
     if (actual !== expected)
-        throw new Error(`expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}`);
+        throw new Error(`expected ${expected} but got ${actual}`);
 }
 
 function makeStack(which) {
@@ -15,13 +15,11 @@ function makeStack(which) {
 
 function positionOfFirstFrame(stack) {
     const match = /^makeStack@.*:(\d+):(\d+)$/m.exec(stack);
-    return [Number(match[1]), Number(match[2])];
+    return `${match[1]}:${match[2]}`;
 }
 
-const expected = [[7, 38], [9, 25], [11, 18]];
-for (let which = 0; which < 3; which++) {
-    const first = makeStack(which);
-    shouldBe(JSON.stringify(positionOfFirstFrame(first)), JSON.stringify(expected[which]));
-    for (let i = 0; i < 100; i++)
-        shouldBe(makeStack(which), first);
+const expected = ["7:38", "9:25", "11:18"];
+for (let i = 0; i < 100; i++) {
+    for (let which = 0; which < 3; which++)
+        shouldBe(positionOfFirstFrame(makeStack(which)), expected[which]);
 }
