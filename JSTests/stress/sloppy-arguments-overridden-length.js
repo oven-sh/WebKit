@@ -308,8 +308,8 @@ function testErrors()
     }
 }
 
-// "length" is the argument count when nothing is overridden, and also after an element is deleted or redefined,
-// which overrides nothing but sends a DirectArguments the same way.
+// "length" is the argument count when nothing is overridden. It still is after an element is deleted or redefined,
+// although a DirectArguments then says that it overrode things.
 function testArgumentCount()
 {
     const changes = [
