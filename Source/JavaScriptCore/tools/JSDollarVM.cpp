@@ -33,6 +33,7 @@
 #include "ArrayPrototype.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
+#include "BytecodeStructs.h"
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
 #include "CodeBlock.h"
@@ -2187,6 +2188,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCaches);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCacheHits);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2950,6 +2953,102 @@ JSC_DEFINE_HOST_FUNCTION(functionHasValueProfilePredictions, (JSGlobalObject* gl
         return JSValue::encode(jsUndefined());
     MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
     return JSValue::encode(jsBoolean(metadataTable && metadataTable->valueProfilePredictions()));
+}
+
+// Usage: $vm.llintGetByIdCaches(functionObj)
+// The LLInt cache of each get_by_id and get_length instruction of the function, in bytecode order: "empty", "self" (an own
+// property), "proto" (a property of the prototype chain), "unset" (no property), "arrayLength" or "stringLength".
+// Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCaches, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    codeBlock = codeBlock->baselineAlternative();
+
+    auto describe = [](const GetByIdModeMetadata& metadata) -> ASCIILiteral {
+        switch (metadata.mode) {
+        case GetByIdMode::Default:
+            return metadata.defaultMode.structureID ? "self"_s : "empty"_s;
+        case GetByIdMode::ProtoLoad:
+            return "proto"_s;
+        case GetByIdMode::Unset:
+            return "unset"_s;
+        case GetByIdMode::ArrayLength:
+            return "arrayLength"_s;
+        case GetByIdMode::StringLength:
+            return "stringLength"_s;
+        }
+        return "invalid"_s;
+    };
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (const auto& instruction : codeBlock->instructions()) {
+        const GetByIdModeMetadata* metadata = nullptr;
+        if (instruction->is<OpGetById>())
+            metadata = &instruction->as<OpGetById>().metadata(codeBlock).m_modeMetadata;
+        else if (instruction->is<OpGetLength>())
+            metadata = &instruction->as<OpGetLength>().metadata(codeBlock).m_modeMetadata;
+        if (!metadata)
+            continue;
+        result->push(globalObject, jsNontrivialString(vm, describe(*metadata)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.llintGetByIdCacheHits(functionObj, receiver)
+// For each get_by_id and get_length instruction of the function, in bytecode order: whether the LLInt fast path
+// serves this receiver from the cache that the site has now. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCacheHits, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    if (!codeBlock)
+        return JSValue::encode(jsUndefined());
+    codeBlock = codeBlock->baselineAlternative();
+    JSValue receiver = callFrame->argument(1);
+
+    auto hits = [&](const GetByIdModeMetadata& metadata) {
+        if (!receiver.isCell())
+            return false;
+        JSCell* cell = receiver.asCell();
+        auto isArrayWithLength = [&] {
+            return isJSArray(cell) && !!(cell->indexingType() & IndexingShapeMask);
+        };
+        switch (metadata.mode) {
+        case GetByIdMode::Default:
+        case GetByIdMode::ProtoLoad:
+        case GetByIdMode::Unset:
+            return metadata.defaultMode.structureID == cell->structureID();
+        case GetByIdMode::ArrayLength:
+            return isArrayWithLength();
+        case GetByIdMode::StringLength:
+            return cell->isString() || isArrayWithLength();
+        }
+        return false;
+    };
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (const auto& instruction : codeBlock->instructions()) {
+        const GetByIdModeMetadata* metadata = nullptr;
+        if (instruction->is<OpGetById>())
+            metadata = &instruction->as<OpGetById>().metadata(codeBlock).m_modeMetadata;
+        else if (instruction->is<OpGetLength>())
+            metadata = &instruction->as<OpGetLength>().metadata(codeBlock).m_modeMetadata;
+        if (!metadata)
+            continue;
+        result->push(globalObject, jsBoolean(hits(*metadata)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -5866,6 +5965,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
     addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCaches"_s, functionLLIntGetByIdCaches, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCacheHits"_s, functionLLIntGetByIdCacheHits, 2);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "dumpBytecodeFor"_s, functionDumpBytecodeFor, 1);
