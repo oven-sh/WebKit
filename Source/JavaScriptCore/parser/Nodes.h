@@ -1012,6 +1012,8 @@ namespace JSC {
     public:
         FunctionCallBracketNode(const JSTokenLocation&, ExpressionNode* base, ExpressionNode* subscript, bool subscriptHasAssignments, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
+        void setCalleeIsOptionalChain() { m_calleeIsOptionalChain = true; }
+
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
@@ -1023,11 +1025,14 @@ namespace JSC {
         ArgumentsNode* m_args;
         bool m_subscriptHasAssignments;
         bool m_isOptionalCall;
+        bool m_calleeIsOptionalChain { false };
     };
 
     class FunctionCallDotNode : public BaseDotNode, public ThrowableSubExpressionData {
     public:
         FunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+
+        void setCalleeIsOptionalChain() { m_calleeIsOptionalChain = true; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) override;
@@ -1038,6 +1043,7 @@ namespace JSC {
 
         ArgumentsNode* m_args;
         bool m_isOptionalCall;
+        bool m_calleeIsOptionalChain { false };
     };
 
     class BytecodeIntrinsicNode final : public ExpressionNode, public ThrowableExpressionData {
