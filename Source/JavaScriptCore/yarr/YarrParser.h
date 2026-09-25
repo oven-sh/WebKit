@@ -860,7 +860,7 @@ private:
     bool isIdentityEscapeAnError(char32_t ch)
     {
         if (isEitherUnicodeCompilation()
-            && ((isASCII(ch) && !strchr((parseEscapeMode == ParseEscapeMode::ClassSet || parseEscapeMode == ParseEscapeMode::ClassStringDisjunction) ? "^$\\.*+?()[]{}|/&-!#%,:;<=>@`~" : "^$\\.*+?()[]{}|/", ch)) || !ch)) {
+            && (!ch || !isASCII(ch) || !strchr((parseEscapeMode == ParseEscapeMode::ClassSet || parseEscapeMode == ParseEscapeMode::ClassStringDisjunction) ? "^$\\.*+?()[]{}|/&-!#%,:;<=>@`~" : "^$\\.*+?()[]{}|/", ch))) {
             m_errorCode = ErrorCode::InvalidIdentityEscape;
             return true;
         }
