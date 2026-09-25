@@ -124,6 +124,9 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+    // A provider that can find a line and a column without the line start table overrides this.
+    // Both are zero-based and in the provider's own text. Any thread can call it. False means: use the table.
+    JS_EXPORT_PRIVATE virtual bool lineAndColumnForOffset(unsigned /* offset */, unsigned& /* line0Based */, unsigned& /* column0Based */) { return false; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -189,11 +192,24 @@ public:
         return m_lineStartTable.offsetForPosition(source(), line0Based, column0Based);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // positionInfoForOffset() for a caller that reads the line and the column only.
+    LineStartTable::PositionInfo lineAndColumnInfoForOffset(unsigned offset)
+    {
+        LineStartTable::PositionInfo info;
+        if (lineAndColumnForOffset(offset, info.line0Based, info.column0Based))
+            return info;
+        return positionInfoForOffset(offset);
+    }
+#else
+    LineStartTable::PositionInfo lineAndColumnInfoForOffset(unsigned offset) { return positionInfoForOffset(offset); }
+#endif
+
     // An inline <script> shifts every line of its document, but shifts the column only on its first
     // line, since later lines begin where their own line begins.
     LineColumn documentLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
+        auto info = lineAndColumnInfoForOffset(offset);
         return {
             m_startPosition.m_line.oneBasedInt() + info.line0Based,
             info.line0Based ? info.column0Based + 1 : m_startPosition.m_column.oneBasedInt() + info.column0Based,
@@ -202,7 +218,7 @@ public:
 
     LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
+        auto info = lineAndColumnInfoForOffset(offset);
         return {
             m_startPosition.m_line.zeroBasedInt() + info.line0Based,
             info.line0Based ? info.column0Based : m_startPosition.m_column.zeroBasedInt() + info.column0Based,
