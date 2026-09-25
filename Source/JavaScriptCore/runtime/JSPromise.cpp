@@ -1004,13 +1004,14 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
 #if USE(BUN_JSC_ADDITIONS)
 // then() was called with no handler for a rejection, in an async context, and returned `promiseOrCapability`:
 // what rejects that is a job that runs no script. (keepAsyncContextForUnhandledRejection())
-static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSGlobalObject* globalObject, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
+static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
 {
     auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability);
     if (!promise) {
-        // then() of an instance of a subclass returned the promise of a capability.
+        // then() of an instance of a subclass returned the promise of a capability, which is of the realm then()
+        // was called in.
         auto* capability = dynamicDowncast<JSObject>(promiseOrCapability);
-        if (!capability || capability->structure() != globalObject->promiseCapabilityObjectStructure())
+        if (!capability || capability->structure() != capability->realm()->promiseCapabilityObjectStructure())
             return;
         promise = dynamicDowncast<JSPromise>(capability->getDirect(promiseCapabilityPromisePropertyOffset));
         if (!promise)
@@ -1073,7 +1074,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 handler = argument;
                 arg = jsUndefined();
                 if (!isResolved && vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
-                    keepAsyncContextOfThen(vm, globalObject, promise, fullReaction);
+                    keepAsyncContextOfThen(vm, promise, fullReaction);
                 break;
             }
             JSValue context = fullReaction->context();

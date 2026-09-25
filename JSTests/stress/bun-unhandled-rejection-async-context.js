@@ -141,4 +141,24 @@ for (let round = 0; round < Math.max(2, testLoopCount / 50); round++) {
     check(round);
     checkValues(round);
 }
+// then() of another realm, called on an instance of a subclass of this one: the promise it returns is this
+// realm's, and what then() leaves is the other realm's.
+{
+    const other = createGlobalObject();
+    const inBoth = (context, fn) => inContext(context, () => {
+        other.$vm.setAsyncContext(context);
+        try {
+            return fn();
+        } finally {
+            other.$vm.setAsyncContext(undefined);
+        }
+    });
+    for (const context of [A, B]) {
+        asyncContextsWhenRejected.clear();
+        const promise = inBoth(context, () => other.Promise.prototype.then.call(new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }), noop));
+        inBoth(context === A ? B : A, drainMicrotasks);
+        shouldBe(asyncContextsWhenRejected.get(promise), context, `then() of another realm, in ${context.name}`);
+    }
+}
+
 shouldBe(get(), undefined, "nothing is left current");
