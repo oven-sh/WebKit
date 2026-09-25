@@ -676,9 +676,10 @@ static void registerFontIfNeeded(const String& family) WTF_REQUIRES_LOCK(userIns
 
         CFErrorRef error = nullptr;
         if (!CTFontManagerRegisterFontsForURL(cfURL.get(), kCTFontManagerScopeProcess, &error)) {
-            RetainPtr descriptionCF = adoptCF(CFErrorCopyDescription(error));
-            String error(descriptionCF.get());
-            RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterError, family.utf8(), error.utf8());
+            SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr adoptedError = adoptCF(error);
+            RetainPtr descriptionCF = adoptCF(CFErrorCopyDescription(adoptedError.get()));
+            String errorDescription(descriptionCF.get());
+            RELEASE_LOG_FORWARDABLE(Fonts, FontCacheCoreTextRegisterError, family.utf8(), errorDescription.utf8());
         }
 
         userInstalledFontMap().removeIf([&](auto& keyAndValue) {

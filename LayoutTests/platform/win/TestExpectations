@@ -1198,7 +1198,6 @@ webkit.org/b/290371 [ Debug ] compositing/repaint/inline-repaint-container.html 
 animations/no-style-recalc-during-accelerated-animation.html [ Pass Failure ]
 
 fast/css/view-transitions-nested-transparency-layers.html [ ImageOnlyFailure Pass ]
-http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 
 compositing/shared-backing/top-layer/backing-sharing-split-by-fullscreen-variant.html [ Skip ] # Timeout
 compositing/shared-backing/top-layer/backing-sharing-split-by-fullscreen.html [ Skip ] # Timeout
@@ -2035,8 +2034,6 @@ webkit.org/b/271223 fast/events/wheel/wheel-events-become-non-cancelable.html [ 
 
 webkit.org/b/277612 fast/html/request-video-frame-callback-does-not-leak.html [ Pass Failure ]
 
-webkit.org/b/230413 fast/canvas/canvas-drawImage-detached-leak.html [ Pass Failure ]
-
 webkit.org/b/208022 http/tests/history/back-to-post.py [ Pass Failure Timeout ]
 
 webkit.org/b/177687 http/tests/inspector/network/resource-sizes-memory-cache.html [ Pass Failure ]
@@ -2273,11 +2270,10 @@ imported/w3c/web-platform-tests/css/css-properties-values-api [ Skip ]
 imported/w3c/web-platform-tests/css/css-pseudo [ Skip ]
 imported/w3c/web-platform-tests/css/css-rhythm [ Skip ]
 imported/w3c/web-platform-tests/css/css-ruby [ Skip ]
-imported/w3c/web-platform-tests/css/css-scoping [ Skip ]
+imported/w3c/web-platform-tests/css/css-shadow [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-anchoring [ Skip ]
 imported/w3c/web-platform-tests/css/css-scrollbars [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-snap [ Skip ]
-imported/w3c/web-platform-tests/css/css-shadow-parts [ Skip ]
 imported/w3c/web-platform-tests/css/css-shapes [ Skip ]
 imported/w3c/web-platform-tests/css/css-size-adjust [ Skip ]
 imported/w3c/web-platform-tests/css/css-sizing [ Skip ]

@@ -104,11 +104,13 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/RegularExpression.h>
 #include <ranges>
+#include <unicode/ubrk.h>
 #include <unicode/uchar.h>
 #include <wtf/Box.h>
 #include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
 
 #if ENABLE(DATA_DETECTION)
@@ -134,7 +136,7 @@ static String normalizeText(const String& string, unsigned maxDescriptionLength 
 }
 
 static constexpr auto minimumClassOrIdLength = 6;
-static constexpr auto maximumClassOrIdLength = 20;
+static constexpr auto maximumClassOrIdLength = 24;
 
 static bool isCandidateClassOrId(StringView text)
 {
@@ -632,6 +634,25 @@ static bool isInDisabledFormControl(Node& node)
 {
     RefPtr control = shadowHostOrSelfInclusiveParent<HTMLFormControlElement>(node);
     return control && control->isDisabledFormControl();
+}
+
+static bool isDisabledControlItem(Node& node, const ItemData& data)
+{
+    bool isControl = WTF::switchOn(data,
+        [](ContainerType type) {
+            return type == ContainerType::Button;
+        },
+        [](const TextFormControlData&) {
+            return true;
+        },
+        [](const SelectData&) {
+            return true;
+        },
+        [](auto&) {
+            return false;
+        });
+
+    return isControl && isInDisabledFormControl(node);
 }
 
 enum class IncludeAssociatedLabels : bool { No, Yes };
@@ -1465,8 +1486,10 @@ static inline void extractRecursive(Node& node, Item& parentItem, TraversalConte
         item->isVisuallyClickable = looksVisuallyClickable(*renderer);
     }
 
-    if (item)
+    if (item) {
         item->visualBlockContainerNumber = context.currentVisualBlockContainerNumber();
+        item->isDisabled = isDisabledControlItem(node, item->data);
+    }
 
     ASSERT_IMPLIES(isScrollable, item);
 
@@ -2380,7 +2403,7 @@ static std::expected<ResolvedMouseTarget, String> resolveMouseTarget(Node& targe
         if (!foundRange) {
             bool targetIsWholePage = element == document->body() || element.get() == document->documentElement();
             bool matched = targetIsWholePage ? normalizedLabelText(*element).containsIgnoringASCIICase(normalizeText(searchText)) : searchTextMatchesElementLabelOrRenderedText(*element, searchText);
-            if (!matched)
+            if (!matched && !element->isLink())
                 return makeUnexpected(searchTextNotFoundDescription(searchText));
         }
     }
@@ -2702,6 +2725,30 @@ static String adjacentRenderedTextLabelDescription(const Element& element, Vecto
     return { };
 }
 
+static bool hrefLacksEnoughContext(StringView href)
+{
+    return href.isEmpty() || href == "#"_s || startsWithLettersIgnoringASCIICase(href, "javascript:"_s);
+}
+
+static bool containsMultipleWords(StringView text)
+{
+    UBreakIterator* iterator = WTF::wordBreakIterator(text);
+    if (!iterator)
+        return false;
+
+    unsigned wordCount = 0;
+    ubrk_first(iterator);
+    for (int position = ubrk_next(iterator); position != UBRK_DONE; position = ubrk_next(iterator)) {
+        if (!isWordTextBreak(iterator))
+            continue;
+
+        if (++wordCount > 1)
+            return true;
+    }
+
+    return false;
+}
+
 static bool hasNoRenderedTextOrLabeledChild(Element& element)
 {
     if (containsLetterOrDigit(normalizeText(plainText(makeRangeSelectingNodeContents(element), behaviorsForTextExtraction))))
@@ -2730,14 +2777,16 @@ static String textDescription(Element& element, Vector<String>& stringsToValidat
 
     auto needsParentContext = true;
     auto hasAccessibleName = false;
+    auto hrefLacksEnoughContext = false;
 
     if (element.isLink()) {
         if (auto text = normalizeText(element.attributeWithoutSynchronization(HTMLNames::hrefAttr)); !text.isEmpty()) {
             auto shortenedHREF = shortenedHREFAttributeForDescription(text);
+            hrefLacksEnoughContext = TextExtraction::hrefLacksEnoughContext(shortenedHREF);
             description.append(makeString(" with href "_s, wrapWithDoubleQuotes(shortenedHREF)));
             stringsToValidate.append(WTF::move(shortenedHREF));
             needsParentContext = false;
-            hasAccessibleName = true;
+            hasAccessibleName = !hrefLacksEnoughContext;
         }
     }
 
@@ -2822,13 +2871,18 @@ static String textDescription(Element& element, Vector<String>& stringsToValidat
     }
 
     String neighborTextDescription;
-    if (isTargetElement && !hasAccessibleName && (is<HTMLImageElement>(element) || element.isSVGElement() || hasNoRenderedTextOrLabeledChild(element))) {
-        bool hasImageAltText = false;
-        if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
-            hasImageAltText = !normalizeText(image->altText()).isEmpty();
+    if (isTargetElement && !hasAccessibleName) {
+        bool isSingleWordLinkWithoutDestination = hrefLacksEnoughContext
+            && !containsMultipleWords(normalizeText(plainText(makeRangeSelectingNodeContents(element), behaviorsForTextExtraction)));
 
-        if (!hasImageAltText)
-            neighborTextDescription = adjacentRenderedTextLabelDescription(element, stringsToValidate);
+        if (is<HTMLImageElement>(element) || element.isSVGElement() || hasNoRenderedTextOrLabeledChild(element) || isSingleWordLinkWithoutDestination) {
+            bool hasImageAltText = false;
+            if (RefPtr image = dynamicDowncast<HTMLImageElement>(element))
+                hasImageAltText = !normalizeText(image->altText()).isEmpty();
+
+            if (!hasImageAltText)
+                neighborTextDescription = adjacentRenderedTextLabelDescription(element, stringsToValidate);
+        }
     }
 
     auto describedElement = [&] {
@@ -2909,6 +2963,30 @@ static String textDescription(std::optional<NodeIdentifier> identifier, Vector<S
     return textDescription(RefPtr { Node::fromIdentifier(*identifier) }.get(), stringsToValidate);
 }
 
+static bool searchTextMatchesUnrenderedElementText(const Element& element, const String& searchText)
+{
+    if (containsInteractiveDescendant(element))
+        return false;
+
+    CheckedPtr box = dynamicDowncast<RenderBox>(element.renderer());
+    if (!box)
+        return false;
+
+    static constexpr auto maximumTargetHeight = 100;
+    static constexpr auto maximumTargetWidth = 400;
+    if (box->borderBoxHeight().toFloat() > maximumTargetHeight || box->borderBoxWidth().toFloat() > maximumTargetWidth)
+        return false;
+
+    auto withoutWhitespace = [](const String& string) {
+        return normalizeText(string).removeCharacters([](char16_t character) {
+            return isUnicodeWhitespace(character);
+        });
+    };
+
+    auto strippedSearchText = withoutWhitespace(searchText);
+    return !strippedSearchText.isEmpty() && withoutWhitespace(element.textContent()).containsIgnoringASCIICase(strippedSearchText);
+}
+
 static String textDescription(LocalFrame& frame, std::optional<NodeIdentifier> identifier, const String& searchText, Action action, Vector<String>& stringsToValidate)
 {
     if (!identifier && searchText.isEmpty())
@@ -2931,8 +3009,13 @@ static String textDescription(LocalFrame& frame, std::optional<NodeIdentifier> i
             searchTextPrefix = makeString(wrapWithDoubleQuotes(escapedSearchText), " in "_s);
         } else {
             RefPtr element = dynamicDowncast<Element>(target.get());
-            if (!identifier || !element || !searchTextMatchesElementLabelOrRenderedText(*element, searchText))
+            if (!identifier || !element)
                 return { };
+
+            if (!element->isLink() && !is<HTMLFormControlElement>(element)) {
+                if (!searchTextMatchesElementLabelOrRenderedText(*element, searchText) && !searchTextMatchesUnrenderedElementText(*element, searchText))
+                    return { };
+            }
         }
     }
 

@@ -145,7 +145,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return @[ ];
 
     return createNSArray(paths, [] (auto& path) {
-        return [NSURL fileURLWithFileSystemRepresentation:path.utf8().data() isDirectory:NO relativeToURL:nil];
+        return [NSURL fileURLWithFileSystemRepresentation:path.utf8().legacyCStringPointer() isDirectory:NO relativeToURL:nil];
     }).autorelease();
 }
 
@@ -388,6 +388,16 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 - (NSTimeInterval)memoryFootprintPollIntervalForTesting
 {
     return _processPoolConfiguration->memoryFootprintPollIntervalForTesting().seconds();
+}
+
+- (void)setMemoryLimitForTesting:(size_t)limit
+{
+    _processPoolConfiguration->setMemoryLimitForTesting(limit);
+}
+
+- (size_t)memoryLimitForTesting
+{
+    return _processPoolConfiguration->memoryLimitForTesting();
 }
 
 - (NSArray<NSNumber *> *)memoryFootprintNotificationThresholds

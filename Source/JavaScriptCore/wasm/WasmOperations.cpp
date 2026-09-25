@@ -832,7 +832,7 @@ static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context,
     context.fp() = std::bit_cast<UCPURegister*>(*framePointer);
     context.sp() = framePointer + 1;
     static_assert(prologueStackPointerDelta() == sizeof(void*) * 1);
-#elif CPU(ARM64E) || CPU(ARM64)
+#elif CPU(ARM64)
     // move(framePointerRegister, stackPointerRegister);
     // popPair(framePointerRegister, linkRegister);
     context.fp() = std::bit_cast<UCPURegister*>(*framePointer);
@@ -1799,10 +1799,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill16B, void, (void* payloa
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFillRefs, void, (uint64_t* payload, uint64_t value, size_t elementCount))
 {
-    // A reference is stored whole so the concurrent collector cannot observe a torn JSValue.
-    volatile uint64_t* cursor = payload;
-    for (size_t i = 0; i < elementCount; ++i)
-        cursor[i] = value;
+    gcSafeMemfill(payload, value, elementCount * sizeof(uint64_t));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayCopyRefs, void, (uint64_t* dst, const uint64_t* src, size_t byteCount))

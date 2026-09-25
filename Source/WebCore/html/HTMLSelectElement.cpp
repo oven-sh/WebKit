@@ -186,6 +186,7 @@ void HTMLSelectElement::didAddUserAgentShadowRoot(ShadowRoot& root)
     ScriptDisallowedScope::EventAllowedScope buttonSlotScope { buttonSlot };
     buttonSlot->setAttributeWithoutSynchronization(inertAttr, emptyAtom());
     buttonSlot->setAttributeWithoutSynchronization(nameAttr, buttonSlotName());
+    buttonSlot->setAttributeWithoutSynchronization(styleAttr, "text-overflow:inherit"_s);
     buttonSlot->appendChild(SelectFallbackButtonElement::create(document));
     root.appendChild(buttonSlot);
     m_buttonSlot = WTF::move(buttonSlot);
@@ -261,7 +262,7 @@ void HTMLSelectElement::optionSelectedByUser(int optionIndex, bool fireOnChangeN
 {
     // User interaction such as mousedown events can cause list box select elements to send change events.
     // This produces that same behavior for changes triggered by other code running on behalf of the user.
-    if (!usesMenuListDeprecated()) {
+    if (!isSingleSelectDropdownBox()) {
         updateSelectedState(optionToListIndex(optionIndex), allowMultipleSelection, false);
         updateValidity();
         if (CheckedPtr renderer = this->renderer())
@@ -284,19 +285,36 @@ void HTMLSelectElement::optionSelectedByUser(int optionIndex, bool fireOnChangeN
     selectOption(optionIndex, flags);
 }
 
+// https://html.spec.whatwg.org/multipage/form-elements.html#concept-select-pick
+void HTMLSelectElement::pickOrToggleOption(HTMLOptionElement& option)
+{
+    ASSERT(!m_multiple || document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled());
+
+    if (isDisabledFormControl())
+        return;
+
+    option.setDirty(true);
+
+    // Toggling rather than picking is not yet in the specification.
+    optionSelectedByUser(option.index(), true, m_multiple);
+
+    if (!m_multiple)
+        hidePickerPopoverElement();
+}
+
 bool HTMLSelectElement::hasPlaceholderLabelOption() const
 {
-    // The select element has no placeholder label option if it has an attribute "multiple" specified or a display size of non-1.
+    // The select element has no placeholder label option if it has an attribute "multiple" specified or a preferred size of non-1.
     // 
     // The condition "size() > 1" is not compliant with the HTML5 spec as of Dec 3, 2010. "size() != 1" is correct.
     // Using "size() > 1" here because size() may be 0 in WebKit.
     // See the discussion at https://bugs.webkit.org/show_bug.cgi?id=43887
     //
     // "0 size()" happens when an attribute "size" is absent or an invalid size attribute is specified.
-    // In this case, the display size should be assumed as the default.
-    // The default display size is 1 for non-multiple select elements, and 4 for multiple select elements.
+    // In this case, the preferred size should be assumed as the default.
+    // The default preferred size is 1 for non-multiple select elements, and 4 for multiple select elements.
     //
-    // Finally, if size() == 0 and non-multiple, the display size can be assumed as 1.
+    // Finally, if size() == 0 and non-multiple, the preferred size can be assumed as 1.
     if (multiple() || size() > 1)
         return false;
 
@@ -339,18 +357,49 @@ bool HTMLSelectElement::usesMenuList() const
 #endif
 }
 
-bool HTMLSelectElement::usesMenuListDeprecated() const
+bool HTMLSelectElement::isSingleSelectDropdownBox() const
 {
-#if !PLATFORM(IOS_FAMILY)
-    return !m_multiple && m_size <= 1;
-#else
-    return !m_multiple;
-#endif
+    return !m_multiple && isDropdownBox();
+}
+
+// https://html.spec.whatwg.org/multipage/form-elements.html#concept-select-size
+unsigned HTMLSelectElement::preferredSize() const
+{
+    if (m_size >= 1)
+        return m_size;
+    return m_multiple ? 4 : 1;
+}
+
+auto HTMLSelectElement::boxType(const Style::ComputedStyle* style) const -> BoxType
+{
+    if (document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled() && hasBaseAppearance(style ? style : existingComputedStyle()))
+        return preferredSize() == 1 ? BoxType::DropdownBox : BoxType::ListBox;
+    return usesMenuList() ? BoxType::DropdownBox : BoxType::ListBox;
+}
+
+bool HTMLSelectElement::isDropdownBox(const Style::ComputedStyle* style) const
+{
+    return boxType(style) == BoxType::DropdownBox;
+}
+
+bool HTMLSelectElement::isBaseListBox(const Style::ComputedStyle* style) const
+{
+    return document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled()
+        && hasBaseAppearance(style ? style : existingComputedStyle())
+        && preferredSize() > 1;
+}
+
+bool HTMLSelectElement::supportsPickerPseudoElement() const
+{
+    return preferredSize() == 1;
 }
 
 bool HTMLSelectElement::usesBaseAppearancePicker() const
 {
-    if (m_multiple || m_size > 1)
+    if (preferredSize() != 1)
+        return false;
+
+    if (m_multiple && !document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled())
         return false;
 
     RefPtr popover = m_popover;
@@ -628,7 +677,9 @@ bool HTMLSelectElement::isMouseFocusable() const
 
 RenderPtr<RenderElement> HTMLSelectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
 {
-    if (usesMenuList()) {
+    if (isBaseListBox(&style))
+        return HTMLElement::createElementRenderer(WTF::move(style), position);
+    if (boxType(&style) == BoxType::DropdownBox) {
         if (hasBaseAppearance(&style))
             return HTMLElement::createElementRenderer(WTF::move(style), position);
         return createRenderer<RenderMenuList>(*this, WTF::move(style));
@@ -640,7 +691,9 @@ bool HTMLSelectElement::childShouldCreateRenderer(const Node& child) const
 {
     if (!HTMLFormControlElement::childShouldCreateRenderer(child))
         return false;
-    if (!usesMenuList())
+    if (isBaseListBox())
+        return &child != m_buttonSlot.get();
+    if (boxType() == BoxType::ListBox)
         return isAnyOf<HTMLOptionElement, HTMLOptGroupElement>(child) || validationMessageShadowTreeContains(child);
     if (child.isInShadowTree() && child.containingShadowRoot() == userAgentShadowRoot())
         return true;
@@ -1085,7 +1138,7 @@ void HTMLSelectElement::selectAll()
 
 void HTMLSelectElement::saveLastSelection()
 {
-    if (usesMenuListDeprecated()) {
+    if (isSingleSelectDropdownBox()) {
         m_lastOnChangeIndex = selectedIndex();
         return;
     }
@@ -1150,7 +1203,7 @@ void HTMLSelectElement::updateListBoxSelection(bool deselectOtherOptions)
 
 void HTMLSelectElement::listBoxOnChange()
 {
-    ASSERT(!usesMenuListDeprecated() || m_multiple);
+    ASSERT(!isSingleSelectDropdownBox());
 
     auto& items = listItems();
 
@@ -1181,7 +1234,7 @@ void HTMLSelectElement::listBoxOnChange()
 
 void HTMLSelectElement::dispatchChangeEventForMenuList()
 {
-    ASSERT(usesMenuListDeprecated());
+    ASSERT(isSingleSelectDropdownBox());
 
     int selected = selectedIndex();
     if (m_lastOnChangeIndex != selected && m_isProcessingUserDrivenChange) {
@@ -1375,7 +1428,7 @@ void HTMLSelectElement::optionSelectionStateChanged(HTMLOptionElement& option, b
     ASSERT(option.ownerSelectElement() == this);
     if (optionIsSelected)
         selectOption(option.index());
-    else if (!usesMenuListDeprecated())
+    else if (!isSingleSelectDropdownBox())
         selectOption(-1);
     else
         selectOption(nextSelectableListIndex(-1));
@@ -1417,7 +1470,7 @@ void HTMLSelectElement::selectOption(int optionIndex, OptionSet<SelectOptionFlag
 
     scrollToSelection();
 
-    if (usesMenuListDeprecated()) {
+    if (isSingleSelectDropdownBox()) {
         m_isProcessingUserDrivenChange = flags.contains(SelectOptionFlag::UserDriven);
         if (flags.contains(SelectOptionFlag::DispatchChangeEvent))
             dispatchChangeEventForMenuList();
@@ -1464,7 +1517,7 @@ void HTMLSelectElement::dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, 
 {
     // Save the selection so it can be compared to the new selection when
     // dispatching change events during blur event dispatch.
-    if (usesMenuListDeprecated())
+    if (isSingleSelectDropdownBox())
         saveLastSelection();
     HTMLFormControlElement::dispatchFocusEvent(WTF::move(oldFocusedElement), options);
 }
@@ -1474,7 +1527,7 @@ void HTMLSelectElement::dispatchBlurEvent(RefPtr<Element>&& newFocusedElement)
     // We only need to fire change events here for menu lists, because we fire
     // change events for list boxes whenever the selection change is actually made.
     // This matches other browsers' behavior.
-    if (usesMenuListDeprecated())
+    if (isSingleSelectDropdownBox())
         dispatchChangeEventForMenuList();
     HTMLFormControlElement::dispatchBlurEvent(WTF::move(newFocusedElement));
 }
@@ -1558,12 +1611,12 @@ void HTMLSelectElement::restoreFormControlState(const FormControlState& state)
 
 void HTMLSelectElement::parseMultipleAttribute(const AtomString& value)
 {
-    bool oldUsesMenuList = usesMenuList();
+    auto oldBoxType = boxType();
     bool oldMultiple = m_multiple;
     int oldSelectedIndex = selectedIndex();
     m_multiple = !value.isNull();
     updateValidity();
-    if (oldUsesMenuList != usesMenuList())
+    if (oldBoxType != boxType())
         invalidateStyleAndRenderersForSubtree();
     if (oldMultiple != m_multiple) {
         if (oldSelectedIndex >= 0)
@@ -1643,7 +1696,7 @@ bool HTMLSelectElement::platformHandleKeydownEvent(KeyboardEvent* event)
             // Calling focus() may cause us to lose our renderer. Return true so
             // that our caller doesn't process the event further, but don't set
             // the event as handled.
-            if (!renderer() || !usesMenuList())
+            if (!renderer() || !isDropdownBox())
                 return true;
 
             openPickerForUserInteraction();
@@ -1678,7 +1731,7 @@ static bool isClickInsidePopover(SelectPopoverElement* popover, Event& event)
 void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
 {
     ASSERT(renderer());
-    ASSERT(usesMenuList());
+    ASSERT(isDropdownBox());
 
     if (!event.isTrusted())
         return;
@@ -1758,7 +1811,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
                 protect(document())->updateStyleIfNeeded();
 
                 // Calling focus() may remove the renderer or change the renderer type.
-                if (!renderer() || !usesMenuList())
+                if (!renderer() || !isDropdownBox())
                     return;
 
                 openPickerForUserInteraction();
@@ -1771,7 +1824,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
                 protect(document())->updateStyleIfNeeded();
 
                 // Calling focus() may remove the renderer or change the renderer type.
-                if (!renderer() || !usesMenuList())
+                if (!renderer() || !isDropdownBox())
                     return;
 
                 openPickerForUserInteraction();
@@ -1794,7 +1847,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
         focus();
         protect(document())->updateStyleIfNeeded();
 #if !PLATFORM(IOS_FAMILY)
-        if (!renderer() || !usesMenuList()) {
+        if (!renderer() || !isDropdownBox()) {
 #else
         if (!usesBaseAppearancePicker()) {
 #endif
@@ -2090,9 +2143,9 @@ void HTMLSelectElement::defaultEventHandler(Event& event)
         return;
     }
 
-    if (usesMenuList())
+    if (isDropdownBox())
         menuListDefaultEventHandler(event);
-    else 
+    else
         listBoxDefaultEventHandler(event);
 
     if (event.defaultHandled())
@@ -2145,7 +2198,7 @@ void HTMLSelectElement::typeAheadFind(KeyboardEvent& event)
     if (index < 0)
         return;
     selectOption(listToOptionIndex(index), { SelectOptionFlag::DeselectOtherOptions, SelectOptionFlag::DispatchChangeEvent, SelectOptionFlag::UserDriven });
-    if (!usesMenuListDeprecated())
+    if (!isSingleSelectDropdownBox())
         listBoxOnChange();
 }
 
@@ -2159,7 +2212,7 @@ void HTMLSelectElement::accessKeySetSelectedIndex(int index)
     // First bring into focus the list box.
     if (!focused())
         accessKeyAction(false);
-    
+
     // If this index is already selected, unselect. otherwise update the selected index.
     auto& items = listItems();
     int listIndex = optionToListIndex(index);
@@ -2172,7 +2225,7 @@ void HTMLSelectElement::accessKeySetSelectedIndex(int index)
         }
     }
 
-    if (usesMenuListDeprecated())
+    if (isSingleSelectDropdownBox())
         dispatchChangeEventForMenuList();
     else
         listBoxOnChange();

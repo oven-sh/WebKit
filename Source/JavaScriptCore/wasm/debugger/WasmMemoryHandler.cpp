@@ -31,7 +31,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #include "JSWebAssemblyInstance.h"
-#include "JSWebAssemblyModule.h"
 #include "Options.h"
 #include "WasmDebugServer.h"
 #include "WasmDebugServerUtilities.h"
@@ -41,6 +40,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <cstdlib>
 #include <cstring>
 #include <wtf/ASCIICType.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -73,8 +73,14 @@ void MemoryHandler::read(StringView packet)
         return;
     }
 
-    VirtualAddress address = VirtualAddress(parseHex(parts[0]));
-    size_t length = static_cast<size_t>(parseHex(parts[1]));
+    auto parsedAddress = parseHexStrict(parts[0]);
+    auto parsedLength = parseHexStrict(parts[1]);
+    if (!parsedAddress || !parsedLength) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    VirtualAddress address = VirtualAddress(*parsedAddress);
+    size_t length = static_cast<size_t>(*parsedLength);
 
     StringBuilder data;
     VirtualAddress::Type addressType = address.type();
@@ -95,34 +101,38 @@ void MemoryHandler::read(StringView packet)
 
 bool MemoryHandler::readModuleData(VirtualAddress address, size_t length, StringBuilder& data)
 {
-    uint32_t id = address.id();
+    uint32_t instanceId = address.instanceId();
     uint32_t offset = address.offset();
 
-    RefPtr module = m_debugServer.m_moduleManager->module(id);
-    if (!module)
+    JSWebAssemblyInstance* jsInstance = m_debugServer.m_moduleManager->jsInstance(instanceId);
+    if (!jsInstance)
         return false;
 
-    const auto& source = module->moduleInformation().debugInfo->source;
+    const auto& source = jsInstance->moduleInformation().debugInfo->source;
     if (!offset && source.size() < length) {
         // FIXME: This is a workaround for tiny modules - clamp initial read at offset 0.
         // Cannot clamp at non-zero offsets as it corrupts DWARF debug info in LLDB.
         dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - clamping read from ", length, " to ", source.size(), " bytes (module size: ", source.size(), ")");
         length = source.size();
-    } else if (offset >= source.size() || offset + length > source.size()) {
-        dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - read beyond module boundary. Address: ", address, " offset: ", offset, " size: ", length, " module size: ", source.size());
-        return false;
+    } else {
+        CheckedSize end = offset;
+        end += length;
+        if (end.hasOverflowed() || end > source.size()) {
+            dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - read beyond module boundary. Address: ", address, " offset: ", offset, " size: ", length, " module size: ", source.size());
+            return false;
+        }
     }
 
     for (size_t i = 0; i < length; ++i)
         data.append(hex(source[offset + i], 2, Lowercase));
 
-    dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - read ", length, " bytes at offset: ", offset, " from module ID: ", id);
+    dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - read ", length, " bytes at offset: ", offset, " from instance ID: ", instanceId);
     return true;
 }
 
 bool MemoryHandler::readMemoryData(VirtualAddress address, size_t length, StringBuilder& data)
 {
-    uint32_t instanceId = address.id();
+    uint32_t instanceId = address.instanceId();
     uint32_t offset = address.offset();
 
     JSWebAssemblyInstance* jsInstance = m_debugServer.m_moduleManager->jsInstance(instanceId);
@@ -134,7 +144,9 @@ bool MemoryHandler::readMemoryData(VirtualAddress address, size_t length, String
     // FIXME(wasm-multimemory): Should the debugger eventually support multiple linear memories?
     void* memoryBase = jsInstance->memory(0)->basePointer();
     size_t size = jsInstance->memory(0)->memory().size();
-    if (!memoryBase || offset + length > size) {
+    CheckedSize readEnd = offset;
+    readEnd += length;
+    if (!memoryBase || readEnd.hasOverflowed() || readEnd > size) {
         dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] - memory access out of bounds. Instance ID: ", instanceId, " offset: ", offset, " size: ", length, " memory size: ", size);
         return false;
     }
@@ -156,27 +168,28 @@ void MemoryHandler::handleMemoryRegionInfo(StringView packet)
     // WebAssembly Context: Provide memory region info for WASM modules, memory, stack, and globals
     // Return region info with start, size, permissions, and name
     StringView addressStr = packet.substring(strlen("qMemoryRegionInfo:"));
-    if (addressStr.isEmpty()) {
+    auto parsedAddress = parseHexStrict(addressStr);
+    if (!parsedAddress) {
         dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] Malformed qMemoryRegionInfo packet");
         m_debugServer.sendErrorReply(ProtocolError::InvalidAddress);
         return;
     }
 
-    VirtualAddress address = VirtualAddress(parseHex(addressStr));
+    VirtualAddress address = VirtualAddress(*parsedAddress);
     dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] qMemoryRegionInfo for address: ", address);
 
     VirtualAddress::Type addressType = address.type();
-    uint32_t id = address.id();
+    uint32_t instanceId = address.instanceId();
     uint32_t offset = address.offset();
 
-    dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] qMemoryRegionInfo: address=", address, ", type=", (int)addressType, ", id=", id, ", offset=0x", hex(offset, Lowercase));
+    dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] qMemoryRegionInfo: address=", address, ", type=", (int)addressType, ", instance=", instanceId, ", offset=0x", hex(offset, Lowercase));
 
     switch (addressType) {
     case VirtualAddress::Type::Memory:
-        handleWasmMemoryRegionInfo(address, id, offset);
+        handleWasmMemoryRegionInfo(address, instanceId, offset);
         break;
     case VirtualAddress::Type::Module:
-        handleWasmModuleRegionInfo(address, id, offset);
+        handleWasmModuleRegionInfo(address, instanceId, offset);
         break;
     default:
         // Invalid address type - send error
@@ -194,8 +207,7 @@ void MemoryHandler::handleWasmMemoryRegionInfo(VirtualAddress address, uint32_t 
         size_t memorySize = instance->memory(0)->memory().size();
         if (offset < memorySize) {
             // Address is within WASM memory - return the memory region
-            uint32_t moduleId = instance->moduleInformation().debugInfo->id;
-            String name = makeString("wasm_memory_"_s, instanceId, "_"_s, moduleId);
+            String name = makeString("wasm_memory_"_s, instanceId);
             sendMemoryRegionReply(address, memorySize, "rw"_s, name);
             return;
         }
@@ -218,22 +230,21 @@ void MemoryHandler::handleWasmMemoryRegionInfo(VirtualAddress address, uint32_t 
     sendUnmappedRegionReply(address, unmappedSize);
 }
 
-void MemoryHandler::handleWasmModuleRegionInfo(VirtualAddress address, uint32_t moduleId, uint32_t offset)
+void MemoryHandler::handleWasmModuleRegionInfo(VirtualAddress address, uint32_t instanceId, uint32_t offset)
 {
-    JSWebAssemblyInstance* instance = m_debugServer.m_moduleManager->jsInstance(moduleId);
+    JSWebAssemblyInstance* instance = m_debugServer.m_moduleManager->jsInstance(instanceId);
     if (instance) {
-        JSWebAssemblyModule* jsModule = instance->jsModule();
-        const auto& source = jsModule->moduleInformation().debugInfo->source;
+        const auto& source = instance->moduleInformation().debugInfo->source;
         if (offset < source.size()) {
             // Address is within module bounds - return info for the entire WASM module region
-            String name = makeString("wasm_module_"_s, moduleId);
+            String name = makeString("wasm_module_"_s, instanceId);
             sendMemoryRegionReply(address, source.size(), "rx"_s, name, "module"_s);
             return;
         }
     }
 
     uint32_t idUpperBoundary = m_debugServer.m_moduleManager->nextInstanceId();
-    uint32_t nextValidID = moduleId;
+    uint32_t nextValidID = instanceId;
     do {
         if (++nextValidID >= idUpperBoundary) {
             // No more instances - return unmapped region to end of address space
@@ -301,12 +312,25 @@ void MemoryHandler::write(StringView packet)
         return;
     }
 
-    VirtualAddress address = VirtualAddress(parseHex(parts[0]));
-    size_t length = static_cast<size_t>(parseHex(parts[1]));
+    auto parsedAddress = parseHexStrict(parts[0]);
+    auto parsedLength = parseHexStrict(parts[1]);
+    if (!parsedAddress || !parsedLength) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+    VirtualAddress address = VirtualAddress(*parsedAddress);
+    size_t length = static_cast<size_t>(*parsedLength);
     StringView hexData = parts[2];
 
     // Validate hex data length (2 hex chars per byte)
     if (hexData.length() != length * 2) {
+        m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
+        return;
+    }
+
+    // toASCIIHexValue() asserts on non-hex input, so check before decoding or writing anything.
+    if (!hexData.containsOnly<isASCIIHexDigit>()) {
+        dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] Write rejected: non-hex payload");
         m_debugServer.sendErrorReply(ProtocolError::InvalidPacket);
         return;
     }
@@ -320,7 +344,7 @@ void MemoryHandler::write(StringView packet)
         return;
     }
 
-    uint32_t instanceId = address.id();
+    uint32_t instanceId = address.instanceId();
     uint32_t offset = address.offset();
 
     JSWebAssemblyInstance* jsInstance = m_debugServer.m_moduleManager->jsInstance(instanceId);
@@ -333,7 +357,9 @@ void MemoryHandler::write(StringView packet)
     // FIXME(wasm-multimemory): Should the debugger eventually support multiple linear memories?
     void* memoryBase = jsInstance->memory(0)->basePointer();
     size_t memorySize = jsInstance->memory(0)->memory().size();
-    if (!memoryBase || offset + length > memorySize) {
+    CheckedSize writeEnd = offset;
+    writeEnd += length;
+    if (!memoryBase || writeEnd.hasOverflowed() || writeEnd > memorySize) {
         dataLogLnIf(Options::verboseWasmDebugger(), "[MemoryHandler] Write out of bounds. Instance ID: ", instanceId, " offset: ", offset, " size: ", length, " memory size: ", memorySize);
         m_debugServer.sendErrorReply(ProtocolError::MemoryError);
         return;

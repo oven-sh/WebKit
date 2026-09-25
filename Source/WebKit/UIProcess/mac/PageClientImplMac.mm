@@ -545,6 +545,14 @@ IntRect PageClientImpl::rootViewToWindow(const WebCore::IntRect& rect)
     return enclosingIntRect(tempRect);
 }
 
+std::optional<FloatRect> PageClientImpl::windowFrameInDeviceSpace() const
+{
+    RetainPtr window = activeWindow();
+    if (!window)
+        return std::nullopt;
+    return FloatRect { [window frame] };
+}
+
 IntPoint PageClientImpl::accessibilityScreenToRootView(const IntPoint& point)
 {
     return screenToRootView(point);
@@ -598,9 +606,9 @@ void PageClientImpl::didDismissContextMenu()
 
 #endif // ENABLE(CONTEXT_MENUS)
 
-RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& initialColor, const WebCore::IntRect& rect, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&& suggestions, std::optional<WebCore::FrameIdentifier> frameID)
+RefPtr<WebColorPicker> PageClientImpl::createColorPicker(WebPageProxy& page, const WebCore::Color& initialColor, ColorControlSupportsAlpha supportsAlpha, Vector<WebCore::Color>&& suggestions, std::optional<WebCore::FrameIdentifier> frameID)
 {
-    return WebColorPickerMac::create(protect(page.colorPickerClient()).ptr(), initialColor, rect, supportsAlpha, WTF::move(suggestions), m_view.get().get(), frameID);
+    return WebColorPickerMac::create(protect(page.colorPickerClient()).ptr(), initialColor, supportsAlpha, WTF::move(suggestions), m_view.get().get(), frameID);
 }
 
 RefPtr<WebDataListSuggestionsDropdown> PageClientImpl::createDataListSuggestionsDropdown(WebPageProxy& page)
@@ -1273,7 +1281,7 @@ void PageClientImpl::showCaptionDisplaySettings(WebCore::HTMLMediaElementIdentif
     protect(m_impl)->showCaptionDisplaySettings(identifier, options, WTF::move(completionHandler));
 }
 
-void PageClientImpl::positionInformationDidChange(const InteractionInformationAtPosition& info)
+void PageClientImpl::positionInformationDidChange(const InteractionInformationAtPosition& info, std::optional<WebCore::FrameIdentifier>)
 {
     CheckedPtr impl = m_impl.get();
     if (!impl)

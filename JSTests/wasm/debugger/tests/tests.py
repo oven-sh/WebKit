@@ -192,7 +192,7 @@ class CWasmTestCase:
         self.session.cmd(
             "mem reg --all",
             patterns=[
-                "[0x0000000000000000-0x0000000001010000) rw- wasm_memory_0_0",
+                "[0x0000000000000000-0x0000000001010000) rw- wasm_memory_0",
                 "[0x0000000001010000-0x4000000000000000) ---",
                 "[0x4000000000000000-0x40000000000014e0) r-x wasm_module_0",
                 "[0x40000000000014e0-0xffffffffffffffff) ---",
@@ -206,7 +206,7 @@ class CWasmTestCase:
 
         self.session.cmd(
             "mem reg 0x0000000000000000",
-            patterns=["[0x0000000000000000-0x0000000001010000) rw- wasm_memory_0_0"],
+            patterns=["[0x0000000000000000-0x0000000001010000) rw- wasm_memory_0"],
         )
 
     def memoryReadWriteTest(self):
@@ -420,7 +420,7 @@ class SwiftWasmTestCase:
         self.session.cmd(
             "mem reg --all",
             patterns=[
-                "[0x0000000000000000-0x0000000000130000) rw- wasm_memory_0_0",
+                "[0x0000000000000000-0x0000000000130000) rw- wasm_memory_0",
                 "[0x0000000000130000-0x4000000000000000) ---",
                 "[0x4000000000000000-0x40000000006b1239) r-x wasm_module_0",
                 "[0x40000000006b1239-0xffffffffffffffff) ---",
@@ -434,7 +434,7 @@ class SwiftWasmTestCase:
 
         self.session.cmd(
             "mem reg 0x0000000000000000",
-            patterns=["[0x0000000000000000-0x0000000000130000) rw- wasm_memory_0_0"],
+            patterns=["[0x0000000000000000-0x0000000000130000) rw- wasm_memory_0"],
         )
 
     def memoryReadWriteTest(self):
@@ -484,6 +484,399 @@ class SwiftWasmGlobalTestCase:
 
         self.session.cmd("p globalCounter1", patterns=["(Int32) 1"])
 
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class SwiftWasmOperandStackTestCase:
+    test_file = "resources/swift-wasm/operand-stack-test/main.js"
+
+    def execute(self):
+        # i32 on the operand stack, read with qWasmStackValue. produce(7) == 7 * 3 + 1 == 22.
+        self.session.cmd("b operand-stack-test.swift:19")
+        self.session.cmd(
+            "c",
+            patterns=[
+                "Process 1 stopped",
+                "stop reason = breakpoint",
+                "-> 19  \t    consume(r)",
+            ],
+        )
+        self.session.cmd("v r", patterns=["(Int32) r = 22"])
+        self.session.cmd("v n", patterns=["(Int32) n = 7"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # Wasm locals, read with qWasmLocal. a == produce(7) == 22, c == produce(9) == 28.
+        # `n` is not checked here: at -O its local is reused once its last use has passed.
+        self.session.cmd("b operand-stack-test.swift:28")
+        self.session.cmd(
+            "c",
+            patterns=[
+                "Process 1 stopped",
+                "stop reason = breakpoint",
+                "-> 28  \t    consume(b)",
+            ],
+        )
+        self.session.cmd("v a", patterns=["(Int32) a = 22"])
+        self.session.cmd("v c", patterns=["(Int32) c = 28"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # i64 on the operand stack. A reply narrowed to the wrong width truncates this to 21.
+        self.session.cmd("b operand-stack-test.swift:37")
+        self.session.cmd(
+            "c",
+            patterns=[
+                "Process 1 stopped",
+                "stop reason = breakpoint",
+                "-> 37  \t    consume64(r64)",
+            ],
+        )
+        self.session.cmd("v r64", patterns=["(Int64) r64 = 4294967317"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthWasmWasmWasmTestCase:
+    test_file = "resources/wasm/depth-wasm-wasm-wasm.js"
+
+    def execute(self):
+        self.session.cmd("b 0x4000000000000060")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000060"])
+
+        # frame 0: two entries, exact depth from the live stack pointer.
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: 66666666"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;2", patterns=["response: E01"])
+
+        # frame 1 kept one entry across a call that takes no arguments.
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 44444444"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+
+        # frame 2 kept two and passed a third as the argument, which is still indexed.
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;3", patterns=["response: E01"])
+
+        # frame 3 is the JS main loop, not a wasm frame.
+        self.session.cmd("process plugin packet send qWasmStackValue:3;0", patterns=["response: E05"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthJsWasmJsWasmTestCase:
+    test_file = "resources/wasm/depth-js-wasm-js-wasm.js"
+
+    def execute(self):
+        self.session.cmd("b 0x400000000000005e")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000005e"])
+
+        # frame 0 holds an i32 and an i64; both occupy one 16-byte entry.
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: 8877665544332211"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;2", patterns=["response: E01"])
+
+        # frame 2 is wasm, reached across the JS callback in frame 1.
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: E05"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthJsJsWasmJsJsWasmTestCase:
+    test_file = "resources/wasm/depth-js-js-wasm-js-js-wasm.js"
+
+    def execute(self):
+        self.session.cmd("b 0x400000000000005b")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000005b"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+
+        # frames 1 and 2 are JS; frame 3 is the wasm frame that kept three entries.
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: E05"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: E05"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;2", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;3", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthWasmJsWasmJsWasmTestCase:
+    test_file = "resources/wasm/depth-wasm-js-wasm-js-wasm.js"
+
+    def execute(self):
+        self.session.cmd("b 0x4000000000000087")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000087"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: E01"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:4;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:4;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthWasmWasmJsWasmWasmTestCase:
+    test_file = "resources/wasm/depth-wasm-wasm-js-wasm-wasm.js"
+
+    def execute(self):
+        self.session.cmd("b 0x4000000000000087")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000087"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: 66666666"])
+
+        # frame 1 is reached by a wasm->wasm hop, frames 3 and 4 across the JS callback.
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 44444444"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;0", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:3;1", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:4;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:4;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthCallShapesTestCase:
+    test_file = "resources/wasm/depth-call-shapes.js"
+
+    def execute(self):
+        # A callee returning two values reserves extra result space; the caller still kept one entry.
+        self.session.cmd("b 0x4000000000000088")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000088"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 21212121"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # Ten arguments push some onto the stack, growing the frame the call reserved. All ten remain
+        # addressable above the entry the caller kept.
+        self.session.cmd("b 0x40000000000000b8")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x40000000000000b8"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: 01000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;10", patterns=["response: 0a000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;11", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # call_indirect: the table index is popped before the shared call path, so it is not indexed.
+        self.session.cmd("b 0x40000000000000d2")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x40000000000000d2"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # A caller that kept nothing has depth 0.
+        self.session.cmd("b 0x40000000000000e2")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x40000000000000e2"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 77777777"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class TailCallToImportTestCase:
+    test_file = "resources/wasm/tail-call-to-import.js"
+
+    def execute(self):
+        # outer tail-called into the JS import, so its WASM frame was replaced by the stub's and the
+        # stub's caller is the JS driver. Walking that used to abort the VM on a RELEASE_ASSERT.
+        self.session.cmd("b 0x400000000000003f", patterns=["address = 0x400000000000003f"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000003f"])
+
+        # frame #1 is js.imp and frame #2 is the JS driver; no WASM frame for outer, which is gone.
+        self.session.cmd("bt", patterns=["frame #0: 0x400000000000003f", "frame #2: 0xc000000000000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class CrossInstanceTailCallImportTestCase:
+    test_file = "resources/wasm/cross-instance-tail-call-import.js"
+
+    def execute(self):
+        # A cross-instance return_call_indirect onto a re-exported JS import tail-calls into the other
+        # instance's WasmToJS stub, so the restore frame sits above the STUB rather than above a WASM
+        # frame. Walking into it from the WasmToJS branch used to abort the VM.
+        self.session.cmd("b 0x4000000100000054", patterns=["address = 0x4000000100000054"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000100000054"])
+
+        # frame #1 is js.f; frame #2 is B.caller, whose call site is the `call 1` at [0x40].
+        self.session.cmd("bt", patterns=["frame #0: 0x4000000100000054", "frame #2: 0x4000000100000042"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthImportMultiResultTestCase:
+    test_file = "resources/wasm/depth-import-multires.js"
+
+    def execute(self):
+        # The import takes one argument and returns two, so .ipint_call_common reserved
+        # extraSpaceForReturns below the arguments. The depth comes from the saved first_non_arg, so
+        # that reservation must not shift it: outer's depth is 2, not 3.
+        self.session.cmd("b 0x4000000000000057")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000057"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class CrossInstanceTailCallTestCase:
+    test_file = "resources/wasm/cross-instance-tail-call.js"
+
+    def execute(self):
+        # A.mid tail-called into instance 0, so a synthetic restore frame sits between B.target and
+        # A.outer. Walking into it used to abort the VM, taking any backtrace with it.
+        self.session.cmd("b 0x4000000000000029", patterns=["Breakpoint 1"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000029"])
+
+        # The restore frame is stepped over, not reported: frame 1 is A.outer, whose call site is the
+        # `call 2` at [0x37] in instance 1, and the saved PC is the instruction after it.
+        self.session.cmd("bt", patterns=["frame #0: 0x4000000000000029", "frame #1: 0x4000000100000039"])
+
+        # A.outer's operand stack is still recoverable across the peeled frame: it kept one value and
+        # passed no arguments to A.mid.
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 77777777"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # Stepping off the tail callee's final `end` returns to A.outer, so getWasmReturnPC has to
+        # step over the restore frame as well -- otherwise no step-out breakpoint is set at all.
+        self.session.cmd("b 0x400000000000002b", patterns=["address = 0x400000000000002b"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000002b"])
+        self.session.cmd("si")
+        self.session.cmd("dis", patterns=["->  0x4000000100000039: drop"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthReturnCallTestCase:
+    test_file = "resources/wasm/depth-return-call.js"
+
+    def execute(self):
+        # A tail call substitutes the callee's signature, so the in-flight arity has to come from the
+        # call frame 1 actually made. Here mid_a took 2 arguments and tail-called a 0-argument leaf:
+        # reading the arity off the surviving callee would report depth 1 and reject indices 1 and 2.
+        self.session.cmd("b 0x4000000000000077")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000077"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 44444444"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;2", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;3", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # The other direction: mid_b took 0 arguments and tail-called a 2-argument leaf, so reading
+        # the arity off the surviving callee would report depth 3 and hand back two slots from below
+        # the operand stack instead of an error.
+        self.session.cmd("b 0x400000000000009f")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000009f"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 08080808"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # Same substitution reached through call_indirect, whose in-flight call metadata is
+        # CallIndirectMetadata rather than CallMetadata. The table index is popped before the shared
+        # call path, so it is not indexed.
+        self.session.cmd("b 0x40000000000000ca")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x40000000000000ca"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: cccccccc"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 99999999"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: aaaaaaaa"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;2", patterns=["response: bbbbbbbb"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;3", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthCallRefTestCase:
+    test_file = "resources/wasm/depth-call-ref.js"
+
+    def execute(self):
+        # call_ref: the funcref operand is popped before the shared call path, so it is not indexed.
+        self.session.cmd("b 0x400000000000004d")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000004d"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;1", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # return_call_ref: the tail-caller's frame is gone, so frame 1 is its caller.
+        self.session.cmd("b 0x400000000000006b")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000006b"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 44444444"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 33333333"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthDuplicateImportTestCase:
+    test_file = "resources/wasm/depth-duplicate-import.js"
+
+    def execute(self):
+        # js.f is imported with no parameters and with one. The 0-parameter binding was called, so the
+        # depth is 1; resolving to the other would report 2 and hand back a neighbouring slot.
+        self.session.cmd("b 0x400000000000008a")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000008a"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+        # js.g is imported as (param i32) and as (param f32). Arity cannot separate them, but both
+        # reserve the same frame, so the depth is the same either way: the kept entry plus the argument.
+        self.session.cmd("b 0x40000000000000a3")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x40000000000000a3"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 66666666"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 07000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthCatchHandlerTestCase:
+    test_file = "resources/wasm/depth-catch-handler.js"
+
+    def execute(self):
+        self.session.cmd("b 0x400000000000004a")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000004a"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        # Catch entry recomputes the frame's stack pointer; the entry kept across the try and the one
+        # pushed inside the handler must both still be addressable.
+        self.session.cmd("process plugin packet send qWasmStackValue:1;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;1", patterns=["response: 22222222"])
+        self.session.cmd("process plugin packet send qWasmStackValue:1;2", patterns=["response: E01"])
+        self.session.cmd("br del -f", patterns=["All breakpoints removed."])
+
+
+class OperandStackDepthImportArityTestCase:
+    """qWasmStackValue depth for a multi-parameter call into JS, disambiguated by arity."""
+
+    test_file = "resources/wasm/depth-import-arity.js"
+
+    def execute(self):
+        self.session.cmd("b 0x400000000000005d")
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000005d"])
+        self.session.cmd("process plugin packet send qWasmStackValue:0;0", patterns=["response: 55555555"])
+        # js.f is imported with three parameters and with one. The three-parameter binding was called,
+        # so the depth is the kept entry plus its three arguments.
+        self.session.cmd("process plugin packet send qWasmStackValue:2;0", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;1", patterns=["response: 01000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;2", patterns=["response: 02000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;3", patterns=["response: 03000000"])
+        self.session.cmd("process plugin packet send qWasmStackValue:2;4", patterns=["response: E01"])
         self.session.cmd("br del -f", patterns=["All breakpoints removed."])
 
 
@@ -1201,6 +1594,23 @@ class ThrowRefTestCase:
         )
 
 
+class StepIntoThrowWithPatchedTryTableTestCase:
+    test_file = "resources/wasm/throw-ref.js"
+
+    def execute(self):
+        # Stepping over a throw must reach the catch body even with a breakpoint on the try_table
+        # opcode, so the step target comes from the pre-patch opcode, not the patched byte.
+        self.session.cmd("b 0x40000000000000e6", patterns=["Breakpoint 1"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x40000000000000e6: try_table"],
+        )
+        self.session.cmd("si", patterns=["->  0x40000000000000ec: throw  0"])
+        self.session.cmd("si", patterns=["->  0x40000000000000f1: throw_ref"])
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
 class TryTableTestCase:
     test_file = "resources/wasm/try-table.js"
 
@@ -1397,6 +1807,73 @@ class MemoryAtomicWaitNoTimeoutTestCase:
         self.session.cmd("thread select 1", patterns=["->  0x4000000000000030: memory.atomic.wait32 0"])
 
 
+class ThreadStopInfoUnknownThreadTestCase:
+    test_file = "resources/wasm/memory-atomic-wait.js"
+    extra_jsc_options = ["--useDollarVM=1"]
+
+    def execute(self):
+        # An unknown thread id must be refused without wedging. The error reply used to route back
+        # through ExecutionHandler::sendReply, which re-takes the lock sendStopReplyForThread is
+        # already holding, so the server never answered again. Thread 0 is never a valid id, so
+        # this always takes that path. The follow-up read is the real assertion.
+        self.session.cmd("process plugin packet send qThreadStopInfo0", patterns=["response: E02"])
+        self.session.cmd("process plugin packet send m0000000000000000,08", patterns=["response: 0000000000000000"])
+
+
+class MalformedMemoryPacketTestCase:
+    test_file = "resources/wasm/memory-atomic-wait.js"
+    extra_jsc_options = ["--useDollarVM=1"]
+
+    def execute(self):
+        # Malformed m/M fields must be rejected without wedging the stub. Each bad packet is
+        # followed by a good one: a wedged server answers nothing, so that is the real assertion.
+        self.session.cmd("process plugin packet send m0000000000000000,08", patterns=["response: 0000000000000000"])
+
+        # 0 is a real address -- instance 0's memory base -- so a bad field must not resolve to it.
+        self.session.cmd("process plugin packet send mzzzzzzzz,10", patterns=["response: E01"])
+        # parseInteger() accepts a leading '+', which is also the RSP ack character.
+        self.session.cmd("process plugin packet send m+20,08", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send m0000000000000000,zz", patterns=["response: E01"])
+
+        # offset + length can wrap back inside the module, so the bound needs wider arithmetic.
+        self.session.cmd("process plugin packet send m4000000000000020,ffffffffffffffe8", patterns=["response: E02"])
+        self.session.cmd("process plugin packet send m4000000000000000,04", patterns=["response: 0061736d"])
+
+        # A non-hex payload reaches toASCIIHexValue, which asserts.
+        self.session.cmd("process plugin packet send M0000000000000000,2:zzzz", patterns=["response: E01"])
+        self.session.cmd("process plugin packet send m0000000000000000,08", patterns=["response: 0000000000000000"])
+
+        # Positive control: a well-formed write still lands.
+        self.session.cmd("process plugin packet send M0000000000000000,2:41ff", patterns=["response: OK"])
+        self.session.cmd("process plugin packet send m0000000000000000,08", patterns=["response: 41ff000000000000"])
+
+
+class MultiInstanceGlobalTestCase:
+    test_file = "resources/wasm/multi-instance-global.js"
+    extra_jsc_options = ["--useDollarVM=1"]
+
+    def execute(self):
+        # A global index only names a global together with an instance. Both instances hold their
+        # own copy of global 0, set to 0x11111111 and 0x22222222 before DEBUGGER_READY.
+        self.session.cmd("image list", patterns=["0x4000000000000000.wasm", "0x4000000100000000.wasm"])
+
+        self.session.cmd("process plugin packet send qWasmGlobal:0;instance:0;", patterns=["response: 11111111"])
+        self.session.cmd("process plugin packet send qWasmGlobal:0;instance:1;", patterns=["response: 22222222"])
+
+        # An id never handed out must be refused, not resolved to a live instance.
+        self.session.cmd("process plugin packet send qWasmGlobal:0;instance:7;", patterns=["response: E05"])
+
+
+class BreakpointNonInstructionBoundaryTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+    extra_jsc_options = ["--useDollarVM=1"]
+
+    def execute(self):
+        self.session.cmd("process plugin packet send Z0,4000000000000025,1", patterns=["response: E02"])
+        self.session.cmd("process plugin packet send Z0,4000000000000024,1", patterns=["response: OK"])
+        self.session.cmd("process plugin packet send z0,4000000000000024,1", patterns=["response: OK"])
+
+
 class DoCatchThrowTestCase:
     test_file = "resources/swift-wasm/do-catch-throw/main.js"
 
@@ -1539,15 +2016,44 @@ class WasmUnreachableFaultTestCase:
     def execute(self):
         for _ in range(10):
             self.session.cmd("c", patterns=["Process 1 stopped"])
-            self.session.cmd("dis", patterns=["->  0x4000000000000024: unreachable"])
+            self.session.cmd("dis", patterns=["->  0x4000000000000025: unreachable"])
 
         self.session.cmd(
             "bt",
             patterns=[
-                "frame #0: 0x4000000000000024",
+                "frame #0: 0x4000000000000025",
                 "frame #1: 0xc000000000000000",
             ]
         )
+
+
+class BreakpointOnUnreachableTestCase:
+    test_file = "resources/wasm/unreachable.js"
+
+    def execute(self):
+        # A breakpoint on unreachable reports the breakpoint first, then the trap.
+        self.session.cmd("b 0x4000000000000025", patterns=["Breakpoint 1"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000000000025: unreachable"],
+        )
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "Unreachable code should not be executed"],
+        )
+
+
+class StepOffUnreachableTestCase:
+    test_file = "resources/wasm/unreachable.js"
+
+    def execute(self):
+        # Unreachable has no successor instruction, so a step off it lands on the trap.
+        self.session.cmd("b 0x4000000000000025", patterns=["Breakpoint 1"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000000000025: unreachable"],
+        )
+        self.session.cmd("si", patterns=["Unreachable code should not be executed"])
 
 
 class WasmDivByZeroTrapTestCase:
@@ -1632,9 +2138,9 @@ class DynamicModuleLoadTestCase:
         # Disassembly confirms the stopped instruction is 'end' at the expected address.
         self.session.cmd("c", patterns=["Process 1 stopped", "->  0x4000000000000023: end"])
 
-        # Resume: stops for the module-load notification (library:; T-packet) when module 2 is
-        # instantiated.  LLDB re-queries qXfer:libraries:read and loads module 2.
-        self.session.cmd("c", patterns=["Process 1 stopped", "loaded new wasm module with ids: 1"])
+        # Resume: stops for the library notification (library:; T-packet) when module 2 is
+        # instantiated.  LLDB re-queries qXfer:libraries:read and loads its instance.
+        self.session.cmd("c", patterns=["Process 1 stopped", "loaded new wasm module instance with ids: 1"])
 
         # Set a breakpoint at the 'end' instruction of func_b in module 2 (virtual address
         # 0x4000000100000023).  Module 2 is now loaded, so the breakpoint resolves immediately.
@@ -1659,14 +2165,504 @@ class SwiftWasmDynamicModuleLoadTestCase:
         # Resume: stops at the func_a breakpoint (module A), confirming that the breakpoint is set and hit correctly.
         self.session.cmd("c", patterns=["Process 1 stopped", "func_a"])
 
-        # Resume: stops at when Module B is loaded and the associated instance is created. This stop trigger
+        # Resume: stops when Module B is loaded and the associated instance is created. This stop triggers
         # LLDB re-querying debug info and resolving the pending breakpoint for func_b, confirming that dynamic
         # module load triggers pending breakpoint resolution.
-        self.session.cmd("c", patterns=["Process 1 stopped", "loaded new wasm module with ids: 1"])
+        self.session.cmd("c", patterns=["Process 1 stopped", "loaded new wasm module instance with ids: 1"])
         self.session.cmd("br list", patterns=["func_a", "func_b"])
 
         # Resume: stops at the func_b breakpoint (module B) on the first call, confirming that the pending breakpoint was resolved via debug info.
         self.session.cmd("c", patterns=["Process 1 stopped", "func_b"])
+
+
+class MultiInstanceCallerFrameTestCase:
+    test_file = "resources/wasm/multi-instance-caller-frame.js"
+
+    def execute(self):
+        # One library per instance. LLDB merges libraries that share a name, so every library is
+        # suffixed with its instance id.
+        self.session.cmd("image list", patterns=["mymodule@0", "mymodule@1", "mymodule@2"])
+        self.session.cmd(
+            "target modules list",
+            patterns=["0x4000000000000000", "0x4000000100000000", "0x4000000200000000"],
+        )
+
+        # A site is scoped to the instance its address names. Instances 0 and 1 both run func_a
+        # through the bytecode a breakpoint patches, but only instance 1 holds a site, so
+        # instance 0 resumes through the patched byte without stopping.
+        self.session.cmd("b 0x4000000100000028", patterns=["Breakpoint 1"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000100000028: nop"],
+        )
+
+        # Both frames belong to instance 1. Reporting the stop at a sibling's address would put
+        # func_outer's return PC in another library.
+        self.session.cmd(
+            "bt",
+            patterns=["frame #0: 0x4000000100000028", "frame #1: 0x400000010000002e"],
+        )
+
+        # Continuing makes progress and lands in instance 1 again, never in instance 0.
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000100000028: nop"],
+        )
+        self.session.cmd(
+            "bt",
+            patterns=["frame #0: 0x4000000100000028", "frame #1: 0x400000010000002e"],
+        )
+
+        # A site through instance 0 patches the same byte, so now instance 0 stops there too.
+        self.session.cmd("b 0x4000000000000028", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000028: nop"],
+        )
+
+        # Stepping off a byte that several sites patch has to advance. LLDB clears one site to step
+        # over it, which leaves the byte patched for the others, so resuming dispatches the opcode
+        # the breakpoint displaced instead of re-reading the bytecode.
+        self.session.cmd(
+            "s",
+            patterns=["Process 1 stopped", "->  0x4000000000000029: end"],
+        )
+
+        # Deleting either breakpoint must leave the other armed.
+        self.session.cmd("br del 1", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000028: nop"],
+        )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class SwiftWasmMultiInstanceTestCase:
+    test_file = "resources/swift-wasm/test/multi-instance.js"
+
+    def execute(self):
+        # Two instances of one module, so two libraries carrying the same DWARF.
+        self.session.cmd(
+            "target modules list",
+            patterns=["0x4000000000000000", "0x4000000100000000"],
+        )
+
+        # A symbol resolves once per library, which is how a breakpoint set by name covers every
+        # instance: LLDB installs one site per instance rather than JSC broadcasting one address.
+        self.session.cmd("b isEven", patterns=["Breakpoint 1: 2 locations"])
+
+        # With only instance 1's site armed, instance 0 runs the same bytecode and must pass
+        # through the patched byte without stopping. Which instance is mid-call when LLDB attaches
+        # is not fixed, so arm exactly one site rather than assuming a hit order.
+        self.session.cmd("br dis 1.1", patterns=["1 breakpoints disabled"])
+        for _ in range(3):
+            self.session.cmd("c", patterns=["Process 1 stopped", "stop reason = breakpoint 1.2"])
+            self.session.cmd(
+                "bt",
+                patterns=["frame #0: 0x4000000100010960", "frame #1: 0x4000000100010a05"],
+            )
+
+        # Symmetric: arm instance 0's site alone and only instance 0 stops.
+        self.session.cmd("br ena 1.1", patterns=["1 breakpoints enabled"])
+        self.session.cmd("br dis 1.2", patterns=["1 breakpoints disabled"])
+        for _ in range(3):
+            self.session.cmd("c", patterns=["Process 1 stopped", "stop reason = breakpoint 1.1"])
+            self.session.cmd(
+                "bt",
+                patterns=["frame #0: 0x4000000000010960", "frame #1: 0x4000000000010a05"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class MultiInstanceSameModuleTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # One library per instance. LLDB merges libraries that share a name, so every library is
+        # suffixed with its instance id.
+        self.session.cmd("image list", patterns=["mymodule@0", "mymodule@1"])
+        self.session.cmd(
+            "target modules list",
+            patterns=["0x4000000000000000", "0x4000000100000000"],
+        )
+
+        # Instances share the bytecode that a breakpoint patches, but not the breakpoint. Only
+        # instance 0 runs, so a site set through idle instance 1 must never stop it. Setting one
+        # site per instance proves that: the stop has to be breakpoint 2, at instance 0's own
+        # address. Were the sibling's site able to claim the stop, this would report breakpoint 1.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        # Continuing makes progress rather than re-reporting the same stop, even though instance
+        # 1's site keeps the shared byte patched across the resume.
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        # Both sites patch the same byte, so deleting one must leave the other armed.
+        self.session.cmd("br del 1", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+# The multi-instance cases below all use one module with two instances: instance 0 runs in a
+# loop, instance 1 is alive but idle. Both instances' virtual addresses resolve to the same
+# physical bytecode, so every breakpoint LLDB sets through either of them patches one shared
+# byte. What must hold throughout is that the patch is shared but the *stop* is not: only the
+# instance whose own address LLDB installed a site through may stop on it.
+#
+# multi-instance-same-module.js body: 0x23 nop, 0x24 i32.const 42, 0x26 drop, 0x27 end.
+# multi-instance-unreachable.js body: 0x23 nop, 0x24 unreachable, 0x25 end.
+#
+# The unreachable cases matter because a breakpoint patch *is* the unreachable opcode (0x00), so
+# a site on a real `unreachable` is indistinguishable from its own patch. There is no displaced
+# opcode to replay, and the program's own trap has to propagate instead.
+
+
+class MultiInstanceForeignSiteIgnoredTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # A site on idle instance 1's nop, and one further down the same body on running
+        # instance 0. Continuing has to skip straight past the nop to the drop: the nop's byte is
+        # patched the whole time, but instance 0 never asked to stop there.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000026", patterns=["Breakpoint 2"])
+        for _ in range(3):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000026: drop"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (2 breakpoints)"])
+
+
+class MultiInstanceStepOverSharedPatchTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # Instance 1's site pins the nop's byte patched for the whole test: LLDB's step-over
+        # dance drops instance 0's site before stepping, but the byte never actually reverts.
+        # Every step below therefore has to run the displaced opcode rather than whatever is at
+        # PC, or the first si would loop on the patch forever.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        patterns = [
+            ["->  0x4000000000000023: nop"],
+            ["->  0x4000000000000024: i32.const 42"],
+            ["->  0x4000000000000026: drop"],
+            ["->  0x4000000000000027: end"],
+        ]
+        for _ in range(3):
+            for pattern in patterns:
+                self.session.cmd("dis", patterns=pattern)
+                self.session.cmd("si")
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (2 breakpoints)"])
+
+
+class MultiInstanceBreakpointDisableTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # Disabling and re-enabling instance 0's site while instance 1's keeps the byte patched.
+        # br dis and br del are the same z0 packet on the wire, so this also covers the case
+        # where the removal must not restore the byte.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        # The catcher goes in only now: the process starts stopped at the nop, so a site on the
+        # drop set beforehand would claim the very first continue before the loop comes around.
+        self.session.cmd("b 0x4000000000000026", patterns=["Breakpoint 3"])
+
+        # Disabled: the byte stays patched for instance 1, but instance 0 runs past it to the drop.
+        self.session.cmd("br dis 2", patterns=["1 breakpoints disabled"])
+        for _ in range(2):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 3", "->  0x4000000000000026: drop"],
+            )
+
+        # Re-enabled: the nop claims the stop again, ahead of the drop.
+        self.session.cmd("br en 2", patterns=["1 breakpoints enabled"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (3 breakpoints)"])
+
+
+class MultiInstanceBreakpointDeleteTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # Deleting either site must leave the other's behaviour untouched, in both directions.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        # Drop the sibling's site: the byte is still claimed by instance 0, so nothing changes.
+        self.session.cmd("br del 1", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+        )
+
+        # Put the sibling back and drop instance 0's instead. The byte is now patched only for an
+        # instance that never runs, so instance 0 falls through to the drop. The catcher goes in
+        # here rather than up top so it cannot claim an earlier continue.
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 3"])
+        self.session.cmd("b 0x4000000000000026", patterns=["Breakpoint 4"])
+        self.session.cmd("br del 2", patterns=["1 breakpoints deleted"])
+        for _ in range(2):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 4", "->  0x4000000000000026: drop"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (2 breakpoints)"])
+
+
+class MultiInstanceUnreachableOwnSiteTestCase:
+    test_file = "resources/wasm/multi-instance-unreachable.js"
+
+    def execute(self):
+        self.session.cmd("image list", patterns=["mymodule@0", "mymodule@1"])
+
+        # A site on instance 0's own `unreachable`. The patch byte and the instruction are both
+        # 0x00, so there is no displaced opcode to replay on resume -- the trap has to propagate.
+        self.session.cmd("b 0x4000000000000025", patterns=["Breakpoint 1"])
+        # FIXME: Cannot be looped; the breakpoint only reports on its first hit. LLDB's z0/step/Z0
+        # dance assumes the step retires one instruction, but a wasm trap unwinds to JS, so step()
+        # resumes all and the JS catch re-enters the export while the site is still lifted.
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000000000025: unreachable"],
+        )
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "Unreachable code should not be executed"],
+        )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class MultiInstanceUnreachableForeignSiteTestCase:
+    test_file = "resources/wasm/multi-instance-unreachable.js"
+
+    def execute(self):
+        # A site on idle instance 1's `unreachable` only. Instance 0 must not stop for a
+        # breakpoint it never asked for, but it must still trap on the instruction itself --
+        # skipping it would swallow the program's own trap and hang.
+        self.session.cmd("b 0x4000000100000025", patterns=["Breakpoint 1"])
+        for _ in range(3):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "Unreachable code should not be executed"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class MultiInstanceUnreachableBothSitesTestCase:
+    test_file = "resources/wasm/multi-instance-unreachable.js"
+
+    def execute(self):
+        # Sites on both instances' `unreachable`. Instance 0 stops for its own, then traps; the
+        # sibling's site never claims the stop. Single-pass for the reason spelled out in
+        # MultiInstanceUnreachableOwnSiteTestCase -- do not wrap these in a loop.
+        self.session.cmd("b 0x4000000100000025", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000025", patterns=["Breakpoint 2"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000025: unreachable"],
+        )
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "Unreachable code should not be executed"],
+        )
+
+        # Dropping instance 0's site leaves the byte patched for the sibling. Instance 0 now only
+        # ever sees the trap.
+        self.session.cmd("br del 2", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "Unreachable code should not be executed"],
+        )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class MultiInstanceUnreachableStepTestCase:
+    test_file = "resources/wasm/multi-instance-unreachable.js"
+
+    def execute(self):
+        # Stepping onto, and then off, a real `unreachable` while instance 1's site keeps the
+        # preceding nop patched. The first si crosses the shared patch; the second executes the
+        # unreachable, which must surface as the trap rather than as another breakpoint stop.
+        self.session.cmd("b 0x4000000100000024", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000000000024", patterns=["Breakpoint 2"])
+        for _ in range(3):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000024: nop"],
+            )
+            self.session.cmd(
+                "si",
+                patterns=["stop reason = instruction step into", "->  0x4000000000000025: unreachable"],
+            )
+            self.session.cmd("si", patterns=["Unreachable code should not be executed"])
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (2 breakpoints)"])
+
+
+class MultiInstanceBothRunningTestCase:
+    test_file = "resources/wasm/multi-instance-both-running.js"
+
+    def execute(self):
+        # Both instances execute, alternating, through the same patched byte. Every other case
+        # here keeps one instance idle, which only ever proves the negative -- that a sibling's
+        # site does not fire. This proves the positive at the same time: with a site on instance
+        # 1 alone, instance 0 runs through that byte between every pair of stops and must never
+        # claim one, so each reported address has to be instance 1's.
+        self.session.cmd("image list", patterns=["mymodule@0", "mymodule@1"])
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 1"])
+        for _ in range(4):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000100000023: nop"],
+            )
+
+        # With a site on each, the stops have to alternate in call order -- instance 0 then
+        # instance 1 -- each reported at its own address off the one shared byte.
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 2"])
+        for _ in range(3):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 2", "->  0x4000000000000023: nop"],
+            )
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000100000023: nop"],
+            )
+
+        # Dropping instance 0's site must leave instance 1 stopping and instance 0 running free.
+        self.session.cmd("br del 2", patterns=["1 breakpoints deleted"])
+        for _ in range(3):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 1", "->  0x4000000100000023: nop"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
+
+
+class MultiInstanceForeignSiteOpcodeShapesTestCase:
+    test_file = "resources/wasm/multi-instance-same-module.js"
+
+    def execute(self):
+        # The filter resumes a non-owning instance by dispatching the displaced opcode instead of
+        # re-reading the patched byte. Everywhere else that path only ever replays `nop`: one
+        # byte, no immediate, PC+1 -- the shape least likely to expose a bug. Patch the rest of
+        # the body through the idle instance so instance 0 has to replay an opcode with an
+        # immediate (i32.const 42), a stack op (drop) and a block terminator (end) on every pass.
+        # A mis-dispatched immediate or a PC left unadvanced would desync the decoder within a
+        # lap or two rather than quietly returning to the nop each time.
+        self.session.cmd("b 0x4000000100000024", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000100000026", patterns=["Breakpoint 2"])
+        self.session.cmd("b 0x4000000100000027", patterns=["Breakpoint 3"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 4"])
+        for _ in range(5):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 4", "->  0x4000000000000023: nop"],
+            )
+
+        # The instruction stream still decodes as written, so nothing walked off the opcode
+        # boundaries while replaying.
+        self.session.cmd(
+            "dis",
+            patterns=[
+                "->  0x4000000000000023: nop",
+                "0x4000000000000024: i32.const 42",
+                "0x4000000000000026: drop",
+                "0x4000000000000027: end",
+            ],
+        )
+
+        # Stepping has to cross all three foreign patches too, not just run past them.
+        for pattern in [
+            ["->  0x4000000000000024: i32.const 42"],
+            ["->  0x4000000000000026: drop"],
+            ["->  0x4000000000000027: end"],
+        ]:
+            self.session.cmd("si")
+            self.session.cmd("dis", patterns=pattern)
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (4 breakpoints)"])
+
+
+class MultiInstanceThreeInstancesTestCase:
+    test_file = "resources/wasm/multi-instance-three.js"
+
+    def execute(self):
+        # Three sites on one byte. The requester set has to outlive each removal but the last,
+        # which two instances cannot distinguish from a plain refcount of one.
+        self.session.cmd("image list", patterns=["mymodule@0", "mymodule@1", "mymodule@2"])
+        self.session.cmd("b 0x4000000200000023", patterns=["Breakpoint 1"])
+        self.session.cmd("b 0x4000000100000023", patterns=["Breakpoint 2"])
+        self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 3"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 3", "->  0x4000000000000023: nop"],
+        )
+
+        # Peel the two idle instances off one at a time. Instance 0 keeps stopping throughout.
+        self.session.cmd("br del 1", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 3", "->  0x4000000000000023: nop"],
+        )
+        self.session.cmd("br del 2", patterns=["1 breakpoints deleted"])
+        self.session.cmd(
+            "c",
+            patterns=["Process 1 stopped", "stop reason = breakpoint 3", "->  0x4000000000000023: nop"],
+        )
+
+        # Removing the last claim restores the byte, so the nop stops being a stop at all.
+        self.session.cmd("b 0x4000000000000026", patterns=["Breakpoint 4"])
+        self.session.cmd("br del 3", patterns=["1 breakpoints deleted"])
+        for _ in range(2):
+            self.session.cmd(
+                "c",
+                patterns=["Process 1 stopped", "stop reason = breakpoint 4", "->  0x4000000000000026: drop"],
+            )
+
+        self.session.cmd("br del -f", patterns=["All breakpoints removed. (1 breakpoint)"])
 
 
 class ModuleNamingFromNameSectionTestCase:
@@ -1674,7 +2670,7 @@ class ModuleNamingFromNameSectionTestCase:
     extra_jsc_options = ["--useDollarVM=1"]
 
     def execute(self):
-        self.session.cmd("image list", patterns=["mymodule"])
+        self.session.cmd("image list", patterns=["mymodule@0"])
 
         # Set a breakpoint at func_a's 'end' instruction by virtual address.
         self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 1"])
@@ -1690,7 +2686,7 @@ class StreamingModuleSourceURLTestCase:
     extra_jsc_options = ["--useDollarVM=1"]
 
     def execute(self):
-        self.session.cmd("image list", patterns=["cdn.example.com/path/canvaskit.wasm"])
+        self.session.cmd("image list", patterns=["cdn.example.com/path/canvaskit.wasm@0"])
 
         # Set a breakpoint at func_b's 'end' instruction by virtual address.
         self.session.cmd("b 0x4000000000000023", patterns=["Breakpoint 1"])
@@ -1742,28 +2738,71 @@ ALL_TESTS = [
     DelegateTestCase,
     RethrowTestCase,
     ThrowRefTestCase,
+    StepIntoThrowWithPatchedTryTableTestCase,
     TryTableTestCase,
     SystemCallTestCase,
     MultiVMSameModuleSameFunctionTestCase,
     MultiVMSameModuleDifferentFunctionsTestCase,
     MemoryAtomicWaitTestCase,
     MemoryAtomicWaitNoTimeoutTestCase,
+    ThreadStopInfoUnknownThreadTestCase,
+    MalformedMemoryPacketTestCase,
+    MultiInstanceGlobalTestCase,
+    BreakpointNonInstructionBoundaryTestCase,
     DoCatchThrowTestCase,
     WasmWasmWasmCallStackTestCase,
     JsWasmJsWasmCallStackTestCase,
     JsJsWasmJsJsWasmCallStackTestCase,
     WasmWasmJsWasmWasmCallStackTestCase,
     WasmJsWasmJsWasmCallStackTestCase,
+    OperandStackDepthWasmWasmWasmTestCase,
+    OperandStackDepthJsWasmJsWasmTestCase,
+    OperandStackDepthJsJsWasmJsJsWasmTestCase,
+    OperandStackDepthWasmJsWasmJsWasmTestCase,
+    OperandStackDepthWasmWasmJsWasmWasmTestCase,
+    OperandStackDepthCallShapesTestCase,
+    OperandStackDepthReturnCallTestCase,
+    CrossInstanceTailCallTestCase,
+    OperandStackDepthImportMultiResultTestCase,
+    CrossInstanceTailCallImportTestCase,
+    TailCallToImportTestCase,
+    OperandStackDepthCallRefTestCase,
+    OperandStackDepthDuplicateImportTestCase,
+    OperandStackDepthImportArityTestCase,
+    OperandStackDepthCatchHandlerTestCase,
     SwiftWasmCrashTestCase,
     WasmUnreachableFaultTestCase,
+    BreakpointOnUnreachableTestCase,
+    StepOffUnreachableTestCase,
     WasmDivByZeroTrapTestCase,
     WasmOutOfBoundsCallIndirectTrapTestCase,
     WasmStackOverflowTrapTestCase,
     WasmOobMemoryTrapTestCase,
     DynamicModuleLoadTestCase,
     SwiftWasmDynamicModuleLoadTestCase,
+    MultiInstanceCallerFrameTestCase,
+    MultiInstanceSameModuleTestCase,
+    MultiInstanceForeignSiteIgnoredTestCase,
+    MultiInstanceStepOverSharedPatchTestCase,
+    MultiInstanceBreakpointDisableTestCase,
+    MultiInstanceBreakpointDeleteTestCase,
+    MultiInstanceUnreachableOwnSiteTestCase,
+    MultiInstanceUnreachableForeignSiteTestCase,
+    MultiInstanceUnreachableBothSitesTestCase,
+    MultiInstanceUnreachableStepTestCase,
+    MultiInstanceBothRunningTestCase,
+    MultiInstanceForeignSiteOpcodeShapesTestCase,
+    MultiInstanceThreeInstancesTestCase,
+    SwiftWasmMultiInstanceTestCase,
     ModuleNamingFromNameSectionTestCase,
     StreamingModuleSourceURLTestCase,
     StreamingModuleLoadTestCase,
     SwiftWasmFatalErrorTestCase,
+]
+
+# Tests that are runnable by name but excluded from a default sweep, because they need something the
+# default environment does not provide. Everything in ALL_TESTS passes on the `xcrun --find lldb`
+# default (validated against Apple's lldb-2100.0.15.202); these do not.
+OPT_IN_TESTS = [
+    SwiftWasmOperandStackTestCase,  # Needs an LLDB carrying llvm/llvm-project#163646; see QueryHandler::handleWasmStackValue.
 ]

@@ -32,81 +32,13 @@ PASS :parse:test="init_let"
 PASS :parse:test="init_let_type"
 PASS :parse:test="init_const"
 PASS :parse:test="init_const_type"
-FAIL :parse:test="init_call" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    4:9: error: Expected one of `=`, `++`, or `--`
-
-    ---- shader ----
-
-    fn f() {
-      var v = 1;
-      for (x();;) { break; }
-    }
-
-    fn x() {}
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    4:8: Expected one of `=`, `++`, or `--`
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
-FAIL :parse:test="init_phony" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    4:3: error: Invalid for-loop initialization clause
-
-    ---- shader ----
-
-    fn f() {
-      var v = 1;
-      for (_ = v;;) { break; }
-    }
-
-    fn x() {}
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    4:2: Invalid for-loop initialization clause
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
+PASS :parse:test="init_call"
+PASS :parse:test="init_phony"
 PASS :parse:test="init_increment"
 PASS :parse:test="init_compound_assign"
 PASS :parse:test="cond_true"
-FAIL :parse:test="cont_call" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    4:11: error: Expected one of `=`, `++`, or `--`
-
-    ---- shader ----
-
-    fn f() {
-      var v = 1;
-      for (;;x()) { break; }
-    }
-
-    fn x() {}
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    4:10: Expected one of `=`, `++`, or `--`
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
-FAIL :parse:test="cont_phony" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    4:3: error: Invalid for-loop update clause
-
-    ---- shader ----
-
-    fn f() {
-      var v = 1;
-      for (;;_ = v) { break; }
-    }
-
-    fn x() {}
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    4:2: Invalid for-loop update clause
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
+PASS :parse:test="cont_call"
+PASS :parse:test="cont_phony"
 PASS :parse:test="cont_increment"
 PASS :parse:test="cont_compound_assign"
 PASS :parse:test="init_cond"

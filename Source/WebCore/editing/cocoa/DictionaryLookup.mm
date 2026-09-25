@@ -145,18 +145,18 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
 
 @interface WebRevealHighlight : NSObject<UIRVPresenterHighlightDelegate>
 
-- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::Image>&&)image;
+- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::BitmapImage>&&)image;
 
 @end
 
 @implementation WebRevealHighlight {
-    RefPtr<WebCore::Image> _image;
+    RefPtr<WebCore::BitmapImage> _image;
     CGRect _highlightRect;
     BOOL _highlighting;
     UIView *_view;
 }
 
-- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::Image>&&)image
+- (instancetype)initWithHighlightRect:(NSRect)highlightRect view:(UIView *)view image:(RefPtr<WebCore::BitmapImage>&&)image
 {
     if (!(self = [super init]))
         return nil;
@@ -169,7 +169,7 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
     return self;
 }
 
-- (void)setImage:(RefPtr<WebCore::Image>&&)image
+- (void)setImage:(RefPtr<WebCore::BitmapImage>&&)image
 {
     _image = WTF::move(image);
 }
@@ -445,7 +445,7 @@ static WKRevealController showPopupOrCreateAnimationController(bool createAnimat
 
         FloatRect firstTextRectInViewCoordinates = textIndicator->textRectsInBoundingRectCoordinates()[0];
         FloatRect textBoundingRectInViewCoordinates = textIndicator->textBoundingRectInRootViewCoordinates();
-        FloatRect selectionBoundingRectInViewCoordinates = textIndicator->selectionRectInRootViewCoordinates();
+        FloatRect selectionBoundingRectInViewCoordinates = textIndicator->selectionRectInMainFrameViewCoordinates();
 
         if (rootViewToViewConversionCallback) {
             textBoundingRectInViewCoordinates = rootViewToViewConversionCallback(textBoundingRectInViewCoordinates);
@@ -457,7 +457,7 @@ static WKRevealController showPopupOrCreateAnimationController(bool createAnimat
         pointerLocation = firstTextRectInViewCoordinates.location();
     } else {
         NSPoint textBaselineOrigin = dictionaryPopupInfo.origin;
-        highlightRect = textIndicator->selectionRectInRootViewCoordinates();
+        highlightRect = textIndicator->selectionRectInMainFrameViewCoordinates();
         pointerLocation = [view convertPoint:textBaselineOrigin toView:nil];
     }
 
@@ -487,7 +487,7 @@ static WKRevealController showPopupOrCreateAnimationController(bool createAnimat
     if (!textIndicator)
         return nil;
 
-    auto webHighlight = adoptNS([[WebRevealHighlight alloc] initWithHighlightRect:[view convertRect:textIndicator->selectionRectInRootViewCoordinates() toView:nil] view:view image:textIndicator->contentImage()]);
+    RetainPtr webHighlight = adoptNS([[WebRevealHighlight alloc] initWithHighlightRect:[view convertRect:textIndicator->selectionRectInMainFrameViewCoordinates() toView:nil] view:view image:textIndicator->contentImage()]);
 #if ENABLE(LEGACY_PDFKIT_PLUGIN)
     auto attributedString = dictionaryPopupInfo.platformData.attributedString.nsAttributedString();
     auto item = adoptNS([PAL::allocRVItemInstance() initWithText:attributedString.get().string selectedRange:NSMakeRange(0, attributedString.get().string.length)]);

@@ -30,6 +30,7 @@
 #include "RemoteDisplayListRecorderProxy.h"
 #include "WebFrameProxyMessages.h"
 #include "WebMessagePortChannelProvider.h"
+#include <WebCore/SerializedScriptValue.h>
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
@@ -95,6 +96,9 @@ void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const Sec
 {
     for (auto& port : message.transferredPorts)
         WebMessagePortChannelProvider::singleton().messagePortSentToRemote(port.first);
+
+    if (RefPtr serializedValue = message.message)
+        serializedValue->sinkBuffersIntoTransferHandles();
 
     if (RefPtr page = m_frame->page())
         page->send(Messages::WebPageProxy::PostMessageToRemote(source, sourceOrigin, target, targetOrigin, message, userGestureToken));
@@ -235,9 +239,9 @@ void WebRemoteFrameClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTr
     WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(data);
 }
 
-void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(const FrameTreeSyncSerializationData& data)
+void WebRemoteFrameClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeSyncSerializationData&& data)
 {
-    WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(data);
+    WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(WTF::move(data));
 }
 
 void WebRemoteFrameClient::didNotifyUserActivation(MonotonicTime activationTime)

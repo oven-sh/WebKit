@@ -213,26 +213,8 @@ PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=8
 PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=32
 PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=48
 PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741824
-FAIL :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741826
+PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741832
 PASS :invalid_usage:canvasType="onscreen";format="bgra8unorm";usage=1073741856
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=0
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=2
@@ -240,26 +222,8 @@ PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=8
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=32
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=48
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741824
-FAIL :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741826
+PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741832
 PASS :invalid_usage:canvasType="onscreen";format="rgba8unorm";usage=1073741856
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=0
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=2
@@ -267,26 +231,8 @@ PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=8
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=32
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=48
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741824
-FAIL :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741826
+PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741832
 PASS :invalid_usage:canvasType="onscreen";format="rgba16float";usage=1073741856
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=0
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=2
@@ -294,26 +240,8 @@ PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=8
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=32
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=48
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741824
-FAIL :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741826
+PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741832
 PASS :invalid_usage:canvasType="offscreen";format="bgra8unorm";usage=1073741856
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=0
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=2
@@ -321,26 +249,8 @@ PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=8
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=32
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=48
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741824
-FAIL :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741826
+PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741832
 PASS :invalid_usage:canvasType="offscreen";format="rgba8unorm";usage=1073741856
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=0
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=2
@@ -348,26 +258,8 @@ PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=8
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=32
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=48
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741824
-FAIL :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741826 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
-FAIL :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741832 assert_unreached:
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:381:28
-  - VALIDATION FAILED: Validation succeeded unexpectedly.
-    eventualAsyncExpectation@http://127.0.0.1:8000/webgpu/common/framework/fixture.js:258:33
-    expectValidationError@http://127.0.0.1:8000/webgpu/webgpu/gpu_test.js:1221:36
-    @http://127.0.0.1:8000/webgpu/webgpu/web_platform/canvas/configure.spec.js:391:28
- Reached unreachable code
+PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741826
+PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741832
 PASS :invalid_usage:canvasType="offscreen";format="rgba16float";usage=1073741856
 PASS :alpha_mode:canvasType="onscreen"
 PASS :alpha_mode:canvasType="offscreen"

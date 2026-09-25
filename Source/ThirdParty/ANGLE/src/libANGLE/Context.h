@@ -143,6 +143,7 @@ class ErrorSet : angle::NonCopyable
 
     const GLenum mResetStrategy;
     const bool mLoseContextOnOutOfMemory;
+    const bool mLoseContextOnInternalError;
 
     // Context-loss handling
     bool mContextLostForced;
@@ -736,8 +737,6 @@ class Context final : public egl::LabeledObject, angle::NonCopyable, public angl
 
     MemoryProgramCache *getMemoryProgramCache() const { return mMemoryProgramCache; }
     MemoryShaderCache *getMemoryShaderCache() const { return mMemoryShaderCache; }
-
-    angle::SimpleMutex &getProgramCacheMutex() const;
 
     bool hasBeenCurrent() const { return mHasBeenCurrent; }
     egl::Display *getDisplay() const { return mDisplay; }

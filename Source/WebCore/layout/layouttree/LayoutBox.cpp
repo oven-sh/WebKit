@@ -203,11 +203,15 @@ bool Box::isFloatingPositioned() const
     // FIXME: Rendering code caches values like this. (style="position: absolute; float: left")
     if (isOutOfFlowPositioned())
         return false;
+    if (isLineBreakBox())
+        return false;
     return m_style.floating() != Float::None;
 }
 
 bool Box::hasFloatClear() const
 {
+    if (isWordBreakOpportunity())
+        return false;
     return m_style.clear() != Clear::None && (isBlockLevelBox() || isLineBreakBox());
 }
 
@@ -221,7 +225,10 @@ bool Box::isFloatAvoider() const
 
 bool Box::isInlineBlockBox() const
 {
-    return m_style.display() == Style::DisplayType::InlineFlowRoot;
+    auto display = m_style.display();
+    if (display == Style::DisplayType::InlineFlowRoot)
+        return true;
+    return display == Style::DisplayType::InlineFlow && is<ElementBox>(*this) && !isInlineBox() && !isReplacedBox() && !isIFrame();
 }
 
 bool Box::isInlineTableBox() const
@@ -229,10 +236,21 @@ bool Box::isInlineTableBox() const
     return m_style.display() == Style::DisplayType::InlineTable;
 }
 
+static bool NODELETE isInsideTable(const Box& box)
+{
+    auto& parent = box.parent();
+    return parent.isTableBox() || parent.isTableWrapperBox() || parent.style().display().isInternalTableBox();
+}
+
 bool Box::isBlockLevelBox() const
 {
+    if (isInlineBox())
+        return false;
+
     // Block level elements generate block level boxes.
     auto display = m_style.display();
+    if (display.isInternalTableBox() || display == Style::DisplayType::TableCaption)
+        return !isInsideTable(*this);
     return display == Style::DisplayType::BlockFlow
         || display == Style::DisplayType::BlockFlowRoot
         || display == Style::DisplayType::BlockTable
@@ -251,6 +269,9 @@ bool Box::isBlockBox() const
 
 bool Box::isInlineLevelBox() const
 {
+    if (isInlineBox())
+        return true;
+
     // Inline level elements generate inline level boxes.
     auto display = m_style.display();
     return is<ElementBox>(*this) &&
@@ -269,12 +290,7 @@ bool Box::isInlineLevelBox() const
 bool Box::isInlineBox() const
 {
     // An inline box is one that is both inline-level and whose contents participate in its containing inline formatting context.
-    // A non-replaced element with a 'display' value of 'inline' generates an inline box.
-    auto display = m_style.display();
-    return is<ElementBox>(*this) &&
-          (display == Style::DisplayType::InlineFlow
-        || display == Style::DisplayType::InlineRuby
-        || display == Style::DisplayType::RubyBase) && !isReplacedBox();
+    return m_nodeType == NodeType::InlineBox || isLineBreakBox();
 }
 
 bool Box::isAtomicInlineBox() const
@@ -297,6 +313,9 @@ bool Box::isGridItem() const
 
 bool Box::isBlockContainer() const
 {
+    if (isInlineBox())
+        return false;
+
     auto display = m_style.display();
     return display == Style::DisplayType::BlockFlow
         || display == Style::DisplayType::BlockFlowRoot
@@ -325,7 +344,7 @@ bool Box::isLayoutContainmentBox() const
 
 bool Box::isRubyAnnotationBox() const
 {
-    return m_style.display() == Style::DisplayType::RubyText;
+    return m_style.display() == Style::DisplayType::RubyText && m_parent && m_parent->isRuby();
 }
 
 bool Box::isInterlinearRubyAnnotationBox() const
@@ -335,8 +354,7 @@ bool Box::isInterlinearRubyAnnotationBox() const
 
 bool Box::isInternalRubyBox() const
 {
-    return m_style.display() == Style::DisplayType::RubyBase
-        || m_style.display() == Style::DisplayType::RubyText;
+    return isRubyBase() || isRubyAnnotationBox();
 }
 
 bool Box::isSizeContainmentBox() const
@@ -371,7 +389,7 @@ bool Box::isInternalTableBox() const
 
 bool Box::isRubyBase() const
 {
-    return style().display() == Style::DisplayType::RubyBase;
+    return style().display() == Style::DisplayType::RubyBase && m_parent && m_parent->isRuby();
 }
 
 const Box* Box::nextInFlowSibling() const
@@ -556,11 +574,11 @@ void Box::setShape(RefPtr<const LayoutShape> shape)
 
 const ElementBox* Box::associatedRubyAnnotationBox() const
 {
-    if (style().display() != Style::DisplayType::RubyBase)
+    if (isLineBreakBox() || style().display() != Style::DisplayType::RubyBase)
         return nullptr;
 
     auto* next = nextSibling();
-    if (!next || next->style().display() != Style::DisplayType::RubyText)
+    if (!next || next->isLineBreakBox() || next->style().display() != Style::DisplayType::RubyText)
         return nullptr;
 
     return dynamicDowncast<ElementBox>(next);

@@ -31,6 +31,7 @@
 #import "WritingToolsCompositionCommand.h"
 #import "WritingToolsTypes.h"
 #import <wtf/CheckedPtr.h>
+#import <wtf/Markable.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakHashSet.h>
 #import <wtf/WeakPtr.h>
@@ -198,11 +199,11 @@ private:
     void replaceContentsOfRangeInSession(CompositionState&, const SimpleRange&, const AttributedString&, WritingToolsCompositionCommand::State);
 
     void compositionSessionDidFinishReplacement();
-    void compositionSessionDidFinishReplacement(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const CharacterRange&, const String&);
+    void compositionSessionDidFinishReplacement(Markable<WTF::UUID> sourceAnimationUUID, Markable<WTF::UUID> destinationAnimationUUID, const CharacterRange&, const String&);
 
     void smartReplySessionDidReceiveTextWithReplacementRange(const WritingTools::Session&, const AttributedString&, const CharacterRange&, const WritingTools::Context&, bool finished);
 
-    void compositionSessionDidReceiveTextWithReplacementRangeAsync(const WTF::UUID&, const WTF::UUID&, const AttributedString&, const CharacterRange&, const WritingTools::Context&, bool finished, TextAnimationRunMode);
+    void compositionSessionDidReceiveTextWithReplacementRangeAsync(Markable<WTF::UUID>, Markable<WTF::UUID>, const AttributedString&, const CharacterRange&, const WritingTools::Context&, bool finished, TextAnimationRunMode);
 
     void showOriginalCompositionForSession();
     void showRewrittenCompositionForSession();

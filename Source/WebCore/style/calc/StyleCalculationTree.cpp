@@ -235,6 +235,31 @@ size_t computeDepth(const Tree& tree)
     return computeDepth(tree.root);
 }
 
+size_t computeNodeCount(const Child& root)
+{
+    size_t total = 1;
+    forAllChildren(root, WTF::makeVisitor(
+        [&](const std::optional<Child>& child) {
+            if (child)
+                total += computeNodeCount(*child);
+        },
+        [&](const Child& child) {
+            total += computeNodeCount(child);
+        },
+        [&](const ChildOrNone& childOrNone) {
+            if (childOrNone.holdsAlternative<Child>())
+                total += computeNodeCount(get<Child>(childOrNone));
+        },
+        [&](const auto&) { }
+    ));
+    return total;
+}
+
+size_t computeNodeCount(const Tree& tree)
+{
+    return computeNodeCount(tree.root);
+}
+
 template<typename Op>
 static auto dumpVariadic(TextStream&, const IndirectNode<Op>&, ASCIILiteral prefix, ASCIILiteral between) -> TextStream&;
 
@@ -246,6 +271,7 @@ static auto operator<<(TextStream&, const Child&) -> TextStream&;
 static auto operator<<(TextStream&, const Number&) -> TextStream&;
 static auto operator<<(TextStream&, const Percentage&) -> TextStream&;
 static auto operator<<(TextStream&, const Dimension&) -> TextStream&;
+static auto operator<<(TextStream&, const Size&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Sum>&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Product>&) -> TextStream&;
 static auto operator<<(TextStream&, const IndirectNode<Negate>&) -> TextStream&;
@@ -308,6 +334,11 @@ TextStream& operator<<(TextStream& ts, const Number& root)
 TextStream& operator<<(TextStream& ts, const Percentage& root)
 {
     return ts << TextStream::FormatNumberRespectingIntegers(root.value) << '%';
+}
+
+TextStream& operator<<(TextStream& ts, const Size&)
+{
+    return ts << "size"_s;
 }
 
 TextStream& operator<<(TextStream& ts, const Dimension& root)

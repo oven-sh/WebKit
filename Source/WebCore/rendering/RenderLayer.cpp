@@ -99,6 +99,7 @@
 #include "OverlapTestRequestClient.h"
 #include "Page.h"
 #include "PlatformMouseEvent.h"
+#include "PositionedLayoutConstraints.h"
 #include "ReferencedSVGResources.h"
 #include "RenderAncestorIterator.h"
 #include "RenderBoxInlines.h"
@@ -175,6 +176,10 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/TextStream.h>
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorBackdropContext.h>
+#endif
 
 namespace WebCore {
 
@@ -2099,7 +2104,7 @@ bool RenderLayer::computeHasVisibleContent() const
 static LayoutRect computeLayerPositionAndIntegralSize(const RenderLayerModelObject& renderer)
 {
     if (auto* inlineRenderer = dynamicDowncast<RenderInline>(renderer); inlineRenderer && inlineRenderer->isInline())
-        return { LayoutPoint(), inlineRenderer->linesBoundingBox().size() };
+        return { LayoutPoint(), inlineRenderer->borderBoxRectInContainer().size() };
 
     if (auto* boxRenderer = dynamicDowncast<RenderBox>(renderer)) {
         const auto& borderBox = boxRenderer->borderBoxRectInContainer();
@@ -2206,8 +2211,8 @@ bool RenderLayer::updateLayerPosition(OptionSet<UpdateLayerPositionsFlag>* flags
             if (auto* positionedParentScrollableArea = positionedParent->scrollableArea())
                 localPoint -= toLayoutSize(positionedParentScrollableArea->scrollPosition());
         }
-        if (auto* inlinePositionedParent = dynamicDowncast<RenderInline>(positionedParent->renderer()); inlinePositionedParent && inlinePositionedParent->canContainAbsolutelyPositionedObjects())
-            localPoint += inlinePositionedParent->offsetForInFlowPositionedInline(renderBox());
+        if (positionedParent->renderer().isInlineBox() && positionedParent->renderer().canContainAbsolutelyPositionedObjects())
+            localPoint += PositionedLayoutConstraints::containingBlockOffsetForNonStaticAxes(downcast<RenderBoxModelObject>(positionedParent->renderer()), renderer().style());
 
         ASSERT(positionedParent->contentsScrollingScope());
         m_boxScrollingScope = positionedParent->contentsScrollingScope();
@@ -3634,6 +3639,9 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
     bool isPaintingOverflowContents = localPaintFlags.contains(PaintLayerFlag::PaintingOverflowContents);
     bool isCollectingEventRegion = localPaintFlags.contains(PaintLayerFlag::CollectingEventRegion);
     bool isCollectingAccessibilityRegion = is<AccessibilityRegionContext>(paintingInfo.regionContext);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool isCollectingAXCustomColorBackdrops = is<AXCustomColorBackdropContext>(paintingInfo.regionContext);
+#endif
 
     bool isSelfPaintingLayer = this->isSelfPaintingLayer();
     bool isInsideSkippedSubtree = renderer().isSkippedContent();
@@ -3891,7 +3899,11 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
             performOverlapTests(*localPaintingInfo.overlapTestRequests, localPaintingInfo.rootLayer, this);
 
         LayoutRect paintDirtyRect = localPaintingInfo.paintDirtyRect;
-        if (shouldPaintContent || shouldPaintOutline || isPaintingOverlayScrollbars || isCollectingEventRegion || isCollectingAccessibilityRegion) {
+        bool needsFragments = shouldPaintContent || shouldPaintOutline || isPaintingOverlayScrollbars || isCollectingEventRegion || isCollectingAccessibilityRegion;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        needsFragments = needsFragments || isCollectingAXCustomColorBackdrops;
+#endif
+        if (needsFragments) {
             // Collect the fragments. This will compute the clip rectangles and paint offsets for each layer fragment, as well as whether or not the content of each
             // fragment should paint.
             auto clipRectOptions = isPaintingOverflowContents ? clipRectOptionsForPaintingOverflowContents : clipRectDefaultOptions;
@@ -3929,6 +3941,13 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
 
         if (isCollectingAccessibilityRegion)
             collectAccessibilityRegionsForFragments(layerFragments, currentContext, localPaintingInfo, paintBehavior);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        if (isCollectingAXCustomColorBackdrops && !isInsideSkippedSubtree) {
+            collectAXCustomColorBackdropsForFragments(PaintPhase::AXCustomColorCollectBackgrounds, layerFragments, currentContext, localPaintingInfo, paintBehavior);
+            collectAXCustomColorBackdropsForFragments(PaintPhase::AXCustomColorComputeBackdrops, layerFragments, currentContext, localPaintingInfo, paintBehavior);
+        }
+#endif
 
         if (shouldPaintOutline)
             paintOutlineForFragments(layerFragments, currentContext, localPaintingInfo, paintBehavior, subtreePaintRootForRenderer);
@@ -4465,6 +4484,28 @@ void RenderLayer::collectAccessibilityRegionsForFragments(const LayerFragments& 
         renderer().paint(paintInfo, paintOffsetForRenderer(fragment, localPaintingInfo));
     }
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+void RenderLayer::collectAXCustomColorBackdropsForFragments(PaintPhase phase, const LayerFragments& layerFragments, GraphicsContext& context, const LayerPaintingInfo& localPaintingInfo, OptionSet<PaintBehavior> paintBehavior)
+{
+    ASSERT(is<AXCustomColorBackdropContext>(localPaintingInfo.regionContext));
+    ASSERT(phase == PaintPhase::AXCustomColorCollectBackgrounds || phase == PaintPhase::AXCustomColorComputeBackdrops);
+
+    for (const auto& fragment : layerFragments) {
+        if (!fragment.shouldPaintContent || fragment.dirtyForegroundRect().isEmpty())
+            continue;
+
+        PaintInfo paintInfo(context, fragment.dirtyForegroundRect().rect(), phase, paintBehavior);
+        paintInfo.regionContext = localPaintingInfo.regionContext;
+        paintInfo.regionContext->pushClip(enclosingIntRect(fragment.dirtyBackgroundRect().rect()));
+
+        renderer().paint(paintInfo, paintOffsetForRenderer(fragment, localPaintingInfo));
+        paintInfo.regionContext->popClip();
+    }
+}
+
+#endif // ENABLE(AX_CUSTOM_COLOR_MODE)
 
 bool RenderLayer::hitTest(const HitTestRequest& request, HitTestResult& result)
 {
@@ -5484,7 +5525,7 @@ bool RenderLayer::intersectsDamageRect(const LayoutRect& layerBounds, const Layo
         return false;
 
     // If we aren't an inline flow, and our layer bounds do intersect the damage rect, then we can return true.
-    if (!renderer().isRenderInline() && layerBounds.intersects(damageRect))
+    if (!renderer().isInlineBox() && layerBounds.intersects(damageRect))
         return true;
 
     // Otherwise we need to compute the bounding box of this single layer and see if it intersects
@@ -5508,8 +5549,8 @@ LayoutRect RenderLayer::localBoundingBox(OptionSet<CalculateLayerBoundsFlag> fla
     // as part of our bounding box.  We do this because we are the responsible layer for both hit testing and painting those
     // floats.
     LayoutRect result;
-    if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(renderer()); renderInline && renderer().isInline())
-        result = renderInline->linesVisualOverflowBoundingBox();
+    if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(renderer()); inlineBox && renderer().isInline())
+        result = inlineBox->visualOverflowRect();
     else if (CheckedPtr modelObject = dynamicDowncast<RenderSVGModelObject>(renderer()))
         result = modelObject->visualOverflowRectEquivalent();
     else if (CheckedPtr tableRow = dynamicDowncast<RenderTableRow>(renderer())) {
@@ -7000,7 +7041,7 @@ void showPaintOrderTree(const WebCore::RenderLayer* layer)
     if (layer)
         outputPaintOrderTreeRecursive(stream, *layer, ""_s);
     
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
 void showPaintOrderTree(const WebCore::RenderObject* renderer)
@@ -7090,7 +7131,7 @@ void showLayerPositionTree(const WebCore::RenderLayer* root, const WebCore::Rend
     if (root)
         outputLayerPositionTreeRecursive(stream, *root, 0, mark);
 
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
 #endif

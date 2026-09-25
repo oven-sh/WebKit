@@ -503,7 +503,7 @@ void VideoPresentationInterfaceIOS::doEnterFullscreen()
 void VideoPresentationInterfaceIOS::enterFullscreenHandler(BOOL success, NSError *error, NextActions nextActions)
 {
     if (!success) {
-        WTFLogAlways("-[AVPlayerViewController enterFullScreenAnimated:completionHandler:] failed with error %s", [[error localizedDescription] UTF8String]);
+        SAFE_WTFLOGALWAYS("-[AVPlayerViewController enterFullScreenAnimated:completionHandler:] failed with error %@", [error localizedDescription]);
         ASSERT_NOT_REACHED();
         return;
     }
@@ -595,7 +595,7 @@ void VideoPresentationInterfaceIOS::doExitFullscreen()
 void VideoPresentationInterfaceIOS::exitFullscreenHandler(BOOL success, NSError* error, NextActions nextActions)
 {
     if (!success)
-        WTFLogAlways("-[AVPlayerViewController exitFullScreenAnimated:completionHandler:] failed with error %s", [[error localizedDescription] UTF8String]);
+        SAFE_WTFLOGALWAYS("-[AVPlayerViewController exitFullScreenAnimated:completionHandler:] failed with error %@", [error localizedDescription]);
 
     LOG(Fullscreen, "VideoPresentationInterfaceIOS::didExitFullscreen(%p) - %d", this, success);
 
@@ -653,7 +653,7 @@ void VideoPresentationInterfaceIOS::cleanupFullscreen()
         [[playerViewController view] layoutIfNeeded];
         dismissFullscreen(false, [](BOOL success, NSError *error) {
             if (!success)
-                WTFLogAlways("-[AVPlayerViewController exitFullScreenAnimated:completionHandler:] failed with error %s", [[error localizedDescription] UTF8String]);
+                SAFE_WTFLOGALWAYS("-[AVPlayerViewController exitFullScreenAnimated:completionHandler:] failed with error %@", [error localizedDescription]);
         });
     }
 

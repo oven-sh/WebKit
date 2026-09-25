@@ -35,9 +35,9 @@ namespace WebKit {
 #if ENABLE(DEVELOPER_MODE)
 static String getExecutablePath()
 {
-    CString executablePath = FileSystem::currentExecutablePath();
+    auto executablePath = FileSystem::currentExecutablePath();
     if (!executablePath.isNull())
-        return FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(executablePath.data()));
+        return FileSystem::parentPath(FileSystem::stringFromFileSystemRepresentation(executablePath.legacyCStringPointer()));
     return { };
 }
 #endif

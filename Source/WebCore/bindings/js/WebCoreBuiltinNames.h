@@ -133,6 +133,7 @@ namespace WebCore {
     macro(CSSCounterStyleRule) \
     macro(CSSColor) \
     macro(CSSColorValue) \
+    macro(CSSEnvironmentMapRule) \
     macro(CSSFunctionDeclarations) \
     macro(CSSFunctionDescriptors) \
     macro(CSSFunctionRule) \
@@ -238,6 +239,7 @@ namespace WebCore {
     macro(GPUComputePipeline) \
     macro(GPUDevice) \
     macro(GPUDeviceLostInfo) \
+    macro(GPUError) \
     macro(GPUExternalTexture) \
     macro(GPUInternalError) \
     macro(GPUMapMode) \

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "StyleGridPosition.h"
+#include <wtf/Range.h>
 
 namespace WebCore {
 namespace Layout {
@@ -46,15 +47,11 @@ private:
         // 0-based grid line indices; endLine is exclusive.
         size_t startLine { 0 };
         size_t endLine { 0 };
-
-        bool operator==(const DefinitePosition&) const = default;
     };
 
     struct AutoPosition {
         // Number of tracks the item spans; resolved to a position during auto-placement.
         size_t span { 1 };
-
-        bool operator==(const AutoPosition&) const = default;
     };
 
     class GridPosition {
@@ -72,8 +69,6 @@ private:
 
         size_t span() const;
 
-        bool operator==(const GridPosition&) const = default;
-
     private:
         using Value = Variant<DefinitePosition, AutoPosition>;
 
@@ -87,13 +82,6 @@ private:
 
 public:
     UnplacedGridItem(const ElementBox&, Style::GridPosition columnStart, Style::GridPosition columnEnd, Style::GridPosition rowStart, Style::GridPosition rowEnd, size_t explicitColumnCount, size_t explicitRowCount, size_t leadingImplicitColumnsCount, size_t leadingImplicitRowsCount);
-    UnplacedGridItem(WTF::HashTableEmptyValueType);
-
-    bool operator==(const UnplacedGridItem& other) const;
-
-    bool isHashTableDeletedValue() const { return m_layoutBox.isHashTableDeletedValue(); }
-    bool isHashTableEmptyValue() const { return m_layoutBox.isHashTableEmptyValue(); }
-    static constexpr bool safeToCompareToHashTableEmptyOrDeletedValue = true;
 
     bool NODELETE hasDefiniteRowPosition() const;
     bool NODELETE hasDefiniteColumnPosition() const;
@@ -102,8 +90,8 @@ public:
     size_t columnSpanSize() const;
     size_t rowSpanSize() const;
 
-    std::pair<size_t, size_t> definiteRowStartEnd() const;
-    std::pair<size_t, size_t> definiteColumnStartEnd() const;
+    WTF::Range<size_t> definiteRowRange() const;
+    WTF::Range<size_t> definiteColumnRange() const;
 
     // Resolves the 0-based explicit line range [start, end) for an axis, or std::nullopt when the
     // axis is auto-positioned. explicitTrackCount is used to resolve negative lines against the end
@@ -120,7 +108,6 @@ private:
     GridPosition m_rowPosition;
 
     friend class GridFormattingContext;
-    friend void add(Hasher&, const WebCore::Layout::UnplacedGridItem&);
 };
 
 // https://drafts.csswg.org/css-grid-1/#auto-placement-algo
@@ -134,16 +121,4 @@ struct UnplacedGridItems {
 };
 
 }
-}
-
-namespace WTF {
-
-template<> struct HashTraits<WebCore::Layout::UnplacedGridItem> : SimpleClassHashTraits<WebCore::Layout::UnplacedGridItem> {
-    static const bool emptyValueIsZero = HashTraits<CheckedRef<const WebCore::Layout::ElementBox>>::emptyValueIsZero;
-    static constexpr bool hasIsEmptyValueFunction = true;
-
-    static bool isEmptyValue(const WebCore::Layout::UnplacedGridItem& unplacedGridItem) { return unplacedGridItem.isHashTableEmptyValue(); }
-    static WebCore::Layout::UnplacedGridItem emptyValue() { return WebCore::Layout::UnplacedGridItem { HashTableEmptyValueType::HashTableEmptyValue }; }
-};
-
 }

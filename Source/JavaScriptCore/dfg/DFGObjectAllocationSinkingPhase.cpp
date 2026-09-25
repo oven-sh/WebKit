@@ -822,11 +822,11 @@ private:
         performOSRAvailabilityAnalysis(m_graph);
         m_combinedLiveness = CombinedLiveness(m_graph);
 
-        CString graphBeforeSinking;
+        UTF8CString graphBeforeSinking;
         if (Options::verboseValidationFailure() && Options::validateGraphAtEachPhase()) [[unlikely]] {
             StringPrintStream out;
             m_graph.dump(out);
-            graphBeforeSinking = out.toCString();
+            graphBeforeSinking = out.toUTF8CString();
         }
 
         dataLogIf(Options::verboseObjectAllocationSinking(), "Graph before elimination:\n", m_graph);

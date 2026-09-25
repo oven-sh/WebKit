@@ -91,7 +91,6 @@ class FetchRequest;
 class FetchResponse;
 class FileSystemHandle;
 class File;
-class GCObservation;
 class HTMLAnchorElement;
 class HTMLAttachmentElement;
 class HTMLCanvasElement;
@@ -156,6 +155,7 @@ class XMLHttpRequest;
 struct VideoConfiguration;
 
 enum class DocumentMarkerType : uint32_t;
+enum class IPAddressSpace : uint8_t;
 
 #if ENABLE(ENCRYPTED_MEDIA)
 class MediaKeys;
@@ -306,6 +306,8 @@ public:
     Ref<CSSComputedStyleDeclaration> computedStyleIncludingVisitedInfo(Element&) const;
 
     float usedOutlineOffset(Element&);
+
+    String computedAppleColorFilter(Element&);
 
     Node& ensureUserAgentShadowRoot(Element& host);
     Node* shadowRoot(Element& host);
@@ -1004,6 +1006,8 @@ public:
     void asyncCreateFile(const String&, DOMPromiseDeferred<IDLInterface<File>>&&);
     String createTemporaryFile(const String& name, const String& contents);
 
+    String documentIPAddressSpace() const;
+
     void queueMicroTask(int);
     bool testPreloaderSettingViewport();
 
@@ -1058,8 +1062,6 @@ public:
     bool NODELETE hasHistoryActionActivation();
 
     bool consumeHistoryActionUserActivation();
-
-    RefPtr<GCObservation> observeGC(JSC::JSValue);
 
     enum class UserInterfaceLayoutDirection : uint8_t { LTR, RTL };
     void setUserInterfaceLayoutDirection(UserInterfaceLayoutDirection);
@@ -1718,7 +1720,9 @@ public:
 #if ENABLE(SPATIAL_PORTAL)
     unsigned NODELETE numberOfHostedModelsInSpatialPortal(Element&);
     bool NODELETE establishesSpatialPortal(Element&);
+    RefPtr<Element> NODELETE spatialPortalAnchorForModel(HTMLModelElement&);
     std::optional<Vector<double>> NODELETE spatialPortalResolvedTransform(Element&);
+    String NODELETE effectiveEnvironmentMap(Element&);
 #endif
 
     ExceptionOr<void> copyImageAtLocation(int x, int y);

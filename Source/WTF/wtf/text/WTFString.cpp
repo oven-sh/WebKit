@@ -57,7 +57,7 @@ String::String(std::span<const char8_t> characters)
 {
 }
 
-// Construct a string with Latin-1 data.
+// Construct a string with Latin-1 data. Intentionally private; `char` carries no encoding.
 String::String(std::span<const char> characters)
     : m_impl(characters.data() ? RefPtr { StringImpl::create(byteCast<Latin1Character>(characters)) } : nullptr)
 {
@@ -78,14 +78,7 @@ char32_t String::codePointAt(unsigned i) const
 
 String makeStringByJoining(std::span<const String> strings, const String& separator)
 {
-    StringBuilder builder;
-    for (const auto& string : strings) {
-        if (builder.isEmpty())
-            builder.append(string);
-        else
-            builder.append(separator, string);
-    }
-    return builder.toString();
+    return makeString(interleave(strings, separator));
 }
 
 String makeStringByRemoving(const String& string, unsigned position, unsigned lengthToRemove)
@@ -394,36 +387,9 @@ Vector<String> String::splitAllowingEmptyEntries(StringView separator) const
 
 ASCIICString String::ascii() const
 {
-    // Printable ASCII characters 32..127 and the null character are
-    // preserved, characters outside of this range are converted to '?'.
-
-    if (isEmpty()) {
-        std::span<char> characterBuffer;
-        return ASCIICString::newUninitialized(0, characterBuffer);
-    }
-
-    if (this->is8Bit()) {
-        auto characters = this->span8();
-
-        std::span<char> characterBuffer;
-        auto result = ASCIICString::newUninitialized(characters.size(), characterBuffer);
-
-        size_t characterBufferIndex = 0;
-        for (auto character : characters)
-            characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : byteCast<char>(character);
-
-        return result;        
-    }
-
-    auto characters = span16();
-    std::span<char> characterBuffer;
-    auto result = ASCIICString::newUninitialized(characters.size(), characterBuffer);
-
-    size_t characterBufferIndex = 0;
-    for (auto character : characters)
-        characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : static_cast<char>(character);
-
-    return result;
+    if (is8Bit())
+        return StringImpl::asciiForCharacters(span8());
+    return StringImpl::asciiForCharacters(span16());
 }
 
 Latin1CString String::latin1() const
@@ -458,7 +424,7 @@ std::expected<UTF8CString, UTF8ConversionError> String::tryGetUTF8() const
     return tryGetUTF8(LenientConversion);
 }
 
-CString String::utf8(ConversionMode mode) const
+UTF8CString String::utf8(ConversionMode mode) const
 {
     auto expectedString = tryGetUTF8(mode);
     RELEASE_ASSERT(expectedString);
@@ -662,8 +628,7 @@ Vector<char> asciiDebug(StringImpl* impl)
             buffer.append('\\', 'u', hex(ch, 4));
         }
     }
-    CString narrowString = buffer.toString().ascii();
-    return { narrowString.spanIncludingNullTerminator() };
+    return { buffer.toString().ascii().spanIncludingNullTerminator() };
 }
 
 Vector<char> asciiDebug(String& string)

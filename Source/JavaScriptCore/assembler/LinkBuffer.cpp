@@ -123,7 +123,7 @@ void LinkBuffer::logJITCodeForJITDump(CodeRef<LinkBufferPtrTag>& codeRef, ASCIIL
         dumpSimpleName(out, simpleName);
         break;
     }
-    auto finalName = out.toCString();
+    auto finalName = out.toUTF8CString();
 
     if (Options::useGdbJITInfo()) [[unlikely]]
         GdbJIT::log(finalName, codeRef);
@@ -155,7 +155,7 @@ LinkBuffer::CodeRef<LinkBufferPtrTag> LinkBuffer::finalizeCodeWithDisassemblyImp
         constexpr auto prefix = "thunk: "_s;
         std::span<char> buffer;
         size_t length = stringLength + prefix.length() + 1;
-        CString label = CString::newUninitialized(length, buffer);
+        auto label = ASCIICString::newUninitialized(length, buffer);
         memcpySpan(buffer, prefix.span8());
         vsnprintf(buffer.subspan(prefix.length()).data(), stringLength + 1, format, argList);
         out.printf("%s", buffer.data());

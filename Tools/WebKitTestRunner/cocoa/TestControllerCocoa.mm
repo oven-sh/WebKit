@@ -800,7 +800,7 @@ WKRetainPtr<WKStringRef> TestController::getBackgroundFetchIdentifier()
     }];
     platformRunUntil(isDone, noTimeout);
 
-    return adoptWK(WKStringCreateWithUTF8CString(result.utf8().data()));
+    return adoptWK(WKStringCreateWithUTF8CString(result.utf8().legacyCStringPointer()));
 }
 
 void TestController::abortBackgroundFetch(WKStringRef identifier)

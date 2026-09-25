@@ -47,7 +47,7 @@ void logFootprintComparison(const std::array<TagInfo, 256>& before, const std::a
     const size_t pageSize = vmPageSize();
 
     WTFLogAlways("Per-tag breakdown of memory reclaimed by pressure handler:");
-    WTFLogAlways("  ## %16s %10s %10s %10s", "VM Tag", "Before", "After", "Diff");
+    SAFE_WTFLOGALWAYS("  ## %16s %10s %10s %10s", "VM Tag"_s, "Before"_s, "After"_s, "Diff"_s);
     for (unsigned i = 0; i < 256; ++i) {
         ssize_t dirtyBefore = before[i].dirty * pageSize;
         ssize_t dirtyAfter = after[i].dirty * pageSize;
@@ -57,9 +57,9 @@ void logFootprintComparison(const std::array<TagInfo, 256>& before, const std::a
         String tagName = displayNameForVMTag(i);
         if (!tagName)
             tagName = makeString("Tag "_s, i);
-        WTFLogAlways("  %02X %16s %10ld %10ld %10ld",
+        SAFE_WTFLOGALWAYS("  %02X %16s %10ld %10ld %10ld",
             i,
-            tagName.ascii().data(),
+            tagName.ascii(),
             dirtyBefore,
             dirtyAfter,
             dirtyDiff

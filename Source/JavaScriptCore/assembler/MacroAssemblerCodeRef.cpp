@@ -45,12 +45,12 @@ bool MacroAssemblerCodeRefBase::tryToDisassemble(CodePtr<DisassemblyPtrTag> code
     return tryToDisassemble(codePtr, size, prefix, WTF::dataFile());
 }
 
-CString MacroAssemblerCodeRefBase::disassembly(CodePtr<DisassemblyPtrTag> codePtr, size_t size)
+UTF8CString MacroAssemblerCodeRefBase::disassembly(CodePtr<DisassemblyPtrTag> codePtr, size_t size)
 {
     StringPrintStream out;
     if (!tryToDisassemble(codePtr, size, "", out))
-        return CString();
-    return out.toCString();
+        return { };
+    return out.toUTF8CString();
 }
 
 bool shouldDumpDisassemblyFor(CodeBlock* codeBlock)

@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2010 Google Inc. All rights reserved.
- * Copyright (C) 2014-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,6 +32,7 @@
 #include "HTTPHeaderNames.h"
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
+#include <algorithm>
 #include <wtf/MainThread.h>
 #include <wtf/WeakPtr.h>
 
@@ -53,6 +54,11 @@ BlobResourceHandleBase::BlobResourceHandleBase(bool async, RefPtr<BlobData>&& bl
 }
 
 BlobResourceHandleBase::~BlobResourceHandleBase() = default;
+
+uint64_t BlobResourceHandleBase::clampReadSizeToRemaining(uint64_t requested, uint64_t totalRemaining)
+{
+    return std::min<uint64_t>(requested, totalRemaining);
+}
 
 auto BlobResourceHandleBase::adjustAndValidateRangeBounds() -> std::optional<Error>
 {
@@ -286,9 +292,7 @@ bool BlobResourceHandleBase::readDataAsync(const BlobDataItem& item, DataSegment
     ASSERT(isMainThread());
 
     ASSERT(m_currentItemReadSize <= static_cast<uint64_t>(item.length()));
-    uint64_t bytesToRead = static_cast<uint64_t>(item.length()) - m_currentItemReadSize;
-    if (bytesToRead > m_totalRemainingSize)
-        bytesToRead = m_totalRemainingSize;
+    auto bytesToRead = clampReadSizeToRemaining(item.length() - m_currentItemReadSize, m_totalRemainingSize);
 
     auto span = data.span().subspan(item.offset() + m_currentItemReadSize, bytesToRead);
     m_currentItemReadSize = 0;
@@ -318,9 +322,7 @@ void BlobResourceHandleBase::readFileAsync(const BlobDataItem& item, BlobDataFil
         return;
     }
 
-    uint64_t bytesToRead = lengthOfItemBeingRead() - m_currentItemReadSize;
-    if (bytesToRead > m_totalRemainingSize)
-        bytesToRead = static_cast<int>(m_totalRemainingSize);
+    auto bytesToRead = clampReadSizeToRemaining(lengthOfItemBeingRead() - m_currentItemReadSize, m_totalRemainingSize);
     asyncStream()->openForRead(file.path(), item.offset() + m_currentItemReadSize, bytesToRead);
     m_isFileOpen = true;
     m_currentItemReadSize = 0;

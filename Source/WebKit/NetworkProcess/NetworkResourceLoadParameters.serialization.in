@@ -112,6 +112,11 @@ enum class WebKit::NavigatingToAppBoundDomain : bool;
     bool globalPrivacyControlEnabled;
     bool shouldConsiderEnhancedSecurityForInsecureResponse;
     MonotonicTime originalNavigationStartTime;
+
+    WebCore::IPAddressSpace clientAddressSpace;
+    bool clientIsSecureContext;
+    bool localNetworkAllowedByPermissionsPolicy;
+    bool loopbackNetworkAllowedByPermissionsPolicy;
 };
 
 using WebCore::FetchingWorkerIdentifier = Variant<std::monostate, WebCore::SharedWorkerIdentifier, WebCore::ServiceWorkerIdentifier>;

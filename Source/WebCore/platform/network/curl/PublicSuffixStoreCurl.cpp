@@ -38,7 +38,7 @@ bool PublicSuffixStore::platformIsPublicSuffix(StringView domain) const
 
     const psl_ctx_t* psl = psl_builtin();
     ASSERT(psl);
-    bool ret = psl_is_public_suffix2(psl, domain.toStringWithoutCopying().convertToLowercaseWithoutLocale().utf8().data(), PSL_TYPE_ANY | PSL_TYPE_NO_STAR_RULE);
+    bool ret = psl_is_public_suffix2(psl, domain.toStringWithoutCopying().convertToLowercaseWithoutLocale().utf8().legacyCStringPointer(), PSL_TYPE_ANY | PSL_TYPE_NO_STAR_RULE);
     return ret;
 }
 
@@ -57,17 +57,18 @@ String PublicSuffixStore::platformTopPrivatelyControlledDomain(StringView domain
 
     // This function is expected to work with the format used by cookies, so skip any leading dots.
     auto domainUTF8 = domain.utf8();
+    auto characters = domainUTF8.span();
 
     unsigned position = 0;
-    while (domainUTF8.data()[position] == '.')
+    while (position < characters.size() && characters[position] == u8'.')
         position++;
 
-    if (position == domainUTF8.length())
+    if (position == characters.size())
         return String();
 
     const psl_ctx_t* psl = psl_builtin();
     ASSERT(psl);
-    return topPrivatelyControlledDomainInternal(psl, domainUTF8.data() + position);
+    return topPrivatelyControlledDomainInternal(psl, domainUTF8.legacyCStringPointer() + position);
 }
 
 } // namespace WebCore

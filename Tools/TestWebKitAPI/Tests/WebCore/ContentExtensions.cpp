@@ -3114,7 +3114,7 @@ TEST_F(ContentExtensionTest, QueryTransformActions)
 
     URL testURL { "https://webkit.org/?foo=garply&baz=test&x+y=z&h%20llo=w%20rld"_s };
     action.applyToURL(testURL);
-    EXPECT_STREQ("https://webkit.org/?foo=bar&x+y=z&h%20llo=w%20rld&one=two", testURL.string().utf8().data());
+    EXPECT_EQ("https://webkit.org/?foo=bar&x+y=z&h%20llo=w%20rld&one=two"_s, testURL.string());
 }
 
 TEST_F(ContentExtensionTest, IfFrameURL)
@@ -3178,11 +3178,11 @@ TEST_F(ContentExtensionTest, UnlessFrameURL)
 
 TEST_F(ContentExtensionTest, RegexSubstitution)
 {
-    auto transformURL = [] (String&& regexSubstitution, String&& regexFilter, String&& originalURL, const char* expectedTransformedURL) {
+    auto transformURL = [] (String&& regexSubstitution, String&& regexFilter, String&& originalURL, ASCIILiteral expectedTransformedURL) {
         WebCore::ContentExtensions::RedirectAction::RegexSubstitutionAction action { WTF::move(regexSubstitution), WTF::move(regexFilter) };
         URL url(WTF::move(originalURL));
         action.applyToURL(url);
-        EXPECT_STREQ(url.string().utf8().data(), expectedTransformedURL);
+        EXPECT_EQ(url.string(), expectedTransformedURL);
     };
     transformURL("https://\\1.xyz.com/"_s, "^https://www\\.(abc?)\\.xyz\\.com/"_s, "https://www.abc.xyz.com"_s, "https://abc.xyz.com/"_s);
     transformURL("https://\\1.\\1.xyz.com/"_s, "^https://www\\.(abc?)\\.xyz\\.com/"_s, "https://www.ab.xyz.com"_s, "https://ab.ab.xyz.com/"_s);

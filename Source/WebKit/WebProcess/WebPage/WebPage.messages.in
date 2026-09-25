@@ -42,9 +42,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 #if PLATFORM(COCOA)
     SetObscuredContentInsetsFenced(WebCore::FloatBoxExtent obscuredContentInsets, MachSendRight machSendRight)
 #endif
-#if !PLATFORM(COCOA)
     SetObscuredContentInsets(WebCore::FloatBoxExtent obscuredContentInsets)
-#endif
 
     [DeferSendingIfSuspended] SetShouldSuppressHDR(bool shouldSuppressHDR)
 
@@ -71,10 +69,10 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
 #if PLATFORM(COCOA)
     SelectWithGesture(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint point, enum:uint8_t WebKit::GestureType gestureType, enum:uint8_t WebKit::GestureRecognizerState gestureState, bool isInteractingWithFocusedElement) -> (struct WebKit::SelectWithGestureResult result, struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
-    RequestPositionInformation(struct WebKit::InteractionInformationRequest request)
+    RequestPositionInformation(std::optional<WebCore::FrameIdentifier> frameID, struct WebKit::InteractionInformationRequest request) -> (Variant<WebKit::InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> result) ReplyCanDispatchOutOfOrder
     SelectPositionAtPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement) -> ()
     UpdateSelectionWithExtentPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement, enum:bool WebKit::RespectSelectionAnchor respectSelectionAnchor) -> (bool endIsMoving)
-    UpdateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, enum:uint8_t WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, enum:uint8_t WebKit::TextInteractionSource sources) -> (bool endIsMoving)
+    UpdateSelectionWithExtentPointAndBoundary(WebCore::IntPoint point, enum:uint8_t WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement, enum:uint8_t WebKit::TextInteractionSource sources, enum:bool WebKit::SelectionExtentAnchor anchor) -> (bool endIsMoving)
     SelectTextWithGranularityAtPoint(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint point, enum:uint8_t WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement) -> (struct std::optional<WebCore::RemoteUserInputEventData> remoteUserInputEventData)
 #endif
 
@@ -115,7 +113,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     ClearSelectionAfterTappingSelectionHighlightIfNeeded(WebCore::FloatPoint location)
 #if ENABLE(REVEAL)
     RequestRVItemInCurrentSelectedRange() -> (WebKit::RevealItem item)
-    PrepareSelectionForContextMenuWithLocationInView(WebCore::IntPoint point) -> (bool shouldShowMenu, WebKit::RevealItem item)
+    PrepareSelectionForContextMenuWithLocationInView(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint point) -> (Variant<WebKit::PrepareSelectionForContextMenuResult, WebCore::RemoteUserInputEventData> result)
 #endif
     WillInsertFinalDictationResult()
     DidInsertFinalDictationResult()
@@ -126,7 +124,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
     SyncApplyAutocorrection(String correction, String originalText, bool isCandidate) -> (bool autocorrectionApplied) Synchronous
     HandleAutocorrectionContextRequest()
     RequestEvasionRectsAboveSelection() -> (Vector<WebCore::FloatRect> rects)
-    StartInteractionWithElementContextOrPosition(struct std::optional<WebCore::ElementContext> elementContext, WebCore::IntPoint point)
+    StartInteractionWithElementContextOrPosition(std::optional<WebCore::FrameIdentifier> frameID, struct std::optional<WebCore::ElementContext> elementContext, WebCore::IntPoint point)
     StopInteraction()
     PerformActionOnElement(uint32_t action, String authenticationToken) -> ()
     PerformActionOnElements(uint32_t action, Vector<WebCore::ElementContext> elements)
@@ -317,6 +315,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     Close() -> ()
     TryClose() -> (bool shouldClose)
+    DispatchPendingNavigateEventForProcessSwap(WebCore::FrameIdentifier frameID, WebCore::PendingNavigateEventIdentifier pendingNavigateEventID) -> (bool cancelled)
     DispatchCrossOriginBeforeUnloadCheckForFrame(WebCore::FrameIdentifier frameID, WebCore::SecurityOriginData navigatingFrameOrigin)
 
     SetEditable(bool editable)
@@ -334,8 +333,8 @@ messages -> WebPage WantsAsyncDispatchMessage {
     RequestFontAttributesAtSelectionStart() -> (struct WebCore::FontAttributes attributes)
 
     DidRemoveEditCommand(WebKit::WebUndoStepID commandID)
-    ReapplyEditCommand(uint32_t undoVersion, WebKit::WebUndoStepID commandID) -> ()
-    UnapplyEditCommand(uint32_t undoVersion, WebKit::WebUndoStepID commandID) -> ()
+    ReapplyEditCommand(uint64_t sequence, WebKit::WebUndoStepID commandID) -> ()
+    UnapplyEditCommand(uint64_t sequence, WebKit::WebUndoStepID commandID) -> ()
 
     DidSetPageZoomFactor(double zoomFactor)
     DidSetTextZoomFactor(double zoomFactor)
@@ -742,7 +741,7 @@ messages -> WebPage WantsAsyncDispatchMessage {
 
     SetIsSuspended(bool suspended) -> (std::optional<bool> didSuspend)
     SuspendWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID) -> (bool success)
-    RestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID, std::optional<std::pair<URL, WebCore::SecurityOriginData>> mainFrameURLAndOrigin, enum:bool WebKit::ShouldFreezeLayerTree shouldFreezeLayerTree) -> (bool success)
+    RestoreWithFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID, std::optional<std::pair<URL, WebCore::SecurityOriginData>> mainFrameURLAndOrigin) -> (bool success)
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     InsertAttachment(String identifier, std::optional<uint64_t> fileSize, String fileName, String contentType) -> ()

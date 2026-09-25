@@ -40,7 +40,7 @@ class Color;
 template<AlphaPremultiplication, typename InterpolationMethodColorSpace>
 typename InterpolationMethodColorSpace::ColorType interpolateColorComponents(InterpolationMethodColorSpace, typename InterpolationMethodColorSpace::ColorType color1, double color1Multiplier, typename InterpolationMethodColorSpace::ColorType color2, double color2Multiplier);
 
-Color interpolateColors(ColorInterpolationMethod, Color color1, double color1Multiplier, Color color2, double color2Multiplier);
+Color interpolateColors(ColorInterpolationMethod, const Color& color1, double color1Multiplier, const Color& color2, double color2Multiplier);
 
 template<AlphaPremultiplication, typename InterpolationMethodColorSpace>
 typename InterpolationMethodColorSpace::ColorType addColorComponents(InterpolationMethodColorSpace, typename InterpolationMethodColorSpace::ColorType color1, typename InterpolationMethodColorSpace::ColorType color2);

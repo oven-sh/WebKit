@@ -62,7 +62,7 @@ public:
 #define VALIDATE(condition, message) do {                               \
         if (condition)                                                  \
             break;                                                      \
-        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toCString message); \
+        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toUTF8CString message); \
     } while (false)
 
     void run()
@@ -1134,16 +1134,16 @@ private:
 
     NO_RETURN_DUE_TO_CRASH void fail(
         const char* filename, int lineNumber, const char* function, const char* condition,
-        CString message)
+        UTF8CString message)
     {
-        CString failureMessage;
+        UTF8CString failureMessage;
         {
             StringPrintStream out;
             out.print("B3 VALIDATION FAILURE\n");
             out.print("    ", condition, " (", filename, ":", lineNumber, ")\n");
             out.print("    ", message, "\n");
             out.print("    After ", m_procedure.lastPhaseName(), "\n");
-            failureMessage = out.toCString();
+            failureMessage = out.toUTF8CString();
         }
 
         dataLog(failureMessage);

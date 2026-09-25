@@ -134,7 +134,7 @@ void IntlPluralRules::initializePluralRules(JSGlobalObject* globalObject, JSValu
     setNumberFormatDigitOptions(globalObject, this, options, 0, 3, m_notation);
     RETURN_IF_EXCEPTION(scope, void());
 
-    auto locale = m_locale.utf8();
+    auto locale = m_locale.ascii();
     UErrorCode status = U_ZERO_ERROR;
 
     StringBuilder skeletonBuilder;
@@ -219,7 +219,7 @@ JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
     unsigned index = 0;
     while (const char* result = uenum_next(keywords.get(), &resultLength, &status)) {
         ASSERT(U_SUCCESS(status));
-        categoriesSet.add(String(unsafeMakeSpan(result, static_cast<size_t>(resultLength))));
+        categoriesSet.add(String::fromLatin1(unsafeMakeSpan(result, static_cast<size_t>(resultLength))));
     }
 
     // 4. Let pluralCategories be a List of Strings containing all possible results of PluralRuleSelect for the selected locale pr.[[Locale]],

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "BlockDirectory.h"
 
+#include "AlignedMemoryAllocator.h"
 #include "BlockDirectoryInlines.h"
 #include "Heap.h"
 #include "HeapInlines.h"
@@ -63,15 +64,27 @@ void BlockDirectory::setSubspace(Subspace* subspace)
     m_subspace = subspace;
 }
 
+void BlockDirectory::noteBlockMayBeStealable(unsigned index)
+{
+    if (!isStealable(index))
+        return;
+
+    // The cursor only moves forward, so a block that falls empty behind it would stay invisible for
+    // the rest of the collection cycle and the heap would grow instead of reusing it.
+    m_emptyCursor = std::min<unsigned>(m_emptyCursor, index);
+    subspace()->alignedMemoryAllocator()->addDirectoryWithEmptyBlocks(this);
+}
+
 MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
 {
     Locker locker(bitvectorLock());
-    m_emptyCursor = (emptyBits() & ~inUseBits()).findBit(m_emptyCursor, true);
+    m_emptyCursor = stealableBits().findBit(m_emptyCursor, true);
     if (m_emptyCursor >= m_blocks.size())
         return nullptr;
+
     dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", m_emptyCursor, " in use (findEmptyBlockToSteal) for ", *this);
     setIsInUse(m_emptyCursor, true);
-    return m_blocks[m_emptyCursor];
+    return m_blocks[m_emptyCursor].first;
 }
 
 MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allocator)
@@ -83,7 +96,10 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
             return nullptr;
         
         unsigned blockIndex = allocator.m_allocationCursor++;
-        MarkedBlock::Handle* result = m_blocks[blockIndex];
+        auto [result, block] = m_blocks[blockIndex];
+        // This block is about to be swept to build a free list, which reads the header. Start the
+        // fetch here so it overlaps the bitvector updates and the lock release below.
+        __builtin_prefetch(block);
         setIsCanAllocate(blockIndex, false);
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", blockIndex, " in use (findBlockForAllocation) for ", *this);
         setIsInUse(blockIndex, true);
@@ -110,7 +126,7 @@ void BlockDirectory::addBlock(MarkedBlock::Handle* block)
         index = m_blocks.size();
 
         size_t oldCapacity = m_blocks.capacity();
-        m_blocks.append(block);
+        m_blocks.append({ block, &block->block() });
         if (m_blocks.capacity() != oldCapacity) {
             ASSERT(m_bits.numBits() == oldCapacity);
             ASSERT(m_blocks.capacity() > oldCapacity);
@@ -120,8 +136,8 @@ void BlockDirectory::addBlock(MarkedBlock::Handle* block)
         }
     } else {
         index = m_freeBlockIndices.takeLast();
-        ASSERT(!m_blocks[index]);
-        m_blocks[index] = block;
+        ASSERT(!m_blocks[index].first);
+        m_blocks[index] = { block, &block->block() };
     }
     
     forEachBitVector(
@@ -142,12 +158,12 @@ void BlockDirectory::removeBlock(MarkedBlock::Handle* block, WillDeleteBlock wil
 {
     assertIsMutatorOrMutatorIsStopped();
     ASSERT(block->directory() == this);
-    ASSERT(m_blocks[block->index()] == block);
+    ASSERT(m_blocks[block->index()].first == block);
     ASSERT(isInUse(block));
     
     subspace()->didRemoveBlock(block->index());
     
-    m_blocks[block->index()] = nullptr;
+    m_blocks[block->index()] = { nullptr, nullptr };
     m_freeBlockIndices.append(block->index());
     
     releaseAssertAcquiredBitVectorLock();
@@ -198,11 +214,16 @@ void BlockDirectory::prepareForAllocation()
         [&] (LocalAllocator* allocator) {
             allocator->prepareForAllocation();
         });
-    
+
     m_unsweptCursor = 0;
     m_emptyCursor = 0;
-    
+
     assertSweeperIsSuspended();
+    // endMarking recomputes the empty bits wholesale rather than block by block, so none of the blocks
+    // that fell empty there announced themselves the way didFinishUsingBlock does. Re-derive
+    // membership from the bits here, once m_emptyCursor above has been rewound to match them.
+    if (!stealableBits().isEmpty())
+        subspace()->alignedMemoryAllocator()->addDirectoryWithEmptyBlocks(this);
     edenBits().clearAll();
 
     if (Options::useImmortalObjects()) [[unlikely]] {
@@ -325,7 +346,7 @@ MarkedBlock::Handle* BlockDirectory::findBlockToSweep(unsigned& unsweptCursor)
         return nullptr;
     dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", unsweptCursor, " in use (findBlockToSweep) for ", *this);
     setIsInUse(unsweptCursor, true);
-    return m_blocks[unsweptCursor];
+    return m_blocks[unsweptCursor].first;
 }
 
 void BlockDirectory::sweep()
@@ -342,7 +363,7 @@ void BlockDirectory::sweep()
         if (index >= m_blocks.size())
             break;
 
-        MarkedBlock::Handle* block = m_blocks[index];
+        MarkedBlock::Handle* block = m_blocks[index].first;
         ASSERT(!isInUse(index));
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", index, " in use (sweep) for ", *this);
         setIsInUse(index, true);
@@ -351,7 +372,7 @@ void BlockDirectory::sweep()
             block->sweep(nullptr);
         }
         ASSERT(!isUnswept(index));
-        setIsInUse(index, false);
+        didFinishUsingBlock(locker, block);
     }
 }
 
@@ -365,7 +386,7 @@ void BlockDirectory::shrink()
 
     Locker locker(bitvectorLock());
     for (size_t index = 0; index < m_blocks.size(); ++index) {
-        index = (emptyBits() & ~destructibleBits() & ~inUseBits()).findBit(index, true);
+        index = stealableBits().findBit(index, true);
         if (index >= m_blocks.size())
             break;
 
@@ -374,7 +395,7 @@ void BlockDirectory::shrink()
         setIsInUse(index, true);
         {
             DropLockForScope scope(locker);
-            markedSpace().freeBlock(m_blocks[index]);
+            markedSpace().freeBlock(m_blocks[index].first);
         }
         setIsInUse(index, false);
     }
@@ -384,7 +405,7 @@ void BlockDirectory::shrink()
 MarkedBlock::Handle* BlockDirectory::findMarkedBlockHandleDebug(MarkedBlock* block)
 {
     for (size_t index = 0; index < m_blocks.size(); ++index) {
-        MarkedBlock::Handle* handle = m_blocks[index];
+        MarkedBlock::Handle* handle = m_blocks[index].first;
         if (handle && &handle->block() == block)
             return handle;
     }
@@ -422,6 +443,7 @@ void BlockDirectory::didFinishUsingBlock(AbstractLocker&, MarkedBlock::Handle* h
 
     dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", handle->index(), " not in use (didFinishUsingBlock) for ", *this);
     setIsInUse(handle, false);
+    noteBlockMayBeStealable(handle->index());
 }
 
 RefPtr<SharedTask<MarkedBlock::Handle*()>> BlockDirectory::parallelNotEmptyBlockSource()
@@ -444,7 +466,7 @@ RefPtr<SharedTask<MarkedBlock::Handle*()>> BlockDirectory::parallelNotEmptyBlock
                 m_done = true;
                 return nullptr;
             }
-            return m_directory.m_blocks[m_index++];
+            return m_directory.m_blocks[m_index++].first;
         }
         
     private:

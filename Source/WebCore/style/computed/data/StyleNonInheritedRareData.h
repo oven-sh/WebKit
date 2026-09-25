@@ -91,6 +91,10 @@
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
+#if ENABLE(SPATIAL_PORTAL)
+#include <WebCore/StyleEnvironmentMap.h>
+#endif
+
 namespace WebCore {
 namespace Style {
 
@@ -168,6 +172,9 @@ public:
     Perspective perspective;
     PerspectiveOrigin perspectiveOrigin;
     PortalTransform portalTransform;
+#if ENABLE(SPATIAL_PORTAL)
+    EnvironmentMap environmentMap;
+#endif
 
     Style::ContainerType containerType;
     ContainerNames containerNames;
@@ -225,6 +232,7 @@ public:
 
     PREFERRED_TYPE(SpatialType) unsigned spatial : 1;
     PREFERRED_TYPE(PortalActionType) unsigned portalAction : 1;
+    PREFERRED_TYPE(PositionContextType) unsigned positionContext : 1;
 
     PREFERRED_TYPE(TransformStyle3D) unsigned transformStyle3D : 2;
     PREFERRED_TYPE(bool) unsigned transformStyleForcedToFlat : 1; // The used value for transform-style is forced to flat by a grouping property.

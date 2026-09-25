@@ -501,7 +501,7 @@ void PageLoadState::receivedQualifiedServerTrust(const Transaction::Token& token
 #if PLATFORM(COCOA)
     // QualifiedServerTrustFetch and IPC can take enough time that the page has navigated away.
     // Make sure we are still exposing the server trust for which the qualifiedServerTrust is valid.
-    if (!certificatesMatch(serverTrust.trust(), this->certificateInfo().trust()))
+    if (!WebCore::certificatesMatch(serverTrust.trust(), this->certificateInfo().trust()))
         return;
 #endif
 

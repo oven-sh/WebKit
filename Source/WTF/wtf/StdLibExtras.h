@@ -539,7 +539,7 @@ concept DerivedFromOrConvertibleTo = std::is_base_of_v<Base, Derived> || std::is
 // MS ABI mangler failing on pack expansions in constrained function templates when the
 // concept (HasSwitchOn) involves a call to a variadic member template.
 // https://github.com/llvm/llvm-project/issues/191588
-template<class V, class... F> ALWAYS_INLINE constexpr decltype(auto) switchOn(V&& v, F&&... f)
+template<class V, class... F> ALWAYS_INLINE constexpr decltype(auto) switchOn(V&& v, NOESCAPE F&&... f)
 {
     if constexpr (HasSwitchOn<V>)
         return std::forward<V>(v).switchOn(std::forward<F>(f)...);
@@ -569,14 +569,14 @@ template<size_t Minimum = 0, class F, class V> ALWAYS_INLINE decltype(auto) visi
 #undef WTF_INDEX_VISIT_CASE
 }
 
-template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
+template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, NOESCAPE F&&... f) -> decltype(visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
 {
     return visitOneVariant(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v)));
 }
 
 #else
 
-template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE constexpr auto switchOn(V&& v, F&&... f) -> decltype(WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
+template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE constexpr auto switchOn(V&& v, NOESCAPE F&&... f) -> decltype(WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v))))
 {
     return WTF::visit(makeVisitor(std::forward<F>(f)...), asVariant(std::forward<V>(v)));
 }
@@ -771,7 +771,7 @@ template<class F, class Tuple> ALWAYS_INLINE constexpr decltype(auto) visitTuple
     );
 }
 
-template<typename Tuple, typename... F> ALWAYS_INLINE constexpr auto switchOnTupleAtIndex(size_t index, Tuple&& tuple, F&&... f) -> decltype(visitTupleElementAtIndex(WTF::makeVisitor(std::forward<F>(f)...), index, std::forward<Tuple>(tuple)))
+template<typename Tuple, typename... F> ALWAYS_INLINE constexpr auto switchOnTupleAtIndex(size_t index, Tuple&& tuple, NOESCAPE F&&... f) -> decltype(visitTupleElementAtIndex(WTF::makeVisitor(std::forward<F>(f)...), index, std::forward<Tuple>(tuple)))
 {
     return visitTupleElementAtIndex(WTF::makeVisitor(std::forward<F>(f)...), index, std::forward<Tuple>(tuple));
 }
@@ -1242,38 +1242,10 @@ bool spansOverlap(std::span<T, TExtent> a, std::span<U, UExtent> b)
         && static_cast<const void*>(b.data()) < static_cast<const void*>(std::to_address(a.end()));
 }
 
-/* WTF_FOR_EACH */
-
-// https://www.scs.stanford.edu/~dm/blog/va-opt.html
-#define WTF_PARENS ()
-#define WTF_EXPAND(...) WTF_EXPAND4(WTF_EXPAND4(WTF_EXPAND4(WTF_EXPAND4(__VA_ARGS__))))
-#define WTF_EXPAND4(...) WTF_EXPAND3(WTF_EXPAND3(WTF_EXPAND3(WTF_EXPAND3(__VA_ARGS__))))
-#define WTF_EXPAND3(...) WTF_EXPAND2(WTF_EXPAND2(WTF_EXPAND2(WTF_EXPAND2(__VA_ARGS__))))
-#define WTF_EXPAND2(...) WTF_EXPAND1(WTF_EXPAND1(WTF_EXPAND1(WTF_EXPAND1(__VA_ARGS__))))
-#define WTF_EXPAND1(...) __VA_ARGS__
-#define WTF_FOR_EACH_HELPER(macro, a1, ...) macro(a1) __VA_OPT__(, WTF_FOR_EACH_AGAIN WTF_PARENS (macro, __VA_ARGS__))
-#define WTF_FOR_EACH_AGAIN() WTF_FOR_EACH_HELPER
-#define WTF_FOR_EACH(macro, ...) __VA_OPT__(WTF_EXPAND(WTF_FOR_EACH_HELPER(macro, __VA_ARGS__)))
-
 /* SAFE_PRINTF */
 
-// https://gist.github.com/sehe/3374327
-template<std::integral T> inline T safePrintfType(T arg) { return arg; }
-template<std::floating_point T> inline T safePrintfType(T arg) { return arg; }
-template<typename T> requires (std::is_pointer_v<T>) inline T safePrintfType(T arg)
-{
-    static_assert(!std::same_as<std::remove_cv_t<std::remove_pointer_t<T>>, char>, "char* is not bounds safe; please use a null terminated string type");
-    return arg;
-}
-
-// These versions of printf reject char* but accept known null terminated
-// string types, like ASCIILiteral and CString. A type can specialize
-// 'safePrintfType' to advertise conversion to null terminated string.
-
-// We do this as a macro so that we still get compile-time checking that our
-// arguments match our format string.
-
-#define SAFE_PRINTF_TYPE(...) WTF_FOR_EACH(WTF::safePrintfType, __VA_ARGS__)
+// WTF_FOR_EACH(), safePrintfType() and SAFE_PRINTF_TYPE() are defined in wtf/Assertions.h, which
+// the logging macros need and which cannot include this header.
 
 #define SAFE_PRINTF(format, ...) \
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
@@ -1294,6 +1266,29 @@ template<typename T> requires (std::is_pointer_v<T>) inline T safePrintfType(T a
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
     dataLogF(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+// WTFLogAlways() and the other WTF_ATTRIBUTE_NSSTRING functions accept %@ as well as the printf
+// conversions, and vprintf_stderr_common() routes a format containing %@ through
+// CFStringCreateWithFormatAndArguments(). An Objective-C object argument therefore has to arrive
+// unchanged: safePrintfType()'s NSString* overload would turn it into a const char*, handing
+// CoreFoundation a char pointer where it expects an object.
+#ifdef __OBJC__
+template<typename T> concept ObjectiveCObjectPointer = std::convertible_to<T, id>;
+#else
+template<typename T> concept ObjectiveCObjectPointer = false;
+#endif
+
+template<ObjectiveCObjectPointer T> inline T CLANG_POINTER_CONVERSION safeNSStringPrintfType(T argument) { return argument; }
+template<typename T> requires (!ObjectiveCObjectPointer<std::decay_t<T>>)
+inline decltype(auto) NODELETE safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
+
+#define SAFE_NSSTRING_PRINTF_TYPE(...) WTF_FOR_EACH(WTF::safeNSStringPrintfType, __VA_ARGS__)
+
+#define SAFE_WTFLOGALWAYS(format, ...) \
+    SUPPRESS_UNCOUNTED_ARG WTFLogAlways(format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+// logPrintfType() and LOG_PRINTF_TYPE(), the logging counterpart to safePrintfType(), are defined
+// in wtf/Assertions.h too, next to the LOG and RELEASE_LOG macro families that use them.
 
 template<typename T>
 concept NonConstByteType = CanBeConstByteType<T> && !std::is_const_v<T>;
@@ -1375,7 +1370,7 @@ constexpr decltype(auto) apply_impl(F&& functor, T&& tupleLike, std::index_seque
 }
 
 template<class F, class T>
-constexpr decltype(auto) apply(F&& functor, T&& tupleLike)
+constexpr decltype(auto) apply(NOESCAPE F&& functor, T&& tupleLike)
 {
     return apply_impl(std::forward<F>(functor), std::forward<T>(tupleLike), std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<T>>> { });
 }

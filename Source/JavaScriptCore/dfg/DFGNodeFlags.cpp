@@ -122,7 +122,7 @@ void dumpNodeFlags(PrintStream& actualOut, NodeFlags flags)
     if (flags & NodeIsFlushed)
         out.print(comma, "IsFlushed"_s);
     
-    CString string = out.toCString();
+    auto string = out.toUTF8CString();
     if (!string.length())
         actualOut.print("<empty>"_s);
     else

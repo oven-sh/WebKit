@@ -364,8 +364,10 @@ public:
             || a.lineBreak != b.lineBreak
             || a.textSecurity != b.textSecurity
             || a.hyphens != b.hyphens
+            || a.internalHyphenateLimitCharsWord != b.internalHyphenateLimitCharsWord
             || a.hyphenateLimitBefore != b.hyphenateLimitBefore
             || a.hyphenateLimitAfter != b.hyphenateLimitAfter
+            || a.hyphenateLimitLines != b.hyphenateLimitLines
             || a.hyphenateCharacter != b.hyphenateCharacter
             || a.rubyPosition != b.rubyPosition
             || a.rubyAlign != b.rubyAlign
@@ -386,7 +388,9 @@ public:
     #endif
             || a.listStyleType != b.listStyleType
             || a.listStyleImage != b.listStyleImage
-            || a.blockEllipsis != b.blockEllipsis)
+            || a.blockEllipsis != b.blockEllipsis
+            || a.borderHorizontalSpacing != b.borderHorizontalSpacing
+            || a.borderVerticalSpacing != b.borderVerticalSpacing)
             return true;
 
         if (a.textStrokeWidth != b.textStrokeWidth)
@@ -472,10 +476,8 @@ public:
             return true;
 
         if (&a.inheritedData() != &b.inheritedData()) {
-            if (a.inheritedData().textAutosizingAdjustedLineHeight != b.inheritedData().textAutosizingAdjustedLineHeight
-                || a.inheritedData().lineHeight != b.inheritedData().lineHeight
-                || a.inheritedData().borderHorizontalSpacing != b.inheritedData().borderHorizontalSpacing
-                || a.inheritedData().borderVerticalSpacing != b.inheritedData().borderVerticalSpacing)
+            if (a.inheritedData().lineHeight != b.inheritedData().lineHeight
+                || a.inheritedData().textAutosizingAdjustedLineHeight != b.inheritedData().textAutosizingAdjustedLineHeight)
                 return true;
 
             if (a.inheritedData().fontData != b.inheritedData().fontData)

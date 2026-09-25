@@ -97,6 +97,7 @@
 #include "CSSShorthandSubstitutionValue.h"
 #include "CSSStringValue.h"
 #include "CSSSubstitutionValue.h"
+#include "CSSSymbolsFunctionValue.h"
 #include "CSSTextShadowPropertyValue.h"
 #include "CSSToLengthConversionData.h"
 #include "CSSTransformListValue.h"
@@ -126,7 +127,7 @@ static_assert(sizeof(CSSValue) == sizeof(SameSizeAsCSSValue), "CSS value should 
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(CSSValue);
 
-template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visitor&& visitor)
+template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESCAPE Visitor&& visitor)
 {
     using enum CSSValue::ClassType;
     switch (m_classType) {
@@ -284,6 +285,8 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSValuePair>(*this));
     case Substitution:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSubstitutionValue>(*this));
+    case SymbolsFunction:
+        return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSSymbolsFunctionValue>(*this));
     case View:
         return std::invoke(std::forward<Visitor>(visitor), uncheckedDowncast<CSSViewValue>(*this));
     case WebkitBoxReflect:
@@ -293,7 +296,7 @@ template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visit
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(Visitor&& visitor) const
+template<typename Visitor> constexpr decltype(auto) CSSValue::visitDerived(NOESCAPE Visitor&& visitor) const
 {
     return const_cast<CSSValue&>(*this).visitDerived([&](auto& value) {
         return std::invoke(std::forward<Visitor>(visitor), std::as_const(value));

@@ -68,12 +68,12 @@ public:
         uint32_t irLineIndex;
     };
 
-    IRDumpDebugInfo(CString&& name)
+    IRDumpDebugInfo(UTF8CString&& name)
         : functionName(WTF::move(name))
     {
     }
 
-    CString functionName;
+    UTF8CString functionName;
     Vector<IRLine> irLines;
     Vector<CodeEntry> codeEntries;
 };
@@ -88,12 +88,12 @@ public:
         Ref<SourceProvider> sourceProvider;
     };
 
-    SourceCodeDumpDebugInfo(CString&& name)
+    SourceCodeDumpDebugInfo(UTF8CString&& name)
         : functionName(WTF::move(name))
     {
     }
 
-    CString functionName;
+    UTF8CString functionName;
     Vector<CodeEntry> codeEntries;
 };
 
@@ -357,7 +357,7 @@ public:
     {
 ALLOW_NONLITERAL_FORMAT_BEGIN
         IGNORE_WARNINGS_BEGIN("format-security")
-        return finalizeCodeWithDisassemblyImpl(dumpDisassembly, simpleName, format, args...).template retagged<tag>();
+        return finalizeCodeWithDisassemblyImpl(dumpDisassembly, simpleName, format, WTF::logPrintfType(args)...).template retagged<tag>();
         IGNORE_WARNINGS_END
 ALLOW_NONLITERAL_FORMAT_END
     }

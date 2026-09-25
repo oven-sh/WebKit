@@ -38,6 +38,7 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 namespace IDBServer {
@@ -155,7 +156,7 @@ void IDBServer::openDatabase(const IDBOpenRequestData& requestData)
 
 void IDBServer::deleteDatabase(const IDBOpenRequestData& requestData)
 {
-    LOG(IndexedDB, "IDBServer::deleteDatabase - %s", requestData.databaseIdentifier().loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBServer::deleteDatabase - "_s << requestData.databaseIdentifier().loggingString());
     ASSERT(!isMainThread());
 
     auto connectionIdentifier = requestData.requestIdentifier().connectionIdentifier();
@@ -414,7 +415,7 @@ void IDBServer::commitTransaction(const IDBResourceIdentifier& transactionIdenti
 
 void IDBServer::didFinishHandlingVersionChangeTransaction(IDBDatabaseConnectionIdentifier databaseConnectionIdentifier, const IDBResourceIdentifier& transactionIdentifier)
 {
-    LOG(IndexedDB, "IDBServer::didFinishHandlingVersionChangeTransaction - %s", transactionIdentifier.loggingString().utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "IDBServer::didFinishHandlingVersionChangeTransaction - "_s << transactionIdentifier.loggingString());
     ASSERT(!isMainThread());
 
     if (RefPtr connection = m_databaseConnections.get(databaseConnectionIdentifier))
@@ -633,7 +634,7 @@ void IDBServer::closeAndDeleteDatabasesForOrigins(const Vector<SecurityOriginDat
 
 static void removeAllDatabasesForFullOriginPath(const String& originPath, WallTime modifiedSince)
 {
-    LOG(IndexedDB, "removeAllDatabasesForOriginPath with originPath %s", originPath.utf8().data());
+    LOG_WITH_STREAM(IndexedDB, stream << "removeAllDatabasesForOriginPath with originPath "_s << originPath);
     Vector<String> databaseNames = FileSystem::listDirectory(originPath);
 
     for (auto& databaseName : databaseNames) {

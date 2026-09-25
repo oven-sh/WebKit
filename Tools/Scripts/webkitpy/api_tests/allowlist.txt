@@ -368,7 +368,7 @@ TestWebKitAPI.Misc/ValueParametrizedTest
 TestWebKitAPI.MixedContentChecker
 TestWebKitAPI.MonospaceFontsTest
 TestWebKitAPI.NSResponderTests
-TestWebKitAPI.NSTextPlaceholder
+TestWebKitAPI.NSTextPlaceholderTests/insertAndRemoveTextPlaceholder(willInsertText:)
 TestWebKitAPI.NativeImageTests/AnyPixelBufferFormatTest
 TestWebKitAPI.Navigation
 TestWebKitAPI.Notification
@@ -425,7 +425,6 @@ TestWebKitAPI.TextCodec
 TestWebKitAPI.TextServicesTests
 TestWebKitAPI.TextStyleFontSize
 TestWebKitAPI.TimeRanges
-TestWebKitAPI.TimeZoneOverrideTest
 TestWebKitAPI.TouchEventTests
 TestWebKitAPI.TransformationMatrix
 TestWebKitAPI.U2fCommandConstructorTest
@@ -453,15 +452,36 @@ TestWebKitAPI.WKProcessPoolConfiguration
 TestWebKitAPI.WKScrollGeometry
 TestWebKitAPI.WKScrollViewTests
 TestWebKitAPI.WKWebExtension
-TestWebKitAPI.WKWebExtensionAPIAlarms
-TestWebKitAPI.WKWebExtensionAPICommands
-TestWebKitAPI.WKWebExtensionAPICookies.ChangedEvent
-TestWebKitAPI.WKWebExtensionAPICookies.ErrorsRead
-TestWebKitAPI.WKWebExtensionAPICookies.ErrorsWrite
-TestWebKitAPI.WKWebExtensionAPICookies.GetAllCookieStores
-TestWebKitAPI.WKWebExtensionAPICookies.GetAllCookieStoresWithPrivateAccess
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/clearAllAlarms()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/clearSingleAlarm()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/createAlarms()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/delayRepeating()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/delaySingleShot()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/errors()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/getAllAlarms()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/getSingleAlarm()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/removeListenerDuringEvent()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/unnamedAlarm()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/whenRepeating()
+TestWebKitAPI.WKWebExtensionAPIAlarmsTests/whenSingleShot()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/changedEvent()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/commandEvent()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/commandForEvent()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/executeActionCommand()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/getAllCommands()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/getAllCommandsEmptyManifest()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/getAllCommandsEmptyManifestNoActionName()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/performCommandAndPermissionsRequest()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/performCommandForEvent()
+TestWebKitAPI.WKWebExtensionAPICommandsTests/performMenuItem()
+TestWebKitAPI.WKWebExtensionAPICookiesTests/changedEvent()
+TestWebKitAPI.WKWebExtensionAPICookiesTests/errorsRead()
+TestWebKitAPI.WKWebExtensionAPICookiesTests/errorsWrite()
+TestWebKitAPI.WKWebExtensionAPICookiesTests/getAllCookieStores()
+TestWebKitAPI.WKWebExtensionAPICookiesTests/getAllCookieStoresWithPrivateAccess()
 TestWebKitAPI.WKWebExtensionAPIDOM
-TestWebKitAPI.WKWebExtensionAPIEvent
+TestWebKitAPI.WKWebExtensionAPIEventTests/errors()
+TestWebKitAPI.WKWebExtensionAPIEventTests/testEventListener()
 TestWebKitAPI.WKWebExtensionAPIExtension
 TestWebKitAPI.WKWebExtensionAPILocalization
 TestWebKitAPI.WKWebExtensionAPINamespace
@@ -470,8 +490,9 @@ TestWebKitAPI.WKWebExtensionController
 TestWebKitAPI.WKWebExtensionControllerConfiguration
 TestWebKitAPI.WKWebExtensionDataRecord
 TestWebKitAPI.WKWebExtensionMatchPattern
-TestWebKitAPI.WKWebExtensionTab
-TestWebKitAPI.WKWebExtensionWindow
+TestWebKitAPI.WKWebExtensionTabTests/openTabs()
+TestWebKitAPI.WKWebExtensionWindowTests/focusedWindow()
+TestWebKitAPI.WKWebExtensionWindowTests/openWindows()
 TestWebKitAPI.WKWebViewAutoFillTests
 TestWebKitAPI.WKWebViewCandidateTests
 TestWebKitAPI.WKWebViewConfiguration
@@ -1698,7 +1719,6 @@ TestWebKitAPI.PrivateClickMeasurement.ValidSourceNonce
 TestWebKitAPI.PrivateClickMeasurement.WellKnownURLs
 TestWebKitAPI.ProcessSwap.APIControlledProcessSwappingThenBackWithDelay
 TestWebKitAPI.ProcessSwap.APIControlledProcessSwappingThenBackWithoutDelay
-TestWebKitAPI.ProcessSwap.Back
 TestWebKitAPI.ProcessSwap.BackWithoutSuspendedPage
 TestWebKitAPI.ProcessSwap.Basic
 TestWebKitAPI.ProcessSwap.BasicWithAsyncSchemeHandler
@@ -1712,18 +1732,15 @@ TestWebKitAPI.ProcessSwap.CommittedURLAfterNavigatingBackToCOOP
 TestWebKitAPI.ProcessSwap.ContentModeInCaseOfCoopProcessSwap
 TestWebKitAPI.ProcessSwap.ContentModeInCaseOfPSONThenCoopProcessSwap
 TestWebKitAPI.ProcessSwap.CookieAccessAfterMultipleRedirects
-TestWebKitAPI.ProcessSwap.CrossSiteClientSideRedirectWithoutPSON
 TestWebKitAPI.ProcessSwap.CrossSiteLinkTargetBlankNoOpenerUsesNewProcess
 TestWebKitAPI.ProcessSwap.CrossSiteWindowOpenNoOpenerUsesNewProcess
 TestWebKitAPI.ProcessSwap.DelayedProcessLaunchDisabled
 TestWebKitAPI.ProcessSwap.LoadUnload
-TestWebKitAPI.ProcessSwap.LockdownModeEnabledByDefaultThenOptOut
 TestWebKitAPI.ProcessSwap.LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSetExplicitly1
 TestWebKitAPI.ProcessSwap.LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSetExplicitly2
 TestWebKitAPI.ProcessSwap.LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSetExplicitly3
 TestWebKitAPI.ProcessSwap.LockdownModeSystemSettingChangeDoesNotReloadViewsWhenModeIsSetExplicitly4
 TestWebKitAPI.ProcessSwap.MainFramesOnly
-TestWebKitAPI.ProcessSwap.MultitabCOOPSwapSameOriginProcessPool
 TestWebKitAPI.ProcessSwap.NavigateBackAfterCrossOriginClientRedirect
 TestWebKitAPI.ProcessSwap.NavigateBackAfterNavigatingAwayFromCOOP
 TestWebKitAPI.ProcessSwap.NavigateBackAfterNavigatingAwayFromCrossOriginOpenerPolicyUsingBackForwardCache
@@ -1776,8 +1793,6 @@ TestWebKitAPI.ProcessSwap.NoProcessSwapDueToRelatedView
 TestWebKitAPI.ProcessSwap.PSONRedirectionToExternal
 TestWebKitAPI.ProcessSwap.PageShowHide
 TestWebKitAPI.ProcessSwap.ProcessSwapDueToRelatedView
-TestWebKitAPI.ProcessSwap.QuickBackForwardNavigationWithPSON
-TestWebKitAPI.ProcessSwap.QuickBackForwardNavigationWithoutPSON
 TestWebKitAPI.ProcessSwap.ResponsePolicyDownloadAfterCOOPProcessSwap
 TestWebKitAPI.ProcessSwap.ReuseProcessAfterNavigatingFromAboutPage
 TestWebKitAPI.ProcessSwap.ReuseProcessAfterNavigatingToSameOriginThroughAboutPage
@@ -2877,39 +2892,38 @@ TestWebKitAPI.SmartLists.SingleLineMarkerDoesNotTriggerConversion
 TestWebKitAPI.StorageQuota.OriginQuotaSharedByCacheStorageAndIndexedDB
 TestWebKitAPI.StorageSiteValidation.StorageBlockingPolicyAllowAll
 TestWebKitAPI.TLSVersion.DidNegotiateModernTLS
-TestWebKitAPI.TextExtractionTests.AuthorShadowDOMText
-TestWebKitAPI.TextExtractionTests.BackgroundTextExtractionBlocksUserMediatedHTTPFallback
-TestWebKitAPI.TextExtractionTests.ClickInteractionWhileInBackground
-TestWebKitAPI.TextExtractionTests.ClickInteractionWithExtractionContext
-TestWebKitAPI.TextExtractionTests.ClickInteractionWithStalledDisplayLink
-TestWebKitAPI.TextExtractionTests.ClickInteractionWithTextOnly
-TestWebKitAPI.TextExtractionTests.DelayedSafeBrowsingWarningBlocksTextExtraction
-TestWebKitAPI.TextExtractionTests.ExtractionContextPrefersInteractiveElement
-TestWebKitAPI.TextExtractionTests.FilterOptions
-TestWebKitAPI.TextExtractionTests.FilterRedundantTextInLinks
-TestWebKitAPI.TextExtractionTests.HoverDoesNotClick
-TestWebKitAPI.TextExtractionTests.HoverInteractionWithExtractionContext
-TestWebKitAPI.TextExtractionTests.HoverInteractionWithTextOnly
-TestWebKitAPI.TextExtractionTests.InjectedBundle
-TestWebKitAPI.TextExtractionTests.InteractionDebugDescription
-TestWebKitAPI.TextExtractionTests.InvalidURLsAreSkipped
-TestWebKitAPI.TextExtractionTests.KeyPressInsertsCharactersInOrder
-TestWebKitAPI.TextExtractionTests.MinimalHTMLOutput
-TestWebKitAPI.TextExtractionTests.NodesToSkip
-TestWebKitAPI.TextExtractionTests.ReplacementStrings
-TestWebKitAPI.TextExtractionTests.RequestContainerJSHandleForNodeIdentifier
-TestWebKitAPI.TextExtractionTests.RequestContainerJSHandleForSearchTexts
-TestWebKitAPI.TextExtractionTests.RequestJSHandleForNodeIdentifier
-TestWebKitAPI.TextExtractionTests.RequestJSHandleForNodeIdentifierCaseSensitive
-TestWebKitAPI.TextExtractionTests.ResolveTargetNodeFromSelectorData
-TestWebKitAPI.TextExtractionTests.ResultOrigin
-TestWebKitAPI.TextExtractionTests.SafeBrowsingWarningBlocksTextExtraction
-TestWebKitAPI.TextExtractionTests.ScreenTimeBlocksTextExtraction
-TestWebKitAPI.TextExtractionTests.SelectPopupMenu
-TestWebKitAPI.TextExtractionTests.ShortenURLsWithTopHostName
-TestWebKitAPI.TextExtractionTests.SubframeInteractions
-TestWebKitAPI.TextExtractionTests.TargetNodeAndClientAttributes
-TestWebKitAPI.TextExtractionTests.VisibleTextOnly
+TestWebKitAPI.TextExtractionTests/authorShadowDOMText()
+TestWebKitAPI.TextExtractionTests/backgroundTextExtractionBlocksUserMediatedHTTPFallback()
+TestWebKitAPI.TextExtractionTests/clickInteractionWhileInBackground()
+TestWebKitAPI.TextExtractionTests/clickInteractionWithExtractionContext()
+TestWebKitAPI.TextExtractionTests/clickInteractionWithStalledDisplayLink()
+TestWebKitAPI.TextExtractionTests/clickInteractionWithTextOnly()
+TestWebKitAPI.TextExtractionTests/delayedSafeBrowsingWarningBlocksTextExtraction()
+TestWebKitAPI.TextExtractionTests/extractionContextPrefersInteractiveElement()
+TestWebKitAPI.TextExtractionTests/filterOptions()
+TestWebKitAPI.TextExtractionTests/filterRedundantTextInLinks()
+TestWebKitAPI.TextExtractionTests/hoverDoesNotClick()
+TestWebKitAPI.TextExtractionTests/hoverInteractionWithExtractionContext()
+TestWebKitAPI.TextExtractionTests/hoverInteractionWithTextOnly()
+TestWebKitAPI.TextExtractionTests/interactionDebugDescription()
+TestWebKitAPI.TextExtractionTests/invalidURLsAreSkipped()
+TestWebKitAPI.TextExtractionTests/keyPressInsertsCharactersInOrder()
+TestWebKitAPI.TextExtractionTests/minimalHTMLOutput()
+TestWebKitAPI.TextExtractionTests/nodesToSkip()
+TestWebKitAPI.TextExtractionTests/replacementStrings()
+TestWebKitAPI.TextExtractionTests/requestContainerJSHandleForNodeIdentifier()
+TestWebKitAPI.TextExtractionTests/requestContainerJSHandleForSearchTexts()
+TestWebKitAPI.TextExtractionTests/requestJSHandleForNodeIdentifier()
+TestWebKitAPI.TextExtractionTests/requestJSHandleForNodeIdentifierCaseSensitive()
+TestWebKitAPI.TextExtractionTests/resolveTargetNodeFromSelectorData()
+TestWebKitAPI.TextExtractionTests/resultOrigin()
+TestWebKitAPI.TextExtractionTests/safeBrowsingWarningBlocksTextExtraction()
+TestWebKitAPI.TextExtractionTests/screenTimeBlocksTextExtraction()
+TestWebKitAPI.TextExtractionTests/selectPopupMenu()
+TestWebKitAPI.TextExtractionTests/shortenURLsWithTopHostName()
+TestWebKitAPI.TextExtractionTests/subframeInteractions()
+TestWebKitAPI.TextExtractionTests/targetNodeAndClientAttributes()
+TestWebKitAPI.TextExtractionTests/visibleTextOnly()
 TestWebKitAPI.TextManipulation.CompleteTextManipulationAddsOverflowHiddenToAvoidBreakingLayout
 TestWebKitAPI.TextManipulation.CompleteTextManipulationAvoidCrashingWhenContentIsRemoved
 TestWebKitAPI.TextManipulation.CompleteTextManipulationCanHandleSubsetOfItemsToFail
@@ -3002,6 +3016,10 @@ TestWebKitAPI.TextManipulation.StartTextManipulationSupportsLegacyDelegateCallba
 TestWebKitAPI.TextManipulation.StartTextManipulationTreatsInlineBlockLinksAndButtonsAndSpansAsParagraphs
 TestWebKitAPI.TextManipulation.StartTextManipulationTreatsLinksInNavigationElementsAsParagraphs
 TestWebKitAPI.TextManipulation.StartTextManipulationTreatsNestedInlineBlockListItemsAndLinksAsParagraphs
+TestWebKitAPI.TextSizeTests/textSize()
+TestWebKitAPI.TextWidthTests/textWidth()
+TestWebKitAPI.TimeZoneOverrideTests/timeZoneOverride()
+TestWebKitAPI.TimeZoneOverrideTests/timeZoneOverrideInWorkers()
 TestWebKitAPI.TopContentInset.AutomaticAdjustment
 TestWebKitAPI.TopContentInset.AutomaticAdjustmentDisabled
 TestWebKitAPI.TopContentInset.AutomaticAdjustmentDoesNotAffectInsetViews
@@ -3626,8 +3644,6 @@ TestWebKitAPI.WebKit.SystemPreviewUnknownMIMEType
 TestWebKitAPI.WebKit.TabDoesNotTakeFocusFromEditableWebView
 TestWebKitAPI.WebKit.TerminateAllProcessesDuringLaunch
 TestWebKitAPI.WebKit.TerminateTwice
-TestWebKitAPI.WebKit.TextSize
-TestWebKitAPI.WebKit.TextWidth
 TestWebKitAPI.WebKit.TintColorAffectsInteractionColor
 TestWebKitAPI.WebKit.TryClose
 TestWebKitAPI.WebKit.TryWindowOpenJavascriptURLInIframeSingleWindowApp
@@ -5083,45 +5099,45 @@ TestWebKitAPI._WKDownload.SystemPreviewUSDZBlobNaming
 [ ios ] TestWebKitAPI.WKUserContentController.UserStyleSheetSpecificityLevelUser
 [ ios ] TestWebKitAPI.WKUserContentController.WebKitSubmitEvent
 [ ios ] TestWebKitAPI.WKUserContentController.WorldLifetime
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.BrowserAction
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.ClickedEvent
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.ClickedEventAndPermissionsRequest
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.EmptyAction
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.Errors
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.GetCurrentTabAndWindowFromPopupPage
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.HasUnreadBadgeText
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.NavigationOpensInNewTab
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.PageAction
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.PresentPopupForAction
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetDefaultActionProperties
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconMultipleSizes
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconMultipleSizesRelative
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconSinglePath
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconSinglePathRelative
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconSymbolIconsDictionary
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconSymbolSinglePath
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconThrowsWithNoValidVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithAnySizeVariantAndSVGDataURL
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithBadDataURL
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithBadImageData
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithBadPath
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithDataURL
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithImageData
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithImageDataAndVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithMixedValidAndInvalidVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithMultipleDataURLs
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithMultipleImageDataSizes
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithNullImageData
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithNullPath
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithNullVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithSymbolVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SetIconWithVariants
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.SubframeNavigation
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.TabSpecificActionProperties
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.UpdateTabFromPopupPage
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.WindowOpenOpensInNewWindow
-[ ios ] TestWebKitAPI.WKWebExtensionAPIAction.WindowSpecificActionProperties
-[ ios ] TestWebKitAPI.WKWebExtensionAPICommands.PerformKeyCommand
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/browserAction()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/clickedEvent()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/clickedEventAndPermissionsRequest()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/emptyAction()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/errors()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/getCurrentTabAndWindowFromPopupPage()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/hasUnreadBadgeText()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/navigationOpensInNewTab()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/pageAction()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/presentPopupForAction()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setDefaultActionProperties()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconMultipleSizes()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconMultipleSizesRelative()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconSinglePath()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconSinglePathRelative()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconSymbolIconsDictionary()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconSymbolSinglePath()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconThrowsWithNoValidVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithAnySizeVariantAndSVGDataURL()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithBadDataURL()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithBadImageData()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithBadPath()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithDataURL()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithImageData()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithImageDataAndVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithMixedValidAndInvalidVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithMultipleDataURLs()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithMultipleImageDataSizes()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithNullImageData()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithNullPath()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithNullVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithSymbolVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/setIconWithVariants()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/subframeNavigation()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/tabSpecificActionProperties()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/updateTabFromPopupPage()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/windowOpenOpensInNewWindow()
+[ ios ] TestWebKitAPI.WKWebExtensionAPIActionTests/windowSpecificActionProperties()
+[ ios ] TestWebKitAPI.WKWebExtensionAPICommandsTests/performKeyCommand()
 [ ios ] TestWebKitAPI.WKWebExtensionAPIDeclarativeNetRequest.BlockedLoadTest
 [ ios ] TestWebKitAPI.WKWebExtensionAPIDeclarativeNetRequest.DynamicRules
 [ ios ] TestWebKitAPI.WKWebExtensionAPIDeclarativeNetRequest.GetDynamicRules

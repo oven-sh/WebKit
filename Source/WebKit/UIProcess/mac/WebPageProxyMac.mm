@@ -205,11 +205,12 @@ void WebPageProxy::searchTheWeb(const String& string)
 void WebPageProxy::windowAndViewFramesChanged(const FloatRect& viewFrameInWindowCoordinates, const FloatPoint& accessibilityViewCoordinates)
 {
     // In case the UI client overrides getWindowFrame(), we call it here to make sure we send the appropriate window frame.
-    m_uiClient->windowFrame(*this, [this, protectedThis = Ref { *this }, viewFrameInWindowCoordinates, accessibilityViewCoordinates] (FloatRect windowFrameInScreenCoordinates) {
+    m_uiClient->windowFrame(*this, [this, protectedThis = Ref { *this }, viewFrameInWindowCoordinates, accessibilityViewCoordinates] (std::optional<FloatRect> frameFromUIClient) {
         RefPtr pageClient = this->pageClient();
         if (!pageClient)
             return;
 
+        FloatRect windowFrameInScreenCoordinates = windowFrameRespectingHostingWindow(*pageClient, frameFromUIClient);
         FloatRect windowFrameInUnflippedScreenCoordinates = pageClient->convertToUserSpace(windowFrameInScreenCoordinates);
 
         m_viewWindowCoordinates = makeUnique<ViewWindowCoordinates>();
@@ -604,9 +605,9 @@ static NSString *temporaryPDFDirectoryPath()
     static NeverDestroyed path = [] {
         RetainPtr temporaryDirectory = NSTemporaryDirectory();
         RetainPtr temporaryDirectoryTemplate = [temporaryDirectory stringByAppendingPathComponent:@"WebKitPDFs-XXXXXX"];
-        CString templateRepresentation = [temporaryDirectoryTemplate fileSystemRepresentation];
-        if (mkdtemp(templateRepresentation.mutableSpanIncludingNullTerminator().data()))
-            return adoptNS((NSString *)[[[NSFileManager defaultManager] stringWithFileSystemRepresentation:templateRepresentation.data() length:templateRepresentation.length()] copy]);
+        UTF8CString templateRepresentation { byteCast<char8_t>([temporaryDirectoryTemplate fileSystemRepresentation]) };
+        if (mkdtemp(byteCast<char>(templateRepresentation.mutableSpanIncludingNullTerminator()).data()))
+            return adoptNS((NSString *)[[[NSFileManager defaultManager] stringWithFileSystemRepresentation:templateRepresentation.legacyCStringPointer() length:templateRepresentation.length()] copy]);
         return RetainPtr<NSString> { };
     }();
     return path.get().get();
@@ -624,14 +625,14 @@ static RetainPtr<NSString> pathToPDFOnDisk(const String& suggestedFilename)
 
     RetainPtr fileManager = [NSFileManager defaultManager];
     if ([fileManager fileExistsAtPath:path.get()]) {
-        auto [fileHandle, pathTemplateRepresentation] = FileSystem::createTemporaryFileInDirectory(pdfDirectoryPath.get(), makeString('-', suggestedFilename));
+        auto [fileHandle, temporaryFilePath] = FileSystem::createTemporaryFileInDirectory(pdfDirectoryPath.get(), makeString('-', suggestedFilename));
         if (!fileHandle) {
-            WTFLogAlways("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8().data());
+            SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", suggestedFilename.utf8());
             return nil;
         }
 
         fileHandle = { };
-        path = [fileManager stringWithFileSystemRepresentation:pathTemplateRepresentation.data() length:pathTemplateRepresentation.length()];
+        path = temporaryFilePath.createNSString();
     }
 
     // Reject any path that resolves outside the temporary PDF directory.
@@ -675,7 +676,7 @@ void WebPageProxy::savePDFToTemporaryFolderAndOpenWithNativeApplication(const St
     RetainPtr nsData = toNSDataNoCopy(data, FreeWhenDone::No);
 
     if (![[NSFileManager defaultManager] createFileAtPath:nsPath.get() contents:nsData.get() attributes:fileAttributes.get()]) {
-        WTFLogAlways("Cannot create PDF file in the temporary directory (%s).", sanitizedFilename.utf8().data());
+        SAFE_WTFLOGALWAYS("Cannot create PDF file in the temporary directory (%s).", sanitizedFilename.utf8());
         return;
     }
     auto originatingURLString = frameInfo.request.url().string();

@@ -308,7 +308,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         AsyncFuncParametersTryCatchInfo& info = m_asyncFuncParametersTryCatchInfo.value();
         ASSERT(info.catchStartLabel && info.thrownValue);
         emitLabel(*info.catchStartLabel.get());
-        JSTextPosition divot(m_scopeNode->firstLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset());
+        JSTextPosition divot(m_scopeNode->startOffset());
         if (promiseRegister()) {
             RefPtr<RegisterID> rejectPromise = moveLinkTimeConstant(nullptr, LinkTimeConstant::rejectPromiseWithFirstResolvingFunctionCallCheck);
             CallArguments args(*this, nullptr, 2);
@@ -915,7 +915,11 @@ IGNORE_GCC_WARNINGS_END
                 if (privateBrandRequirement() == PrivateBrandRequirement::Needed)
                     emitInstallPrivateBrand(&m_thisRegister);
 
-                emitInstanceFieldInitializationIfNeeded(&m_thisRegister, &m_calleeRegister, m_scopeNode->position(), m_scopeNode->position(), m_scopeNode->position());
+                {
+                    // The fields are initialized where the constructor starts. position() is where it ends.
+                    JSTextPosition constructorStart(m_scopeNode->startStartOffset());
+                    emitInstanceFieldInitializationIfNeeded(&m_thisRegister, &m_calleeRegister, constructorStart, constructorStart, constructorStart);
+                }
                 break;
             case ConstructorKind::Extends:
                 moveEmptyValue(&m_thisRegister);
@@ -1666,6 +1670,11 @@ void BytecodeGenerator::emitJumpIfNotFunctionCall(RegisterID* cond, Label& targe
 void BytecodeGenerator::emitJumpIfNotFunctionApply(RegisterID* cond, Label& target)
 {
     OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::applyFunction), target.bind(this));
+}
+
+void BytecodeGenerator::emitJumpIfNotReflectConstruct(RegisterID* cond, Label& target)
+{
+    OpJneqPtr::emit(this, cond, moveLinkTimeConstant(nullptr, LinkTimeConstant::reflectConstructFunction), target.bind(this));
 }
 
 void BytecodeGenerator::emitJumpIfNotEvalFunction(RegisterID* cond, Label& target)
@@ -3724,7 +3733,7 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     SourceParseMode parseMode = SourceParseMode::ClassFieldInitializerMode;
     ConstructAbility constructAbility = ConstructAbility::CannotConstruct;
 
-    FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, 0, 0, ImplementationVisibility::Private, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
+    FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, ImplementationVisibility::Private, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
@@ -4302,7 +4311,7 @@ void BytecodeGenerator::emitDebugHook(ExpressionNode* expr, RegisterID* data)
 
 void BytecodeGenerator::emitWillLeaveCallFrameDebugHook()
 {
-    emitDebugHook(WillLeaveCallFrame, JSTextPosition(m_scopeNode->lastLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset()));
+    emitDebugHook(WillLeaveCallFrame, m_scopeNode->position());
 }
 
 void BytecodeGenerator::pushFinallyControlFlowScope(FinallyContext& finallyContext)
@@ -4916,7 +4925,7 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
             emitLabel(afterInit.get());
         }
 
-        JSTextPosition divot(m_scopeNode->firstLine(), m_scopeNode->startOffset(), m_scopeNode->lineStartOffset());
+        JSTextPosition divot(m_scopeNode->startOffset());
 
         // Async disposal state (per DisposeResources spec): needsAwait / hasAwaited.
         // Only allocated when this scope contains at least one await using declaration.
@@ -5002,9 +5011,9 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
                 emitLoad(hasAwaited.get(), jsBoolean(true));
                 emitAwait(result.get(), result.get(), divot);
 
+                emitJump(skipSlot.get());
                 Ref<Label> trySlotEnd = newEmittedLabel();
                 popTry(trySlotData, trySlotEnd.get());
-                emitJump(skipSlot.get());
 
                 emitSuppressedErrorCatch(trySlotData, catchLabel.get());
             } else {
@@ -5030,9 +5039,9 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
                 move(disposeArgs.thisRegister(), slot.value.get());
                 emitCallIgnoreResult(newTemporary(), slot.method.get(), NoExpectedFunction, disposeArgs, divot, divot, divot, DebuggableCall::No);
 
+                emitJump(skipSlot.get());
                 Ref<Label> trySlotEnd = newEmittedLabel();
                 popTry(trySlotData, trySlotEnd.get());
-                emitJump(skipSlot.get());
 
                 emitSuppressedErrorCatch(trySlotData, catchLabel.get());
             }

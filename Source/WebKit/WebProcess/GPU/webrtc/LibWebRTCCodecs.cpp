@@ -37,6 +37,7 @@
 #include "RemoteVideoFrameProxy.h"
 #include "WebProcess.h"
 #include <WebCore/CVUtilities.h>
+#include <WebCore/GPUVideoEncoder.h>
 #include <WebCore/LibWebRTCDav1dDecoder.h>
 #include <WebCore/LibWebRTCMacros.h>
 #include <WebCore/LibWebRTCVideoFrameUtilities.h>
@@ -44,6 +45,7 @@
 #include <WebCore/Page.h>
 #include <WebCore/PlatformMediaSessionManager.h>
 #include <WebCore/Settings.h>
+#include <WebCore/SharedBuffer.h>
 #include <WebCore/VP9UtilitiesCocoa.h>
 #include <WebCore/VideoFrameCV.h>
 #include <wtf/MainThread.h>
@@ -448,13 +450,20 @@ int32_t LibWebRTCCodecs::decodeWebRTCFrame(Decoder& decoder, int64_t timeStamp, 
     return promise ? WEBRTC_VIDEO_CODEC_OK : WEBRTC_VIDEO_CODEC_ERROR;
 }
 
-Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrame(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data)
+Ref<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrame(Decoder& decoder, int64_t timeStamp, Ref<WebCore::SharedBuffer>&& data)
 {
-    auto promise = decodeFrameInternal(decoder, timeStamp, data, 0, 0);
+    auto promise = decodeFrameInternal(decoder, timeStamp, WTF::move(data), 0, 0);
     return promise ? promise.releaseNonNull() : FramePromise::createAndReject("Decoding task did not complete"_s);
 }
 
-RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrameInternal(Decoder& decoder, int64_t timeStamp, std::span<const uint8_t> data, uint16_t width, uint16_t height)
+static std::span<const uint8_t> frameDataSpan(std::span<const uint8_t> data) { return data; }
+static std::span<const uint8_t> frameDataSpan(const Ref<WebCore::SharedBuffer>& data) { return data->span(); }
+
+static Ref<WebCore::SharedBuffer> frameDataBuffer(std::span<const uint8_t> data) { return WebCore::SharedBuffer::create(data); }
+static Ref<WebCore::SharedBuffer> frameDataBuffer(Ref<WebCore::SharedBuffer>&& data) { return WTF::move(data); }
+
+template<typename Data>
+RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrameInternal(Decoder& decoder, int64_t timeStamp, Data&& data, uint16_t width, uint16_t height)
 {
     Locker locker { m_connectionLock };
     if (decoder.hasError) {
@@ -466,11 +475,11 @@ RefPtr<LibWebRTCCodecs::FramePromise> LibWebRTCCodecs::decodeFrameInternal(Decod
         FramePromise::AutoRejectProducer producer;
         auto promise = producer.promise();
 
-        decoder.pendingFrames.append({ timeStamp, data, width, height, WTF::move(producer) });
+        decoder.pendingFrames.append({ timeStamp, frameDataBuffer(std::forward<Data>(data)), width, height, WTF::move(producer) });
         return promise;
     }
 
-    return sendFrameToDecode(decoder, timeStamp, data, width, height);
+    return sendFrameToDecode(decoder, timeStamp, frameDataSpan(data), width, height);
 }
 
 void LibWebRTCCodecs::registerDecodeFrameCallback(Decoder& decoder, void* decodedImageCallback)
@@ -815,7 +824,40 @@ RefPtr<GenericPromise> LibWebRTCCodecs::setEncodeRates(Encoder& encoder, uint32_
     });
 }
 
-void LibWebRTCCodecs::completedEncoding(VideoEncoderIdentifier identifier, std::span<const uint8_t> data, const webrtc::WebKitEncodedFrameInfo& info)
+static webrtc::WebKitEncodedVideoRotation toWebKitEncodedVideoRotation(WebCore::VideoFrameRotation rotation)
+{
+    switch (rotation) {
+    case WebCore::VideoFrameRotation::None:
+        return webrtc::WebKitEncodedVideoRotation::kVideoRotation_0;
+    case WebCore::VideoFrameRotation::UpsideDown:
+        return webrtc::WebKitEncodedVideoRotation::kVideoRotation_180;
+    case WebCore::VideoFrameRotation::Right:
+        return webrtc::WebKitEncodedVideoRotation::kVideoRotation_90;
+    case WebCore::VideoFrameRotation::Left:
+        return webrtc::WebKitEncodedVideoRotation::kVideoRotation_270;
+    }
+    ASSERT_NOT_REACHED();
+    return webrtc::WebKitEncodedVideoRotation::kVideoRotation_0;
+}
+
+static webrtc::WebKitEncodedFrameInfo toWebKitEncodedFrameInfo(const WebCore::GPUVideoEncoderFrameInfo& info)
+{
+    return {
+        .width = info.width,
+        .height = info.height,
+        .timeStamp = info.timeStamp,
+        .duration = info.duration,
+        .captureTimeMS = info.captureTimeMS,
+        .frameType = info.isKeyFrame ? webrtc::VideoFrameType::kVideoFrameKey : webrtc::VideoFrameType::kVideoFrameDelta,
+        .rotation = toWebKitEncodedVideoRotation(info.rotation),
+        .contentType = info.isScreenshare ? webrtc::VideoContentType::SCREENSHARE : webrtc::VideoContentType::UNSPECIFIED,
+        .completeFrame = true,
+        .qp = info.qp,
+        .temporalIndex = info.temporalIndex ? static_cast<int>(*info.temporalIndex) : -1,
+    };
+}
+
+void LibWebRTCCodecs::completedEncoding(VideoEncoderIdentifier identifier, std::span<const uint8_t> data, const WebCore::GPUVideoEncoderFrameInfo& info)
 {
     assertIsCurrent(workQueue());
 
@@ -830,15 +872,16 @@ void LibWebRTCCodecs::completedEncoding(VideoEncoderIdentifier identifier, std::
     Locker locker { AdoptLock, encoder->encodedImageCallbackLock };
 
     if (encoder->encoderCallback) {
-        auto temporalIndex = info.temporalIndex >= 0 ? std::make_optional<unsigned>(info.temporalIndex) : std::nullopt;
-        encoder->encoderCallback(data, info.frameType == webrtc::VideoFrameType::kVideoFrameKey, info.timeStamp, info.duration, temporalIndex);
+        auto temporalIndex = info.temporalIndex ? std::make_optional<unsigned>(*info.temporalIndex) : std::nullopt;
+        encoder->encoderCallback(data, info.isKeyFrame, info.timeStamp, info.duration, temporalIndex);
         return;
     }
 
     if (!encoder->encodedImageCallback)
         return;
 
-    webrtc::encoderVideoTaskComplete(encoder->encodedImageCallback, toWebRTCCodecType(encoder->type), data.data(), data.size(), info);
+    auto webKitInfo = toWebKitEncodedFrameInfo(info);
+    webrtc::encoderVideoTaskComplete(encoder->encodedImageCallback, toWebRTCCodecType(encoder->type), data.data(), data.size(), webKitInfo);
 }
 
 void LibWebRTCCodecs::setEncodingConfiguration(WebKit::VideoEncoderIdentifier identifier, std::span<const uint8_t> description, std::optional<WebCore::PlatformVideoColorSpace> colorSpace)
@@ -963,7 +1006,7 @@ void LibWebRTCCodecs::setDecoderConnection(Decoder& decoder, RefPtr<IPC::Connect
     decoder.connection = WTF::move(connection);
     auto frames = std::exchange(decoder.pendingFrames, { });
     for (auto& frame : frames)
-        sendFrameToDecode(decoder, frame.timeStamp, frame.data.span(), frame.width, frame.height)->chainTo(WTF::move(frame.producer));
+        sendFrameToDecode(decoder, frame.timeStamp, protect(frame.data)->span(), frame.width, frame.height)->chainTo(WTF::move(frame.producer));
 }
 
 }

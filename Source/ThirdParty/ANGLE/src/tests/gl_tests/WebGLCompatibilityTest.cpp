@@ -6,6 +6,8 @@
 
 // WebGLCompatibilityTest.cpp : Tests of the GL_ANGLE_webgl_compatibility extension.
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
@@ -1405,7 +1407,7 @@ TEST_P(WebGLCompatibilityTest, FramebufferAttachmentSizeMismatch)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[0], 0);
 
     ASSERT_GL_NO_ERROR();
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLRenderbuffer renderbuffer;
     glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
@@ -1434,7 +1436,7 @@ TEST_P(WebGLCompatibilityTest, FramebufferAttachmentSizeMismatch)
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0);
 
         ASSERT_GL_NO_ERROR();
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 3, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
@@ -2208,7 +2210,7 @@ void main()
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture1, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texture2, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLenum drawbuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     glDrawBuffers(2, drawbuffers);
@@ -2655,7 +2657,7 @@ void main() {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     ANGLE_GL_PROGRAM(program, kVS, kFS);
 
@@ -2721,7 +2723,7 @@ void main() {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     ANGLE_GL_PROGRAM(program, kVS, kFS);
 
@@ -2829,7 +2831,7 @@ void main() {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     // Texture is still a valid name in context2.
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     // There is no rendering feedback loop at this point.
 
     glDisable(GL_BLEND);
@@ -2950,7 +2952,7 @@ void WebGLCompatibilityTest::drawBuffersEXTFeedbackLoop(GLuint program,
     glDrawBuffersEXT(2, drawBuffers.data());
 
     // Make sure framebuffer is complete before feedback loop detection
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     drawQuad(program, "aPosition", 0.5f, 1.0f, true);
 
@@ -3058,7 +3060,7 @@ TEST_P(WebGLCompatibilityTest, TextureCopyingFeedbackLoops)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
     // framebuffer should be FRAMEBUFFER_COMPLETE.
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     ASSERT_GL_NO_ERROR();
 
     // testing copyTexImage2D
@@ -3119,7 +3121,7 @@ TEST_P(HardenedContextTest, TextureCopyingFeedbackLoops)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
     // framebuffer should be FRAMEBUFFER_COMPLETE.
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     ASSERT_GL_NO_ERROR();
 
     // testing copyTexImage2D
@@ -3183,7 +3185,7 @@ TEST_P(WebGLCompatibilityTest, CubeTextureCopyingFeedbackLoops)
                            texture, 0);
 
     // framebuffer should be FRAMEBUFFER_COMPLETE.
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     ASSERT_GL_NO_ERROR();
 
     // testing copyTexImage2D
@@ -3311,7 +3313,7 @@ void WebGLCompatibilityTest::drawBuffersFeedbackLoop(GLuint program,
     glDrawBuffers(2, drawBuffers.data());
 
     // Make sure framebuffer is complete before feedback loop detection
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     drawQuad(program, "aPosition", 0.5f, 1.0f, true);
 
@@ -3868,12 +3870,12 @@ TEST_P(WebGLCompatibilityTest, FramebufferFloatColorAttachment)
     GLFramebuffer fbo1;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo1);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture1, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLFramebuffer fbo2;
     glBindFramebuffer(GL_FRAMEBUFFER, fbo2);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture2, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     glDrawArrays(GL_POINTS, 0, 1);
     EXPECT_GL_ERROR(GL_INVALID_OPERATION);
 
@@ -3888,7 +3890,7 @@ TEST_P(WebGLCompatibilityTest, FramebufferFloatColorAttachment)
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0,
                            0);  // test unbind
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture2, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     glDrawArrays(GL_POINTS, 0, 1);
     EXPECT_GL_ERROR(GL_INVALID_OPERATION);
@@ -3986,7 +3988,7 @@ void main()
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture1, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, texture2, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     GLenum drawbuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     if (isWebGL2)
@@ -4018,7 +4020,7 @@ void main()
         // WebGL 1 will report a FRAMEBUFFER_UNSUPPORTED for one unsigned_byte and one float
         // attachment bound to one FBO at the same time
         glDrawBuffers(1, drawbuffers);
-        ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         glDrawArrays(GL_POINTS, 0, 1);
         EXPECT_GL_NO_ERROR();
         glDrawBuffers(2, drawbuffers);
@@ -4690,7 +4692,7 @@ void main() {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     ANGLE_GL_PROGRAM(program, kVS, kFS);
 
@@ -4769,7 +4771,7 @@ void main() {
     // Test rendering and sampling feedback loop for depth buffer
     glBindTexture(GL_TEXTURE_2D, tex1);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex1, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
     // The same image is used as depth buffer during rendering.
     glEnable(GL_DEPTH_TEST);
@@ -4793,7 +4795,7 @@ void main() {
     glBindTexture(GL_TEXTURE_2D, tex2);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, tex2, 0);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     constexpr GLint stencilClearValue = 0x40;
     glClearBufferiv(GL_STENCIL, 0, &stencilClearValue);
 
@@ -5501,7 +5503,7 @@ TEST_P(WebGLCompatibilityTest, DrawBuffers)
     ANGLE_SKIP_TEST_IF(maxDrawBuffers < 4);
 
     // Clears all the renderbuffers to red.
-    auto ClearEverythingToRed = [](GLRenderbuffer *renderbuffers) {
+    auto ClearEverythingToRed = [](const std::array<GLRenderbuffer, 4> &renderbuffers) {
         GLFramebuffer clearFBO;
         glBindFramebuffer(GL_FRAMEBUFFER, clearFBO);
 
@@ -5509,14 +5511,15 @@ TEST_P(WebGLCompatibilityTest, DrawBuffers)
         for (int i = 0; i < 4; ++i)
         {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                      ANGLE_UNSAFE_TODO(renderbuffers[i]));
+                                      renderbuffers[i]);
             glClear(GL_COLOR_BUFFER_BIT);
         }
         ASSERT_GL_NO_ERROR();
     };
 
     // Checks that the renderbuffers specified by mask have the correct color
-    auto CheckColors = [](GLRenderbuffer *renderbuffers, int mask, GLColor color) {
+    auto CheckColors = [](const std::array<GLRenderbuffer, 4> &renderbuffers, int mask,
+                          GLColor color) {
         GLFramebuffer readFBO;
         glBindFramebuffer(GL_FRAMEBUFFER, readFBO);
 
@@ -5525,7 +5528,7 @@ TEST_P(WebGLCompatibilityTest, DrawBuffers)
             if (mask & (1 << attachmentIndex))
             {
                 glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
-                                          ANGLE_UNSAFE_TODO(renderbuffers[attachmentIndex]));
+                                          renderbuffers[attachmentIndex]);
                 EXPECT_PIXEL_COLOR_EQ(0, 0, color) << "attachment " << attachmentIndex;
             }
         }
@@ -5548,13 +5551,13 @@ TEST_P(WebGLCompatibilityTest, DrawBuffers)
     GLFramebuffer drawFBO;
     glBindFramebuffer(GL_FRAMEBUFFER, drawFBO);
 
-    GLRenderbuffer renderbuffers[4];
+    std::array<GLRenderbuffer, 4> renderbuffers;
     for (int i = 0; i < 4; ++i)
     {
-        glBindRenderbuffer(GL_RENDERBUFFER, ANGLE_UNSAFE_TODO(renderbuffers[i]));
+        glBindRenderbuffer(GL_RENDERBUFFER, renderbuffers[i]);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA4, 1, 1);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_RENDERBUFFER,
-                                  ANGLE_UNSAFE_TODO(renderbuffers[i]));
+                                  renderbuffers[i]);
     }
 
     ASSERT_GL_NO_ERROR();
@@ -6992,13 +6995,14 @@ TEST_P(WebGL2CompatibilityTest, ETC2EACFormats)
 // Test that GL_HALF_FLOAT_OES type is rejected by WebGL 2.0 contexts.
 TEST_P(WebGL2CompatibilityTest, HalfFloatOesType)
 {
-    const std::array<std::pair<GLenum, GLenum>, 6> formats = {{{GL_R16F, GL_RED},
-                                                               {GL_RG16F, GL_RG},
-                                                               {GL_RGB16F, GL_RGB},
-                                                               {GL_RGBA16F, GL_RGBA},
-                                                               {GL_R11F_G11F_B10F, GL_RGB},
-                                                               {GL_RGB9_E5, GL_RGB}}};
-    for (const auto &fmt : formats)
+    static constexpr std::array<std::pair<GLenum, GLenum>, 6> kFormats = {
+        {{GL_R16F, GL_RED},
+         {GL_RG16F, GL_RG},
+         {GL_RGB16F, GL_RGB},
+         {GL_RGBA16F, GL_RGBA},
+         {GL_R11F_G11F_B10F, GL_RGB},
+         {GL_RGB9_E5, GL_RGB}}};
+    for (const auto &fmt : kFormats)
     {
         {
             GLTexture tex;
@@ -7372,10 +7376,10 @@ void main(void) {
 
     GLBuffer buffer;
     glBindBuffer(GL_ARRAY_BUFFER, buffer);
-    std::array<int8_t, 12> data = {
+    static constexpr std::array<int8_t, 12> kData = {
         1,
     };
-    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(data[0]), data.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, kData.size() * sizeof(kData[0]), kData.data(), GL_STATIC_DRAW);
 
     ANGLE_GL_PROGRAM(program, kVS, kFS);
     glBindAttribLocation(program, 0, "attr1");
@@ -7499,14 +7503,14 @@ void main()
     ANGLE_GL_PROGRAM(program, kVS, kFS);
     glUseProgram(program);
 
-    const GLint attrLocations[4] = {
+    const std::array<GLint, 4> attrLocations = {
         glGetAttribLocation(program, "attr1"),
         glGetAttribLocation(program, "attr2"),
         glGetAttribLocation(program, "attr3"),
         glGetAttribLocation(program, "attr4"),
     };
 
-    GLBuffer buffers[4];
+    std::array<GLBuffer, 4> buffers;
 
     // Set up all the buffers as such:
     //
@@ -7514,27 +7518,27 @@ void main()
     // Buffer 2: 16 bytes + (offset) 212
     // Buffer 3: 128 bytes + (offset) 76
     // Buffer 4: 96 bytes + (offset) 52
-    constexpr GLsizei kBufferSizes[4] = {
+    static constexpr std::array<GLsizei, 4> kBufferSizes = {
         64,
         16,
         128,
         96,
     };
-    constexpr GLsizei kBufferOffsets[4] = {
+    static constexpr std::array<GLsizei, 4> kBufferOffsets = {
         124,
         212,
         76,
         52,
     };
     // Attribute component count corresponding to the shader
-    constexpr GLint kAttrComponents[4] = {
+    static constexpr std::array<GLint, 4> kAttrComponents = {
         4,
         2,
         4,
         3,
     };
     // Attribute types
-    constexpr GLenum kAttrTypes[4] = {
+    static constexpr std::array<GLenum, 4> kAttrTypes = {
         GL_SHORT,
         GL_BYTE,
         GL_FLOAT,
@@ -7550,7 +7554,7 @@ void main()
     //   drawn from this buffer.
     // - Buffer 4 has 96 bytes, each attribute is 6 bytes.  With a stride of 8, 12 vertices can be
     //   drawn from this buffer.
-    constexpr GLsizei kAttrStrides[4] = {
+    static constexpr std::array<GLsizei, 4> kAttrStrides = {
         12,
         0,
         20,
@@ -7559,15 +7563,12 @@ void main()
 
     for (int i = 0; i < 4; ++i)
     {
-        ANGLE_UNSAFE_TODO({
-            glBindBuffer(GL_ARRAY_BUFFER, buffers[i]);
-            glBufferData(GL_ARRAY_BUFFER, kBufferSizes[i] + kBufferOffsets[i], nullptr,
-                         GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, buffers[i]);
+        glBufferData(GL_ARRAY_BUFFER, kBufferSizes[i] + kBufferOffsets[i], nullptr, GL_STATIC_DRAW);
 
-            glEnableVertexAttribArray(attrLocations[i]);
-            glVertexAttribPointer(attrLocations[i], kAttrComponents[i], kAttrTypes[i], GL_TRUE,
-                                  kAttrStrides[i], reinterpret_cast<void *>(kBufferOffsets[i]));
-        })
+        glEnableVertexAttribArray(attrLocations[i]);
+        glVertexAttribPointer(attrLocations[i], kAttrComponents[i], kAttrTypes[i], GL_TRUE,
+                              kAttrStrides[i], reinterpret_cast<void *>(kBufferOffsets[i]));
     }
     ASSERT_GL_NO_ERROR();
 
@@ -8033,7 +8034,9 @@ TEST_P(WebGL2CompatibilityTest, UnpackStateValidation)
             }
 
             const void *dataPtr =
-                usePixelUnpackBuffer ? nullptr : reinterpret_cast<const void *>(data.data());
+                usePixelUnpackBuffer
+                    ? nullptr
+                    : ANGLE_UNSAFE_BUFFERS(reinterpret_cast<const void *>(data.data()));
 
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, usePixelUnpackBuffer ? buf.get() : 0);
             ASSERT_GL_NO_ERROR();
@@ -8552,6 +8555,8 @@ TEST_P(HardenedContextTest, UniformBufferRangeExceedsSize)
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HardenedContextTest);
 ANGLE_INSTANTIATE_TEST_ES3(HardenedContextTest);
 
+// TODO(anglebug.com/558810273): No supported backends are available for this
+// test on iOS on arm64-based Macs.
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(HardenedContextTestES31);
 ANGLE_INSTANTIATE_TEST_ES31(HardenedContextTestES31);
 }  // namespace angle

@@ -120,6 +120,7 @@ enum class Hyphens : uint8_t;
 enum class ImageRendering : uint8_t;
 enum class InputSecurity : bool;
 enum class InsideLink : uint8_t;
+enum class InterpolateSize : bool;
 enum class Isolation : bool;
 enum class ItemPosition : uint8_t;
 enum class Kerning : uint8_t;
@@ -252,6 +253,9 @@ struct CounterSet;
 struct Cursor;
 struct Display;
 struct DynamicRangeLimit;
+#if ENABLE(SPATIAL_PORTAL)
+struct EnvironmentMap;
+#endif
 struct Filter;
 struct FitTolerance;
 struct FlexBasis;
@@ -482,6 +486,12 @@ public:
     inline const Color& colorForHighlight() const;
     inline void setColorForHighlight(Color&&);
 
+    inline bool usesCurrentBackgroundColorKeyword() const;
+    inline void setUsesCurrentBackgroundColorKeyword();
+
+    inline const WebCore::Color& currentBackgroundColor() const;
+    inline void setCurrentBackgroundColor(WebCore::Color);
+
     inline bool isLink() const;
     inline void setIsLink(bool);
 
@@ -542,6 +552,11 @@ public:
     inline bool NODELETE effectiveInert() const;
     bool NODELETE effectiveInertOutOfLine() const;
     inline void setEffectiveInert(bool);
+
+#if ENABLE(SMART_IMAGE_RESIZER)
+    inline bool isAffectedBySmartImageResizer() const;
+    inline void setIsAffectedBySmartImageResizer(bool);
+#endif
 
     inline bool isEffectivelyTransparent() const; // This or any ancestor has opacity 0.
     inline void setIsEffectivelyTransparent(bool);
@@ -776,6 +791,7 @@ public:
         PREFERRED_TYPE(bool) unsigned usesViewportUnits : 1;
         PREFERRED_TYPE(bool) unsigned isContainerDependent : 1;
         PREFERRED_TYPE(bool) unsigned useTreeCountingFunctions : 1;
+        PREFERRED_TYPE(bool) unsigned usesCurrentBackgroundColorKeyword : 1;
         PREFERRED_TYPE(bool) unsigned hasExplicitlyInheritedProperties : 1; // Explicitly inherits a non-inherited property.
         PREFERRED_TYPE(bool) unsigned disallowsFastPathInheritance : 1;
 

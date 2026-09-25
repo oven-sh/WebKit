@@ -47,15 +47,21 @@ public:
 
 #if ENABLE(DOM_AUDIO_SESSION)
     WEBCORE_EXPORT void broadcastAudioSessionTypeToOtherProcesses(const WebCore::DOMAudioSessionType&);
+    WEBCORE_EXPORT void broadcastAudioSessionTypeToOtherProcesses(WebCore::DOMAudioSessionType&&);
 #endif
     WEBCORE_EXPORT void broadcastMainFrameURLChangeToOtherProcesses(const URL&);
+    WEBCORE_EXPORT void broadcastMainFrameURLChangeToOtherProcesses(URL&&);
     WEBCORE_EXPORT void broadcastIsAutofocusProcessedToOtherProcesses(const bool&);
+    WEBCORE_EXPORT void broadcastIsAutofocusProcessedToOtherProcesses(bool&&);
     WEBCORE_EXPORT void broadcastUserDidInteractWithPageToOtherProcesses(const bool&);
+    WEBCORE_EXPORT void broadcastUserDidInteractWithPageToOtherProcesses(bool&&);
     WEBCORE_EXPORT void broadcastAnotherOneToOtherProcesses(const StringifyThis&);
+    WEBCORE_EXPORT void broadcastAnotherOneToOtherProcesses(StringifyThis&&);
     WEBCORE_EXPORT void broadcastMultipleHeadersToOtherProcesses(const HashSet<URL>&);
+    WEBCORE_EXPORT void broadcastMultipleHeadersToOtherProcesses(HashSet<URL>&&);
 
 protected:
-    virtual void broadcastTestSyncDataToOtherProcesses(const TestSyncSerializationData&) { }
+    virtual void broadcastTestSyncDataToOtherProcesses(TestSyncSerializationData&&) { }
 };
 
 } // namespace WebCore

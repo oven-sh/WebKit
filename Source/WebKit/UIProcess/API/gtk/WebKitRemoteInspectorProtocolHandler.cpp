@@ -162,7 +162,7 @@ void RemoteInspectorProtocolHandler::updateTargetList(WebKitWebView* webView)
     clientForWebView->appendTargetList(scriptBuilder, RemoteInspectorClient::InspectorType::UI, RemoteInspectorClient::ShouldEscapeSingleQuote::Yes);
     scriptBuilder.append("';"_s);
     auto script = scriptBuilder.toString().utf8();
-    webkit_web_view_evaluate_javascript(webView, script.data(), script.length(), nullptr, nullptr, nullptr, nullptr, nullptr);
+    webkit_web_view_evaluate_javascript(webView, script.legacyCStringPointer(), script.length(), nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
 void RemoteInspectorProtocolHandler::webViewLoadChanged(WebKitWebView* webView, WebKitLoadEvent event, RemoteInspectorProtocolHandler* handler)

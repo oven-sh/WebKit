@@ -180,6 +180,7 @@ public:
     static bool consumeScrollTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeViewTimelineShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeLineClampShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
+    static bool consumeHyphenateLimitCharsShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextBoxShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeTextWrapShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
     static bool consumeWhiteSpaceShorthand(CSSParserTokenRange&, PropertyParserState&, const StylePropertyShorthand&, PropertyParserResult&);
@@ -1953,6 +1954,36 @@ inline bool PropertyParserCustom::consumeLineClampShorthand(CSSParserTokenRange&
     result.addPropertyForCurrentShorthand(state, CSSPropertyMaxLines, WTF::move(maxLines));
     result.addPropertyForCurrentShorthand(state, CSSPropertyContinue, CSSKeywordValue::create(CSSValueDiscard));
     result.addPropertyForCurrentShorthand(state, CSSPropertyBlockEllipsis, WTF::move(blockEllipsis));
+    return range.atEnd();
+}
+
+inline bool PropertyParserCustom::consumeHyphenateLimitCharsShorthand(CSSParserTokenRange& range, PropertyParserState& state, const StylePropertyShorthand& shorthand, PropertyParserResult& result)
+{
+    ASSERT(state.currentProperty == shorthand.id());
+    ASSERT(shorthand.length() == 3);
+    auto longhands = shorthand.properties();
+
+    // <'hyphenate-limit-chars'> = [ auto | <integer [0,∞]> ]{1,3}
+    // First value is the total minimum, second is the minimum before the hyphen (defaulting
+    // to auto if omitted), and third is the minimum after the hyphen (defaulting to the
+    // before value if omitted).
+    RefPtr total = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[0], state);
+    if (!total)
+        return false;
+
+    RefPtr before = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[1], state);
+    auto beforeImplicit = !before ? IsImplicit::Yes : IsImplicit::No;
+    if (beforeImplicit == IsImplicit::Yes)
+        before = CSSKeywordValue::create(CSSValueAuto);
+
+    RefPtr after = CSSPropertyParsing::parseStylePropertyLonghand(range, longhands[2], state);
+    auto afterImplicit = !after ? IsImplicit::Yes : IsImplicit::No;
+    if (afterImplicit == IsImplicit::Yes)
+        after = before;
+
+    result.addPropertyForCurrentShorthand(state, longhands[0], total.releaseNonNull());
+    result.addPropertyForCurrentShorthand(state, longhands[1], before.releaseNonNull(), beforeImplicit);
+    result.addPropertyForCurrentShorthand(state, longhands[2], after.releaseNonNull(), afterImplicit);
     return range.atEnd();
 }
 

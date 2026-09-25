@@ -24,24 +24,21 @@
  */
 
 #import "config.h"
+#import <wtf/RetainPtr.h>
 #import <wtf/UUID.h>
 
 #import "Helpers/PlatformUtilities.h"
 
 TEST(WTF, NSUUIDConversionForDeletedValue)
 {
-    WTF::UUID deletedUUID { WTF::UUID::deletedValue };
-    RetainPtr deletedNSUUID = deletedUUID.createNSUUID();
-    EXPECT_STREQ("00000000-0000-0000-0000-000000000001", [[deletedNSUUID UUIDString] UTF8String]);
+    RetainPtr deletedNSUUID = adoptNS([[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000001"]);
     auto uuid = WTF::UUID::fromNSUUID(deletedNSUUID.get());
     EXPECT_FALSE(uuid);
 }
 
 TEST(WTF, NSUUIDConversionForEmptyValue)
 {
-    WTF::UUID emptyUUID { WTF::UUID::emptyValue };
-    RetainPtr emptyNSUUID = emptyUUID.createNSUUID();
-    EXPECT_STREQ("00000000-0000-0000-0000-000000000000", [[emptyNSUUID UUIDString] UTF8String]);
+    RetainPtr emptyNSUUID = adoptNS([[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000000"]);
     auto uuid = WTF::UUID::fromNSUUID(emptyNSUUID.get());
     EXPECT_FALSE(uuid);
 }

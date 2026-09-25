@@ -40,7 +40,7 @@ public:
 
     ~ScopedPrintStream() final
     {
-        m_out.print(m_buffer.toCString());
+        m_out.print(m_buffer.toUTF8CString());
         m_out.flush();
     }
 

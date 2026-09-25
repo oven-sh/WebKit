@@ -29,7 +29,9 @@
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
 
 #import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/_WKFeature.h>
+#import <wtf/SetForScope.h>
 
 namespace TestWebKitAPI {
 
@@ -453,6 +455,90 @@ TEST_F(WKWebExtensionAPIOffscreen, OffscreenDocumentVisibleToClientsMatchAllAfte
     [manager runUntilTestMessage:@"Offscreen Document Created"];
 
     [manager.get().context _reloadBackgroundContentForTesting];
+
+    [manager run];
+}
+
+TEST_F(WKWebExtensionAPIOffscreen, BackgroundServiceWorkerKeepsExtensionAPIsWhenReloadedInNewProcess)
+{
+    // Without site isolation the background web view is created with _relatedWebView pointing at the offscreen
+    // document, which puts the relaunched worker right back in the process it just left and covers nothing.
+    SetForScope siteIsolation { Util::shouldEnableSiteIsolationForWebExtensionsTest, true };
+
+    auto *script = @[
+        @"const offscreenURL = browser.runtime.getURL('offscreen.html')",
+
+        @"if (await browser.offscreen.hasDocument()) {",
+        @"  browser.test.assertEq(typeof browser.runtime.getURL, 'function', 'The extension APIs should still be available after the worker relaunches in a new process')",
+        @"  browser.test.notifyPass()",
+        @"} else {",
+        @"  await browser.offscreen.createDocument({ url: 'offscreen.html', reasons: ['TESTING'], justification: 'test' })",
+        @"  const clients = await self.clients.matchAll()",
+        @"  browser.test.assertTrue(clients.some((client) => client.url === offscreenURL), 'The offscreen document should be a client, so it holds the registration open across the reload')",
+        @"  browser.test.sendMessage('Offscreen Document Created')",
+        @"}",
+    ];
+
+    auto manager = Util::loadExtension(offscreenManifest, @{
+        @"background.js": Util::constructScript(script),
+        @"offscreen.html": @"<!DOCTYPE html><html></html>",
+    }, offscreenConfig);
+
+    [manager runUntilTestMessage:@"Offscreen Document Created"];
+
+    auto originalBackgroundProcess = [manager.get().context._backgroundWebView _webProcessIdentifier];
+    EXPECT_NE(originalBackgroundProcess, 0);
+
+    [manager.get().context _reloadBackgroundContentForTesting];
+
+    [manager run];
+
+    // The worker can only land in the wrong process if the reload moved the background page out of the old one,
+    // so without this the test would quietly stop covering anything if that ever stopped being true.
+    EXPECT_NE(originalBackgroundProcess, [manager.get().context._backgroundWebView _webProcessIdentifier]);
+}
+
+TEST_F(WKWebExtensionAPIOffscreen, OffscreenDocumentImmediatelyVisibleToClientsMatchAllWhenWokenByTabMessage)
+{
+    auto *script = @[
+        @"const offscreenURL = browser.runtime.getURL('offscreen.html')",
+        @"const isOffscreenAClient = async () => (await self.clients.matchAll()).some((client) => client.url === offscreenURL)",
+
+        @"browser.runtime.onMessage.addListener(async (message) => {",
+        @"  if (message !== 'Wake Up')",
+        @"    return",
+        @"  browser.test.assertTrue(await isOffscreenAClient(), 'The offscreen document should immediately be a controlled client when a tab message wakes the service worker, with no polling required')",
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"if (!(await browser.offscreen.hasDocument())) {",
+        @"  await browser.offscreen.createDocument({ url: 'offscreen.html', reasons: ['TESTING'], justification: 'test' })",
+        @"  await browser.tabs.create({ url: 'tab.html' })",
+        @"}",
+    ];
+
+    auto *tabScript = @[
+        @"browser.test.onMessage.addListener((message) => {",
+        @"  if (message !== 'Trigger')",
+        @"    return",
+        @"  browser.runtime.sendMessage('Wake Up')",
+        @"})",
+
+        @"browser.test.sendMessage('Tab Ready')",
+    ];
+
+    auto manager = Util::loadExtension(offscreenManifest, @{
+        @"background.js": Util::constructScript(script),
+        @"offscreen.html": @"<!DOCTYPE html><html></html>",
+        @"tab.html": @"<script type='module' src='tab.js'></script>",
+        @"tab.js": Util::constructScript(tabScript),
+    }, offscreenConfig);
+
+    [manager runUntilTestMessage:@"Tab Ready"];
+
+    [manager.get().context _unloadBackgroundContentForTesting];
+
+    [manager sendTestMessage:@"Trigger"];
 
     [manager run];
 }

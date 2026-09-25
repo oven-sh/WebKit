@@ -25,7 +25,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
 {
     ContextVk *contextVk = vk::GetImpl(context);
 
-    if (context->isWebGL() || context->isHardenedContext())
+    if (context->isHardenedContext())
     {
         // Only WebGL requires initialization of local variables, others don't.
         // Extra initialization in spirv shader may affect performance.
@@ -83,6 +83,11 @@ std::shared_ptr<ShaderTranslateTask> ShaderVk::compile(const gl::Context *contex
     if (!contextVk->getFeatures().supportsDepthClipControl.enabled)
     {
         options->addVulkanDepthCorrection = true;
+    }
+
+    if (contextVk->getFeatures().preferPrecomputedVertexTransform.enabled)
+    {
+        options->preferPrecomputedVertexTransform = true;
     }
 
     if (contextVk->getFeatures().supportsTransformFeedbackExtension.enabled)

@@ -156,10 +156,8 @@ namespace JSC {
     public:
         virtual ~Node() { }
 
-        int firstLine() const { return m_position.line; }
         int startOffset() const { return m_position.offset; }
         int endOffset() const { return m_endOffset; }
-        int lineStartOffset() const { return m_position.lineStartOffset; }
         const JSTextPosition& position() const LIFETIME_BOUND { return m_position; }
         void setEndOffset(int offset) { m_endOffset = offset; }
         void setStartOffset(int offset) { m_position.offset = offset; }
@@ -232,9 +230,15 @@ namespace JSC {
         bool isOptionalChainBase() const { return m_isOptionalChainBase; }
         void setIsOptionalChainBase() { m_isOptionalChainBase = true; }
 
+        // Parentheses are otherwise transparent here, but `(x) = f` must not name f "x" the way
+        // `x = f` does: the spec's IsIdentifierRef is false for a parenthesized operand.
+        bool isParenthesized() const { return m_isParenthesized; }
+        void setIsParenthesized() { m_isParenthesized = true; }
+
     private:
         ResultType m_resultType;
         bool m_isOptionalChainBase { false };
+        bool m_isParenthesized { false };
     };
 
     class StatementNode : public Node {
@@ -244,8 +248,6 @@ namespace JSC {
     public:
         virtual void emitBytecode(BytecodeGenerator&, RegisterID* destination = nullptr) = 0;
 
-        void NODELETE setLoc(unsigned firstLine, unsigned lastLine, int startOffset, int lineStartOffset);
-        unsigned lastLine() const { return m_lastLine; }
 
         StatementNode* next() const { return m_next; }
         void setNext(StatementNode* next) { m_next = next; }
@@ -268,7 +270,6 @@ namespace JSC {
         virtual bool isDefineFieldNode() const { return false; }
 
     protected:
-        int m_lastLine { -1 };
         StatementNode* m_next { nullptr };
     };
 
@@ -411,9 +412,6 @@ namespace JSC {
 
         void checkConsistency() const
         {
-            ASSERT(m_divot.offset >= m_divot.lineStartOffset);
-            ASSERT(m_divotStart.offset >= m_divotStart.lineStartOffset);
-            ASSERT(m_divotEnd.offset >= m_divotEnd.lineStartOffset);
             ASSERT(m_divot.offset >= m_divotStart.offset);
             ASSERT(m_divotEnd.offset >= m_divot.offset);
         }
@@ -431,8 +429,6 @@ namespace JSC {
         ThrowableSubExpressionData()
             : m_subexpressionDivotOffset(0)
             , m_subexpressionEndOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
@@ -440,45 +436,28 @@ namespace JSC {
             : ThrowableExpressionData(divot, divotStart, divotEnd)
             , m_subexpressionDivotOffset(0)
             , m_subexpressionEndOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
         void setSubexpressionInfo(const JSTextPosition& subexpressionDivot, int subexpressionOffset)
         {
             ASSERT(subexpressionDivot.offset <= divot().offset);
-            // Overflow means we can't do this safely, so just point at the primary divot,
-            // divotLine, or divotLineStart.
+            // Overflow means we can't do this safely, so just point at the primary divot.
             if ((divot() - subexpressionDivot.offset) & ~0xFFFF)
-                return;
-            if ((divot().line - subexpressionDivot.line) & ~0xFFFF)
-                return;
-            if ((divot().lineStartOffset - subexpressionDivot.lineStartOffset) & ~0xFFFF)
                 return;
             if ((divotEnd() - subexpressionOffset) & ~0xFFFF)
                 return;
             m_subexpressionDivotOffset = divot() - subexpressionDivot.offset;
             m_subexpressionEndOffset = divotEnd() - subexpressionOffset;
-            m_subexpressionLineOffset = divot().line - subexpressionDivot.line;
-            m_subexpressionLineStartOffset = divot().lineStartOffset - subexpressionDivot.lineStartOffset;
         }
 
-        JSTextPosition subexpressionDivot()
-        {
-            int newLine = divot().line - m_subexpressionLineOffset;
-            int newOffset = divot().offset - m_subexpressionDivotOffset;
-            int newLineStartOffset = divot().lineStartOffset - m_subexpressionLineStartOffset;
-            return JSTextPosition(newLine, newOffset, newLineStartOffset);
-        }
+        JSTextPosition subexpressionDivot() { return divot() - static_cast<int>(m_subexpressionDivotOffset); }
         JSTextPosition subexpressionStart() { return divotStart(); }
         JSTextPosition subexpressionEnd() { return divotEnd() - static_cast<int>(m_subexpressionEndOffset); }
 
     protected:
         uint16_t m_subexpressionDivotOffset;
         uint16_t m_subexpressionEndOffset;
-        uint16_t m_subexpressionLineOffset;
-        uint16_t m_subexpressionLineStartOffset;
     };
     
     class ThrowablePrefixedSubExpressionData : public ThrowableExpressionData {
@@ -486,8 +465,6 @@ namespace JSC {
         ThrowablePrefixedSubExpressionData()
             : m_subexpressionDivotOffset(0)
             , m_subexpressionStartOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
@@ -495,45 +472,28 @@ namespace JSC {
             : ThrowableExpressionData(divot, start, end)
             , m_subexpressionDivotOffset(0)
             , m_subexpressionStartOffset(0)
-            , m_subexpressionLineOffset(0)
-            , m_subexpressionLineStartOffset(0)
         {
         }
 
         void setSubexpressionInfo(const JSTextPosition& subexpressionDivot, int subexpressionOffset)
         {
             ASSERT(subexpressionDivot.offset >= divot().offset);
-            // Overflow means we can't do this safely, so just point at the primary divot,
-            // divotLine, or divotLineStart.
+            // Overflow means we can't do this safely, so just point at the primary divot.
             if ((subexpressionDivot.offset - divot()) & ~0xFFFF) 
-                return;
-            if ((subexpressionDivot.line - divot().line) & ~0xFFFF)
-                return;
-            if ((subexpressionDivot.lineStartOffset - divot().lineStartOffset) & ~0xFFFF)
                 return;
             if ((subexpressionOffset - divotStart()) & ~0xFFFF) 
                 return;
             m_subexpressionDivotOffset = subexpressionDivot.offset - divot();
             m_subexpressionStartOffset = subexpressionOffset - divotStart();
-            m_subexpressionLineOffset = subexpressionDivot.line - divot().line;
-            m_subexpressionLineStartOffset = subexpressionDivot.lineStartOffset - divot().lineStartOffset;
         }
 
-        JSTextPosition subexpressionDivot()
-        {
-            int newLine = divot().line + m_subexpressionLineOffset;
-            int newOffset = divot().offset + m_subexpressionDivotOffset;
-            int newLineStartOffset = divot().lineStartOffset + m_subexpressionLineStartOffset;
-            return JSTextPosition(newLine, newOffset, newLineStartOffset);
-        }
+        JSTextPosition subexpressionDivot() { return divot() + static_cast<int>(m_subexpressionDivotOffset); }
         JSTextPosition subexpressionStart() { return divotStart() + static_cast<int>(m_subexpressionStartOffset); }
         JSTextPosition subexpressionEnd() { return divotEnd(); }
 
     protected:
         uint16_t m_subexpressionDivotOffset;
         uint16_t m_subexpressionStartOffset;
-        uint16_t m_subexpressionLineOffset;
-        uint16_t m_subexpressionLineStartOffset;
     };
 
     class TemplateExpressionListNode final : public ParserArenaFreeable {
@@ -736,7 +696,7 @@ namespace JSC {
 
         bool isArrayLiteral() const final { return true; }
 
-        ArgumentListNode* NODELETE toArgumentList(ParserArena&, int, int) const;
+        ArgumentListNode* NODELETE toArgumentList(ParserArena&, int) const;
 
         ElementNode* elements() const { return m_element; }
     private:
@@ -1132,6 +1092,14 @@ namespace JSC {
     class HasOwnPropertyFunctionCallDotNode final : public FunctionCallDotNode {
     public:
         HasOwnPropertyFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+
+    private:
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+    };
+
+    class ReflectConstructFunctionCallDotNode final : public FunctionCallDotNode {
+    public:
+        ReflectConstructFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1966,9 +1934,7 @@ namespace JSC {
         const SourceCode& source() const LIFETIME_BOUND { return m_source; }
         SourceID sourceID() const { return m_source.providerID(); }
 
-        int startLine() const { return m_startLineNumber; }
         int startStartOffset() const { return m_startStartOffset; }
-        int startLineStartOffset() const { return m_startLineStartOffset; }
 
         CodeFeatures features() { return m_features; }
         LexicallyScopedFeatures lexicallyScopedFeatures() { return m_lexicallyScopedFeatures; }
@@ -2024,9 +1990,7 @@ namespace JSC {
         bool analyzeModule(ModuleAnalyzer&);
 
     protected:
-        int m_startLineNumber;
         unsigned m_startStartOffset;
-        unsigned m_startLineStartOffset;
 
     private:
         CodeFeatures m_features;
@@ -2040,40 +2004,28 @@ namespace JSC {
 
     class ProgramNode final : public ScopeNode {
     public:
-        ProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
-
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
+        ProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         static constexpr bool scopeIsFunction = false;
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
     };
 
     class EvalNode final : public ScopeNode {
     public:
-        EvalNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
-
-        ALWAYS_INLINE unsigned startColumn() const { return 0; }
-        unsigned endColumn() const { return m_endColumn; }
+        EvalNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         static constexpr bool scopeIsFunction = false;
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-
-        unsigned m_endColumn;
     };
 
     class ModuleProgramNode final : public ScopeNode {
     public:
-        ModuleProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
+        ModuleProgramNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
         bool usesAwait() const { return m_usesAwait; }
 
         static constexpr bool scopeIsFunction = false;
@@ -2085,8 +2037,6 @@ namespace JSC {
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
         bool m_usesAwait;
         const Ref<ModuleScopeData> m_moduleScopeData;
     };
@@ -2273,13 +2223,13 @@ namespace JSC {
     public:
         FunctionMetadataNode(
             ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, 
-            unsigned startColumn, unsigned endColumn, unsigned functionStart,
+            unsigned functionStart,
             int functionNameStart, int parametersStart, ImplementationVisibility, LexicallyScopedFeatures,
             ConstructorKind, SuperBinding, unsigned parameterCount,
             SourceParseMode, bool isArrowFunctionBodyExpression);
         FunctionMetadataNode(
             const JSTokenLocation& start, const JSTokenLocation& end, 
-            unsigned startColumn, unsigned endColumn, unsigned functionStart,
+            unsigned functionStart,
             int functionNameStart, int parametersStart, ImplementationVisibility, LexicallyScopedFeatures,
             ConstructorKind, SuperBinding, unsigned parameterCount,
             SourceParseMode, bool isArrowFunctionBodyExpression);
@@ -2301,12 +2251,8 @@ namespace JSC {
         int functionNameStart() const { return m_functionNameStart; }
         unsigned functionStart() const { return m_functionStart; }
         int parametersStart() const { return m_parametersStart; }
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
         unsigned parameterCount() const { return m_parameterCount; }
         SourceParseMode parseMode() const { return m_parseMode; }
-
-        void NODELETE setEndPosition(JSTextPosition);
 
         const SourceCode& source() const LIFETIME_BOUND { return m_source; }
         const SourceCode& classSource() const LIFETIME_BOUND { return m_classSource; }
@@ -2329,14 +2275,6 @@ namespace JSC {
 
         bool isArrowFunctionBodyExpression() const { return m_isArrowFunctionBodyExpression; }
 
-        void setLoc(unsigned firstLine, unsigned lastLine, int startOffset, int lineStartOffset)
-        {
-            m_lastLine = lastLine;
-            m_position = JSTextPosition(firstLine, startOffset, lineStartOffset);
-            ASSERT(m_position.offset >= m_position.lineStartOffset);
-        }
-        unsigned lastLine() const { return m_lastLine; }
-
         bool operator==(const FunctionMetadataNode&) const;
 
     public:
@@ -2352,8 +2290,6 @@ namespace JSC {
         FunctionMode m_functionMode;
         Identifier m_ident;
         Identifier m_ecmaName;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
         unsigned m_functionStart;
         int m_functionNameStart;
         int m_parametersStart;
@@ -2361,12 +2297,11 @@ namespace JSC {
         SourceCode m_classSource;
         int m_startStartOffset;
         unsigned m_parameterCount;
-        int m_lastLine { 0 };
     };
 
     class FunctionNode final : public ScopeNode {
     public:
-        FunctionNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, unsigned startColumn, unsigned endColumn, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
+        FunctionNode(ParserArena&, const JSTokenLocation& start, const JSTokenLocation& end, SourceElements*, VariableEnvironment&&, FunctionStack&&, VariableEnvironment&&, FunctionParameters*, const SourceCode&, CodeFeatures, LexicallyScopedFeatures, InnerArrowFunctionCodeFeatures, int numConstants, RefPtr<ModuleScopeData>&&);
 
         FunctionParameters* parameters() const { return m_parameters; }
 
@@ -2380,17 +2315,12 @@ namespace JSC {
 
         FunctionMode functionMode() const { return m_functionMode; }
 
-        unsigned startColumn() const { return m_startColumn; }
-        unsigned endColumn() const { return m_endColumn; }
-
         static constexpr bool scopeIsFunction = true;
 
     private:
         Identifier m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;
-        unsigned m_startColumn;
-        unsigned m_endColumn;
     };
 
     class BaseFuncExprNode : public ExpressionNode {

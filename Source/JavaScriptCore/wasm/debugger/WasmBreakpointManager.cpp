@@ -44,60 +44,128 @@ BreakpointManager::~BreakpointManager()
     clearAllBreakpoints();
 }
 
-bool BreakpointManager::hasBreakpoints()
-{
-    Locker locker { m_lock };
-    return !m_breakpoints.isEmpty();
-}
-
 bool BreakpointManager::hasOneTimeBreakpoints()
 {
     Locker locker { m_lock };
     return !m_oneTimeBreakpoints.isEmpty();
 }
 
-void BreakpointManager::setBreakpoint(VirtualAddress address, Breakpoint&& breakpoint)
+Ref<Breakpoint> BreakpointManager::ensurePatched(const ModuleInformation& owner, uint8_t* pc)
 {
-    Locker locker { m_lock };
-    breakpoint.patchBreakpoint();
-    dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] setBreakpoint ", breakpoint, " at moduleAddress:", address);
-    if (breakpoint.isOneTimeBreakpoint())
-        m_oneTimeBreakpoints.add(address);
-    m_breakpoints.set(address, WTF::move(breakpoint));
+    RELEASE_ASSERT(pc);
+    if (auto it = m_breakpoints.find(pc); it != m_breakpoints.end()) {
+        dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Reusing the patch at ", RawPointer(pc));
+        return it->value;
+    }
+
+    Ref<Breakpoint> breakpoint = Breakpoint::create(owner, pc);
+    breakpoint->patchBreakpoint();
+    dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Patched the byte at ", breakpoint.get());
+    return m_breakpoints.set(pc, WTF::move(breakpoint)).iterator->value;
 }
 
-Breakpoint* BreakpointManager::findBreakpoint(VirtualAddress address)
+void BreakpointManager::releasePatchIfUnused(Ref<Breakpoint> breakpoint)
 {
-    Locker locker { m_lock };
-    if (auto it = m_breakpoints.find(address); it != m_breakpoints.end())
-        return &it->value;
-    return nullptr;
+    if (!breakpoint->isUnused())
+        return;
+
+    dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Restoring ", breakpoint.get());
+    breakpoint->restorePatch();
+    m_breakpoints.remove(breakpoint->pc);
 }
 
-bool BreakpointManager::removeBreakpointImpl(VirtualAddress address)
+RefPtr<Breakpoint> BreakpointManager::breakpointAt(const uint8_t* pc)
 {
-    auto it = m_breakpoints.find(address);
-    RELEASE_ASSERT(it != m_breakpoints.end());
-    dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Removing breakpoint ", it->value, " at ", address);
-    it->value.restorePatch();
-    m_breakpoints.remove(it);
+    Locker locker { m_lock };
+    return m_breakpoints.get(const_cast<uint8_t*>(pc));
+}
+
+void BreakpointManager::setBreakpointAt(VirtualAddress address, const ModuleInformation& owner, uint8_t* pc)
+{
+    Locker locker { m_lock };
+    // Re-arming an existing site is a no-op. An address names one instance's view of one byte and
+    // IDs are never reused, so it always resolves to this pc.
+    if (auto it = m_addressToBreakpoint.find(address); it != m_addressToBreakpoint.end()) {
+        RELEASE_ASSERT(it->value->pc == pc);
+        return;
+    }
+    Ref<Breakpoint> breakpoint = ensurePatched(owner, pc);
+    breakpoint->siteCount++;
+    m_addressToBreakpoint.add(address, breakpoint.copyRef());
+    dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Site added at ", address, " -> ", breakpoint.get());
+}
+
+bool BreakpointManager::removeSiteImpl(VirtualAddress address)
+{
+    // Resolved from the address LLDB installed the site through rather than from a live instance:
+    // the bytecode outlives the instance that named it.
+    auto it = m_addressToBreakpoint.find(address);
+    if (it == m_addressToBreakpoint.end())
+        return false;
+
+    Ref<Breakpoint> breakpoint = it->value;
+    m_addressToBreakpoint.remove(it);
+    // Sibling instances hold their own sites on the same byte, so the patch outlives every
+    // removal but the last.
+    RELEASE_ASSERT(breakpoint->siteCount);
+    breakpoint->siteCount--;
+    releasePatchIfUnused(breakpoint);
     return true;
 }
 
-bool BreakpointManager::removeBreakpoint(VirtualAddress address)
+bool BreakpointManager::removeBreakpointAt(VirtualAddress address)
 {
     Locker locker { m_lock };
-    bool removed = removeBreakpointImpl(address);
-    RELEASE_ASSERT(removed);
-    return true;
+    return removeSiteImpl(address);
+}
+
+void BreakpointManager::removeSitesForInstance(uint32_t instanceId)
+{
+    Locker locker { m_lock };
+    Vector<VirtualAddress> staleSites;
+    for (const auto& pair : m_addressToBreakpoint) {
+        if (pair.key.instanceId() == instanceId)
+            staleSites.append(pair.key);
+    }
+    for (VirtualAddress address : staleSites) {
+        dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Dropping site ", address, " of collected instance ", instanceId);
+        removeSiteImpl(address);
+    }
+}
+
+OpType BreakpointManager::originalOpcodeAt(const uint8_t* pc)
+{
+    Locker locker { m_lock };
+    auto it = m_breakpoints.find(const_cast<uint8_t*>(pc));
+    if (it == m_breakpoints.end())
+        return static_cast<OpType>(*pc);
+    return it->value->originalBytecode;
+}
+
+std::optional<BreakpointManager::TrapAction> BreakpointManager::trapActionFor(const uint8_t* pc, VirtualAddress hitAddress)
+{
+    Locker locker { m_lock };
+    auto it = m_breakpoints.find(const_cast<uint8_t*>(pc));
+    if (it == m_breakpoints.end())
+        return std::nullopt;
+
+    TrapAction action { it->value->originalBytecode, std::nullopt };
+    // A site names one instance; a sibling sharing the patched byte has no breakpoint here. A
+    // site wins over a claim at the same byte, so a claim never masks a user breakpoint's reason.
+    if (m_addressToBreakpoint.get(hitAddress) == it->value.ptr())
+        action.stopReason = DebugStopReason::Breakpoint;
+    else
+        action.stopReason = it->value->oneTimeClaim;
+    return action;
 }
 
 void BreakpointManager::clearAllOneTimeBreakpoints()
 {
     Locker locker { m_lock };
-    for (VirtualAddress address : m_oneTimeBreakpoints)
-        removeBreakpointImpl(address);
-    m_oneTimeBreakpoints.clear();
+    for (Ref<Breakpoint>& breakpoint : std::exchange(m_oneTimeBreakpoints, { })) {
+        breakpoint->oneTimeClaim = std::nullopt;
+        releasePatchIfUnused(breakpoint);
+    }
     dataLogLnIf(Options::verboseWasmDebugger(), "[BreakpointManager] Cleared all one-time breakpoints");
 }
 
@@ -105,9 +173,10 @@ void BreakpointManager::clearAllBreakpoints()
 {
     Locker locker { m_lock };
     for (auto& [_, breakpoint] : m_breakpoints)
-        breakpoint.restorePatch();
+        breakpoint->restorePatch();
     m_breakpoints.clear();
-    RELEASE_ASSERT(m_oneTimeBreakpoints.isEmpty());
+    m_oneTimeBreakpoints.clear();
+    m_addressToBreakpoint.clear();
 }
 
 } // namespace Wasm

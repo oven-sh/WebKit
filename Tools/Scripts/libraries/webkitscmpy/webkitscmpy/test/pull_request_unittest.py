@@ -847,6 +847,120 @@ No pre-PR checks to run""")
             ],
         )
 
+    def test_github_reopen_defaults(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            local.Git(self.path).remote().pull_requests.get(1).close()
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+            # Automation cannot answer the "this pull-request is closed" prompt, it must not re-use the closed pull-request
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--defaults'),
+                    path=self.path,
+                ))
+
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+            self.assertTrue(local.Git(self.path).remote().pull_requests.get(2).opened)
+            self.assertEqual(local.Git(self.path).remote().pull_requests.get(2).head, 'eng/pr-branch')
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Created 'PR 2 | [Testing] Amending commits'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/2\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+        log = captured.root.log.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in log if 'Mock process' not in line], [
+                'Amending commit...',
+                "Rebasing 'eng/pr-branch' on 'main'...",
+                "Rebased 'eng/pr-branch' on 'main!'",
+                'Running pre-PR checks...',
+                'No pre-PR checks to run',
+                'Checking if PR already exists...',
+                'PR #1 found.',
+                "Updating 'main' on 'https://github.example.com/Contributor/WebKit'",
+                "Pushing 'eng/pr-branch' to 'fork'...",
+                "Creating pull-request for 'eng/pr-branch'...",
+            ],
+        )
+
+    def test_github_reopen_closed(self):
+        with mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ) as repo, mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            with OutputCapture():
+                repo.staged['added.txt'] = 'added'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-i', 'pr-branch'),
+                    path=self.path,
+                ))
+
+            local.Git(self.path).remote().pull_requests.get(1).close()
+            self.assertFalse(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+            # '--reopen-closed' is how automation opts into re-using a closed pull-request
+            with OutputCapture(level=logging.INFO) as captured:
+                repo.staged['added.txt'] = 'diff'
+                self.assertEqual(0, program.main(
+                    args=('pull-request', '-v', '--no-history', '--defaults', '--reopen-closed'),
+                    path=self.path,
+                ))
+
+            self.assertTrue(local.Git(self.path).remote().pull_requests.get(1).opened)
+
+        self.assertEqual(
+            captured.stdout.getvalue(),
+            "Updated 'PR 1 | [Testing] Amending commits'!\n"
+            "https://github.example.com/WebKit/WebKit/pull/1\n",
+        )
+        self.assertEqual(captured.stderr.getvalue(), '')
+
+    def test_find_existing_pull_request_prefers_open(self):
+        with OutputCapture(), mocks.remote.GitHub() as remote, mocks.local.Git(
+            self.path, remote='https://{}'.format(remote.remote),
+            remotes=dict(fork='https://{}/Contributor/WebKit'.format(remote.hosts[0])),
+        ), mocks.local.Svn(), patch('webkitbugspy.Tracker._trackers', []):
+            # A closed pull-request later in iteration order must not hide an open one
+            remote.pull_requests = [dict(
+                number=1,
+                state='open',
+                title='[Testing] Existing commit',
+                user=dict(login='rreviewer'),
+                body='#### 06de5d56554e693db72313f4ca1fb969c30b8ccb\n<pre>\n[Testing] Existing commit\n</pre>',
+                head=dict(ref='eng/pr-branch'),
+                base=dict(ref='main'),
+                draft=False,
+            ), dict(
+                number=2,
+                state='closed',
+                title='[Testing] Abandoned commit',
+                user=dict(login='rreviewer'),
+                body='#### 16de5d56554e693db72313f4ca1fb969c30b8ccb\n<pre>\n[Testing] Abandoned commit\n</pre>',
+                head=dict(ref='eng/pr-branch'),
+                base=dict(ref='main'),
+                draft=False,
+            )]
+
+            repository = local.Git(self.path)
+            existing_pr = program.PullRequest.find_existing_pull_request(
+                repository, repository.remote(), branch='eng/pr-branch',
+            )
+            self.assertEqual(1, existing_pr.number)
+            self.assertTrue(existing_pr.opened)
+
     def test_github_substring_branch(self):
         # Test that a branch that is a substring of another branch doesn't match
         # For example, 'eng/Adopt-LIFETIME_BOUND-for-WTF-Ref' should not match

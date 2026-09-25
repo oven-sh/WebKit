@@ -168,13 +168,14 @@ void SVGSMILElement::buildPendingResource()
         return;
     }
 
+    Ref treeScopeForReferences = treeScopeForSVGReferences();
     AtomString id;
     RefPtr<Element> target;
     auto& href = getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr);
     if (href.isEmpty())
         target = parentElement();
     else {
-        auto result = SVGURIReference::targetElementFromIRIString(href.string(), treeScopeForSVGReferences());
+        auto result = SVGURIReference::targetElementFromIRIString(href.string(), treeScopeForReferences);
         target = WTF::move(result.element);
         id = WTF::move(result.identifier);
     }
@@ -185,11 +186,11 @@ void SVGSMILElement::buildPendingResource()
 
     if (!svgTarget) {
         // Do not register as pending if we are already pending this resource.
-        if (treeScopeForSVGReferences().isPendingSVGResource(*this, id))
+        if (treeScopeForReferences->isPendingSVGResource(*this, id))
             return;
 
         if (!id.isEmpty()) {
-            treeScopeForSVGReferences().addPendingSVGResource(id, *this);
+            treeScopeForReferences->addPendingSVGResource(id, *this);
             ASSERT(hasPendingResources());
         }
     } else
@@ -588,7 +589,7 @@ void SVGSMILElement::svgAttributeChanged(const QualifiedName& attrName)
 
 inline RefPtr<Element> SVGSMILElement::eventBaseFor(const Condition& condition)
 {
-    return condition.m_baseID.isEmpty() ? RefPtr<Element> { targetElement() } : treeScope().getElementById(condition.m_baseID);
+    return condition.m_baseID.isEmpty() ? RefPtr<Element> { targetElement() } : protect(treeScope())->getElementById(condition.m_baseID);
 }
 
 void SVGSMILElement::connectConditions()
@@ -607,7 +608,7 @@ void SVGSMILElement::connectConditions()
             eventBase->addEventListener(condition.m_name, *condition.m_eventListener);
         } else if (condition.m_type == Condition::Syncbase) {
             ASSERT(!condition.m_baseID.isEmpty());
-            condition.m_syncbase = treeScope().getElementById(condition.m_baseID);
+            condition.m_syncbase = protect(treeScope())->getElementById(condition.m_baseID);
             if (!condition.m_syncbase)
                 continue;
             RefPtr svgSMILElement = dynamicDowncast<SVGSMILElement>(*condition.m_syncbase);
@@ -1080,12 +1081,13 @@ float SVGSMILElement::calculateAnimationPercentAndRepeat(SMILTime elapsed, unsig
     SMILTime activeTime = elapsed - m_intervalBegin;
     SMILTime repeatingDuration = this->repeatingDuration();
 
+    // Clamp the page-controlled repeat count to prevent overflow.
     if ((elapsed >= m_intervalEnd && !repeatingDuration.isIndefinite()) || activeTime > repeatingDuration) {
-        repeat = static_cast<unsigned>(repeatingDuration.value() / simpleDuration.value());
-        if (!fmod(repeatingDuration.value(), simpleDuration.value()))
+        repeat = clampTo<unsigned>(repeatingDuration.value() / simpleDuration.value());
+        if (repeat && !fmod(repeatingDuration.value(), simpleDuration.value()))
             --repeat;
     } else
-        repeat = static_cast<unsigned>(activeTime.value() / simpleDuration.value());
+        repeat = clampTo<unsigned>(activeTime.value() / simpleDuration.value());
 
     double percent;
     if (elapsed >= m_intervalEnd || activeTime > repeatingDuration) {
@@ -1261,20 +1263,9 @@ bool SVGSMILElement::progress(SMILTime elapsed, SVGSMILElement& firstAnimation, 
         if (m_activeState == Inactive || m_activeState == Frozen)
             smilEventSender().dispatchEventSoon(*this, eventNames().endEventEvent);
 
-        if (repeat) {
-            // We intentionally dispatch repeat - 1 events here because the first repeat
-            // event (for the initial loop) is sent elsewhere during continuous animation run.
-            // If repeat == 1, no events are dispatched here.
-            for (unsigned i = 1; i < repeat; ++i) {
-                m_pendingRepeatIterations.append(i);
-                smilEventSender().dispatchEventSoon(*this, eventNames().repeatEventEvent);
-            }
-
-            if (m_activeState == Inactive) {
-                m_pendingRepeatIterations.append(repeat);
-                smilEventSender().dispatchEventSoon(*this, eventNames().repeatEventEvent);
-            }
-        }
+        // Coalesce the skipped repeat iterations into a single event instead of one per interval.
+        if (repeat > 1 || (repeat && m_activeState == Inactive))
+            smilEventSender().dispatchEventSoon(*this, eventNames().repeatEventEvent);
     }
 
     m_nextProgressTime = calculateNextProgressTime(elapsed);

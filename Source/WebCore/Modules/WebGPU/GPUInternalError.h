@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "GPUError.h"
 #include "WebGPUInternalError.h"
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -32,7 +33,7 @@
 
 namespace WebCore {
 
-class GPUInternalError : public RefCounted<GPUInternalError> {
+class GPUInternalError final : public GPUError {
 public:
     static Ref<GPUInternalError> create(String&& message)
     {
@@ -44,7 +45,8 @@ public:
         return adoptRef(*new GPUInternalError(WTF::move(backing)));
     }
 
-    const String& NODELETE message() const LIFETIME_BOUND;
+    Type type() const final { return Type::Internal; }
+    const String& NODELETE message() const LIFETIME_BOUND final;
 
     WebGPU::InternalError* backing() { return m_backing.get(); }
     const WebGPU::InternalError* backing() const { return m_backing.get(); }

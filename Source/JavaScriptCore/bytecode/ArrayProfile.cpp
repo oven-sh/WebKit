@@ -174,13 +174,13 @@ void ArrayProfile::observeIndexedRead(JSCell* cell, unsigned index)
     }
 }
 
-CString ArrayProfile::briefDescription(CodeBlock* codeBlock)
+UTF8CString ArrayProfile::briefDescription(CodeBlock* codeBlock)
 {
     computeUpdatedPrediction(codeBlock);
     return briefDescriptionWithoutUpdating();
 }
 
-CString ArrayProfile::briefDescriptionWithoutUpdating()
+UTF8CString ArrayProfile::briefDescriptionWithoutUpdating()
 {
     StringPrintStream out;
     CommaPrinter comma;
@@ -198,7 +198,7 @@ CString ArrayProfile::briefDescriptionWithoutUpdating()
     if (!m_arrayProfileFlags.contains(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray))
         out.print(comma, "Resizable"_s);
 
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 } // namespace JSC

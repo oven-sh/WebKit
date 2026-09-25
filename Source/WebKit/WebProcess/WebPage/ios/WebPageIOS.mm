@@ -978,7 +978,8 @@ Awaitable<DragInitiationResult> WebPage::requestDragStart(std::optional<WebCore:
     co_return { DragInitiationResult::RemoteFrameData {
         transformer.remoteFrameID(),
         transformer.transformToRemoteFrameCoordinates(clientPosition),
-        transformer.transformToRemoteFrameCoordinates(globalPosition)
+        // globalPosition is not frame-relative, so it survives the hop unchanged.
+        globalPosition
     } };
 }
 
@@ -1005,7 +1006,8 @@ Awaitable<DragInitiationResult> WebPage::requestAdditionalItemsForDragSession(st
     co_return { DragInitiationResult::RemoteFrameData {
         transformer.remoteFrameID(),
         transformer.transformToRemoteFrameCoordinates(clientPosition),
-        transformer.transformToRemoteFrameCoordinates(globalPosition)
+        // globalPosition is not frame-relative, so it survives the hop unchanged.
+        globalPosition
     } };
 }
 
@@ -2138,29 +2140,36 @@ void WebPage::requestRVItemInCurrentSelectedRange(CompletionHandler<void(const W
     completionHandler(RevealItem(revealItemForCurrentSelection()));
 }
 
-void WebPage::prepareSelectionForContextMenuWithLocationInView(IntPoint point, CompletionHandler<void(bool, const RevealItem&)>&& completionHandler)
+void WebPage::prepareSelectionForContextMenuWithLocationInView(std::optional<WebCore::FrameIdentifier> frameID, IntPoint point, CompletionHandler<void(Variant<PrepareSelectionForContextMenuResult, WebCore::RemoteUserInputEventData>&&)>&& completionHandler)
 {
     constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
-    RefPtr localMainFrame = protect(m_page)->localMainFrame();
-    if (!localMainFrame)
-        return completionHandler(false, { });
-    Ref frame = *localMainFrame;
-    auto result = frame->eventHandler().hitTestResultAtPoint(point, hitType);
+    RefPtr localRootFrame = this->localRootFrame(frameID);
+    if (!localRootFrame)
+        return completionHandler({ });
+
+    // The long press landed on a cross-origin frame, whose content lives in another process; ask the
+    // UI process to re-dispatch this into that frame's process rather than selecting the frame owner.
+    if (auto remoteUserInputEventData = remoteUserInputEventDataForSelectionGesture(localRootFrame.get(), point))
+        return completionHandler(WTF::move(*remoteUserInputEventData));
+
+    Ref frame = *localRootFrame;
+    RefPtr view = frame->view();
+    if (!view)
+        return completionHandler({ });
+
+    auto pointInContents = view->rootViewToContents(point);
+    auto result = frame->eventHandler().hitTestResultAtPoint(pointInContents, hitType);
     RefPtr hitNode = result.innerNonSharedNode();
     if (!hitNode)
-        return completionHandler(false, { });
+        return completionHandler({ });
 
-    if (RefPtr view = frame->view()) {
-        auto pointInContents = view->rootViewToContents(point);
-
-        if (protect(frame->selection())->contains(pointInContents))
-            return completionHandler(true, revealItemForCurrentSelection());
-    }
+    if (protect(frame->selection())->contains(pointInContents))
+        return completionHandler(PrepareSelectionForContextMenuResult { true, revealItemForCurrentSelection() });
 
     auto sendEditorStateAndCallCompletionHandler = [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](RevealItem&& item) mutable {
         layoutIfNeeded();
         sendEditorStateUpdate();
-        completionHandler(true, WTF::move(item));
+        completionHandler(PrepareSelectionForContextMenuResult { true, WTF::move(item) });
     };
 
     if (is<HTMLImageElement>(*hitNode) && hitNode->hasEditableStyle()) {
@@ -2500,7 +2509,7 @@ static inline bool isObscuredElement(Element& element)
     return true;
 }
 
-void WebPage::startInteractionWithElementContextOrPosition(std::optional<WebCore::ElementContext>&& elementContext, WebCore::IntPoint&& point)
+void WebPage::startInteractionWithElementContextOrPosition(std::optional<WebCore::FrameIdentifier> frameID, std::optional<WebCore::ElementContext>&& elementContext, WebCore::IntPoint&& point)
 {
     if (elementContext) {
         m_interactionNode = elementForContext(*elementContext);
@@ -2508,9 +2517,15 @@ void WebPage::startInteractionWithElementContextOrPosition(std::optional<WebCore
             return;
     }
 
+    m_interactionNode = nullptr;
+
+    RefPtr localRoot = localRootFrame(frameID);
+    RefPtr localRootView = localRoot ? localRoot->view() : nullptr;
+    if (!localRootView)
+        return;
+
     FloatPoint adjustedPoint;
-    if (RefPtr localMainFrame = protect(m_page)->localMainFrame())
-        m_interactionNode = localMainFrame->nodeRespondingToInteraction(point, adjustedPoint);
+    m_interactionNode = localRoot->nodeRespondingToInteraction(localRootView->convertFromRootViewAcrossIsolatedFrames(FloatPoint { point }), adjustedPoint);
 }
 
 void WebPage::stopInteraction()
@@ -2664,7 +2679,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformationWitho
     FocusedElementInformation information;
 
     if (RefPtr webFrame = WebProcess::singleton().webFrame(focusedOrMainFrame->frameID()))
-        information.frame = webFrame->info(WithCertificateInfo::Yes);
+        information.frame = webFrame->info();
 
     information.lastInteractionLocation = flooredIntPoint(m_lastInteractionLocation);
     if (auto elementContext = contextForElement(*focusedElement))
@@ -2848,6 +2863,7 @@ void WebPage::emitDeferredFocusedElementUpdate(PendingFocusedElementUpdate&& pen
         return;
 
     information->preventScroll = pending.options.preventScroll;
+    information->preventInputViewPresentation = pending.options.preventInputViewPresentation;
     information->isFocusingWithValidationMessage = pending.isFocusingWithValidationMessage;
     send(Messages::WebPageProxy::ElementDidFocus(information.value(), pending.userIsInteracting, pending.recentlyBlurredElementSnapshot, pending.activityStateChanges, UserData(WebProcess::singleton().transformObjectsToHandles(pending.userData.get()).get())));
 }
@@ -4119,9 +4135,9 @@ void WebPage::drawPrintingToSnapshotiOS(RemoteSnapshotIdentifier snapshotIdentif
 
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
-        snapshotIdentifier,
-        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
-        MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
+        .identifier = snapshotIdentifier,
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier),
+        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
             completionHandler(success ? std::optional<FloatSize>(snapshotSize) : std::nullopt);
         })
     };
@@ -4206,9 +4222,9 @@ void WebPage::drawPrintingPagesToSnapshotiOS(RemoteSnapshotIdentifier snapshotId
 
     Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
     m_remoteSnapshotState = {
-        snapshotIdentifier,
-        remoteRenderingBackend->createSnapshotRecorder(snapshotIdentifier),
-        MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
+        .identifier = snapshotIdentifier,
+        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier),
+        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
             completionHandler(success ? std::optional<FloatSize>(snapshotSize) : std::nullopt);
         })
     };

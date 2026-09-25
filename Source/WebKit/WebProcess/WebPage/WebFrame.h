@@ -31,6 +31,7 @@
 #include "MessageReceiver.h"
 #include "MessageSender.h"
 #include "PolicyDecision.h"
+#include "PolicyListenerIdentifier.h"
 #include "TransactionID.h"
 #include "WKBase.h"
 #include "WebLocalFrameLoaderClient.h"
@@ -43,6 +44,7 @@
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/MarkupExclusionRule.h>
+#include <WebCore/PendingNavigateEventIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ShareableBitmap.h>
@@ -117,8 +119,6 @@ struct JSHandleInfo;
 struct ProvisionalFrameCreationParameters;
 struct WebsitePoliciesData;
 
-enum class WithCertificateInfo : bool { No, Yes };
-
 class WebFrame : public API::ObjectImpl<API::Object::Type::BundleFrame>, public IPC::MessageReceiver, public IPC::MessageSender {
 public:
     static Ref<WebFrame> create(WebPage& page, WebCore::FrameIdentifier frameID) { return adoptRef(*new WebFrame(page, frameID)); }
@@ -150,7 +150,7 @@ public:
     WebCore::LocalFrame* provisionalFrame() { return m_provisionalFrame.get(); }
 
     Awaitable<std::optional<FrameInfoData>> getFrameInfo();
-    FrameInfoData info(WithCertificateInfo = WithCertificateInfo::No) const;
+    FrameInfoData info() const;
     FrameTreeNodeData frameTreeData() const;
 
     WebCore::FrameIdentifier frameID() const { return m_frameID; }
@@ -160,9 +160,10 @@ public:
     // document that made it: once the frame has a different document, the check can no longer be honored. A
     // download attribute check also carries the load it was made for, which a newer navigation can replace.
     enum class PolicyCheckKind : uint8_t { Navigation, DownloadAttribute, NewWindow };
-    uint64_t setUpPolicyListener(WebCore::FramePolicyFunction&&, ForNavigationAction, PolicyCheckKind, Markable<WebCore::ScriptExecutionContextIdentifier> initiatingDocument = { }, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader = { });
+    PolicyListenerIdentifier setUpPolicyListener(WebCore::FramePolicyFunction&&, ForNavigationAction, PolicyCheckKind, Markable<WebCore::ScriptExecutionContextIdentifier> initiatingDocument = { }, SingleThreadWeakPtr<WebCore::DocumentLoader>&& downloadAttributePolicyDocumentLoader = { });
     void invalidatePolicyListeners();
-    void didReceivePolicyDecision(uint64_t listenerID, PolicyDecision&&);
+    void didReceivePolicyDecision(PolicyListenerIdentifier, PolicyDecision&&);
+    bool dispatchPendingNavigateEventAfterNavigationPolicy(WebCore::PendingNavigateEventIdentifier);
 
     void didFinishLoadInAnotherProcess();
     void removeFromTree();
@@ -347,7 +348,7 @@ private:
         SingleThreadWeakPtr<WebCore::DocumentLoader> downloadAttributePolicyDocumentLoader;
         WebCore::FramePolicyFunction policyFunction;
     };
-    HashMap<uint64_t, PolicyCheck> m_pendingPolicyChecks;
+    HashMap<PolicyListenerIdentifier, PolicyCheck> m_pendingPolicyChecks;
 
     bool initiatingDocumentIsStillCurrent(const PolicyCheck&) const;
     bool newerNavigationOwnsDownloadAttributePolicyCheckLoad(const PolicyCheck&) const;

@@ -45,7 +45,11 @@ public:
 
 inline WebGPU::TextureUsageFlags convertTextureUsageFlagsToBacking(GPUTextureUsageFlags textureUsageFlags)
 {
+    constexpr GPUTextureUsageFlags allKnownUsages = GPUTextureUsage::COPY_SRC | GPUTextureUsage::COPY_DST | GPUTextureUsage::TEXTURE_BINDING | GPUTextureUsage::STORAGE_BINDING | GPUTextureUsage::RENDER_ATTACHMENT | GPUTextureUsage::TRANSIENT_ATTACHMENT;
+
     WebGPU::TextureUsageFlags result;
+    if (textureUsageFlags & ~allKnownUsages)
+        result.add(WebGPU::TextureUsage::Invalid);
     if (textureUsageFlags & GPUTextureUsage::COPY_SRC)
         result.add(WebGPU::TextureUsage::CopySource);
     if (textureUsageFlags & GPUTextureUsage::COPY_DST)

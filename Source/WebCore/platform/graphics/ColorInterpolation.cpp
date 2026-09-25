@@ -83,7 +83,7 @@ std::pair<float, float> fixupHueComponentsPriorToInterpolation(HueInterpolationM
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Color interpolateColors(ColorInterpolationMethod colorInterpolationMethod, Color color1, double color1Multiplier, Color color2, double color2Multiplier)
+Color interpolateColors(ColorInterpolationMethod colorInterpolationMethod, const Color& color1, double color1Multiplier, const Color& color2, double color2Multiplier)
 {
     return WTF::switchOn(colorInterpolationMethod.colorSpace,
         [&]<typename MethodColorSpace> (const MethodColorSpace& colorSpace) -> Color {

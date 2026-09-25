@@ -30,12 +30,16 @@
 #include "AcceleratedSurfaceMessages.h"
 #include "DRMMainDevice.h"
 #include "Display.h"
+#include "DrawingAreaMessages.h"
+#include "DrawingAreaProxy.h"
 #include "HardwareAccelerationManager.h"
 #include "LayerTreeContext.h"
+#include "MessageSenderInlines.h"
 #include "RendererBufferTransportMode.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include <WebCore/DMABufBuffer.h>
+#include <WebCore/FloatRect.h>
 #include <WebCore/GLContext.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/NativeImage.h>
@@ -214,10 +218,32 @@ AcceleratedBackingStore::AcceleratedBackingStore(WebPageProxy& webPage)
     : m_webPage(webPage)
     , m_fenceMonitor([this] {
         if (m_webPage)
-            gtk_widget_queue_draw(m_webPage->viewWidget());
+            queuePendingDamageDraw();
     })
     , m_legacyMainFrameProcess(webPage.legacyMainFrameProcess())
 {
+}
+
+void AcceleratedBackingStore::queuePendingDamageDraw()
+{
+    auto* viewWidget = m_webPage->viewWidget();
+
+#if !USE(GTK4)
+    // GTK4 hands the damage to the texture builder, but on GTK3 the widget has to be
+    // invalidated per rect, otherwise every frame repaints and uploads the whole view.
+    if (!m_pendingDamageRects.isEmpty() && m_committedBuffer) {
+        auto deviceScaleFactor = m_webPage->deviceScaleFactor();
+        for (const auto& rect : m_pendingDamageRects) {
+            FloatRect scaledRect(rect);
+            scaledRect.scale(1 / deviceScaleFactor);
+            auto widgetRect = enclosingIntRect(scaledRect);
+            gtk_widget_queue_draw_area(viewWidget, widgetRect.x(), widgetRect.y(), widgetRect.width(), widgetRect.height());
+        }
+        return;
+    }
+#endif
+
+    gtk_widget_queue_draw(viewWidget);
 }
 
 AcceleratedBackingStore::~AcceleratedBackingStore()
@@ -782,11 +808,23 @@ void AcceleratedBackingStore::frameDone()
 
 void AcceleratedBackingStore::realize()
 {
+    if (!std::exchange(m_needsFrame, false) || m_pendingBuffer)
+        return;
+
+    RefPtr webPage = m_webPage.get();
+    if (!webPage)
+        return;
+
+    if (RefPtr drawingArea = webPage->drawingArea())
+        drawingArea->send(Messages::DrawingArea::DidDiscardBackingStore());
 }
 
 void AcceleratedBackingStore::unrealize()
 {
-    m_committedBuffer = nullptr;
+    if (auto buffer = std::exchange(m_committedBuffer, nullptr)) {
+        m_needsFrame = true;
+        buffer->release();
+    }
 
     if (m_gdkGLContext && m_gdkGLContext.get() == gdk_gl_context_get_current())
         gdk_gl_context_clear_current();

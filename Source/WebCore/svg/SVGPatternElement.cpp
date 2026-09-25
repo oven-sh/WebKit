@@ -87,7 +87,7 @@ void SVGPatternElement::attributeChanged(const QualifiedName& name, const AtomSt
         protect(m_patternContentUnits)->parseBaseVal<SVGUnitTypes::SVGUnitType>(*this, newValue);
         break;
     case AttributeNames::patternTransformAttr: {
-        protect(m_patternTransform)->baseVal()->parse(newValue);
+        protect(protect(m_patternTransform)->baseVal())->parse(newValue);
         break;
     }
     case AttributeNames::xAttr:
@@ -150,13 +150,6 @@ RenderPtr<RenderElement> SVGPatternElement::createElementRenderer(Style::Compute
     if (document().settings().layerBasedSVGEngineEnabled())
         return createRenderer<RenderSVGResourcePattern>(*this, WTF::move(style));
     return createRenderer<LegacyRenderSVGResourcePattern>(*this, WTF::move(style));
-}
-
-bool SVGPatternElement::hasPatternTransformAttribute() const
-{
-    if (!attributeWithoutSynchronization(SVGNames::patternTransformAttr).isNull())
-        return true;
-    return !m_patternTransform->baseVal()->isEmpty();
 }
 
 bool SVGPatternElement::collectPatternAttributes(PatternAttributes& attributes)
@@ -222,8 +215,10 @@ void SVGPatternElement::collectOwnPatternAttributes(PatternAttributes& attribute
     if (!attributes.hasPatternContentUnits() && hasAttribute(SVGNames::patternContentUnitsAttr))
         attributes.setPatternContentUnits(patternContentUnits());
 
-    if (!attributes.hasPatternTransform() && hasPatternTransformAttribute())
-        attributes.setPatternTransform(patternTransform().concatenate().value_or(identity));
+    if (!attributes.hasPatternTransform()) {
+        if (auto transform = patternTransform().concatenate())
+            attributes.setPatternTransform(*transform);
+    }
 
     if (!attributes.hasPatternContentElement() && childElementCount())
         attributes.setPatternContentElement(this);

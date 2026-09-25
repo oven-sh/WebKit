@@ -37,6 +37,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/JSONValues.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/TypeCasts.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
@@ -47,6 +48,7 @@ class IdentifierRegistry;
 
 namespace WebCore {
 
+class CSSRule;
 class CSSRuleList;
 class CSSSelector;
 class CSSStyleDeclaration;
@@ -55,7 +57,26 @@ class CSSStyleSheet;
 class Document;
 class Element;
 class InspectorStyleSheet;
-class ParsedStyleSheet;
+
+class ParsedStyleSheet {
+    WTF_MAKE_TZONE_ALLOCATED(ParsedStyleSheet);
+public:
+    ParsedStyleSheet();
+
+    const String& NODELETE text() const { ASSERT(m_hasText); return m_text; }
+    void setText(const String&);
+    bool NODELETE hasText() const { return m_hasText; }
+    RuleSourceDataList* NODELETE sourceData() const { return m_sourceData.get(); }
+    void setSourceData(std::unique_ptr<RuleSourceDataList>);
+    bool NODELETE hasSourceData() const { return m_sourceData != nullptr; }
+    CSSRuleSourceData* ruleSourceDataAt(unsigned) const;
+
+private:
+
+    String m_text;
+    bool m_hasText;
+    std::unique_ptr<RuleSourceDataList> m_sourceData;
+};
 
 class InspectorCSSId {
 public:
@@ -187,7 +208,7 @@ public:
     CSSRule* ruleForId(const InspectorCSSId&) const;
     RefPtr<Inspector::Protocol::CSS::CSSStyleSheetBody> buildObjectForStyleSheet();
     RefPtr<Inspector::Protocol::CSS::CSSStyleSheetHeader> buildObjectForStyleSheetInfo();
-    RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSStyleRule*);
+    RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSRule*);
     Ref<Inspector::Protocol::CSS::CSSStyle> buildObjectForStyle(CSSStyleDeclaration*);
     RefPtr<Inspector::Protocol::CSS::Grouping> buildObjectForGrouping(CSSRule*);
 

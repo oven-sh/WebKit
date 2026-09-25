@@ -38,11 +38,15 @@ class ImageSource;
 class NativeImage;
 
 class BitmapImage final : public Image {
+    friend class GraphicsContext;
 public:
     WEBCORE_EXPORT static Ref<BitmapImage> create(ImageObserver* = nullptr, AlphaOption = AlphaOption::Premultiplied, GammaAndColorProfileOption = GammaAndColorProfileOption::Applied);
     WEBCORE_EXPORT static Ref<BitmapImage> create(Ref<NativeImage>&&);
     WEBCORE_EXPORT static RefPtr<BitmapImage> create(RefPtr<NativeImage>&&);
     WEBCORE_EXPORT static RefPtr<BitmapImage> create(PlatformImagePtr&&);
+    WEBCORE_EXPORT static std::optional<Ref<BitmapImage>> create(RefPtr<ShareableBitmap>&&); // Uses `std::optional<Ref<...>>` to conform to the interface needed by IPC infrastructure.
+
+    WEBCORE_EXPORT static BitmapImage& nullImage();
 
     // Animation
     void startAnimation() final { m_source->startAnimation(); }
@@ -53,7 +57,7 @@ public:
 
     // Decoding
     bool isLargeForDecoding() const { return m_source->isLargeForDecoding(); }
-    void stopDecoderWorkQueue() { m_source->stopDecoderWorkQueue(); }
+    void stopDecodingWorkQueue() { m_source->stopDecodingWorkQueue(); }
     void decode(Function<void(DecodingStatus)>&& decodeCallback) { m_source->decode(WTF::move(decodeCallback)); }
 
     // Current ImageFrame
@@ -87,7 +91,7 @@ public:
     RefPtr<NativeImage> nativeImageAtIndex(unsigned index) final { return m_source->nativeImageAtIndex(index); }
 
     // Testing support.
-    CString sourceUTF8() const { return sourceURL().string().utf8(); }
+    UTF8CString sourceUTF8() const { return sourceURL().string().utf8(); }
     void setAsyncDecodingEnabledForTesting(bool enabled) { m_source->setAsyncDecodingEnabledForTesting(enabled); }
     bool isAsyncDecodingEnabledForTesting() const { return m_source->isAsyncDecodingEnabledForTesting(); }
     void setMinimumDecodingDurationForTesting(Seconds duration) { m_source->setMinimumDecodingDurationForTesting(duration); }

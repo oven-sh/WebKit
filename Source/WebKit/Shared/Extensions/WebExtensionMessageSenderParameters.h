@@ -31,6 +31,8 @@
 #include "WebExtensionFrameIdentifier.h"
 #include "WebExtensionTabParameters.h"
 #include <wtf/Forward.h>
+#include <wtf/Markable.h>
+#include <wtf/UUID.h>
 
 namespace WebKit {
 
@@ -41,7 +43,7 @@ struct WebExtensionMessageSenderParameters {
     WebPageProxyIdentifier pageProxyIdentifier;
     WebExtensionContentWorldType contentWorldType { WebExtensionContentWorldType::ContentScript };
     URL url;
-    WTF::UUID documentIdentifier { 0 };
+    Markable<WTF::UUID> documentIdentifier;
 };
 
 } // namespace WebKit

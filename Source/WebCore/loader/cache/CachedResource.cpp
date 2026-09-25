@@ -57,6 +57,7 @@
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/TextStream.h>
 
 #if USE(QUICK_LOOK)
 #include "QuickLook.h"
@@ -147,7 +148,7 @@ void CachedResource::deref() const
 void CachedResource::failBeforeStarting()
 {
     // FIXME: What if resources in other frames were waiting for this revalidation?
-    LOG(ResourceLoading, "Cannot start loading '%s'", url().string().utf8().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Cannot start loading '"_s << url().string() << "'"_s);
     if (allowsCaching() && m_resourceToRevalidate)
         MemoryCache::singleton().revalidationFailed(*this);
     error(CachedResource::LoadError);
@@ -245,30 +246,6 @@ void CachedResource::load(CachedResourceLoader& cachedResourceLoader)
     if (m_options.keepAlive && type() != Type::Ping && !cachedResourceLoader.keepaliveRequestTracker().tryRegisterRequest(*this)) {
         setResourceError({ errorDomainWebKitInternal, 0, request.url(), "Reached maximum amount of queued data of 64Kb for keepalive requests"_s, ResourceError::Type::AccessControl });
         failBeforeStarting();
-        return;
-    }
-
-    // FIXME: Deprecate that code path.
-    if (m_options.keepAlive && shouldUsePingLoad(type()) && platformStrategies()->loaderStrategy()->usePingLoad()) {
-        ASSERT(m_originalRequest);
-        RefPtr protectedThis { *this };
-
-        auto identifier = ResourceLoaderIdentifier::generate();
-        InspectorInstrumentation::willSendRequestOfType(frame.ptr(), identifier, protect(frameLoader->activeDocumentLoader()).get(), request, Inspector::UncachedLoadType::Beacon);
-
-        platformStrategies()->loaderStrategy()->startPingLoad(frame, request, m_originalRequest->httpHeaderFields(), m_options, m_options.contentSecurityPolicyImposition, [this, protectedThis = Ref { *this }, frame = Ref { frame }, identifier] (const ResourceError& error, const ResourceResponse& response) {
-            if (!response.isNull())
-                InspectorInstrumentation::didReceiveResourceResponse(frame, identifier, protect(frame->loader().activeDocumentLoader()), response, nullptr);
-            if (!error.isNull()) {
-                setResourceError(error);
-                this->error(LoadError);
-                InspectorInstrumentation::didFailLoading(frame.ptr(), protect(frame->loader().activeDocumentLoader()), identifier, error);
-                return;
-            }
-            finishLoading(nullptr, { });
-            NetworkLoadMetrics emptyMetrics;
-            InspectorInstrumentation::didFinishLoading(frame.ptr(), protect(frame->loader().activeDocumentLoader()), identifier, emptyMetrics, nullptr);
-        });
         return;
     }
 

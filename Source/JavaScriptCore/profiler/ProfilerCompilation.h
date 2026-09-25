@@ -70,7 +70,7 @@ public:
     CompilationKind kind() const { return m_kind; }
     
     void addDescription(const CompiledBytecode&);
-    void addDescription(const OriginStack&, const CString& description);
+    void addDescription(const OriginStack&, const UTF8CString& description);
     ExecutionCounter* executionCounterFor(const OriginStack&);
     void addOSRExitSite(const Vector<CodePtr<JSInternalPtrTag>>& codeAddresses);
     OSRExit* addOSRExit(unsigned id, const OriginStack&, ExitKind, bool isWatchpoint);
@@ -94,7 +94,7 @@ private:
     unsigned m_numInlinedPutByIds;
     unsigned m_numInlinedCalls;
     JettisonReason m_jettisonReason;
-    CString m_additionalJettisonReason;
+    UTF8CString m_additionalJettisonReason;
     UID m_uid;
 };
 

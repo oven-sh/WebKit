@@ -53,6 +53,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/MathExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
@@ -148,7 +149,7 @@ ValueOrReference<String> NumberInputType::stripInvalidNumberCharacters(const Str
 {
     auto allowedChars = StringView::fromLatin1("0123456789.Ee-+");
     auto length = input.length();
-    LOG(Editing, "stripInvalidNumberCharacters: input=[%s], length=%u", input.utf8().data(), length);
+    LOG_WITH_STREAM(Editing, stream << "stripInvalidNumberCharacters: input=["_s << input << "], length="_s << length);
 
     auto needsFiltering = false;
     for (unsigned i = 0; i < length; ++i) {
@@ -177,7 +178,7 @@ ValueOrReference<String> NumberInputType::stripInvalidNumberCharacters(const Str
         } else
             LOG(Editing, "Skipping disallowed char: [%c]", character);
     }
-    LOG(Editing, "Filtering complete, result=[%s]", builder.toString().utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "Filtering complete, result=["_s << builder.toString() << "]"_s);
     return String { builder.toString() };
 }
 
@@ -388,7 +389,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
 {
     // Normalize full-width digits and minus sign to ASCII
     auto normalizedText = normalizeFullWidthNumberChars(event.text()).get();
-    LOG(Editing, "normalizeFullWidthNumberChars() -> [%s]", normalizedText.utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "normalizeFullWidthNumberChars() -> ["_s << normalizedText << "]"_s);
 
     ASSERT(element());
     Ref element = *this->element();
@@ -422,7 +423,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
     // If the cleaned up text doesn't match input text, don't insert partial input
     // since it could be an incorrect paste.
     updatedEventText = stripInvalidNumberCharacters(updatedEventText).get();
-    LOG(Editing, "stripInvalidNumberCharacters() -> [%s]", updatedEventText.utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "stripInvalidNumberCharacters() -> ["_s << updatedEventText << "]"_s);
 
     // Get left and right of cursor
     auto originalValue = element->innerTextValue();
@@ -551,7 +552,7 @@ void NumberInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& eve
         leftHalf = leftHalfBuilder.toString();
         finalEventText.append(character);
     }
-    LOG(Editing, "finalEventText: [%s]", finalEventText.toString().utf8().data());
+    LOG_WITH_STREAM(Editing, stream << "finalEventText: ["_s << finalEventText.toString() << "]"_s);
     const auto displayedText = displayedTextUsesNonPeriodDecimalSeparator ? locale->localizeNumberCharacters(finalEventText.toString()) : finalEventText.toString();
     event.setText(displayedText);
 }

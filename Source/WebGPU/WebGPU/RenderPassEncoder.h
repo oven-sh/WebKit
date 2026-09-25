@@ -71,6 +71,12 @@ public:
     {
         return adoptRef(*new RenderPassEncoder(parentEncoder, device, errorString));
     }
+    static Ref<RenderPassEncoder> createInvalidWithEncoderStateNotOpen(CommandEncoder& parentEncoder, Device& device, NSString* errorString)
+    {
+        Ref renderPassEncoder = createInvalid(parentEncoder, device, errorString);
+        renderPassEncoder->markEncoderStateWasNotOpen();
+        return renderPassEncoder;
+    }
 
     ~RenderPassEncoder();
 
@@ -98,6 +104,9 @@ public:
     Device& device() const { return m_device; }
 
     bool isValid() const { return m_renderCommandEncoder; }
+    // A pass begun while its command encoder was not open never took the encoder over, so it can
+    // never be ended. https://gpuweb.github.io/gpuweb/#dom-gpurenderpassencoder-end
+    void markEncoderStateWasNotOpen() { m_encoderStateWasNotOpen = true; }
     NSString* errorValidatingColorDepthStencilTargets(const RenderPipeline&) const;
     id<MTLRenderCommandEncoder> NODELETE renderCommandEncoder() const;
     void makeInvalid(NSString* = nil);
@@ -140,7 +149,7 @@ private:
     void addResourceToActiveResources(const TextureView&, OptionSet<BindGroupEntryUsage>, WGPUTextureAspect);
     void addResourceToActiveResources(const TextureOrTextureView&, OptionSet<BindGroupEntryUsage>, WGPUTextureAspect);
     void addResourceToActiveResources(const Texture&, OptionSet<BindGroupEntryUsage>);
-    void addTextureToActiveResources(const void*, id<MTLResource>, OptionSet<BindGroupEntryUsage>, uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect);
+    void addTextureToActiveResources(const void*, id<MTLResource>, OptionSet<BindGroupEntryUsage>, uint32_t baseMipLevel, uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t arrayLayerCount, WGPUTextureAspect);
     void addResourceToActiveResources(const void*, OptionSet<BindGroupEntryUsage>);
 
     NSString* errorValidatingAndBindingBuffers();
@@ -224,12 +233,17 @@ private:
     const uint64_t m_maxDrawCount { 0 };
     id<MTLRasterizationRateMap> m_rasterizationRateMap { nil };
     uint32_t m_stencilClearValue { 0 };
+    // Kept for the lifetime of the pass rather than cleared once applied: every draw reads the depth
+    // range back out to tell the fragment shader what to clamp frag_depth to, and splitting the pass
+    // has to reapply the viewport to the new command encoder.
     std::optional<MTLViewport> m_viewport;
+    bool m_viewportNeedsApplying { false };
     MTLDepthClipMode m_overrideDepthClipMode { MTLDepthClipModeClip };
     bool m_clearDepthAttachment { false };
     bool m_clearStencilAttachment { false };
     bool m_occlusionQueryActive { false };
     bool m_passEnded { false };
+    bool m_encoderStateWasNotOpen { false };
     bool m_ignoreBufferCache { false };
     Vector<bool> m_bindGroupDynamicOffsetsChanged;
 

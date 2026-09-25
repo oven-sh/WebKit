@@ -58,9 +58,9 @@ ReportingScope::~ReportingScope() = default;
 
 void ReportingScope::registerReportingObserver(ReportingObserver& observer)
 {
-    if (m_reportingObservers.containsIf([&observer](const auto& item) { return item.ptr() == &observer; }))
+    if (containsObserver(observer))
         return;
-    
+
     m_reportingObservers.append(observer);
 }
 

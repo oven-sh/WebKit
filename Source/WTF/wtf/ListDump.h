@@ -107,7 +107,7 @@ PointerListDump<T> pointerListDump(const T& list, ASCIILiteral comma = ", "_s)
 }
 
 template<typename T, typename Comparator>
-CString sortedListDump(const T& list, const Comparator& comparator, ASCIILiteral comma = ", "_s)
+UTF8CString sortedListDump(const T& list, const Comparator& comparator, ASCIILiteral comma = ", "_s)
 {
     Vector<typename T::ValueType> myList;
     myList.appendRange(list.begin(), list.end());
@@ -116,11 +116,11 @@ CString sortedListDump(const T& list, const Comparator& comparator, ASCIILiteral
     CommaPrinter commaPrinter(comma);
     for (unsigned i = 0; i < myList.size(); ++i)
         out.print(commaPrinter, myList[i]);
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 template<typename T>
-CString sortedListDump(const T& list, ASCIILiteral comma = ", "_s)
+UTF8CString sortedListDump(const T& list, ASCIILiteral comma = ", "_s)
 {
     return sortedListDump(list, std::less<>(), comma);
 }
@@ -132,7 +132,7 @@ MapDump<T> mapDump(const T& map, ASCIILiteral arrow = "=>"_s, ASCIILiteral comma
 }
 
 template<typename T, typename Comparator>
-CString sortedMapDump(const T& map, const Comparator& comparator, ASCIILiteral arrow = "=>"_s, ASCIILiteral comma = ", "_s)
+UTF8CString sortedMapDump(const T& map, const Comparator& comparator, ASCIILiteral arrow = "=>"_s, ASCIILiteral comma = ", "_s)
 {
     Vector<typename T::KeyType> keys;
     for (auto iter = map.begin(); iter != map.end(); ++iter)
@@ -142,7 +142,7 @@ CString sortedMapDump(const T& map, const Comparator& comparator, ASCIILiteral a
     CommaPrinter commaPrinter(comma);
     for (unsigned i = 0; i < keys.size(); ++i)
         out.print(commaPrinter, keys[i], arrow, map.get(keys[i]));
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 template<typename T, typename U>

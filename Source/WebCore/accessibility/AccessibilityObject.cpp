@@ -437,11 +437,12 @@ Vector<AXTextMarkerRange> AccessibilityObject::misspellingRanges() const
     if (!node)
         return { };
 
-    RefPtr frame = node->document().frame();
+    RefPtr frame = protect(node->document())->frame();
     if (!frame)
         return { };
 
-    auto* textChecker = protect(frame->editor())->textChecker();
+    Ref editor = frame->editor();
+    auto* textChecker = editor->textChecker();
     if (!textChecker)
         return { };
 
@@ -459,7 +460,7 @@ Vector<AXTextMarkerRange> AccessibilityObject::misspellingRanges() const
         Vector<TextCheckingResult> misspellings;
         checkTextOfParagraph(*textChecker, stringValue(), TextCheckingType::Spelling, misspellings, frame->selection().selection());
         for (auto& misspelling : misspellings) {
-            if (auto range = protect(frame->editor())->rangeForTextCheckingResult(misspelling))
+            if (auto range = editor->rangeForTextCheckingResult(misspelling))
                 ranges.append(range);
         }
     } else {
@@ -480,7 +481,7 @@ std::optional<SimpleRange> AccessibilityObject::misspellingRange(const SimpleRan
     if (!node)
         return std::nullopt;
 
-    RefPtr frame = node->document().frame();
+    RefPtr frame = protect(node->document())->frame();
     if (!frame)
         return std::nullopt;
 
@@ -520,7 +521,7 @@ AXTextMarkerRange AccessibilityObject::textInputMarkedTextMarkerRange() const
     if (!node)
         return { };
 
-    RefPtr frame = node->document().frame();
+    RefPtr frame = protect(node->document())->frame();
     if (!frame)
         return { };
 
@@ -1383,10 +1384,11 @@ Vector<String> AccessibilityObject::performTextOperation(const AccessibilityText
             // Insert text instead of replacing when the selection length is zero, because replacements
             // aren't performed correctly in certain edge cases like at the the boundary between nodes
             // separated by spaces <p> foo <i>bar</i>[insert here] baz </p>.
+            Ref editor = frame->editor();
             if (textOperationRange.characterRange.length)
-                protect(frame->editor())->replaceSelectionWithText(replacementString, Editor::SelectReplacement::Yes, operation.smartReplace == AccessibilityTextOperationSmartReplace::No ? Editor::SmartReplace::No : Editor::SmartReplace::Yes);
+                editor->replaceSelectionWithText(replacementString, Editor::SelectReplacement::Yes, operation.smartReplace == AccessibilityTextOperationSmartReplace::No ? Editor::SmartReplace::No : Editor::SmartReplace::Yes);
             else
-                protect(frame->editor())->insertText(replacementString, /* triggeringEvent */ nullptr);
+                editor->insertText(replacementString, /* triggeringEvent */ nullptr);
 
             result.append(replacementString);
         } else
@@ -1606,7 +1608,7 @@ bool AccessibilityObject::press()
     RefPtr actionElement = this->actionElement();
     if (!actionElement)
         return false;
-    if (RefPtr frame = actionElement->document().frame())
+    if (RefPtr frame = protect(actionElement->document())->frame())
         frame->loader().resetMultipleFormSubmissionProtection();
 
     // Hit test at this location to determine if there is a sub-node element that should act
@@ -1706,7 +1708,7 @@ bool AccessibilityObject::pressPreservingFocus()
     // as assistive technology is concerned, focus never left where it was before the action.
     cache->beginSuppressingFocusChange(originalFocusedElement.get());
     if (originalFocusedElement)
-        originalFocusedElement->focus();
+        originalFocusedElement->focus({ .preventInputViewPresentation = true });
     else
         document->setFocusedElement(nullptr);
 
@@ -2098,12 +2100,25 @@ VisiblePositionRange AccessibilityObject::lineRangeForPosition(const VisiblePosi
         return { };
     }
 
-    // Move from the given visiblePosition forward until it hits the start of the next line or cross over a line break.
+    // Walk forward to the first position that is no longer on this line. Start the search
+    // one position back because with line-break: after-white-space, the start of the next line
+    // could be the same offset with downstream affinity.
     auto end = visiblePosition;
-    while (end.isNotNull() && inSameLine(end, visiblePosition)) {
+    if (auto previous = visiblePosition.previous(); inSameLine(previous, visiblePosition))
+        end = WTF::move(previous);
+    while (end.isNotNull() && startOfLine(end) == start) {
         auto next = end.next();
         if (next == end) {
             // Without this break, we would loop infinitely.
+            break;
+        }
+
+        if (!inSameBlock(next, visiblePosition)) {
+            // A line that ends its block has no next line to run into, so this position is already in
+            // whatever follows the block, and the newline between the two is synthesized to separate
+            // them rather than being a line break that terminates this line. End the range at the
+            // line. Reaching outside it would, for the last line of an editable element, hand out a
+            // range that leaves the field and counts a character the field's text doesn't have.
             break;
         }
 
@@ -2480,6 +2495,26 @@ bool AccessibilityObject::contentEditableAttributeIsEnabled(Element& element)
     return contentEditableValue.isEmpty() || equalLettersIgnoringASCIICase(contentEditableValue, "true"_s) || equalLettersIgnoringASCIICase(contentEditableValue, "plaintext-only"_s);
 }
 
+// How many lines |laterPosition| sits below |earlierPosition|. Answers nothing when they are on
+// lines of different blocks, whose line boxes can't be reached from one another.
+static std::optional<int> lineCountBetween(const VisiblePosition& earlierPosition, const VisiblePosition& laterPosition)
+{
+    auto earlierLineBox = RenderedPosition(earlierPosition).lineBox();
+    auto laterLineBox = RenderedPosition(laterPosition).lineBox();
+    if (!earlierLineBox || !laterLineBox)
+        return std::nullopt;
+    if (earlierLineBox == laterLineBox)
+        return 0;
+
+    int lineCount = 0;
+    for (auto lineBox = laterLineBox; lineBox; lineBox = lineBox->previous()) {
+        ++lineCount;
+        if (lineBox->previous() == earlierLineBox)
+            return lineCount;
+    }
+    return std::nullopt;
+}
+
 int AccessibilityObject::lineForPosition(const VisiblePosition& visiblePos) const
 {
     if (visiblePos.isNull() || !node())
@@ -2490,18 +2525,28 @@ int AccessibilityObject::lineForPosition(const VisiblePosition& visiblePos) cons
     if (!containerNode->isShadowIncludingInclusiveAncestorOf(node()) && !node()->isShadowIncludingInclusiveAncestorOf(containerNode.get()))
         return -1;
 
-    int lineCount = -1;
+    int lineCount = 0;
     VisiblePosition currentVisiblePos = visiblePos;
     VisiblePosition savedVisiblePos;
 
     // move up until we get to the top
     // FIXME: This only takes us to the top of the rootEditableElement, not the top of the
     // top document.
-    do {
+    while (true) {
         savedVisiblePos = currentVisiblePos;
         currentVisiblePos = previousLinePosition(currentVisiblePos, 0, HasEditableAXRole);
-        ++lineCount;
-    } while (currentVisiblePos.isNotNull() && !(inSameLine(currentVisiblePos, savedVisiblePos)));
+        if (currentVisiblePos.isNull() || inSameLine(currentVisiblePos, savedVisiblePos))
+            break;
+        // Count lines rather than steps, because one step can cross more than one. The start of a
+        // line following an inline replaced element is the very same VisiblePosition as the one
+        // after that element, so it resolves onto the element's line:
+        //   ABCDE
+        //   [img]
+        //   |FGHIJ
+        // Stepping up from "FGHIJ" lands on the image's line, skipping the line "F" is on.
+        // A step into another block counts as the one line it moved.
+        lineCount += lineCountBetween(currentVisiblePos, savedVisiblePos).value_or(1);
+    }
 
     return lineCount;
 }
@@ -2889,7 +2934,7 @@ bool AccessibilityObject::ignoredFromModalPresence() const
         return false;
 
     // We only want to ignore the objects within the same frame as the modal dialog.
-    if (modalNode->document().frame() != this->frame())
+    if (protect(modalNode->document())->frame() != this->frame())
         return false;
 
     // Some objects might be outside of a modal, but are linked to elements inside of it. Don't ignore those.
@@ -2971,9 +3016,14 @@ bool AccessibilityObject::replaceTextInRange(const String& replacementString, co
     // Also only do this when the field is in editing mode.
     Ref frame = renderer()->frame();
     if (element->shouldUseInputMethod()) {
-        uint64_t textLength = getLengthForTextRange();
-        uint64_t startIndex = std::min(range.location, textLength);
-        uint64_t endIndex = startIndex + std::min(range.length, textLength - startIndex);
+        // Don't clamp to getLengthForTextRange() here. It reports the value of a text control, and
+        // an editing host need not be one: a design-mode body carries no contenteditable attribute,
+        // so it measures as empty and every index would collapse to 0. visiblePositionForIndex()
+        // already lands an index past the end of the content at the end of it, so the only bound
+        // needed is the one the call itself can represent.
+        constexpr uint64_t maxIndex = std::numeric_limits<int>::max();
+        uint64_t startIndex = std::min<uint64_t>(range.location, maxIndex);
+        uint64_t endIndex = startIndex + std::min<uint64_t>(range.length, maxIndex - startIndex);
 
         auto start = visiblePositionForIndex(static_cast<int>(startIndex));
         std::optional insertionRange = makeSimpleRange(start, endIndex == startIndex ? start : visiblePositionForIndex(static_cast<int>(endIndex)));
@@ -3016,7 +3066,7 @@ bool AccessibilityObject::insertText(const String& text)
         return false;
 
     // Use Editor::insertText to mimic typing into the field.
-    Ref editor = protect(renderer())->frame().editor();
+    Ref editor = protect(protect(renderer())->frame())->editor();
     return editor->insertText(text, nullptr);
 }
 
@@ -3294,7 +3344,7 @@ String AccessibilityObject::embeddedImageDescription() const
 static RefPtr<Image> imageFromRenderer(RenderObject* renderer)
 {
     CheckedPtr renderImage = dynamicDowncast<RenderImage>(renderer);
-    auto* cachedImage = renderImage ? renderImage->cachedImage() : nullptr;
+    RefPtr cachedImage = renderImage ? renderImage->cachedImage() : nullptr;
     return cachedImage ? cachedImage->image() : nullptr;
 }
 
@@ -3601,7 +3651,7 @@ void AccessibilityObject::setFocused(bool focus)
 {
     if (focus) {
         // Ensure that the view is focused and active, otherwise, any attempt to set focus to an object inside it will fail.
-        RefPtr frame = document() ? document()->frame() : nullptr;
+        RefPtr frame = document() ? protect(document())->frame() : nullptr;
         if (frame && frame->selection().isFocusedAndActive())
             return; // Nothing to do, already focused and active.
 
@@ -4164,9 +4214,11 @@ void AccessibilityObject::scrollAreaAndAncestor(std::pair<ScrollableArea*, Acces
 {
     // Search up the parent chain until we find the first one that's scrollable.
     scrollers.first = nullptr;
-    for (scrollers.second = parentObject(); scrollers.second; scrollers.second = protect(scrollers.second)->parentObject()) {
-        if ((scrollers.first = protect(scrollers.second)->getScrollableAreaIfScrollable()))
+    for (scrollers.second = parentObject(); scrollers.second; ) {
+        Ref current = *scrollers.second;
+        if ((scrollers.first = current->getScrollableAreaIfScrollable()))
             break;
+        scrollers.second = current->parentObject();
     }
 }
 

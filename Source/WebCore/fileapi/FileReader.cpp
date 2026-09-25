@@ -45,6 +45,7 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -93,21 +94,21 @@ ScriptExecutionContext* FileReader::scriptExecutionContext() const
 
 ExceptionOr<void> FileReader::readAsArrayBuffer(Blob& blob)
 {
-    LOG(FileAPI, "FileReader: reading as array buffer: %s %s\n", blob.url().string().utf8().data(), is<File>(blob) ? downcast<File>(blob).path().utf8().data() : "");
+    LOG_WITH_STREAM(FileAPI, stream << "FileReader: reading as array buffer: "_s << blob.url().string() << " "_s << (is<File>(blob) ? downcast<File>(blob).path() : ""_s));
 
     return readInternal(blob, FileReaderLoader::ReadAsArrayBuffer);
 }
 
 ExceptionOr<void> FileReader::readAsBinaryString(Blob& blob)
 {
-    LOG(FileAPI, "FileReader: reading as binary: %s %s\n", blob.url().string().utf8().data(), is<File>(blob) ? downcast<File>(blob).path().utf8().data() : "");
+    LOG_WITH_STREAM(FileAPI, stream << "FileReader: reading as binary: "_s << blob.url().string() << " "_s << (is<File>(blob) ? downcast<File>(blob).path() : ""_s));
 
     return readInternal(blob, FileReaderLoader::ReadAsBinaryString);
 }
 
 ExceptionOr<void> FileReader::readAsText(Blob& blob, const String& encoding)
 {
-    LOG(FileAPI, "FileReader: reading as text: %s %s\n", blob.url().string().utf8().data(), is<File>(blob) ? downcast<File>(blob).path().utf8().data() : "");
+    LOG_WITH_STREAM(FileAPI, stream << "FileReader: reading as text: "_s << blob.url().string() << " "_s << (is<File>(blob) ? downcast<File>(blob).path() : ""_s));
 
     m_encoding = encoding;
     return readInternal(blob, FileReaderLoader::ReadAsText);
@@ -115,7 +116,7 @@ ExceptionOr<void> FileReader::readAsText(Blob& blob, const String& encoding)
 
 ExceptionOr<void> FileReader::readAsDataURL(Blob& blob)
 {
-    LOG(FileAPI, "FileReader: reading as data URL: %s %s\n", blob.url().string().utf8().data(), is<File>(blob) ? downcast<File>(blob).path().utf8().data() : "");
+    LOG_WITH_STREAM(FileAPI, stream << "FileReader: reading as data URL: "_s << blob.url().string() << " "_s << (is<File>(blob) ? downcast<File>(blob).path() : ""_s));
 
     return readInternal(blob, FileReaderLoader::ReadAsDataURL);
 }

@@ -27,6 +27,7 @@
 #include "GraphicsContext.h"
 
 #include "BidiResolver.h"
+#include "BitmapImage.h"
 #include "DisplayList.h"
 #include "Filter.h"
 #include "FilterImage.h"
@@ -175,13 +176,13 @@ FloatSize GraphicsContext::drawText(const FontCascade& font, const TextRun& run,
 
 void GraphicsContext::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
-    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
+    drawGlyphsImmediate(font, glyphs, advances, point, fontSmoothingMode);
 }
 
-void GraphicsContext::drawGlyphsImmediate(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
+void GraphicsContext::drawGlyphsImmediate(const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& point, FontSmoothingMode fontSmoothingMode)
 {
     // Called by implementations that transform drawGlyphs into drawGlyphsImmediate, drawImageBuffer, etc calls.
-    drawGlyphs(font, glyphs, advances, point, fontSmoothingMode);
+    FontCascade::drawGlyphs(*this, font, glyphs, advances, point, fontSmoothingMode);
 }
 
 void GraphicsContext::drawEmphasisMarks(const FontCascade& font, const TextRun& run, const AtomString& mark, const FloatPoint& point, unsigned from, std::optional<unsigned> to)
@@ -344,6 +345,22 @@ ImageDrawResult GraphicsContext::drawImage(Image& image, const FloatRect& destin
     return image.draw(*this, destination, source, options);
 }
 
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatPoint& destination, ImagePaintingOptions imagePaintingOptions)
+{
+    return drawBitmapImage(image, FloatRect(destination, image.size()), FloatRect(FloatPoint(), image.size()), imagePaintingOptions);
+}
+
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, ImagePaintingOptions imagePaintingOptions)
+{
+    FloatRect source(FloatPoint(), image.size(imagePaintingOptions.orientation()));
+    return drawBitmapImage(image, destination, source, imagePaintingOptions);
+}
+
+ImageDrawResult GraphicsContext::drawBitmapImage(BitmapImage& image, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions imagePaintingOptions)
+{
+    return image.draw(*this, destination, source, imagePaintingOptions);
+}
+
 ImageDrawResult GraphicsContext::drawTiledImage(Image& image, const FloatRect& destination, const FloatPoint& source, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options)
 {
     return image.drawTiled(*this, destination, source, tileSize, spacing, options);
@@ -432,7 +449,7 @@ void GraphicsContext::drawPattern(ImageBuffer& image, const FloatRect& destRect,
     FloatRect scaledSource = source;
     scaledSource.scale(image.resolutionScale());
     if (auto nativeImage = nativeImageForDrawing(image))
-        drawPattern(*nativeImage, destRect, source, patternTransform, phase, spacing, options);
+        drawPattern(*nativeImage, destRect, scaledSource, patternTransform, phase, spacing, options);
 }
 
 void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
@@ -441,16 +458,19 @@ void GraphicsContext::drawControlPart(ControlPart& part, const FloatRoundedRect&
 }
 
 #if ENABLE(VIDEO)
-void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ImageOrientation orientation, bool shouldDiscardAlpha)
+void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
 {
     RefPtr image = frame.copyNativeImage();
     if (!image)
         return;
     IntSize size = image->size();
-    if (orientation.usesWidthAsHeight())
+    if (options.orientation().usesWidthAsHeight())
         size = size.transposedSize();
-    auto compositeOperator = !shouldDiscardAlpha && image->hasAlpha() ? CompositeOperator::SourceOver : CompositeOperator::Copy;
-    drawNativeImage(*image, destination, { { }, size }, { compositeOperator, orientation });
+    // Copy is equivalent to SourceOver when the frame's alpha is not used, and cheaper.
+    // FIXME: This overrides whatever composite operator the caller asked for, so drawing a video
+    // frame into a canvas ignores its globalCompositeOperation.
+    auto compositeOperator = ((shouldDiscardAlpha == ShouldDiscardAlpha::No) && image->hasAlpha()) ? CompositeOperator::SourceOver : CompositeOperator::Copy;
+    drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif
 

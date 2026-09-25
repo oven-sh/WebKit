@@ -35,7 +35,6 @@
 #include "Logging.h"
 #include "MessageSenderInlines.h"
 #include "RemotePageProxy.h"
-#include "ShouldFreezeLayerTree.h"
 #include "WebBackForwardCache.h"
 #include "WebBackForwardList.h"
 #include "WebBackForwardListFrameItem.h"
@@ -53,6 +52,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -314,7 +314,7 @@ void SuspendedPageProxy::unsuspend(WebCore::BackForwardFrameItemIdentifier mainF
         if (!suspendedPage->hasSubframeInProcess(process->coreProcessIdentifier()))
             return;
         RELEASE_LOG(ProcessSwapping, "%p - SuspendedPageProxy::unsuspend: Sending RestoreWithFrameItem to pid %i", &suspendedPage, process->processID());
-        process->sendWithAsyncReply(Messages::WebPage::RestoreWithFrameItem(mainFrameItemID, mainFrameURLAndOrigin, ShouldFreezeLayerTree::Yes), aggregator->chain(), remotePage.identifierInSiteIsolatedProcess());
+        process->sendWithAsyncReply(Messages::WebPage::RestoreWithFrameItem(mainFrameItemID, mainFrameURLAndOrigin), aggregator->chain(), remotePage.identifierInSiteIsolatedProcess());
     });
 }
 
@@ -358,7 +358,7 @@ void SuspendedPageProxy::closeWithoutFlashing()
 
 void SuspendedPageProxy::didProcessRequestToSuspend(SuspensionState newSuspensionState)
 {
-    LOG(ProcessSwapping, "SuspendedPageProxy %s from process %i finished transition to suspended", loggingString().utf8().data(), m_process->processID());
+    LOG_WITH_STREAM(ProcessSwapping, stream << "SuspendedPageProxy "_s << loggingString() << " from process "_s << m_process->processID() << " finished transition to suspended"_s);
     RELEASE_LOG(ProcessSwapping, "%p - SuspendedPageProxy::didProcessRequestToSuspend() success? %d", this, newSuspensionState == SuspensionState::Suspended);
 
     ASSERT(newSuspensionState == SuspensionState::Suspended || newSuspensionState == SuspensionState::FailedToSuspend);

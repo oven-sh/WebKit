@@ -34,6 +34,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/Uint8Array.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -103,25 +104,25 @@ void LegacyMockCDM::deref() const
 static Uint8Array* initDataPrefix()
 {
     static constexpr std::array<uint8_t, 4> prefixData { 'm', 'o', 'c', 'k' };
-    static Uint8Array& prefix { Uint8Array::create(prefixData).leakRef() };
+    static NeverDestroyed<Ref<Uint8Array>> prefix { Uint8Array::create(prefixData) };
 
-    return &prefix;
+    return prefix->ptr();
 }
 
 static Uint8Array* keyPrefix()
 {
     static constexpr std::array<uint8_t, 3> prefixData { 'k', 'e', 'y' };
-    static Uint8Array& prefix { Uint8Array::create(prefixData).leakRef() };
+    static NeverDestroyed<Ref<Uint8Array>> prefix { Uint8Array::create(prefixData) };
 
-    return &prefix;
+    return prefix->ptr();
 }
 
 static Uint8Array* keyRequest()
 {
     static constexpr std::array<uint8_t, 7> requestData { 'r', 'e', 'q', 'u', 'e', 's', 't' };
-    static Uint8Array& request { Uint8Array::create(requestData).leakRef() };
+    static NeverDestroyed<Ref<Uint8Array>> request { Uint8Array::create(requestData) };
 
-    return &request;
+    return request->ptr();
 }
 
 static String NODELETE generateSessionId()
@@ -138,8 +139,9 @@ MockCDMSession::MockCDMSession(LegacyCDMSessionClient& client)
 
 RefPtr<Uint8Array> MockCDMSession::generateKeyRequest(const String&, Uint8Array* initData, String&, unsigned short& errorCode, uint32_t&)
 {
-    for (unsigned i = 0; i < initDataPrefix()->length(); ++i) {
-        if (!initData || i >= initData->length() || initData->item(i) != initDataPrefix()->item(i)) {
+    Ref prefix = *initDataPrefix();
+    for (unsigned i = 0; i < prefix->length(); ++i) {
+        if (!initData || i >= initData->length() || initData->item(i) != prefix->item(i)) {
             errorCode = WebKitMediaKeyError::MEDIA_KEYERR_UNKNOWN;
             return nullptr;
         }
@@ -154,8 +156,9 @@ void MockCDMSession::releaseKeys()
 
 bool MockCDMSession::update(Uint8Array* key, RefPtr<Uint8Array>&, unsigned short& errorCode, uint32_t&)
 {
-    for (unsigned i = 0; i < keyPrefix()->length(); ++i) {
-        if (i >= key->length() || key->item(i) != keyPrefix()->item(i)) {
+    Ref prefix = *keyPrefix();
+    for (unsigned i = 0; i < prefix->length(); ++i) {
+        if (i >= key->length() || key->item(i) != prefix->item(i)) {
             errorCode = WebKitMediaKeyError::MEDIA_KEYERR_CLIENT;
             return false;
         }

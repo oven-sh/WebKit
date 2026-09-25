@@ -44,7 +44,7 @@ public:
     {
     }
     
-    Bytecode(unsigned bytecodeIndex, OpcodeID opcodeID, const CString& description)
+    Bytecode(unsigned bytecodeIndex, OpcodeID opcodeID, const UTF8CString& description)
         : m_bytecodeIndex(bytecodeIndex)
         , m_opcodeID(opcodeID)
         , m_description(description)
@@ -53,13 +53,13 @@ public:
     
     unsigned bytecodeIndex() const { return m_bytecodeIndex; }
     OpcodeID opcodeID() const { return m_opcodeID; }
-    const CString& description() const LIFETIME_BOUND { return m_description; }
+    const UTF8CString& description() const LIFETIME_BOUND { return m_description; }
     
     Ref<JSON::Value> toJSON(Dumper&) const;
 private:
     unsigned m_bytecodeIndex;
     OpcodeID m_opcodeID;
-    CString m_description;
+    UTF8CString m_description;
 };
 
 inline unsigned getBytecodeIndexForBytecode(Bytecode* bytecode) { return bytecode->bytecodeIndex(); }

@@ -66,6 +66,8 @@ typedef enum WGPUBufferBindingTypeExtended {
     WGPUBufferBindingType_Float3x2 = WGPUBufferBindingType_Force32 - 1,
     WGPUBufferBindingType_Float4x3 = WGPUBufferBindingType_Force32 - 2,
     WGPUBufferBindingType_ArrayLength = WGPUBufferBindingType_Force32 - 3,
+    WGPUBufferBindingType_Float3x3 = WGPUBufferBindingType_Force32 - 4,
+    WGPUBufferBindingType_UInt2 = WGPUBufferBindingType_Force32 - 5,
 } WGPUBufferBindingTypeExtended;
 
 typedef enum WGPUSTypeExtended {
@@ -82,9 +84,13 @@ typedef struct WGPUExternalTextureBindingLayout {
 } WGPUExternalTextureBindingLayout;
 
 typedef struct WGPUExternalTextureDescriptor {
-    char const * label; // nullable
+    WGPUStringView label;
     CVPixelBufferRef pixelBuffer;
     WGPUColorSpace colorSpace;
+    // The size the source presents the frame at, which the pixel buffer does not carry. Zero when the
+    // source could not say, and then the frame's own decoded size stands in for it.
+    uint32_t visibleWidth;
+    uint32_t visibleHeight;
 } WGPUExternalTextureDescriptor;
 
 // How a decoded frame has to be transformed to be presented, which its pixel buffer does not carry:
@@ -110,7 +116,7 @@ typedef struct WGPUImageCopyExternalImage {
     // pixelBuffer.
     WGPUVideoFrameRotation pixelBufferRotation;
     WGPUBool pixelBufferIsMirrored;
-    // Format of the IOSurface's single plane. Only the uncompressed colour formats which can back an
+    // Format of the IOSurface's single plane. Only the uncompressed color formats which can back an
     // accelerated 2D canvas are accepted; anything else must not reach here.
     WGPUTextureFormat sourceFormat;
     // Top-left corner of the sub-rect to copy, in source pixels.
@@ -127,7 +133,7 @@ typedef struct WGPUImageCopyExternalImage {
     WGPUColorSpace colorSpace;
 } WGPUImageCopyExternalImage;
 
-// WGPUImageCopyTexture plus the GPUImageCopyTextureTagged colour-space and alpha tags.
+// WGPUImageCopyTexture plus the GPUImageCopyTextureTagged color-space and alpha tags.
 typedef struct WGPUImageCopyTextureTagged {
     WGPUTexture texture;
     uint32_t mipLevel;
@@ -139,7 +145,7 @@ typedef struct WGPUImageCopyTextureTagged {
 
 #if !defined(WGPU_SKIP_PROCS)
 
-typedef void (*WGPUProcRenderBundleSetLabel)(WGPURenderBundle renderBundle, char const * label);
+typedef void (*WGPUProcRenderBundleSetLabel)(WGPURenderBundle renderBundle, WGPUStringView label);
 
 typedef WGPUExternalTexture (*WGPUProcDeviceImportExternalTexture)(WGPUSwapChain swapChain);
 
@@ -150,7 +156,7 @@ typedef WGPUTexture (*WGPUProcSwapChainGetCurrentTexture)(WGPUSwapChain swapChai
 
 #if !defined(WGPU_SKIP_DECLARATIONS)
 
-WGPU_EXPORT void wgpuRenderBundleSetLabel(WGPURenderBundle renderBundle, char const * label);
+WGPU_EXPORT void wgpuRenderBundleSetLabel(WGPURenderBundle renderBundle, WGPUStringView label);
 
 // FIXME: https://github.com/webgpu-native/webgpu-headers/issues/89 is about moving this from WebGPUExt.h to WebGPU.h
 WGPU_EXPORT WGPUTexture wgpuSwapChainGetCurrentTexture(WGPUSwapChain swapChain, uint32_t frameIndex);
@@ -162,7 +168,7 @@ WGPU_EXPORT void wgpuQueueCopyExternalImageToTexture(WGPUQueue queue, const WGPU
 
 WGPU_EXPORT void wgpuDeviceSetDeviceLostCallback(WGPUDevice device, WGPUDeviceLostCallback callback, void* userdata);
 WGPU_EXPORT void wgpuDeviceSetDeviceLostCallbackWithBlock(WGPUDevice device, WGPUDeviceLostBlockCallback callback);
-WGPU_EXPORT void wgpuExternalTextureReference(WGPUExternalTexture externalTexture);
+WGPU_EXPORT void wgpuExternalTextureAddRef(WGPUExternalTexture externalTexture);
 WGPU_EXPORT void wgpuExternalTextureRelease(WGPUExternalTexture externalTexture);
 WGPU_EXPORT void wgpuRenderBundleEncoderSetBindGroupWithDynamicOffsets(WGPURenderBundleEncoder renderBundleEncoder, uint32_t groupIndex, WGPU_NULLABLE WGPUBindGroup group, std::optional<Vector<uint32_t>>&& dynamicOffsets) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuExternalTextureDestroy(WGPUExternalTexture texture) WGPU_FUNCTION_ATTRIBUTE;
@@ -176,7 +182,7 @@ WGPU_EXPORT void wgpuDevicePauseErrorReporting(WGPUDevice device, WGPUBool pause
 WGPU_EXPORT void wgpuDeviceCreateComputePipelineWithPipelineLayoutFromPipelineAsync(WGPUDevice, const WGPUComputePipelineDescriptor*, WGPUComputePipeline, WGPUCreateComputePipelineAsyncCallback, void*) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuDeviceCreateRenderPipelineWithPipelineLayoutFromPipelineAsync(WGPUDevice, const WGPURenderPipelineDescriptor*, WGPURenderPipeline, WGPUCreateRenderPipelineAsyncCallback, void*) WGPU_FUNCTION_ATTRIBUTE;
 
-WGPU_EXPORT WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsageFlags flags, double scale) WGPU_FUNCTION_ATTRIBUTE;
+WGPU_EXPORT WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUXRSubImage wgpuBindingGetViewSubImage(WGPUXRBinding binding, WGPUXRProjectionLayer layer) WGPU_FUNCTION_ATTRIBUTE;
 
 WGPU_EXPORT WGPUTexture wgpuXRSubImageGetColorTexture(WGPUXRSubImage subImage) WGPU_FUNCTION_ATTRIBUTE;

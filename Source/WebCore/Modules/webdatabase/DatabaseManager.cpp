@@ -44,6 +44,7 @@
 #include "WindowEventLoop.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
@@ -121,7 +122,7 @@ static inline void NODELETE logOpenDatabaseError(Document&, const String&)
 
 static void logOpenDatabaseError(Document& document, const String& name)
 {
-    LOG(StorageAPI, "Database %s for origin %s not allowed to be established", name.utf8().data(), document.securityOrigin().toString().utf8().data());
+    LOG_WITH_STREAM(StorageAPI, stream << "Database "_s << name << " for origin "_s << document.securityOrigin().toString() << " not allowed to be established"_s);
 }
 
 #endif
@@ -219,7 +220,7 @@ ExceptionOr<Ref<Database>> DatabaseManager::openDatabase(Document& document, con
     if (database->isNew() && creationCallback.get()) {
         LOG(StorageAPI, "Scheduling DatabaseCreationCallbackTask for database %p\n", database.get());
         database->setHasPendingCreationEvent(true);
-        protect(database->m_document->eventLoop())->queueTask(TaskSource::Networking, [creationCallback, database] {
+        protect(protect(database->m_document)->eventLoop())->queueTask(TaskSource::Networking, [creationCallback, database] {
             creationCallback->invoke(*database);
             database->setHasPendingCreationEvent(false);
         });

@@ -63,6 +63,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Logger.h>
+#include <wtf/MachSendRight.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
@@ -269,6 +270,7 @@ public:
 
     static RefPtr<WebProcessProxy> processForIdentifier(WebCore::ProcessIdentifier);
     static Ref<WebProcessProxy> fromConnection(const IPC::Connection&);
+    static Vector<Ref<WebProcessProxy>> allProcesses();
     static WebPageProxy* NODELETE webPage(WebPageProxyIdentifier);
     static WebPageProxy* NODELETE webPage(WebCore::PageIdentifier);
     static WebPageProxy* NODELETE audioCapturingWebPage();
@@ -316,6 +318,7 @@ public:
     bool isRunningSharedWorkers() const { return !!m_sharedWorkerInformation; }
     bool isStandaloneSharedWorkerProcess() const { return isRunningSharedWorkers() && !pageCount(); }
     bool isRunningWorkers() const { return m_sharedWorkerInformation || m_serviceWorkerInformation; }
+    std::optional<WebPageProxyIdentifier> remoteWorkerPageProxyID(RemoteWorkerType) const;
 
     bool NODELETE isDummyProcessProxy() const;
 
@@ -427,6 +430,9 @@ public:
     static const Vector<String>& mediaMIMETypes();
     void cacheMediaMIMETypes(const Vector<String>&);
     void cacheMediaSourceTypeSupported(const String& type, bool isSupported);
+
+    void setTaskNamePort(MachSendRight&&);
+    const MachSendRight& taskNamePort() const { return m_taskNamePort; }
 #endif
 
 #if HAVE(DISPLAY_LINK)
@@ -708,7 +714,6 @@ private:
 
     using WebProcessProxyMap = HashMap<WebCore::ProcessIdentifier, CheckedRef<WebProcessProxy>>;
     static WebProcessProxyMap& NODELETE allProcessMap();
-    static Vector<Ref<WebProcessProxy>> allProcesses();
     static WebPageProxyMap& NODELETE globalPageMap();
     static Vector<Ref<WebPageProxy>> globalPages();
 
@@ -862,7 +867,10 @@ private:
     HashSet<WebCore::ClientOrigin> m_committedClientOrigins; // Only grows because WebProcess can navigate back to an old origin in a history item.
     HashSet<WebCore::Site> m_remoteWorkerSites; // Only grows so that messages sent by a remote worker that is going away remain valid.
 
-    WeakHashMap<VisitedLinkStore, HashSet<WebPageProxyIdentifier>> m_visitedLinkStoresWithUsers;
+    // A single page can register with a store more than once for the same process, e.g. when a
+    // ProvisionalPageProxy and a RemotePageProxy for the same page live in the same process, so
+    // the registrations need to be counted rather than deduplicated.
+    WeakHashMap<VisitedLinkStore, HashCountedSet<WebPageProxyIdentifier>> m_visitedLinkStoresWithUsers;
 
     int m_numberOfTimesSuddenTerminationWasDisabled { 0 };
     ForegroundWebProcessToken m_foregroundToken;
@@ -916,6 +924,7 @@ private:
 
 #if PLATFORM(COCOA)
     MediaCaptureSandboxExtensions m_mediaCaptureSandboxExtensions { SandboxExtensionType::None };
+    MachSendRight m_taskNamePort;
 #endif
     RefPtr<Logger> m_logger;
 

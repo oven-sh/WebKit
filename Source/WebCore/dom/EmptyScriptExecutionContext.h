@@ -28,6 +28,7 @@
 #include "AdvancedPrivacyProtections.h"
 #include "EventLoop.h"
 #include "Microtasks.h"
+#include "NetworkLoadPolicy.h"
 #include "ReferrerPolicy.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
@@ -107,6 +108,7 @@ private:
     void logExceptionToConsole(const String&, const String&, int, int, RefPtr<Inspector::ScriptCallStack>&&) final { }
 
     const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    const NetworkLoadPolicy& networkLoadPolicy() const final { return NetworkLoadPolicy::unrestricted(); }
 
 #if ENABLE(NOTIFICATIONS)
     NotificationClient* notificationClient() final { return nullptr; }

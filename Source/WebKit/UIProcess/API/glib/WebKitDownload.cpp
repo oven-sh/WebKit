@@ -35,6 +35,7 @@
 #include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/CStringView.h>
 
 using namespace WebKit;
 using namespace WebCore;
@@ -205,7 +206,7 @@ static void webkit_download_class_init(WebKitDownloadClass* downloadClass)
      * This value will range from 0.0 to 1.0. The value is an estimate
      * based on the total number of bytes expected to be received for
      * a download.
-     * If you need a more accurate progress information you can connect to
+     * If you need more accurate progress information you can connect to
      * #WebKitDownload::received-data signal to track the progress.
      */
     sObjProperties[PROP_ESTIMATED_PROGRESS] =
@@ -411,8 +412,8 @@ void webkitDownloadNotifyProgress(WebKitDownload* download, guint64 bytesReceive
 
 void webkitDownloadFailed(WebKitDownload* download, const ResourceError& resourceError)
 {
-    GUniquePtr<GError> webError(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().data()),
-        toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().data()));
+    GUniquePtr<GError> webError(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().legacyCStringPointer()),
+        toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
     if (download->priv->timer)
         g_timer_stop(download->priv->timer.get());
 
@@ -433,7 +434,7 @@ void webkitDownloadFinished(WebKitDownload* download)
     g_signal_emit(download, signals[FINISHED], 0, nullptr);
 }
 
-void webkitDownloadDecideDestinationWithSuggestedFilename(WebKitDownload* download, CString&& suggestedFilename, CompletionHandler<void(AllowOverwrite, String)>&& completionHandler)
+void webkitDownloadDecideDestinationWithSuggestedFilename(WebKitDownload* download, UTF8CString&& suggestedFilename, CompletionHandler<void(AllowOverwrite, String)>&& completionHandler)
 {
     if (download->priv->isCancelled) {
         completionHandler(AllowOverwrite::No, { });
@@ -442,7 +443,7 @@ void webkitDownloadDecideDestinationWithSuggestedFilename(WebKitDownload* downlo
 
     download->priv->decideDestinationCallback = WTF::move(completionHandler);
     gboolean applicationWillDecideDestination = FALSE;
-    g_signal_emit(download, signals[DECIDE_DESTINATION], 0, suggestedFilename.data(), &applicationWillDecideDestination);
+    g_signal_emit(download, signals[DECIDE_DESTINATION], 0, suggestedFilename.legacyCStringPointer(), &applicationWillDecideDestination);
     if (!applicationWillDecideDestination)
         maybeFinishDecideDestination(download);
 }
@@ -453,9 +454,9 @@ void webkitDownloadDestinationCreated(WebKitDownload* download, const String& de
         return;
 
 #if ENABLE(2022_GLIB_API)
-    g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationPath.utf8().data());
+    g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationPath.utf8().legacyCStringPointer());
 #else
-    GUniquePtr<char> destinationURI(g_filename_to_uri(destinationPath.utf8().data(), nullptr, nullptr));
+    GUniquePtr<char> destinationURI(g_filename_to_uri(destinationPath.utf8().legacyCStringPointer(), nullptr, nullptr));
     ASSERT(destinationURI);
     g_signal_emit(download, signals[CREATED_DESTINATION], 0, destinationURI.get());
 #endif
@@ -606,11 +607,10 @@ void webkit_download_cancel(WebKitDownload* download)
  * @download: a #WebKitDownload
  *
  * Gets the value of the #WebKitDownload:estimated-progress property.
- * Gets the value of the #WebKitDownload:estimated-progress property.
  * You can monitor the estimated progress of the download operation by
  * connecting to the notify::estimated-progress signal of @download.
  *
- * Returns: an estimate of the of the percent complete for a download
+ * Returns: an estimate of the percent complete for a download
  *     as a range from 0.0 to 1.0.
  */
 gdouble webkit_download_get_estimated_progress(WebKitDownload* download)

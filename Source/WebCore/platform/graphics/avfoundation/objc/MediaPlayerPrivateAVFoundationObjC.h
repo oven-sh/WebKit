@@ -402,10 +402,6 @@ private:
     RefPtr<WebCoreAVFResourceLoader> getResourceLoader(AVAssetResourceLoadingRequest *) const;
     RefPtr<WebCoreAVFResourceLoader> takeResourceLoader(AVAssetResourceLoadingRequest *);
 
-#if HAVE(AVPLAYER_PARTICIPATESINAUDIOSESSION)
-    void setParticipatesInAudioSession(bool);
-#endif
-
     void updateLayerAttachment();
     bool shouldAttachLayerToPlayer();
 

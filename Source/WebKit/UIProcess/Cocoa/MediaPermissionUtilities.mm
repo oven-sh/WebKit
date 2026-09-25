@@ -57,7 +57,7 @@ bool checkSandboxRequirementForType(MediaPermissionType type)
 
         int result = sandbox_check(getpid(), operation, static_cast<enum sandbox_filter_type>(SANDBOX_CHECK_NO_REPORT | SANDBOX_FILTER_NONE));
         if (result == -1)
-            WTFLogAlways("Error checking '%s' sandbox access, errno=%ld", operation.characters(), (long)errno);
+            SAFE_WTFLOGALWAYS("Error checking '%s' sandbox access, errno=%ld", operation, (long)errno);
         return !result;
     };
 
@@ -98,7 +98,7 @@ bool checkUsageDescriptionStringForSpeechRecognition()
 
 static RetainPtr<NSString> visibleDomain(const String& host)
 {
-    auto domain = WTF::URLHelpers::userVisibleURL(host.utf8());
+    auto domain = WTF::URLHelpers::userVisibleURL(host.utf8().span());
     return startsWithLettersIgnoringASCIICase(domain, "www."_s) ? StringView(domain).substring(4).createNSString() : domain.createNSString();
 }
 

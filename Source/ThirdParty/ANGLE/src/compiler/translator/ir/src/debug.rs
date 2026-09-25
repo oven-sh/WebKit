@@ -254,18 +254,24 @@ fn image_type_str(basic_type: ImageBasicType, image_type: ImageType) -> String {
     format!("{prefix}{base_name}{suffix}{multisample_suffix}{array_suffix}{shadow_suffix}")
 }
 
-fn name_str(name: &Name, temp_prefix: &'static str, id: u32) -> String {
+fn name_str(name: &Name, temp_prefix: &'static str, user_prefix: &'static str, id: u32) -> String {
     // Some names are expected to be output exactly, and are known to be unique.  Others will
     // be disambiguated with an `_N` suffix if they clash with any other name in text outputs.
     format!(
         "'{}{}{}'",
         match name.source {
-            NameSource::ShaderInterface => USER_SYMBOL_PREFIX,
+            NameSource::ShaderInterface => user_prefix,
             NameSource::Temporary => temp_prefix,
             _ => "",
         },
         name.name,
-        if name.source == NameSource::Temporary { format!("_{id}") } else { "".to_string() }
+        if name.source == NameSource::Temporary {
+            format!("_{id}")
+        } else if let Some(suffix) = name.suffix {
+            format!("_{}", suffix)
+        } else {
+            "".to_string()
+        }
     )
 }
 
@@ -319,7 +325,6 @@ fn image_internal_format_str(format: ImageInternalFormat) -> String {
 fn decoration_str(decoration: Decoration) -> String {
     match decoration {
         Decoration::Invariant => "invariant".to_string(),
-        Decoration::Precise => "precise".to_string(),
         Decoration::Interpolant => "interpolant".to_string(),
         Decoration::Smooth => "smooth".to_string(),
         Decoration::Flat => "flat".to_string(),
@@ -366,12 +371,15 @@ fn decoration_str(decoration: Decoration) -> String {
     }
 }
 
-fn decoration_list(precision: Precision, decorations: &Decorations) -> String {
+fn decoration_list(precision: Precision, precise: bool, decorations: &Decorations) -> String {
     let mut result = Vec::new();
     match precision {
         Precision::NotApplicable => {}
         _ => result.push(precision_str(precision).to_string()),
     };
+    if precise {
+        result.push("precise".to_string());
+    }
 
     decorations.decorations.iter().for_each(|&decoration| {
         result.push(decoration_str(decoration));
@@ -380,8 +388,13 @@ fn decoration_list(precision: Precision, decorations: &Decorations) -> String {
     result.join(", ")
 }
 
-fn append_decorations(result: &mut String, precision: Precision, decorations: &Decorations) {
-    let decorations = decoration_list(precision, decorations);
+fn append_decorations(
+    result: &mut String,
+    precision: Precision,
+    precise: bool,
+    decorations: &Decorations,
+) {
+    let decorations = decoration_list(precision, precise, decorations);
     if !decorations.is_empty() {
         *result = format!("{result} [{decorations}]");
     }
@@ -390,10 +403,10 @@ fn append_decorations(result: &mut String, precision: Precision, decorations: &D
 fn field_str(field: &Field, index: usize) -> String {
     let mut result = format!(
         "{}: {}",
-        name_str(&field.name, TEMP_STRUCT_FIELD_PREFIX, index as u32),
+        name_str(&field.name, TEMP_STRUCT_FIELD_PREFIX, USER_VARIABLE_PREFIX, index as u32),
         type_id_str(field.type_id)
     );
-    append_decorations(&mut result, field.precision, &field.decorations);
+    append_decorations(&mut result, field.precision, field.precise, &field.decorations);
     result
 }
 
@@ -472,10 +485,15 @@ fn function_param_direction_str(direction: FunctionParamDirection) -> String {
 }
 
 fn function_prototype_str(id: FunctionId, function: &Function) -> String {
-    let name = name_str(&function.name, TEMP_FUNCTION_PREFIX, id.id);
+    let name = name_str(&function.name, TEMP_FUNCTION_PREFIX, USER_VARIABLE_PREFIX, id.id);
 
     let mut return_type = type_id_str(function.return_type_id);
-    append_decorations(&mut return_type, function.return_precision, &function.return_decorations);
+    append_decorations(
+        &mut return_type,
+        function.return_precision,
+        function.return_precise,
+        &function.return_decorations,
+    );
 
     let params = function
         .params
@@ -947,14 +965,19 @@ fn dump_types(ir_meta: &IRMeta, result: &mut String) {
                 &Type::UnsizedArray(type_id) =>
                     format!("Unsized Array of {}", type_id_str(type_id)),
                 &Type::Image(basic_type, image_type) => image_type_str(basic_type, image_type),
-                Type::Struct(name, _, specialization) => format!(
-                    "{} {}:",
-                    match specialization {
-                        StructSpecialization::Struct => "Struct",
-                        StructSpecialization::InterfaceBlock => "Interface Block",
-                    },
-                    name_str(name, TEMP_STRUCT_PREFIX, id as u32)
-                ),
+                Type::Struct(name, _, specialization) => {
+                    let (typename, prefix) = match specialization {
+                        StructSpecialization::Struct => ("Struct", USER_VARIABLE_PREFIX),
+                        StructSpecialization::InterfaceBlock => {
+                            ("Interface Block", USER_BLOCK_PREFIX)
+                        }
+                    };
+                    format!(
+                        "{} {}:",
+                        typename,
+                        name_str(name, TEMP_STRUCT_PREFIX, prefix, id as u32)
+                    )
+                }
                 &Type::Pointer(type_id) => format!("Pointer to {}", type_id_str(type_id)),
                 Type::DeadCodeEliminated => {
                     return;
@@ -1006,7 +1029,7 @@ fn dump_variables(ir_meta: &IRMeta, result: &mut String) {
         if v.is_dead_code_eliminated {
             return;
         }
-        let name = name_str(&v.name, TEMP_VARIABLE_PREFIX, id as u32);
+        let name = name_str(&v.name, TEMP_VARIABLE_PREFIX, USER_VARIABLE_PREFIX, id as u32);
         let initializer = v
             .initializer
             .map(|constant_id| format!("={}", constant_id_str(constant_id)))
@@ -1030,9 +1053,9 @@ fn dump_variables(ir_meta: &IRMeta, result: &mut String) {
             name,
             initializer,
             built_in,
-            loop_variable
+            loop_variable,
         );
-        append_decorations(&mut formatted, v.precision, &v.decorations);
+        append_decorations(&mut formatted, v.precision, v.precise, &v.decorations);
 
         append_on_new_line(result, formatted, 1);
     });
@@ -1064,7 +1087,7 @@ fn dump_instruction(
             (
                 format!("{} {:>6} = ", register_id_str(id), type_id),
                 opcode_str(&instruction.op),
-                decoration_list(instruction.result.precision, &Decorations::new_none()),
+                decoration_list(instruction.result.precision, false, &Decorations::new_none()),
             )
         }
         BlockInstruction::Void(op) => ("".to_string(), opcode_str(op), "".to_string()),
@@ -1113,7 +1136,7 @@ fn dump_block(
 
         let mut formatted =
             format!("Input: {} ({})", register_id_str(input.id), type_id_str(input.type_id));
-        append_decorations(&mut formatted, input.precision, &Decorations::new_none());
+        append_decorations(&mut formatted, input.precision, false, &Decorations::new_none());
         append_on_new_line(result, formatted, indent);
     });
 

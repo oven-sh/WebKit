@@ -86,7 +86,7 @@ void ScriptProcessorNode::initialize()
     if (isInitialized())
         return;
 
-    float sampleRate = context().sampleRate();
+    float sampleRate = protect(context())->sampleRate();
 
     // Create double buffers on both the input and output sides.
     // These AudioBuffers will be directly accessed in the main thread by JavaScript.
@@ -105,7 +105,8 @@ RefPtr<AudioBuffer> ScriptProcessorNode::createInputBufferForJS(AudioBuffer* inp
         return nullptr;
 
     // As an optimization, we reuse the same buffer as last time when possible.
-    if (!m_cachedInputBufferForJS || !inputBuffer->copyTo(*m_cachedInputBufferForJS))
+    RefPtr cachedInputBufferForJS = m_cachedInputBufferForJS;
+    if (!cachedInputBufferForJS || !inputBuffer->copyTo(*cachedInputBufferForJS))
         m_cachedInputBufferForJS = inputBuffer->clone();
 
     return m_cachedInputBufferForJS;
@@ -114,10 +115,11 @@ RefPtr<AudioBuffer> ScriptProcessorNode::createInputBufferForJS(AudioBuffer* inp
 RefPtr<AudioBuffer> ScriptProcessorNode::createOutputBufferForJS(AudioBuffer& outputBuffer) const
 {
     // As an optimization, we reuse the same buffer as last time when possible.
-    if (!m_cachedOutputBufferForJS || !m_cachedOutputBufferForJS->topologyMatches(outputBuffer))
+    RefPtr cachedOutputBufferForJS = m_cachedOutputBufferForJS;
+    if (!cachedOutputBufferForJS || !cachedOutputBufferForJS->topologyMatches(outputBuffer))
         m_cachedOutputBufferForJS = outputBuffer.clone(AudioBuffer::ShouldCopyChannelData::No);
     else
-        m_cachedOutputBufferForJS->zero();
+        cachedOutputBufferForJS->zero();
 
     return m_cachedOutputBufferForJS;
 }
@@ -147,9 +149,9 @@ void ScriptProcessorNode::process(size_t framesToProcess)
 
     // Get input and output busses.
     CheckedPtr firstInput = input(0);
-    AudioBus& inputBus = firstInput->bus();
+    Ref inputBus = firstInput->bus();
     CheckedPtr firstOutput = output(0);
-    AudioBus& outputBus = firstOutput->bus();
+    Ref outputBus = firstOutput->bus();
 
     // Get input and output buffers. We double-buffer both the input and output sides.
     unsigned bufferIndex = this->bufferIndex();
@@ -158,13 +160,13 @@ void ScriptProcessorNode::process(size_t framesToProcess)
     if (!m_bufferLocks[bufferIndex].tryLock()) {
         // We're late in handling the previous request. The main thread must be
         // very busy. The best we can do is clear out the buffer ourself here.
-        outputBus.zero();
+        outputBus->zero();
         return;
     }
     Locker locker { AdoptLock, m_bufferLocks[bufferIndex] };
-    
-    AudioBuffer* inputBuffer = m_inputBuffers[bufferIndex].get();
-    AudioBuffer* outputBuffer = m_outputBuffers[bufferIndex].get();
+
+    RefPtr inputBuffer = m_inputBuffers[bufferIndex];
+    RefPtr outputBuffer = m_outputBuffers[bufferIndex];
 
     // Check the consistency of input and output buffers.
     unsigned numberOfInputChannels = m_internalInputBus->numberOfChannels();
@@ -184,7 +186,7 @@ void ScriptProcessorNode::process(size_t framesToProcess)
     if (!isFramesToProcessGood)
         return;
 
-    unsigned numberOfOutputChannels = outputBus.numberOfChannels();
+    unsigned numberOfOutputChannels = outputBus->numberOfChannels();
 
     bool channelsAreGood = (numberOfInputChannels == m_numberOfInputChannels) && (numberOfOutputChannels == m_numberOfOutputChannels);
     ASSERT(channelsAreGood);
@@ -199,7 +201,7 @@ void ScriptProcessorNode::process(size_t framesToProcess)
 
     // Copy from the output buffer to the output. 
     for (unsigned i = 0; i < numberOfOutputChannels; ++i)
-        memcpySpan(outputBus.channel(i)->mutableSpan(), outputBuffer->rawChannelData(i).subspan(m_bufferReadWriteIndex, framesToProcess));
+        memcpySpan(outputBus->channel(i)->mutableSpan(), outputBuffer->rawChannelData(i).subspan(m_bufferReadWriteIndex, framesToProcess));
 
     // Update the buffering index.
     m_bufferReadWriteIndex = (m_bufferReadWriteIndex + framesToProcess) % bufferSize();
@@ -213,7 +215,7 @@ void ScriptProcessorNode::process(size_t framesToProcess)
 
         // Reference ourself so we don't accidentally get deleted before fireProcessEvent() gets called.
         // We only wait for script code execution when the context is an offline one for performance reasons.
-        if (context().isOfflineContext()) {
+        if (protect(context())->isOfflineContext()) {
             callOnMainThreadAndWait([this, bufferIndex, protector = Ref { *this }] {
                 fireProcessEvent(bufferIndex);
             });
@@ -232,19 +234,20 @@ void ScriptProcessorNode::fireProcessEvent(unsigned bufferIndex)
 {
     ASSERT(isMainThread());
 
-    AudioBuffer* inputBuffer = m_inputBuffers[bufferIndex].get();
-    AudioBuffer* outputBuffer = m_outputBuffers[bufferIndex].get();
+    RefPtr inputBuffer = m_inputBuffers[bufferIndex];
+    RefPtr outputBuffer = m_outputBuffers[bufferIndex];
     ASSERT(outputBuffer);
     if (!outputBuffer)
         return;
 
     // Avoid firing the event if the document has already gone away.
-    if (context().isStopped())
+    Ref context = this->context();
+    if (context->isStopped())
         return;
 
     // Calculate playbackTime with the buffersize which needs to be processed each time when onaudioprocess is called.
     // The outputBuffer being passed to JS will be played after exhausting previous outputBuffer by double-buffering.
-    double playbackTime = (context().currentSampleFrame() + m_bufferSize) / static_cast<double>(context().sampleRate());
+    double playbackTime = (context->currentSampleFrame() + m_bufferSize) / static_cast<double>(context->sampleRate());
 
     auto inputBufferForJS = createInputBufferForJS(inputBuffer);
     auto outputBufferForJS = createOutputBufferForJS(*outputBuffer);

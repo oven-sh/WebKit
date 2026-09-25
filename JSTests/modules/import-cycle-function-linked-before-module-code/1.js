@@ -1,4 +1,4 @@
-import "./2.js"
+import "./2.js";
 
 export let lexical = 0;
 export var hoisted = 0;

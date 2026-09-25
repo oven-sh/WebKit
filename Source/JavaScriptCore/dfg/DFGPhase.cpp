@@ -43,7 +43,7 @@ void Phase::beginPhase()
     if (Options::verboseValidationFailure()) {
         StringPrintStream out;
         m_graph.dump(out);
-        m_graphDumpBeforePhase = out.toCString();
+        m_graphDumpBeforePhase = out.toUTF8CString();
     }
 
     dataLogIf(shouldDumpGraphAtEachPhase(m_graph),

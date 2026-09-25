@@ -584,10 +584,18 @@ void AXTextMarkerRange::forEachTextPiece(IncludeListMarkerText includeListMarker
         emit(listMarkerText);
     }
 
+    // An ignored replaced element (an <img alt=""> say) contributes no character, as TextIterator and
+    // auxiliaryTextForObject both have it.
+    auto emitRunText = [&] (AXIsolatedObject& object, StringView text) {
+        if (object.isReplacedElementForTextEmission() && object.isIgnored())
+            return;
+        emit(text);
+    };
+
     if (start.isolatedObject() == end.isolatedObject()) {
         size_t minOffset = std::min(start.offset(), end.offset());
         size_t maxOffset = std::max(start.offset(), end.offset());
-        emit(start.runs()->substring(minOffset, maxOffset - minOffset));
+        emitRunText(*start.isolatedObject(), start.runs()->substring(minOffset, maxOffset - minOffset));
         return;
     }
 
@@ -602,13 +610,13 @@ void AXTextMarkerRange::forEachTextPiece(IncludeListMarkerText includeListMarker
         emit(auxiliaryTextForObject(object, traversalPoint, lastEmittedCharacter).text);
     };
 
-    emit(start.runs()->substring(start.offset()));
+    emitRunText(*start.isolatedObject(), start.runs()->substring(start.offset()));
 
     // FIXME: If we've been given reversed markers, i.e. the end marker actually comes before the start marker,
     // we may want to detect this and try searching AXDirection::Previous?
     RefPtr current = findObjectWithRuns(*start.isolatedObject(), AXDirection::Next, std::nullopt, emitAuxiliaryText, EnterUserAgentShadowContent::No);
     while (current && current->objectID() != end.objectID()) {
-        emit(current->textRuns()->toStringView());
+        emitRunText(*current, current->textRuns()->toStringView());
         RefPtr next = findObjectWithRuns(*current, AXDirection::Next, std::nullopt, emitAuxiliaryText, EnterUserAgentShadowContent::No);
         if (next == current) [[unlikely]] {
             // findObjectWithRuns returned its input. Would loop forever.
@@ -617,7 +625,7 @@ void AXTextMarkerRange::forEachTextPiece(IncludeListMarkerText includeListMarker
         }
         current = WTF::move(next);
     }
-    emit(end.runs()->substring(0, end.offset()));
+    emitRunText(*end.isolatedObject(), end.runs()->substring(0, end.offset()));
 }
 
 // The length of what toString would return, without building the string. Text markers are queried
@@ -1686,12 +1694,15 @@ AXTextMarker AXTextMarker::findWordOrSentence(AXDirection direction, bool findWo
 
     // objectBorder maintains the position in flattenedRuns between the current object's text and the previously scanned object(s)
     int objectBorder = direction == AXDirection::Next ? 0 : flattenedRuns.length();
+    // Position in flattenedRuns of the boundary the backwards iterators last found, if they found one.
+    std::optional<int> backwardsBoundaryIndex;
 
     // Functions to update resultMarker for word and sentence text units.
     auto updateWordResultMarker = [&] () {
         if (direction == AXDirection::Previous && boundary == AXTextUnitBoundary::Start) {
             TEXT_MARKER_ASSERT_SINGLE(offset <= flattenedRuns.length(), (*this));
             int previousWordStart = findNextWordFromIndex(flattenedRuns, offset, false);
+            backwardsBoundaryIndex = previousWordStart;
             if (previousWordStart <= objectBorder)
                 resultMarker = AXTextMarker(*currentObject, previousWordStart, origin);
         } else if (direction == AXDirection::Next && boundary == AXTextUnitBoundary::End) {
@@ -1718,12 +1729,16 @@ AXTextMarker AXTextMarker::findWordOrSentence(AXDirection direction, bool findWo
     auto updateSentenceResultMarker = [&] () {
         if (boundary == AXTextUnitBoundary::Start) {
             int start = previousSentenceStartFromOffset(flattenedRuns, offset);
+            if (direction == AXDirection::Previous && start != -1)
+                backwardsBoundaryIndex = start;
             if (direction == AXDirection::Previous && start < objectBorder && start != -1)
                 resultMarker = AXTextMarker(*currentObject, start, origin);
             else if (direction == AXDirection::Next && start != -1 && start >= objectBorder)
                 resultMarker = AXTextMarker(*currentObject, start - objectBorder, origin);
         } else {
             int end = nextSentenceEndFromOffset(flattenedRuns, offset);
+            if (direction == AXDirection::Previous && end != -1)
+                backwardsBoundaryIndex = end;
             // If the current marker (this) is the same position from the end, start a new search from there.
             if (direction == AXDirection::Previous && end <= objectBorder && end != -1)
                 resultMarker = AXTextMarker(*currentObject, end, origin);
@@ -1732,6 +1747,12 @@ AXTextMarker AXTextMarker::findWordOrSentence(AXDirection direction, bool findWo
                 resultMarker = AXTextMarker(*currentObject, end - objectBorder, origin);
             }
         }
+    };
+
+    // The boundary can't move once scanned text precedes it, because text further back only adds
+    // words and sentences before it.
+    auto foundFinalBoundary = [&] {
+        return backwardsBoundaryIndex.value_or(0) > 0;
     };
 
     while (currentObject) {
@@ -1743,9 +1764,16 @@ AXTextMarker AXTextMarker::findWordOrSentence(AXDirection direction, bool findWo
         bool lastObjectIsEditable = !!currentObject->editableAncestor();
         currentObject = findObjectWithRuns(*currentObject, direction);
         if (currentObject) {
-            // We should return when the containing block is different (indicating a paragraph).
-            if (currentRuns->containingBlock != currentObject->textRuns()->containingBlock)
-                return resultMarker;
+            bool crossedContainingBlock = currentRuns->containingBlock != currentObject->textRuns()->containingBlock;
+            if (crossedContainingBlock) {
+                // A containing block change means a new paragraph. Only backwards searches cross one. e.g.:
+                //   <p>Test sentence one. Test sentence two</p>
+                //   <p>|Where</p>
+                // The previous word start is "two". Forwards from "two|" the next word end is the
+                // paragraph break itself, so nothing in the next paragraph needs searching.
+                if (direction == AXDirection::Next || foundFinalBoundary())
+                    return resultMarker;
+            }
 
             // We only stop at line breaks when finding words, as for sentences, the text break iterator needs to find the next sentence boundary, which isn't necessarily at a break.
             bool shouldStopAtLineBreaks = findWord && currentObject->role() == AccessibilityRole::LineBreak && !currentObject->editableAncestor();
@@ -1757,8 +1785,10 @@ AXTextMarker AXTextMarker::findWordOrSentence(AXDirection direction, bool findWo
             currentRuns = currentObject->textRuns();
             StringView newRunsFlattenedString = currentRuns->toStringView();
             if (direction == AXDirection::Previous) {
-                flattenedRuns = makeString(newRunsFlattenedString, flattenedRuns);
-                offset += newRunsFlattenedString.length();
+                // Crossing a containing block means a new paragraph. Include a \n separator in this case.
+                unsigned separatorLength = crossedContainingBlock ? 1 : 0;
+                flattenedRuns = crossedContainingBlock ? makeString(newRunsFlattenedString, '\n', flattenedRuns) : makeString(newRunsFlattenedString, flattenedRuns);
+                offset += newRunsFlattenedString.length() + separatorLength;
                 objectBorder = newRunsFlattenedString.length();
             } else {
                 // We don't need to update the offset when moving fowards, since text is being appended to the end of flattenedRuns

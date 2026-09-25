@@ -27,7 +27,9 @@
 #pragma once
 
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/StructuredCloneTags.h>
 #include <WebCore/FileSystemStorageConnection.h>
+#include <WebCore/ImageBitmap.h>
 #include <WebCore/NonSerializedDataToken.h>
 #include <WebCore/URLKeepingBlobAlive.h>
 #include <wtf/FastMalloc.h>
@@ -54,13 +56,8 @@
 #include <WebCore/RTCRtpTransformableFrame.h>
 #endif
 
-#if ENABLE(WEBASSEMBLY)
-namespace JSC { namespace Wasm { class Module; } }
-#endif
-
 namespace WebCore {
 
-class DetachedImageBitmap;
 class MessagePort;
 class OffscreenCanvas;
 
@@ -69,11 +66,11 @@ class DetachedOffscreenCanvas;
 #endif
 
 #if ENABLE(WEBASSEMBLY)
-using WasmModuleArray = Vector<Ref<::JSC::Wasm::Module>>;
-using WasmMemoryHandleArray = Vector<RefPtr<::JSC::SharedArrayBufferContents>>;
+using WasmModuleArray = ::JSC::WasmModuleArray;
+using WasmMemoryHandleArray = ::JSC::WasmMemoryHandleArray;
 #endif
 
-using ArrayBufferContentsArray = Vector<::JSC::ArrayBufferContents>;
+using ArrayBufferContentsArray = ::JSC::ArrayBufferContentsArray;
 
 struct SerializedScriptValueInternals {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED_EXPORT(SerializedScriptValueInternals, WEBCORE_EXPORT);
@@ -88,6 +85,8 @@ struct SerializedScriptValueInternals {
 #endif
     uint64_t exposedMessagePortCount { 0 };
     std::optional<NonSerializedDataToken> nonSerializedDataToken { };
+    // Must stay inside the contiguous run of serialized members at the top of this struct.
+    Vector<std::optional<DetachedImageBitmap>> detachedImageBitmaps { };
     Vector<FileSystemHandleKeepAlive> fileSystemHandleKeepAlives { };
 #if ENABLE(WEB_CODECS)
     Vector<WebCodecsVideoFrameData> serializedVideoFrames { };
@@ -105,7 +104,6 @@ struct SerializedScriptValueInternals {
     Vector<std::unique_ptr<MediaStreamTrackHandleDataHolder>> detachedMediaStreamTrackHandles { };
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBufferContentsArray { nullptr };
-    Vector<std::optional<DetachedImageBitmap>> detachedImageBitmaps { };
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> detachedOffscreenCanvases { };
     Vector<Ref<OffscreenCanvas>> inMemoryOffscreenCanvases { };

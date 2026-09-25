@@ -93,13 +93,14 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::startTracking()
     if (m_tracking)
         return { };
 
-    ResourceUsageThread::addObserver(this, Memory, [this] (const ResourceUsageData& data) {
-        collectSample(data);
+    ResourceUsageThread::addObserver(this, Memory, [weakThis = WeakPtr { *this }] (const ResourceUsageData& data) {
+        if (CheckedPtr agent = weakThis.get())
+            agent->collectSample(data);
     });
 
     m_tracking = true;
 
-    m_frontendDispatcher->trackingStart(protect(environment())->executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingStart(protect(protect(environment())->executionStopwatch())->elapsedTime().seconds());
 
     return { };
 }
@@ -113,7 +114,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::stopTracking()
 
     m_tracking = false;
 
-    m_frontendDispatcher->trackingComplete(protect(environment())->executionStopwatch().elapsedTime().seconds());
+    m_frontendDispatcher->trackingComplete(protect(protect(environment())->executionStopwatch())->elapsedTime().seconds());
 
     return { };
 }
@@ -121,7 +122,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorMemoryAgent::stopTracking()
 void InspectorMemoryAgent::didHandleMemoryPressure(Critical critical)
 {
     MemoryFrontendDispatcher::Severity severity = critical == Critical::Yes ? MemoryFrontendDispatcher::Severity::Critical : MemoryFrontendDispatcher::Severity::NonCritical;
-    m_frontendDispatcher->memoryPressure(protect(environment())->executionStopwatch().elapsedTime().seconds(), Inspector::Protocol::Helpers::getEnumConstantValue(severity));
+    m_frontendDispatcher->memoryPressure(protect(protect(environment())->executionStopwatch())->elapsedTime().seconds(), Inspector::Protocol::Helpers::getEnumConstantValue(severity));
 }
 
 void InspectorMemoryAgent::collectSample(const ResourceUsageData& data)

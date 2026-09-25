@@ -29,6 +29,7 @@
 #include <limits>
 #include <numbers>
 #include <sstream>
+#include <wtf/ASCIICType.h>
 #include <wtf/MathExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -81,7 +82,7 @@ TEST(WTF, StringStartsWithEmptyVsNull)
 static inline const char* testStringNumberFixedPrecision(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::numberToStringFixedPrecision(number).utf8().data(), 99);
+    std::strncpy(testBuffer, String::numberToStringFixedPrecision(number).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -130,7 +131,7 @@ TEST(WTF, StringNumberFixedPrecision)
 static inline const char* testStringNumberFixedWidth(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::numberToStringFixedWidth(number, 6).utf8().data(), 99);
+    std::strncpy(testBuffer, String::numberToStringFixedWidth(number, 6).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -177,7 +178,7 @@ TEST(WTF, StringNumberFixedWidth)
 static inline const char* testStringNumber(double number)
 {
     static char testBuffer[100] = { };
-    std::strncpy(testBuffer, String::number(number).utf8().data(), 99);
+    std::strncpy(testBuffer, String::number(number).utf8().legacyCStringPointer(), 99);
     return testBuffer;
 }
 
@@ -242,38 +243,38 @@ TEST(WTF, StringReplaceWithLiteral)
     String testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', ""_s);
-    EXPECT_STREQ("14", testString.utf8().data());
+    EXPECT_EQ("14"_s, testString);
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', "3"_s);
-    EXPECT_STREQ("1334", testString.utf8().data());
+    EXPECT_EQ("1334"_s, testString);
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '2', "555"_s);
-    EXPECT_STREQ("15555554", testString.utf8().data());
+    EXPECT_EQ("15555554"_s, testString);
 
     testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
-    EXPECT_STREQ("1224", testString.utf8().data());
+    EXPECT_EQ("1224"_s, testString);
 
     // Cases for 16Bit source.
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), "e"_s);
-    EXPECT_STREQ("resume", testString.utf8().data());
+    EXPECT_EQ("resume"_s, testString);
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, char16_t(0x00E9 /*U+00E9 is 'é'*/), ""_s);
-    EXPECT_STREQ("rsum", testString.utf8().data());
+    EXPECT_EQ("rsum"_s, testString);
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
     testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
-    EXPECT_STREQ("résumé", testString.utf8().data());
+    EXPECT_STREQ("résumé", testString.utf8().legacyCStringPointer());
 }
 
 TEST(WTF, StringIsolatedCopy)
@@ -488,13 +489,13 @@ TEST(WTF, StringSplitWithConsecutiveSeparators)
     Vector<String> expected { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 
     actual = string.splitAllowingEmptyEntries(' ');
     expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
-        EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
+        EXPECT_EQ(expected[i], actual[i]) << "Vectors differ at index " << i;
 }
 
 TEST(WTF, StringMakeStringByJoining)
@@ -510,6 +511,25 @@ TEST(WTF, StringMakeStringByJoining)
     std::vector<String> test3 = { "foo"_s, "bar"_s };
     auto test3_result = makeStringByJoining(test3, ", "_s);
     ASSERT_EQ(test3_result, "foo, bar"_s);
+
+    Vector<String> test4 = { emptyString(), "a"_s };
+    ASSERT_EQ(makeStringByJoining(test4, "\n"_s), "\na"_s);
+
+    Vector<String> test5 = { emptyString(), emptyString(), "a"_s, "b"_s };
+    ASSERT_EQ(makeStringByJoining(test5, "\n"_s), "\n\na\nb"_s);
+
+    Vector<String> test6 = { emptyString(), emptyString() };
+    ASSERT_EQ(makeStringByJoining(test6, "\n"_s), "\n"_s);
+
+    Vector<String> test7 = { String { }, "a"_s };
+    ASSERT_EQ(makeStringByJoining(test7, "\n"_s), "\na"_s);
+
+    Vector<String> test8 = { "a"_s, emptyString(), "b"_s };
+    ASSERT_EQ(makeStringByJoining(test8, "\n"_s), "a\n\nb"_s);
+
+    auto test9_result = makeStringByJoining(Vector<String> { }, ", "_s);
+    ASSERT_TRUE(test9_result.isEmpty());
+    ASSERT_FALSE(test9_result.isNull());
 }
 
 TEST(WTF, StringUTF8ConversionInvalidUTF16LenientMode)
@@ -523,14 +543,14 @@ TEST(WTF, StringUTF8ConversionInvalidUTF16LenientMode)
 
     auto result = stringWithOrphanHigh.utf8(LenientConversion);
     // U+FFFD in UTF-8 is 0xEF 0xBF 0xBD
-    EXPECT_STREQ("abc\xEF\xBF\xBD" "def", result.data());
+    EXPECT_STREQ("abc\xEF\xBF\xBD" "def", result.legacyCStringPointer());
 
     // Create a string with an orphan low surrogate (0xDC00)
     char16_t orphanLowSurrogate[] = { 'x', 0xDC00, 'y', 0 };
     String stringWithOrphanLow = String(std::span { orphanLowSurrogate, 3 });
 
     auto resultLow = stringWithOrphanLow.utf8(LenientConversion);
-    EXPECT_STREQ("x\xEF\xBF\xBDy", resultLow.data());
+    EXPECT_STREQ("x\xEF\xBF\xBDy", resultLow.legacyCStringPointer());
 
     // Create a string with two consecutive orphan surrogates
     char16_t doubleOrphan[] = { 0xD800, 0xD800, 0 };
@@ -538,7 +558,7 @@ TEST(WTF, StringUTF8ConversionInvalidUTF16LenientMode)
 
     auto resultDouble = stringWithDoubleOrphan.utf8(LenientConversion);
     // Each orphan should become one replacement character
-    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultDouble.data());
+    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultDouble.legacyCStringPointer());
 
     // Create a string with reversed surrogate pair (low then high)
     char16_t reversedPair[] = { 0xDC00, 0xD800, 0 };
@@ -546,7 +566,7 @@ TEST(WTF, StringUTF8ConversionInvalidUTF16LenientMode)
 
     auto resultReversed = stringWithReversed.utf8(LenientConversion);
     // Both are invalid, should become two replacement characters
-    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultReversed.data());
+    EXPECT_STREQ("\xEF\xBF\xBD\xEF\xBF\xBD", resultReversed.legacyCStringPointer());
 }
 
 TEST(WTF, StringUTF8ConversionStrictReplacingMode)
@@ -559,7 +579,53 @@ TEST(WTF, StringUTF8ConversionStrictReplacingMode)
     String stringWithOrphan = String(std::span { orphanHighSurrogate, 4 });
 
     auto result = stringWithOrphan.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-    EXPECT_STREQ("ab\xEF\xBF\xBD" "c", result.data());
+    EXPECT_STREQ("ab\xEF\xBF\xBD" "c", result.legacyCStringPointer());
+}
+
+TEST(WTF, StringSimplifyWhiteSpace)
+{
+    auto simplify = [](const String& string) {
+        return string.simplifyWhiteSpace(isASCIIWhitespace);
+    };
+
+    // Null and empty are returned unchanged.
+    EXPECT_TRUE(simplify(String()).isNull());
+    EXPECT_EQ(emptyString(), simplify(emptyString()));
+
+    // Already-simplified strings come back equal (fast path).
+    EXPECT_EQ("word"_s, simplify("word"_s));
+    EXPECT_EQ("two words"_s, simplify("two words"_s));
+    EXPECT_EQ("a b c d e"_s, simplify("a b c d e"_s));
+
+    // Leading and trailing whitespace is stripped.
+    EXPECT_EQ("word"_s, simplify(" word"_s));
+    EXPECT_EQ("word"_s, simplify("word "_s));
+    EXPECT_EQ("word"_s, simplify("   word   "_s));
+    EXPECT_EQ("two words"_s, simplify("  two words  "_s));
+
+    // Interior runs collapse to a single space.
+    EXPECT_EQ("two words"_s, simplify("two  words"_s));
+    EXPECT_EQ("a b c"_s, simplify("a    b     c"_s));
+
+    // Non-space whitespace is converted to a single space.
+    EXPECT_EQ("a b"_s, simplify("a\tb"_s));
+    EXPECT_EQ("a b"_s, simplify("a\nb"_s));
+    EXPECT_EQ("a b"_s, simplify("a\r\n\t b"_s));
+    EXPECT_EQ("a b"_s, simplify("\t a \f b \n"_s));
+
+    // All-whitespace and single whitespace collapse to empty.
+    EXPECT_EQ(emptyString(), simplify(" "_s));
+    EXPECT_EQ(emptyString(), simplify(" \t\n\r "_s));
+
+    // Vertical tab is not ASCII whitespace, so it is preserved unchanged.
+    EXPECT_EQ("a\vb"_s, simplify("a\vb"_s));
+
+    // 16-bit strings take the same path.
+    char16_t wide[] = { ' ', ' ', 0x4E2D, '\t', 0x6587, ' ', ' ', 0 };
+    char16_t expected[] = { 0x4E2D, ' ', 0x6587, 0 };
+    String wideString { std::span { wide, 7 } };
+    EXPECT_FALSE(wideString.is8Bit());
+    EXPECT_EQ(String(std::span { expected, 3 }), simplify(wideString));
 }
 
 } // namespace TestWebKitAPI

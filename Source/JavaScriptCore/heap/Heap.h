@@ -52,6 +52,7 @@
 #include <wtf/Box.h>
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/Deque.h>
+#include <wtf/DoublyLinkedList.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -59,6 +60,7 @@
 #include <wtf/NotFound.h>
 #include <wtf/ParallelHelperPool.h>
 #include <wtf/SegmentedVector.h>
+#include <wtf/SentinelLinkedList.h>
 #include <wtf/Threading.h>
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -103,6 +105,7 @@ class RunningScope;
 class SlotVisitor;
 class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
+class StructureAlignedMemoryAllocator;
 class SweepingScope;
 class VM;
 class VerifierSlotVisitor;
@@ -585,8 +588,9 @@ public:
 
     JS_EXPORT_PRIVATE void registerWeakGCHashTable(WeakGCHashTable*);
     JS_EXPORT_PRIVATE void unregisterWeakGCHashTable(WeakGCHashTable*);
+    void addDirtyWeakGCHashTable(WeakGCHashTable*);
 
-    void addLogicallyEmptyWeakBlock(WeakBlock*);
+    unsigned weakBlockCount() const { return m_weakBlockCount; }
 
 #if ENABLE(RESOURCE_USAGE)
     size_t blockBytesAllocated() const { return m_blockBytesAllocated; }
@@ -743,6 +747,7 @@ private:
     friend class IncrementalSweeper;
     friend class VM;
     friend class VerifierSlotVisitor;
+    friend class WeakBlock;
     friend class WeakSet;
 
     class HeapThread;
@@ -850,11 +855,10 @@ private:
 
     void cancelDeferredWorkIfNeeded();
     void reapWeakHandles();
-    void pruneStaleEntriesFromWeakGCHashTables();
+    void reconcileWeakGCHashTables();
     void sweepArrayBuffers();
     void snapshotUnswept();
     void deleteSourceProviderCaches();
-    void notifyIncrementalSweeper();
     void harvestWeakReferences();
 
     template<typename CellType, typename CellSet>
@@ -876,8 +880,12 @@ private:
     void runCollectionEpilogue();
     void sweepEagerlyInEpilogue();
     
-    void sweepAllLogicallyEmptyWeakBlocks();
-    bool sweepNextLogicallyEmptyWeakBlock();
+    void addDetachedWeakBlock(WeakBlock*);
+    void releaseDetachedWeakBlock(WeakBlock*);
+    void returnWeakBlockToPool(WeakBlock*);
+    WeakBlock* takeWeakBlockFromPool();
+    void destroyAllPooledWeakBlocks();
+    unsigned maxPooledWeakBlocks();
 
     bool shouldDoFullCollection();
 
@@ -1016,8 +1024,10 @@ private:
     Seconds m_lastEdenGCLength { 10_ms };
 #endif
 
-    Vector<WeakBlock*> m_logicallyEmptyWeakBlocks;
-    size_t m_indexOfNextLogicallyEmptyWeakBlockToSweep { WTF::notFound };
+    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
+    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks;
+    unsigned m_pooledWeakBlockCount { 0 };
+    unsigned m_weakBlockCount { 0 };
 
 #if ASSERT_ENABLED
     // JS_EXPORT_PRIVATE matches GCOwnedDataScope.h. Heap.h does not include it, so
@@ -1055,6 +1065,7 @@ private:
     unsigned m_deferralDepth { 0 };
 
     UncheckedKeyHashSet<WeakGCHashTable*> m_weakGCHashTables;
+    SentinelLinkedList<WeakGCHashTable, BasicRawSentinelNode<WeakGCHashTable>> m_dirtyWeakGCHashTables;
     
 #if ENABLE(WEBASSEMBLY)
     UncheckedKeyHashSet<Ref<Wasm::Callee>> m_wasmCalleesPendingDestruction WTF_GUARDED_BY_LOCK(m_wasmCalleesPendingDestructionLock);
@@ -1212,6 +1223,7 @@ public:
     // AlignedMemoryAllocators
     std::unique_ptr<FastMallocAlignedMemoryAllocator> fastMallocAllocator;
     std::unique_ptr<GigacageAlignedMemoryAllocator> primitiveGigacageAllocator;
+    std::unique_ptr<StructureAlignedMemoryAllocator> structureAllocator;
 
     // Subspaces
     CompleteSubspace primitiveGigacageAuxiliarySpace; // Typed arrays, strings, bitvectors, etc go here.
@@ -1368,7 +1380,7 @@ public:
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
-    CString m_signpostMessage;
+    UTF8CString m_signpostMessage;
 };
 
 namespace GCClient {

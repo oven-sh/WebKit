@@ -42,11 +42,11 @@ Special::Special() = default;
 
 Special::~Special() = default;
 
-CString Special::name() const
+UTF8CString Special::name() const
 {
     StringPrintStream out;
     dumpImpl(out);
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 std::optional<unsigned> Special::shouldTryAliasingDef(Inst&)
