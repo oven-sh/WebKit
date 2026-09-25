@@ -28,6 +28,7 @@
 
 #include <WebCore/ChromeClient.h>
 #include <WebCore/Site.h>
+#include <wtf/Markable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakRef.h>
 
@@ -279,6 +280,7 @@ private:
 #if ENABLE(GPU_PROCESS)
     RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat) const final;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) final;
+    RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const WebCore::ImageBufferTransferHandle&) final;
 #endif
     std::unique_ptr<WebCore::WorkerClient> createWorkerClient(SerialFunctionDispatcher&) final;
 
@@ -388,6 +390,9 @@ private:
     void themeColorChanged() const final;
     void pageExtendedBackgroundColorDidChange() const final;
     void sampledPageTopColorChanged() const final;
+#if __has_include(<WebKitAdditions/WebChromeClientAdditions.h>)
+#include <WebKitAdditions/WebChromeClientAdditions.h>
+#endif
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     void allowImmersiveElement(CompletionHandler<void(bool)>&&) const final;
@@ -561,7 +566,7 @@ private:
 
     void addSourceTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, bool finished, const WebCore::CharacterRange&, const String&, CompletionHandler<void(WebCore::TextAnimationRunMode)>&&) final;
 
-    void addDestinationTextAnimationForActiveWritingToolsSession(const WTF::UUID& sourceAnimationUUID, const WTF::UUID& destinationAnimationUUID, const std::optional<WebCore::CharacterRange>&, const String&) final;
+    void addDestinationTextAnimationForActiveWritingToolsSession(Markable<WTF::UUID> sourceAnimationUUID, Markable<WTF::UUID> destinationAnimationUUID, const std::optional<WebCore::CharacterRange>&, const String&) final;
 
     void saveSnapshotOfTextPlaceholderForAnimation(const WebCore::SimpleRange&);
 
@@ -584,8 +589,6 @@ private:
     bool requiresConsistentPrivacyQuirkForDomain(const URL&) const final;
 
     void setIsInRedo(bool) final;
-
-    void hasActiveNowPlayingSessionChanged(bool) final;
 
 #if ENABLE(GPU_PROCESS)
     void getImageBufferResourceLimitsForTesting(CompletionHandler<void(std::optional<WebCore::ImageBufferResourceLimits>)>&&) const final;

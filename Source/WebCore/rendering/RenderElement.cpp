@@ -310,7 +310,7 @@ Style::Difference RenderElement::adjustStyleDifference(Style::Difference diff) c
         if (isRenderTextControl())
             return false;
         // Let's still trigger layout on content with legacy line layout.
-        if (is<RenderInline>(*this) && !LayoutIntegration::LineLayout::containing(*this))
+        if (isInlineBox() && !LayoutIntegration::LineLayout::containing(*this))
             return false;
         return true;
     };
@@ -1136,10 +1136,15 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     if (!m_parent)
         return;
 
-    // When style containment changes, quote depth scoping boundaries change,
-    // so all quotes need to be recalculated.
-    if (oldStyle && oldStyle->usedContain().contains(Style::ContainValue::Style) != m_style.usedContain().contains(Style::ContainValue::Style))
-        view().setHasQuotesNeedingUpdate(true);
+    // When effective style containment changes, quote and counter scoping
+    // boundaries change, so all quotes and the counter tree need to be recalculated.
+    if (oldStyle && element()) {
+        bool oldAppliesStyleContainment = Style::ContainmentChecker { *oldStyle, *element() }.shouldApplyStyleContainment();
+        if (oldAppliesStyleContainment != shouldApplyStyleContainment()) {
+            view().setHasQuotesNeedingUpdate(true);
+            view().setHasCounterTreeNeedingUpdate(true);
+        }
+    }
 
     if (diff == Style::DifferenceResult::Layout || diff == Style::DifferenceResult::Overflow) {
         RenderCounter::rendererStyleChanged(*this, oldStyle, m_style);
@@ -1226,7 +1231,7 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
     }
 
     // FIXME: First line change on the block comes in as equal on inline boxes.
-    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (is<RenderInline>(*this) && &style() != &firstLineStyle())) && layoutBox();
+    auto needsLayoutBoxStyleUpdate = (diff >= Style::DifferenceResult::Repaint || (isInlineBox() && &style() != &firstLineStyle())) && layoutBox();
     if (needsLayoutBoxStyleUpdate)
         LayoutIntegration::LineLayout::updateStyle(*this);
 }
@@ -1444,7 +1449,16 @@ void RenderElement::paintAsInlineBlock(PaintInfo& paintInfo, const LayoutPoint& 
     // (See Appendix E.2, section 6.4 on inline block/table/replaced elements in the CSS2.1 specification.)
     // This is also used by other elements (e.g. flex items and grid items).
     PaintPhase paintPhaseToUse = isExcludedAndPlacedInBorder() ? paintInfo.phase : PaintPhase::Foreground;
-    if (paintInfo.phase == PaintPhase::Selection || paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::TextClip || paintInfo.phase == PaintPhase::Accessibility)
+    bool paintsAllPhasesAtomically = paintInfo.phase == PaintPhase::Selection
+        || paintInfo.phase == PaintPhase::TextClip
+        || paintInfo.phase == PaintPhase::EventRegion
+        || paintInfo.phase == PaintPhase::Accessibility
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        || paintInfo.phase == PaintPhase::AXCustomColorComputeBackdrops
+        || paintInfo.phase == PaintPhase::AXCustomColorCollectBackgrounds
+#endif
+        ;
+    if (paintsAllPhasesAtomically)
         paint(paintInfo, childPoint);
     else if (paintInfo.phase == paintPhaseToUse) {
         paintPhase(*this, PaintPhase::BlockBackground, paintInfo, childPoint);

@@ -72,6 +72,7 @@ NonInheritedRareData::NonInheritedRareData()
     , perspectiveOrigin({ ComputedStyle::initialPerspectiveOriginX(), ComputedStyle::initialPerspectiveOriginY() })
 #if ENABLE(SPATIAL_PORTAL)
     , portalTransform(ComputedStyle::initialPortalTransform())
+    , environmentMap(ComputedStyle::initialEnvironmentMap())
 #else
     , portalTransform(CSS::Keyword::Auto { })
 #endif
@@ -118,6 +119,7 @@ NonInheritedRareData::NonInheritedRareData()
     , contentVisibility(static_cast<unsigned>(ComputedStyle::initialContentVisibility()))
     , spatial(static_cast<unsigned>(SpatialType::None))
     , portalAction(static_cast<unsigned>(PortalActionType::None))
+    , positionContext(static_cast<unsigned>(PositionContextType::Container))
     , transformStyle3D(static_cast<unsigned>(ComputedStyle::initialTransformStyle3D()))
     , transformStyleForcedToFlat(false)
     , backfaceVisibility(static_cast<unsigned>(ComputedStyle::initialBackfaceVisibility()))
@@ -190,6 +192,9 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , perspective(o.perspective)
     , perspectiveOrigin(o.perspectiveOrigin)
     , portalTransform(o.portalTransform)
+#if ENABLE(SPATIAL_PORTAL)
+    , environmentMap(o.environmentMap)
+#endif
     , containerType(o.containerType)
     , containerNames(o.containerNames)
     , containIntrinsicWidth(o.containIntrinsicWidth)
@@ -233,6 +238,7 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , contentVisibility(o.contentVisibility)
     , spatial(o.spatial)
     , portalAction(o.portalAction)
+    , positionContext(o.positionContext)
     , transformStyle3D(o.transformStyle3D)
     , transformStyleForcedToFlat(o.transformStyleForcedToFlat)
     , backfaceVisibility(o.backfaceVisibility)
@@ -312,6 +318,9 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && perspective == o.perspective
         && perspectiveOrigin == o.perspectiveOrigin
         && portalTransform == o.portalTransform
+#if ENABLE(SPATIAL_PORTAL)
+        && environmentMap == o.environmentMap
+#endif
         && containerType == o.containerType
         && containerNames == o.containerNames
         && containIntrinsicWidth == o.containIntrinsicWidth
@@ -355,6 +364,7 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && contentVisibility == o.contentVisibility
         && spatial == o.spatial
         && portalAction == o.portalAction
+        && positionContext == o.positionContext
         && transformStyle3D == o.transformStyle3D
         && transformStyleForcedToFlat == o.transformStyleForcedToFlat
         && backfaceVisibility == o.backfaceVisibility
@@ -450,6 +460,9 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT(perspective);
     LOG_IF_DIFFERENT(perspectiveOrigin);
     LOG_IF_DIFFERENT(portalTransform);
+#if ENABLE(SPATIAL_PORTAL)
+    LOG_IF_DIFFERENT(environmentMap);
+#endif
 
     LOG_IF_DIFFERENT(containerType);
     LOG_IF_DIFFERENT(containerNames);
@@ -507,6 +520,7 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
 
     LOG_IF_DIFFERENT_WITH_CAST(SpatialType, spatial);
     LOG_IF_DIFFERENT_WITH_CAST(PortalActionType, portalAction);
+    LOG_IF_DIFFERENT_WITH_CAST(PositionContextType, positionContext);
 
     LOG_IF_DIFFERENT_WITH_CAST(TransformStyle3D, transformStyle3D);
     LOG_IF_DIFFERENT_WITH_CAST(bool, transformStyleForcedToFlat);

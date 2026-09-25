@@ -129,9 +129,9 @@ void LibWebRTCSocketFactory::forSocketInGroup(ScriptExecutionContextIdentifier c
     }
 }
 
-std::unique_ptr<LibWebRTCResolver> LibWebRTCSocketFactory::createAsyncDnsResolver()
+std::unique_ptr<LibWebRTCResolver> LibWebRTCSocketFactory::createAsyncDnsResolver(WebCore::ScriptExecutionContextIdentifier contextIdentifier)
 {
-    auto resolver = makeUnique<LibWebRTCResolver>();
+    auto resolver = makeUnique<LibWebRTCResolver>(contextIdentifier);
 
     ASSERT(!m_resolvers.contains(resolver->identifier()));
     m_resolvers.add(resolver->identifier(), *resolver);

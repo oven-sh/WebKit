@@ -159,6 +159,7 @@ ADD_WK2_TEST(TestWebKitPolicyClient ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWe
 ADD_WK2_TEST(TestWebKitSecurityOrigin ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitSecurityOrigin.cpp)
 ADD_WK2_TEST(TestWebKitSettings ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitSettings.cpp)
 ADD_WK2_TEST(TestWebKitURIUtilities ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitURIUtilities.cpp)
+ADD_WK2_TEST(TestWebKitUserAgent ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitUserAgent.cpp)
 ADD_WK2_TEST(TestWebKitWebContext ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitWebContext.cpp)
 ADD_WK2_TEST(TestWebKitWebView ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitWebView.cpp)
 ADD_WK2_TEST(TestWebKitUserContentFilterStore ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestWebKitUserContentFilterStore.cpp)
@@ -216,6 +217,14 @@ macro(ADD_WPE_QT_TEST test_name)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/TestWebKitAPI/WPEQt
         AUTOMOC ON
     )
+    # Workaround for QTBUG-83160 (https://bugreports.qt.io/browse/QTBUG-83160): moc cannot evaluate "_GLIBCXX_VISIBILITY"
+    # before <concepts> uses it, which is a header unconditionally included in Assertions.h. A fix for this regression
+    # landed in Qt 6.5.3 release. Remove this check once the minimum required Qt6 version is >= 6.5.3.
+    if (Qt6Core_VERSION VERSION_LESS "6.5.3")
+        set_target_properties(${test_name} PROPERTIES
+            AUTOMOC_MOC_OPTIONS "-D_GLIBCXX_VISIBILITY="
+        )
+    endif ()
     target_include_directories(${test_name} SYSTEM PRIVATE ${WPEQtAPITests_INCLUDE_DIRECTORIES})
     target_include_directories(${test_name} PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}

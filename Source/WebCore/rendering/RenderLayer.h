@@ -59,6 +59,7 @@
 #include <WebCore/RenderView.h>
 #include <WebCore/ScrollAlignment.h>
 #include <WebCore/ScrollBehavior.h>
+#include <WebCore/ScrollIntoViewContainer.h>
 #include <WebCore/TransformationMatrix.h>
 #include <wtf/InlineWeakPtr.h>
 #include <wtf/Markable.h>
@@ -163,6 +164,7 @@ struct ScrollRectToVisibleOptions {
     AllowScrollingOverflowHidden allowScrollingOverflowHidden { AllowScrollingOverflowHidden::Yes };
     std::optional<LayoutRect> visibilityCheckRect { std::nullopt };
     SkipScrollingTargetElement skipScrollingTargetElement { SkipScrollingTargetElement::No };
+    ScrollIntoViewContainer container { ScrollIntoViewContainer::All };
 };
 
 enum class UpdateBackingSharingFlags {
@@ -537,7 +539,7 @@ public:
 
     bool hasOverlayScrollbars() const;
 
-    bool isPointInResizeControl(IntPoint localPoint) const;
+    WEBCORE_EXPORT bool isPointInResizeControl(IntPoint localPoint) const;
     IntSize offsetFromResizeCorner(const IntPoint& localPoint) const;
 
     std::optional<ScrollbarUpdateScope> updateScrollInfoAfterLayout();
@@ -1283,6 +1285,9 @@ private:
     void paintTransformedLayerIntoFragments(GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintLayerFlag>);
     void collectEventRegionForFragments(const LayerFragments&, GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintBehavior>);
     void collectAccessibilityRegionsForFragments(const LayerFragments&, GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintBehavior>);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void collectAXCustomColorBackdropsForFragments(PaintPhase, const LayerFragments&, GraphicsContext&, const LayerPaintingInfo&, OptionSet<PaintBehavior>);
+#endif
 
     RenderLayer* transparentPaintingAncestor(const LayerPaintingInfo&);
     void beginTransparencyLayers(GraphicsContext&, const LayerPaintingInfo&, const LayoutRect& dirtyRect);

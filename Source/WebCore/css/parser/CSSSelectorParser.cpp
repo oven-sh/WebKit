@@ -38,6 +38,7 @@
 #include "CSSTokenizer.h"
 #include "CommonAtomStrings.h"
 #include "Document.h"
+#include "HTMLNames.h"
 #include "MutableCSSSelector.h"
 #include "PseudoElementIdentifier.h"
 #include "SelectorPseudoTypeMap.h"
@@ -748,11 +749,23 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeClass(CSSParserTok
     if (range.peek().type() != IdentToken)
         return nullptr;
 
-    auto selector = makeUnique<MutableCSSSelector>();
-    selector->setMatch(CSSSelector::Match::Class);
-
     auto token = range.consume();
-    selector->setValue(token.value().toAtomString(), m_context.mode == HTMLQuirksMode);
+    auto identifier = token.value();
+
+    auto selector = makeUnique<MutableCSSSelector>();
+
+    // The class prefix selector (.foo-*) is a dash-terminated identifier immediately followed by
+    // an asterisk, with no intervening whitespace. https://drafts.csswg.org/selectors/#class-prefix
+    bool matchLowerCase = false;
+    if (m_context.cssClassPrefixSelectorEnabled && identifier.endsWith('-')
+        && range.peek().type() == DelimiterToken && range.peek().delimiter() == '*') {
+        range.consume();
+        selector->setMatch(CSSSelector::Match::ClassPrefix);
+    } else {
+        selector->setMatch(CSSSelector::Match::Class);
+        matchLowerCase = m_context.mode == HTMLQuirksMode;
+    }
+    selector->setValue(identifier.toAtomString(), matchLowerCase);
 
     return selector;
 }
@@ -767,6 +780,34 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeNesting(CSSParserT
     selector->setMatch(CSSSelector::Match::NestingParent);
     
     return selector;
+}
+
+// [class~="foo"] selects the same elements as .foo: both compare the whitespace-separated
+// tokens of the class attribute case-sensitively. Marking it lets matching use the tokenized
+// ElementData::classNames() instead of searching the raw attribute value.
+static bool isEquivalentToClassSelector(const CSSSelector& selector, CSSParserMode mode)
+{
+    // Only HTMLStandardMode. Quirks mode ASCII-lowercases the class list while [class~=] stays
+    // case-sensitive, and UA sheets are parsed once and shared with quirks mode documents.
+    if (mode != HTMLStandardMode)
+        return false;
+
+    if (selector.match() != CSSSelector::Match::List)
+        return false;
+
+    // A prefixed or uppercase attribute name is a different attribute, except for HTML elements
+    // where the name is matched ASCII-case-insensitively. Requiring an exact match keeps
+    // [CLASS~=foo] and [html|class~=foo] on the general attribute path.
+    if (selector.attribute() != HTMLNames::classAttr)
+        return false;
+
+    if (selector.attributeMatchType() == CSSSelector::AttributeMatchType::CaseInsensitive)
+        return false;
+
+    // Neither [class~=""] nor a value with whitespace can match anything, which is not what a
+    // class selector would do.
+    auto& value = selector.value();
+    return !value.isEmpty() && value.find(isASCIIWhitespace<char16_t>) == notFound;
 }
 
 std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeAttribute(CSSParserTokenRange& range)
@@ -807,6 +848,10 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumeAttribute(CSSParse
 
     if (!block.atEnd())
         return nullptr;
+
+    if (isEquivalentToClassSelector(selector->selector(), m_context.mode))
+        selector->setIsEquivalentToClassSelector();
+
     return selector;
 }
 
@@ -1006,11 +1051,18 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
         }
 #endif
         case CSSSelector::PseudoElement::Highlight: {
-            auto& ident = block.consumeIncludingWhitespace();
-            if (ident.type() != IdentToken || !block.atEnd())
+            auto& token = block.consumeIncludingWhitespace();
+            if (!block.atEnd())
                 return nullptr;
-            selector->setStringList({ { ident.value().toAtomString() } });
-            return selector;
+            if (token.type() == IdentToken) {
+                selector->setStringList({ { token.value().toAtomString() } });
+                return selector;
+            }
+            if (token.type() == DelimiterToken && token.delimiter() == '*') {
+                selector->setStringList({ { universalPseudoElementNameAtom() } });
+                return selector;
+            }
+            return nullptr;
         }
 
         case CSSSelector::PseudoElement::Picker: {
@@ -1030,7 +1082,7 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
 
             // Check for implicit universal selector.
             if (block.peek().type() == DelimiterToken && block.peek().delimiter() == '.')
-                nameAndClasses.append(starAtom());
+                nameAndClasses.append(universalPseudoElementNameAtom());
 
             // Parse name or explicit universal selector.
             if (nameAndClasses.isEmpty()) {
@@ -1038,7 +1090,7 @@ std::unique_ptr<MutableCSSSelector> CSSSelectorParser::consumePseudo(CSSParserTo
                 if (ident.type() == IdentToken && isValidCustomIdentifier(ident.id()))
                     nameAndClasses.append(ident.value().toAtomString());
                 else if (ident.type() == DelimiterToken && ident.delimiter() == '*')
-                    nameAndClasses.append(starAtom());
+                    nameAndClasses.append(universalPseudoElementNameAtom());
                 else
                     return nullptr;
             }
@@ -1515,20 +1567,21 @@ std::optional<Style::PseudoElementIdentifier> CSSSelectorParser::parsePseudoElem
         return { };
     block.consumeWhitespace();
     switch (*pseudoElement) {
-    case CSSSelector::PseudoElement::Highlight: {
-        auto& ident = block.consumeIncludingWhitespace();
-        if (ident.type() != IdentToken || !block.atEnd())
-            return { };
-        return { Style::PseudoElementIdentifier { PseudoElementType::Highlight, ident.value().toAtomString() } };
-    }
+    case CSSSelector::PseudoElement::Highlight:
     case CSSSelector::PseudoElement::ViewTransitionGroup:
     case CSSSelector::PseudoElement::ViewTransitionImagePair:
     case CSSSelector::PseudoElement::ViewTransitionOld:
     case CSSSelector::PseudoElement::ViewTransitionNew: {
-        auto& ident = block.consumeIncludingWhitespace();
-        if (ident.type() != IdentToken || !isValidCustomIdentifier(ident.id()) || !block.atEnd())
+        auto& token = block.consumeIncludingWhitespace();
+        if (!block.atEnd())
             return { };
-        return { Style::PseudoElementIdentifier { *CSSSelector::stylePseudoElementTypeFor(*pseudoElement), ident.value().toAtomString() } };
+        if (token.type() == IdentToken) {
+            if (!isValidCustomIdentifier(token.id()) && *pseudoElement != CSSSelector::PseudoElement::Highlight)
+                return { };
+            return { Style::PseudoElementIdentifier { *CSSSelector::stylePseudoElementTypeFor(*pseudoElement), token.value().toAtomString() } };
+        }
+        // Intentionally don't parse the universal selector here, because getComputedStyle() only supports returning styles for unique identifiers.
+        return { };
     }
     case CSSSelector::PseudoElement::Picker: {
         auto argument = consumePickerArgument(block);

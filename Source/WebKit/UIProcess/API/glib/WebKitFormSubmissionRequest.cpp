@@ -79,8 +79,8 @@ WebKitFormSubmissionRequest* webkitFormSubmissionRequestCreate(const Vector<std:
         request->priv->textFieldNames = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         request->priv->textFieldValues = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         for (size_t i = 0; i < values.size(); i++) {
-            g_ptr_array_add(request->priv->textFieldNames.get(), g_strdup(values[i].first.utf8().data()));
-            g_ptr_array_add(request->priv->textFieldValues.get(), g_strdup(values[i].second.utf8().data()));
+            g_ptr_array_add(request->priv->textFieldNames.get(), g_strdup(values[i].first.utf8().legacyCStringPointer()));
+            g_ptr_array_add(request->priv->textFieldValues.get(), g_strdup(values[i].second.utf8().legacyCStringPointer()));
         }
     }
     request->priv->listener = WTF::move(listener);
@@ -92,17 +92,17 @@ WebKitFormSubmissionRequest* webkitFormSubmissionRequestCreate(const Vector<std:
  * webkit_form_submission_request_get_text_fields:
  * @request: a #WebKitFormSubmissionRequest
  *
- * Get the values of the text fields contained in the form associated to @request.
+ * Get the values of the text fields contained in the form associated with @request.
  *
  * Get a #GHashTable with the values of the text fields contained in the form
- * associated to @request. Note that fields will be missing if the form
+ * associated with @request. Note that fields will be missing if the form
  * contains multiple text input elements with the same name, so this
  * function does not reliably return all text fields.
  *
  * Returns: (allow-none) (transfer none): a #GHashTable with the form
  *    text fields, or %NULL if the form doesn't contain text fields.
  *
- * Deprecated: 2.20. Use webkit_form_submission_request_list_text_fields() instead.
+ * Deprecated: 2.20: Use webkit_form_submission_request_list_text_fields() instead.
  */
 GHashTable* webkit_form_submission_request_get_text_fields(WebKitFormSubmissionRequest* request)
 {
@@ -131,10 +131,10 @@ GHashTable* webkit_form_submission_request_get_text_fields(WebKitFormSubmissionR
  * @field_values: (out) (optional) (element-type utf8) (transfer none):
  *    values of the text fields in the form
  *
- * Get lists of the text fields contained in the form associated to @request.
+ * Get lists of the text fields contained in the form associated with @request.
  *
  * Get lists with the names and values of the text fields contained in
- * the form associated to @request. Note that names and values may be
+ * the form associated with @request. Note that names and values may be
  * %NULL.
  *
  * If this function returns %FALSE, then both @field_names and

@@ -149,7 +149,7 @@ RefPtr<ArchiveResource> MHTMLParser::parseNextPart(const MIMEHeader& mimeHeader,
             LOG_ERROR("Binary contents requires end of part");
             return nullptr;
         }
-        m_lineReader.setSeparator(endOfPartBoundary.utf8().data());
+        m_lineReader.setSeparator(endOfPartBoundary.utf8().legacyCStringPointer());
         Vector<uint8_t> part;
         if (!m_lineReader.nextChunk(part)) {
             LOG_ERROR("Binary contents requires end of part");

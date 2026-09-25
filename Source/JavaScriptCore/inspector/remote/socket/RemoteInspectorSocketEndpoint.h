@@ -146,7 +146,7 @@ protected:
             if (nextRetryTime && *nextRetryTime > MonotonicTime::now())
                 return false;
 
-            if (auto newSocket = Socket::listen(address.utf8().data(), port)) {
+            if (auto newSocket = Socket::listen(address.utf8().legacyCStringPointer(), port)) {
                 if (setSocket(*newSocket)) {
                     retryInterval = initialRetryInterval;
                     return true;

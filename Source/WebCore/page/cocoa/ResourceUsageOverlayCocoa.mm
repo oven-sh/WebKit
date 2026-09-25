@@ -234,17 +234,21 @@ void ResourceUsageOverlay::platformInitialize()
 
     protect(overlay())->layer().setContentsToPlatformLayer(m_layer.get(), GraphicsLayer::ContentsLayerPurpose::None);
 
-    ResourceUsageThread::addObserver(this, All, [this] (const ResourceUsageData& data) {
+    ResourceUsageThread::addObserver(this, All, [weakThis = WeakPtr { *this }] (const ResourceUsageData& data) {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+
         appendDataToHistory(data);
 
         // FIXME: It shouldn't be necessary to update the bounds on every single thread loop iteration,
         // but something is causing them to become 0x0.
         [CATransaction begin];
-        RetainPtr<CALayer> containerLayer = [m_layer superlayer];
+        RetainPtr<CALayer> containerLayer = [protectedThis->m_layer superlayer];
         CGRect rect = CGRectMake(0, 0, ResourceUsageOverlay::normalWidth, ResourceUsageOverlay::normalHeight);
-        [m_layer setBounds:rect];
+        [protectedThis->m_layer setBounds:rect];
         [containerLayer setBounds:rect];
-        [m_layer setNeedsDisplay];
+        [protectedThis->m_layer setNeedsDisplay];
         [CATransaction commit];
     });
 }
@@ -273,11 +277,12 @@ static void showText(CGContextRef context, float x, float y, CGColorRef color, c
     CFTypeRef keys[] = { kCTFontAttributeName, kCTForegroundColorFromContextAttributeName };
     CFTypeRef values[] = { font.get(), kCFBooleanTrue };
     auto attributes = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, std::size(keys), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-    CString cstr = text.ascii();
+    auto cstr = text.ascii();
     auto cstrSpan = cstr.span();
     auto string = adoptCF(CFStringCreateWithBytesNoCopy(kCFAllocatorDefault, byteCast<UInt8>(cstrSpan.data()), cstrSpan.size(), kCFStringEncodingASCII, false, kCFAllocatorNull));
     auto attributedString = adoptCF(CFAttributedStringCreate(kCFAllocatorDefault, string.get(), attributes.get()));
     auto line = adoptCF(CTLineCreateWithAttributedString(attributedString.get()));
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     CGContextSetTextPosition(context, x, y);
     CTLineDraw(line.get(), context);
 

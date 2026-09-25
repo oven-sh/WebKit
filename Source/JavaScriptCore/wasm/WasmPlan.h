@@ -87,7 +87,7 @@ protected:
     virtual bool isComplete() const = 0;
     virtual void complete() WTF_REQUIRES_LOCK(m_lock) = 0;
 
-    CString signpostMessage(CompilationMode, uint32_t functionIndexSpace) const;
+    UTF8CString signpostMessage(CompilationMode, uint32_t functionIndexSpace) const;
     void beginCompilerSignpost(CompilationMode, uint32_t functionIndexSpace) const;
     void beginCompilerSignpost(const Callee&) const;
     void endCompilerSignpost(CompilationMode, uint32_t functionIndexSpace) const;

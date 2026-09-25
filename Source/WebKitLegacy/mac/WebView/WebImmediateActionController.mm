@@ -50,6 +50,7 @@
 #import <WebCore/GeometryUtilities.h>
 #import <WebCore/ImmediateActionStage.h>
 #import <WebCore/LocalFrame.h>
+#import <WebCore/LocalFrameInlines.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/NodeDocument.h>
 #import <WebCore/NodeRenderStyle.h>
@@ -168,11 +169,11 @@
 {
     using namespace WebCore;
 
-    auto* coreFrame = core([_webView _selectedOrMainFrame]);
+    RefPtr coreFrame = core([_webView _selectedOrMainFrame]);
     if (!coreFrame)
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(coreFrame->mainFrame());
+    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(coreFrame->mainFrame());
     if (!localMainFrame)
         return;
 
@@ -180,7 +181,7 @@
     _hitTestResult = coreFrame->eventHandler().hitTestResultAtPoint(WebCore::IntPoint(viewPoint), hitType);
     localMainFrame->eventHandler().setImmediateActionStage(WebCore::ImmediateActionStage::PerformedHitTest);
 
-    if (auto* element = _hitTestResult.targetElement())
+    if (RefPtr element = _hitTestResult.targetElement())
         _contentPreventsDefault = element->dispatchMouseForceWillBegin();
 }
 
@@ -310,7 +311,7 @@
         }
     }
 
-    WebCore::Node* node = _hitTestResult.innerNode();
+    RefPtr node = _hitTestResult.innerNode();
     if ((node && node->isTextNode()) || _hitTestResult.isOverTextInsideFormControlElement()) {
         if (auto animationController = [self _animationControllerForDataDetectedText]) {
             _type = WebImmediateActionDataDetectedItem;
@@ -386,11 +387,11 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
     if (!node)
         return { };
 
-    auto* frame = node->document().frame();
+    RefPtr frame = node->document().frame();
     if (!frame)
         return { };
 
-    auto* view = frame->view();
+    RefPtr view = frame->view();
     if (!view)
         return { };
 
@@ -406,11 +407,11 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
     if (!_webView)
         return NSZeroRect;
 
-    WebCore::Node* node = _hitTestResult.innerNode();
+    RefPtr node = _hitTestResult.innerNode();
     if (!node)
         return NSZeroRect;
 
-    return elementBoundingBoxInWindowCoordinatesFromNode(node);
+    return elementBoundingBoxInWindowCoordinatesFromNode(node.get());
 }
 
 - (NSSize)menuItem:(NSMenuItem *)menuItem maxSizeForPoint:(NSPoint)point
@@ -514,14 +515,14 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
 
 + (WebCore::DictionaryPopupInfo)_dictionaryPopupInfoForRange:(const WebCore::SimpleRange&)range inFrame:(WebCore::LocalFrame*)frame indicatorOptions:(OptionSet<WebCore::TextIndicatorOption>)indicatorOptions transition:(WebCore::TextIndicatorPresentationTransition)presentationTransition
 {
-    auto& editor = frame->editor();
-    editor.setIsGettingDictionaryPopupInfo(true);
+    Ref editor = frame->editor();
+    editor->setIsGettingDictionaryPopupInfo(true);
 
     // Dictionary API will accept a whitespace-only string and display UI as if it were real text,
     // so bail out early to avoid that.
     WebCore::DictionaryPopupInfo popupInfo;
     if (plainText(range).find(deprecatedIsNotSpaceOrNewline) == notFound) {
-        editor.setIsGettingDictionaryPopupInfo(false);
+        editor->setIsGettingDictionaryPopupInfo(false);
         return popupInfo;
     }
 
@@ -530,7 +531,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
 
     auto quads = WebCore::RenderObject::absoluteTextQuads(range);
     if (quads.isEmpty()) {
-        editor.setIsGettingDictionaryPopupInfo(false);
+        editor->setIsGettingDictionaryPopupInfo(false);
         return popupInfo;
     }
 
@@ -561,7 +562,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
     if (auto textIndicator = WebCore::TextIndicator::createWithRange(range, indicatorOptions, presentationTransition))
         popupInfo.textIndicator = textIndicator;
 
-    editor.setIsGettingDictionaryPopupInfo(false);
+    editor->setIsGettingDictionaryPopupInfo(false);
     return popupInfo;
 }
 
@@ -570,11 +571,11 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
     if (!PAL::getLULookupDefinitionModuleClassSingleton())
         return nil;
 
-    auto node = _hitTestResult.innerNode();
+    RefPtr node = _hitTestResult.innerNode();
     if (!node)
         return nil;
 
-    auto frame = node->document().frame();
+    RefPtr frame = node->document().frame();
     if (!frame)
         return nil;
 
@@ -583,7 +584,7 @@ static WebCore::IntRect elementBoundingBoxInWindowCoordinatesFromNode(WebCore::N
         return nil;
 
     auto dictionaryRange = WTF::move(*range);
-    auto dictionaryPopupInfo = [WebImmediateActionController _dictionaryPopupInfoForRange:dictionaryRange inFrame:frame indicatorOptions: { } transition: WebCore::TextIndicatorPresentationTransition::FadeIn];
+    auto dictionaryPopupInfo = [WebImmediateActionController _dictionaryPopupInfoForRange:dictionaryRange inFrame:frame.get() indicatorOptions: { } transition: WebCore::TextIndicatorPresentationTransition::FadeIn];
 #if ENABLE(LEGACY_PDFKIT_PLUGIN)
     if (!dictionaryPopupInfo.platformData.attributedString.nsAttributedString())
         return nil;

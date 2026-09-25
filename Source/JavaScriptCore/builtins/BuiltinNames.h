@@ -199,6 +199,7 @@ namespace JSC {
     macro(privateBrand) \
     macro(privateClassBrand) \
     macro(hasOwnPropertyFunction) \
+    macro(reflectConstructFunction) \
     macro(createPrivateSymbol) \
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \

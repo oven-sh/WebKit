@@ -69,7 +69,7 @@ https://www.dictionary.com/
 https://www.disneyplus.com/
     (none)
 https://www.ea.com/
-    (none)
+    ShouldPreventKeyframeEffectAccelerationQuirk
 https://www.espn.com/
     ShouldDisableEndFullscreenEventWhenEnteringPictureInPictureFromFullscreenQuirk
 https://www.facebook.com/
@@ -89,6 +89,14 @@ https://play.geforcenow.com/
     NeedsGeforcenowWarningDisplayNoneQuirk
 https://www.google.com/
     MaybeBypassBackForwardCache
+https://www.google.com/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
+https://www.google.com/search/howsearchworks
+    MaybeBypassBackForwardCache
+https://www.google.co.jp/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
 https://www.google.com/maps/
     MayNeedToIgnoreContentObservation
     MaybeBypassBackForwardCache
@@ -168,6 +176,7 @@ https://www.linkedin.com/
 https://outlook.live.com/
     MayNeedToIgnoreContentObservation
     NeedsMozillaFileTypeForDataTransferQuirk
+    NeedsUserAgentStringOverrideQuirk
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
 https://live.com/
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
@@ -257,6 +266,7 @@ https://www.theguardian.com/
 https://www.thesaurus.com/
     NeedsAnchorToBeMouseFocusableQuirk
 https://www.tiktok.com/
+    NeedsChromeCompatibilityUserAgentQuirk
     NeedsTikTokOverflowingContentQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
 https://trix-editor.org/
@@ -287,6 +297,7 @@ https://workspaces.xyz/
 https://wpdevelopment.ca/
     NeedsFormControlToBeMouseFocusableQuirk
 https://x.com/
+    NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
     RequiresUserGestureToLoadInPictureInPictureQuirk
     RequiresUserGestureToPauseInPictureInPictureQuirk
 https://twitter.com/

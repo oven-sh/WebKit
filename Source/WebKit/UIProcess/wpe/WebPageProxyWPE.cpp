@@ -85,14 +85,14 @@ void WebPageProxy::bindAccessibilityTree(const String& plugID)
 #if ENABLE(WPE_PLATFORM)
     if (auto* view = wpeView()) {
         if (auto* accessible = wpe_view_get_accessible(view))
-            wpe_view_accessible_bind(accessible, plugID.utf8().data());
+            wpe_view_accessible_bind(accessible, plugID.utf8().legacyCStringPointer());
         return;
     }
 #endif
 
 #if USE(ATK)
     auto* accessible = static_cast<PageClientImpl&>(*pageClient).accessible();
-    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().data()));
+    atk_socket_embed(ATK_SOCKET(accessible), const_cast<char*>(plugID.utf8().legacyCStringPointer()));
     atk_object_notify_state_change(accessible, ATK_STATE_TRANSIENT, FALSE);
 #else
     UNUSED_PARAM(plugID);
@@ -163,7 +163,7 @@ Vector<RendererBufferFormat> WebPageProxy::preferredBufferFormats() const
         if (!targetDevice)
             targetDevice = mainDevice;
         if (targetDevice)
-            bufferFormat.drmDevice = { CString(wpe_drm_device_get_primary_node(targetDevice)), CString(wpe_drm_device_get_render_node(targetDevice)) };
+            bufferFormat.drmDevice = { UTF8CString { byteCast<char8_t>(wpe_drm_device_get_primary_node(targetDevice)) }, UTF8CString { byteCast<char8_t>(wpe_drm_device_get_render_node(targetDevice)) } };
 #endif
 
         auto formatsCount = wpe_buffer_formats_get_group_n_formats(formats, i);

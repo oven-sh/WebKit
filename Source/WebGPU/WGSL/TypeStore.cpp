@@ -209,9 +209,9 @@ const Type* TypeStore::textureStorageType(TextureStorage::Kind kind, TexelFormat
     return type;
 }
 
-const Type* TypeStore::functionType(WTF::Vector<const Type*>&& parameters, const Type* result, bool mustUse)
+const Type* TypeStore::functionType(WTF::Vector<const Type*>&& parameters, const Type* result, bool mustUse, bool isEntryPoint)
 {
-    return allocateType<Function>(WTF::move(parameters), result, mustUse);
+    return allocateType<Function>(WTF::move(parameters), result, mustUse, isEntryPoint);
 }
 
 const Type* TypeStore::referenceType(AddressSpace addressSpace, const Type* element, AccessMode accessMode, bool isVectorComponent)

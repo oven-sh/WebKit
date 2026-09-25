@@ -65,7 +65,7 @@ public:
 
     void registerToSaveAtExit(const char* filename);
     
-    JS_EXPORT_PRIVATE void logEvent(CodeBlock* codeBlock, const char* summary, const CString& detail);
+    JS_EXPORT_PRIVATE void logEvent(CodeBlock*, const char* summary, const UTF8CString& detail);
     
 private:
     Bytecodes* ensureBytecodesFor(const AbstractLocker&, CodeBlock*) WTF_REQUIRES_LOCK(m_lock);

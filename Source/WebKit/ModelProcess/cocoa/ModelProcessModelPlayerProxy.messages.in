@@ -44,11 +44,16 @@ messages -> ModelProcessModelPlayerProxy {
     SetPlaybackRate(WebCore::NodeIdentifier nodeID, double playbackRate) -> (double effectivePlaybackRate) Async
     SetPaused(WebCore::NodeIdentifier nodeID, bool paused) -> (bool succeeded) Async
     SetCurrentTime(WebCore::NodeIdentifier nodeID, Seconds currentTime) -> () Async
-    SetEnvironmentMap(Ref<WebCore::SharedBuffer> data)
+    SetEnvironmentMapData(Ref<WebCore::SharedBuffer> data)
+#if ENABLE(SPATIAL_PORTAL)
+    [EnabledBy=SpatialPortalEnabled] DisableEnvironmentMap()
+    [EnabledBy=SpatialPortalEnabled] EnableSystemEnvironmentMap()
+#endif
     SetHasPortal(bool hasPortal)
 #if ENABLE(SPATIAL_PORTAL)
-    [EnabledBy=SpatialPortalEnabled] SetPortalTransform(enum:uint8_t WebCore::PortalTransformKind kind)
+    [EnabledBy=SpatialPortalEnabled] SetPortalTransform(struct WebCore::UsedPortalTransform portalTransform)
     [EnabledBy=SpatialPortalEnabled] SetPortalAction(enum:bool WebCore::PortalActionKind kind)
+    [EnabledBy=SpatialPortalEnabled] SetAnchor(WebCore::NodeIdentifier nodeID, std::optional<WebCore::NodeIdentifier> anchorNode, String placement)
 #endif
     SetStageMode(enum:bool WebCore::StageModeOperation stagemodeOp)
     BeginStageModeTransform(WebCore::TransformationMatrix transform)

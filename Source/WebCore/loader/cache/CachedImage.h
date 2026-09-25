@@ -58,7 +58,7 @@ public:
     bool currentFrameKnownToBeOpaque(const RenderElement*);
     bool currentFrameIsComplete(const RenderElement*);
 
-    std::pair<WeakPtr<Image>, float> brokenImage(float deviceScaleFactor) const; // Returns an image and the image's resolution scale factor.
+    std::pair<WeakPtr<BitmapImage>, float> brokenImage(float deviceScaleFactor) const; // Returns an image and the image's resolution scale factor.
     bool NODELETE willPaintBrokenImage() const;
 
     bool canRender(const RenderElement* renderer, float multiplier) { return !errorOccurred() && !imageSizeForRenderer(renderer, multiplier).isEmpty(); }
@@ -67,10 +67,10 @@ public:
     bool allowsOrientationOverride() const { return m_allowsOrientationOverride; }
 
     void setContainerContextForClient(const CachedImageClient&, const LayoutSize&, float, const URL&, const Style::LinkParameters&);
-    bool usesImageContainerSize() const { return m_image && m_image->usesContainerSize(); }
-    bool imageHasNaturalAspectRatio() const { return m_image && m_image->hasNaturalAspectRatio(); }
-    bool imageHasRelativeWidth() const { return m_image && m_image->hasRelativeWidth(); }
-    bool imageHasRelativeHeight() const { return m_image && m_image->hasRelativeHeight(); }
+    bool usesImageContainerSize() const { return m_image && protect(m_image)->usesContainerSize(); }
+    bool imageHasNaturalAspectRatio() const { return m_image && protect(m_image)->hasNaturalAspectRatio(); }
+    bool imageHasRelativeWidth() const { return m_image && protect(m_image)->hasRelativeWidth(); }
+    bool imageHasRelativeHeight() const { return m_image && protect(m_image)->hasRelativeHeight(); }
 
     void updateBuffer(const FragmentedSharedBuffer&) override;
     void finishLoading(const FragmentedSharedBuffer*, const NetworkLoadMetrics&) override;
@@ -106,13 +106,6 @@ public:
 
     bool isVisibleInViewport(const Document&) const;
     bool allowsAnimation(const Image&) const;
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    std::optional<bool> axCustomColorModeShouldAdjust() const { return m_axCustomColorModeShouldAdjust; }
-    void setAXCustomColorModeShouldAdjust(bool value) { m_axCustomColorModeShouldAdjust = value; }
-    NativeImage* axCustomColorModeAdjustedTile(const FloatSize& forSize) const;
-    void setAXCustomColorModeAdjustedTile(RefPtr<NativeImage>&&, const FloatSize&);
-#endif
 
 private:
     FloatSize internalImageSizeForRenderer(const RenderElement*, float multiplier, SizeType, float density) const;
@@ -157,10 +150,10 @@ private:
         explicit CachedImageObserver(CachedImage&);
 
         // ImageObserver API
-        URL sourceUrl() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).url() : URL(); }
-        String mimeType() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).mimeType() : emptyString(); }
-        unsigned numberOfClients() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).numberOfClients() : 0; }
-        long long expectedContentLength() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).expectedContentLength() : 0; }
+        URL sourceUrl() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->url() : URL(); }
+        String mimeType() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->mimeType() : emptyString(); }
+        unsigned numberOfClients() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->numberOfClients() : 0; }
+        long long expectedContentLength() const override { return !m_cachedImages.isEmptyIgnoringNullReferences() ? protect(*m_cachedImages.begin())->expectedContentLength() : 0; }
 
         void encodedDataStatusChanged(const Image&, EncodedDataStatus) final;
         void decodedSizeChanged(const Image&, long long delta) final;
@@ -174,7 +167,7 @@ private:
 
         bool allowsAnimation(const Image&) const final;
         const Settings* settings() final { return !m_cachedImages.isEmptyIgnoringNullReferences() ? (*m_cachedImages.begin()).m_settings.get() : nullptr; }
-        bool useSystemDarkAppearance() const final { return !m_cachedImages.isEmptyIgnoringNullReferences() && m_cachedImages.begin()->useSystemDarkAppearance(); }
+        bool useSystemDarkAppearance() const final { return !m_cachedImages.isEmptyIgnoringNullReferences() && protect(*m_cachedImages.begin())->useSystemDarkAppearance(); }
 
         WeakHashSet<CachedImage> m_cachedImages;
     };
@@ -208,12 +201,6 @@ private:
     RefPtr<CachedImageObserver> m_imageObserver;
     RefPtr<Image> m_image;
     std::unique_ptr<SVGImageCache> m_svgImageCache;
-
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-    std::optional<bool> m_axCustomColorModeShouldAdjust;
-    RefPtr<NativeImage> m_axCustomColorModeAdjustedTile;
-    FloatSize m_axCustomColorModeAdjustedTileSize;
-#endif
 
     MonotonicTime m_lastUpdateImageDataTime;
 

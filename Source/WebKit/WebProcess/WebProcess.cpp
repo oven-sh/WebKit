@@ -79,6 +79,10 @@
 #include "WebPermissionController.h"
 #include "WebPlatformStrategies.h"
 #include "WebProcessCreationParameters.h"
+#if ENABLE(GPU_PROCESS)
+#include "RemoteImageBufferProxy.h"
+#endif
+#include <WebCore/ImageBuffer.h>
 #include "WebProcessDataStoreParameters.h"
 #include "WebProcessMessages.h"
 #include "WebProcessProxyMessages.h"
@@ -266,7 +270,7 @@
 #endif
 
 #if ENABLE(GPU_PROCESS) && ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && USE(GBM)
-#include <WebCore/GraphicsContextGLTextureMapperGBM.h>
+#include <WebCore/GraphicsContextGLGBM.h>
 #endif
 
 #undef WEBPROCESS_RELEASE_LOG
@@ -436,7 +440,7 @@ void WebProcess::initializeProcess(const AuxiliaryProcessInitializationParameter
     }
 
     MessagePortChannelProvider::setSharedProvider(WebMessagePortChannelProvider::singleton());
-    
+
     platformInitializeProcess(parameters);
     updateCPULimit();
 }
@@ -589,7 +593,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
             WTF::TextStream activityStateStream(WTF::TextStream::LineMode::SingleLine);
             activityStateStream << page->activityState();
 
-            RELEASE_LOG(ActivityState, "WebPage %p - load_time: %" PRId64 ", visible: %d, throttleable: %d , suspended: %d , websam_state: %" PUBLIC_LOG_STRING ", activity_state: %" PUBLIC_LOG_STRING ", url: %" PRIVATE_LOG_STRING, page.ptr(), loadCommitTime, page->isVisible(), page->isThrottleable(), page->isSuspended(), MemoryPressureHandler::processStateDescription().characters(), activityStateStream.release().utf8().data(), page->mainWebFrame().url().string().utf8().data());
+            RELEASE_LOG(ActivityState, "WebPage %p - load_time: %" PRId64 ", visible: %d, throttleable: %d , suspended: %d , websam_state: %" PUBLIC_LOG_STRING ", activity_state: %" PUBLIC_LOG_STRING ", url: %" PRIVATE_LOG_STRING, page.ptr(), loadCommitTime, page->isVisible(), page->isThrottleable(), page->isSuspended(), MemoryPressureHandler::processStateDescription().characters(), activityStateStream.release().utf8(), page->mainWebFrame().url().string().utf8());
         }
     });
 #endif
@@ -608,7 +612,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
         if (RefPtr injectedBundle = InjectedBundle::create(parameters, transformHandlesToObjects(protect(parameters.initializationUserData.object()).get())))
             lazyInitialize(m_injectedBundle, injectedBundle.releaseNonNull());
         else
-            WEBPROCESS_RELEASE_LOG_ERROR(Process, "Failed to create injected bundle for path [%" PUBLIC_LOG_STRING "]; bundle plug-in callbacks will not fire for any WebPage in this process", parameters.injectedBundlePath.utf8().data());
+            WEBPROCESS_RELEASE_LOG_ERROR(Process, "Failed to create injected bundle for path [%" PUBLIC_LOG_STRING "]; bundle plug-in callbacks will not fire for any WebPage in this process", parameters.injectedBundlePath.utf8());
     }
 
     for (auto& supplement : m_supplements.values())
@@ -2329,7 +2333,7 @@ void WebProcess::grantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensi
         auto extensionID = extensions[i].first;
         Ref sandboxExtension = extensions[i].second;
         sandboxExtension->consume();
-        WEBPROCESS_RELEASE_LOG(WebRTC, "grantUserMediaDeviceSandboxExtensions: granted extension %s", extensionID.utf8().data());
+        WEBPROCESS_RELEASE_LOG(WebRTC, "grantUserMediaDeviceSandboxExtensions: granted extension %s", extensionID.utf8());
         m_mediaCaptureSandboxExtensions.add(extensionID, WTF::move(sandboxExtension));
     }
     m_machBootstrapExtension = extensions.machBootstrapExtension();
@@ -2363,7 +2367,7 @@ void WebProcess::revokeUserMediaDeviceSandboxExtensions(const Vector<String>& ex
         ASSERT(extension || MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled());
         if (extension) {
             extension->revoke();
-            WEBPROCESS_RELEASE_LOG(WebRTC, "revokeUserMediaDeviceSandboxExtensions: revoked extension %s", extensionID.utf8().data());
+            WEBPROCESS_RELEASE_LOG(WebRTC, "revokeUserMediaDeviceSandboxExtensions: revoked extension %s", extensionID.utf8());
         }
     }
     
@@ -2605,7 +2609,7 @@ bool WebProcess::shouldUseRemoteRenderingForWebGL() const
 {
 #if USE(COORDINATED_GRAPHICS)
 #if USE(GBM)
-    return m_useGPUProcessForWebGL && WebCore::GraphicsContextGLTextureMapperGBM::checkRequirements();
+    return m_useGPUProcessForWebGL && WebCore::GraphicsContextGLGBM::checkRequirements();
 #else
     return false;
 #endif
@@ -2732,7 +2736,8 @@ void WebProcess::setResourceMonitorContentRuleListAsync(WebCompiledContentRuleLi
 void WebProcess::didReceiveRemoteCommand(PlatformMediaSession::RemoteControlCommandType type, const PlatformMediaSession::RemoteCommandArgument& argument, std::optional<WebCore::MediaSessionIdentifier> targetSession)
 {
     if (!targetSession) {
-        // Non-site-isolated NowPlaying: every page's manager re-selects locally, as it always has.
+        // The GPU process named no target session for this process. Let every page's manager re-select
+        // locally rather than drop the command.
         for (auto& page : m_pageMap.values())
             page->didReceiveRemoteCommand(type, argument, std::nullopt);
         return;
@@ -2744,10 +2749,9 @@ void WebProcess::didReceiveRemoteCommand(PlatformMediaSession::RemoteControlComm
             return;
     }
 
-    // The elected session went away or stopped accepting commands between the election and now. Fall back to local
-    // re-selection so the command is not dropped, as it would be without site isolation. Best effort only: m_pageMap
-    // has no stable order and, under site isolation, each page has its own manager, so there is no cross-page
-    // current-session order to follow here.
+    // The elected session went away or stopped accepting commands between the election and now. Fall back to
+    // local re-selection rather than drop the command. Best effort only: m_pageMap has no stable order, and a
+    // page can have a manager of its own, so there is no cross-page current-session order to follow here.
     for (auto& page : m_pageMap.values()) {
         if (page->didReceiveRemoteCommand(type, argument, std::nullopt))
             return;

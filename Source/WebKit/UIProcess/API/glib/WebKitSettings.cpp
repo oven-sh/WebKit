@@ -78,19 +78,19 @@ struct _WebKitSettingsPrivate {
     }
 
     RefPtr<WebPreferences> preferences;
-    CString defaultFontFamily;
-    CString monospaceFontFamily;
-    CString serifFontFamily;
-    CString sansSerifFontFamily;
-    CString cursiveFontFamily;
-    CString fantasyFontFamily;
-    CString pictographFontFamily;
-    CString mathFontFamily;
-    CString defaultCharset;
-    CString userAgent;
-    CString mediaContentTypesRequiringHardwareSupport;
+    UTF8CString defaultFontFamily;
+    UTF8CString monospaceFontFamily;
+    UTF8CString serifFontFamily;
+    UTF8CString sansSerifFontFamily;
+    UTF8CString cursiveFontFamily;
+    UTF8CString fantasyFontFamily;
+    UTF8CString pictographFontFamily;
+    UTF8CString mathFontFamily;
+    UTF8CString defaultCharset;
+    UTF8CString userAgent;
+    UTF8CString mediaContentTypesRequiringHardwareSupport;
 #if ENABLE(WEB_RTC)
-    CString webrtcUDPPortsRange;
+    UTF8CString webrtcUDPPortsRange;
 #endif
     bool allowModalDialogs { false };
     bool zoomTextOnly { false };
@@ -102,7 +102,7 @@ struct _WebKitSettingsPrivate {
 /**
  * WebKitSettings:
  *
- * Control the behaviour of a #WebKitWebView.
+ * Control the behavior of a #WebKitWebView.
  *
  * #WebKitSettings can be applied to a #WebKitWebView to control text charset,
  * color, font sizes, printing mode, script support, loading of images and various
@@ -1016,7 +1016,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * Determines whether or not private browsing is enabled. Private browsing
      * will disable history, cache and form auto-fill for any pages visited.
      *
-     * Deprecated: 2.16. Use #WebKitWebView:is-ephemeral or #WebKitWebsiteDataManager:is-ephemeral instead.
+     * Deprecated: 2.16: Use #WebKitWebView:is-ephemeral or #WebKitWebsiteDataManager:is-ephemeral instead.
      */
     sObjProperties[PROP_ENABLE_PRIVATE_BROWSING] =
         g_param_spec_boolean(
@@ -1171,7 +1171,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      *
      * Determine whether it's allowed to create and run modal dialogs
      * from a #WebKitWebView through JavaScript with
-     * <function>window.showModalDialog</function>. If it's set to
+     * `window.showModalDialog`. If it's set to
      * %FALSE, the associated #WebKitWebView won't be able to create
      * new modal dialogs, so not even the #WebKitWebView::create
      * signal will be emitted.
@@ -1311,7 +1311,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * content to render incorrectly or fail to run, as many web pages are written to
      * parse the user-agent strings of only the most popular browsers. Therefore, it's
      * typically better to not completely override the standard user-agent, but to use
-     * webkit_settings_set_user_agent_with_application_details() instead.
+     * #WebKitUserAgent and webkit_settings_set_user_agent() instead.
      *
      * If this property is set to the empty string or %NULL, it will revert to the standard
      * user-agent.
@@ -1442,9 +1442,9 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * Whether to enable Spatial Navigation. This feature consists in the ability
      * to navigate between focusable elements in a Web page, such as hyperlinks
      * and form controls, by using Left, Right, Up and Down arrow keys.
-     * For example, if an user presses the Right key, heuristics determine whether
+     * For example, if a user presses the Right key, heuristics determine whether
      * there is an element they might be trying to reach towards the right, and if
-     * there are multiple elements, which element they probably wants.
+     * there are multiple elements, which element they probably want.
      *
      * Since: 2.4
      */
@@ -1531,7 +1531,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * Whether file access is allowed from file URLs. By default, when
      * something is loaded in a #WebKitWebView using a file URI, cross
      * origin requests to other file resources are not allowed. This
-     * setting allows you to change that behaviour, so that it would be
+     * setting allows you to change that behavior, so that it would be
      * possible to do a XMLHttpRequest of a local file, for example.
      *
      * Since: 2.10
@@ -1551,7 +1551,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * should be allowed to access content from any origin.  By default, when
      * something is loaded in a #WebKitWebView using a file scheme URL,
      * access to the local file system and arbitrary local storage is not
-     * allowed. This setting allows you to change that behaviour, so that
+     * allowed. This setting allows you to change that behavior, so that
      * it would be possible to use local storage, for example.
      *
      * Since: 2.14
@@ -1570,7 +1570,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      * Whether or not the top frame is allowed to navigate to data URLs. It is disabled by default
      * due to the risk it poses when loading untrusted URLs, with data URLs being used in scamming
      * and phishing attacks. In contrast, a scenario where it could be enabled could be an app that
-     * embeds a WebView and you have control of the pages being show instead of a generic browser.
+     * embeds a WebView and you have control of the pages being shown instead of a generic browser.
      *
      * Since: 2.28
      */
@@ -1662,7 +1662,7 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
     /**
      * WebKitSettings:media-content-types-requiring-hardware-support:
      *
-     * List of media content types requiring hardware support, split by semicolons (:).
+     * List of media content types requiring hardware support, split by colons (:).
      * For example: 'video/webm; codecs="vp*":video/mp4; codecs="avc*":video/&ast; codecs="av1*"'.
      *
      * Since: 2.30
@@ -1722,8 +1722,8 @@ static void webkit_settings_class_init(WebKitSettingsClass* klass)
      *
      * Allow customization of the WebRTC UDP ports range.
      *
-     * In some constrained environments where a firewall blocks UDP network traffic excepted on a
-     * specific port range, this settings can be used to give hints to the WebRTC backend regarding
+     * In some constrained environments where a firewall blocks UDP network traffic except on a
+     * specific port range, this setting can be used to give hints to the WebRTC backend regarding
      * which ports to allocate. The format is min-port:max-port, so for instance 20000:30000. The
      * default empty string value means the OS will use no hints from the WebRTC backend. Using 0
      * for one of the values is allowed and means the value is unspecified.
@@ -1865,7 +1865,7 @@ gboolean webkit_settings_get_load_icons_ignoring_image_load_setting(WebKitSettin
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    g_warning("webkit_settings_get_load_icons_ignoring_image_load_setting is deprecated and always returns FALSE.");
+    g_warning("webkit_settings_get_load_icons_ignoring_image_load_setting() is deprecated and always returns FALSE.");
 
     return FALSE;
 }
@@ -1884,7 +1884,7 @@ void webkit_settings_set_load_icons_ignoring_image_load_setting(WebKitSettings* 
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (enabled)
-        g_warning("webkit_settings_set_load_icons_ignoring_image_load_setting is deprecated and does nothing.");
+        g_warning("webkit_settings_set_load_icons_ignoring_image_load_setting() is deprecated and does nothing.");
 }
 
 /**
@@ -1918,7 +1918,7 @@ void webkit_settings_set_enable_offline_web_application_cache(WebKitSettings* se
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (enabled)
-        g_warning("webkit_settings_set_enable_offline_web_application_cache is deprecated and does nothing.");
+        g_warning("webkit_settings_set_enable_offline_web_application_cache() is deprecated and does nothing.");
 }
 
 /**
@@ -2000,7 +2000,7 @@ void webkit_settings_set_enable_html5_database(WebKitSettings* settings, gboolea
  *
  * Returns: %FALSE
  *
- * Deprecated: 2.38. This function does nothing.
+ * Deprecated: 2.38: This function does nothing.
  */
 gboolean webkit_settings_get_enable_xss_auditor(WebKitSettings* settings)
 {
@@ -2016,7 +2016,7 @@ gboolean webkit_settings_get_enable_xss_auditor(WebKitSettings* settings)
  *
  * The XSS auditor has been removed. This function does nothing.
  *
- * Deprecated: 2.38. This function does nothing.
+ * Deprecated: 2.38: This function does nothing.
  */
 void webkit_settings_set_enable_xss_auditor(WebKitSettings* settings, gboolean enabled)
 {
@@ -2068,7 +2068,7 @@ gboolean webkit_settings_get_enable_plugins(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    g_warning("webkit_settings_get_enable_plugins is deprecated and always returns FALSE. Plugins are no longer supported.");
+    g_warning("webkit_settings_get_enable_plugins() is deprecated and always returns FALSE. Plugins are no longer supported.");
 
     return FALSE;
 }
@@ -2087,7 +2087,7 @@ void webkit_settings_set_enable_plugins(WebKitSettings* settings, gboolean enabl
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (enabled)
-        g_warning("webkit_settings_set_enable_plugins is deprecated and does nothing. Plugins are no longer supported.");
+        g_warning("webkit_settings_set_enable_plugins() is deprecated and does nothing. Plugins are no longer supported.");
 }
 
 /**
@@ -2098,13 +2098,13 @@ void webkit_settings_set_enable_plugins(WebKitSettings* settings, gboolean enabl
  *
  * Returns: %FALSE always.
  *
- * Deprecated: 2.38. This function always returns %FALSE.
+ * Deprecated: 2.38: This function always returns %FALSE.
  */
 gboolean webkit_settings_get_enable_java(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    g_warning("webkit_settings_get_enable_java is deprecated and always returns FALSE. Java is no longer supported.");
+    g_warning("webkit_settings_get_enable_java() is deprecated and always returns FALSE. Java is no longer supported.");
 
     return FALSE;
 }
@@ -2118,14 +2118,14 @@ gboolean webkit_settings_get_enable_java(WebKitSettings* settings)
  *
  * Deprecated function that does nothing.
  *
- * Deprecated: 2.38. This function does nothing.
+ * Deprecated: 2.38: This function does nothing.
  */
 void webkit_settings_set_enable_java(WebKitSettings* settings, gboolean enabled)
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (enabled)
-        g_warning("webkit_settings_set_enable_java is deprecated and does nothing. Java is no longer supported.");
+        g_warning("webkit_settings_set_enable_java() is deprecated and does nothing. Java is no longer supported.");
 }
 #endif
 
@@ -2135,7 +2135,7 @@ void webkit_settings_set_enable_java(WebKitSettings* settings, gboolean enabled)
  *
  * Get the #WebKitSettings:javascript-can-open-windows-automatically property.
  *
- * Returns: %TRUE If JavaScript can open window automatically or %FALSE otherwise.
+ * Returns: %TRUE If JavaScript can open windows automatically or %FALSE otherwise.
  */
 gboolean webkit_settings_get_javascript_can_open_windows_automatically(WebKitSettings* settings)
 {
@@ -2195,7 +2195,7 @@ void webkit_settings_set_enable_hyperlink_auditing(WebKitSettings* settings, gbo
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (!enabled)
-        g_warning("webkit_settings_set_enable_hyperlink_auditing is deprecated and does nothing.");
+        g_warning("webkit_settings_set_enable_hyperlink_auditing() is deprecated and does nothing.");
 }
 
 /**
@@ -2210,7 +2210,7 @@ const gchar* webkit_settings_get_default_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->defaultFontFamily.data();
+    return settings->priv->defaultFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2226,7 +2226,7 @@ void webkit_settings_set_default_font_family(WebKitSettings* settings, const gch
     g_return_if_fail(defaultFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->defaultFontFamily.data(), defaultFontFamily))
+    if (!g_strcmp0(priv->defaultFontFamily.legacyCStringPointer(), defaultFontFamily))
         return;
 
     String standardFontFamily = String::fromUTF8(defaultFontFamily);
@@ -2247,7 +2247,7 @@ const gchar* webkit_settings_get_monospace_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->monospaceFontFamily.data();
+    return settings->priv->monospaceFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2263,7 +2263,7 @@ void webkit_settings_set_monospace_font_family(WebKitSettings* settings, const g
     g_return_if_fail(monospaceFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->monospaceFontFamily.data(), monospaceFontFamily))
+    if (!g_strcmp0(priv->monospaceFontFamily.legacyCStringPointer(), monospaceFontFamily))
         return;
 
     String fixedFontFamily = String::fromUTF8(monospaceFontFamily);
@@ -2284,7 +2284,7 @@ const gchar* webkit_settings_get_serif_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->serifFontFamily.data();
+    return settings->priv->serifFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2300,7 +2300,7 @@ void webkit_settings_set_serif_font_family(WebKitSettings* settings, const gchar
     g_return_if_fail(serifFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->serifFontFamily.data(), serifFontFamily))
+    if (!g_strcmp0(priv->serifFontFamily.legacyCStringPointer(), serifFontFamily))
         return;
 
     String serifFontFamilyString = String::fromUTF8(serifFontFamily);
@@ -2321,7 +2321,7 @@ const gchar* webkit_settings_get_sans_serif_font_family(WebKitSettings* settings
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->sansSerifFontFamily.data();
+    return settings->priv->sansSerifFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2337,7 +2337,7 @@ void webkit_settings_set_sans_serif_font_family(WebKitSettings* settings, const 
     g_return_if_fail(sansSerifFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->sansSerifFontFamily.data(), sansSerifFontFamily))
+    if (!g_strcmp0(priv->sansSerifFontFamily.legacyCStringPointer(), sansSerifFontFamily))
         return;
 
     String sansSerifFontFamilyString = String::fromUTF8(sansSerifFontFamily);
@@ -2358,7 +2358,7 @@ const gchar* webkit_settings_get_cursive_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->cursiveFontFamily.data();
+    return settings->priv->cursiveFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2374,7 +2374,7 @@ void webkit_settings_set_cursive_font_family(WebKitSettings* settings, const gch
     g_return_if_fail(cursiveFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->cursiveFontFamily.data(), cursiveFontFamily))
+    if (!g_strcmp0(priv->cursiveFontFamily.legacyCStringPointer(), cursiveFontFamily))
         return;
 
     String cursiveFontFamilyString = String::fromUTF8(cursiveFontFamily);
@@ -2395,7 +2395,7 @@ const gchar* webkit_settings_get_fantasy_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->fantasyFontFamily.data();
+    return settings->priv->fantasyFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2411,7 +2411,7 @@ void webkit_settings_set_fantasy_font_family(WebKitSettings* settings, const gch
     g_return_if_fail(fantasyFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->fantasyFontFamily.data(), fantasyFontFamily))
+    if (!g_strcmp0(priv->fantasyFontFamily.legacyCStringPointer(), fantasyFontFamily))
         return;
 
     String fantasyFontFamilyString = String::fromUTF8(fantasyFontFamily);
@@ -2432,7 +2432,7 @@ const gchar* webkit_settings_get_pictograph_font_family(WebKitSettings* settings
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->pictographFontFamily.data();
+    return settings->priv->pictographFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2448,7 +2448,7 @@ void webkit_settings_set_pictograph_font_family(WebKitSettings* settings, const 
     g_return_if_fail(pictographFontFamily);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->pictographFontFamily.data(), pictographFontFamily))
+    if (!g_strcmp0(priv->pictographFontFamily.legacyCStringPointer(), pictographFontFamily))
         return;
 
     String pictographFontFamilyString = String::fromUTF8(pictographFontFamily);
@@ -2465,13 +2465,13 @@ void webkit_settings_set_pictograph_font_family(WebKitSettings* settings, const 
  *
  * Returns: (nullable): The default font family used to display content marked with math font.
  *
- * Since 2.52
+ * Since: 2.52
  */
 const gchar* webkit_settings_get_math_font_family(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->mathFontFamily.data();
+    return settings->priv->mathFontFamily.legacyCStringPointer();
 }
 
 /**
@@ -2481,7 +2481,7 @@ const gchar* webkit_settings_get_math_font_family(WebKitSettings* settings)
  *
  * Set the #WebKitSettings:math-font-family property.
  *
- * Since 2.52
+ * Since: 2.52
  */
 void webkit_settings_set_math_font_family(WebKitSettings* settings, const gchar* mathFontFamily)
 {
@@ -2490,12 +2490,12 @@ void webkit_settings_set_math_font_family(WebKitSettings* settings, const gchar*
 
     if (!mathFontFamily) {
         priv->preferences->deleteMathFontFamily();
-        priv->mathFontFamily = CString();
+        priv->mathFontFamily = UTF8CString();
         g_object_notify_by_pspec(G_OBJECT(settings), sObjProperties[PROP_MATH_FONT_FAMILY]);
         return;
     }
 
-    if (!g_strcmp0(priv->mathFontFamily.data(), mathFontFamily))
+    if (!g_strcmp0(priv->mathFontFamily.legacyCStringPointer(), mathFontFamily))
         return;
 
     auto mathFontFamilyString = String::fromUTF8(mathFontFamily);
@@ -2621,7 +2621,7 @@ const gchar* webkit_settings_get_default_charset(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), 0);
 
-    return settings->priv->defaultCharset.data();
+    return settings->priv->defaultCharset.legacyCStringPointer();
 }
 
 /**
@@ -2637,7 +2637,7 @@ void webkit_settings_set_default_charset(WebKitSettings* settings, const gchar* 
     g_return_if_fail(defaultCharset);
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->defaultCharset.data(), defaultCharset))
+    if (!g_strcmp0(priv->defaultCharset.legacyCStringPointer(), defaultCharset))
         return;
 
     String defaultCharsetString = String::fromUTF8(defaultCharset);
@@ -2655,7 +2655,7 @@ void webkit_settings_set_default_charset(WebKitSettings* settings, const gchar* 
  *
  * Returns: %TRUE If private browsing is enabled or %FALSE otherwise.
  *
- * Deprecated: 2.16. Use #WebKitWebView:is-ephemeral or #WebKitWebContext:is-ephemeral instead.
+ * Deprecated: 2.16: Use #WebKitWebView:is-ephemeral or #WebKitWebsiteDataManager:is-ephemeral instead.
  */
 gboolean webkit_settings_get_enable_private_browsing(WebKitSettings* settings)
 {
@@ -2671,13 +2671,13 @@ gboolean webkit_settings_get_enable_private_browsing(WebKitSettings* settings)
  *
  * Set the #WebKitSettings:enable-private-browsing property.
  *
- * Deprecated: 2.16. Use #WebKitWebView:is-ephemeral or #WebKitWebContext:is-ephemeral instead.
+ * Deprecated: 2.16: Use #WebKitWebView:is-ephemeral or #WebKitWebsiteDataManager:is-ephemeral instead.
  */
 void webkit_settings_set_enable_private_browsing(WebKitSettings* settings, gboolean enabled)
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
-    g_warning("webkit_settings_set_enable_private_browsing is deprecated and does nothing, use #WebKitWebView:is-ephemeral or #WebKitWebContext:is-ephemeral instead");
+    g_warning("webkit_settings_set_enable_private_browsing() is deprecated and does nothing, use WebKitWebView:is-ephemeral or WebKitWebsiteDataManager:is-ephemeral instead");
 }
 #endif
 
@@ -2800,7 +2800,7 @@ gboolean webkit_settings_get_enable_dns_prefetching(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), FALSE);
 
-    g_warning("webkit_settings_get_enable_dns_prefetching is deprecated and always returns FALSE.");
+    g_warning("webkit_settings_get_enable_dns_prefetching() is deprecated and always returns FALSE.");
 
     return FALSE;
 }
@@ -2819,7 +2819,7 @@ void webkit_settings_set_enable_dns_prefetching(WebKitSettings* settings, gboole
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     if (enabled)
-        g_warning("webkit_settings_set_enable_dns_prefetching is deprecated and does nothing.");
+        g_warning("webkit_settings_set_enable_dns_prefetching() is deprecated and does nothing.");
 }
 
 /**
@@ -3108,7 +3108,7 @@ void webkit_settings_set_javascript_can_access_clipboard(WebKitSettings* setting
  *
  * Get the #WebKitSettings:media-playback-requires-user-gesture property.
  *
- * Returns: %TRUE If an user gesture is needed to play or load media
+ * Returns: %TRUE If a user gesture is needed to play or load media
  *    or %FALSE if no user gesture is needed.
  */
 gboolean webkit_settings_get_media_playback_requires_user_gesture(WebKitSettings* settings)
@@ -3251,7 +3251,7 @@ void webkit_settings_set_enable_site_specific_quirks(WebKitSettings* settings, g
  *
  * Get the #WebKitSettings:enable-page-cache property.
  *
- * Returns: %TRUE if page cache enabled or %FALSE otherwise.
+ * Returns: %TRUE if page cache is enabled or %FALSE otherwise.
  */
 gboolean webkit_settings_get_enable_page_cache(WebKitSettings* settings)
 {
@@ -3294,7 +3294,7 @@ const char* webkit_settings_get_user_agent(WebKitSettings* settings)
 
     WebKitSettingsPrivate* priv = settings->priv;
     ASSERT(!priv->userAgent.isNull());
-    return priv->userAgent.data();
+    return priv->userAgent.legacyCStringPointer();
 }
 
 /**
@@ -3317,11 +3317,11 @@ void webkit_settings_set_user_agent(WebKitSettings* settings, const char* userAg
     } else
         userAgentString = WebCore::standardUserAgent(emptyString());
 
-    CString newUserAgent = userAgentString.utf8();
+    auto newUserAgent = userAgentString.utf8();
     if (newUserAgent == priv->userAgent)
         return;
 
-    priv->userAgent = newUserAgent;
+    priv->userAgent = WTF::move(newUserAgent);
     g_object_notify_by_pspec(G_OBJECT(settings), sObjProperties[PROP_USER_AGENT]);
 }
 
@@ -3329,20 +3329,22 @@ void webkit_settings_set_user_agent(WebKitSettings* settings, const char* userAg
  * webkit_settings_set_user_agent_with_application_details:
  * @settings: a #WebKitSettings
  * @application_name: (allow-none): The application name used for the user agent or %NULL to use the default user agent.
- * @application_version: (allow-none): The application version for the user agent or %NULL to user the default version.
+ * @application_version: (allow-none): The application version for the user agent or %NULL to use the default version.
  *
  * Set the #WebKitSettings:user-agent property by appending the application details.
  *
  * Set the #WebKitSettings:user-agent property by appending the application details to the default user
- * agent. If no application name or version is given, the default user agent used will be used. If only
- * the version is given, the default engine version is used with the given application name.
+ * agent. If no application name is given, the default user agent will be used and @application_version
+ * is ignored. If only the name is given, the default engine version is used with the given application name.
+ *
+ * Deprecated: 2.56: Use webkit_user_agent_to_string() and webkit_settings_set_user_agent() instead.
  */
 void webkit_settings_set_user_agent_with_application_details(WebKitSettings* settings, const char* applicationName, const char* applicationVersion)
 {
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
-    CString newUserAgent = WebCore::standardUserAgent(String::fromUTF8(applicationName), String::fromUTF8(applicationVersion)).utf8();
-    webkit_settings_set_user_agent(settings, newUserAgent.data());
+    auto newUserAgent = WebCore::standardUserAgent(String::fromUTF8(applicationName), String::fromUTF8(applicationVersion)).utf8();
+    webkit_settings_set_user_agent(settings, newUserAgent.legacyCStringPointer());
 }
 
 /**
@@ -3603,7 +3605,7 @@ gboolean webkit_settings_get_enable_mock_capture_devices(WebKitSettings* setting
  *
  * Set the #WebKitSettings:enable-mock-capture-devices property.
  *
- * Since: 2.4
+ * Since: 2.24
  */
 void webkit_settings_set_enable_mock_capture_devices(WebKitSettings* settings, gboolean enabled)
 {
@@ -3860,7 +3862,7 @@ void webkit_settings_set_allow_universal_access_from_file_urls(WebKitSettings* s
  *
  * Get the #WebKitSettings:allow-top-navigation-to-data-urls property.
  *
- * Returns: %TRUE If navigation to data URLs from the top frame is allowed or %FALSE\
+ * Returns: %TRUE If navigation to data URLs from the top frame is allowed or %FALSE
  * otherwise.
  *
  * Since: 2.28
@@ -3900,7 +3902,7 @@ void webkit_settings_set_allow_top_navigation_to_data_urls(WebKitSettings* setti
  *
  * Get the #WebKitSettings:hardware-acceleration-policy property.
  *
- * Return: a #WebKitHardwareAccelerationPolicy
+ * Returns: a #WebKitHardwareAccelerationPolicy
  *
  * Since: 2.16
  */
@@ -3973,7 +3975,7 @@ void webkit_settings_set_hardware_acceleration_policy(WebKitSettings* settings, 
  *
  * Get the #WebKitSettings:enable-back-forward-navigation-gestures property.
  *
- * Returns: %TRUE if horizontal swipe gesture will trigger back-forward navigaiton or %FALSE otherwise.
+ * Returns: %TRUE if horizontal swipe gesture will trigger back-forward navigation or %FALSE otherwise.
  *
  * Since: 2.24
  */
@@ -4151,13 +4153,13 @@ const gchar* webkit_settings_get_media_content_types_requiring_hardware_support(
     const auto& mediaContentTypesRequiringHardwareSupport = settings->priv->mediaContentTypesRequiringHardwareSupport;
     if (!mediaContentTypesRequiringHardwareSupport.length())
         return nullptr;
-    return mediaContentTypesRequiringHardwareSupport.data();
+    return mediaContentTypesRequiringHardwareSupport.legacyCStringPointer();
 }
 
 /**
  * webkit_settings_set_media_content_types_requiring_hardware_support:
  * @settings: a #WebKitSettings
- * @content_types: (allow-none): list of media content types requiring hardware support split by semicolons (:) or %NULL to use the default value.
+ * @content_types: (allow-none): list of media content types requiring hardware support split by colons (:) or %NULL to use the default value.
  *
  * Set the #WebKitSettings:media-content-types-requiring-hardware-support property.
  *
@@ -4168,7 +4170,7 @@ void webkit_settings_set_media_content_types_requiring_hardware_support(WebKitSe
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->mediaContentTypesRequiringHardwareSupport.data(), mediaContentTypesRequiringHardwareSupport))
+    if (!g_strcmp0(priv->mediaContentTypesRequiringHardwareSupport.legacyCStringPointer(), mediaContentTypesRequiringHardwareSupport))
         return;
 
     String mediaContentTypesRequiringHardwareSupportString = String::fromUTF8(mediaContentTypesRequiringHardwareSupport);
@@ -4242,7 +4244,7 @@ void webkit_settings_set_feature_enabled(WebKitSettings* settings, WebKitFeature
 /**
  * webkit_settings_get_feature_enabled:
  * @settings: a #WebKitSettings
- * @feature: the feature to toggle.
+ * @feature: the feature to query.
  *
  * Gets whether a feature is enabled.
  *
@@ -4286,7 +4288,7 @@ WebKitFeatureList* webkit_settings_get_all_features(void)
  * Gets the list of available experimental WebKit features.
  *
  * The returned features are a subset of those returned by
- * [func@Settings.get_all_features], and includes those which
+ * [func@Settings.get_all_features], and include those which
  * certain applications may want to expose to end users; see
  * [enum@FeatureStatus] for more details.
  *
@@ -4305,7 +4307,7 @@ WebKitFeatureList* webkit_settings_get_experimental_features(void)
  * Gets the list of available development WebKit features.
  *
  * The returned features are a subset of those returned by
- * [func@Settings.get_all_features], and includes those which
+ * [func@Settings.get_all_features], and include those which
  * web and WebKit developers might find useful, but in general should
  * *not* be exposed to end users; see [enum@FeatureStatus] for
  * more details.
@@ -4326,7 +4328,7 @@ WebKitFeatureList* webkit_settings_get_development_features(void)
  * @group_name: Name of the group to read from @key_file
  * @error: return location for error or %NULL to ignore
  *
- * Reads the contents of the given @group_name from the given @key_file and apply the value of
+ * Reads the contents of the given @group_name from the given @key_file and applies the value of
  * each key/value to the corresponding property on the @settings.
  *
  * Value types have to match with the corresponding setting property type and the group keys have to
@@ -4450,7 +4452,7 @@ webkit_settings_get_webrtc_udp_ports_range(WebKitSettings* settings)
 {
     g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), nullptr);
 #if ENABLE(WEB_RTC)
-    return settings->priv->webrtcUDPPortsRange.data();
+    return settings->priv->webrtcUDPPortsRange.legacyCStringPointer();
 #else
     return nullptr;
 #endif
@@ -4471,7 +4473,7 @@ webkit_settings_set_webrtc_udp_ports_range(WebKitSettings* settings, const gchar
     g_return_if_fail(WEBKIT_IS_SETTINGS(settings));
 #if ENABLE(WEB_RTC)
     WebKitSettingsPrivate* priv = settings->priv;
-    if (!g_strcmp0(priv->webrtcUDPPortsRange.data(), udpPortsRange))
+    if (!g_strcmp0(priv->webrtcUDPPortsRange.legacyCStringPointer(), udpPortsRange))
         return;
 
     auto portRange = String::fromLatin1(udpPortsRange);

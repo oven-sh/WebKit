@@ -461,14 +461,14 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::draw(uint32_t ve
     if (!executePreDrawCommands(vertexCount == 1, false, firstInstance, instanceCount))
         return finalizeRenderCommand();
     if (id<MTLIndirectRenderCommand> icbCommand = currentRenderCommand()) {
-        if (!m_makeSubmitInvalid)
+        if (!m_makeSubmitInvalid && vertexCount && instanceCount)
             [icbCommand drawPrimitives:m_primitiveType vertexStart:firstVertex vertexCount:vertexCount instanceCount:instanceCount baseInstance:firstInstance];
     } else {
         if (!runVertexBufferValidation(vertexCount, instanceCount, firstVertex, firstInstance))
             return finalizeRenderCommand();
-        if (!vertexCount || !instanceCount)
-            return finalizeRenderCommand();
 
+        // A draw with a zero vertex or instance count still has to be validated, so record it like
+        // any other draw and skip only the encoded command when it is replayed.
         recordCommand([vertexCount, instanceCount, firstVertex, firstInstance, protectedThis = protect(*this)] {
             protectedThis->draw(vertexCount, instanceCount, firstVertex, firstInstance);
             return true;
@@ -725,7 +725,7 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::drawIndexed(uint
                 [renderPassEncoder->renderCommandEncoder() drawIndexedPrimitives:m_primitiveType indexType:m_indexType indexBuffer:indexBuffer indexBufferOffset:0 indirectBuffer:indirectBuffer indirectBufferOffset:indirectBufferOffset];
         } else if (useIndirectCall != RenderPassEncoder::IndexCall::Skip) {
             auto checkedAddition = checkedSum<size_t>(indexBufferOffsetInBytes, indexCountTimesSizeInBytes);
-            if (!checkedAddition.hasOverflowed() && checkedAddition.value() <= indexBuffer.length && !m_makeSubmitInvalid)
+            if (!checkedAddition.hasOverflowed() && checkedAddition.value() <= indexBuffer.length && !m_makeSubmitInvalid && indexCount && instanceCount)
                 [icbCommand drawIndexedPrimitives:m_primitiveType indexCount:indexCount indexType:m_indexType indexBuffer:indexBuffer indexBufferOffset:indexBufferOffsetInBytes instanceCount:instanceCount baseVertex:baseVertex baseInstance:firstInstance];
         }
     } else {
@@ -743,9 +743,11 @@ RenderBundleEncoder::FinalizeRenderCommand RenderBundleEncoder::drawIndexed(uint
         if (!runIndexBufferValidation(firstInstance, instanceCount))
             return finalizeRenderCommand();
 
-        if (!indexCount || !instanceCount || !indexBuffer || m_indexBuffer->isDestroyed())
+        if (!indexBuffer || m_indexBuffer->isDestroyed())
             return finalizeRenderCommand();
 
+        // A draw with a zero index or instance count still has to be validated, so record it like
+        // any other draw and skip only the encoded command when it is replayed.
         recordCommand([indexCount, instanceCount, firstIndex, baseVertex, firstInstance, protectedThis = protect(*this)] {
             protectedThis->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
             return true;
@@ -1075,7 +1077,7 @@ Ref<RenderBundle> RenderBundleEncoder::finish(const WGPURenderBundleDescriptor& 
     };
 
     auto renderBundle = createRenderBundle();
-    renderBundle->setLabel(String::fromUTF8(descriptor.label));
+    renderBundle->setLabel(fromAPI(descriptor.label));
     m_finished = true;
 
     return renderBundle;
@@ -1495,7 +1497,7 @@ void RenderBundleEncoder::setLabel(String&& label)
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuRenderBundleEncoderReference(WGPURenderBundleEncoder renderBundleEncoder)
+void NODELETE wgpuRenderBundleEncoderAddRef(WGPURenderBundleEncoder renderBundleEncoder)
 {
     WebGPU::fromAPI(renderBundleEncoder).ref();
 }
@@ -1532,7 +1534,7 @@ WGPURenderBundle wgpuRenderBundleEncoderFinish(WGPURenderBundleEncoder renderBun
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(renderBundleEncoder))->finish(*descriptor));
 }
 
-void wgpuRenderBundleEncoderInsertDebugMarker(WGPURenderBundleEncoder renderBundleEncoder, const char* markerLabel)
+void wgpuRenderBundleEncoderInsertDebugMarker(WGPURenderBundleEncoder renderBundleEncoder, WGPUStringView markerLabel)
 {
     protect(WebGPU::fromAPI(renderBundleEncoder))->insertDebugMarker(WebGPU::fromAPI(markerLabel));
 }
@@ -1542,7 +1544,7 @@ void wgpuRenderBundleEncoderPopDebugGroup(WGPURenderBundleEncoder renderBundleEn
     protect(WebGPU::fromAPI(renderBundleEncoder))->popDebugGroup();
 }
 
-void wgpuRenderBundleEncoderPushDebugGroup(WGPURenderBundleEncoder renderBundleEncoder, const char* groupLabel)
+void wgpuRenderBundleEncoderPushDebugGroup(WGPURenderBundleEncoder renderBundleEncoder, WGPUStringView groupLabel)
 {
     protect(WebGPU::fromAPI(renderBundleEncoder))->pushDebugGroup(WebGPU::fromAPI(groupLabel));
 }
@@ -1574,7 +1576,7 @@ void wgpuRenderBundleEncoderSetVertexBuffer(WGPURenderBundleEncoder renderBundle
     protect(WebGPU::fromAPI(renderBundleEncoder))->setVertexBuffer(slot, optionalBuffer.get(), offset, size);
 }
 
-void wgpuRenderBundleEncoderSetLabel(WGPURenderBundleEncoder renderBundleEncoder, const char* label)
+void wgpuRenderBundleEncoderSetLabel(WGPURenderBundleEncoder renderBundleEncoder, WGPUStringView label)
 {
     protect(WebGPU::fromAPI(renderBundleEncoder))->setLabel(WebGPU::fromAPI(label));
 }

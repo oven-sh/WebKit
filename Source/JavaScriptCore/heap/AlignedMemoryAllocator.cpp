@@ -27,7 +27,6 @@
 #include "AlignedMemoryAllocator.h"
 
 #include "BlockDirectory.h"
-#include "HeapInlines.h"
 #include "Subspace.h"
 
 namespace JSC { 
@@ -36,23 +35,52 @@ AlignedMemoryAllocator::AlignedMemoryAllocator() = default;
 
 AlignedMemoryAllocator::~AlignedMemoryAllocator() = default;
 
-void AlignedMemoryAllocator::registerDirectory(JSC::Heap& heap, BlockDirectory* directory)
+void AlignedMemoryAllocator::addDirectoryWithEmptyBlocks(BlockDirectory* directory)
 {
-    RELEASE_ASSERT(!directory->nextDirectoryInAlignedMemoryAllocator());
-    
-    if (m_directories.isEmpty()) {
-        ASSERT_UNUSED(heap, !Thread::mayBeGCThread() || heap.worldIsStopped());
-        for (Subspace* subspace = m_subspaces.first(); subspace; subspace = subspace->nextSubspaceInAlignedMemoryAllocator())
-            subspace->didCreateFirstDirectory(directory);
-    }
-    
-    m_directories.append(std::mem_fn(&BlockDirectory::setNextDirectoryInAlignedMemoryAllocator), directory);
+    ASSERT(directory->subspace()->alignedMemoryAllocator() == this);
+
+    // Sweeping announces every block it finishes with, so the already-listed case is the common one
+    // and skips the lock. Reading the flag unlocked is sound because directories join and leave this
+    // list on the mutator, or on a sweeper holding the API lock, never from two threads at once. A
+    // wrong read would cost reuse rather than correctness anyway: a directory left off the list is
+    // simply not stealable from until its next empty block or the next prepareForAllocation re-adds
+    // it. See the concurrency FIXME in LocalAllocator::tryAllocateWithoutCollecting before allocating
+    // from a second thread.
+    if (directory->m_isOnEmptyBlocksList.loadRelaxed())
+        return;
+
+    Locker locker { m_directoriesWithEmptyBlocksLock };
+    if (directory->m_isOnEmptyBlocksList.loadRelaxed())
+        return;
+    directory->m_isOnEmptyBlocksList.storeRelaxed(true);
+    directory->m_nextDirectoryWithEmptyBlocks = m_firstDirectoryWithEmptyBlocks;
+    m_firstDirectoryWithEmptyBlocks = directory;
 }
 
-void AlignedMemoryAllocator::registerSubspace(Subspace* subspace)
+BlockDirectory* AlignedMemoryAllocator::takeDirectoryWithEmptyBlocks()
 {
-    RELEASE_ASSERT(!subspace->nextSubspaceInAlignedMemoryAllocator());
-    m_subspaces.append(std::mem_fn(&Subspace::setNextSubspaceInAlignedMemoryAllocator), subspace);
+    Locker locker { m_directoriesWithEmptyBlocksLock };
+    BlockDirectory* directory = m_firstDirectoryWithEmptyBlocks;
+    if (!directory)
+        return nullptr;
+    m_firstDirectoryWithEmptyBlocks = directory->m_nextDirectoryWithEmptyBlocks;
+    directory->m_nextDirectoryWithEmptyBlocks = nullptr;
+    directory->m_isOnEmptyBlocksList.storeRelaxed(false);
+    return directory;
+}
+
+MarkedBlock::Handle* AlignedMemoryAllocator::findEmptyBlockToSteal()
+{
+    // Popped before it is searched, not after: a directory that gains a block mid-search must be able
+    // to put itself back on, which it cannot do while the search still claims it. Directories
+    // announce themselves from under their own lock, so the list lock has to be dropped either way.
+    while (BlockDirectory* directory = takeDirectoryWithEmptyBlocks()) {
+        if (MarkedBlock::Handle* block = directory->findEmptyBlockToSteal()) {
+            addDirectoryWithEmptyBlocks(directory);
+            return block;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace JSC

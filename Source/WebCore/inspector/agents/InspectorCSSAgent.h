@@ -71,6 +71,8 @@ class InspectorCSSAgent final : public InspectorAgentBase , public Inspector::CS
     WTF_MAKE_TZONE_ALLOCATED(InspectorCSSAgent);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorCSSAgent);
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
+
     explicit InspectorCSSAgent(PageAgentContext&);
     ~InspectorCSSAgent();
 
@@ -178,7 +180,7 @@ private:
     Inspector::Protocol::CSS::StyleSheetOrigin NODELETE detectOrigin(CSSStyleSheet* pageStyleSheet, Document* ownerDocument);
 
     RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(const StyleRule*, Style::Resolver&, Element&);
-    RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSStyleRule*);
+    RefPtr<Inspector::Protocol::CSS::CSSRule> buildObjectForRule(CSSRule*);
     Ref<JSON::ArrayOf<Inspector::Protocol::CSS::RuleMatch>> buildArrayForMatchedRuleList(const Vector<Ref<const StyleRule>>&, Style::Resolver&, Element&, std::optional<Style::PseudoElementIdentifier>);
     RefPtr<Inspector::Protocol::CSS::CSSStyle> buildObjectForAttributesStyle(StyledElement&);
 

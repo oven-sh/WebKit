@@ -103,6 +103,7 @@ rect: style.getPropertyValue(grid-template-rows) : none
 rect: style.getPropertyValue(hanging-punctuation) : none
 rect: style.getPropertyValue(height) : 100px
 rect: style.getPropertyValue(hyphenate-character) : auto
+rect: style.getPropertyValue(hyphenate-limit-lines) : no-limit
 rect: style.getPropertyValue(image-rendering) : auto
 rect: style.getPropertyValue(justify-content) : normal
 rect: style.getPropertyValue(justify-items) : normal
@@ -222,7 +223,6 @@ rect: style.getPropertyValue(-webkit-column-axis) : auto
 rect: style.getPropertyValue(-webkit-font-smoothing) : auto
 rect: style.getPropertyValue(-webkit-hyphenate-limit-after) : auto
 rect: style.getPropertyValue(-webkit-hyphenate-limit-before) : auto
-rect: style.getPropertyValue(-webkit-hyphenate-limit-lines) : no-limit
 rect: style.getPropertyValue(-webkit-line-align) : none
 rect: style.getPropertyValue(-webkit-line-box-contain) : block inline replaced
 rect: style.getPropertyValue(-webkit-line-clamp) : none
@@ -343,6 +343,7 @@ g: style.getPropertyValue(grid-template-rows) : none
 g: style.getPropertyValue(hanging-punctuation) : none
 g: style.getPropertyValue(height) : auto
 g: style.getPropertyValue(hyphenate-character) : auto
+g: style.getPropertyValue(hyphenate-limit-lines) : no-limit
 g: style.getPropertyValue(image-rendering) : auto
 g: style.getPropertyValue(justify-content) : normal
 g: style.getPropertyValue(justify-items) : normal
@@ -462,7 +463,6 @@ g: style.getPropertyValue(-webkit-column-axis) : auto
 g: style.getPropertyValue(-webkit-font-smoothing) : auto
 g: style.getPropertyValue(-webkit-hyphenate-limit-after) : auto
 g: style.getPropertyValue(-webkit-hyphenate-limit-before) : auto
-g: style.getPropertyValue(-webkit-hyphenate-limit-lines) : no-limit
 g: style.getPropertyValue(-webkit-line-align) : none
 g: style.getPropertyValue(-webkit-line-box-contain) : block inline replaced
 g: style.getPropertyValue(-webkit-line-clamp) : none

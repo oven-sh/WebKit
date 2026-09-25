@@ -772,7 +772,7 @@ Status WebMParser::OnTrackEntry(const ElementMetadata&, const TrackEntry& trackE
         return Status(Status::kOkCompleted);
 
     auto trackType = trackEntry.track_type.value();
-    String codecId = std::span { trackEntry.codec_id.value() };
+    String codecId = String::fromLatin1(std::span { trackEntry.codec_id.value() });
 
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, trackType, ", codec ", codecId);
 

@@ -65,6 +65,7 @@
 #include <wtf/SystemTracing.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 #include "LocalFrameInlines.h"
 
 #if PLATFORM(IOS_FAMILY)
@@ -777,7 +778,7 @@ void SubresourceLoader::didFinishLoading(const NetworkLoadMetrics& networkLoadMe
     ASSERT(!resource->resourceToRevalidate());
     // FIXME (129394): We should cancel the load when a decode error occurs instead of continuing the load to completion.
     ASSERT(!resource->errorOccurred() || resource->status() == CachedResource::DecodeError || !resource->isLoading());
-    LOG(ResourceLoading, "Received '%s'.", resource->url().string().utf8().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Received '"_s << resource->url().string() << "'."_s);
     logResourceLoaded(protect(frame()).get(), resource->type());
 
     m_loadTiming.markEndTime();
@@ -831,7 +832,7 @@ void SubresourceLoader::didFail(const ResourceError& error)
 
     ASSERT(!reachedTerminalState());
     RefPtr resource = m_resource;
-    LOG(ResourceLoading, "Failed to load '%s'.\n", resource->url().string().utf8().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Failed to load '"_s << resource->url().string() << "'."_s);
 
     RefPtr frame = m_frame;
     if (frame && frame->document() && error.isAccessControl() && error.domain() != InspectorNetworkAgent::errorDomain() && resource->type() != CachedResource::Type::Ping)
@@ -874,7 +875,7 @@ void SubresourceLoader::willCancel(const ResourceError& error)
 
     Ref protectedThis { *this };
     RefPtr resource = m_resource;
-    LOG(ResourceLoading, "Cancelled load of '%s'.\n", resource->url().string().utf8().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Cancelled load of '"_s << resource->url().string() << "'."_s);
 
 #if PLATFORM(IOS_FAMILY)
     m_state = m_state == Uninitialized ? CancelledWhileInitializing : Finishing;

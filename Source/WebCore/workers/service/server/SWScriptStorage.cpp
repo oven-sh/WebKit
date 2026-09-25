@@ -57,7 +57,7 @@ String SWScriptStorage::sha2Hash(const String& input) const
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
     crypto->addBytes(m_salt);
     auto inputUTF8 = input.utf8();
-    crypto->addBytes(byteCast<uint8_t>(inputUTF8.span()));
+    crypto->addBytes(std::as_bytes(inputUTF8.span()));
     return base64URLEncodeToString(crypto->computeHash());
 }
 
@@ -102,7 +102,7 @@ ScriptBuffer SWScriptStorage::store(const ServiceWorkerRegistrationKey& registra
     if (!shouldUseFileMapping(size)) {
         auto handle = FileSystem::openFile(scriptPath, FileSystem::FileOpenMode::Truncate);
         if (!handle) {
-            RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::openFile() failed", scriptPath.utf8().data());
+            RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::openFile() failed", scriptPath.utf8());
             return { };
         }
         if (size) {
@@ -116,7 +116,7 @@ ScriptBuffer SWScriptStorage::store(const ServiceWorkerRegistrationKey& registra
 
     auto mappedFile = FileSystem::mapToFile(scriptPath, size, WTF::move(iterateOverBufferAndWriteData));
     if (!mappedFile) {
-        RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::mapToFile() failed", scriptPath.utf8().data());
+        RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::store: Failure to store %s, FileSystem::mapToFile() failed", scriptPath.utf8());
         return { };
     }
     return ScriptBuffer { SharedBuffer::create(WTF::move(mappedFile)) };
@@ -129,7 +129,7 @@ ScriptBuffer SWScriptStorage::retrieve(const ServiceWorkerRegistrationKey& regis
     auto scriptPath = this->scriptPath(registrationKey, scriptURL);
     auto fileSize = FileSystem::fileSize(scriptPath);
     if (!fileSize) {
-        RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::retrieve: Failure to retrieve %s, FileSystem::fileSize() failed", scriptPath.utf8().data());
+        RELEASE_LOG_ERROR(ServiceWorker, "SWScriptStorage::retrieve: Failure to retrieve %s, FileSystem::fileSize() failed", scriptPath.utf8());
         return { };
     }
 
@@ -144,7 +144,7 @@ void SWScriptStorage::clear(const ServiceWorkerRegistrationKey& registrationKey)
 {
     auto registrationDirectory = this->registrationDirectory(registrationKey);
     bool result = FileSystem::deleteNonEmptyDirectory(registrationDirectory);
-    RELEASE_LOG_ERROR_IF(!result, ServiceWorker, "SWScriptStorage::clear: Failure to clear scripts for registration %s", registrationKey.toDatabaseKey().utf8().data());
+    RELEASE_LOG_ERROR_IF(!result, ServiceWorker, "SWScriptStorage::clear: Failure to clear scripts for registration %s", registrationKey.toDatabaseKey().utf8());
 }
 
 } // namespace WebCore

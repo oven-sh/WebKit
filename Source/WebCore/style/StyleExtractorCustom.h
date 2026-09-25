@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "BoxSides.h"
 #include "ColorSerialization.h"
 #include "ContainerNodeInlines.h"
 #include "CSSFontValue.h"
@@ -55,10 +56,10 @@
 #include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderGrid.h"
-#include "RenderInline.h"
 #include "RenderSVGModelObject.h"
 #include "SVGElement.h"
 #include "SVGLengthContext.h"
+#include "StyleCalcSizeValue+Serialization.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StyleFontPaletteInlines.h"
@@ -154,6 +155,7 @@ public:
     static RefPtr<CSSValue> extractFontShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractFontSynthesisShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractFontVariantShorthand(ExtractorState&);
+    static RefPtr<CSSValue> extractHyphenateLimitCharsShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractLineClampShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractMaskShorthand(ExtractorState&);
     static RefPtr<CSSValue> extractMaskBorderShorthand(ExtractorState&);
@@ -253,6 +255,7 @@ public:
     static void extractFontShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractFontSynthesisShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractFontVariantShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
+    static void extractHyphenateLimitCharsShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractLineClampShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractMaskShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
     static void extractMaskBorderShorthandSerialization(ExtractorState&, StringBuilder&, const CSS::SerializationContext&);
@@ -376,21 +379,36 @@ template<CSSPropertyID propertyID> struct InsetEdgeSharedAdaptor {
             if (AnchorPositionEvaluator::isLayoutTimeAnchorPositioned(box.style()) && AnchorPositionEvaluator::defaultAnchorForBox(box)) [[unlikely]]
                 return LayoutUnit { };
 
+            if (CheckedPtr grid = dynamicDowncast<RenderGrid>(container)) {
+                auto writingMode = grid->writingMode();
+                auto physicalRange = [&](BoxAxis physicalAxis) {
+                    bool usesColumns = (physicalAxis == BoxAxis::Horizontal) == writingMode.isHorizontal();
+                    auto range = grid->gridAreaRangeForOutOfFlow(box, usesColumns ? Style::GridTrackSizingDirection::Columns : Style::GridTrackSizingDirection::Rows);
+                    if (usesColumns ? writingMode.isInlineFlipped() : writingMode.isBlockFlipped()) {
+                        auto containerSize = physicalAxis == BoxAxis::Horizontal ? grid->borderBoxWidth() : grid->borderBoxHeight();
+                        range.moveTo(containerSize - range.max());
+                    }
+                    return range;
+                };
+                auto horizontalRange = physicalRange(BoxAxis::Horizontal);
+                auto verticalRange = physicalRange(BoxAxis::Vertical);
+                auto gridArea = LayoutRect(horizontalRange.min(), verticalRange.min(), horizontalRange.size(), verticalRange.size());
+
+                if constexpr (propertyID == CSSPropertyTop)
+                    return box.offsetTop() - box.marginTop() - (gridArea.y() - grid->borderTop());
+                else if constexpr (propertyID == CSSPropertyRight)
+                    return (gridArea.maxX() - grid->borderLeft()) - (box.offsetLeft() + box.offsetWidth() + box.marginRight());
+                else if constexpr (propertyID == CSSPropertyBottom)
+                    return (gridArea.maxY() - grid->borderTop()) - (box.offsetTop() + box.offsetHeight() + box.marginBottom());
+                else if constexpr (propertyID == CSSPropertyLeft)
+                    return box.offsetLeft() - box.marginLeft() - (gridArea.x() - grid->borderLeft());
+            }
+
             auto paddingBoxWidth = [&]() -> LayoutUnit {
-                if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(container))
-                    return renderBlock->paddingBoxWidth();
-                if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(container))
-                    return inlineBox->innerPaddingBoxWidth();
-                ASSERT_NOT_REACHED();
-                return { };
+                return container.writingMode().isHorizontal() ? container.paddingBoxLogicalWidth() : container.paddingBoxLogicalHeight();
             };
             auto paddingBoxHeight = [&]() -> LayoutUnit {
-                if (CheckedPtr renderBlock = dynamicDowncast<RenderBlock>(container))
-                    return renderBlock->paddingBoxHeight();
-                if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(container))
-                    return inlineBox->innerPaddingBoxHeight();
-                ASSERT_NOT_REACHED();
-                return { };
+                return container.writingMode().isHorizontal() ? container.paddingBoxLogicalHeight() : container.paddingBoxLogicalWidth();
             };
             if constexpr (propertyID == CSSPropertyTop)
                 return box.offsetTop() - box.marginTop();
@@ -912,7 +930,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyGridAutoFlow> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyRotate> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.rotate());
     }
@@ -921,7 +939,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyRotate> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyScale> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.scale());
     }
@@ -930,7 +948,7 @@ template<> struct PropertyExtractorAdaptor<CSSPropertyScale> {
 template<> struct PropertyExtractorAdaptor<CSSPropertyTranslate> {
     template<typename F> decltype(auto) computedValue(ExtractorState& state, F&& functor) const
     {
-        if (is<RenderInline>(state.renderer))
+        if (state.renderer && state.renderer->isInlineBox())
             return functor(CSS::Keyword::None { });
         return functor(state.style.translate());
     }
@@ -2956,6 +2974,46 @@ inline void ExtractorCustom::extractFontVariantShorthandSerialization(ExtractorS
 {
     // FIXME: Do this more efficiently without creating and destroying a CSSValue object.
     builder.append(extractFontVariantShorthand(state)->cssText(context));
+}
+
+inline RefPtr<CSSValue> ExtractorCustom::extractHyphenateLimitCharsShorthand(ExtractorState& state)
+{
+    auto& style = state.style;
+    auto total = style.internalHyphenateLimitCharsWord();
+    auto before = style.hyphenateLimitBefore();
+    auto after = style.hyphenateLimitAfter();
+
+    bool showAfter = after != before;
+    bool showBefore = showAfter || !before.isAuto();
+
+    CSSValueListBuilder list;
+    list.append(createCSSValue(state.pool, style, total));
+    if (showBefore)
+        list.append(createCSSValue(state.pool, style, before));
+    if (showAfter)
+        list.append(createCSSValue(state.pool, style, after));
+    return CSSValueList::createSpaceSeparated(WTF::move(list));
+}
+
+inline void ExtractorCustom::extractHyphenateLimitCharsShorthandSerialization(ExtractorState& state, StringBuilder& builder, const CSS::SerializationContext& context)
+{
+    auto& style = state.style;
+    auto total = style.internalHyphenateLimitCharsWord();
+    auto before = style.hyphenateLimitBefore();
+    auto after = style.hyphenateLimitAfter();
+
+    bool showAfter = after != before;
+    bool showBefore = showAfter || !before.isAuto();
+
+    serializationForCSS(builder, context, style, total);
+    if (showBefore) {
+        builder.append(' ');
+        serializationForCSS(builder, context, style, before);
+    }
+    if (showAfter) {
+        builder.append(' ');
+        serializationForCSS(builder, context, style, after);
+    }
 }
 
 inline RefPtr<CSSValue> ExtractorCustom::extractLineClampShorthand(ExtractorState& state)

@@ -97,6 +97,7 @@
 #include <wtf/Scope.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 #include "LocalFrameInlines.h"
 
@@ -1104,7 +1105,7 @@ void CachedResourceLoader::updateHTTPRequestHeaders(FrameLoader& frameLoader, Ca
     // all of them or none.
     Ref frame = frameLoader.frame();
     if (shouldUpdateFetchMetadata(frame, request.resourceRequest(), type, request.options().mode)) {
-        auto site = computeFetchMetadataSite(request.resourceRequest(), type, request.options().mode, frame, frame->isMainFrame() && m_documentLoader && m_documentLoader->isRequestFromClientOrUserInput(), m_documentLoader.get());
+        auto site = computeFetchMetadataSite(request.resourceRequest(), type, request.options().mode, frame, frame->isMainFrame() && m_documentLoader && m_documentLoader->isRequestFromClientOrUserInput(), protect(m_documentLoader));
         updateRequestFetchMetadataHeaders(request.resourceRequest(), request.options(), site);
     }
     request.updateUserAgentHeader(frameLoader);
@@ -1215,7 +1216,7 @@ ResourceErrorOr<Ref<CachedResource>> CachedResourceLoader::requestResource(Cache
         return makeUnexpected(ResourceError { errorDomainWebKitInternal, 0, url, "URL is invalid"_s });
     }
 
-    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", url.stringCenterEllipsizedToLength().utf8().data(), request.charset().utf8().data(), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
+    LOG(ResourceLoading, "CachedResourceLoader::requestResource '%.255s', charset '%s', priority=%d, forPreload=%u", url.stringCenterEllipsizedToLength().utf8(), request.charset().utf8(), request.priority() ? static_cast<int>(request.priority().value()) : -1, forPreload == ForPreload::Yes);
 
     request.setDestinationIfNotSet(destinationForType(type, frame));
 
@@ -1553,7 +1554,7 @@ Ref<CachedResource> CachedResourceLoader::loadResource(CachedResource::Type type
     ASSERT(!request.allowsCaching() || mayAddToMemoryCache == MayAddToMemoryCache::No || !memoryCache->resourceForRequest(request.resourceRequest(), sessionID)
         || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::DoNotUseAnyCache || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::ReloadIgnoringCacheData || request.resourceRequest().cachePolicy() == ResourceRequestCachePolicy::RefreshAnyCacheData);
 
-    LOG(ResourceLoading, "Loading CachedResource for '%s'.", request.resourceRequest().url().stringCenterEllipsizedToLength().utf8().data());
+    LOG_WITH_STREAM(ResourceLoading, stream << "Loading CachedResource for '"_s << request.resourceRequest().url().stringCenterEllipsizedToLength() << "'."_s);
 
     auto resource = createResource(type, WTF::move(request), sessionID, &cookieJar, settings, protect(document()).get());
 

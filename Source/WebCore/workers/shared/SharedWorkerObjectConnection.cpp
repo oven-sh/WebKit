@@ -53,7 +53,7 @@ void SharedWorkerObjectConnection::fetchScriptInClient(URL&& url, WebCore::Share
     ASSERT(isMainThread());
 
     RefPtr workerObject = SharedWorker::fromIdentifier(sharedWorkerObjectIdentifier);
-    CONNECTION_RELEASE_LOG("fetchScriptInClient: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p", sharedWorkerObjectIdentifier.toString().utf8().data(), workerObject.get());
+    CONNECTION_RELEASE_LOG("fetchScriptInClient: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p", sharedWorkerObjectIdentifier.toString().utf8(), workerObject.get());
     if (!workerObject)
         return completionHandler(workerFetchError(ResourceError { ResourceError::Type::Cancellation }), { });
 
@@ -61,7 +61,7 @@ void SharedWorkerObjectConnection::fetchScriptInClient(URL&& url, WebCore::Share
     Ref loader = SharedWorkerScriptLoader::create(WTF::move(url), *workerObject, WTF::move(workerOptions));
     m_loaders.add(loaderIdentifier, loader.copyRef());
 
-    loader->load([this, loaderIdentifier, completionHandler = WTF::move(completionHandler)](WorkerFetchResult&& fetchResult, WorkerInitializationData&& initializationData) mutable {
+    loader->load([this, protectedThis = Ref { *this }, loaderIdentifier, completionHandler = WTF::move(completionHandler)](WorkerFetchResult&& fetchResult, WorkerInitializationData&& initializationData) mutable {
         CONNECTION_RELEASE_LOG("fetchScriptInClient: finished script load, success=%d", fetchResult.error.isNull());
         RefPtr loader = m_loaders.take(loaderIdentifier);
         ASSERT(loader);
@@ -74,9 +74,9 @@ void SharedWorkerObjectConnection::notifyWorkerObjectOfLoadCompletion(WebCore::S
     ASSERT(isMainThread());
     RefPtr workerObject = SharedWorker::fromIdentifier(sharedWorkerObjectIdentifier);
     if (error.isNull())
-        CONNECTION_RELEASE_LOG("notifyWorkerObjectOfLoadCompletion: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, load succeeded", sharedWorkerObjectIdentifier.toString().utf8().data(), workerObject.get());
+        CONNECTION_RELEASE_LOG("notifyWorkerObjectOfLoadCompletion: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, load succeeded", sharedWorkerObjectIdentifier.toString().utf8(), workerObject.get());
     else
-        CONNECTION_RELEASE_LOG_ERROR("notifyWorkerObjectOfLoadCompletion: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, load failed", sharedWorkerObjectIdentifier.toString().utf8().data(), workerObject.get());
+        CONNECTION_RELEASE_LOG_ERROR("notifyWorkerObjectOfLoadCompletion: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, load failed", sharedWorkerObjectIdentifier.toString().utf8(), workerObject.get());
     if (workerObject)
         workerObject->didFinishLoading(error);
 }
@@ -85,7 +85,7 @@ void SharedWorkerObjectConnection::postErrorToWorkerObject(SharedWorkerObjectIde
 {
     ASSERT(isMainThread());
     RefPtr workerObject = SharedWorker::fromIdentifier(sharedWorkerObjectIdentifier);
-    CONNECTION_RELEASE_LOG_ERROR("postErrorToWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p", sharedWorkerObjectIdentifier.toString().utf8().data(), workerObject.get());
+    CONNECTION_RELEASE_LOG_ERROR("postErrorToWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p", sharedWorkerObjectIdentifier.toString().utf8(), workerObject.get());
     if (!workerObject)
         return;
 
@@ -98,7 +98,7 @@ void SharedWorkerObjectConnection::reportNetworkUsageToWorkerObject(SharedWorker
 {
     ASSERT(isMainThread());
     RefPtr workerObject = SharedWorker::fromIdentifier(sharedWorkerObjectIdentifier);
-    CONNECTION_RELEASE_LOG("reportNetworkUsageToWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, bytesTransferredOverNetworkDelta=%" PRIu64, sharedWorkerObjectIdentifier.toString().utf8().data(), workerObject.get(), bytesTransferredOverNetworkDelta);
+    CONNECTION_RELEASE_LOG("reportNetworkUsageToWorkerObject: sharedWorkerObjectIdentifier=%" PUBLIC_LOG_STRING ", worker=%p, bytesTransferredOverNetworkDelta=%" PRIu64, sharedWorkerObjectIdentifier.toString().utf8(), workerObject.get(), bytesTransferredOverNetworkDelta);
     if (workerObject)
         workerObject->reportNetworkUsage(bytesTransferredOverNetworkDelta);
 }

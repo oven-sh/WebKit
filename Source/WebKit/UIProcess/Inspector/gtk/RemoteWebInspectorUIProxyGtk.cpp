@@ -138,7 +138,7 @@ void RemoteWebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::Sav
     // unfortunately.
     URL url { saveDatas[0].url };
     // Strip leading / character.
-    gtk_file_chooser_set_current_name(chooser, url.path().substring(1).utf8().data());
+    gtk_file_chooser_set_current_name(chooser, url.path().substring(1).utf8().legacyCStringPointer());
 
     if (gtk_native_dialog_run(GTK_NATIVE_DIALOG(dialog.get())) != GTK_RESPONSE_ACCEPT)
         return;

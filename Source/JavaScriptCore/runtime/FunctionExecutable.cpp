@@ -55,14 +55,14 @@ void FunctionExecutable::destroy(JSCell* cell)
     static_cast<FunctionExecutable*>(cell)->FunctionExecutable::~FunctionExecutable();
 }
 
-CString FunctionExecutable::inferredNameForTools()
+UTF8CString FunctionExecutable::inferredNameForTools()
 {
     // Only the thread running the VM may pull the name out of the bytecode cache (it atomizes); compiler, GC, sampling
     // profiler and crash-reporter threads print what is there.
     if (isCompilationThread() || Thread::mayBeGCThread() || !vm().currentThreadIsHoldingAPILock()) {
         if (const Identifier* name = tryGetEcmaNameConcurrently())
             return name->utf8();
-        return "<name not materialized>"_span;
+        return "<name not materialized>"_s;
     }
     // The mutator itself may be inside the collector's end phase (a CodeBlock dumped while it is jettisoned), where it must not atomize either.
     return ecmaNameWithoutGC().utf8();
@@ -173,8 +173,6 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 {
     ASSERT(!m_rareData);
     auto rareData = makeUnique<RareData>();
-    rareData->m_lineCount = lineCount();
-    rareData->m_endColumn = endColumn();
     rareData->m_parametersStartOffset = parametersStartOffset();
     rareData->m_functionStart = functionStart();
     rareData->m_functionEnd = functionEnd();
@@ -222,8 +220,6 @@ void FunctionExecutable::overrideInfo(const FunctionOverrideInfo& overrideInfo)
 {
     auto& rareData = ensureRareData();
     m_source = overrideInfo.sourceCode;
-    rareData.m_lineCount = overrideInfo.lineCount;
-    rareData.m_endColumn = overrideInfo.endColumn;
     rareData.m_parametersStartOffset = overrideInfo.parametersStartOffset;
     rareData.m_functionStart = overrideInfo.functionStart;
     rareData.m_functionEnd = overrideInfo.functionEnd;

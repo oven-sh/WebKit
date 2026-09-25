@@ -322,8 +322,7 @@ OptionSet<WheelEventProcessingSteps> RemoteLayerTreeEventDispatcher::determineWh
 
     // Replicate the hack in EventDispatcher::internalWheelEvent(). We could pass rubberBandableEdges all the way through the
     // WebProcess and back via the ScrollingTree, but we only ever need to consult it here.
-    if (wheelEvent.phase() == PlatformWheelEventPhase::Began)
-        scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
+    scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
 
     return scrollingTree->determineWheelEventProcessing(wheelEvent);
 }
@@ -736,6 +735,20 @@ void RemoteLayerTreeEventDispatcher::updateTimelinesRegistration(WebCore::Proces
         m_monotonicTimelineRegistry = nullptr;
 }
 
+void RemoteLayerTreeEventDispatcher::removeTimelines(WebCore::ProcessIdentifier processIdentifier)
+{
+    assertIsHeld(m_animationLock);
+
+    if (auto scrollingTree = this->scrollingTree())
+        scrollingTree->removeTimelines(processIdentifier);
+
+    if (m_monotonicTimelineRegistry) {
+        m_monotonicTimelineRegistry->remove(processIdentifier);
+        if (m_monotonicTimelineRegistry->isEmpty())
+            m_monotonicTimelineRegistry = nullptr;
+    }
+}
+
 RefPtr<const RemoteAnimationTimeline> RemoteLayerTreeEventDispatcher::timeline(const TimelineID& timelineID)
 {
     assertIsHeld(m_animationLock);
@@ -788,6 +801,14 @@ HashSet<Ref<RemoteProgressBasedTimeline>> RemoteLayerTreeEventDispatcher::timeli
     if (auto scrollingTree = this->scrollingTree())
         return scrollingTree->timelinesForScrollingNodeIDForTesting(scrollingNodeID);
     return { };
+}
+
+HashSet<Ref<RemoteMonotonicTimeline>> RemoteLayerTreeEventDispatcher::monotonicTimelinesForProcessForTesting(WebCore::ProcessIdentifier processIdentifier) const
+{
+    assertIsHeld(m_animationLock);
+    if (!m_monotonicTimelineRegistry)
+        return { };
+    return m_monotonicTimelineRegistry->timelinesForProcessForTesting(processIdentifier);
 }
 #endif
 

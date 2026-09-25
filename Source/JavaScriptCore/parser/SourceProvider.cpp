@@ -88,7 +88,7 @@ const String& SourceProvider::sourceURLStripped()
     return m_sourceURLStripped;
 }
 
-CString SourceProvider::sourceCodeDumpFilePath(const CString& dumpDirectory)
+UTF8CString SourceProvider::sourceCodeDumpFilePath(const UTF8CString& dumpDirectory)
 {
     if (m_sourceCodeDumped.load(std::memory_order_acquire)) {
         Locker locker { m_sourceCodeDumpLock };
@@ -122,7 +122,7 @@ CString SourceProvider::sourceCodeDumpFilePath(const CString& dumpDirectory)
             filePath = result.first;
             handle = WTF::move(result.second);
         } else {
-            filePath = makeString(String::fromUTF8(dumpDirectory.span()), FileSystem::pathSeparator, baseName, ".js"_s);
+            filePath = makeString(dumpDirectory, FileSystem::pathSeparator, baseName, ".js"_s);
             handle = FileSystem::openFile(filePath, FileSystem::FileOpenMode::Truncate);
         }
         if (handle) {
@@ -143,6 +143,89 @@ BaseWebAssemblySourceProvider::BaseWebAssemblySourceProvider(const SourceOrigin&
 {
 }
 #endif
+
+template<typename CharType>
+Vector<unsigned> LineStartTable::build(std::span<const CharType> text)
+{
+    Vector<unsigned> lineStarts;
+    lineStarts.append(0);
+
+    const CharType* const begin = text.data();
+    const CharType* const end = std::to_address(text.end());
+    size_t index = 0;
+    while (index < text.size()) {
+        const CharType* found = findLineTerminator(text.subspan(index));
+        if (found == end)
+            break;
+        size_t next = lineStartAfterTerminator(text, static_cast<size_t>(found - begin));
+        lineStarts.append(static_cast<unsigned>(next));
+        index = next;
+    }
+
+    lineStarts.shrinkToFit();
+    return lineStarts;
+}
+
+const Vector<unsigned>& LineStartTable::ensureBuilt(StringView text)
+{
+    if (!m_lineStarts) {
+        m_lineStarts = text.is8Bit() ? build(text.span8()) : build(text.span16());
+        m_builtForLength = text.length();
+    }
+    ASSERT(m_builtForLength == text.length());
+    return *m_lineStarts;
+}
+
+static unsigned lineEndFor(StringView text, const Vector<unsigned>& lineStarts, size_t line0Based)
+{
+    unsigned length = text.length();
+    // A non-final line's end comes from the next line's start, which is past the terminator, so the
+    // terminator has to be backed over.
+    unsigned lineEnd = (line0Based + 1 < lineStarts.size()) ? lineStarts[line0Based + 1] : length;
+    if (lineEnd < length) {
+        if (lineEnd >= 2 && isCRLFPair(text[lineEnd - 2], text[lineEnd - 1]))
+            lineEnd -= 2;
+        else
+            lineEnd -= 1;
+    }
+    return lineEnd;
+}
+
+LineStartTable::PositionInfo LineStartTable::positionInfoForOffset(StringView text, unsigned offset)
+{
+    Locker locker { m_lock };
+    const Vector<unsigned>& lineStarts = ensureBuilt(text);
+
+    // An offset past the end of the text clamps to the last line rather than being refused, because
+    // callers reach here from error reporting, where an approximate answer beats none.
+    size_t line0Based = lineStarts.size() - 1;
+    if (offset < lineStarts.last()) {
+        auto it = std::upper_bound(lineStarts.begin(), lineStarts.end(), offset);
+        ASSERT(it != lineStarts.begin());
+        line0Based = static_cast<size_t>(it - lineStarts.begin()) - 1;
+    }
+
+    unsigned lineStart = lineStarts[line0Based];
+
+    return {
+        static_cast<unsigned>(line0Based),
+        offset > lineStart ? offset - lineStart : 0,
+        lineStart,
+        lineEndFor(text, lineStarts, line0Based),
+    };
+}
+
+unsigned LineStartTable::offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based)
+{
+    Locker locker { m_lock };
+    const Vector<unsigned>& lineStarts = ensureBuilt(text);
+
+    unsigned length = text.length();
+    if (line0Based >= lineStarts.size())
+        return length;
+
+    return std::min(lineStarts[line0Based] + column0Based, lineEndFor(text, lineStarts, line0Based));
+}
 
 } // namespace JSC
 

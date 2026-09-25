@@ -68,19 +68,19 @@ static void testWASMVirtualAddressConstants()
     TEST_ASSERT(VirtualAddress::INVALID_BASE == 0x8000000000000000ULL,
         "INVALID_BASE should be 0x8000000000000000");
 
-    // Test virtualAddress encoding for different module IDs
-    VirtualAddress module0Obj = VirtualAddress::createModule(0, 0);
-    VirtualAddress module1Obj = VirtualAddress::createModule(1, 0);
-    VirtualAddress module0Mem = VirtualAddress::createMemory(0, 0);
+    // Test virtualAddress encoding for different instance IDs
+    VirtualAddress instance0Obj = VirtualAddress::createModule(0, 0);
+    VirtualAddress instance1Obj = VirtualAddress::createModule(1, 0);
+    VirtualAddress instance0Mem = VirtualAddress::createMemory(0, 0);
 
-    TEST_ASSERT(module0Obj == 0x4000000000000000ULL, "Module 0 obj should be at encoded address");
-    TEST_ASSERT(module1Obj == 0x4000000100000000ULL, "Module 1 obj should be at encoded address");
-    TEST_ASSERT(module0Mem == 0x0000000000000000ULL, "Module 0 memory should be at encoded address");
+    TEST_ASSERT(instance0Obj == 0x4000000000000000ULL, "Instance 0 obj should be at encoded address");
+    TEST_ASSERT(instance1Obj == 0x4000000100000000ULL, "Instance 1 obj should be at encoded address");
+    TEST_ASSERT(instance0Mem == 0x0000000000000000ULL, "Instance 0 memory should be at encoded address");
 
     // Test address decoding
-    TEST_ASSERT(module0Obj.type() == VirtualAddress::Type::Module, "Should decode as Module");
-    TEST_ASSERT(!module0Obj.id(), "Should decode module ID 0");
-    TEST_ASSERT(!module0Obj.offset(), "Should decode offset 0");
+    TEST_ASSERT(instance0Obj.type() == VirtualAddress::Type::Module, "Should decode as Module");
+    TEST_ASSERT(!instance0Obj.instanceId(), "Should decode instance ID 0");
+    TEST_ASSERT(!instance0Obj.offset(), "Should decode offset 0");
 
     dataLogLn("VirtualAddress design tests completed");
 }
@@ -92,35 +92,35 @@ static void testWASMVirtualAddressEncoding()
     // Test all address type combinations
     struct AddressTest {
         VirtualAddress::Type type;
-        uint32_t moduleId;
+        uint32_t instanceId;
         uint32_t offset;
-        const char* description;
+        ASCIILiteral description;
     };
 
     AddressTest tests[] = {
-        { VirtualAddress::Type::Memory, 0, 0, "Module 0 memory base" },
-        { VirtualAddress::Type::Memory, 1, 0x1000, "Module 1 memory offset" },
-        { VirtualAddress::Type::Memory, 0x1000, 0x2000, "Module 4096 memory offset" },
-        { VirtualAddress::Type::Module, 0, 0, "Module 0 obj base" },
-        { VirtualAddress::Type::Module, 1, 0x2000, "Module 1 obj offset" },
-        { VirtualAddress::Type::Module, 0x2000, 0x3000, "Module 8192 obj offset" }
+        { VirtualAddress::Type::Memory, 0, 0, "Instance 0 memory base"_s },
+        { VirtualAddress::Type::Memory, 1, 0x1000, "Instance 1 memory offset"_s },
+        { VirtualAddress::Type::Memory, 0x1000, 0x2000, "Instance 4096 memory offset"_s },
+        { VirtualAddress::Type::Module, 0, 0, "Instance 0 obj base"_s },
+        { VirtualAddress::Type::Module, 1, 0x2000, "Instance 1 obj offset"_s },
+        { VirtualAddress::Type::Module, 0x2000, 0x3000, "Instance 8192 obj offset"_s }
     };
 
     for (const auto& test : tests) {
         VirtualAddress encoded = (test.type == VirtualAddress::Type::Memory)
-            ? VirtualAddress::createMemory(test.moduleId, test.offset)
-            : VirtualAddress::createModule(test.moduleId, test.offset);
+            ? VirtualAddress::createMemory(test.instanceId, test.offset)
+            : VirtualAddress::createModule(test.instanceId, test.offset);
 
         VirtualAddress::Type decodedType = encoded.type();
-        uint32_t decodedId = encoded.id();
+        uint32_t decodedId = encoded.instanceId();
         uint32_t decodedOffset = encoded.offset();
 
         TEST_ASSERT(decodedType == test.type,
-            makeString("Address encoding/decoding type mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
-        TEST_ASSERT(decodedId == test.moduleId,
-            makeString("Address encoding/decoding ID mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
+            makeString("Address encoding/decoding type mismatch for "_s, test.description));
+        TEST_ASSERT(decodedId == test.instanceId,
+            makeString("Address encoding/decoding ID mismatch for "_s, test.description));
         TEST_ASSERT(decodedOffset == test.offset,
-            makeString("Address encoding/decoding offset mismatch for "_s, String::fromLatin1(test.description)).utf8().data());
+            makeString("Address encoding/decoding offset mismatch for "_s, test.description));
     }
 
     dataLogLn("VirtualAddress encoding/decoding tests completed");
@@ -158,16 +158,16 @@ static void testWASMVirtualAddressLLDBEnumeration()
 
     struct RegionTest {
         uint64_t address;
-        const char* description;
+        ASCIILiteral description;
         bool shouldBeValid;
     };
 
     RegionTest regionTests[] = {
         // Core WASM addresses
-        { VirtualAddress::createMemory(0, 0), "Module 0 memory base", true },
-        { VirtualAddress::createModule(0, 0), "Module 0 module base", true },
-        { 0x8000000000000000ULL, "Invalid type probe", true }, // Invalid type (0x02)
-        { 0xC000000000000000ULL, "Invalid2 type probe", true }, // Invalid2 type (0x03)
+        { VirtualAddress::createMemory(0, 0), "Instance 0 memory base"_s, true },
+        { VirtualAddress::createModule(0, 0), "Instance 0 module base"_s, true },
+        { 0x8000000000000000ULL, "Invalid type probe"_s, true }, // Invalid type (0x02)
+        { 0xC000000000000000ULL, "Invalid2 type probe"_s, true }, // Invalid2 type (0x03)
     };
 
     for (const auto& test : regionTests) {
@@ -177,10 +177,10 @@ static void testWASMVirtualAddressLLDBEnumeration()
 
         if (test.shouldBeValid) {
             TEST_ASSERT(isValidType,
-                makeString("Address "_s, String::fromLatin1(test.description), " (0x"_s, hex(test.address, Lowercase), ") should decode to valid type"_s).utf8().data());
+                makeString("Address "_s, test.description, " (0x"_s, hex(test.address, Lowercase), ") should decode to valid type"_s));
         } else {
             TEST_ASSERT(!isValidType,
-                makeString("Address "_s, String::fromLatin1(test.description), " (0x"_s, hex(test.address, Lowercase), ") should not decode to valid type"_s).utf8().data());
+                makeString("Address "_s, test.description, " (0x"_s, hex(test.address, Lowercase), ") should not decode to valid type"_s));
         }
     }
 
@@ -192,15 +192,15 @@ static void testWASMVirtualAddressEdgeCases()
     dataLogLn("=== Testing VirtualAddress Edge Cases ===");
 
     // Test maximum values for each field
-    uint32_t maxId = 0x3FFFFFFF; // 30 bits
+    uint32_t maxId = VirtualAddress::MAX_ID; // 30 bits
     uint32_t maxOffset = 0xFFFFFFFF; // 32 bits
 
     // Test maximum ID values
     VirtualAddress maxMemoryId = VirtualAddress::createMemory(maxId, 0);
     VirtualAddress maxModuleId = VirtualAddress::createModule(maxId, 0);
 
-    TEST_ASSERT(maxMemoryId.id() == maxId, "Should handle maximum memory ID");
-    TEST_ASSERT(maxModuleId.id() == maxId, "Should handle maximum module ID");
+    TEST_ASSERT(maxMemoryId.instanceId() == maxId, "Should handle maximum memory instance ID");
+    TEST_ASSERT(maxModuleId.instanceId() == maxId, "Should handle maximum module instance ID");
     TEST_ASSERT(maxMemoryId.type() == VirtualAddress::Type::Memory, "Max ID should preserve memory type");
     TEST_ASSERT(maxModuleId.type() == VirtualAddress::Type::Module, "Max ID should preserve module type");
 

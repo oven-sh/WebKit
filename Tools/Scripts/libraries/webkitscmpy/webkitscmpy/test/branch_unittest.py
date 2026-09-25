@@ -606,3 +606,66 @@ Created the local development branch 'eng/4'
                 }),
                 ['branch.eng/Example-feature-1.bug', 'branch.eng/Example-feature-1.title'],
             )
+
+    def test_truncate_branch_name_under_limit(self):
+        self.assertEqual('eng/short-name', program.Branch.truncate_branch_name('eng/short-name', limit=30))
+
+    def test_truncate_branch_name_at_limit(self):
+        self.assertEqual('eng/exactly-ten', program.Branch.truncate_branch_name('eng/exactly-ten', limit=len('eng/exactly-ten')))
+
+    def test_truncate_branch_name_over_limit(self):
+        self.assertEqual(
+            'eng/revert-5-main-a-reason',
+            program.Branch.truncate_branch_name('eng/revert-5-main-a-reason-that-is-much-too-long', limit=30),
+        )
+
+    def test_truncate_branch_name_without_separator(self):
+        self.assertEqual('a' * 10, program.Branch.truncate_branch_name('a' * 20, limit=10))
+
+    def test_truncate_branch_name_strips_trailing_separators(self):
+        self.assertEqual('eng/reason', program.Branch.truncate_branch_name('eng/reason-----tail', limit=16))
+
+    def test_truncate_branch_name_default_limit(self):
+        name = 'eng/{}'.format('a-' * 200)
+        self.assertEqual(program.Branch.MAX_BRANCH_NAME_LENGTH - 1, len(program.Branch.truncate_branch_name(name)))
+
+    def branch_matches_issue(self, branch, issue_id=1, associated_issue_id=None):
+        with OutputCapture(), mocks.local.Git(self.path), mocks.local.Svn(), bmocks.Bugzilla(
+            self.BUGZILLA.split('://')[-1],
+            issues=bmocks.ISSUES,
+            environment=Environment(
+                BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+                BUGS_EXAMPLE_COM_PASSWORD='password',
+            ),
+        ), patch('webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA)]):
+            repository = local.Git(self.path)
+            if associated_issue_id:
+                program.Command.write_branch_variables(
+                    repository, branch,
+                    bug=Tracker.instance().issue(associated_issue_id).link,
+                )
+            return program.Branch.branch_matches_issue(repository, branch, Tracker.instance().issue(issue_id))
+
+    def test_branch_matches_issue_from_config(self):
+        self.assertTrue(self.branch_matches_issue('eng/unrelated-branch-name', associated_issue_id=1))
+
+    def test_branch_matches_issue_id(self):
+        self.assertTrue(self.branch_matches_issue('eng/1'))
+
+    def test_branch_matches_issue_id_with_prefix(self):
+        self.assertTrue(self.branch_matches_issue('eng/revert-5-main-1'))
+
+    def test_branch_matches_issue_title(self):
+        self.assertTrue(self.branch_matches_issue('eng/Example-issue-1'))
+
+    def test_branch_matches_issue_title_with_prefix(self):
+        self.assertTrue(self.branch_matches_issue('eng/revert-5-main-Example-issue-1'))
+
+    def test_branch_matches_issue_truncated_title(self):
+        self.assertTrue(self.branch_matches_issue('eng/revert-5-main-Example-iss'))
+
+    def test_branch_matches_issue_different_issue(self):
+        self.assertFalse(self.branch_matches_issue('eng/revert-5-main-Example-issue-1', issue_id=2))
+
+    def test_branch_matches_issue_no_branch(self):
+        self.assertFalse(self.branch_matches_issue(''))

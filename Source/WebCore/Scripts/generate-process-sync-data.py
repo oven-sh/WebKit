@@ -138,7 +138,7 @@ public:
 
 _process_sync_client_header_suffix = """
 protected:
-    virtual void broadcast{prefix}SyncDataToOtherProcesses(const {prefix}SyncSerializationData&) {{ }}
+    virtual void broadcast{prefix}SyncDataToOtherProcesses({prefix}SyncSerializationData&&) {{ }}
 }};
 
 }} // namespace WebCore
@@ -161,6 +161,7 @@ def generate_process_sync_client_header(prefix, synched_datas):
         if data.conditional is not None:
             result.append('#if %s' % data.conditional)
         result.append('    WEBCORE_EXPORT void broadcast%sToOtherProcesses(const %s&);' % (data.name, data.fully_qualified_type))
+        result.append('    WEBCORE_EXPORT void broadcast%sToOtherProcesses(%s&&);' % (data.name, data.fully_qualified_type))
         if data.conditional is not None:
             result.append('#endif')
 
@@ -174,6 +175,7 @@ _process_sync_client_impl_prefix = """
 
 #include "{prefix}SyncData.h"
 #include <wtf/EnumTraits.h>
+#include <wtf/StdLibExtras.h>
 
 namespace WebCore {{
 """
@@ -192,8 +194,14 @@ def generate_process_sync_client_impl(prefix, synched_datas):
         result.append('    broadcast%sSyncDataToOtherProcesses({ %sSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(%sSyncDataType::%s)>, data } });' % (prefix, prefix, prefix, data.name))
 
         result.append('}')
+        result.append('')
+        result.append('void %sSyncClient::broadcast%sToOtherProcesses(%s&& data)' % (prefix, data.name, data.fully_qualified_type))
+        result.append('{')
+        result.append('    broadcast%sSyncDataToOtherProcesses({ %sSyncDataVariant { WTF::InPlaceIndex<std::to_underlying(%sSyncDataType::%s)>, WTF::move(data) } });' % (prefix, prefix, prefix, data.name))
+        result.append('}')
         if data.conditional is not None:
             result.append('#endif')
+        result.append('')
 
     result.append('\n} // namespace WebCore\n')
     return '\n'.join(result)

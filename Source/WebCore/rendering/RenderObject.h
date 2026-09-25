@@ -131,12 +131,12 @@ public:
         CombineText,
         Counter,
         DeprecatedFlexibleBox,
-        DetailsMarker,
         EmbeddedObject,
         FileUploadControl,
         FlexibleBox,
         Frame,
         FrameSet,
+        Glyph,
         Grid,
         HTMLCanvas,
         IFrame,
@@ -243,7 +243,7 @@ public:
         IsBox = 1 << 2,
         IsBoxModelObject = 1 << 3,
         IsLayerModelObject = 1 << 4,
-        IsRenderInline = 1 << 5,
+        IsInlineBox = 1 << 5,
         IsRenderBlock = 1 << 6,
         IsFlexibleBox = 1 << 7,
     };
@@ -432,16 +432,16 @@ public:
     bool isRenderBoxModelObject() const { return m_typeFlags.contains(TypeFlag::IsBoxModelObject); }
     bool isRenderBlock() const { return m_typeFlags.contains(TypeFlag::IsRenderBlock); }
     bool isRenderBlockFlow() const { return m_typeSpecificFlags.kind() == TypeSpecificFlags::Kind::BlockFlow; }
-    bool isRenderInline() const { return m_typeFlags.contains(TypeFlag::IsRenderInline); }
+    bool isInlineBox() const { return m_typeFlags.contains(TypeFlag::IsInlineBox); }
     bool isRenderLayerModelObject() const { return m_typeFlags.contains(TypeFlag::IsLayerModelObject); }
 
     inline bool isAtomicInlineLevelBox() const; // Defined in RenderObjectStyle.h
     inline bool isNonReplacedAtomicInlineLevelBox() const;
 
     bool isRenderCounter() const { return type() == Type::Counter; }
+    bool isRenderGlyph() const { return type() == Type::Glyph; }
     bool isRenderQuote() const { return type() == Type::Quote; }
 
-    bool isRenderDetailsMarker() const { return type() == Type::DetailsMarker; }
     bool isRenderEmbeddedObject() const { return type() == Type::EmbeddedObject; }
     bool NODELETE isFieldset() const;
     bool isRenderFileUploadControl() const { return type() == Type::FileUploadControl; }

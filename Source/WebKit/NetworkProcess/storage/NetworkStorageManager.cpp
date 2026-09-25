@@ -115,7 +115,7 @@ static String encode(const String& string, FileSystem::Salt salt)
 {
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
     auto utf8String = string.utf8();
-    crypto->addBytes(byteCast<uint8_t>(utf8String.span()));
+    crypto->addBytes(std::as_bytes(utf8String.span()));
     crypto->addBytes(salt);
     return base64URLEncodeToString(crypto->computeHash());
 }
@@ -2211,7 +2211,7 @@ void NetworkStorageManager::didFinishHandlingVersionChangeTransaction(IPC::Conne
 {
     if (RefPtr databaseConnection = m_idbStorageRegistry->connection(databaseConnectionIdentifier, ipcConnection)) {
         if (!databaseConnection->checkedDatabase()->isVersionChangeTransactionFinishingOrFinished(transactionIdentifier)) {
-            RELEASE_LOG_FAULT(IndexedDB, "NetworkStorageManager::didFinishHandlingVersionChangeTransaction: version change transaction %" PUBLIC_LOG_STRING " is not finishing or finished", transactionIdentifier.loggingString().utf8().data());
+            RELEASE_LOG_FAULT(IndexedDB, "NetworkStorageManager::didFinishHandlingVersionChangeTransaction: version change transaction %" PUBLIC_LOG_STRING " is not finishing or finished", transactionIdentifier.loggingString().utf8());
             return;
         }
         databaseConnection->didFinishHandlingVersionChange(transactionIdentifier);

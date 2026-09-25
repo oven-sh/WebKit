@@ -3,15 +3,13 @@ accessibility/AccessibilityRenderObject.cpp
 [ iOS ] accessibility/cocoa/AXTextMarkerCocoa.mm
 [ iOS ] accessibility/ios/AccessibilityObjectIOS.mm
 [ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
-dom/ContainerNode.cpp
 dom/Document.cpp
-dom/Element.cpp
 dom/Position.cpp
-editing/Editing.cpp
 [ iOS ] editing/cocoa/EditorCocoa.mm
 [ macOS ] html/HTMLMediaElement.cpp
 inspector/InspectorOverlay.cpp
 inspector/agents/InspectorDOMAgent.cpp
+inspector/agents/InspectorDOMDebuggerAgent.cpp
 layout/formattingContexts/FormattingGeometry.cpp
 layout/formattingContexts/inline/InlineLineBoxBuilder.cpp
 layout/formattingContexts/inline/InlineLineBuilder.cpp
@@ -27,7 +25,6 @@ layout/integration/inline/LayoutIntegrationLineLayout.cpp
 [ iOS ] page/DOMTimer.cpp
 page/ElementTargetingController.cpp
 page/EventHandler.cpp
-page/IntersectionObserver.cpp
 page/LocalFrameView.cpp
 [ iOS ] page/cocoa/ContentChangeObserver.cpp
 [ iOS ] page/ios/FrameIOS.mm

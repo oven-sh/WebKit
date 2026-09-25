@@ -77,7 +77,7 @@ https://www.dictionary.com/
 https://www.disneyplus.com/
     ShouldHideCoarsePointerCharacteristicsQuirk
 https://www.ea.com/
-    (none)
+    ShouldPreventKeyframeEffectAccelerationQuirk
 https://www.espn.com/
     AllowLayeredFullscreenVideos
     NeedsSuppressedPauseEventOnFullscreenExitQuirk
@@ -85,6 +85,7 @@ https://www.espn.com/
 https://www.facebook.com/
     NeedsFacebookRemoveNotSupportedQuirk
     RequiresUserGestureToPauseInPictureInPictureQuirk
+    ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
     ShouldEnableCameraAndMicrophonePermissionStateQuirk
@@ -100,6 +101,14 @@ https://play.geforcenow.com/
     NeedsGeforcenowWarningDisplayNoneQuirk
 https://www.google.com/
     MaybeBypassBackForwardCache
+https://www.google.com/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
+https://www.google.com/search/howsearchworks
+    MaybeBypassBackForwardCache
+https://www.google.co.jp/search
+    MaybeBypassBackForwardCache
+    NeedsAnchorToBeMouseFocusableQuirk
 https://www.google.com/maps/
     MayNeedToIgnoreContentObservation
     MaybeBypassBackForwardCache
@@ -188,6 +197,7 @@ https://outlook.live.com/
     MayNeedToIgnoreContentObservation
     NeedsChromeOSNavigatorUserAgentQuirk
     NeedsMozillaFileTypeForDataTransferQuirk
+    NeedsUserAgentStringOverrideQuirk
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
 https://live.com/
     NeedsChromeOSNavigatorUserAgentQuirk
@@ -224,8 +234,10 @@ https://www.messenger.com/
     ShouldEnableRemoteTrackLabelQuirk
 https://www.netflix.com/
     NeedsNetflixVolumeSliderQuirk
+    NeedsPerDocumentAutoplayBehaviorQuirk
     NeedsSeekingSupportDisabledQuirk
 https://www.nba.com/
+    NeedsPerDocumentAutoplayBehaviorQuirk
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.nfl.com/
     ShouldSuppressHLSSubtitles
@@ -283,7 +295,9 @@ https://www.thesaurus.com/
     NeedsAnchorToBeMouseFocusableQuirk
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.tiktok.com/
+    NeedsChromeCompatibilityUserAgentQuirk
     NeedsTikTokOverflowingContentQuirk
+    ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
 https://trix-editor.org/
@@ -316,6 +330,7 @@ https://workspaces.xyz/
 https://wpdevelopment.ca/
     (none)
 https://x.com/
+    NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
     RequiresUserGestureToLoadInPictureInPictureQuirk
     RequiresUserGestureToPauseInPictureInPictureQuirk
     ShouldAvoidProgrammaticScrollClampingQuirk

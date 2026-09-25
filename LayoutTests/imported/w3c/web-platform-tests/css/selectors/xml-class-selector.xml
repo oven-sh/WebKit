@@ -10,7 +10,7 @@
     <Boxes xmlns="http://foo">
       <box class="green">.classname selector</box>
       <box class="green2">*[class~="classname"] selector</box>
-    </boxes>
+    </Boxes>
 
     <style>
       box {background:red;}

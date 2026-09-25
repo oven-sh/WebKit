@@ -183,7 +183,7 @@
 #include "LargestContentfulPaint.h"
 #include "LargestContentfulPaintData.h"
 #include "LayoutDisallowedScope.h"
-#include "LazyLoadImageObserver.h"
+#include "LazyLoadElementObserver.h"
 #include "LegacySchemeRegistry.h"
 #include "LinkLoader.h"
 #include "LoadableSpeculationRules.h"
@@ -213,6 +213,7 @@
 #include "Navigator.h"
 #include "NavigatorMediaSession.h"
 #include "NestingLevelIncrementer.h"
+#include "NetworkLoadPolicy.h"
 #include "NodeIterator.h"
 #include "NodeRareData.h"
 #include "NodeWithIndex.h"
@@ -440,10 +441,6 @@
 #include "MediaStreamTrack.h"
 #endif
 
-#if ENABLE(MODEL_ELEMENT)
-#include "LazyLoadModelObserver.h"
-#endif
-
 #if ENABLE(PICTURE_IN_PICTURE_API)
 #include "HTMLVideoElementPictureInPicture.h"
 #endif
@@ -459,7 +456,6 @@
 #if ENABLE(VIDEO)
 #include "CaptionUserPreferences.h"
 #include "CueMatch.h"
-#include "LazyLoadVideoObserver.h"
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -481,6 +477,10 @@
 
 #if ENABLE(THREADED_ANIMATIONS)
 #include "AcceleratedEffectStackUpdater.h"
+#endif
+
+#if __has_include(<WebKitAdditions/AXCustomColorModeController.h>)
+#include <WebKitAdditions/AXCustomColorModeController.h>
 #endif
 
 #define DOCUMENT_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageID=%" PRIu64 ", frameID=%" PRIu64 ", isMainFrame=%d] Document::" fmt, this, pageID() ? pageID()->toUInt64() : 0, frameID() ? frameID()->toUInt64() : 0, this->isTopDocument(), ##__VA_ARGS__)
@@ -834,6 +834,9 @@ Document::~Document()
         ASSERT(m_intersectionObserverData->registrations.isEmpty());
     }
 
+    ASSERT(m_localIntersectionObservers.isEmpty());
+    ASSERT(m_remoteIntersectionObservers.isEmpty());
+
     removeFromDocumentsMap();
 
     // We need to remove from the contexts map very early in the destructor so that calling postTask() on this Document from another thread is safe.
@@ -1018,6 +1021,12 @@ void Document::commonTeardown()
             localIntersectionObserver->disconnect();
     }
 
+    auto remoteIntersectionObservers = m_remoteIntersectionObservers;
+    for (auto& weakRemoteIntersectionObserver : remoteIntersectionObservers) {
+        if (RefPtr remoteIntersectionObserver = weakRemoteIntersectionObserver.get())
+            remoteIntersectionObserver->disconnect();
+    }
+
     auto resizeObservers = m_resizeObservers;
     for (auto& weakResizeObserver : resizeObservers) {
         if (RefPtr resizeObserver = weakResizeObserver.get())
@@ -1056,9 +1065,7 @@ void Document::commonTeardown()
         rtcNetworkManager->close();
 #endif
 
-#if ENABLE(VIDEO)
-    m_lazyLoadVideoObserver = nullptr;
-#endif
+    m_lazyLoadElementObserver = nullptr;
 }
 
 Quirks& Document::ensureQuirks()
@@ -2056,7 +2063,7 @@ void Document::setReadyState(ReadyState readyState)
                 eventTiming->domLoading = now;
             // We do this here instead of in the Document constructor because monotonicTimestamp() is 0 when the Document constructor is running.
             if (!url().isEmpty())
-                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8().data(), frame() && frame()->isMainFrame());
+                WTFBeginSignpostWithTimeDelta(this, NavigationAndPaintTiming, -Seconds(monotonicTimestamp()), "Loading %" PRIVATE_LOG_STRING " | isMainFrame: %d", url().string().utf8(), frame() && frame()->isMainFrame());
             WTFEmitSignpost(this, NavigationAndPaintTiming, "domLoading");
         }
         break;
@@ -3335,7 +3342,7 @@ bool Document::updateLayoutIfDimensionsOutOfDate(Element& element, OptionSet<Dim
             }
 
             // Require the entire container chain to be boxes or SVG or inline box in block-inline-inline case.
-            if (is<RenderInline>(*currentRenderer) && currentBox && currentBox->isBlockLevelBox())
+            if (currentRenderer->isInlineBox() && currentBox && currentBox->isBlockLevelBox())
                 continue;
 
             if (!currentRenderer->isSVGRenderer()) {
@@ -4406,7 +4413,9 @@ void Document::implicitClose()
     // We used to force a synchronous display and flush here. This really isn't
     // necessary and can in fact be actively harmful if pages are loading at a rate of > 60fps
     // (if your platform is syncing flushes and limiting them to 60fps).
-    if (!ownerElement() || (ownerElement()->renderer() && !ownerElement()->renderer()->needsLayout())) {
+    RefPtr owner = ownerElement();
+    CheckedPtr ownerRenderer = owner ? owner->renderer() : nullptr;
+    if (!owner || (ownerRenderer && !ownerRenderer->needsLayout())) {
         updateStyleIfNeeded();
 
         // Always do a layout after loading if needed.
@@ -6512,6 +6521,19 @@ void Document::elementInActiveChainDidDetach(Element& element)
         m_activeElement = m_activeElement->parentElement();
 }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+void Document::updateAXCustomColorModeTextBackdrops()
+{
+    if (!isAXCustomColorModeActive())
+        return;
+
+    if (CheckedPtr view = renderView())
+        axCustomColorModeController().updateTextBackdrops(view->frameView());
+}
+
+#endif // ENABLE(AX_CUSTOM_COLOR_MODE)
+
 void Document::updateEventRegions()
 {
     // FIXME: Move updateTouchEventRegions() here, but it should only happen for the top document.
@@ -8586,7 +8608,7 @@ void Document::enforceSandboxFlags(SandboxFlags flags, SandboxFlagsSource source
     bool wasSandboxedOrigin = isSandboxed(SandboxFlag::Origin);
     SecurityContext::enforceSandboxFlags(flags, source);
 
-    if (RefPtr page = this->page(); page && page->hasRemoteFrames()) {
+    if (RefPtr page = this->page(); page && page->mainFrame().tree().containsRemoteFrame()) {
         bool sandboxedStateDidChange = wasSandboxedOrigin != isSandboxed(SandboxFlag::Origin);
         if (!sandboxedStateDidChange)
             return;
@@ -9266,6 +9288,12 @@ void Document::checkCompleted()
 {
     if (RefPtr frame = this->frame())
         frame->loader().checkCompleted();
+}
+
+void Document::checkLoadComplete()
+{
+    if (RefPtr frame = this->frame())
+        frame->loader().checkLoadComplete();
 }
 
 double Document::monotonicTimestamp() const
@@ -10132,6 +10160,18 @@ void Document::adjustStyleColorOptionsIfNeeded(OptionSet<StyleColorOptions>&) co
 }
 #endif
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+
+bool Document::isAXCustomColorModeActive() const
+{
+    if (RefPtr page = this->page())
+        return page->isAXCustomColorModeActive();
+
+    return false;
+}
+
+#endif // ENABLE(AX_CUSTOM_COLOR_MODE)
+
 OptionSet<StyleColorOptions> Document::styleColorOptions(const Style::ComputedStyle* style) const
 {
     OptionSet<StyleColorOptions> options;
@@ -10158,6 +10198,12 @@ CompositeOperator Document::compositeOperatorForBackgroundColor(const Color& col
     // Mail on macOS uses a transparent view, and on iOS it is an opaque view. We need to
     // use different composite modes to get the right results in this case.
     return frameView->isTransparent() ? CompositeOperator::DestinationOut : CompositeOperator::DestinationIn;
+}
+
+bool Document::backgroundColorIsPunchedOut(const Color& color, const RenderElement& renderer) const
+{
+    auto compositeOperator = compositeOperatorForBackgroundColor(color, renderer);
+    return compositeOperator == CompositeOperator::DestinationIn || compositeOperator == CompositeOperator::DestinationOut;
 }
 
 void Document::didAssociateFormControl(Element& element)
@@ -10545,7 +10591,7 @@ void Document::updateRemoteIntersectionObservers()
     if (!page)
         return;
 
-    ASSERT(page->hasRemoteFrames());
+    ASSERT(page->mainFrame().tree().containsRemoteFrame());
 
     RefPtr mainFrame = this->page()->mainFrame();
     if (!mainFrame)
@@ -11674,7 +11720,7 @@ const Style::ComputedStyle& Document::initialStyle() const
         auto allowUserInstalledFonts = settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No;
 
         FontCascadeDescription fontDescription;
-        fontDescription.setSpecifiedLocale(contentLanguage());
+        fontDescription.setComputedLocale(contentLanguage());
         fontDescription.setOneFamily(WTF::move(initialFontFamily));
         fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
         fontDescription.setComputedSize(initialComputedFontSize);
@@ -11892,30 +11938,12 @@ TextManipulationController& Document::textManipulationController()
     return *m_textManipulationController;
 }
 
-LazyLoadImageObserver& Document::lazyLoadImageObserver()
+LazyLoadElementObserver& Document::lazyLoadElementObserver()
 {
-    if (!m_lazyLoadImageObserver)
-        m_lazyLoadImageObserver = makeUnique<LazyLoadImageObserver>();
-    return *m_lazyLoadImageObserver;
+    if (!m_lazyLoadElementObserver)
+        m_lazyLoadElementObserver = makeUnique<LazyLoadElementObserver>();
+    return *m_lazyLoadElementObserver;
 }
-
-#if ENABLE(MODEL_ELEMENT)
-LazyLoadModelObserver& Document::lazyLoadModelObserver()
-{
-    if (!m_lazyLoadModelObserver)
-        m_lazyLoadModelObserver = makeUnique<LazyLoadModelObserver>();
-    return *m_lazyLoadModelObserver;
-}
-#endif
-
-#if ENABLE(VIDEO)
-LazyLoadVideoObserver& Document::lazyLoadVideoObserver()
-{
-    if (!m_lazyLoadVideoObserver)
-        m_lazyLoadVideoObserver = makeUnique<LazyLoadVideoObserver>();
-    return *m_lazyLoadVideoObserver;
-}
-#endif
 
 CrossOriginOpenerPolicy Document::crossOriginOpenerPolicy() const
 {
@@ -11973,6 +12001,29 @@ void Document::removeCanvasNeedingPreparationForDisplayOrFlush(CanvasRenderingCo
 {
     m_canvasContextsToPrepare.remove(context);
     context.setIsInPreparationForDisplayOrFlush(false);
+}
+
+void Document::serviceCanvasPaintEvents()
+{
+    auto canvases = std::exchange(m_canvasesNeedingPaintEvent, { });
+    for (RefPtr canvas : canvases) {
+        if (!canvas->isConnected())
+            continue;
+        canvas->dispatchPaintEvent();
+    }
+}
+
+void Document::requestCanvasPaintEvent(HTMLCanvasElement& canvas)
+{
+    bool shouldSchedule = m_canvasesNeedingPaintEvent.isEmptyIgnoringNullReferences();
+    m_canvasesNeedingPaintEvent.add(canvas);
+    if (shouldSchedule)
+        scheduleRenderingUpdate(RenderingUpdateStep::CanvasPaintEvent);
+}
+
+void Document::cancelCanvasPaintEvent(HTMLCanvasElement& canvas)
+{
+    m_canvasesNeedingPaintEvent.remove(canvas);
 }
 
 void Document::updateSleepDisablerIfNeeded()
@@ -12058,6 +12109,14 @@ std::optional<PAL::SessionID> Document::sessionID() const
         return page->sessionID();
 
     return std::nullopt;
+}
+
+const NetworkLoadPolicy& Document::networkLoadPolicy() const
+{
+    if (RefPtr page = this->page())
+        return page->networkLoadPolicy();
+
+    return NetworkLoadPolicy::unrestricted();
 }
 
 void Document::addElementWithPendingUserAgentShadowTreeUpdate(Element& element)

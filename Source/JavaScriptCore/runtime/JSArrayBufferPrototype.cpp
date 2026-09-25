@@ -60,33 +60,40 @@ std::optional<JSValue> arrayBufferSpeciesConstructorSlow(JSGlobalObject* globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool isValid = speciesWatchpointIsValid(thisObject, mode);
-    scope.assertNoException();
-    if (isValid) [[likely]]
-        return std::nullopt;
+    // https://tc39.es/ecma262/#sec-speciesconstructor
 
+    // 1. Let ctor be ? Get(obj, "constructor").
     JSValue constructor = thisObject->get(globalObject, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (constructor.isConstructor()) {
-        JSObject* constructorObject = uncheckedDowncast<JSObject>(constructor);
-        JSGlobalObject* globalObjectFromConstructor = constructorObject->realm();
-        bool isAnyArrayBufferConstructor = constructorObject == globalObjectFromConstructor->arrayBufferConstructor(mode);
-        if (isAnyArrayBufferConstructor)
-            return std::nullopt;
-    }
 
+    // 2. If ctor is undefined, return defaultCtor.
     if (constructor.isUndefined())
         return std::nullopt;
 
+    // 3. If ctor is not an Object, throw a TypeError exception.
     if (!constructor.isObject()) {
         throwTypeError(globalObject, scope, "constructor property should not be null"_s);
         return std::nullopt;
     }
 
+    JSObject* arrayBufferConstructor = globalObject->arrayBufferConstructor(mode);
+    if (constructor == arrayBufferConstructor && thisObject->realm() == globalObject) {
+        if (globalObject->arrayBufferSpeciesWatchpointSet(mode).state() == IsWatched) [[likely]]
+            return std::nullopt;
+    }
+
+    // 4. Let species be ? Get(ctor, %Symbol.species%).
     JSValue species = constructor.get(globalObject, vm.propertyNames->speciesSymbol);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    return species.isUndefinedOrNull() ? std::nullopt : std::make_optional(species);
+    // 5. If species is either undefined or null, return defaultCtor.
+    if (species.isUndefinedOrNull())
+        return std::nullopt;
+
+    if (species == arrayBufferConstructor)
+        return std::nullopt;
+
+    return species;
 }
 
 static ALWAYS_INLINE std::pair<SpeciesConstructResult, JSArrayBuffer*> speciesConstructArrayBuffer(JSGlobalObject* globalObject, JSArrayBuffer* thisObject, size_t length, ArrayBufferSharingMode mode)
@@ -288,15 +295,11 @@ JSC_DEFINE_HOST_FUNCTION(arrayBufferProtoFuncResize, (JSGlobalObject* globalObje
     if (!thisObject->impl()->isResizableOrGrowableShared()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "ArrayBuffer is not resizable"_s);
 
-    double newLength = callFrame->argument(0).toIntegerOrInfinity(globalObject);
+    uint64_t newByteLength = callFrame->argument(0).toIndex(globalObject, "newLength"_s);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (thisObject->impl()->isDetached()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Receiver is detached"_s);
-
-    if (!std::isfinite(newLength) || newLength < 0)
-        return throwVMRangeError(globalObject, scope, "new length is out of range"_s);
-    size_t newByteLength = static_cast<size_t>(newLength);
 
 #if ENABLE(WEBASSEMBLY)
     // Wasm JS API redefines the abstract operation HostResizeArrayBuffer as follows:
@@ -503,12 +506,9 @@ JSC_DEFINE_HOST_FUNCTION(sharedArrayBufferProtoFuncGrow, (JSGlobalObject* global
     if (!thisObject->impl()->isResizableOrGrowableShared())
         return throwVMTypeError(globalObject, scope, "SharedArrayBuffer is not growable"_s);
 
-    double newLength = callFrame->argument(0).toIntegerOrInfinity(globalObject);
+    uint64_t newByteLength = callFrame->argument(0).toIndex(globalObject, "newLength"_s);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (!std::isfinite(newLength) || newLength < 0)
-        return throwVMRangeError(globalObject, scope, "new length is out of range"_s);
-    size_t newByteLength = static_cast<size_t>(newLength);
     if (!thisObject->impl()->grow(vm, newByteLength))
         return throwVMRangeError(globalObject, scope, makeString("grow failed with new byte length "_s, newByteLength));
 

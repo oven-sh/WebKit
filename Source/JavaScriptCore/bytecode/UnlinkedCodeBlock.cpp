@@ -182,18 +182,13 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     return *m_expressionInfo;
 }
 
-LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex)
-{
-    return expressionInfo().lineColumnForInstPC(bytecodeIndex.offset());
-}
-
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     return expressionInfo().entryForInstPC(bytecodeIndex.offset());
 }
 
 #ifndef NDEBUG
-static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, LineColumn lineColumn, unsigned divot, unsigned startOffset, unsigned endOffset)
+static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, unsigned divot, unsigned startOffset, unsigned endOffset)
 {
     const auto instruction = instructionStream.at(instructionOffset);
     ASCIILiteral event = "";
@@ -210,7 +205,7 @@ static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& i
         case DidAwait: event = " DidAwait"; break;
         }
     }
-    SAFE_DATALOGF("  [%zu] pc %u @ line %u col %u divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, lineColumn.line, lineColumn.column, divot, startOffset, endOffset, instruction->name(), event);
+    SAFE_DATALOGF("  [%zu] pc %u @ divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, divot, startOffset, endOffset, instruction->name(), event);
 }
 
 void UnlinkedCodeBlock::dumpExpressionInfo()
@@ -220,7 +215,7 @@ void UnlinkedCodeBlock::dumpExpressionInfo()
 
     ExpressionInfo::Decoder decoder(expressionInfo());
     while (decoder.decode() != IterationStatus::Done) {
-        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.lineColumn(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
+        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
         index++;
     }
     dataLog("}\n");

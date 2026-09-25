@@ -630,29 +630,13 @@ namespace JSC {
                 return;
 #endif
             unsigned sourceOffset = m_scopeNode->source().startOffset();
-            unsigned firstLine = m_scopeNode->source().firstLine().oneBasedInt();
 
             unsigned divotOffset = divot.offset - sourceOffset;
             unsigned startOffset = divot.offset - divotStart.offset;
             unsigned endOffset = divotEnd.offset - divot.offset;
 
-            unsigned line = divot.line;
-            ASSERT(line >= firstLine);
-            line -= firstLine;
-
-            unsigned lineStart = divot.lineStartOffset;
-            if (lineStart > sourceOffset)
-                lineStart -= sourceOffset;
-            else
-                lineStart = 0;
-
-            if (divotOffset < lineStart)
-                return;
-
-            unsigned column = divotOffset - lineStart;
-
             unsigned instructionOffset = instructions().size();
-            m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset, { line, column });
+            m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
         }
 
 
@@ -883,6 +867,7 @@ namespace JSC {
         RegisterID* emitCallDirectEval(RegisterID* dst, RegisterID* func, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallVarargs(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitCallVarargsInTailPosition(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
+        RegisterID* emitConstructVarargs(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
 
         void emitCallIgnoreResult(RegisterID* dst, RegisterID* func, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
 
@@ -935,6 +920,7 @@ namespace JSC {
         void emitJumpIfFalse(RegisterID* cond, Label& target);
         void emitJumpIfNotFunctionCall(RegisterID* cond, Label& target);
         void emitJumpIfNotFunctionApply(RegisterID* cond, Label& target);
+        void emitJumpIfNotReflectConstruct(RegisterID* cond, Label& target);
         void emitJumpIfNotEvalFunction(RegisterID* cond, Label& target);
         void emitJumpIfEmptyPropertyNameEnumerator(RegisterID* cond, Label& target);
         void emitJumpIfSentinelString(RegisterID* cond, Label& target);
@@ -1272,7 +1258,6 @@ namespace JSC {
         Vector<Identifier> getParameterNames() const;
         std::optional<PrivateNameEnvironment> getAvailablePrivateAccessNames();
 
-        RegisterID* emitConstructVarargs(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
         RegisterID* emitSuperConstructVarargs(RegisterID* dst, RegisterID* func, RegisterID* thisRegister, RegisterID* arguments, RegisterID* firstFreeRegister, int32_t firstVarArgOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, DebuggableCall);
 
         template<typename CallOp>

@@ -1450,7 +1450,7 @@ angle::Result FramebufferVk::blit(const gl::Context *context,
     bool flipY                          = false;
     bool noClip                         = false;
 
-    UtilsVk::BlitResolveParameters params;
+    UtilsVk::BlitResolveParameters params = {};
     params.stretch[0] = static_cast<float>(stretch[0]);
     params.stretch[1] = static_cast<float>(stretch[1]);
     params.renderArea = getRotatedCompleteRenderArea(contextVk);
@@ -2025,7 +2025,7 @@ angle::Result FramebufferVk::generateFragmentShadingRateWithCompute(
 {
     ASSERT(activeFocalPoints.size() < gl::IMPLEMENTATION_MAX_FOCAL_POINTS);
 
-    UtilsVk::GenerateFragmentShadingRateParameters shadingRateParams;
+    UtilsVk::GenerateFragmentShadingRateParameters shadingRateParams = {};
     shadingRateParams.textureWidth          = foveatedAttachmentWidth;
     shadingRateParams.textureHeight         = foveatedAttachmentHeight;
     shadingRateParams.attachmentBlockWidth  = fragmentShadingRateBlockWidth;
@@ -2466,9 +2466,11 @@ angle::Result FramebufferVk::invalidateImpl(ContextVk *contextVk,
 }
 
 angle::Result FramebufferVk::updateColorAttachment(const gl::Context *context,
-                                                   uint32_t colorIndexGL)
+                                                   uint32_t colorIndexGL,
+                                                   bool *readColorTargetUpdatedOut)
 {
-    ANGLE_TRY(mRenderTargetCache.updateColorRenderTarget(context, mState, colorIndexGL));
+    ANGLE_TRY(mRenderTargetCache.updateColorRenderTarget(context, mState, colorIndexGL,
+                                                         readColorTargetUpdatedOut));
 
     // Update cached masks for masked clears.
     RenderTargetVk *renderTarget = mRenderTargetCache.getColors()[colorIndexGL];
@@ -2654,6 +2656,8 @@ angle::Result FramebufferVk::syncState(const gl::Context *context,
 
     bool shouldUpdateColorMaskAndBlend = false;
     bool shouldUpdateLayerCount        = false;
+    bool shouldUpdateReadColorTarget   = false;
+    bool readColorTargetUpdated        = false;
 
     // Cache new foveation state, if any
     const gl::FoveationState *newFoveationState = nullptr;
@@ -2707,7 +2711,7 @@ angle::Result FramebufferVk::syncState(const gl::Context *context,
                 dirtyDepthStencilAttachment = true;
                 break;
             case gl::Framebuffer::DIRTY_BIT_READ_BUFFER:
-                ANGLE_TRY(mRenderTargetCache.update(context, mState, dirtyBits));
+                shouldUpdateReadColorTarget = true;
                 break;
             case gl::Framebuffer::DIRTY_BIT_DRAW_BUFFERS:
                 shouldUpdateColorMaskAndBlend = true;
@@ -2740,7 +2744,7 @@ angle::Result FramebufferVk::syncState(const gl::Context *context,
                 uint32_t colorIndexGL =
                     static_cast<uint32_t>(dirtyBit - gl::Framebuffer::DIRTY_BIT_COLOR_ATTACHMENT_0);
 
-                ANGLE_TRY(updateColorAttachment(context, colorIndexGL));
+                ANGLE_TRY(updateColorAttachment(context, colorIndexGL, &readColorTargetUpdated));
 
                 // Check if attachment has foveated rendering, if so grab foveation state
                 const gl::FramebufferAttachment *attachment =
@@ -2768,6 +2772,12 @@ angle::Result FramebufferVk::syncState(const gl::Context *context,
                 break;
             }
         }
+    }
+
+    // Update the read render target unless updateColorAttachment() already did so.
+    if (shouldUpdateReadColorTarget && !readColorTargetUpdated)
+    {
+        ANGLE_TRY(mRenderTargetCache.updateReadColorRenderTarget(context, mState));
     }
 
     // Update cached value of samples. Always ensure we have at least one sample since
@@ -4037,7 +4047,7 @@ angle::Result FramebufferVk::startNewRenderPass(ContextVk *contextVk,
             mRenderPassDesc.hasStencilUnresolveAttachment())
         {
             // Unresolve attachments using a separate renderpass.
-            UtilsVk::UnresolveParameters params;
+            UtilsVk::UnresolveParameters params = {};
             params.unresolveColorMask  = mRenderPassDesc.getColorUnresolveAttachmentMask();
             params.unresolveDepth      = mRenderPassDesc.hasDepthUnresolveAttachment();
             params.unresolveStencil    = mRenderPassDesc.hasStencilUnresolveAttachment();
@@ -4115,7 +4125,7 @@ angle::Result FramebufferVk::startNewRenderPass(ContextVk *contextVk,
     if (anyUnresolve)
     {
         // Unresolve attachments if any.
-        UtilsVk::UnresolveParameters params;
+        UtilsVk::UnresolveParameters params = {};
         params.unresolveColorMask = unresolveColorMask;
         params.unresolveDepth     = unresolveDepth;
         params.unresolveStencil   = unresolveStencil;

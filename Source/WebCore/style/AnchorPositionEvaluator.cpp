@@ -42,7 +42,6 @@
 #include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
-#include "RenderLineBreak.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
 #include "StyleBuilderState.h"
@@ -285,7 +284,8 @@ static inline void clearAnchorScrollSnapshots(RenderBox& anchored, bool clearAnc
 
 static inline bool isFixed(const RenderBoxModelObject& box)
 {
-    return box.layer() && box.layer()->behavesAsFixed();
+    CheckedPtr layer = box.layer() ? : box.enclosingLayer();
+    return layer && layer->behavesAsFixed();
 }
 
 void AnchorPositionEvaluator::captureScrollSnapshots(RenderBox& anchored, bool invalidateStyleForScrollPositionChanges)
@@ -311,8 +311,6 @@ void AnchorPositionEvaluator::captureScrollSnapshots(RenderBox& anchored, bool i
         if (auto* box = dynamicDowncast<RenderBox>(ancestor.get())) {
             if (box->hasPotentiallyScrollableOverflow())
                 adjuster.addScrollSnapshot(*box);
-            if (isFixed(*box))
-                isFixedAnchor = true;
             if (box->isStickilyPositioned())
                 adjuster.addStickySnapshot(*box);
         }
@@ -478,7 +476,7 @@ static LayoutRect boxBoundingBoxInContainer(const RenderBoxModelObject& box, con
     bool wasFixed = false;
     auto localRect = [&]() -> LayoutRect {
         if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(&box))
-            return inlineBox->linesBoundingBox();
+            return inlineBox->borderBoxRectInContainer();
         return box.borderBoundingBox();
     }();
     // FIXME: figure out if OverscrollClamp is still needed.
@@ -492,8 +490,8 @@ static LayoutRect boxBoundingBoxInContainer(const RenderBoxModelObject& box, con
 
     if (box.containingBlock() == container.containingBlock()) {
         // Account for 'position: relative' inline containing blocks by shifting back down into them.
-        if (CheckedPtr ancestorInline = dynamicDowncast<RenderInline>(&container))
-            boundingBox.moveBy(-ancestorInline->firstInlineBoxTopLeft()); // FIXME: Handle RTL.
+        if (container.isInlineBox())
+            boundingBox.moveBy(-downcast<RenderBoxModelObject>(container).firstFragmentBorderBoxRect().location()); // FIXME: Handle RTL.
     }
 
     if (auto ancestorBox = dynamicDowncast<RenderBox>(container)) // Zero out containing block scroll position.
@@ -1662,8 +1660,8 @@ bool AnchorPositionEvaluator::overflowsInsetModifiedContainingBlock(const Render
     inlineConstraints.computeInsets();
     blockConstraints.computeInsets();
 
-    auto anchorInlineSize = anchoredBox.logicalWidth() + anchoredBox.marginStart() + anchoredBox.marginEnd();
-    auto anchorBlockSize = anchoredBox.logicalHeight() + anchoredBox.marginBefore() + anchoredBox.marginAfter();
+    auto anchorInlineSize = anchoredBox.logicalWidth() + anchoredBox.marginStart(anchoredBox.writingMode()) + anchoredBox.marginEnd(anchoredBox.writingMode());
+    auto anchorBlockSize = anchoredBox.logicalHeight() + anchoredBox.marginBefore(anchoredBox.writingMode()) + anchoredBox.marginAfter(anchoredBox.writingMode());
 
     return inlineConstraints.insetModifiedContainingSize() < anchorInlineSize
         || blockConstraints.insetModifiedContainingSize() < anchorBlockSize;
@@ -1684,16 +1682,7 @@ bool AnchorPositionEvaluator::isDefaultAnchorInvisibleOrClippedByInterveningBoxe
     // "An anchor box anchor is clipped by intervening boxes relative to a positioned box abspos relying on it if anchor’s ink overflow
     // rectangle is fully clipped by a box which is an ancestor of anchor but a descendant of abspos’s containing block."
 
-    auto localAnchorRect = [&] {
-        if (anchorBox)
-            return anchorBox->visualOverflowRect();
-        if (CheckedPtr inlineBox = dynamicDowncast<RenderInline>(*defaultAnchor))
-            return inlineBox->linesVisualOverflowBoundingBox();
-        if (CheckedPtr lineBreak = dynamicDowncast<RenderLineBreak>(*defaultAnchor))
-            return LayoutRect { lineBreak->linesBoundingBox() };
-        ASSERT_NOT_REACHED();
-        return LayoutRect { };
-    }();
+    auto localAnchorRect = defaultAnchor->visualOverflowRect();
     auto* anchoredContainingBlock = anchoredBox.container();
 
     auto anchorRect = defaultAnchor->localToAbsoluteQuad(FloatQuad { localAnchorRect }).boundingBox();

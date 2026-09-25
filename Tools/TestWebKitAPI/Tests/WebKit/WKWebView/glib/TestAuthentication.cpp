@@ -483,7 +483,7 @@ public:
         m_proxyServer.run(serverCallback);
         g_assert_false(m_proxyServer.baseURL().isNull());
         gProxyServerPort = m_proxyServer.port();
-        WebKitNetworkProxySettings* settings = webkit_network_proxy_settings_new(m_proxyServer.baseURL().string().utf8().data(), nullptr);
+        WebKitNetworkProxySettings* settings = webkit_network_proxy_settings_new(m_proxyServer.baseURL().string().utf8().legacyCStringPointer(), nullptr);
 #if ENABLE(2022_GLIB_API)
         webkit_network_session_set_proxy_settings(m_networkSession.get(), WEBKIT_NETWORK_PROXY_MODE_CUSTOM, settings);
 #else

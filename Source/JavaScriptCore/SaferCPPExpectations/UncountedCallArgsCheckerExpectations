@@ -85,7 +85,6 @@ jit/JITWorklist.cpp
 jit/JITWorklistInlines.h
 jit/JITWorklistThread.cpp
 jit/PolymorphicCallStubRoutine.cpp
-llint/LLIntSlowPaths.cpp
 parser/Lexer.cpp
 parser/Parser.cpp
 parser/Parser.h
@@ -95,7 +94,6 @@ parser/UnlinkedSourceCode.h
 profiler/ProfilerDatabase.cpp
 profiler/ProfilerEvent.cpp
 runtime/ArrayBufferView.cpp
-runtime/ArrayBufferView.h
 runtime/AtomicsObject.cpp
 runtime/CacheableIdentifierInlines.h
 runtime/CodeCache.cpp

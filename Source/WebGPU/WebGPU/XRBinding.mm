@@ -66,7 +66,7 @@ bool XRBinding::isValid() const
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuXRBindingReference(WGPUXRBinding binding)
+void NODELETE wgpuXRBindingAddRef(WGPUXRBinding binding)
 {
     WebGPU::fromAPI(binding).ref();
 }
@@ -76,7 +76,7 @@ void wgpuXRBindingRelease(WGPUXRBinding binding)
     WebGPU::fromAPI(binding).deref();
 }
 
-WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsageFlags flags, double scale)
+WGPUXRProjectionLayer wgpuBindingCreateXRProjectionLayer(WGPUXRBinding binding, WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale)
 {
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(binding))->createXRProjectionLayer(colorFormat, optionalDepthStencilFormat, flags, scale));
 }

@@ -73,11 +73,12 @@ https://www.dictionary.com/
 https://www.disneyplus.com/
     (none)
 https://www.ea.com/
-    (none)
+    ShouldPreventKeyframeEffectAccelerationQuirk
 https://www.espn.com/
     (none)
 https://www.facebook.com/
     NeedsFacebookRemoveNotSupportedQuirk
+    ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
     ShouldEnableCameraAndMicrophonePermissionStateQuirk
@@ -92,6 +93,12 @@ https://gizmodo.com/
 https://play.geforcenow.com/
     NeedsGeforcenowWarningDisplayNoneQuirk
 https://www.google.com/
+    MaybeBypassBackForwardCache
+https://www.google.com/search
+    MaybeBypassBackForwardCache
+https://www.google.com/search/howsearchworks
+    MaybeBypassBackForwardCache
+https://www.google.co.jp/search
     MaybeBypassBackForwardCache
 https://www.google.com/maps/
     MaybeBypassBackForwardCache
@@ -169,6 +176,7 @@ https://www.linkedin.com/
     (none)
 https://outlook.live.com/
     NeedsMozillaFileTypeForDataTransferQuirk
+    NeedsUserAgentStringOverrideQuirk
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldPreventDispatchOfTouchEventQuirk
 https://live.com/
@@ -201,6 +209,7 @@ https://www.messenger.com/
     ShouldEnableRTCEncodedStreamsQuirk
     ShouldEnableRemoteTrackLabelQuirk
 https://www.netflix.com/
+    NeedsPerDocumentAutoplayBehaviorQuirk
     NeedsSeekingSupportDisabledQuirk
     ShouldDispatchPointerOutAndLeaveAfterHandlingSyntheticClick
 https://www.nba.com/
@@ -258,6 +267,7 @@ https://www.thesaurus.com/
     (none)
 https://www.tiktok.com/
     NeedsTikTokOverflowingContentQuirk
+    ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
 https://trix-editor.org/
@@ -285,7 +295,7 @@ https://workspaces.xyz/
 https://wpdevelopment.ca/
     (none)
 https://x.com/
-    (none)
+    NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://twitter.com/
     (none)
 https://www.yahoo.com/

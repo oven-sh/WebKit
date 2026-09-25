@@ -78,7 +78,7 @@ JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObj
     m_consoleAgent = consoleAgent.ptr();
     m_agents.append(WTF::move(consoleAgent));
 
-    m_consoleClient = makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent);
+    lazyInitialize(m_consoleClient, makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent));
 
     m_executionStopwatch->start();
 }
@@ -97,7 +97,7 @@ JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObj
     m_consoleAgent = consoleAgent.ptr();
     m_agents.append(WTF::move(consoleAgent));
 
-    m_consoleClient = makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent);
+    lazyInitialize(m_consoleClient, makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent));
 
     m_executionStopwatch->start();
 }
@@ -227,7 +227,7 @@ void JSGlobalObjectInspectorController::reportAPIException(JSGlobalObject* globa
             ConsoleClient::printConsoleMessage(MessageSource::JS, MessageType::Log, MessageLevel::Error, errorMessage, String(), 0, 0);
     }
 
-    m_consoleAgent->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::JS, MessageType::Log, MessageLevel::Error, errorMessage, WTF::move(callStack)));
+    protect(m_consoleAgent)->addMessageToConsole(makeUnique<ConsoleMessage>(MessageSource::JS, MessageType::Log, MessageLevel::Error, errorMessage, WTF::move(callStack)));
 }
 
 CheckedPtr<ConsoleClient> JSGlobalObjectInspectorController::consoleClient() const
@@ -262,9 +262,9 @@ void JSGlobalObjectInspectorController::frontendInitialized()
 {
     if (m_pauseAfterInitialization) {
         m_pauseAfterInitialization = false;
-
-        std::ignore = ensureDebuggerAgent().enable();
-        std::ignore = ensureDebuggerAgent().pause();
+        CheckedRef debuggerAgent = ensureDebuggerAgent();
+        std::ignore = debuggerAgent->enable();
+        std::ignore = debuggerAgent->pause();
     }
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -357,11 +357,11 @@ void JSGlobalObjectInspectorController::createLazyAgents()
     ensureDebuggerAgent();
 
     auto scriptProfilerAgent = makeUniqueRef<InspectorScriptProfilerAgent>(context);
-    m_consoleClient->setPersistentScriptProfilerAgent(scriptProfilerAgent.ptr());
+    m_consoleClient->setPersistentScriptProfilerAgent(protect(scriptProfilerAgent).ptr());
     m_agents.append(WTF::move(scriptProfilerAgent));
 
     auto heapAgent = makeUniqueRef<InspectorHeapAgent>(context);
-    m_consoleClient->setPersistentHeapAgent(heapAgent.ptr());
+    m_consoleClient->setPersistentHeapAgent(protect(heapAgent).ptr());
     m_agents.append(WTF::move(heapAgent));
 
     m_agents.append(makeUniqueRef<JSGlobalObjectAuditAgent>(context));

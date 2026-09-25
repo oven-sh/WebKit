@@ -193,6 +193,14 @@ void NonCompositedFrameRenderer::updateRendering()
     webPage->finalizeRenderingUpdate({ });
     webPage->flushPendingEditorStateUpdate();
 
+#if ENABLE(DAMAGE_TRACKING)
+    if (m_frameDamage && m_frameDamage->isEmpty() && !m_forcedRepaintAsyncCallback) {
+        webPage->didUpdateRendering({ });
+        WTFEndSignpost(this, NonCompositedRenderingUpdate);
+        return;
+    }
+#endif
+
     IntSize scaledSize = webPage->size();
     scaledSize.scale(webPage->deviceScaleFactor());
 
@@ -208,9 +216,10 @@ void NonCompositedFrameRenderer::updateRendering()
         if (m_context)
             PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent();
 
-        m_surface->clear({ });
-
         canvas->save();
+        if (auto clearColor = m_surface->skiaClearColor({ }))
+            canvas->clear(*clearColor);
+
         GraphicsContextSkia graphicsContext(*canvas, m_context ? RenderingMode::Accelerated : RenderingMode::Unaccelerated, RenderingPurpose::DOM);
         graphicsContext.applyDeviceScaleFactor(webPage->deviceScaleFactor());
 

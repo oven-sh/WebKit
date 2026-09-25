@@ -26,6 +26,7 @@
 #include "GStreamerElementHarness.h"
 #include "GStreamerRegistryScanner.h"
 #include "PlatformRawAudioDataGStreamer.h"
+#include "SharedBuffer.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WorkQueue.h>
@@ -58,7 +59,7 @@ public:
     }
     ~GStreamerInternalAudioDecoder() = default;
 
-    Ref<AudioDecoder::DecodePromise> decode(std::span<const uint8_t>, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration);
+    Ref<AudioDecoder::DecodePromise> decode(Ref<SharedBuffer>&&, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration);
     void flush();
     void close() { m_isClosed = true; }
     bool isConfigured() const { return !!m_inputCaps; }
@@ -91,7 +92,7 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
     auto& scanner = GStreamerRegistryScanner::singleton();
     auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName);
     if (!lookupResult) {
-        GST_WARNING("No decoder found for codec %s", codecName.utf8().data());
+        GST_WARNING("No decoder found for codec %s", codecName.utf8().legacyCStringPointer());
         callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
         return;
     }
@@ -100,7 +101,7 @@ void GStreamerAudioDecoder::create(const String& codecName, const Config& config
     Ref decoder = adoptRef(*new GStreamerAudioDecoder(codecName, config, WTF::move(outputCallback), WTF::move(element)));
     Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
-        GST_WARNING("Internal audio decoder failed to configure for codec %s", codecName.utf8().data());
+        GST_WARNING("Internal audio decoder failed to configure for codec %s", codecName.utf8().legacyCStringPointer());
         callback(makeUnexpected(makeString("Internal audio decoder failed to configure for codec "_s, codecName)));
         return;
     }
@@ -125,8 +126,8 @@ GStreamerAudioDecoder::~GStreamerAudioDecoder()
 
 Ref<AudioDecoder::DecodePromise> GStreamerAudioDecoder::decode(EncodedData&& data)
 {
-    return invokeAsync(gstDecoderWorkQueue(), [value = Vector<uint8_t> { data.data }, isKeyFrame = data.isKeyFrame, timestamp = data.timestamp, duration = data.duration, decoder = m_internalDecoder] {
-        return decoder->decode(value.span(), isKeyFrame, timestamp, duration);
+    return invokeAsync(gstDecoderWorkQueue(), [buffer = WTF::move(data.data), isKeyFrame = data.isKeyFrame, timestamp = data.timestamp, duration = data.duration, decoder = m_internalDecoder]() mutable {
+        return decoder->decode(WTF::move(buffer), isKeyFrame, timestamp, duration);
     });
 }
 
@@ -277,11 +278,11 @@ GStreamerInternalAudioDecoder::GStreamerInternalAudioDecoder(const String& codec
     });
 }
 
-Ref<AudioDecoder::DecodePromise> GStreamerInternalAudioDecoder::decode(std::span<const uint8_t> frameData, [[maybe_unused]] bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration)
+Ref<AudioDecoder::DecodePromise> GStreamerInternalAudioDecoder::decode(Ref<SharedBuffer>&& frameData, [[maybe_unused]] bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration)
 {
-    GST_DEBUG_OBJECT(m_harness->element(), "Decoding%s frame with size %zu bytes", isKeyFrame ? " key" : "", frameData.size_bytes());
+    GST_DEBUG_OBJECT(m_harness->element(), "Decoding%s frame with size %zu bytes", isKeyFrame ? " key" : "", frameData->size());
 
-    auto encodedData = wrapSpanData(frameData);
+    auto encodedData = wrapSharedBuffer(WTF::move(frameData));
     if (!encodedData)
         return AudioDecoder::DecodePromise::createAndResolve();
 

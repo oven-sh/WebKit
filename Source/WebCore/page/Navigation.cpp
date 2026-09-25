@@ -668,7 +668,7 @@ void Navigation::resolveFinishedPromise(NavigationAPIMethodTracker* apiMethodTra
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#reject-the-finished-promise
 void Navigation::rejectFinishedPromise(NavigationAPIMethodTracker* apiMethodTracker, const Exception& exception, JSC::JSValue exceptionObject)
 {
-    RELEASE_LOG(Navigation, "rejectFinishedPromise: rejecting promises for tracker=%p with exception='%s'", apiMethodTracker, exception.message().utf8().data());
+    RELEASE_LOG(Navigation, "rejectFinishedPromise: rejecting promises for tracker=%p with exception='%s'", apiMethodTracker, exception.message().utf8());
 
     apiMethodTracker->rejectFinished(exception, exceptionObject);
     m_methodTrackers.unregister(*apiMethodTracker);
@@ -758,11 +758,16 @@ void Navigation::recursivelyDisposeOfForwardEntriesInParents(BackForwardItemIden
     if (!index)
         return;
 
-    for (size_t i = *index + 1; i < m_entries.size(); i++)
-        Ref { m_entries[i] }->dispatchDisposeEvent();
+    auto disposedEntries = m_entries.subvector(*index + 1);
 
     m_currentEntryIndex = index;
     m_entries.resize(*m_currentEntryIndex + 1);
+
+    for (auto& disposedEntry : disposedEntries)
+        disposedEntry->dispatchDisposeEvent();
+
+    if (!frame())
+        return;
 
     for (RefPtr child = frame()->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr localChild = dynamicDowncast<LocalFrame>(child.get());

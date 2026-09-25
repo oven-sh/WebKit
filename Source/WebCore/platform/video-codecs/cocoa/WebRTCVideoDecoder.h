@@ -44,7 +44,7 @@ class WebRTCVideoDecoder {
 public:
     virtual ~WebRTCVideoDecoder() = default;
 
-    WEBCORE_EXPORT static std::unique_ptr<WebRTCVideoDecoder> create(VideoCodecType, WebRTCVideoDecoderCallback, std::optional<PlatformVideoColorSpace>&& colorSpaceOverride = std::nullopt);
+    WEBCORE_EXPORT static std::unique_ptr<WebRTCVideoDecoder> create(VideoCodecType, bool useWebCoreDecoder, WebRTCVideoDecoderCallback, std::optional<PlatformVideoColorSpace>&& colorSpaceOverride = std::nullopt);
 
     virtual void flush() = 0;
     virtual void setFormat(std::span<const uint8_t>, uint16_t width, uint16_t height) = 0;

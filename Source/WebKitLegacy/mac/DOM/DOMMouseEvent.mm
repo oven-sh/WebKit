@@ -40,7 +40,7 @@
 #import <wtf/GetPtr.h>
 #import <wtf/URL.h>
 
-#define IMPL static_cast<WebCore::MouseEvent*>(reinterpret_cast<WebCore::Event*>(_internal))
+#define IMPL protect(static_cast<WebCore::MouseEvent*>(reinterpret_cast<WebCore::Event*>(_internal)))
 
 @implementation DOMMouseEvent
 
@@ -144,8 +144,8 @@
 {
     WebCore::JSMainThreadNullState state;
     DOMNode* inRelatedTargetObjC = inRelatedTarget;
-    WebCore::Node* inRelatedTargetNode = core(inRelatedTargetObjC);
-    IMPL->initMouseEvent(type, canBubble, cancelable, toWindowProxy(view), detail, inScreenX, inScreenY, inClientX, inClientY, inCtrlKey, inAltKey, inShiftKey, inMetaKey, inButton, inRelatedTargetNode);
+    RefPtr inRelatedTargetNode = core(inRelatedTargetObjC);
+    IMPL->initMouseEvent(type, canBubble, cancelable, toWindowProxy(view), detail, inScreenX, inScreenY, inClientX, inClientY, inCtrlKey, inAltKey, inShiftKey, inMetaKey, inButton, WTF::move(inRelatedTargetNode));
 }
 
 @end

@@ -326,8 +326,8 @@ static UnixFileDescriptor drmFileDescriptorForGBMDisplay()
         return { gbm_device_get_fd(device->device()), UnixFileDescriptor::Borrow };
 
     const auto& device = deviceManager.mainDevice();
-    const CString& deviceNode = device.renderNode.isNull() ? device.primaryNode : device.renderNode;
-    return { open(deviceNode.data(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
+    auto& deviceNode = device.renderNode.isNull() ? device.primaryNode : device.renderNode;
+    return { open(deviceNode.legacyCStringPointer(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
 }
 #endif // USE(GBM)
 
@@ -530,9 +530,9 @@ static VkBool32 debugUtilsMessengerHandleMessage(VkDebugUtilsMessageSeverityFlag
     messageTypeString.shrink(messageTypeString.length() - 2);
 
     if (data->pMessageIdName)
-        RELEASE_LOG_WITH_LEVEL(Vulkan, logLevel, "[%s: %s] %s", data->pMessageIdName, messageTypeString.toString().utf8().data(), data->pMessage);
+        RELEASE_LOG_WITH_LEVEL(Vulkan, logLevel, "[%s: %s] %s", data->pMessageIdName, messageTypeString.toString().utf8(), data->pMessage);
     else
-        RELEASE_LOG_WITH_LEVEL(Vulkan, logLevel, "[%s] %s", messageTypeString.toString().utf8().data(), data->pMessage);
+        RELEASE_LOG_WITH_LEVEL(Vulkan, logLevel, "[%s] %s", messageTypeString.toString().utf8(), data->pMessage);
 
     return VK_FALSE;
 }

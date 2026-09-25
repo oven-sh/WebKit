@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 Test how many selector filter hashes in each category we extract from a selector.
 <pre id=log></pre>
 <script>
@@ -79,6 +80,18 @@ function run() {
     test(":is(a .b) + target");
     test("#c :is(a, .b) target");
     test("#c :is(a .b) target");
+
+    // [class~=foo] is equivalent to .foo, so it contributes a class hash rather than
+    // a much less selective "has a class attribute" hash. The forms that are not
+    // equivalent keep contributing an attribute hash.
+    test("[class~=foo] target");
+    test("[class~=foo s] target");
+    test("[class~=foo i] target");
+    test("[class~='foo bar'] target");
+    test("[class~=''] target");
+    test("[CLASS~=foo] target");
+    test("[*|class~=foo] target");
+    test("[className~=foo] target");
 };
 
 if (window.internals)

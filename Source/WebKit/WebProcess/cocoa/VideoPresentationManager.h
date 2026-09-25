@@ -157,6 +157,8 @@ public:
     void setupRemoteLayerHosting(WebCore::HTMLVideoElement&);
     void willRemoveLayerForID(WebCore::MediaPlayerClientIdentifier);
 
+    RefPtr<WebCore::HTMLVideoElement> videoElementForContext(WebCore::MediaPlayerClientIdentifier) const;
+
     void swapFullscreenModes(WebCore::HTMLVideoElement&, WebCore::HTMLVideoElement&);
 
     // Interface to WebChromeClient

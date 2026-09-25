@@ -721,8 +721,9 @@ void RenderObject::setLayerNeedsFullRepaintForOutOfFlowMovementLayout()
     downcast<RenderLayerModelObject>(*this).layer()->setRepaintStatus(RepaintStatus::NeedsFullRepaintForOutOfFlowMovementLayout);
 }
 
-static inline RenderBlock* nearestNonAnonymousContainingBlockIncludingSelf(RenderElement* renderer)
+RenderBlock* RenderElement::nearestNonAnonymousContainingBlockIncludingSelf() const
 {
+    auto* renderer = const_cast<RenderElement*>(this);
     while (renderer && (!is<RenderBlock>(*renderer) || renderer->isAnonymousBlock()))
         renderer = renderer->containingBlock();
     return downcast<RenderBlock>(renderer);
@@ -742,16 +743,16 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
 
     if (positionType == PositionType::Absolute) {
         auto containingBlockForAbsolutePosition = [&] {
-            if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(renderer); renderInline && renderInline->style().position() == PositionType::Relative) {
+            if (renderer.isInlineBox() && renderer.style().position() == PositionType::Relative) {
                 // A relatively positioned RenderInline forwards its absolute positioned descendants to
                 // its nearest non-anonymous containing block (to avoid having positioned objects list in RenderInlines).
-                return nearestNonAnonymousContainingBlockIncludingSelf(renderer.parent());
+                return renderer.parent() ? renderer.parent()->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
             }
             CheckedPtr ancestor = renderer.parent();
             while (ancestor && !ancestor->canContainAbsolutelyPositionedObjects())
                 ancestor = ancestor->parent();
             // Make sure we only return non-anonymous RenderBlock as containing block.
-            return nearestNonAnonymousContainingBlockIncludingSelf(ancestor.get());
+            return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
         };
         return containingBlockForAbsolutePosition();
     }
@@ -764,7 +765,7 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
                     return &renderer.view();
                 ancestor = ancestor->parent();
             }
-            return nearestNonAnonymousContainingBlockIncludingSelf(ancestor.get());
+            return ancestor ? ancestor->nearestNonAnonymousContainingBlockIncludingSelf() : nullptr;
         };
         return containingBlockForFixedPosition();
     }
@@ -1208,7 +1209,7 @@ void RenderObject::showRenderTreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     root->outputRenderSubTreeAndMark(stream, this, 1);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
 void RenderObject::showSubtreeForThis() const
@@ -1216,7 +1217,7 @@ void RenderObject::showSubtreeForThis() const
     TextStream stream(TextStream::LineMode::MultipleLine, TextStream::Formatting::SVGStyleRect);
     outputRenderTreeLegend(stream);
     outputRenderSubTreeAndMark(stream, this, 1);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
 void RenderObject::showLineTreeForThis() const
@@ -1228,7 +1229,7 @@ void RenderObject::showLineTreeForThis() const
     outputRenderTreeLegend(stream);
     outputRenderObject(stream, false, 1);
     blockFlow->outputLineTreeAndMark(stream, nullptr, 2);
-    WTFLogAlways("%s", stream.release().utf8().data());
+    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
 }
 
 static const RenderFragmentedFlow* enclosingFragmentedFlowFromRenderer(const RenderObject* renderer)
@@ -1358,7 +1359,7 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
         stream << " ";
 
     if (node())
-        stream << node()->nodeName().utf8().data() << " ";
+        stream << node()->nodeName() << " ";
 
     ASCIILiteral name = renderName();
     StringView nameView { name };
@@ -1401,9 +1402,9 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
         const int maxPrintedLength = 80;
         if (value.length() > maxPrintedLength) {
             auto substring = StringView(value).left(maxPrintedLength);
-            stream << " \"" << substring.utf8().data() << "\"...";
+            stream << " \"" << substring << "\"...";
         } else
-            stream << " \"" << value.utf8().data() << "\"";
+            stream << " \"" << value << "\"";
     }
 
     if (auto* box = dynamicDowncast<RenderBox>(*this)) {
@@ -3164,7 +3165,7 @@ void printPaintOrderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
         showPaintOrderTree(document->renderView());
     }
 }
@@ -3176,7 +3177,7 @@ void printRenderTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
         showRenderTree(document->renderView());
     }
 }
@@ -3188,7 +3189,7 @@ void printLayerTreeForLiveDocuments()
             continue;
         if (document->frame() && document->frame()->isRootFrame())
             WTFLogAlways("----------------------root frame--------------------------\n");
-        WTFLogAlways("%s", document->url().string().utf8().data());
+        SAFE_WTFLOGALWAYS("%s", document->url().string().utf8());
         showLayerTree(document->renderView());
     }
 }
@@ -3211,9 +3212,9 @@ void printAccessibilityTreeForLiveDocuments()
             continue;
         if (document->frame()) {
             if (document->frame()->isRootFrame())
-                WTFLogAlways("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), document->url().string().utf8().data());
+                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for root document %p %s", getpid(), document.ptr(), document->url().string().utf8());
             else
-                WTFLogAlways("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), document->url().string().utf8().data());
+                SAFE_WTFLOGALWAYS("\nPID %d: Accessibility tree for non-root document %p %s", getpid(), document.ptr(), document->url().string().utf8());
             dumpAccessibilityTreeToStderr(document.get());
         }
     }
@@ -3225,7 +3226,7 @@ void printGraphicsLayerTreeForLiveDocuments()
         if (!document->renderView())
             continue;
         if (document->frame() && document->frame()->isRootFrame()) {
-            WTFLogAlways("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8().data());
+            SAFE_WTFLOGALWAYS("Graphics layer tree for root document %p %s", document.ptr(), document->url().string().utf8());
             showGraphicsLayerTreeForCompositor(protect(document->renderView())->compositor());
         }
     }

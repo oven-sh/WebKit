@@ -53,7 +53,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
-#include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore::ContentExtensions {
@@ -194,7 +193,7 @@ auto ContentExtensionsBackend::actionsForResourceLoad(const ResourceLoadInfo& re
 
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     MonotonicTime addedTimeEnd = MonotonicTime::now();
-    dataLogF("Time added: %f microseconds %s \n", (addedTimeEnd - addedTimeStart).microseconds(), resourceLoadInfo.resourceURL.string().utf8().data());
+    dataLogLn("Time added: "_s, (addedTimeEnd - addedTimeStart).microseconds(), " microseconds "_s, resourceLoadInfo.resourceURL.string());
 #endif
     return actionsVector;
 }
@@ -281,7 +280,7 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
         const String& contentRuleListIdentifier = actionsFromContentRuleList.contentRuleListIdentifier;
         ContentRuleListResults::Result result;
         for (const auto& action : actionsFromContentRuleList.actions) {
-            WTF::visit(WTF::makeVisitor([&](const BlockLoadAction&) {
+            WTF::switchOn(action.data(), [&](const BlockLoadAction&) {
                 if (results.summary.redirected)
                     return;
 
@@ -350,7 +349,7 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
                 // We create a requestId here since ResourceRequest objects don't have one, and it's a non-optional parameter.
                 // We set documentLifecycle to null because that will require Safari API to be implemented.
                 page.chrome().client().contentRuleListMatchedRule({ { reportIdentifierAction.identifier, reportIdentifierAction.string, contentRuleListIdentifier }, { frameId, parentFrameId, initiatingDocumentLoader.request().httpMethod(), requestId, -1, resourceTypeToStringForMatchedRule(resourceType), url.string(), initiator, documentId, std::nullopt, frameType, std::nullopt } });
-            }), action.data());
+            });
         }
 
         if (!actionsFromContentRuleList.sawIgnorePreviousRules) {

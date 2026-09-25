@@ -32,7 +32,8 @@ namespace Style {
 
 // MARK: - Blending
 
-template<LengthPercentageOrKeywordDerived StyleType> struct Blending<StyleType> {
+// Base class shared with the SizeOrKeywordDerived types, which also accept calc-size().
+template<LengthPercentageOrKeywordDerived StyleType> struct NumericOrKeywordBlending {
     using Numeric = typename StyleType::Numeric;
     using Calc = typename StyleType::Calc;
 
@@ -52,6 +53,8 @@ template<LengthPercentageOrKeywordDerived StyleType> struct Blending<StyleType> 
         return Style::blend(get<Numeric>(a), get<Numeric>(b), context);
     }
 };
+
+template<LengthPercentageOrKeywordDerived StyleType> struct Blending<StyleType> : NumericOrKeywordBlending<StyleType> { };
 
 } // namespace Style
 } // namespace WebCore

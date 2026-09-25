@@ -423,7 +423,7 @@ static Vector<ContentSecurityPolicyHash> generateHashesForContent(const StringVi
     if (algorithms.isEmpty())
         return { };
 
-    CString utf8Content = content.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    auto utf8Content = content.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     Vector<ContentSecurityPolicyHash> hashes;
     for (auto algorithm : algorithms) {
         auto hash = cryptographicDigestForBytes(algorithm, byteCast<uint8_t>(utf8Content.span()));

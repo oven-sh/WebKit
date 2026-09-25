@@ -129,11 +129,16 @@ template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<I
 };
 
 template<typename IDLType> struct InspectorCanvasArgumentProcessor<IDLNullable<IDLAllowSharedAdaptor<IDLType>>> {
-    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, auto& value)
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, const auto& value)
     {
         if (!value)
             return std::nullopt;
-        return InspectorCanvasArgumentProcessor<IDLAllowSharedAdaptor<IDLType>>{}(context, value.releaseNonNull());
+        InspectorCanvasArgumentProcessor<IDLAllowSharedAdaptor<IDLType>> processor;
+        // BufferSource is std::optional, Typed Arrays are RefPtr.
+        if constexpr (requires { value.has_value(); })
+            return processor(context, *value);
+        else
+            return processor(context, Ref { *value });
     }
 };
 
@@ -337,6 +342,10 @@ template<> struct InspectorCanvasArgumentProcessor<IDLArrayBuffer> {
 
 template<> struct InspectorCanvasArgumentProcessor<IDLArrayBufferView> {
     std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const Ref<JSC::ArrayBufferView>&);
+};
+
+template<> struct InspectorCanvasArgumentProcessor<IDLBufferSource> {
+    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas&, const BufferSource&);
 };
 
 template<> struct InspectorCanvasArgumentProcessor<IDLFloat32Array> {
@@ -570,13 +579,6 @@ template<typename... IDLTypes> struct InspectorCanvasArgumentProcessor<IDLUnion<
         return WTF::switchOn(argument, [&](const typename IDLTypes::UnionStorageType& value) {
             return InspectorCanvasArgumentProcessor<IDLTypes>{}(context, value);
         }...);
-    }
-
-    template<typename T>
-        requires requires (const T& value) { static_cast<const ImplementationType&>(value.variant()); }
-    std::optional<InspectorCanvasProcessedArgument> operator()(InspectorCanvas& context, const T& argument)
-    {
-        return operator()(context, static_cast<const ImplementationType&>(argument.variant()));
     }
 };
 

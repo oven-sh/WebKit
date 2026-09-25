@@ -23,6 +23,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(modules)
+
 #if USE(APPKIT)
 #import <AppKit/AppKit.h>
 #else
@@ -37,3 +39,5 @@ WEBCORE_EXPORT
 + (void)installForWebViewIfNeeded:(CocoaView *)view kind:(NSString *)kind deprecated:(BOOL)isDeprecated;
 
 @end
+
+#endif // !__has_feature(modules)

@@ -43,6 +43,7 @@
 #include <WebCore/ServiceWorkerTypes.h>
 #include <WebCore/WorkerThreadMode.h>
 #include <pal/SessionID.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
@@ -122,7 +123,7 @@ public:
         virtual void setRegistrationLastUpdateTime(ServiceWorkerRegistrationIdentifier, WallTime) = 0;
         virtual void setRegistrationUpdateViaCache(ServiceWorkerRegistrationIdentifier, ServiceWorkerUpdateViaCache) = 0;
         virtual void notifyClientsOfControllerChange(const HashSet<ScriptExecutionContextIdentifier>& contextIdentifiers, const std::optional<ServiceWorkerData>& newController) = 0;
-        virtual void postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier, const MessageWithMessagePorts&, ServiceWorkerIdentifier, const SecurityOriginData& sourceOrigin) = 0;
+        virtual void postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier, const MessageWithMessagePorts&, ServiceWorkerIdentifier, const SecurityOriginData& sourceOrigin, CompletionHandlerCallingScope&& messageDispatched) = 0;
         virtual void focusServiceWorkerClient(ScriptExecutionContextIdentifier, CompletionHandler<void(std::optional<ServiceWorkerClientData>&&)>&&) = 0;
         virtual void updateBackgroundFetchRegistration(const BackgroundFetchInformation&) = 0;
 
@@ -245,7 +246,7 @@ public:
     void removeFromScopeToRegistrationMap(const ServiceWorkerRegistrationKey&);
 
     WEBCORE_EXPORT void addContextConnection(SWServerToContextConnection&);
-    WEBCORE_EXPORT void removeContextConnection(SWServerToContextConnection&);
+    WEBCORE_EXPORT void removeContextConnection(SWServerToContextConnection&, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifierForReplacementConnection = std::nullopt);
     WEBCORE_EXPORT void terminateIdleServiceWorkers(SWServerToContextConnection&);
 
     using ContextConnectionKey = std::pair<RegistrableDomain, CrossOriginEmbedderPolicyValue>;
@@ -337,6 +338,8 @@ private:
     void unregisterServiceWorkerConnection(Connection&, ServiceWorkerIdentifier);
 
     void terminatePreinstallationWorker(SWServerWorker&);
+
+    void replaceContextConnectionIfNotInServiceWorkerPageProcess(SWServerRegistration&, ScriptExecutionContextIdentifier serviceWorkerPageIdentifier);
 
     void clearInternal(const SecurityOriginData& topOrigin, Function<bool(const ServiceWorkerRegistrationKey&)>&& matches, CompletionHandler<void()>&&);
 

@@ -6,7 +6,6 @@ version = "@PROJECT_VERSION@"
 repository_url = "https://github.com/WebKit/WebKit"
 website_url = "https://wpewebkit.org"
 dependencies = ["GObject-2.0", "Gio-2.0"]
-realated = ["WPEPlatformWayland-2.0"]
 devhelp = true
 search_index = true
 
@@ -38,6 +37,8 @@ content_files = [
     "overview.md",
     "compiling.md",
     "tutorial-browser.md",
-    "tutorial-platform.md"
+    "tutorial-platform.md",
+    "migrating-from-libwpe.md",
+    "migration-mapping.md"
 ]
 urlmap_file = "urlmap.js"

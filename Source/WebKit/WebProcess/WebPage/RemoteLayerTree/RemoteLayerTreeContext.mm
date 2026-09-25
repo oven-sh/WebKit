@@ -146,6 +146,19 @@ void RemoteLayerTreeContext::layerDidEnterContext(PlatformCALayerRemote& layer, 
     m_createdLayers.add(layerID, WTF::move(creationProperties));
     m_livePlatformLayers.add(layerID, &layer);
 }
+
+RefPtr<HTMLVideoElement> RemoteLayerTreeContext::videoElementForLayer(PlatformLayerIdentifier layerID) const
+{
+    auto it = m_videoLayers.find(layerID);
+    if (it == m_videoLayers.end())
+        return nullptr;
+
+    RefPtr videoElement = protect(protect(webPage())->videoPresentationManager())->videoElementForContext(it->value);
+    if (!videoElement)
+        RELEASE_LOG_ERROR(RemoteLayerTree, "RemoteLayerTreeContext::videoElementForLayer: layer %" PRIu64 " is registered as a video layer but has no video element; remote layer hosting will not be set up", layerID.object().toUInt64());
+
+    return videoElement;
+}
 #endif
 
 WebPage& RemoteLayerTreeContext::webPage() const

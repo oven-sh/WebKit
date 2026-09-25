@@ -43,6 +43,7 @@ enum class WebCore::LockBackForwardList : bool;
     WebKit::UserData userData;
     WebCore::LockHistory lockHistory;
     WebCore::LockBackForwardList lockBackForwardList;
+    WebCore::NavigationHistoryBehavior navigationHistoryBehavior;
     WebCore::SubstituteData::SessionHistoryVisibility sessionHistoryVisibility
     String clientRedirectSourceForHistory;
     std::optional<WebCore::SandboxFlags> effectiveSandboxFlags;
@@ -57,6 +58,7 @@ enum class WebCore::LockBackForwardList : bool;
     std::optional<double> dataDetectionReferenceDate;
 #endif
     bool isRequestFromClientOrUserInput;
+    bool hasCrossOriginRedirect;
     bool hadUserGesture;
     WebCore::NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior;
     bool isHandledByAboutSchemeHandler;

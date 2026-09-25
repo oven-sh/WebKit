@@ -110,13 +110,13 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
 void GPUQueue::onSubmittedWorkDone(OnSubmittedWorkDonePromise&& promise)
 {
     m_backing->onSubmittedWorkDone([promise = WTF::move(promise)]() mutable {
-        promise.resolve(nullptr);
+        promise.resolve();
     });
 }
 
 static GPUSize64 computeElementSize(const BufferSource& data)
 {
-    return WTF::switchOn(data.variant(),
+    return data.switchOn(
         [&](const Ref<JSC::ArrayBufferView>& bufferView) {
             return static_cast<GPUSize64>(JSC::elementSize(bufferView->getType()));
         },
@@ -703,6 +703,9 @@ static bool isSupportedGPUSourcePixelFormat(PixelFormat pixelFormat)
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     case PixelFormat::RGBA16F:
 #endif
+#if ENABLE(PIXEL_FORMAT_RGBA16)
+    case PixelFormat::RGBA16:
+#endif
         return true;
 #if ENABLE(PIXEL_FORMAT_RGB10)
     case PixelFormat::RGB10:
@@ -775,7 +778,7 @@ static GPUResidentSource gpuResidentSourceForImageData(ScriptExecutionContext& c
 
 // A decoded image's pixels live in CoreGraphics' own decode buffer rather than an IOSurface, so they
 // have to be drawn into an accelerated buffer first. Doing it this way lets CoreGraphics resolve the
-// EXIF orientation, indexed palettes and the image's colour space, which is what the CPU path below
+// EXIF orientation, indexed palettes and the image's color space, which is what the CPU path below
 // hand-rolls. Only bitmap images come this way: a vector image has no pixels of its own, and the CPU
 // path rasterizes it at the destination texture's size.
 static GPUResidentSource gpuResidentSourceForImageElement(ScriptExecutionContext& context, HTMLImageElement& imageElement)
@@ -795,7 +798,7 @@ static GPUResidentSource gpuResidentSourceForImageElement(ScriptExecutionContext
     if (sourceRect.isEmpty() || destinationRect.isEmpty())
         return { };
 
-    // The image is converted into sRGB rather than kept in its own colour space, because that is the
+    // The image is converted into sRGB rather than kept in its own color space, because that is the
     // space copyExternalImageToTexture's destination is described relative to, and because the
     // backing queue can only convert between sRGB and Display P3 itself.
     RefPtr imageBuffer = ImageBitmap::createImageBuffer(context, destinationRect.size(), ColorSpace::SRGB());
@@ -819,7 +822,8 @@ static GPUResidentSource imageBufferForSource([[maybe_unused]] ScriptExecutionCo
     using ResultType = GPUResidentSource;
     auto result = WTF::switchOn(source,
         [&](const Ref<ImageBitmap>& imageBitmap) -> ResultType {
-            return { imageBitmap->buffer(), imageBitmap->premultiplyAlpha() };
+            // bufferAlphaFormat(), because premultiplyAlpha() is what was asked for, not what is stored.
+            return { imageBitmap->buffer(), imageBitmap->bufferAlphaFormat() == AlphaPremultiplication::Premultiplied };
         },
 #if ENABLE(VIDEO) && ENABLE(WEB_CODECS)
         [&](const Ref<ImageData>& imageData) -> ResultType {
@@ -847,7 +851,7 @@ static GPUResidentSource imageBufferForSource([[maybe_unused]] ScriptExecutionCo
 
     // A video source is a CVPixelBuffer rather than an ImageBuffer, so none of the checks below apply
     // to it: it is not resampled, it has no unpremultiplied channels to preserve, and the backing
-    // queue converts out of its own colour space using the matrices the frame itself carries.
+    // queue converts out of its own color space using the matrices the frame itself carries.
     if (result.videoSource)
         return result;
 
@@ -868,7 +872,7 @@ static GPUResidentSource imageBufferForSource([[maybe_unused]] ScriptExecutionCo
     if (!isSupportedGPUSourcePixelFormat(imageBuffer->pixelFormat()))
         return { };
 
-    // The backing queue converts between sRGB and Display P3 only; anything else would need a colour
+    // The backing queue converts between sRGB and Display P3 only; anything else would need a color
     // matrix it does not have.
     auto colorSpace = imageBuffer->colorSpace();
     bool isSupportedColorSpace = colorSpace == ColorSpace::SRGB();
@@ -1444,7 +1448,7 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=263692 - this code should be removed once
         // every source takes the GPU process path above. The sources which still land here are the
         // ones it turns away: an unaccelerated or scaled ImageBuffer, a 10-bit packed surface, a
-        // colour space beyond sRGB and Display P3, a vector image, and every source at all on a port
+        // color space beyond sRGB and Display P3, a vector image, and every source at all on a port
         // without IOSurface. Until then a request the CPU converter cannot satisfy is made to fail
         // Metal validation, so that the destination texture is left untouched rather than written
         // with the wrong bytes.

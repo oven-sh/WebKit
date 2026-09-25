@@ -4177,13 +4177,13 @@ struct NodeComparator {
 };
 
 template<typename T>
-CString nodeListDump(const T& nodeList)
+UTF8CString nodeListDump(const T& nodeList)
 {
     return sortedListDump(nodeList, NodeComparator());
 }
 
 template<typename T>
-CString nodeMapDump(const T& nodeMap, DumpContext* context = nullptr)
+UTF8CString nodeMapDump(const T& nodeMap, DumpContext* context = nullptr)
 {
     Vector<typename T::KeyType> keys;
     for (
@@ -4195,11 +4195,11 @@ CString nodeMapDump(const T& nodeMap, DumpContext* context = nullptr)
     CommaPrinter comma;
     for(unsigned i = 0; i < keys.size(); ++i)
         out.print(comma, keys[i], "=>"_s, inContext(nodeMap.get(keys[i]), context));
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 template<typename T>
-CString nodeValuePairListDump(const T& nodeValuePairList, DumpContext* context = nullptr)
+UTF8CString nodeValuePairListDump(const T& nodeValuePairList, DumpContext* context = nullptr)
 {
     T sortedList = nodeValuePairList;
     std::ranges::sort(sortedList, [](const auto& a, const auto& b) {
@@ -4210,7 +4210,7 @@ CString nodeValuePairListDump(const T& nodeValuePairList, DumpContext* context =
     CommaPrinter comma;
     for (const auto& pair : sortedList)
         out.print(comma, pair.node, "=>"_s, inContext(pair.value, context));
-    return out.toCString();
+    return out.toUTF8CString();
 }
 
 } } // namespace JSC::DFG

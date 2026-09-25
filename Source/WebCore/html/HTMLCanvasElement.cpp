@@ -32,6 +32,7 @@
 #include "Blob.h"
 #include "BlobCallback.h"
 #include "CanvasGradient.h"
+#include "CanvasPaintEvent.h"
 #include "CanvasPattern.h"
 #include "CanvasRenderingContext2D.h"
 #include "CanvasRenderingContext2DSettings.h"
@@ -145,6 +146,7 @@ HTMLCanvasElement::~HTMLCanvasElement()
     // avoided in destructors, but works as long as it's done before HTMLCanvasElement destructs completely.
     notifyObserversCanvasDestroyed();
     removeCanvasNeedingPreparationForDisplayOrFlush();
+    protect(document())->cancelCanvasPaintEvent(*this);
 }
 
 bool HTMLCanvasElement::hasPresentationalHintsForAttribute(const QualifiedName& name) const
@@ -170,6 +172,10 @@ void HTMLCanvasElement::attributeChanged(const QualifiedName& name, const AtomSt
         if (!isControlledByOffscreen())
             didUpdateSizeProperties();
     }
+
+    if (name == layoutsubtreeAttr)
+        invalidateStyleAndRenderersForSubtree();
+
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
@@ -194,7 +200,7 @@ bool HTMLCanvasElement::canContainRangeEndPoint() const
 
 bool HTMLCanvasElement::canStartSelection() const
 {
-    return false;
+    return layoutSubtree() && HTMLElement::canStartSelection();
 }
 
 ExceptionOr<void> HTMLCanvasElement::setHeight(unsigned value)
@@ -225,6 +231,13 @@ bool HTMLCanvasElement::layoutSubtree() const
 
 void HTMLCanvasElement::requestPaint()
 {
+    protect(document())->requestCanvasPaintEvent(*this);
+}
+
+void HTMLCanvasElement::dispatchPaintEvent()
+{
+    // FIXME: Populate changedElements.
+    dispatchEvent(CanvasPaintEvent::create(eventNames().paintEvent, { }, Event::IsTrusted::Yes));
 }
 
 ExceptionOr<Ref<DOMMatrix>> HTMLCanvasElement::getElementTransform(const CanvasElementImageSource&, DOMMatrix&)
@@ -232,9 +245,25 @@ ExceptionOr<Ref<DOMMatrix>> HTMLCanvasElement::getElementTransform(const CanvasE
     return Exception { ExceptionCode::InvalidStateError };
 }
 
-ExceptionOr<Ref<CanvasElementImage>> HTMLCanvasElement::captureElementImage(Element&)
+ExceptionOr<Ref<CanvasElementImage>> HTMLCanvasElement::captureElementImage(Element& drawableElement)
 {
+    if (auto snapshot = drawableElementSnapshot(drawableElement))
+        return CanvasElementImage::create(WTF::move(*snapshot));
+
     return Exception { ExceptionCode::InvalidStateError };
+}
+
+std::optional<CanvasElementSnapshot> HTMLCanvasElement::drawableElementSnapshot(Element& drawableElement) const
+{
+    CheckedPtr drawableRenderer = drawableElement.renderer();
+    if (!drawableRenderer)
+        return std::nullopt;
+
+    CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(renderer());
+    if (!canvasRenderer)
+        return std::nullopt;
+
+    return canvasRenderer->drawableRendererSnapshot(*drawableRenderer);
 }
 
 void HTMLCanvasElement::setSizeForControllingContext(IntSize newSize)
@@ -897,6 +926,7 @@ void HTMLCanvasElement::didMoveToNewDocument(Document& oldDocument, Document& ne
         oldDocument.removeCanvasNeedingPreparationForDisplayOrFlush(*context);
         newDocument.addCanvasNeedingPreparationForDisplayOrFlush(*context);
     }
+    oldDocument.cancelCanvasPaintEvent(*this);
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 
