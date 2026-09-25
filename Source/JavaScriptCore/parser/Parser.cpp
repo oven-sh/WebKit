@@ -356,8 +356,10 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
 }
 
 template <typename LexerType>
-template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context)
+template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(TreeBuilder& context, bool& isArrowFunctionWithInvalidParameters)
 {
+    isArrowFunctionWithInvalidParameters = false;
+
     if (match(OPENPAREN)) {
         SavePoint saveArrowFunctionPoint = createSavePoint(context);
         next();
@@ -365,19 +367,49 @@ template <class TreeBuilder> bool Parser<LexerType>::isArrowFunctionParameters(T
         if (consume(CLOSEPAREN))
             isArrowFunction = match(ARROWFUNCTION);
         else {
-            SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
-            // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
-            AutoPopScope fakeScope(this, pushScope());
+            auto parseParameters = [&](bool parseAsGeneratorFunction) {
+                SyntaxChecker syntaxChecker(const_cast<VM&>(m_vm), m_lexer.get());
+                // We make fake scope, otherwise parseFormalParameters will add variable to current scope that lead to errors
+                AutoPopScope fakeScope(this, pushScope());
 
-            fakeScope->setSourceParseMode(SourceParseMode::ArrowFunctionMode);
-            resetImplementationVisibilityIfNeeded();
+                fakeScope->setSourceParseMode(SourceParseMode::ArrowFunctionMode);
+                resetImplementationVisibilityIfNeeded();
 
-            unsigned parametersCount = 0;
-            bool isArrowFunctionParameterList = true;
-            bool isMethod = false;
-            isArrowFunction = parseFormalParameters(syntaxChecker, syntaxChecker.createFormalParameterList(), isArrowFunctionParameterList, isMethod, parametersCount) && consume(CLOSEPAREN) && match(ARROWFUNCTION);
-            propagateError();
-            popScope(fakeScope, syntaxChecker.NeedsFreeVariableInfo);
+                unsigned parametersCount = 0;
+                bool isArrowFunctionParameterList = true;
+                bool isMethod = false;
+                bool result;
+                {
+                    Scope::MaybeParseAsGeneratorFunctionForScope parseAsGenerator(fakeScope.scope(), parseAsGeneratorFunction);
+                    result = parseFormalParameters(syntaxChecker, syntaxChecker.createFormalParameterList(), isArrowFunctionParameterList, isMethod, parametersCount) && consume(CLOSEPAREN) && match(ARROWFUNCTION);
+                }
+                if (hasError())
+                    return false;
+                popScope(fakeScope, syntaxChecker.NeedsFreeVariableInfo);
+                return result;
+            };
+
+            // parseFunctionInfo() parses these parameters with [+Yield] parameterization in a generator, and so does this. The two
+            // have to agree on what the parameters can hold: a function in them goes to the SourceProviderCache from here, and
+            // parseFunctionInfo() skips it from there.
+            bool parseAsGeneratorFunction = currentScope()->isGeneratorFunction();
+            isArrowFunction = parseParameters(parseAsGeneratorFunction);
+            if (hasError()) {
+                if (!parseAsGeneratorFunction)
+                    return false;
+
+                // When [+Yield] is all that is wrong, the text is an arrow function, and this error says what is wrong with it.
+                // The caller has another one, from the text as an expression, which it is not.
+                SavePointWithError parametersError = swapSavePointForError(context, saveArrowFunctionPoint);
+                next();
+                bool isArrowFunctionWithoutYield = parseParameters(false);
+                propagateError();
+                if (isArrowFunctionWithoutYield) {
+                    restoreSavePointWithError(context, parametersError);
+                    isArrowFunctionWithInvalidParameters = true;
+                    return false;
+                }
+            }
         }
         restoreSavePoint(context, saveArrowFunctionPoint);
         return isArrowFunction;
@@ -4254,7 +4286,8 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
         }
     }
 
-    if (isArrowFunctionParameters(context)) {
+    bool isArrowFunctionWithInvalidParameters = false;
+    if (isArrowFunctionParameters(context, isArrowFunctionWithInvalidParameters)) {
         if (wasOpenParen)
             currentScope()->revertToPreviousUsedVariables(usedVariablesSize);
         shouldReturnResult = true;
@@ -4263,7 +4296,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
 
     // The reason why we use propagateError only when isArrowFunctionToken = true is that
     // this can produce better error message than restoring it to errorRestorationSavePoint.
-    if (isArrowFunctionToken && hasError()) [[unlikely]] {
+    if ((isArrowFunctionToken || isArrowFunctionWithInvalidParameters) && hasError()) [[unlikely]] {
         shouldReturnResult = true;
         return 0;
     }
