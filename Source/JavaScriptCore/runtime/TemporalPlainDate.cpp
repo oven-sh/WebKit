@@ -197,110 +197,50 @@ TemporalPlainDate* createTemporalDate(JSGlobalObject* globalObject, ISO8601::Pla
     return createTemporalDateImpl<TemporalConstructTarget::NewTarget>(globalObject, WTF::move(plainDate), calendarID, newTarget);
 }
 
-static TemporalPlainDate* fromImpl(JSGlobalObject*, JSValue, Variant<JSObject*, TemporalOverflow>);
-
-// ToTemporalDate property-bag and string paths (spec steps 2.d-2.i and 3-11).
-static TemporalPlainDate* fromImpl(JSGlobalObject* globalObject, JSValue itemValue, Variant<JSObject*, TemporalOverflow> optionsOrOverflow)
+// ToTemporalDate property-bag path (spec steps 2.d-2.i).
+static TemporalPlainDate* fromPropertyBag(JSGlobalObject* globalObject, JSObject* item, JSValue optionsValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (itemValue.isObject()) {
-        // Fast paths for typed Temporal objects (spec steps 2.a/2.b/2.c).
-        // Options are handled by the caller (from()); these paths skip field reading.
-        if (itemValue.inherits<TemporalPlainDate>()) {
-            auto* existing = uncheckedDowncast<TemporalPlainDate>(itemValue);
-            if (existing->calendarID() != iso8601CalendarID())
-                return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), existing->plainDate(), existing->calendarID());
-            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), existing->plainDate());
-        }
+    // Step 2.d: calendar = ? GetTemporalCalendarIdentifierWithISODefault(item).
+    CalendarID calendarId = getTemporalCalendarIdentifierWithISODefault(globalObject, item);
+    RETURN_IF_EXCEPTION(scope, { });
 
-        if (itemValue.inherits<TemporalPlainDateTime>()) {
-            auto* pdt = uncheckedDowncast<TemporalPlainDateTime>(itemValue);
-            if (pdt->calendarID() != iso8601CalendarID())
-                return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), pdt->plainDate(), pdt->calendarID());
-            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), pdt->plainDate());
-        }
+    // Step 2.e: fields = ? PrepareCalendarFields(...). Fields before options (spec order).
+    auto fields = readCalendarFieldsFromObject(globalObject, item, calendarId);
+    RETURN_IF_EXCEPTION(scope, { });
 
-        if (itemValue.inherits<TemporalZonedDateTime>()) {
-            auto* zdt = uncheckedDowncast<TemporalZonedDateTime>(itemValue);
-            auto [date, time] = zdt->getLocalDateTime(globalObject);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (!TemporalCore::calendarIsISO(zdt->calendarID()))
-                return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTF::move(date), String(zdt->calendarId()));
-            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTF::move(date));
-        }
-
-        // Step 2.d: calendar = ? GetTemporalCalendarIdentifierWithISODefault(item).
-        CalendarID calendarId = getTemporalCalendarIdentifierWithISODefault(globalObject, asObject(itemValue));
-        RETURN_IF_EXCEPTION(scope, { });
-
-        // Step 2.e: fields = ? PrepareCalendarFields(...). Fields before options (spec order).
-        auto fields = readCalendarFieldsFromObject(globalObject, asObject(itemValue), calendarId);
-        RETURN_IF_EXCEPTION(scope, { });
-
-        // Steps 2.f-2.g: resolvedOptions = ? GetOptionsObject(options);
-        //                overflow = ? GetTemporalOverflowOption(resolvedOptions).
-        auto overflow = TemporalOverflow::Constrain;
-        if (std::holds_alternative<TemporalOverflow>(optionsOrOverflow))
-            overflow = std::get<TemporalOverflow>(optionsOrOverflow);
-        else if (auto* opts = std::get<JSObject*>(optionsOrOverflow)) {
-            overflow = toTemporalOverflow(globalObject, opts);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-
-        // Step 2.h: isoDate = ? CalendarDateFromFields(calendar, fields, overflow).
-        auto result = TemporalCore::dateFromFields(calendarId, fields, overflow);
-        if (!result) [[unlikely]] {
-            if (result.error().kind == TemporalErrorKind::TypeError)
-                throwTypeError(globalObject, scope, String(result.error().message));
-            else
-                throwRangeError(globalObject, scope, String(result.error().message));
+    // Steps 2.f-2.g: resolvedOptions = ? GetOptionsObject(options);
+    //                overflow = ? GetTemporalOverflowOption(resolvedOptions).
+    // A non-object options throws here: after the field reads, before CalendarDateFromFields
+    // resolves era/eraYear and range-checks the result.
+    JSObject* options = nullptr;
+    if (!optionsValue.isUndefined()) {
+        if (!optionsValue.isObject()) [[unlikely]] {
+            throwTypeError(globalObject, scope, "options must be an object"_s);
             return { };
         }
-
-        // Step 2.i: Return ! CreateTemporalDate(isoDate, calendar).
-        RELEASE_AND_RETURN(scope, createTemporalDate(globalObject, WTF::move(result->isoDate), result->calendarId));
+        options = asObject(optionsValue);
+    }
+    auto overflow = TemporalOverflow::Constrain;
+    if (options) {
+        overflow = toTemporalOverflow(globalObject, options);
+        RETURN_IF_EXCEPTION(scope, { });
     }
 
-    // String path (spec steps 3-11).
-    if (!itemValue.isString()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "can only convert to PlainDate from object or string values"_s);
+    // Step 2.h: isoDate = ? CalendarDateFromFields(calendar, fields, overflow).
+    auto result = TemporalCore::dateFromFields(calendarId, fields, overflow);
+    if (!result) [[unlikely]] {
+        if (result.error().kind == TemporalErrorKind::TypeError)
+            throwTypeError(globalObject, scope, String(result.error().message));
+        else
+            throwRangeError(globalObject, scope, String(result.error().message));
         return { };
     }
 
-    auto string = itemValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    // Step 4: result = ? ParseISODateTime(item, « TemporalDateTimeString[~Zoned] »).
-    auto dateTime = ISO8601::parseISODateTime(string, ISO8601::TemporalProduction::DateTimeUnzoned);
-    if (dateTime) [[likely]] {
-        auto [plainDateOpt, plainTimeOptional, timeZoneOptional, calendarOptional, matched, isShortForm] = WTF::move(*dateTime);
-        ASSERT(plainDateOpt);
-        auto plainDate = WTF::move(*plainDateOpt);
-
-        // Steps 5-7: calendar = result.[[Calendar]]; if ~empty~ → "iso8601"; CanonicalizeCalendar.
-        CalendarID calendarId = iso8601CalendarID();
-        if (calendarOptional) {
-            auto rawCal = StringView(*calendarOptional).convertToASCIILowercase();
-            auto canonicalized = isBuiltinCalendar(rawCal);
-            if (!canonicalized) [[unlikely]] {
-                throwRangeError(globalObject, scope, makeString("'"_s, rawCal, "' is not a valid calendar identifier"_s));
-                return { };
-            }
-            calendarId = *canonicalized;
-        }
-        // Steps 8-9: GetOptionsObject + GetTemporalOverflowOption.
-        //   Options aren't reachable on the compare path (compare takes no options arg); the
-        //   spec calls are no-ops on undefined and the overflow value is unused for strings.
-        // Steps 10-11: isoDate = CreateISODateRecord(...); Return ? CreateTemporalDate(isoDate, calendar).
-        if (calendarId == iso8601CalendarID())
-            RELEASE_AND_RETURN(scope, createTemporalDate(globalObject, WTF::move(plainDate)));
-        RELEASE_AND_RETURN(scope, createTemporalDate(globalObject, WTF::move(plainDate), WTF::move(calendarId)));
-    }
-
-    throwRangeError(globalObject, scope, "invalid date string"_s);
-    return { };
+    // Step 2.i: Return ! CreateTemporalDate(isoDate, calendar).
+    RELEASE_AND_RETURN(scope, createTemporalDate(globalObject, WTF::move(result->isoDate), result->calendarId));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaldate
@@ -347,20 +287,8 @@ TemporalPlainDate* TemporalPlainDate::from(JSGlobalObject* globalObject, JSValue
             return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), pdt->plainDate());
         }
 
-        // Steps 2.d-2.i: property bag → PrepareCalendarFields (before options) + overflow + CalendarDateFromFields.
-        // fromImpl() reads fields first then options; split here so TypeError for bad options type
-        // is thrown only after field reads (spec observability).
-        JSObject* opts = nullptr;
-        if (!optionsValue.isUndefined()) {
-            if (!optionsValue.isObject()) {
-                fromImpl(globalObject, itemValue, Variant<JSObject*, TemporalOverflow>(TemporalOverflow::Constrain));
-                RETURN_IF_EXCEPTION(scope, { });
-                throwTypeError(globalObject, scope, "options must be an object"_s);
-                return { };
-            }
-            opts = asObject(optionsValue);
-        }
-        RELEASE_AND_RETURN(scope, fromImpl(globalObject, itemValue, Variant<JSObject*, TemporalOverflow>(opts)));
+        // Steps 2.d-2.i: property bag → PrepareCalendarFields + GetOptionsObject + overflow + CalendarDateFromFields.
+        RELEASE_AND_RETURN(scope, fromPropertyBag(globalObject, asObject(itemValue), optionsValue));
     }
 
     // Step 3: If item is not a String, throw TypeError.
