@@ -60,6 +60,7 @@
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "ModuleNamespaceAccessCase.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "PropertyInlineCache.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include "RegExpObject.h"
@@ -4111,12 +4112,51 @@ void InlineCacheCompiler::emitDOMJITGetter(JSGlobalObject* globalObjectForDOMJIT
     }
 }
 
+// A handler's miss that leaves nothing to repatch tells the slow path so by making the countdown nonzero: the slow path
+// only repatches when it finds zero, and takes one off otherwise. Every handler of a chain may see the same miss (one
+// for each export layout does, for a namespace object that has no layout yet), so this does not add to a countdown
+// that is already set. Adding one for each handler would put repatching off by that many slow reads.
+static void emitDataICIgnoreMissOnce(CCallHelpers& jit, GPRReg propertyCacheGPR)
+{
+    auto alreadyCounted = jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfCountdown()));
+    jit.store8(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfCountdown()));
+    alreadyCounted.link(&jit);
+}
+
 void InlineCacheCompiler::emitModuleNamespaceLoad(ModuleNamespaceAccessCase& accessCase, MacroAssembler::JumpList& fallThrough)
 {
     CCallHelpers& jit = *m_jit;
     GPRReg valueGPR = m_propertyCache.valueGPR();
     GPRReg baseGPR = m_propertyCache.baseGPR();
     GPRReg scratchGPR = m_scratchGPR;
+
+    if (accessCase.exportLayout()) {
+        // Any namespace object of this layout. An object has no layout, and then no slot for the name, until a
+        // [[Get]] on it has found the variable. The slow path's [[Get]] sees to both, and there is nothing to repatch.
+        CCallHelpers::JumpList nothingToRepatch;
+        fallThrough.append(jit.branchIfNotType(baseGPR, ModuleNamespaceObjectType));
+        jit.loadPtr(CCallHelpers::Address(baseGPR, JSModuleNamespaceObject::offsetOfExportLayout()), scratchGPR);
+        auto layoutMatches = jit.branchPtr(CCallHelpers::Equal, scratchGPR, CCallHelpers::TrustedImmPtr(accessCase.exportLayout()));
+        nothingToRepatch.append(jit.branchTestPtr(CCallHelpers::Zero, scratchGPR));
+        fallThrough.append(jit.jump());
+        layoutMatches.link(&jit);
+        jit.loadPtr(CCallHelpers::Address(baseGPR, JSModuleNamespaceObject::offsetOfExportSlots()), scratchGPR);
+        jit.loadPtr(CCallHelpers::Address(scratchGPR, static_cast<int32_t>(accessCase.exportIndex() * sizeof(WriteBarrierBase<Unknown>*))), scratchGPR);
+        nothingToRepatch.append(jit.branchTestPtr(CCallHelpers::Zero, scratchGPR));
+        jit.loadValue(CCallHelpers::Address(scratchGPR), scratchGPR);
+        nothingToRepatch.append(jit.branchIfEmpty(scratchGPR));
+        jit.move(scratchGPR, valueGPR);
+        succeed();
+
+        if (!useHandlerIC()) {
+            m_failAndIgnore.append(nothingToRepatch);
+            return;
+        }
+        nothingToRepatch.link(&jit);
+        emitDataICIgnoreMissOnce(jit, m_propertyCache.propertyCacheGPR());
+        fallThrough.append(jit.jump());
+        return;
+    }
 
     fallThrough.append(
         jit.branchPtr(
@@ -5616,6 +5656,51 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdModuleNamespaceLoadHandler()
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::InlineCache);
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "GetById ModuleNamespaceLoad handler"_s, "GetById ModuleNamespaceLoad handler");
+}
+
+MacroAssemblerCodeRef<JITThunkPtrTag> getByIdModuleNamespaceLoadByExportLayoutHandler()
+{
+    CCallHelpers jit;
+
+    using BaselineJITRegisters::GetById::baseGPR;
+    using BaselineJITRegisters::GetById::propertyCacheGPR;
+    using BaselineJITRegisters::GetById::scratch1GPR;
+    using BaselineJITRegisters::GetById::scratch2GPR;
+    using BaselineJITRegisters::GetById::resultGPR;
+
+    InlineCacheCompiler::emitDataICPrologue(jit);
+    traceHandler(jit, ICEvent::GetByIdModuleNamespaceLoadHandler);
+
+    CCallHelpers::JumpList fallThrough;
+    CCallHelpers::JumpList nothingToRepatch;
+
+    // Any namespace object of the handler's layout. An object has no layout, and then no slot for the name, until a
+    // [[Get]] on it has found the variable. The slow path's [[Get]] sees to both, and there is nothing to repatch.
+    fallThrough.append(jit.branchIfNotType(baseGPR, ModuleNamespaceObjectType));
+    jit.loadPtr(CCallHelpers::Address(baseGPR, JSModuleNamespaceObject::offsetOfExportLayout()), scratch1GPR);
+    auto layoutMatches = jit.branchPtr(CCallHelpers::Equal, scratch1GPR, CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfModuleNamespaceExportLayout()));
+    nothingToRepatch.append(jit.branchTestPtr(CCallHelpers::Zero, scratch1GPR));
+    fallThrough.append(jit.jump());
+    layoutMatches.link(&jit);
+
+    jit.loadPtr(CCallHelpers::Address(baseGPR, JSModuleNamespaceObject::offsetOfExportSlots()), scratch1GPR);
+    jit.load32(CCallHelpers::Address(GPRInfo::handlerGPR, InlineCacheHandler::offsetOfModuleNamespaceExportIndex()), scratch2GPR);
+    jit.loadPtr(CCallHelpers::BaseIndex(scratch1GPR, scratch2GPR, CCallHelpers::ScalePtr), scratch1GPR);
+    nothingToRepatch.append(jit.branchTestPtr(CCallHelpers::Zero, scratch1GPR));
+    jit.loadValue(CCallHelpers::Address(scratch1GPR), scratch1GPR);
+    nothingToRepatch.append(jit.branchIfEmpty(scratch1GPR));
+    jit.move(scratch1GPR, resultGPR);
+    InlineCacheCompiler::emitDataICEpilogue(jit);
+    jit.ret();
+
+    nothingToRepatch.link(&jit);
+    emitDataICIgnoreMissOnce(jit, propertyCacheGPR);
+
+    fallThrough.link(&jit);
+    InlineCacheCompiler::emitDataICJumpNextHandler(jit);
+
+    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::InlineCache);
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "GetById ModuleNamespaceLoad by export layout handler"_s, "GetById ModuleNamespaceLoad by export layout handler");
 }
 
 // FIXME: We may need to implement it in offline asm eventually to share it with non JIT environment.
@@ -7355,7 +7440,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                 case AccessCase::ModuleNamespaceLoad: {
                     ASSERT(!accessCase.viaGlobalProxy());
                     ASSERT(accessCase.conditionSet().isEmpty());
-                    auto code = vm.getCTIStub(CommonJITThunkID::GetByIdModuleNamespaceLoadHandler).retagged<JITStubRoutinePtrTag>();
+                    bool byExportLayout = accessCase.as<ModuleNamespaceAccessCase>().exportLayout();
+                    auto code = vm.getCTIStub(byExportLayout ? CommonJITThunkID::GetByIdModuleNamespaceLoadByExportLayoutHandler : CommonJITThunkID::GetByIdModuleNamespaceLoadHandler).retagged<JITStubRoutinePtrTag>();
                     auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
                     connectWatchpointSets(stub.get(), { }, WTF::move(additionalWatchpointSets));
                     return finishPreCompiledCodeGeneration(WTF::move(stub));

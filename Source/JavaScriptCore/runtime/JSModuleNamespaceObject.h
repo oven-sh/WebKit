@@ -28,8 +28,11 @@
 #include "AbstractModuleRecord.h"
 #include "JSDestructibleObject.h"
 #include <wtf/OrderedHashMap.h>
+#include <wtf/UniqueArray.h>
 
 namespace JSC {
+
+class ModuleNamespaceExportLayout;
 
 class JSModuleNamespaceObject final : public JSNonFinalObject {
 public:
@@ -74,6 +77,17 @@ public:
 
     AbstractModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
 
+    // What the inline caches that serve every namespace object of one ModuleNamespaceExportLayout read. Export slot i
+    // is the address of the module environment variable that the i-th exported name is bound to, and null until a
+    // [[Get]] of that name has found the variable. An object without a layout has no slots.
+    ModuleNamespaceExportLayout* exportLayout() const { return m_exportLayout.get(); }
+    // A [[Get]] of `uid` has found this variable (PropertySlot::moduleNamespaceSlot()). Gives the object its layout,
+    // fills the slot in, and returns the position of `uid` in the layout.
+    unsigned noteExportSlot(VM&, UniquedStringImpl* uid, JSModuleEnvironment*, ScopeOffset);
+
+    static constexpr ptrdiff_t offsetOfExportLayout() { return OBJECT_OFFSETOF(JSModuleNamespaceObject, m_exportLayout); }
+    static constexpr ptrdiff_t offsetOfExportSlots() { return OBJECT_OFFSETOF(JSModuleNamespaceObject, m_exportSlots); }
+
 #if USE(BUN_JSC_ADDITIONS)
     WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
 #endif
@@ -92,8 +106,15 @@ private:
 
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
 
+    void fillExportSlot(VM&, unsigned exportIndex, JSModuleEnvironment*, ScopeOffset);
+
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
+    WriteBarrier<ModuleNamespaceExportLayout> m_exportLayout;
+    UniqueArray<WriteBarrierBase<Unknown>*> m_exportSlots;
+    // The environments the filled export slots point into, so that a slot cannot outlive its variable. (A record keeps
+    // its environment, but lets it go when its linking fails.) Appended to under cellLock().
+    Vector<WriteBarrier<JSModuleEnvironment>> m_exportSlotEnvironments;
     const bool m_isDeferred;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isOverridingValue = false;
@@ -101,5 +122,8 @@ private:
 
     friend size_t cellSize(JSCell*);
 };
+
+// Inline caches load the slots through offsetOfExportSlots().
+static_assert(sizeof(UniqueArray<WriteBarrierBase<Unknown>*>) == sizeof(void*));
 
 } // namespace JSC

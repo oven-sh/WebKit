@@ -2305,6 +2305,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionAsanEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionIsMemoryLimited);
 static JSC_DECLARE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations);
+static JSC_DECLARE_HOST_FUNCTION(functionHaveSameExportLayout);
 static JSC_DECLARE_HOST_FUNCTION(functionUseJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseDFGJIT);
 static JSC_DECLARE_HOST_FUNCTION(functionUseFTLJIT);
@@ -4743,6 +4744,18 @@ JSC_DEFINE_HOST_FUNCTION(functionUninstantiatedFunctionDeclarations, (JSGlobalOb
     return JSValue::encode(jsNumber(moduleRecord->numberOfUninstantiatedFunctionDeclarations()));
 }
 
+// Returns true if both module namespace objects have an export layout (ModuleNamespaceExportLayout) and it is the same one.
+// Usage: $vm.haveSameExportLayout(moduleNamespaceObject, moduleNamespaceObject)
+JSC_DEFINE_HOST_FUNCTION(functionHaveSameExportLayout, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* first = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(0));
+    auto* second = dynamicDowncast<JSModuleNamespaceObject>(callFrame->argument(1));
+    if (!first || !second)
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(first->exportLayout() && first->exportLayout() == second->exportLayout()));
+}
+
 // Returns true if JIT is enabled.
 // Usage: $vm.useJIT()
 JSC_DEFINE_HOST_FUNCTION(functionUseJIT, (JSGlobalObject*, CallFrame*))
@@ -6045,6 +6058,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "isMemoryLimited"_s, functionIsMemoryLimited, 0);
     addFunction(vm, alwaysAllow, "uninstantiatedFunctionDeclarations"_s, functionUninstantiatedFunctionDeclarations, 1);
+    addFunction(vm, alwaysAllow, "haveSameExportLayout"_s, functionHaveSameExportLayout, 2);
     addFunction(vm, alwaysAllow, "useJIT"_s, functionUseJIT, 0);
     addFunction(vm, alwaysAllow, "useDFGJIT"_s, functionUseDFGJIT, 0);
     addFunction(vm, alwaysAllow, "useFTLJIT"_s, functionUseFTLJIT, 0);

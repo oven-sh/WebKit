@@ -34,25 +34,44 @@ namespace JSC {
 
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
+class ModuleNamespaceExportLayout;
 
+// A load of an exported name from a module namespace object. There are two kinds.
+// For one namespace object: the case is for that object only and knows the variable the name is bound to, which is
+// what lets the DFG turn the load into a closure variable load, or a constant.
+// By export layout: the case is for every namespace object of one ModuleNamespaceExportLayout and reads the variable's
+// address from the object's export slot at the name's position. An inline cache goes by layout from the second
+// namespace object it sees (tryCacheGetBy). The inline caches of code that several module loaders share see one
+// namespace object for each loader.
 class ModuleNamespaceAccessCase final : public AccessCase {
 public:
     using Base = AccessCase;
     friend class AccessCase;
     friend class InlineCacheCompiler;
 
+    // Null in a case that goes by export layout.
     JSModuleNamespaceObject* moduleNamespaceObject() const LIFETIME_BOUND { return m_moduleNamespaceObject.get(); }
     JSModuleEnvironment* moduleEnvironment() const LIFETIME_BOUND { return m_moduleEnvironment.get(); }
     ScopeOffset scopeOffset() const { return m_scopeOffset; }
 
+    // Null in a case for one namespace object.
+    ModuleNamespaceExportLayout* exportLayout() const LIFETIME_BOUND { return m_exportLayout.get(); }
+    unsigned exportIndex() const { return m_exportIndex; }
+
     static Ref<AccessCase> create(VM&, JSCell* owner, CacheableIdentifier, JSModuleNamespaceObject*, JSModuleEnvironment*, ScopeOffset);
+    static Ref<AccessCase> createForExportLayout(VM&, JSCell* owner, CacheableIdentifier, ModuleNamespaceExportLayout*, unsigned exportIndex);
 
 private:
     ModuleNamespaceAccessCase(VM&, JSCell* owner, CacheableIdentifier, JSModuleNamespaceObject*, JSModuleEnvironment*, ScopeOffset);
+    ModuleNamespaceAccessCase(VM&, JSCell* owner, CacheableIdentifier, ModuleNamespaceExportLayout*, unsigned exportIndex);
+
+    void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const;
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
+    WriteBarrier<ModuleNamespaceExportLayout> m_exportLayout;
     ScopeOffset m_scopeOffset;
+    unsigned m_exportIndex { 0 };
 };
 
 } // namespace JSC
