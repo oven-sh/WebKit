@@ -890,6 +890,19 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
     return decoder.entry();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+unsigned ExpressionInfo::divotForInstPC(InstPC instPC)
+{
+    auto iter = m_cachedDivots.find(instPC);
+    if (iter != m_cachedDivots.end())
+        return iter->value;
+
+    unsigned divot = entryForInstPC(instPC).divot;
+    m_cachedDivots.add(instPC, divot);
+    return divot;
+}
+#endif
+
 template<unsigned bitCount>
 void ExpressionInfo::print(PrintStream& out, FieldID fieldID, unsigned value)
 {

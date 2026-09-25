@@ -187,6 +187,13 @@ ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(Bytecode
     return expressionInfo().entryForInstPC(bytecodeIndex.offset());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+unsigned UnlinkedCodeBlock::divotForBytecodeIndex(BytecodeIndex bytecodeIndex)
+{
+    return expressionInfo().divotForInstPC(bytecodeIndex.offset());
+}
+#endif
+
 #ifndef NDEBUG
 static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, unsigned divot, unsigned startOffset, unsigned endOffset)
 {

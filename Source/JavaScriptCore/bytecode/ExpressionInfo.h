@@ -183,6 +183,12 @@ public:
 
     Entry NODELETE entryForInstPC(InstPC);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // entryForInstPC() decodes from the start of the chapter on every call, and a stack trace
+    // asks for the same instructions again. This keeps the divot of each instruction it was asked for.
+    unsigned divotForInstPC(InstPC);
+#endif
+
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
     size_t NODELETE byteSize() const; // owned by this object
     size_t NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
@@ -312,7 +318,11 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
+#if USE(BUN_JSC_ADDITIONS)
+    using DivotMap = UncheckedKeyHashMap<InstPC, unsigned, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 
+    DivotMap m_cachedDivots;
+#endif
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

@@ -183,7 +183,7 @@ public:
     bool hasExpressionInfo() { return !expressionInfo().isEmpty(); }
     // Null while the expression info is still in the cache payload. For a caller that cannot take m_lock or allocate
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
-    // which does neither; lineColumnForInstPC() fills a cache.
+    // which does neither; divotForInstPC() fills a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
@@ -291,6 +291,9 @@ public:
     bool hasRareData() const { return m_rareData.get(); }
 
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex);
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned divotForBytecodeIndex(BytecodeIndex);
+#endif
 
     bool typeProfilerExpressionInfoForBytecodeOffset(unsigned bytecodeOffset, unsigned& startDivot, unsigned& endDivot);
 
