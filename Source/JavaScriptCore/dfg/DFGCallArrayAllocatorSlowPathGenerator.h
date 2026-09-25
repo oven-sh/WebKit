@@ -62,7 +62,7 @@ private:
         // out-of-line init). Strip the tag. Same-thread allocation: the tagged
         // word was stored by a call this thread just made, so no ordering is
         // needed - mask only.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             jit->maskButterflyTag(m_storageGPR);
         jumpTo(jit);
     }

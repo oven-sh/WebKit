@@ -230,14 +230,14 @@ public:
     uint32_t concurrentEditCount() const { return m_concurrentEditCount.load(std::memory_order_acquire); }
     ALWAYS_INLINE void beginConcurrentEdit()
     {
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             m_concurrentEditCount.store(m_concurrentEditCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
             WTF::storeStoreFence(); // Odd stamp visible before the first mutating store.
         }
     }
     ALWAYS_INLINE void bumpConcurrentEditCount()
     {
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             m_concurrentEditCount.store(m_concurrentEditCount.load(std::memory_order_relaxed) + 1, std::memory_order_release);
     }
 
@@ -648,7 +648,7 @@ PropertyTable::ConcurrentFindResult PropertyTable::findConcurrentlyImpl(const In
 
 inline PropertyTable::ConcurrentFindResult PropertyTable::findConcurrently(const KeyType& key) const
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(key);
     ASSERT(key->isAtom() || key->isSymbol());
     ASSERT(key != PROPERTY_MAP_DELETED_ENTRY_KEY);
@@ -687,6 +687,7 @@ inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& ke
 
 [[nodiscard]] inline std::tuple<PropertyOffset, unsigned, bool> PropertyTable::add(VM& vm, const ValueType& entry)
 {
+    JSC_PER_THREADS_MODE_BEGIN(std::tuple<PropertyOffset, unsigned, bool>)
     ASSERT(!m_deletedOffsets || !m_deletedOffsets->reusable.contains(entry.offset()));
     ASSERT(!quarantinedDeletedOffsetsContains(entry.offset())); // §6/I18: a quarantined offset must not be re-added before promotion.
 
@@ -695,6 +696,7 @@ inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& ke
     if (result.offset != invalidOffset)
         return std::tuple { result.offset, result.attributes, false };
     return addAfterFind(vm, entry, WTF::move(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfterFind(VM& vm, const ValueType& entry, FindResult&& result)
@@ -722,7 +724,7 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
     unsigned entryIndex = usedCount() + 1;
     withIndexVector([&](auto* vector) {
         auto* table = tableFromIndexVector(vector);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // T3 (§3.25): entry words first, then the index slot, both relaxed —
             // pairs with findConcurrently's relaxed loads (plain stores would
             // race them); the seqlock bracket around this edit provides the
@@ -756,7 +758,7 @@ inline void PropertyTable::remove(VM& vm, KeyType key, unsigned entryIndex, unsi
     // the entry so we can iterate all the entries as needed.
     withIndexVector([&](auto* vector) {
         auto* table = tableFromIndexVector(vector);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // T3 (§3.25): relaxed atomic stores paired with findConcurrently's
             // relaxed loads (see addAfterFind); we are the serialized writer, so
             // the read-modify-write of the entry below is single-writer-safe.
@@ -801,7 +803,7 @@ inline PropertyOffset PropertyTable::updateAttributeIfExists(const KeyType& key,
         if (result.offset == invalidOffset)
             return invalidOffset;
         beginConcurrentEdit(); // S6 L3/L4 + T3: odd stamp before the in-place attribute store.
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // T3 (§3.25): relaxed atomic entry store paired with
             // findConcurrently's relaxed loads; single serialized writer.
             auto entry = concurrentLoadEntry(&table[result.entryIndex - 1]);
@@ -852,7 +854,7 @@ inline void PropertyTable::clearDeletedOffsets()
     // layout. Sound flag-on because F3 runs flattening of shared objects under
     // a per-event stop-the-world (every mutator passed a safepoint => no stale
     // reader holds a pre-flatten offset, I18/I34).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // The replaced-index-vector quarantine and the cached epoch slot are
         // independent of the offsets and stay: a lock-free probe may still be
         // walking a replaced vector.
@@ -869,7 +871,7 @@ inline bool PropertyTable::hasDeletedOffset()
 {
     if (!m_deletedOffsets)
         return false;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // §6 lazy promotion (I18/I19): Reusable is fed SOLELY by epoch
         // promotion. The cached slot is read lock-free (stable address); the
         // surrounding table mutation already holds the Structure's m_lock or
@@ -897,7 +899,7 @@ inline void PropertyTable::addDeletedOffset(PropertyOffset offset)
 {
     ASSERT(!m_deletedOffsets || !m_deletedOffsets->reusable.contains(offset));
     ASSERT(!quarantinedDeletedOffsetsContains(offset));
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // §6 eligibility is TOTAL: EVERY deleted offset - inline AND
         // out-of-line - is quarantined (dictionary-mode deletes AND
         // non-dictionary removePropertyTransition; NO bypass). Inline slots
@@ -931,7 +933,7 @@ inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity)
         return takeDeletedOffset();
 
     unsigned propertyNumber = size();
-    if (Options::useTaggedButterflies() && m_deletedOffsets) [[unlikely]] {
+    if (processUsesTaggedButterflies() && m_deletedOffsets) [[unlikely]] {
         // §6: quarantined slots still occupy storage numbers (the prefix
         // invariant is keyCount + deleted == allocated property numbers, and
         // the Reusable list is empty here), so fresh offsets are allocated
@@ -994,7 +996,7 @@ inline void PropertyTable::reinsert(Index* indexVector, Entry* table, const Valu
 
     ASSERT(!isCompact() || usedCount() < UINT8_MAX);
     unsigned entryIndex = usedCount() + 1;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // T3 (§3.25): relaxed atomic stores — reinsert runs during rehash of a
         // published table, which lock-free probes (findConcurrently) may be
         // reading; pairs their relaxed loads (see addAfterFind).
@@ -1057,7 +1059,7 @@ inline void PropertyTable::rehash(VM& vm, unsigned newCapacity, bool canStayComp
     // deleted-offset reuse: a crossed epoch proves every mutator passed a
     // world-stopped window after the unpublish, so no probe can still hold
     // the pointer) instead of freeing it. Flag-off: today's immediate free.
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         quarantineIndexVector(oldIndexVector);
     else
         destroyIndexVector(oldIndexVector);
@@ -1110,7 +1112,7 @@ ALWAYS_INLINE uintptr_t PropertyTable::allocateIndexVector(bool isCompact, unsig
     // immutable after this store; the StoreStore fence orders it (and any
     // zero-fill) before the caller's publication of the vector pointer.
     // 16 bytes keeps the entry array's existing 16-byte alignment.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         uint8_t* base = std::bit_cast<uint8_t*>(PropertyTableMalloc::malloc(PropertyTable::dataSize(isCompact, indexSize) + concurrentIndexVectorHeaderSize));
         *std::bit_cast<uint32_t*>(base) = indexSize;
         WTF::storeStoreFence();
@@ -1121,7 +1123,7 @@ ALWAYS_INLINE uintptr_t PropertyTable::allocateIndexVector(bool isCompact, unsig
 
 ALWAYS_INLINE uintptr_t PropertyTable::allocateZeroedIndexVector(bool isCompact, unsigned indexSize)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // See allocateIndexVector above for the header contract.
         uint8_t* base = std::bit_cast<uint8_t*>(PropertyTableMalloc::zeroedMalloc(PropertyTable::dataSize(isCompact, indexSize) + concurrentIndexVectorHeaderSize));
         *std::bit_cast<uint32_t*>(base) = indexSize;
@@ -1134,13 +1136,13 @@ ALWAYS_INLINE uintptr_t PropertyTable::allocateZeroedIndexVector(bool isCompact,
 ALWAYS_INLINE unsigned PropertyTable::indexSizeOfIndexVectorAllocation(uintptr_t indexVector)
 {
     // T3 (flag-on only — flag-off allocations carry no header).
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     return *std::bit_cast<const uint32_t*>((indexVector & indexVectorMask) - concurrentIndexVectorHeaderSize);
 }
 
 ALWAYS_INLINE void PropertyTable::destroyIndexVector(uintptr_t indexVector)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         PropertyTableMalloc::free(std::bit_cast<uint8_t*>(indexVector & indexVectorMask) - concurrentIndexVectorHeaderSize);
         return;
     }

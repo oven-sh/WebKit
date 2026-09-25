@@ -309,7 +309,7 @@ inline bool canUseFastArrayJoin(const JSObject* thisObject)
 // vectorLength. Flag-off the tag bits are zero and this is exactly butterfly().
 ALWAYS_INLINE bool flatButterflySnapshot(JSObject* object, Butterfly*& butterfly)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         uint64_t word = object->taggedButterflyWord();
         if (isSegmentedButterfly(word) || !(word & butterflyPointerMask)) [[unlikely]]
             return false;
@@ -337,7 +337,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
-        if (Options::useTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
+        if (processUsesTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
             break;
         auto data = butterfly.contiguous().data();
 
@@ -345,7 +345,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         // a buffer of the measured size) is unsound on an array another thread
         // may write: a longer value between the passes overruns the measure.
         // The one-pass joiner below converts each lane as it reads it.
-        if (!g_jscConfig.gilOffProcess) [[likely]] {
+        if (!processIsGILOff()) [[likely]] {
             JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
             if (auto joined = onlyInt32sJoiner.tryJoin<Int32Shape>(globalObject, data, length))
                 RELEASE_AND_RETURN(scope, joined);
@@ -358,7 +358,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         for (; i < length; ++i) {
             JSValue value = data[i].get();
             if (value) [[likely]] {
-                if (g_jscConfig.gilOffProcess && !value.isInt32()) [[unlikely]]
+                if (processIsGILOff() && !value.isInt32()) [[unlikely]]
                     goto generalCase; // SPEC-objectmodel I41: the owner relabelled Int32->Contiguous under us.
                 joiner.appendNumber(vm, value.asInt32());
             } else {
@@ -378,12 +378,12 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         unsigned originalLength = butterfly.publicLength();
         if (length > originalLength) [[unlikely]]
             break;
-        if (Options::useTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
+        if (processUsesTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
             break;
         auto data = butterfly.contiguous().data();
         bool holesKnownToBeOK = false;
 
-        if (!g_jscConfig.gilOffProcess) [[likely]] { // Two-pass joiner: see the Int32 case.
+        if (!processIsGILOff()) [[likely]] { // Two-pass joiner: see the Int32 case.
             JSOnlyStringsAndInt32sJoiner onlyStringsJoiner(separator);
             if (auto joined = onlyStringsJoiner.tryJoin<ContiguousShape>(globalObject, data, length))
                 RELEASE_AND_RETURN(scope, joined);
@@ -423,7 +423,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *snapshotButterfly;
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
-        if (Options::useTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
+        if (processUsesTaggedButterflies() && length > butterfly.vectorLength()) [[unlikely]]
             break;
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });

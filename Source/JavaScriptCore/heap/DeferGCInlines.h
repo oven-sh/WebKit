@@ -31,13 +31,13 @@
 
 namespace JSC {
 
-inline DeferGC::DeferGC(VM& vm)
+ALWAYS_INLINE DeferGC::DeferGC(VM& vm)
     : m_vm(vm)
 {
     m_vm.heap.incrementDeferralDepth();
 }
 
-inline DeferGC::~DeferGC()
+ALWAYS_INLINE DeferGC::~DeferGC()
 {
     if constexpr (validateDFGDoesGC)
         m_vm.verifyCanGC();

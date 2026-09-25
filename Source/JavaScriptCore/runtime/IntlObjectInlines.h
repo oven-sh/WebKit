@@ -62,7 +62,7 @@ static constexpr uint32_t computeTwoCharacters16Code(const StringType& string)
 template<typename Slot, typename IsUnset, typename Compute>
 ALWAYS_INLINE Slot& intlLazyField(const JSCell& owner, Slot& slot, const IsUnset& isUnset, const Compute& compute)
 {
-    if (!g_jscConfig.gilOffProcess) [[likely]] {
+    if (!processIsGILOff()) [[likely]] {
         if (isUnset(slot))
             slot = compute();
         return slot;
@@ -105,7 +105,7 @@ ALWAYS_INLINE typename Pointer::element_type* intlLazyObject(const JSCell& owner
 template<typename Slot>
 ALWAYS_INLINE Slot intlLazyFieldSnapshot(const JSCell& owner, const Slot& slot)
 {
-    if (!g_jscConfig.gilOffProcess) [[likely]]
+    if (!processIsGILOff()) [[likely]]
         return slot;
     Locker locker { const_cast<JSCell&>(owner).cellLock() };
     return slot;

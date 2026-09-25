@@ -237,6 +237,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
 
 unsigned sizeOfVarargs(JSGlobalObject* globalObject, JSValue arguments, uint32_t firstVarArgOffset)
 {
+    JSC_PER_THREADS_MODE_BEGIN(unsigned)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -285,6 +286,7 @@ unsigned sizeOfVarargs(JSGlobalObject* globalObject, JSValue arguments, uint32_t
         length = 0;
     
     return length;
+    JSC_PER_THREADS_MODE_END
 }
 
 unsigned sizeFrameForForwardArguments(JSGlobalObject* globalObject, CallFrame* callFrame, VM& vm, unsigned numUsedStackSlots)
@@ -301,6 +303,7 @@ unsigned sizeFrameForForwardArguments(JSGlobalObject* globalObject, CallFrame* c
 
 unsigned sizeFrameForVarargs(JSGlobalObject* globalObject, CallFrame* callFrame, VM& vm, JSValue arguments, unsigned numUsedStackSlots, uint32_t firstVarArgOffset)
 {
+    JSC_PER_THREADS_MODE_BEGIN(unsigned)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned length = sizeOfVarargs(globalObject, arguments, firstVarArgOffset);
@@ -313,6 +316,7 @@ unsigned sizeFrameForVarargs(JSGlobalObject* globalObject, CallFrame* callFrame,
     }
     
     return length;
+    JSC_PER_THREADS_MODE_END
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -1436,6 +1440,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
 
 JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSValue)
     VM& vm = this->vm();
     if (callData.type == CallData::Type::JS || !callData.native.isBoundFunction)
         return executeCallImpl(vm, function, callData, thisValue, context, args);
@@ -1454,6 +1459,7 @@ JSValue Interpreter::executeCall(JSObject* function, const CallData& callData, J
         return executeCallImpl(vm, targetFunction, targetFunctionCallData, boundThis, context, args);
     }
     return executeBoundCall(vm, boundFunction, context, args);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)

@@ -57,7 +57,7 @@ public:
         // m_codeBlock) when this object dies; removeOnDestruction acquires
         // the link lock unconditionally gilOff. ~CallLinkInfoBase's own
         // gilOff delist would run only AFTER this store — too late.
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             removeOnDestruction();
         WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed); // THREADS: see unlinkOrUpgradeImpl.
     }

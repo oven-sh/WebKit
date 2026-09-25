@@ -59,7 +59,7 @@ namespace JSC {
 // out-of-line TLS lookup in isJSThreadCurrent() is never reached.
 ALWAYS_INLINE bool throwIfWebAssemblyRefusedOnSpawnedThread(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         if (ThreadManager::isJSThreadCurrent()) {
             throwTypeError(globalObject, scope, "WebAssembly is not available on spawned JS Thread instances (SD7)"_s);
             return true;

@@ -144,7 +144,7 @@ public:
         // bench later shows this matters, the optimized variant (branch-retarget
         // publish inside STW + retired-code epoch release) is the chartered
         // follow-up, not a flake fix.
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return;
 
         auto linkJumpToOutOfLineSnippet = [&] () {

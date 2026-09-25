@@ -1867,7 +1867,7 @@ private:
                 // callWebAssemblyFunction (and DFG/FTL code can run on
                 // spawned Threads, where carrier-published wasm stack
                 // limits are the wrong stack).
-                if (Options::useJSThreads()) [[unlikely]]
+                if (processUsesJSThreads()) [[unlikely]]
                     break;
                 if (m_node->op() != Call && m_node->op() != TailCallInlinedCaller) // FIXME: We should support tail-call.
                     break;

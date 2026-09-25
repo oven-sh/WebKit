@@ -63,7 +63,7 @@ ALWAYS_INLINE JSValue Structure::storedPrototype(const JSObject* object) const
     // any offset-bearing storage deref; the sampled structure's own
     // m_prototype is immutable, so this read is stable). Flag-off: assert
     // unchanged.
-    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || Options::useTaggedButterflies() || object->structure() == this);
+    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || processUsesTaggedButterflies() || object->structure() == this);
     if (hasMonoProto())
         return storedPrototype();
     return object->getDirect(knownPolyProtoOffset);
@@ -73,7 +73,7 @@ ALWAYS_INLINE JSObject* Structure::storedPrototypeObject(const JSObject* object)
 {
     // See storedPrototype(object) above: sampled-structure readers are legal
     // under useJSThreads (SPEC-objectmodel M7/I24); flag-off unchanged.
-    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || Options::useTaggedButterflies() || object->structure() == this);
+    ASSERT(isCompilationThread() || Thread::mayBeGCThread() || processUsesTaggedButterflies() || object->structure() == this);
     if (hasMonoProto())
         return storedPrototypeObject();
     JSValue proto = object->getDirect(knownPolyProtoOffset);
@@ -118,7 +118,7 @@ ALWAYS_INLINE PropertyOffset Structure::get(VM& vm, PropertyName propertyName, u
     // the writers this excludes are other mutators, which cannot run while
     // this thread holds the GIL inside a C++ property operation, so the
     // flag-off walk below is used; only a GIL-off process takes this arm.
-    if (Options::useJSThreads() && g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processUsesJSThreads() && processIsGILOff()) [[unlikely]] {
         // A head structure whose table was stolen by a successor makes
         // getConcurrently walk (and lock) the transition chain on every call.
         // This is a mutator with heap access (flag-off allocates here too), so
@@ -154,7 +154,7 @@ inline bool Structure::hasIndexingHeader(const JSCell* cell) const
 
 inline bool Structure::addTransitionWatchpoint(Watchpoint* watchpoint) const
 {
-    ASSERT(Options::useTaggedButterflies() || transitionWatchpointSetIsStillValid());
+    ASSERT(processUsesTaggedButterflies() || transitionWatchpointSetIsStillValid());
     return m_transitionWatchpointSet.add(watchpoint);
 }
 

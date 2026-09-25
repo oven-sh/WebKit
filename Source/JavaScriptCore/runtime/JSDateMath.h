@@ -121,7 +121,7 @@ private:
     // did. GIL-on / flag-off: the GIL serializes and everything runs on this instance.
     ALWAYS_INLINE DateCache& live()
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return gilOffPerThreadCache();
         return *this;
     }

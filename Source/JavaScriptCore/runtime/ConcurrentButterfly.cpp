@@ -571,8 +571,8 @@ uint64_t lockedTransitionCount() { return s_lockedTransitionCount.load(std::memo
 
 ButterflySpine* convertToSegmentedButterfly(VM& vm, JSObjectWithButterfly* object, Structure* expectedSourceOrNull, Structure* newStructureOrNull, PropertyOffset offset, JSValue value)
 {
-    RELEASE_ASSERT(Options::useTaggedButterflies()); // SPEC-objectmodel G1: nothing is foreign in an untagged process, and generated code there cannot read a spine.
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesTaggedButterflies()); // SPEC-objectmodel G1: nothing is foreign in an untagged process, and generated code there cannot read a spine.
+    RELEASE_ASSERT(processUsesJSThreads());
     s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     RELEASE_ASSERT(offset == invalidOffset || isOutOfLineOffset(offset)); // Inline adds are N2 (tryStructureOnlyTransition), never §4.2 step 4.
@@ -1072,7 +1072,7 @@ enum class TransitionFlavor : uint8_t {
 // DCAS-failure taxonomy (a)-(d); (6) release the cell lock.
 bool trySegmentedTransition(VM& vm, JSObjectWithButterfly* object, Structure* expectedSource, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
@@ -1652,7 +1652,7 @@ static bool clonedTableStillMatchesSource(VM& vm, Structure* source, Structure* 
 
 bool tryStructureOnlyTransition(VM& vm, JSObject* object, Structure* expectedSource, Structure* newStructure, PropertyOffset inlineOffset, JSValue value, const PropertyTable* plannedTable, uint32_t plannedEditCount, bool requireSourceStillUnpinnedIfNoPlan)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     s_lockedTransitionCount.fetch_add(1, std::memory_order_relaxed);
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
@@ -1932,7 +1932,7 @@ bool tryMaterializeCopyOnWriteButterflyForSharedWrite(VM& vm, JSObjectWithButter
     // nobody to serialize with and publishes as flag off does - nuked(S), fence, the tagged word, fence, S' - for the
     // marker and the compiler threads. A writer that is not the word's owner keeps the locked route below (its F2
     // fire ran above; the restart protocol is its own).
-    if (!g_jscConfig.gilOffProcess && !butterflyWriterIsForeign(expectedWord)) {
+    if (!processIsGILOff() && !butterflyWriterIsForeign(expectedWord)) {
         RELEASE_ASSERT(object->structureIDConcurrently().bits() == sourceID.bits());
         RELEASE_ASSERT(butterflyWordAtomic(object)->load(std::memory_order_relaxed) == expectedWord);
         object->nukeStructureAndSetButterfly(vm, sourceID, newButterfly);
@@ -2020,9 +2020,9 @@ bool tryMaterializeCopyOnWriteButterflyForSharedWrite(VM& vm, JSObjectWithButter
 // flat owned by the calling thread (post-CoW materialization), or None.
 void ensureSharedWriteBit(VM& vm, JSObjectWithButterfly* object)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
-    if (!Options::useTaggedButterflies()) [[unlikely]]
+    if (!processUsesTaggedButterflies()) [[unlikely]]
         return; // SPEC-objectmodel G1: every thread is the owner; no word ever needs the SW bit.
 
     while (true) {
@@ -2238,7 +2238,7 @@ void butterflyConcurrentCopyWordsSlow(void* dst, const void* src, size_t bytes)
 
 void materializeCopyOnWriteButterflyConcurrent(VM& vm, JSObjectWithButterfly* object)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     while (true) {
         StructureID id = object->structureIDConcurrently(); // RAW bits (M5): never decode a nuked ID.
@@ -2272,7 +2272,7 @@ void materializeCopyOnWriteButterflyConcurrent(VM& vm, JSObjectWithButterfly* ob
 // §6-ranked lock.
 bool ensureSegmentedOutOfLineCapacity(VM& vm, JSObjectWithButterfly* object, size_t neededCapacitySlots)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     while (true) {
         // Review round 4 (blocker fix): the fresh fragments below are stored
@@ -2379,7 +2379,7 @@ void assertCasButterflyShape(JSObjectWithButterfly* object, uint64_t expectedTag
 // the old payload after the copy - re-CASing the copy would drop it, I21).
 bool casButterfly(JSObjectWithButterfly* object, uint64_t expectedTagged, uint64_t newTagged)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     assertCasButterflyShape(object, expectedTagged, newTagged);
     uint64_t previousWord = butterflyWordAtomic(object)->compareExchangeStrong(expectedTagged, newTagged, std::memory_order_seq_cst);
     return previousWord == expectedTagged;
@@ -2388,7 +2388,7 @@ bool casButterfly(JSObjectWithButterfly* object, uint64_t expectedTagged, uint64
 // §4.6 AS-COPY publication form (T3/I17): see the header comment.
 void publishArrayStorageButterflyLocked(VM& vm, JSObjectWithButterfly* object, Butterfly* newButterfly)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(object->cellLock().isLocked()); // I31/L5: every AS butterfly mutation is cell-locked.
     ASSERT(hasAnyArrayStorage(object->indexingType()));
     ASSERT(newButterfly);
@@ -2413,7 +2413,7 @@ void publishArrayStorageButterflyLocked(VM& vm, JSObjectWithButterfly* object, B
 // growOutOfLineStorageForConcurrentLockedAdd, with a structure publish.
 bool tryArrayStoragePropertyTransition(VM& vm, JSObjectWithButterfly* object, Structure* expectedSource, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(expectedSource && newStructure);
     RELEASE_ASSERT(isOutOfLineOffset(offset)); // Inline AS adds are N2 (tryStructureOnlyTransition); attribute-only reshapes are N2 too.
@@ -2579,7 +2579,7 @@ ALWAYS_INLINE void fillFragmentSlotWithHole(WriteBarrierBase<Unknown>* slot, boo
 // side may still alias the flat allocation - I7).
 bool tryGrowSegmentedVectorLength(VM& vm, JSObjectWithButterfly* object, unsigned newVectorLength)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(newVectorLength <= MAX_STORAGE_VECTOR_LENGTH);
 
@@ -2745,7 +2745,7 @@ bool tryGrowSegmentedVectorLength(VM& vm, JSObjectWithButterfly* object, unsigne
 // dispatch table (T1/T2/§4.8; T5 removed in review round 1).
 bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned length)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(length <= MAX_STORAGE_VECTOR_LENGTH);
 
@@ -2909,7 +2909,7 @@ bool ensureLengthSlowConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned 
 // comment for the dispatch table.
 void shrinkButterflyForSetLengthConcurrent(VM& vm, JSObjectWithButterfly* object, unsigned length)
 {
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     ASSERT(length <= MAX_STORAGE_VECTOR_LENGTH);
     ASSERT(hasContiguous(object->indexingType()) || hasInt32(object->indexingType())
@@ -3019,7 +3019,7 @@ void shrinkButterflyForSetLengthConcurrent(VM& vm, JSObjectWithButterfly* object
 
 JSValue JSObjectWithButterfly::getIndexConcurrent(unsigned i) const
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     if (hasAnyArrayStorage(indexingType())) [[unlikely]] {
         // I31/L5: EVERY runtime AS access - reads included, any SW - holds the
         // cell lock; re-load the word under it (AS-COPY republishes).
@@ -3039,7 +3039,7 @@ JSValue JSObjectWithButterfly::getIndexConcurrent(unsigned i) const
 
 bool JSObjectWithButterfly::putIndexConcurrent(VM& vm, unsigned i, JSValue value)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(value);
 
     while (true) {
@@ -3348,7 +3348,7 @@ JSValue atomicSlotLockFreeLoop(JSGlobalObject* globalObject, VM& vm, JSObject* o
 
 JSValue JSObject::atomicSlotReadModifyWrite(JSGlobalObject* globalObject, UniquedStringImpl* uid, PropertyOffset offset, StructureID expectedStructureID, const AtomicSlotRequest& request, AtomicSlotStatus& status)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(isValidOffset(offset));
     VM& vm = globalObject->vm();
     status = AtomicSlotStatus::Restart;
@@ -3544,7 +3544,7 @@ JSValue JSObject::atomicSlotReadModifyWrite(JSGlobalObject* globalObject, Unique
 
 JSValue JSObject::atomicSlotReadModifyWriteAtIndex(JSGlobalObject* globalObject, unsigned index, const AtomicSlotRequest& request, AtomicSlotStatus& status)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     VM& vm = globalObject->vm();
     status = AtomicSlotStatus::Restart;
     bool isWrite = atomicSlotOperationWrites(request.operation);
@@ -3678,7 +3678,7 @@ JSValue JSObject::atomicSlotReadModifyWriteAtIndex(JSGlobalObject* globalObject,
 // success is linearizable against racing defines.
 ASCIILiteral JSObject::putDirectForAtomicsMissingAdd(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(!parseIndex(propertyName));
     return putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
 }
@@ -3762,7 +3762,7 @@ ASCIILiteral JSObject::putDirectForAtomicsMissingAdd(VM& vm, PropertyName proper
 template<typename Visitor>
 Structure* visitSegmentedButterfly(Visitor& visitor, JSObjectWithButterfly* object, ButterflySpine* spine, StructureID expectedStructureID, Structure* structure, PropertyOffset maxOffset, IndexingType indexingMode)
 {
-    ASSERT(Options::useJSThreads()); // Segmented words cannot exist flag-off (I22).
+    ASSERT(processUsesJSThreads()); // Segmented words cannot exist flag-off (I22).
     ASSERT(spine);
     ASSERT(!expectedStructureID.isNuked());
     ASSERT(structure == expectedStructureID.decode());
@@ -4113,7 +4113,7 @@ void applyForceSegmentedButterfliesStressIfNeeded(VM& vm, JSObjectWithButterfly*
 {
     if (!forceSegmentedButterfliesEnabled()) [[likely]]
         return;
-    if (!Options::useJSThreads())
+    if (!processUsesJSThreads())
         return; // The stress option is meaningless flag-off (I22): no conversion machinery may run.
     ASSERT(vm.currentThreadIsHoldingAPILock());
     RELEASE_ASSERT(!t_cellLocksHeldByConcurrentButterfly); // GT11/O2: the conversion below stops and locks.

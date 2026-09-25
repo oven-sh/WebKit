@@ -1536,3 +1536,66 @@ cycles 1.039 (per test 1.028); first six iterations 1.023. Tier-capped, six iter
 (per test, geometric mean 1.041; instructions 1.052), Baseline 1.010, DFG 1.025. Generated code over all tiers +0.4 % of a
 run; C++ +1.6 %. Start-up of the shell: +2.7 % instructions, +1.4 MB. Peak resident set: single tests +2.2 %; the suite in one
 process 1,801 to 2,164 MB on `main`, 2,163 to 2,716 MB flag off (four pairs of runs).
+
+### 6.15 Thirteenth round: flag off by exact instruction counts
+
+The round measured flag off against `main` (both at `35e8970dfd92`) in two ways: the counters of
+`Tools/threads/perf/flagoff` (main-thread cycles and instructions, the score), whose results are in LANDING-PLAN "Results,
+twelfth and thirteenth rounds", and exact per-function instruction counts of the main thread under callgrind
+(`Tools/threads/perf/flagoff/parity`), which is what every change of the round was decided on. This section is the second.
+
+**Why exact counts.** A sampled instruction profile (`perf record -e instructions`) of this machine put the excess on
+`llint_op_mul` (+6,500 samples) where the two binaries have the same code: the samples skid across calls. Counts under
+callgrind repeat to the instruction when the collector and the JIT are not concurrent; with the concurrent collector the
+write barrier's slow path ran 0.15 M to 209 M instructions in one test across three builds of nearly the same code, which is
+the time at which marking happened to be active and nothing else.
+
+**The interpreter** (`--useJIT=0 --useConcurrentGC=0`, 34 tests, one iteration, 212 G instructions on `main`):
+
+| Tree | Branch / `main` |
+|---|---|
+| after the rebase, before the round | 1.0314 (with the concurrent collector on) |
+| slow paths compiled per mode | 1.0244 (with the concurrent collector on) |
+| + cell allocation, typed arrays, arithmetic profiles, the first functions in place | 1.0120 |
+| + 90 functions by the gate census | 1.0090 |
+| + the slow paths called through the table | 1.0058 |
+| final tree | 1.0014 |
+
+In the final tree a slow path's copy without threads executes the instruction count of `main`'s function (`put_by_val`:
+11,950,893,778 against 11,950,792,844). What is left is the load of the table's address at each slow path call and the
+29 assembly sites that test the Config byte (function prologue, native call trampoline, VM entry).
+
+**Every tier, the suite in one process** (`--useConcurrentJIT=0 --useConcurrentGC=0`, 36 tests, one iteration, 88.6 G
+instructions on `main`; compilation is on the main thread here, so the compilers count):
+
+| Family | Share of `main` | Branch minus `main`, % of the run | % of itself |
+|---|---|---|---|
+| object model, arrays, structures | 4.5 % | +0.34 | +7.4 |
+| optimizing compilers | 29.3 % | +0.23 | +0.8 |
+| collector: marking | 0.6 % | +0.20 | +32.5 |
+| JIT operations | 1.8 % | +0.17 | +9.3 |
+| strings, atoms | 7.1 % | +0.15 | +2.1 |
+| collector: sweeping, allocation slow paths | 1.0 % | +0.10 | +10.7 |
+| parser, bytecode generator, linking | 7.8 % | +0.08 | +1.0 |
+| generated code | 30.4 % | +0.06 | +0.2 |
+| calls, exceptions, entry | 0.9 % | +0.05 | +5.7 |
+| interpreter assembly | 0.5 % | +0.03 | +6.7 |
+| everything else | | +0.03 | |
+| **total** | | **+1.44** (1.0144) | |
+
+The same pass gave 1.0170 before the round's last three batches. The collector's rows are indicative only: collections are
+also started by timers, and time under valgrind is not the program's.
+
+**What the counts found that was not a gate.**
+- `memset` ran 3.4 times `main`'s instructions in the JSON tests: `UnlinkedMetadataTable::link()` zero-filled a table the
+  allocator had zeroed (a rebase's leftover). Removed.
+- The set of structure IDs of `DFG::DesiredWeakReferences` costs 1.6 to 2.0 times `main`'s instructions with the same number
+  of compilations: `Structure` is 128 bytes instead of 112 and the IDs, hashed by identity, fall into an eighth of the
+  buckets. With the structure padded to 144 bytes the cost is 0.94 to 1.02 of `main`'s. Not changed (SPEC-ungil history).
+- A third of the functions that cost more than on `main` have no gate of their own that a copy per mode would remove: they
+  got slower by the entry test and were reverted. JIT operations all have (tracer, throw scope, exception check).
+
+**Threaded modes, exact** (per test, `--useConcurrentJIT=0 --useConcurrentGC=0`, two iterations), the final tree against the
+tree before the round: GIL on 1.0006, GIL off 1.0008. The copy with threads is the function as it was; the wrapper of the
+cell allocation costs a call there (+0.09 % GIL on, +0.24 % GIL off in the allocation rows), the restored inlining gives it
+back elsewhere.

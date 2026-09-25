@@ -65,8 +65,10 @@ void SharedJITStubSet::setDOMJITCode(DOMJITCacheKey key, MacroAssemblerCodeRef<J
 
 RefPtr<InlineCacheHandler> SharedJITStubSet::getSlowPathHandler(AccessType type) const
 {
+    JSC_PER_THREADS_MODE_BEGIN(RefPtr<InlineCacheHandler>)
     ThreadsModeLocker<Lock> locker { m_lock };
     return m_slowPathHandlers[static_cast<unsigned>(type)];
+    JSC_PER_THREADS_MODE_END
 }
 
 void SharedJITStubSet::setSlowPathHandler(AccessType type, Ref<InlineCacheHandler> handler)

@@ -76,7 +76,7 @@ void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
         // list (no-op). World-stopped repatching has precedent in row 2
         // (resetStubAsJumpInAccess). Flag-off: byte-identical (unlink stays
         // at destructor time). THREADS-INTEGRATE(jit)
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
         return true;
     });

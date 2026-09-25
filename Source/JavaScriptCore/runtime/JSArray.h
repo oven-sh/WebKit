@@ -66,7 +66,8 @@ protected:
 
 public:
     inline static JSArray* tryCreate(VM&, Structure*, unsigned initialLength = 0);
-    inline static JSArray* tryCreate(VM&, Structure*, unsigned initialLength, unsigned vectorLengthHint);
+    ALWAYS_INLINE static JSArray* tryCreate(VM&, Structure*, unsigned initialLength, unsigned vectorLengthHint);
+    template<bool threaded> inline static JSArray* tryCreatePerThreadsMode(VM&, Structure*, unsigned initialLength, unsigned vectorLengthHint); // ThreadsModePage.h
     inline static JSArray* create(VM&, Structure*, unsigned initialLength = 0);
     static JSArray* createWithButterfly(VM&, GCDeferralContext*, Structure*, Butterfly*);
 
@@ -84,7 +85,9 @@ public:
     //     otherwise the caller can provide a null GCDefferalContext*.
     //   - Provide a local stack instance of ObjectInitializationScope at the call site.
     //
-    JS_EXPORT_PRIVATE static JSArray* tryCreateUninitializedRestricted(ObjectInitializationScope&, GCDeferralContext*, Structure*, unsigned initialLength);
+    // Compiled once per threads mode (ThreadsModePage.h).
+    static ALWAYS_INLINE JSArray* tryCreateUninitializedRestricted(ObjectInitializationScope& argument0, GCDeferralContext* argument1, Structure* argument2, unsigned initialLength) { return JSC_CALL_PER_THREADS_MODE(tryCreateUninitializedRestrictedPerThreadsMode, argument0, argument1, argument2, initialLength); }
+    template<bool threaded> JS_EXPORT_PRIVATE static JSArray* tryCreateUninitializedRestrictedPerThreadsMode(ObjectInitializationScope& argument0, GCDeferralContext* argument1, Structure* argument2, unsigned initialLength);
     static JSArray* tryCreateUninitializedRestricted(ObjectInitializationScope& scope, Structure* structure, unsigned initialLength)
     {
         return tryCreateUninitializedRestricted(scope, nullptr, structure, initialLength);

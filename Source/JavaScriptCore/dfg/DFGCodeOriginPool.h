@@ -61,7 +61,7 @@ public:
     // are rare and bounded by the free list). Flag-off: the plain Vector.
     CodeOrigin get(unsigned index)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             return WTF::atomicLoad(&m_published, std::memory_order_acquire)[index];
         return m_codeOrigins[index];
     }

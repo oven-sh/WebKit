@@ -169,8 +169,12 @@ void initialize()
 
     // With the flag set the gated opcodes (get_by_id, put_by_id, the calls, ...) run their threaded bodies; a process without it
     // runs `main`'s and executes no gate test.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         llint_threaded_entry(opcodeMap, opcodeMapWide16, opcodeMapWide32);
+
+    // The slow paths the interpreter calls through the table: the copies for this process's threads mode.
+    installLLIntSlowPaths(g_opcodeConfig.slowPaths);
+    installCommonSlowPaths(g_opcodeConfig.slowPaths);
 
 #if ENABLE(WEBASSEMBLY)
     if (Options::useWasm())

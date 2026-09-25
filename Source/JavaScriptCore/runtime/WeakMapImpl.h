@@ -253,7 +253,7 @@ public:
     template<typename Func>
     ALWAYS_INLINE decltype(auto) withLockIfGILOff(const Func& func)
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             Locker locker { cellLock() };
             return func();
         }

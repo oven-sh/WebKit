@@ -294,11 +294,11 @@ public:
     // set watchpoints that we believe will actually be fired.
     void startWatching()
     {
-        ASSERT(Options::useJSThreads() || m_state.loadRelaxed() != IsInvalidated);
+        ASSERT(processUsesJSThreads() || m_state.loadRelaxed() != IsInvalidated);
         if (m_state.loadRelaxed() == IsWatched)
             return;
         WTF::storeStoreFence();
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // IsInvalidated is terminal: a fire on another mutator may have
             // reached it since the check above, and a plain store would re-arm
             // the set over that fire.
@@ -331,7 +331,7 @@ public:
     
     void invalidate(VM& vm, const FireDetail& detail)
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // Another mutator's add() can arm the set right up to the moment
             // the terminal state is claimed, so claim it by CAS and fire
             // whenever the claim finds the set armed; a watchpoint linked to
@@ -526,7 +526,7 @@ public:
             if (decodeState(data) == IsInvalidated) {
                 // Only flag-on: a fire on another mutator reached the terminal
                 // state after the caller's own check.
-                ASSERT(Options::useJSThreads());
+                ASSERT(processUsesJSThreads());
                 return;
             }
             if (tryStoreThinState(data, IsWatched))
@@ -719,7 +719,7 @@ private:
     {
         ASSERT(isThin(data));
         uintptr_t desired = encodeState(state) | (data & ClassBFlag);
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!processUsesJSThreads()) [[likely]] {
             m_data.storeRelaxed(desired);
             return true;
         }

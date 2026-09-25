@@ -185,7 +185,7 @@ JITGetByIdGenerator::JITGetByIdGenerator(
 // is the high half of the packed word.
 static CCallHelpers::Jump emitPackedInlineAccessCheckThreaded(CCallHelpers& jit, GPRReg propertyCacheGPR, GPRReg baseGPR, GPRReg scratch1GPR, GPRReg wordGPR)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(wordGPR != InvalidGPRReg && wordGPR != scratch1GPR && wordGPR != baseGPR && wordGPR != propertyCacheGPR);
     jit.load64(CCallHelpers::Address(propertyCacheGPR, PropertyInlineCache::offsetOfPackedInlineAccessSelfWord()), wordGPR);
     jit.load32(CCallHelpers::Address(baseGPR, JSCell::structureIDOffset()), scratch1GPR);
@@ -207,7 +207,7 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
     switch (cacheType) {
     case CacheType::GetByIdSelf: {
 #if CPU(LITTLE_ENDIAN)
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
             // scratch2GPR (never resultGPR: it may alias baseGPR) holds the word.
             outSlowCases.append(emitPackedInlineAccessCheckThreaded(jit, propertyCacheGPR, baseGPR, scratch1GPR, scratch2GPR));
@@ -235,7 +235,7 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         break;
     }
     case CacheType::GetByIdPrototype: {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit section 4.2 (Task 4): holder-bearing inlined forms are
             // disabled flag-on - m_inlineHolder cannot pack into the 64-bit
             // unit, and a separate holder load could pair a fresh
@@ -254,7 +254,7 @@ static void generateGetByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
         break;
     }
     case CacheType::ArrayLength: {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit section 5.5 (Task 8): apply the READ choke point to
             // the length load (ArrayLength is reachable for AS arrays, so the
             // conservative SW=1 => handler-dispatch form is used).
@@ -365,7 +365,7 @@ static void generatePutByIdInlineAccessBaselineDataIC(CCallHelpers& jit, GPRReg 
 {
     UNUSED_PARAM(scratch3GPR);
 #if CPU(LITTLE_ENDIAN)
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Single 64-bit load of {byIdSelfOffset, structureID} (section 4.2/I6).
         // scratch2GPR may alias baseGPR (Baseline passes base as the
         // storeProperty scratch), so the packed word lives in scratch3GPR.

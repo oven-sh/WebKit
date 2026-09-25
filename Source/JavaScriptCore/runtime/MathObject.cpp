@@ -370,6 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(mathProtoFuncTan, (JSGlobalObject* globalObject, CallFr
 
 JSC_DEFINE_HOST_FUNCTION(mathProtoFuncIMul, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int32_t left = callFrame->argument(0).toInt32(globalObject);
@@ -377,6 +378,7 @@ JSC_DEFINE_HOST_FUNCTION(mathProtoFuncIMul, (JSGlobalObject* globalObject, CallF
     scope.release();
     int32_t right = callFrame->argument(1).toInt32(globalObject);
     return JSValue::encode(jsNumber(left * right));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(mathProtoFuncACosh, (JSGlobalObject* globalObject, CallFrame* callFrame))

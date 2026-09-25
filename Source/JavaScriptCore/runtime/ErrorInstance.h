@@ -177,6 +177,10 @@ protected:
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_stackStringIsFramesOnly : 1;
+    JSValue stackWithHeader(VM&, String&& frames);
+#endif
     // GIL-off: which thread materializes the lazy properties (ErrorInstance.cpp,
     // materializeErrorInfoIfNeededGILOff). Other threads read this byte, never the
     // bit-field above, while a materialization may be running.

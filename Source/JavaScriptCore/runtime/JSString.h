@@ -69,6 +69,7 @@ JSString* jsString(VM&, Ref<StringImpl>&&);
 JSString* jsSingleCharacterString(VM&, char16_t);
 JSString* jsSingleCharacterString(VM&, Latin1Character);
 JSString* jsSubstring(VM&, const String&, unsigned offset, unsigned length);
+ALWAYS_INLINE JSString* jsSubstring(JSGlobalObject*, VM&, JSString*, unsigned offset, unsigned length);
 
 // Non-trivial strings are two or more characters long.
 // These functions are faster than just calling jsString.
@@ -1172,12 +1173,14 @@ inline GCOwnedDataScope<const String&> JSString::tryGetValue(bool allocationAllo
 
 inline JSString* JSString::getIndex(JSGlobalObject* globalObject, unsigned i)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(canGetIndex(i));
     auto view = this->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return jsSingleCharacterString(vm, view[i]);
+    JSC_PER_THREADS_MODE_END
 }
 
 // (1) Cost of making JSString    : sizeof(JSString) (for new string) + sizeof(StringImpl header) + totalLength
@@ -1323,7 +1326,7 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSString* base, unsigned offset, uns
     }
 }
 
-inline JSString* jsSubstring(JSGlobalObject* globalObject, VM& vm, JSString* base, unsigned offset, unsigned length)
+ALWAYS_INLINE JSString* jsSubstring(JSGlobalObject* globalObject, VM& vm, JSString* base, unsigned offset, unsigned length)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* result = tryJSSubstringImpl(vm, base, offset, length);

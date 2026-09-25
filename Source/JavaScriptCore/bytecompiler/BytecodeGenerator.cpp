@@ -3581,6 +3581,7 @@ RegisterID* BytecodeGenerator::emitNewArrayBuffer(RegisterID* dst, JSCellButterf
 
 RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elements, unsigned length, IndexingType recommendedIndexingType)
 {
+    JSC_PER_THREADS_MODE_BEGIN(RegisterID*)
     Vector<RefPtr<RegisterID>, 16, UnsafeVectorOverflow> argv;
     for (ElementNode* n = elements; n; n = n->next()) {
         if (!length)
@@ -3595,6 +3596,7 @@ RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elemen
     ASSERT(!length);
     OpNewArray::emit(this, dst, argv.size() ? argv[0].get() : VirtualRegister { 0 }, argv.size(), recommendedIndexingType);
     return dst;
+    JSC_PER_THREADS_MODE_END
 }
 
 RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements)

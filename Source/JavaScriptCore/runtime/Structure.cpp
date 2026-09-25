@@ -75,7 +75,7 @@ void Structure::checkOffsetConsistency(PropertyTable* propertyTable, const Detai
     // (checkConsistency) or with a thread-local table
     // (materializePropertyTable), where the dictionary condition below is the
     // only remaining legal-transient case. Flag-off: unchanged (I22).
-    if (Options::useTaggedButterflies() && isDictionary()) [[unlikely]]
+    if (processUsesTaggedButterflies() && isDictionary()) [[unlikely]]
         return;
 
     unsigned totalSize = propertyTable->propertyStorageSize();
@@ -110,7 +110,7 @@ inline void StructureTransitionTable::setSingleTransition(VM& vm, JSCell* owner,
 {
     ASSERT(isUsingSingleSlot());
     intptr_t newData = std::bit_cast<intptr_t>(structure) | UsingSingleSlotFlag;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // TSAN family structure-fields (UG §K publication): this is the
         // publish store of a freshly constructed transition target. Mutator
         // lookups hold m_lock flag-on (L6), but GC concurrent-marking reads
@@ -137,6 +137,7 @@ bool StructureTransitionTable::contains(PointerKey rep, unsigned attributes, Tra
 
 void StructureTransitionTable::add(VM& vm, JSCell* owner, Structure* structure)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // SPEC-objectmodel Task 3b (SPEC-vmstate §5.3): allocating transition-table
     // insertions (single-slot -> TransitionMap inflation, map node allocation)
     // run under the process-global structure-allocation lock. Every caller in
@@ -150,7 +151,7 @@ void StructureTransitionTable::add(VM& vm, JSCell* owner, Structure* structure)
     // that lock first (adopting a racing winner instead of inserting), so a
     // duplicate-keyed insert here would silently clobber a published
     // transition — a logic error.
-    ASSERT(!Options::useTaggedButterflies() || !getMatching(structure));
+    ASSERT(!processUsesTaggedButterflies() || !getMatching(structure));
 
     if (isUsingSingleSlot()) {
         Structure* existingTransition = trySingleTransition();
@@ -169,6 +170,7 @@ void StructureTransitionTable::add(VM& vm, JSCell* owner, Structure* structure)
 
     // Add the structure to the map.
     map()->set(StructureTransitionTable::Hash::createKeyFromStructure(structure), structure);
+    JSC_PER_THREADS_MODE_END
 }
 
 void Structure::dumpStatistics()
@@ -290,7 +292,7 @@ Structure::Structure(VM& vm, StructureVariant variant, JSGlobalObject* globalObj
     // the release so readers that reach this Structure through the publish
     // see WebAssemblyGC, never the delegate's transient Normal. Flag-off
     // codegen unchanged (predicted-not-taken branch only).
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         WTF::storeStoreFence();
 }
 
@@ -334,7 +336,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     // on the main thread; never notTTLTID). Flag-off the field keeps the 0
     // stored above and is never consulted (I22/E3), so skip the out-of-line
     // currentButterflyTID() call (cross-DSO + TLS read) entirely.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         m_transitionThreadLocalWatchpointSet.startWatching();
         m_writeThreadLocalWatchpointSet.startWatching();
         tsanRelaxedStore(m_transitionThreadLocalTID, currentButterflyTID());
@@ -384,7 +386,7 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     // this structure's m_lock. All constructor stores must be ordered before
     // any such publish store — the missing release the triage ruling calls
     // out. Gated so the flag-off path keeps today's codegen (no dmb on arm64).
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         WTF::storeStoreFence();
 }
 
@@ -409,7 +411,7 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     // Flag-off: keep the 0 stored above (TID) and both TTL sets' inert
     // ClearWatchpoint (I22), skip the out-of-line TLS read. Flag-on: start
     // watching both TTL sets (§5).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         m_transitionThreadLocalWatchpointSet.startWatching();
         m_writeThreadLocalWatchpointSet.startWatching();
         tsanRelaxedStore(m_transitionThreadLocalTID, currentButterflyTID());
@@ -451,7 +453,7 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
 
     // Publication release — see the 7-argument constructor above.
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         WTF::storeStoreFence();
 }
 
@@ -514,7 +516,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     // optimizations on IsStillValid/IsValidAndWatched, so born-invalid merely
     // disables thread-locality elision for the new shape, exactly as F4
     // intends for a shared family. Flag-off unchanged (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (previous->transitionThreadLocalIsStillValid()) [[likely]]
             m_transitionThreadLocalWatchpointSet.startWatching();
         else
@@ -583,7 +585,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     ASSERT(WTF::roundUpToMultipleOf<Structure::atomSize>(this) == this);
 
     // Publication release — see the 7-argument constructor above.
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         WTF::storeStoreFence();
 }
 
@@ -708,7 +710,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     // stamp". Locked readers never saw the half-baked table either way (we
     // hold m_lock across both orders). Flag-off: today's publish-first
     // order, byte-identical (I22).
-    bool deferPublicationUntilExact = Options::useTaggedButterflies() && setPropertyTable;
+    bool deferPublicationUntilExact = processUsesTaggedButterflies() && setPropertyTable;
     if (setPropertyTable && !deferPublicationUntilExact)
         this->setPropertyTable(vm, table);
 
@@ -746,7 +748,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     // Flag-off: today's nextOffset()/addDeletedOffset() replay, unchanged
     // (I22 — replayFromRecord is the latched single predicted-false branch;
     // the local Vector is the same I22-noise class as `structures` above).
-    const bool replayFromRecord = Options::useTaggedButterflies();
+    const bool replayFromRecord = processUsesTaggedButterflies();
     Vector<PropertyOffset, 8> replayDeletedOffsets;
     if (replayFromRecord) [[unlikely]] {
         // Drain the COPIED source table's combined Quarantined+Reusable into
@@ -881,6 +883,7 @@ Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, Proper
 
 Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    JSC_PER_THREADS_MODE_BEGIN(Structure*)
     JSTHREADS_COUNT(structureTransition);
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
@@ -897,7 +900,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     // adopts the winner's PropertyAddition instead -- flag-on-only heuristic
     // divergence, intentionally accepted.
     // Flag-off: today's debug assert, bit-identical behavior (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (Structure* existing = addPropertyTransitionToExistingStructureConcurrently(structure, propertyName.uid(), attributes, offset)) {
             existing->checkOffsetConsistency();
             return existing;
@@ -1006,7 +1009,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
         // stole the source's table, the source simply rematerializes from its
         // transition chain on demand. The winner's offset is authoritative
         // (deleted-offset reuse can make the racers' offsets diverge).
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 validateOffset(existing->transitionOffset(), existing->inlineCapacity());
                 offset = existing->transitionOffset();
@@ -1019,6 +1022,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->checkOffsetConsistency();
     structure->checkOffsetConsistency();
     return transition;
+    JSC_PER_THREADS_MODE_END
 }
 
 Structure* Structure::removePropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, PropertyOffset& offset, DeferredStructureTransitionWatchpointFire* deferred)
@@ -1056,7 +1060,7 @@ Structure* Structure::removePropertyTransitionFromExistingStructure(Structure* s
     // SPEC-objectmodel L6(i)/I37 (Task 3c): flag-on, mutator transition-table
     // lookups hold the source's m_lock — route to the Concurrently variant.
     // Flag-off: today's lock-free lookup (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         return removePropertyTransitionFromExistingStructureConcurrently(structure, propertyName, offset);
     unsigned attributes = 0;
     if (structure->getConcurrently(propertyName.uid(), attributes) == invalidOffset)
@@ -1108,7 +1112,7 @@ Structure* Structure::addPropertyTransitionToExistingStructureConcurrently(Struc
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
     offset = invalidOffset;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (!structure->hasBeenDictionary()) [[likely]] {
             if (Structure* existingTransition = structure->m_transitionTable.tryGetSingleSlotConcurrently(uid, attributes, TransitionKind::PropertyAddition)) [[likely]] {
                 validateOffset(existingTransition->transitionOffset(), existingTransition->inlineCapacity());
@@ -1135,7 +1139,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     // locked dual-check before m_transitionTable.add() below remains the
     // guard for the window between this recheck and the insert.
     // Flag-off: today's debug assert, bit-identical behavior (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (Structure* existing = removePropertyTransitionFromExistingStructureConcurrently(structure, propertyName, offset)) {
             existing->checkOffsetConsistency();
             return existing;
@@ -1207,7 +1211,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
         // SPEC-objectmodel L6/I37 (Task 3c): dual-check under m_lock; see
         // addNewPropertyTransition. The winner's offset is authoritative.
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 validateOffset(existing->transitionOffset(), existing->inlineCapacity());
                 offset = existing->transitionOffset();
@@ -1235,7 +1239,7 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
         // SPEC-objectmodel L6(i)/I37 (Task 3c): flag-on, this mutator
         // transition-table lookup holds the source's m_lock (released at the
         // end of this block, before any allocation). Flag-off: no lock (I22).
-        ConcurrentJSLocker locker(Options::useTaggedButterflies() ? &structure->lock() : nullptr);
+        ConcurrentJSLocker locker(processUsesTaggedButterflies() ? &structure->lock() : nullptr);
         if (Structure* existingTransition = structure->m_transitionTable.get(key, 0, TransitionKind::ChangePrototype)) {
             ASSERT(!existingTransition->hasPolyProto());
             existingTransition->checkOffsetConsistency();
@@ -1274,7 +1278,7 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
         // addNewPropertyTransition. (Key: prototype object + ChangePrototype —
         // transition->storedPrototype() was set above, so getMatching mirrors
         // the lookup at the top of this function.)
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 ASSERT(!existing->hasPolyProto());
                 existing->checkOffsetConsistency();
@@ -1336,7 +1340,7 @@ Structure* Structure::attributeChangeTransitionToExistingStructure(Structure* st
     ASSERT(!isCompilationThread());
     // SPEC-objectmodel L6(i)/I37 (Task 3c): flag-on, mutator transition-table
     // lookups hold the source's m_lock — route to the Concurrently variant.
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         return attributeChangeTransitionToExistingStructureConcurrently(structure, propertyName, attributes, offset);
     return attributeChangeTransitionToExistingStructureImpl(structure, propertyName, attributes, offset);
 }
@@ -1425,7 +1429,7 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
         // SPEC-objectmodel L6/I37 (Task 3c): dual-check under m_lock; see
         // addNewPropertyTransition.
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 validateOffset(existing->transitionOffset(), existing->inlineCapacity());
                 existing->checkOffsetConsistency();
@@ -1516,7 +1520,7 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm, Structure* tr
     // stolen/cloned/materialized result is PRIVATE to the not-yet-published
     // transition; the caller may mutate it lock-free until its new Structure
     // publishes. Flag-off: clone without the lock.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         {
             GCSafeConcurrentJSLocker locker(m_lock, vm);
             if (PropertyTable* result = propertyTableOrNull()) {
@@ -1555,13 +1559,14 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm, Structure* tr
 
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    JSC_PER_THREADS_MODE_BEGIN(Structure*)
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
     if (!structure->isDictionary()) {
         // SPEC-objectmodel L6(i)/I37 (Task 3c): flag-on, this mutator
         // transition-table lookup holds the source's m_lock. Flag-off: no
         // lock (I22).
-        ConcurrentJSLocker locker(Options::useTaggedButterflies() ? &structure->lock() : nullptr);
+        ConcurrentJSLocker locker(processUsesTaggedButterflies() ? &structure->lock() : nullptr);
         if (Structure* existingTransition = structure->m_transitionTable.get(nullptr, 0, transitionKind)) {
             ASSERT(existingTransition->transitionKind() == transitionKind);
             ASSERT(existingTransition->indexingModeIncludingHistory() == indexingModeIncludingHistory);
@@ -1649,7 +1654,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         Locker locker { structure->m_lock };
         // SPEC-objectmodel L6/I37 (Task 3c): dual-check under m_lock; see
         // addNewPropertyTransition. (Key: null pointer + transitionKind.)
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 ASSERT(existing->transitionKind() == transitionKind);
                 ASSERT(existing->indexingModeIncludingHistory() == indexingModeIncludingHistory);
@@ -1662,6 +1667,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
 
     transition->checkOffsetConsistency();
     return transition;
+    JSC_PER_THREADS_MODE_END
 }
 
 // In future we may want to cache this property.
@@ -1674,7 +1680,7 @@ bool Structure::isSealed(VM& vm)
     // (isSealed iterates every entry's attributes) holds m_lock; the loop
     // retries if a racing transition stole the table between materialization
     // and lock acquisition. Flag-off: today's lock-free walk (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
             if (!table)
@@ -1698,7 +1704,7 @@ bool Structure::isFrozen(VM& vm)
         return false;
 
     // SPEC-objectmodel L6(iii) (Task 3c): see isSealed above.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
             if (!table)
@@ -1738,7 +1744,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     // sharing is UNDETECTABLE, so the only sound flag-on choice is the stop;
     // flatten is rare and already expensive, and genuinely owner-local
     // objects keep their TTL sets (the firing below stays conditional).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (vm.gilOff())
             return flattenDictionaryStructureByTransitionConcurrent(vm, object);
         return flattenDictionaryStructureUnderStop(vm, object);
@@ -1853,7 +1859,7 @@ Structure* Structure::flattenDictionaryStructureByTransitionConcurrent(VM& vm, J
 
 bool Structure::flattenTriggerIsShared(JSObject* object) const
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     // Shared <=> either TTL set has fired (some instance went notTTLTID or
     // SW=1 - I11/I12), or this object's own butterfly word is shared-written or
     // segmented. The word checks are belt-and-braces: F1/F2 fire the sets
@@ -1874,7 +1880,7 @@ bool Structure::flattenTriggerIsShared(JSObject* object) const
 // dereferenced only when flat (JSObject::butterfly() contract).
 Structure::FlattenShrinkPlan Structure::flattenShrinkPlan(JSObject* object)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     FlattenShrinkPlan plan;
     uint64_t word = object->taggedButterflyWord();
     if (isSegmentedButterfly(word))
@@ -1911,7 +1917,7 @@ Structure::FlattenShrinkPlan Structure::flattenShrinkPlan(JSObject* object)
 
 Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* object)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
 
     // O4: stop-window closures never allocate - the scratch buffer and the
     // shrunk butterfly the impl's shift leg publishes are pre-allocated out
@@ -2002,7 +2008,7 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
 
     // Loaded once: flag-on the word cannot change underneath us (unshared
     // thread-local object on the fast path; world stopped on the shared path).
-    const bool objectIsSegmented = Options::useTaggedButterflies() && isSegmentedButterfly(object->taggedButterflyWord());
+    const bool objectIsSegmented = processUsesTaggedButterflies() && isSegmentedButterfly(object->taggedButterflyWord());
 
     // The DeferGC precedes the cell lock (O1): the GCSafeConcurrentJSLocker
     // below would otherwise end its own deferral under that lock, and the
@@ -2025,7 +2031,7 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
     // This is the only case we shrink butterfly in this function. We should take a cell lock to protect against concurrent access to the butterfly.
     // SPEC-objectmodel L3/L4 (§6): flag-on, ALL dictionary-mode storage access
     // is serialized by the cell lock, so take it unconditionally there.
-    if (beforeOutOfLineCapacity != afterOutOfLineCapacity || Options::useTaggedButterflies())
+    if (beforeOutOfLineCapacity != afterOutOfLineCapacity || processUsesTaggedButterflies())
         cellLocker = Locker { object->cellLock() };
 
     ConcurrentJSLocker locker(m_lock);
@@ -2037,7 +2043,7 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
     // revalidation could observe (see flattenDictionaryStructure). Bail out
     // (nullptr) BEFORE any mutation if a caller ever reaches here unstopped;
     // locks are released by the destructors.
-    if (Options::useTaggedButterflies() && !butterflyWorldIsStopped(vm)) [[unlikely]]
+    if (processUsesTaggedButterflies() && !butterflyWorldIsStopped(vm)) [[unlikely]]
         return nullptr;
 
     object->setStructureIDDirectly(id().nuke());
@@ -2100,7 +2106,7 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
         // If the object had a Butterfly but after flattening/compacting we no longer have need of it,
         // we need to zero it out because the collector depends on the Structure to know the size for copying.
         if (!afterOutOfLineCapacity && !this->hasIndexingHeader(object)) {
-            if (Options::useTaggedButterflies()) [[unlikely]] {
+            if (processUsesTaggedButterflies()) [[unlikely]] {
                 // r47 manifest-7 audit escape #3 (SCALEBENCH §47): we are
                 // world-stopped + cell-locked here (asserted above), so the
                 // word cannot move. setButterfly()'s owner-only
@@ -2184,7 +2190,7 @@ void Structure::fireWriteThreadLocal(VM& vm, const char* reason)
 
 void Structure::fireTTLWatchpointSetsAfterPinning(VM& vm, const Structure* source)
 {
-    if (!Options::useTaggedButterflies()) [[likely]]
+    if (!processUsesTaggedButterflies()) [[likely]]
         return;
 
     // F3: pin()/pinForCaching() during a transition rearrange/pin the property
@@ -2212,7 +2218,7 @@ void Structure::fireTTLWatchpointSetsAfterPinning(VM& vm, const Structure* sourc
 
 void Structure::allocateRareData(VM& vm)
 {
-    if (!Options::useTaggedButterflies()) [[likely]] {
+    if (!processUsesTaggedButterflies()) [[likely]] {
         // Flag-off: single mutator inside the VM at a time, today's code is
         // unconditionally correct (I22) and flag-off codegen on transition
         // paths is preserved per the project rule.
@@ -2304,7 +2310,7 @@ WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyO
     if (watchpointSet && watchpointSet->state() == IsWatched) {
         StructureRareData* rareData = structure->rareData();
         watchpointSet->fireAll(vm, reason);
-        if (!Options::useTaggedButterflies()) [[likely]] {
+        if (!processUsesTaggedButterflies()) [[likely]] {
             // Flag-off: single mutator inside the VM, the plain counter is
             // exact; preserve today's codegen per the project rule.
             if (!rareData->decrementActiveReplacementWatchpointSet())
@@ -2412,7 +2418,7 @@ PropertyTable* Structure::copyPropertyTableForPinning(VM& vm, Structure* transit
     // lock. The clone is private to the caller until publication. The
     // materialize fallback opens with DeferGC and locks per-structure itself;
     // never call it holding m_lock. Flag-off: clone without the lock.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         {
             GCSafeConcurrentJSLocker locker(m_lock, vm);
             if (PropertyTable* table = propertyTableOrNull()) {
@@ -2436,7 +2442,7 @@ PropertyTable* Structure::copyPropertyTableForPinning(VM& vm, Structure* transit
 
 void Structure::materializePropertyTableForMutatorLookup(VM& vm)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     if (isCompilationThread() || Thread::mayBeGCThread() || !vm.currentThreadIsHoldingAPILock())
         return;
     if (protectPropertyTableWhileTransitioning())
@@ -2448,6 +2454,7 @@ void Structure::materializePropertyTableForMutatorLookup(VM& vm)
 
 PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attributes)
 {
+    JSC_PER_THREADS_MODE_BEGIN(PropertyOffset)
     // T3 (flag-on): validated LOCK-FREE fast path against THIS structure's
     // cached table, before the m_lock-per-chain-node walk below. When the
     // head holds a table, the locked walk degenerates to "lock head, probe
@@ -2476,7 +2483,7 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
     // §1508 notes concern transition publication, which still happens under
     // m_lock with the same stores as before). Flag-off: unreachable, today's
     // code byte-for-byte below (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         if (VMLite::currentIfExists()) {
             for (unsigned attempt = 0; attempt < 3; ++attempt) {
                 // The probe's loads depend on this pointer, which orders them
@@ -2561,6 +2568,7 @@ PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attr
     }
 
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 Vector<PropertyTableEntry> Structure::getPropertiesConcurrently()
@@ -2614,7 +2622,7 @@ void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& 
     // sanctioned DeferGC form. Retry if a racing transition stole the table
     // between materialization and lock acquisition. Flag-off: no lock (I22).
     std::optional<GCSafeConcurrentJSLocker> l6Locker;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         while (true) {
             l6Locker.emplace(m_lock, vm);
             if (propertyTableOrNull() == table)
@@ -2733,7 +2741,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (thisObject->isPinnedPropertyTable()
         || thisObject->protectPropertyTableWhileTransitioning()
         || visitor.vm().isAnalyzingHeap()
-        || Options::useTaggedButterflies()) {
+        || processUsesTaggedButterflies()) {
         // T3 (flag-on): KEEP cached property tables across GC instead of
         // dropping them on the floor. Flag-off this drop is a pure memory
         // optimization: the next mutator Structure::get re-materializes AND
@@ -2987,7 +2995,7 @@ void Structure::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator
     // m_cachedPrototypeChain with no interleaving possible, so chain always
     // equals it and this bail is unreachable — preserved by the ASSERT below.
     if (chain != cachedPrototypeChainConcurrently()) {
-        ASSERT(Options::useJSThreads() && !Options::useThreadGIL());
+        ASSERT(processUsesJSThreads() && !Options::useThreadGIL());
         return;
     }
     // AUD1.N4(3): flag-on, retire (don't free) any previous watchpoint vector
@@ -2998,7 +3006,7 @@ void Structure::setCachedPropertyNameEnumerator(VM& vm, JSPropertyNameEnumerator
     // watchpoint sets. We hold m_lock, which serializes this against the
     // flag-on clearCachedPrototypeChain. Flag-off: single mutator, today's
     // immediate in-place destruction is race-free and stays bit-identical (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         rareData()->retireCachedPropertyNameEnumeratorWatchpoints();
     rareData()->setCachedPropertyNameEnumerator(vm, this, enumerator, chain);
 }
@@ -3044,7 +3052,7 @@ bool Structure::canCachePropertyNameEnumerator(VM&) const
     // clearCachedPrototypeChain / visitChildrenImpl (same mov/ldr codegen).
     StructureChain* structureChain = cachedPrototypeChainConcurrently();
     if (!structureChain) [[unlikely]] {
-        ASSERT(Options::useJSThreads() && !Options::useThreadGIL());
+        ASSERT(processUsesJSThreads() && !Options::useThreadGIL());
         return false;
     }
     // TSAN family structure-fields (r4 residual "StructureChain::create x
@@ -3118,7 +3126,7 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
     // SPEC-objectmodel L6(i)/I37 (Task 3c): flag-on, mutator transition-table
     // lookups hold the source's m_lock — route to the Concurrently variant.
     Structure* existingTransition;
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         existingTransition = setBrandTransitionFromExistingStructureConcurrently(structure, &brand->uid());
     else
         existingTransition = setBrandTransitionFromExistingStructureImpl(structure, &brand->uid());
@@ -3170,7 +3178,7 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
         Locker locker { structure->m_lock };
         // SPEC-objectmodel L6/I37 (Task 3c): dual-check under m_lock; see
         // addNewPropertyTransition. (Key: brand uid + SetBrand.)
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             if (Structure* existing = structure->m_transitionTable.getMatching(transition)) {
                 existing->checkOffsetConsistency();
                 return existing;
@@ -3189,7 +3197,7 @@ void DeferredStructureTransitionWatchpointFire::fireAllSlow()
     watchpointsToFire().fireAll(m_vm, detail);
     // SPEC-jit §5.6 "Deferred claims in flight": this object's set is IsWatched only because it took the members of a
     // set it claimed (the deferred overload is the only way in), and that claim was counted GIL off.
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         WatchpointSet::noteDeferredClaimFired();
 }
 
@@ -3264,6 +3272,7 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
 
 void Structure::checkOffsetConsistency() const
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // CVE-DBG-2: every caller of this no-arg entry is an UNLOCKED spot-check
     // (the transition-planning paths in this file). Flag-on GIL-off, a
     // foreign thread can be rehashing/stealing the published PropertyTable
@@ -3289,12 +3298,13 @@ void Structure::checkOffsetConsistency() const
     // its thread-local table via the two-arg form. Flag-off:
     // behavior-identical (one predicted-false branch, same convention as the
     // existing carve-out in the two-arg template above).
-    if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+    if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]]
         return;
     if (auto* propertyTable = propertyTableOrNull())
         checkOffsetConsistency(propertyTable, [] { });
     else
         ASSERT(!isPinnedPropertyTable());
+    JSC_PER_THREADS_MODE_END
 }
 
 #if ASSERT_ENABLED

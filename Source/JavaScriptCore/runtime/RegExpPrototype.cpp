@@ -152,6 +152,7 @@ JSValue regExpExec(JSGlobalObject* globalObject, JSValue thisValue, JSString* st
 
 JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -188,6 +189,7 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncTest, (JSGlobalObject* globalObject, Cal
     RETURN_IF_EXCEPTION(scope, { });
 
     return JSValue::encode(jsBoolean(!match.isNull()));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(regExpProtoFuncExec, (JSGlobalObject* globalObject, CallFrame* callFrame))

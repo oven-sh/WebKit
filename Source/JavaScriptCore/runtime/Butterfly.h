@@ -440,7 +440,7 @@ ALWAYS_INLINE void butterflyConcurrentCopyWords(void* dst, const void* src, size
     // lands before the SW publication), and a torn lane would be a torn
     // JSValue. Flag off, and GIL on (no other mutator stores while this thread
     // copies; SPEC-objectmodel history §37): today's memcpy.
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         butterflyConcurrentCopyWordsSlow(dst, src, bytes);
     else
         memcpy(dst, src, bytes);

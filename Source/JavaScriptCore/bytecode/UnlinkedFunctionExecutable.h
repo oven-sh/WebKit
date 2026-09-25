@@ -437,7 +437,7 @@ private:
     SourceParseMode m_sourceParseMode;
     bool m_hasCapturedVariables;
     std::atomic<bool> m_singletonHasBeenInvalidated { false };
-    // The bytecode cache's deferred members (Options::useThinChildExecutables()). Set by the decoding constructor;
+    // The bytecode cache's deferred members (Decoder::canDeferIntoPayload()). Set by the decoding constructor;
     // cleared late by the materializing thread while compiler threads read the bit-field group above.
     enum DeferredStateBit : uint8_t {
         NameIsDeferred = 1 << 0, // m_ecmaName is still in the cache record; implies MembersAreDeferred

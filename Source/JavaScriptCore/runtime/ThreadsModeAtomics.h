@@ -45,7 +45,7 @@ namespace JSC {
 // with no load, compare and branch in front of it.
 ALWAYS_INLINE bool sharedProfileWriteAvoidance()
 {
-    return Options::useJSThreads() && Options::useSharedProfileWriteAvoidance();
+    return processUsesJSThreads() && Options::useSharedProfileWriteAvoidance();
 }
 
 template<typename T, typename U>
@@ -73,7 +73,7 @@ ALWAYS_INLINE void racyStoreProfileWord(T& location, U value)
 template<typename T>
 ALWAYS_INLINE T threadsModeFetchAddRelaxed(std::atomic<T>& location, T operand)
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return location.fetch_add(operand, std::memory_order_relaxed);
     T old = location.load(std::memory_order_relaxed);
     location.store(static_cast<T>(old + operand), std::memory_order_relaxed);
@@ -83,7 +83,7 @@ ALWAYS_INLINE T threadsModeFetchAddRelaxed(std::atomic<T>& location, T operand)
 template<typename T>
 ALWAYS_INLINE T threadsModeFetchSubRelaxed(std::atomic<T>& location, T operand)
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return location.fetch_sub(operand, std::memory_order_relaxed);
     T old = location.load(std::memory_order_relaxed);
     location.store(static_cast<T>(old - operand), std::memory_order_relaxed);
@@ -93,7 +93,7 @@ ALWAYS_INLINE T threadsModeFetchSubRelaxed(std::atomic<T>& location, T operand)
 template<typename T>
 ALWAYS_INLINE T threadsModeExchangeRelaxed(std::atomic<T>& location, T desired)
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return location.exchange(desired, std::memory_order_relaxed);
     T old = location.load(std::memory_order_relaxed);
     location.store(desired, std::memory_order_relaxed);
@@ -107,7 +107,7 @@ class ThreadsModeLocker {
 public:
     explicit ThreadsModeLocker(LockType& lock)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             m_locker.emplace(lock);
     }
 
@@ -123,7 +123,7 @@ class SharedHeapModeLocker {
 public:
     explicit SharedHeapModeLocker(LockType& lock)
     {
-        if (Options::useSharedGCHeap() || Options::useJSThreads()) [[unlikely]]
+        if (processUsesSharedGCHeap() || processUsesJSThreads()) [[unlikely]]
             m_locker.emplace(lock);
     }
 

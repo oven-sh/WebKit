@@ -212,7 +212,7 @@ namespace {
 // (useJSThreads=false) this is false and every caller takes the landed path.
 static inline bool gilOffThreadsProcess()
 {
-    return Options::useJSThreads() && !Options::useThreadGIL();
+    return processUsesJSThreads() && !Options::useThreadGIL();
 }
 
 // ===== GIL-off detached-buffer table (annex N6 arm 1) =====

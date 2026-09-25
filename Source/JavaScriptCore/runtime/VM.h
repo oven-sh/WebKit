@@ -737,7 +737,7 @@ public:
         // above). gilOffProcess is latched in the VM ctor strictly BEFORE
         // any m_gilOff designation (VM.cpp), so gilOffProcess==0 implies
         // m_gilOff==0 in every reachable state on every thread.
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return m_gilOff;
         return false;
     }
@@ -748,7 +748,7 @@ public:
     // trap poll of a GIL-off mutator) but [[unlikely]] so it is laid out cold.
     ALWAYS_INLINE VMLitePrimitives& group3Primitives()
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
             if (m_gilOff && lite && lite->vm == this) [[likely]]
                 return lite->primitives;
@@ -768,7 +768,7 @@ public:
     // it is written only by the ctor, so no reader races a writer.
     ALWAYS_INLINE size_t& currentSoftReservedZoneSizeSlot()
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
             if (m_gilOff && lite && lite->vm == this) [[likely]]
                 return lite->softReservedZoneSize;
@@ -1710,6 +1710,7 @@ public:
 private:
     void whenIdleWithOtherThreadsStopped(DeleteAllCodeEffort, Function<void(bool deleteHeapCode)>&&);
     void clearCodeCaches();
+    void deleteAllCodeWithOtherThreadsStopped(DeleteAllCodeEffort, bool toGenerateItAgain);
 public:
 
     enum class ShrinkFootprint : uint8_t {
@@ -1875,7 +1876,7 @@ public:
     // asserted here instead of being silently relied on.
     ALWAYS_INLINE VMTraps& trapsForCurrentThread()
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
             if (m_gilOff && lite && lite->vm == this) [[likely]] {
                 ASSERT(lite->gilOff == (m_gilOff ? 1 : 0));
@@ -1897,7 +1898,7 @@ public:
     // predicted-not-taken Config load and branch flag-off.
     ALWAYS_INLINE bool trapsMaybeNeedHandlingForCurrentThread() const
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             VMLite* lite = VMLite::currentIfExists();
             if (m_gilOff && lite && lite->vm == this) [[likely]] {
                 // Same selector as trapsForCurrentThread()/group3Primitives()

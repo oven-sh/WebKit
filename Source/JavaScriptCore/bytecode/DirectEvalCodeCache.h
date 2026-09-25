@@ -132,7 +132,7 @@ namespace JSC {
         void set(JSGlobalObject* globalObject, JSCell* owner, const CacheLookupKey& cacheKey, DirectEvalExecutable* evalExecutable)
         {
             // setSlow checks the size again under the lock.
-            if (Options::useJSThreads() || m_cacheMap.size() < maxCacheEntries)
+            if (processUsesJSThreads() || m_cacheMap.size() < maxCacheEntries)
                 setSlow(globalObject, owner, cacheKey, evalExecutable);
         }
 

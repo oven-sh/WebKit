@@ -1997,6 +1997,40 @@ probe (DFG, FTL). One new flag-on rule that G1 needs: SlowPutArrayStorage sites 
 `trySetIndexQuickly`'s SlowPut arm is closed whenever the flag is on (Thread.restrict, api §5.8).
 
 
+## 10. The thirteenth round's rebase range
+
+The branch was rebased onto `35e8970dfd92` (the commit Bun pins). The range `000c48997255..35e8970dfd92` is eight commits of
+the fork itself. They were read against the working tree with the GIL off in mind; nothing was built or run for this section.
+The twelfth round's range (`cf1b36ec8703..000c48997255`) was merged and tested but never read as a range: it has no section here.
+
+| Row | Commit | New state | With several mutators in one VM | Verdict |
+|---|---|---|---|---|
+| R13-1 | `ddd87b080df3` (#693) thread suspend signal handler | `requestedThreadHandle`, `pendingSuspendResumeRequest`: lock-free atomics; the single request slot relies on `ThreadSuspendLocker` | the branch's three callers (`MachineStackMarker`, `SamplingProfiler`, `JSThreadsSafepoint`) hold it | no exposure. The branch's own change to this file (saving and restoring `errno` in the handler) is dropped: upstream's scope exit restores it on every exit. The file equals upstream's |
+| R13-2 | `ebd5a6145bf7` (#696) a materialized stack gets the error's name and message | `ErrorInstance::m_stackStringIsFramesOnly`, in the flag byte of `m_errorInfoMaterialized` and `m_stackPropertyAlreadyMaterialized` | collector against mutator: none (end phase, mutators stopped). Mutator against mutator: `setStackFrames` (embedder only; no caller in JavaScriptCore) against a thread that is materializing the same error: a lost bit or a read of a freed trace | **open, low.** `m_errorInfoMaterializationGILOff` serializes materializers only. Fix: GIL off, `setStackFrames` and `setStackPropertyAlreadyMaterialized` claim the state byte as the materializer does |
+| R13-3 | `63a807e88ce0` (#707) a payload records its size | none at run time | | no exposure |
+| R13-4 | `b54a4733d8f7` (#677) the always-on options are dropped | none new; `useThinChildExecutables` and `useLazySymbolTableConstants`, which GIL off forced off, no longer exist | thin child executables, lazy SymbolTable constants and lazy module function declarations are now refused by `Decoder::canDeferIntoPayload()`, which is false in a GIL-off VM; the three-character atom cache is skipped GIL off. `prepareLazyStateForConcurrentCompilationSlow` now runs for every code block and can run twice (the publication is a compare-and-swap, the state bit atomic) | guarded |
+| R13-5 | `ade7e6d4aff8` (#708) decommit on the first sweep after a full collection | `MarkedBlock::Handle::m_markingVersionAtLastSweep`, written by whichever thread sweeps the block | `sweep` already requires the stop window, the exclusive sweep lock or the directory's refill stripe | guarded. Not verified: that a stripe and the exclusive lock exclude each other (taken from the comment; the assertion is for builds with assertions) |
+| R13-6 | `564ac2a6cad8` (#676) CodeCacheMap evicts a random entry | none; `random()` uses the process-wide `WeakRandom`, whose words are relaxed atomics on the branch | every caller that reaches `prune` holds `GILOffCompilationLocker` | guarded |
+| R13-7 | `299c5323879e` (#712) a live executable keeps its fetcher | none; the visitor reads an immutable chain and adds to a concurrent set | | no exposure |
+| R13-8 | `35e8970dfd92` (#718) order file | `VM::m_unlinkedCodeKeepers` (plain increment), `m_unlinkedCodeIsKeptUntil`, `m_isDeletingAllCodeToGenerateItAgain`; `PersistentBytecodePayloads::m_orderRecorder` (cleared lazily by readers) and its statistics; `UnlinkedFunctionExecutable::codeBlocksDecodingCached` | in the tree: the decode paths hold the compilation lock; `deleteAllCodeToGenerateItAgain` goes through the stop window GIL off (`VM::deleteAllCodeWithOtherThreadsStopped`) and sets its mark there. Embedder-only paths (`BytecodeLinkEncoder`, the digest functions, `decodeBuiltinFunction`'s recorder lookup, `keepUnlinkedCode()`) take no lock | guarded in the tree; **open, low, latent** for the embedder's build-time tools. Fix: the compilation lock at the top of `codeBlocksDecodingCached` and `decodeBuiltinFunction`; `m_unlinkedCodeKeepers` atomic |
+
+Adjacent to R13-2, not from these commits and not run: with the GIL off the deferral depth is per client, so a thread parked in the
+embedder's `onComputeErrorInfo` hook does not hold off another thread's collection, whose end phase can free the stack trace
+under it. It needs the embedder's hook to be installed.
+
+**Textual merges of this range** (SPEC-ungil history, thirteenth round, has the rules): `CodeBlock.cpp` (upstream's removal of the
+"nothing was deferred" block taken), `UnlinkedFunctionExecutable.cpp` (the compilation lock kept around upstream's order recorder),
+`Debugger.cpp` (the stop-window wrapper kept, now around `deleteAllCodeToGenerateItAgain`), `Heap.cpp` (`keepsUnlinkedCode()` moved
+into `deleteAllUnlinkedCodeBlocksWithCollectionPrevented`), `VM.cpp` / `VM.h`, `CachedTypes.cpp` / `.h`, `ErrorInstance.h`,
+`ThreadingPOSIX.cpp`, `Options.cpp`, `HeapProfiler.cpp`, `JSDollarVM.cpp`.
+
+**A leftover of an earlier rebase, found this round.** `UnlinkedMetadataTable::link()` still had the two `memset` calls that
+upstream's #494 removed when it made the allocation zeroed: every metadata table was zero-filled twice, in every mode.
+`Tools/threads/lint-upstream-removed-lines.py` lists the lines the branch adds to a file that the base's history removed from it;
+of its 122 hits in 16 files this was the only one that was upstream's deleted work (the others are the branch's own code that
+repeats a line upstream once had, or code that moved between files). It is to be run after every rebase.
+
+
 ## What this audit did not check
 
 - Nothing was built or run. No test was written. TSAN was not run.

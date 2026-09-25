@@ -97,7 +97,7 @@ ALWAYS_INLINE StackManager& CLoopStack::stackManager() const
 // GC scanning — only the limit publish is per-lite.
 ALWAYS_INLINE StackManager& CLoopStack::publishTargetStackManager() const
 {
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         if (VMLite* lite = VMLite::currentIfExists(); lite && lite->gilOff)
             return lite->threadContext.traps().cloopStack().stackManager();
     }

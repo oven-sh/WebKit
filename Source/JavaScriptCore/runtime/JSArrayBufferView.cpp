@@ -277,7 +277,7 @@ JSArrayBuffer* JSArrayBufferView::possiblySharedJSBuffer(JSGlobalObject* globalO
 // right after construction is.
 void JSArrayBufferView::detachIfBufferDetachedSinceConstruction(ArrayBuffer& buffer)
 {
-    if (!g_jscConfig.gilOffProcess) [[likely]]
+    if (!processIsGILOff()) [[likely]]
         return;
     if (buffer.isShared() || !buffer.isDetached())
         return;
@@ -313,7 +313,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     // load that may already be stale by the time we get here (a racing thread
     // may have published the wastage transition); the cell-locked re-check
     // below is the witness instead. Flag-off the original entry assert holds.
-    ASSERT(Options::useJSThreads() || !hasArrayBuffer());
+    ASSERT(processUsesJSThreads() || !hasArrayBuffer());
 
     // We play this game because we want this to be callable even from places that
     // don't have access to CallFrame* or the VM, and we only allocate so little
@@ -363,8 +363,9 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     // may both observe a stale m_mode==Fast/Oversize and enter; the loser
     // returns the winner's buffer instead of double-adopting (Oversize) or
     // leaking (Fast) a second ArrayBuffer.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         RefPtr<ArrayBuffer> buffer;
+        size_t bytesAlreadyReported = 0;
         for (;;) {
             {
                 Locker locker { cellLock() };
@@ -443,6 +444,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
                     if (!buffer) {
                         ASSERT(m_mode == OversizeTypedArray);
                         buffer = ArrayBuffer::createAdopted(span());
+                        bytesAlreadyReported = buffer->byteLength(); // As below: the vector was reported when it was allocated.
                         if (segmented)
                             std::bit_cast<IndexingHeader*>(&headerFragment->slots[0])->setArrayBuffer(buffer.get());
                         else
@@ -462,7 +464,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
             // pass re-classifies the word either way.
             convertToSegmentedButterfly(vm, this, nullptr, nullptr, invalidOffset, JSValue());
         }
-        heap->addReference(this, buffer.get());
+        heap->addReference(this, buffer.get(), bytesAlreadyReported);
         return buffer.unsafeGet();
     }
 

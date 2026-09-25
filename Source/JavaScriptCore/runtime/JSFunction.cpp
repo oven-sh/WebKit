@@ -373,6 +373,7 @@ static Lock s_lazyLengthOrNameLock;
 
 bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
+    JSC_PER_THREADS_MODE_BEGIN(bool)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -403,6 +404,7 @@ bool JSFunction::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, false);
 
     RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot));
+    JSC_PER_THREADS_MODE_END
 }
 
 void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)

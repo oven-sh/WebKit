@@ -154,13 +154,13 @@ public:
 // rewireStubAsJumpInAccess, DirectCallLinkInfo patching).
 ALWAYS_INLINE void assertPatchingIsSafe(VM& vm)
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         RELEASE_ASSERT(worldIsStopped(vm));
 }
 
 ALWAYS_INLINE void assertPatchingIsSafe()
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         RELEASE_ASSERT(worldIsStopped());
 }
 

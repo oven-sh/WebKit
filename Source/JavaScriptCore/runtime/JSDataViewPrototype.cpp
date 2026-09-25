@@ -136,6 +136,7 @@ Structure* JSDataViewPrototype::createStructure(
 template<typename Adaptor>
 EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    JSC_PER_THREADS_MODE_BEGIN(EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -192,11 +193,13 @@ EncodedJSValue getData(JSGlobalObject* globalObject, CallFrame* callFrame)
         loadBytes([](uint8_t* dataPtr) ALWAYS_INLINE_LAMBDA { return *dataPtr; });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(Adaptor::toJSValue(globalObject, std::bit_cast<typename Adaptor::Type>(rawBytes))));
+    JSC_PER_THREADS_MODE_END
 }
 
 template<typename Adaptor>
 EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    JSC_PER_THREADS_MODE_BEGIN(EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -249,6 +252,7 @@ EncodedJSValue setData(JSGlobalObject* globalObject, CallFrame* callFrame)
         storeBytes([](uint8_t* dataPtr, uint8_t byte) ALWAYS_INLINE_LAMBDA { *dataPtr = byte; });
 
     return JSValue::encode(jsUndefined());
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_CUSTOM_GETTER(dataViewProtoGetterBuffer, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))

@@ -30,6 +30,7 @@
 #include "CCallHelpers.h"
 #include "CacheableIdentifierInlines.h"
 #include "CallFrameShuffler.h"
+#include "CallLinkInfo.h"
 #include "DFGOperations.h"
 #include "DFGSpeculativeJIT.h"
 #include "DOMJITGetterSetter.h"
@@ -1265,7 +1266,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
     AccessGenerationResult result;
     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit App. 5.6(c) / Task-11 bucket (iii): the (oldStructure, offset)
         // replacement-set fire in the ExistingProperty branch below is a direct
         // Class-A fireAll and must NOT run under CodeBlock::m_lock (section-7):
@@ -1432,7 +1433,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 } else
                     RELEASE_ASSERT(baseValue.asCell()->structure() == oldStructure);
 
-                if (!Options::useJSThreads()) [[likely]]
+                if (!processUsesJSThreads()) [[likely]]
                     oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
                 else {
                     // App. 5.6(c): the Class-A fire for this (structure, offset)
@@ -1487,7 +1488,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 if (!newStructure || !newStructure->propertyAccessesAreCacheable())
                     return GiveUpOnCache;
 
-                if (Options::useTaggedButterflies()) [[unlikely]] {
+                if (processUsesTaggedButterflies()) [[unlikely]] {
                     // SPEC-jit §5.5 Transition (OM E4-C, r17): a cached
                     // transition is the claim-first non-reallocating form with
                     // its runtime owner test; it needs a source that is not
@@ -1510,7 +1511,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 // Flag-on another thread may have transitioned the (shared) object
                 // since this put; the check below gives up on caching then. (Until
                 // r17 the fired-source refusal above returned before this point.)
-                ASSERT(baseValue.asCell()->structure() == newStructure || Options::useJSThreads());
+                ASSERT(baseValue.asCell()->structure() == newStructure || processUsesJSThreads());
                 if (baseValue.asCell()->structure() != newStructure)
                     return GiveUpOnCache;
 
@@ -1902,7 +1903,7 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
         // SPEC-jit section 5.5 (Task 8): deletes are transitions with slot
         // clearing; flag-on they require the locked/quarantined OM path, so
         // delete ICs are never created (generic operation handles them).
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             return GiveUpOnCache;
 
         ASSERT(oldStructure);
@@ -2292,7 +2293,7 @@ static InlineCacheAction tryCacheSetPrivateBrand(
         // SPEC-jit section 5.5 (Task 8): SetBrand is a structure-only
         // transition (OM N2); flag-on it requires the locked header-CAS
         // path, so the IC form is never created.
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             return GiveUpOnCache;
 
         ASSERT(oldStructure);

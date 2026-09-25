@@ -76,7 +76,7 @@ JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValu
     // and m_segmenter itself never moves.
     UBreakIterator* segmenter = m_segmenter.get();
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> ownSegmenter;
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         UErrorCode status = U_ZERO_ERROR;
         ownSegmenter = std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(m_segmenter.get(), &status));
         if (U_FAILURE(status)) [[unlikely]] {

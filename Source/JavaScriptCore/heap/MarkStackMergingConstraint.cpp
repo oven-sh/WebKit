@@ -83,7 +83,7 @@ void MarkStackMergingConstraint::executeImplImpl(Visitor& visitor)
     if (m_heap.m_isMarkingForGCVerifier)
         return;
 
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         Locker locker { m_heap.m_serverMutatorMarkStackLock };
         m_heap.m_mutatorMarkStack->transferTo(visitor.mutatorMarkStack());
     } else

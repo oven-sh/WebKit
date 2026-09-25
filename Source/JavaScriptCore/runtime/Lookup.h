@@ -459,7 +459,7 @@ class StaticPropertyReificationLocker {
 public:
     explicit StaticPropertyReificationLocker(VM& vm)
     {
-        if (!Options::useJSThreads())
+        if (!processUsesJSThreads())
             return;
         m_locked = true;
         if (staticPropertyReificationLock().tryLock())
@@ -561,7 +561,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     // one uid. putDirectInternal's structure->get() replace leg already
     // prevents same-uid duplicates. This re-probe is therefore the TOCTOU
     // closure (avoid the redundant install), not a duplicate-uid fix.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         if (staticPropertyAlreadyReified(vm, thisObj, propertyName))
             return;
     }

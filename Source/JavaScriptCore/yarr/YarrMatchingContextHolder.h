@@ -40,8 +40,8 @@ namespace Yarr {
 class MatchingContextHolder {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    MatchingContextHolder(VM&, RegExp*, MatchFrom);
-    ~MatchingContextHolder();
+    ALWAYS_INLINE MatchingContextHolder(VM&, RegExp*, MatchFrom);
+    ALWAYS_INLINE ~MatchingContextHolder();
 
     static constexpr ptrdiff_t offsetOfStackLimit() { return OBJECT_OFFSETOF(MatchingContextHolder, m_stackLimit); }
     static constexpr ptrdiff_t offsetOfFreeList() { return OBJECT_OFFSETOF(MatchingContextHolder, m_freeList); }
@@ -58,7 +58,7 @@ private:
     MatchFrom m_matchFrom;
 };
 
-inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, MatchFrom matchFrom)
+ALWAYS_INLINE MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, MatchFrom matchFrom)
     : m_matchFrom(matchFrom)
 {
     if (matchFrom == MatchFrom::VMThread) {
@@ -87,7 +87,7 @@ inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, Matc
     }
 }
 
-inline MatchingContextHolder::~MatchingContextHolder()
+ALWAYS_INLINE MatchingContextHolder::~MatchingContextHolder()
 {
     if (m_matchFrom == MatchFrom::VMThread)
         *m_executingRegExpSlot = nullptr;

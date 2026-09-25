@@ -129,7 +129,7 @@ RecursiveLock CallLinkInfo::s_callLinkSerializationLock;
 // 11 (writer-writer), not 10.
 void CallLinkInfo::publishRecord(VM& vm, uintptr_t comparand, CodePtr<JSEntryPtrTag> target, CodeBlock* codeBlockToTransfer)
 {
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         return;
     auto* record = new CallLinkRecord { comparand, target, codeBlockToTransfer };
     WTF::storeStoreFence();
@@ -143,7 +143,7 @@ void CallLinkInfo::clearRecord(VM& vm)
     // path or under STW; always-call (virtual/stub) records are only unlinked
     // under STW/GC (their callers - reset/visitWeak-driven unlinkOrUpgrade -
     // run there, asserted by the section 5.3 machinery).
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!processUsesJSThreads()) [[likely]] {
         ASSERT(!m_record.loadRelaxed());
         return;
     }
@@ -212,7 +212,7 @@ CallLinkInfo::~CallLinkInfo()
     // sentinel lists the locked linkers also mutate). The mode gate is the
     // inline Config-page byte, not the 5-Options VM::isGILOffProcess()
     // re-derivation (flag-off pays one predicted not-taken byte test).
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         Locker locker { s_callLinkSerializationLock };
         if (isOnList())
             remove();
@@ -254,7 +254,7 @@ void CallLinkInfo::clearStub()
     // through it once the record is gone, and the ref is released when the
     // stub is replaced (setStub's single-store swap) or when this
     // CallLinkInfo dies. Flag-off: clear eagerly, as today.
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         m_stub = nullptr;
 }
 
@@ -323,7 +323,7 @@ void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee,
 {
     RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     RELEASE_ASSERT(!(std::bit_cast<uintptr_t>(callee) & polymorphicCalleeMask));
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-D, superseded by AB17c F4 third fix / corrected AB17f: the
         // LLInt monomorphic fast path IS now routed through the published
         // m_record flag-on (LowLevelInterpreter64.asm .opCallThreadedRecord
@@ -359,7 +359,7 @@ void CallLinkInfo::setMonomorphicCallee(VM& vm, JSCell* owner, JSObject* callee,
 void CallLinkInfo::clearCallee()
 {
     RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-D (amended per review; same shape as clearStub's flag-on rule).
         // AB17f note: flag-on fast paths no longer read these mirrors (see
         // setMonomorphicCallee — they dispatch on the published record), so
@@ -394,7 +394,7 @@ JSObject* CallLinkInfo::callee()
 void CallLinkInfo::setLastSeenCallee(VM& vm, const JSCell* owner, JSObject* callee)
 {
     RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // TSAN wave 4 (calllink, SPEC-jit 5.8 / object-model blessed cell-slot
         // race): the READER side of m_lastSeenCallee is already relaxed-atomic
         // (WriteBarrierBase::cell()), but WriteBarrierBase::set routes the
@@ -491,7 +491,7 @@ void CallLinkInfo::revertCallToStub()
     // what in all likelihood fits in 24. So we just splat out the first instruction. Long term, we
     // need something cleaner. But this works on arm64 for now.
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-D: same rule as clearCallee. In Polymorphic mode the published
         // comparand is the always-call mask; clearing m_callee (slot -> 0)
         // unpublishes it, after which no reader takes .goPolymorphic here. A
@@ -606,6 +606,7 @@ bool LazyCallLinkInfo::hasNeverExecuted(VM& vm) const
 
 void LazyCallLinkInfo::setExecutedOnce(VM& vm)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     if (vm.gilOff()) [[unlikely]] {
         // Another thread may have run the site a second time already, and given it a CallSiteData of its own: only the shared
         // "never executed" one is replaced.
@@ -614,6 +615,7 @@ void LazyCallLinkInfo::setExecutedOnce(VM& vm)
     }
     ASSERT(m_data == vm.neverExecutedCallSiteData());
     WTF::atomicStore(&m_data, vm.executedOnceCallSiteData(), std::memory_order_relaxed);
+    JSC_PER_THREADS_MODE_END
 }
 
 DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)
@@ -696,7 +698,7 @@ void CallLinkInfo::setVirtualCall(VM& vm)
     if (vm.gilOff()) [[unlikely]]
         gilOffLocker.emplace(s_callLinkSerializationLock);
     reset(vm);
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-D publication order (cf. setMonomorphicCallee): the always-call
         // mask comparand makes ANY callee match in the LLInt mirror reader, so
         // the payload must be in place before the mask is stored — otherwise a
@@ -749,7 +751,7 @@ void CallLinkInfo::setStub(VM& vm, Ref<PolymorphicCallStubRoutine>&& newStub)
 {
     RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
     clearStub();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit section 5.8 (Task 7): the shared polymorphic-call thunk
         // reloads m_stub through this CallLinkInfo, so replacement must be ONE
         // raw pointer store with no null window - a racing reader observes the
@@ -776,7 +778,7 @@ void CallLinkInfo::setStub(VM& vm, Ref<PolymorphicCallStubRoutine>&& newStub)
     } else
         m_stub = WTF::move(newStub);
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-D publication order (cf. setVirtualCall): payload before the
         // always-call mask comparand, for the lock-free LLInt mirror reader.
         m_codeBlock = nullptr; // PolymorphicCallStubRoutine will set CodeBlock inside it.
@@ -833,7 +835,7 @@ void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& ji
     // sequence below, through its polymorphic-looking mirror fields, which ends in the unlinked call thunk, as flag off.
     CCallHelpers::JumpList sharedCallLinkInfo;
     CCallHelpers::Jump doneWithRecordPath;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit section 5.8 frozen fast path (all tiers/flavors flag-on):
         //   load r = m_record; if (!r) r = empty record (default call);
         //   load c = r->comparand;
@@ -1002,7 +1004,7 @@ void OptimizingCallLinkInfo::initializeFromDFGUnlinkedCallLinkInfo(VM&, const DF
 // GIL-removal precondition 11 (docs/threads/INTEGRATE-jit.md).
 void DirectCallLinkInfo::publishRecord(VM& vm, CodePtr<JSEntryPtrTag> target, CodeBlock* codeBlockToTransfer)
 {
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         return;
     ASSERT(isDataIC()); // I3: flag-on, all DirectCallLinkInfos are data ICs.
     auto* record = new CallLinkRecord { 0, target, codeBlockToTransfer };
@@ -1015,7 +1017,7 @@ void DirectCallLinkInfo::publishRecord(VM& vm, CodePtr<JSEntryPtrTag> target, Co
 
 void DirectCallLinkInfo::clearRecord(VM& vm)
 {
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!processUsesJSThreads()) [[likely]] {
         ASSERT(!m_record.loadRelaxed());
         return;
     }
@@ -1096,7 +1098,7 @@ CCallHelpers::JumpList DirectCallLinkInfo::emitDirectFastPath(CCallHelpers& jit)
     if (isDataIC()) {
         CCallHelpers::JumpList slowPath;
         jit.move(CCallHelpers::TrustedImmPtr(this), BaselineJITRegisters::Call::callLinkInfoGPR);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit section 5.8 frozen fast path, direct flavor: load
             // r = m_record; if (!r) goto slow; no comparand check; store
             // r->codeBlockToTransfer -> callee frame; load t = r->target ONCE;
@@ -1139,7 +1141,7 @@ CCallHelpers::JumpList DirectCallLinkInfo::emitDirectTailCallFastPath(CCallHelpe
     if (isDataIC()) {
         CCallHelpers::JumpList slowPath;
         jit.move(CCallHelpers::TrustedImmPtr(this), BaselineJITRegisters::Call::callLinkInfoGPR);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit section 5.8 frozen fast path, direct tail flavor (see
             // emitDirectFastPath). r is moved into callLinkInfoGPR, which
             // survives prepareForTailCall (as today's CallLinkInfo pointer
@@ -1189,7 +1191,7 @@ void DirectCallLinkInfo::initialize()
     ASSERT(m_codeBlockLocation);
     // SPEC-jit I2/I3 (section 5.8 DirectCall): code-patching direct-call fast
     // paths only exist for UseDataIC::No, which is forbidden flag-on.
-    RELEASE_ASSERT(!Options::useJSThreads());
+    RELEASE_ASSERT(!processUsesJSThreads());
     if (isTailCall()) {
         RELEASE_ASSERT(fastPathStart());
         CCallHelpers::replaceWithJump(fastPathStart(), slowPathStart());
@@ -1210,7 +1212,7 @@ void DirectCallLinkInfo::setCallTarget(VM& vm, CodeBlock* codeBlock, CodeLocatio
     if (!isDataIC()) {
         // SPEC-jit I2/I3 (section 5.8 DirectCall): this branch patches machine
         // code; unreachable flag-on (UseDataIC::No construction is forbidden).
-        RELEASE_ASSERT(!Options::useJSThreads());
+        RELEASE_ASSERT(!processUsesJSThreads());
         if (isTailCall()) {
             RELEASE_ASSERT(fastPathStart());
             // We reserved this many bytes for the jump at fastPathStart(). Make that
@@ -1258,7 +1260,7 @@ void DirectCallLinkInfo::repatchSpeculatively()
     // SPEC-jit section 5.8: speculative repatching (possibly from a compiler
     // thread, G10) is forbidden with shared-memory threads enabled; flag-on,
     // direct calls are data ICs and never reach this late-link task.
-    RELEASE_ASSERT(!Options::useJSThreads());
+    RELEASE_ASSERT(!processUsesJSThreads());
     // Flag-off only: publishRecord is a no-op, so this VM is unused by the
     // record path; m_executable is held alive by the compilation plan.
     VM& vm = m_executable->vm();

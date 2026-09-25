@@ -30,7 +30,8 @@ Source/JavaScriptCore/bytecode/BytecodeIntrinsicRegistry.cpp	BytecodeIntrinsicRe
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	CCallHelpers::JumpList DirectCallLinkInfo::emitDirectFastPath(CCallHelpers& jit)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	CCallHelpers::JumpList DirectCallLinkInfo::emitDirectTailCallFastPath(CCallHelpers& jit, ScopedLambda<void()>&& prepareForTailCall)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	CallLinkInfo::~CallLinkInfo()	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	DataOnlyCallLinkInfo& LazyCallLinkInfo::ensureSlow(VM& vm, CodeBlock* owner, CallLinkInfo::CallType callType, CodeOrigin codeOrigin)	3	relaxed-atomic,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	bool LazyCallLinkInfo::hasNeverExecuted(VM& vm) const	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void CallLinkInfo::clearCallee()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void CallLinkInfo::clearStub()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void CallLinkInfo::emitFastPathImpl(CallLinkInfo* callLinkInfo, CCallHelpers& jit, bool isTailCall, ScopedLambda<void()>&& prepareForTailCall)	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -51,7 +52,9 @@ Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void DirectCallLinkInfo::repatch
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void DirectCallLinkInfo::setCallTarget(VM& vm, CodeBlock* codeBlock, CodeLocationLabel<JSEntryPtrTag> target)	2	fail-stop,gate-test				
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void DirectCallLinkInfo::unlinkOrUpgradeImpl(VM& vm, CodeBlock* oldCodeBlock, CodeBlock* newCodeBlock)	4	lock,gate-test				
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void DirectCallLinkInfo::validateSpeculativeRepatchOnMainThread(VM& vm)	2	other				
-Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void LazyCallLinkInfo::setExecutedOnce(VM& vm)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void LazyCallLinkInfo::setExecutedOnce(VM& vm)	4	locked-rmw,relaxed-atomic,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void LazyCallLinkInfo::setNeverExecuted(VM& vm)	1	relaxed-atomic				
+Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void LazyCallLinkInfo::setTailCallNotExecuted(VM& vm)	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.cpp	void OptimizingCallLinkInfo::initializeFromDFGUnlinkedCallLinkInfo(VM&, const DFG::UnlinkedCallLinkInfo& unlinkedCallLinkInfo, CodeBlock* owner)	2	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	CallMode callMode() const	2	other				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	CallType callType() const	2	other				
@@ -59,10 +62,12 @@ Source/JavaScriptCore/bytecode/CallLinkInfo.h	CodeSpecializationKind specializat
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	PolymorphicCallStubRoutine* stub() const	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool clearedByGC()	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool clearedByVirtual()	1	relaxed-atomic				
+Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool hasExecutedOnce() const	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool hasSeenClosure()	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool isVarargs() const	1	other				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	bool seenOnce()	1	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)	3	other				
+Source/JavaScriptCore/bytecode/CallLinkInfo.h	private: CallSiteData* ownData() const	1	other				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	protected: CallLinkInfo(Type type, JSCell* owner, CodeOrigin codeOrigin) : CallLinkInfoBase(CallSiteType::CallLinkInfo) , m_codeOrigin(codeOrigin)	2	relaxed-atomic				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	public: DirectCallLinkInfo(CodeOrigin codeOrigin, UseDataIC useDataIC, JSCell* owner, ExecutableBase* executable) : CallLinkInfoBase(CallSiteType::DirectCall) ,	4	fail-stop,relaxed-atomic,gate-test				
 Source/JavaScriptCore/bytecode/CallLinkInfo.h	template<typename Functor> void forEachDependentCell(const Functor& functor) const	8	other				
@@ -85,7 +90,7 @@ Source/JavaScriptCore/bytecode/CodeBlock.cpp	ValueProfileAndVirtualRegisterBuffe
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	ValueProfileAndVirtualRegisterBuffer* CodeBlock::ensureCatchLivenessIsComputedForBytecodeIndexSlow(const OpCatch& op, BytecodeIndex bytecodeIndex)	2	relaxed-atomic,gate-test				
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	bool CodeBlock::agesByMutatorQuietness()	1	other				
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	bool CodeBlock::ensureCatchLivenessIsComputedForExecutedCatchesSlow()	2	relaxed-atomic				
-Source/JavaScriptCore/bytecode/CodeBlock.cpp	bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)	8	relaxed-atomic,gate-test				
+Source/JavaScriptCore/bytecode/CodeBlock.cpp	bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)	7	relaxed-atomic,gate-test				
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	bool CodeBlock::shouldOptimizeNowFromBaseline()	5	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	size_t CodeBlock::estimatedSize(JSCell* cell, VM& vm)	1	other				
 Source/JavaScriptCore/bytecode/CodeBlock.cpp	template<CodeBlock::QuickTierUpCheck check> void CodeBlock::optimizeAfterWarmUpImpl()	1	other				
@@ -258,7 +263,7 @@ Source/JavaScriptCore/bytecode/SharedJITStubSet.h	void remove(PolymorphicAccessJ
 Source/JavaScriptCore/bytecode/SpeculatedType.cpp	SpeculatedType speculationFromClassInfoInheritance(const ClassInfo* classInfo)	31	other				
 Source/JavaScriptCore/bytecode/UnlinkedCodeBlock.cpp	BytecodeLivenessAnalysis& UnlinkedCodeBlock::livenessAnalysisSlow(CodeBlock* codeBlock)	3	relaxed-atomic				
 Source/JavaScriptCore/bytecode/UnlinkedCodeBlock.cpp	template<typename Visitor> void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)	1	relaxed-atomic				
-Source/JavaScriptCore/bytecode/UnlinkedCodeBlock.cpp	void UnlinkedCodeBlock::ensureValueAndArrayProfiles()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/bytecode/UnlinkedCodeBlock.cpp	void UnlinkedCodeBlock::ensureValueAndArrayProfiles()	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/bytecode/UnlinkedCodeBlock.h	BytecodeLivenessAnalysis& livenessAnalysis(CodeBlock* codeBlock)	2	relaxed-atomic				
 Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.cpp	FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> over	1	other				
 Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.cpp	SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passedParentSource) const	2	other				
@@ -272,7 +277,7 @@ Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.h	void materializeDefe
 Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.h	void materializeDeferredScalarsIfNeeded() const	1	other				
 Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.h	void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)	2	relaxed-atomic				
 Source/JavaScriptCore/bytecode/UnlinkedFunctionExecutable.h	void setEcmaName(const Identifier& name)	1	other				
-Source/JavaScriptCore/bytecode/UnlinkedMetadataTableInlines.h	ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()	4	lock,gate-test				
+Source/JavaScriptCore/bytecode/UnlinkedMetadataTableInlines.h	ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()	2	lock,gate-test				
 Source/JavaScriptCore/bytecode/UnlinkedMetadataTableInlines.h	ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)	2	lock,gate-test				
 Source/JavaScriptCore/bytecode/ValueProfile.h	SUPPRESS_TSAN void dump(PrintStream& out)	2	relaxed-atomic				
 Source/JavaScriptCore/bytecode/ValueProfile.h	SpeculatedType computeUpdatedPrediction()	4	relaxed-atomic				
@@ -489,7 +494,7 @@ Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	template<typename MapOrSet> vo
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compile(Node* node)	26	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileArrayUnshift(Node* node)	12	other				
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)	7	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)	9	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileMultiGetByVal(Node* node)	6	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileMultiPutByVal(Node* node)	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp	void SpeculativeJIT::compileRegExpStringIteratorNext(Node* node)	6	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -579,7 +584,7 @@ Source/JavaScriptCore/heap/AbstractSlotVisitorInlines.h	inline bool AbstractSlot
 Source/JavaScriptCore/heap/AllocatingScope.h	public: AllocatingScope(JSC::Heap& heap) : m_mutatorState(heap.mutatorStateSlot())	2	fail-stop	fail-stop	a RELEASE_ASSERT or crash that flag off never reaches with the invariant it states	tool	
 Source/JavaScriptCore/heap/AllocatingScope.h	~AllocatingScope()	2	fail-stop	fail-stop	a RELEASE_ASSERT or crash that flag off never reaches with the invariant it states	tool	
 Source/JavaScriptCore/heap/BlockDirectory.cpp	BlockDirectory::BlockDirectory(Heap& heap, size_t cellSize) : m_heap(heap) , m_cellSize(static_cast<unsigned>(cellSize))	3	relaxed-atomic				
-Source/JavaScriptCore/heap/BlockDirectory.cpp	MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allocator)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/heap/BlockDirectory.cpp	MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allocator)	13	lock,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/BlockDirectory.cpp	MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/BlockDirectory.cpp	MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(const AbstractLocker& mutatorSlowPathLocker, JSC::Heap& heap)	2	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/BlockDirectory.cpp	void BlockDirectory::addBlock(MarkedBlock::Handle* block)	6	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -622,7 +627,7 @@ Source/JavaScriptCore/heap/Heap.cpp	TypeCountSet Heap::objectTypeCounts()	3	othe
 Source/JavaScriptCore/heap/Heap.cpp	bool Heap::unprotect(JSValue k)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/Heap.cpp	size_t Heap::globalObjectCount()	3	other				
 Source/JavaScriptCore/heap/Heap.cpp	void Heap::addToRememberedSet(const JSCell* constCell)	19	debug-assert,lock,relaxed-atomic,gate-test				
-Source/JavaScriptCore/heap/Heap.cpp	void Heap::clearConcurrentRetainedDataIfPossible()	1097	fail-stop,debug-assert,locked-rmw,lock,relaxed-atomic,main-form-helper,gate-test				
+Source/JavaScriptCore/heap/Heap.cpp	void Heap::clearConcurrentRetainedDataIfPossible()	1122	fail-stop,debug-assert,locked-rmw,lock,relaxed-atomic,main-form-helper,gate-test				
 Source/JavaScriptCore/heap/Heap.cpp	void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort, bool keepWhatNeedsParsing)	2	other				
 Source/JavaScriptCore/heap/Heap.cpp	void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<UnlinkedCodeToDelete> which)	2	other				
 Source/JavaScriptCore/heap/Heap.cpp	void Heap::dumpHeapStatisticsAtVMDestruction()	1	lock				
@@ -636,14 +641,14 @@ Source/JavaScriptCore/heap/Heap.cpp	void Heap::reportAbandonedObjectGraph()	3	lo
 Source/JavaScriptCore/heap/Heap.h	void appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(const JSString* owner, String&& string, bool gilOff)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/Heap.h	void releaseAccess()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapInlines.h	ALWAYS_INLINE VM& Heap::vm() const	1	fail-stop	fail-stop	a RELEASE_ASSERT or crash that flag off never reaches with the invariant it states	tool	
+Source/JavaScriptCore/heap/HeapInlines.h	ALWAYS_INLINE void Heap::decrementDeferralDepthAndGCIfNeeded()	3	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/heap/HeapInlines.h	ALWAYS_INLINE void Heap::incrementDeferralDepth()	2	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/heap/HeapInlines.h	inline void Heap::acquireAccess()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapInlines.h	inline void Heap::decrementDeferralDepth()	4	debug-assert	debug-assert	assertion only: no release-build code	tool	
-Source/JavaScriptCore/heap/HeapInlines.h	inline void Heap::decrementDeferralDepthAndGCIfNeeded()	7	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/heap/HeapInlines.h	inline void Heap::incrementDeferralDepth()	2	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/heap/HeapInlines.h	inline void Heap::stopIfNecessary()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapInlines.h	template<typename Func> void Heap::forEachSlotVisitor(const Func& func)	5	lock,relaxed-atomic				
 Source/JavaScriptCore/heap/HeapInlines.h	template<typename Functor> inline void Heap::forEachProtectedCell(const Functor& functor)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/heap/HeapProfiler.cpp	static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)	4	other				
+Source/JavaScriptCore/heap/HeapProfiler.cpp	static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)	3	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp	HeapSnapshotBuilder::HeapSnapshotBuilder(HeapProfiler& profiler, SnapshotType type) : HeapAnalyzer() , m_profiler(profiler) , m_snapshotType(type)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp	HeapSnapshotBuilder::~HeapSnapshotBuilder()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/HeapSnapshotBuilder.cpp	void HeapSnapshotBuilder::dumpToStream(PrintStream& out)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -675,7 +680,7 @@ Source/JavaScriptCore/heap/MachineStackMarker.cpp	void MachineThreads::gatherCon
 Source/JavaScriptCore/heap/MarkStackMergingConstraint.cpp	template<typename Visitor> void MarkStackMergingConstraint::executeImplImpl(Visitor& visitor)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/MarkedBlock.cpp	MarkedBlock::Handle* MarkedBlock::tryCreate(JSC::Heap& heap, AlignedMemoryAllocator* alignedMemoryAllocator)	2	locked-rmw,relaxed-atomic				
 Source/JavaScriptCore/heap/MarkedBlock.cpp	MarkedBlock::Header::Header(VM& vm, Handle& handle) : m_handle(handle) , m_vm(&vm) , m_markingVersion(MarkedSpace::nullVersion) , m_newlyAllocatedVersion(Marked	1	other				
-Source/JavaScriptCore/heap/MarkedBlock.cpp	void MarkedBlock::Handle::decommitUnusedPages()	7	other				
+Source/JavaScriptCore/heap/MarkedBlock.cpp	void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollection)	7	other				
 Source/JavaScriptCore/heap/MarkedBlock.cpp	void MarkedBlock::Handle::didRemoveFromDirectory()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/heap/MarkedBlock.h	inline bool MarkedBlock::isMarkedRaw(const void* p)	1	other				
 Source/JavaScriptCore/heap/MarkedBlock.h	inline bool MarkedBlock::isNewlyAllocated(const void* p)	1	other				
@@ -845,6 +850,7 @@ Source/JavaScriptCore/jit/GCAwareJITStubRoutine.cpp	void PolymorphicAccessJITStu
 Source/JavaScriptCore/jit/GCAwareJITStubRoutine.h	void addOwner(CodeBlock* codeBlock)	3	lock				
 Source/JavaScriptCore/jit/GCAwareJITStubRoutine.h	void removeOwner(CodeBlock* codeBlock)	3	lock				
 Source/JavaScriptCore/jit/JIT.cpp	RefPtr<BaselineJITCode> JIT::compileAndLinkWithoutFinalizing(JITCompilationEffort effort)	1	other				
+Source/JavaScriptCore/jit/JITCall.cpp	template<typename Op> void JIT::emitIteratorOpenGeneric(const JSInstruction* instruction)	1	relaxed-atomic				
 Source/JavaScriptCore/jit/JITCall.cpp	void JIT::emit_op_async_iterator_next(const JSInstruction* instruction)	1	other				
 Source/JavaScriptCore/jit/JITCode.h	(no enclosing function found)	5	locked-rmw,relaxed-atomic				
 Source/JavaScriptCore/jit/JITExceptions.cpp	void genericUnwind(VM& vm, CallFrame* callFrame)	8	debug-assert	debug-assert	assertion only: no release-build code	tool	
@@ -911,7 +917,7 @@ Source/JavaScriptCore/jsc.cpp	Worker& Worker::current()	4	other
 Source/JavaScriptCore/jsc.cpp	public: void add(UniquedStringImpl* uid)	1	lock				
 Source/JavaScriptCore/jsc.cpp	template<typename Func> int runJSC(const CommandLine& options, bool isWorker, const Func& func)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/jsc.cpp	template<typename Func> void Workers::broadcast(const Func& func)	2	other				
-Source/JavaScriptCore/llint/LLIntData.cpp	void initialize()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/llint/LLIntData.cpp	void initialize()	3	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	(no enclosing function found)	6	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(entry_osr)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(entry_osr_function_for_call)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -932,7 +938,7 @@ Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_it
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_log_shadow_chicken_prologue)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_log_shadow_chicken_tail)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_profile_catch)	1	relaxed-atomic				
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_put_by_id)	8	relaxed-atomic,gate-test				
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_put_by_id)	14	relaxed-atomic,gate-test				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_put_private_name)	1	other				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)	1	other				
@@ -940,14 +946,14 @@ Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	LLINT_SLOW_PATH_DECL(slow_path_si
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	UGPRPair SYSV_ABI llint_check_stack_and_vm_traps(CallFrame* callFrame, const JSInstruction* pc, void* newTopOfStack)	3	other				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, JSValue subscript, OpGetByVal bytecode)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame, CodeSpecializationKind kind)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, 	15	relaxed-atomic,gate-test				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)	2	other				
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)	2	other				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static inline UGPRPair commonCallDirectEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)	1	other				
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)	10	relaxed-atomic,gate-test				
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, J	3	fail-stop,gate-test				
-Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<typename Op, SetArgumentsWith set> static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)	8	relaxed-atomic,gate-test				
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<bool threaded> static JSValue performLLIntGetByIDPerThreadsMode(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValu	15	relaxed-atomic,gate-test				
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<bool threaded> static UGPRPair handleHostCallPerThreadsMode(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)	2	other				
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<bool threaded> static UGPRPair setUpCallPerThreadsMode(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<bool threaded> static bool jitCompileAndSetHeuristicsPerThreadsMode(VM& vm, CodeBlock* codeBlock)	10	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<bool threaded> static void setupGetByIdPrototypeCachePerThreadsMode(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeI	3	fail-stop,gate-test				
+Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	template<typename Op, SetArgumentsWith set> static ALWAYS_INLINE UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)	8	relaxed-atomic,gate-test				
 Source/JavaScriptCore/llint/LLIntSlowPaths.cpp	void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/llint/LLIntThunks.cpp	MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueThunk()	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/lol/LOLJIT.cpp	RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEffort effort)	1	other				
@@ -1027,9 +1033,11 @@ Source/JavaScriptCore/runtime/CachedSpecialPropertyAdaptiveStructureWatchpoint.c
 Source/JavaScriptCore/runtime/CachedSpecialPropertyAdaptiveStructureWatchpoint.cpp	void CachedSpecialPropertyAdaptiveStructureWatchpoint::fireInternal(VM& vm, const FireDetail&)	1	other				
 Source/JavaScriptCore/runtime/CachedTypes.cpp	ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& decoder, const CachedFunctionExecutable& cachedExecutable) : Base(decoder.vm(), de	4	other				
 Source/JavaScriptCore/runtime/CachedTypes.cpp	ALWAYS_INLINE void CachedFunctionExecutable::encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable)	2	other				
-Source/JavaScriptCore/runtime/CachedTypes.cpp	Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/CachedTypes.cpp	Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t, 4> slot)	3	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/CachedTypes.cpp	RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)	1	lock,gate-test				
 Source/JavaScriptCore/runtime/CachedTypes.cpp	String UnlinkedFunctionExecutable::ecmaNameWithoutGCSlow() const	1	debug-assert	debug-assert	assertion only: no release-build code	tool	
+Source/JavaScriptCore/runtime/CachedTypes.cpp	std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMaterializing() const	1	other				
+Source/JavaScriptCore/runtime/CachedTypes.cpp	std::optional<uint32_t> UnlinkedFunctionExecutable::firstClassElementOffsetWithoutMaterializing() const	1	other				
 Source/JavaScriptCore/runtime/CachedTypes.cpp	void CachedFunctionExecutable::packScalars(const UnlinkedFunctionExecutable& executable, VarintWriter& writer)	2	other				
 Source/JavaScriptCore/runtime/CachedTypes.cpp	void UnlinkedFunctionExecutable::materializeDeferredMembersSlow() const	5	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/runtime/CachedTypes.cpp	void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const	3	debug-assert,relaxed-atomic				
@@ -1055,8 +1063,8 @@ Source/JavaScriptCore/runtime/CommonSlowPaths.cpp	JSC_DEFINE_COMMON_SLOW_PATH(sl
 Source/JavaScriptCore/runtime/CommonSlowPaths.cpp	template<OpcodeSize width> ALWAYS_INLINE UGPRPair asyncIteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame,	6	relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/CommonSlowPaths.cpp	template<OpcodeSize width> ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, Thro	4	relaxed-atomic				
 Source/JavaScriptCore/runtime/CommonSlowPaths.cpp	template<OpcodeSize width> ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, Thro	9	relaxed-atomic				
-Source/JavaScriptCore/runtime/CommonSlowPaths.h	inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)	1	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/runtime/CommonSlowPaths.h	inline JSValue opEnumeratorGetByVal(JSGlobalObject* globalObject, JSValue baseValue, JSValue propertyNameValue, unsigned index, JSPropertyNameEnumerator::Flag m	1	relaxed-atomic				
+Source/JavaScriptCore/runtime/CommonSlowPaths.h	template<bool threaded> JSArray* allocateNewArrayBufferPerThreadsMode(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)	1	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/runtime/CommonSlowPathsInlines.h	inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue, JSValue propertyNameValue, JSValue value, ECMAMode ecmaMode, unsigned index, J	1	relaxed-atomic				
 Source/JavaScriptCore/runtime/CommonSlowPathsInlines.h	inline void tryCacheGetFromScopeGlobal( JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slo	7	relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/CommonSlowPathsInlines.h	inline void tryCachePutToScopeGlobal( JSGlobalObject* globalObject, CodeBlock* codeBlock, OpPutToScope& bytecode, JSObject* scope, PutPropertySlot& slot, const 	2	relaxed-atomic,gate-test				
@@ -1168,7 +1176,7 @@ Source/JavaScriptCore/runtime/InferredValue.h	template<typename JSCellType> bool
 Source/JavaScriptCore/runtime/InferredValue.h	template<typename JSCellType> void InferredValue<JSCellType>::InferredValueWatchpointSet::notifyWriteSlow(VM& vm, JSCell* owner, JSCellType* value, const FireDe	4	debug-assert,relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/InferredValue.h	template<typename JSCellType> void InferredValue<JSCellType>::notifyWriteSlow(VM& vm, JSCell* owner, JSCellType* value, const FireDetail& detail)	4	debug-assert,relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/InferredValue.h	void invalidate(VM& vm, const FireDetail& detail)	4	relaxed-atomic,gate-test				
-Source/JavaScriptCore/runtime/InitializeThreading.cpp	void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/InitializeThreading.cpp	void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/IntlCache.cpp	String IntlCache::canonicalizeUnicodeLocaleID(const String& languageTag)	1	lock,main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/IntlCache.cpp	Vector<char16_t, 32> IntlCache::getBestDateTimePattern(const CString& locale, std::span<const char16_t> skeleton, UErrorCode& status)	1	lock,main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/IntlCache.cpp	Vector<char16_t, 32> IntlCache::getFieldDisplayName(const CString& locale, UDateTimePatternField field, UDateTimePGDisplayWidth width, UErrorCode& status)	1	lock,main-form-helper,gate-test				
@@ -1208,8 +1216,9 @@ Source/JavaScriptCore/runtime/IntlRelativeTimeFormat.cpp	JSValue IntlRelativeTim
 Source/JavaScriptCore/runtime/IntlSegmentIterator.cpp	JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)	12	lock,gate-test				
 Source/JavaScriptCore/runtime/IntlSegments.cpp	JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValue)	6	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/IteratorOperations.cpp	IterationMode getIterationMode(VM& vm, JSGlobalObject* globalObject, JSValue iterable, JSValue symbolIterator)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/IteratorOperations.h	template<typename Metadata> ALWAYS_INLINE bool iteratorNextWithIndexInFrame(JSGlobalObject* globalObject, Metadata& metadata, JSValue iterable, JSValue& indexIn	2	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastFlat(JSGlobalObject* globalObject, uint64_t depth, uint64_t length)	7	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint64_t startIndex, uint64_t count)	44	debug-assert,relaxed-atomic,gate-test				
+Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastSlice(JSGlobalObject* globalObject, JSObject* source, uint64_t startIndex, uint64_t count)	45	debug-assert,relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastToReversed(JSGlobalObject* globalObject, uint64_t length)	15	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastToSpliced(JSGlobalObject* globalObject, CallFrame* callFrame, uint64_t length, uint64_t newLength, uint64_t start, uint64_t deleteCount, u	7	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSArray.cpp	JSArray* JSArray::fastWith(JSGlobalObject* globalObject, uint32_t index, JSValue value, uint64_t length)	14	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -1239,8 +1248,9 @@ Source/JavaScriptCore/runtime/JSArrayBufferView.cpp	ArrayBuffer* JSArrayBufferVi
 Source/JavaScriptCore/runtime/JSArrayBufferView.cpp	void JSArrayBufferView::detachFromArrayBuffer()	7	fence				
 Source/JavaScriptCore/runtime/JSArrayBufferView.cpp	void JSArrayBufferView::finishCreation(VM& vm)	10	other				
 Source/JavaScriptCore/runtime/JSArrayBufferView.h	(no enclosing function found)	3	relaxed-atomic				
-Source/JavaScriptCore/runtime/JSArrayBufferView.h	inline ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/JSArrayBufferView.h	ALWAYS_INLINE ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSArrayBufferViewInlines.h	WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN inline void JSArrayBufferView::refreshVector(void* newData)	1	other				
+Source/JavaScriptCore/runtime/JSArrayInlines.h	ALWAYS_INLINE JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initialLength, unsigned vectorLengthHint)	2	main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/JSArrayInlines.h	ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue value)	11	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSArrayInlines.h	inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType other, bool allowPromotion)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSBigInt.cpp	template <typename BigIntImpl1, typename BigIntImpl2> JSBigInt::ImplResult JSBigInt::remainderImpl(JSGlobalObject* globalObject, BigIntImpl1 x, BigIntImpl2 y)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -1260,6 +1270,10 @@ Source/JavaScriptCore/runtime/JSCellInlines.h	inline void JSCell::finishCreation
 Source/JavaScriptCore/runtime/JSCellInlines.h	inline void JSCell::setPerCellBit(bool value)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSCellInlines.h	inline void JSCellLock::lock()	3	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/runtime/JSCellInlines.h	inline void JSCellLock::unlock()	3	debug-assert	debug-assert	assertion only: no release-build code	tool	
+Source/JavaScriptCore/runtime/JSCellInlines.h	template<typename T> void* allocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)	1	main-form-helper,gate-test				
+Source/JavaScriptCore/runtime/JSCellInlines.h	template<typename T> void* allocateCell(VM& vm, size_t size)	1	main-form-helper,gate-test				
+Source/JavaScriptCore/runtime/JSCellInlines.h	template<typename T> void* tryAllocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)	1	main-form-helper,gate-test				
+Source/JavaScriptCore/runtime/JSCellInlines.h	template<typename T> void* tryAllocateCell(VM& vm, size_t size)	1	main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/JSCellInlines.h	template<typename Type> inline Allocator allocatorForConcurrently(VM& vm, size_t allocationSize, AllocatorForMode mode)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSDataView.cpp	JSDataView::JSDataView(VM& vm, ConstructionContext& context, ArrayBuffer* buffer) : Base(vm, context)	2	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSDataView.h	ArrayBuffer* unsharedBuffer() const	3	fail-stop	fail-stop	a RELEASE_ASSERT or crash that flag off never reaches with the invariant it states	tool	
@@ -1375,6 +1389,7 @@ Source/JavaScriptCore/runtime/JSObject.cpp	ContiguousJSValues JSObject::createIn
 Source/JavaScriptCore/runtime/JSObject.cpp	ContiguousJSValues JSObject::createInitialInt32(VM& vm, unsigned length)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObject.cpp	ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)	8	fail-stop,relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/JSObject.cpp	ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)	8	fail-stop,relaxed-atomic,gate-test				
+Source/JavaScriptCore/runtime/JSObject.cpp	JSString* JSObject::toString(JSGlobalObject* globalObject) const	1	other				
 Source/JavaScriptCore/runtime/JSObject.cpp	bool JSObject::attemptToInterceptPutByIndexOnHoleForPrototype(JSGlobalObject* globalObject, JSValue thisValue, unsigned i, JSValue value, bool shouldThrow, bool	3	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObject.cpp	bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned index, const PropertyDescriptor& descriptor, bool throwException)	17	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObject.cpp	bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwExce	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -1430,8 +1445,10 @@ Source/JavaScriptCore/runtime/JSObject.h	template<bool debugLLIntGetById> ALWAYS
 Source/JavaScriptCore/runtime/JSObject.h	unsigned getArrayLength() const	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObject.h	unsigned getVectorLength()	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObjectInlines.h	ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, StructureID structureID, Stru	8	debug-assert,fence,gate-test				
+Source/JavaScriptCore/runtime/JSObjectInlines.h	ALWAYS_INLINE bool JSObject::canGetIndexQuicklyForTypedArray(unsigned i) const	2	main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/JSObjectInlines.h	ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObjectInlines.h	ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/JSObjectInlines.h	ALWAYS_INLINE void JSObject::initializeIndex(ObjectInitializationScope& scope, unsigned i, JSValue v)	2	main-form-helper,gate-test				
 Source/JavaScriptCore/runtime/JSObjectInlines.h	inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObjectInlines.h	inline void JSObject::nukeStructureAndSetButterfly(VM& vm, StructureID oldStructureID, Butterfly* butterfly)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/JSObjectInlines.h	inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -1477,6 +1494,7 @@ Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE GCOwnedDataScope<AtomStri
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE GCOwnedDataScope<StringView> JSRopeString::view(JSGlobalObject* globalObject) const	7	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE GCOwnedDataScope<StringView> JSString::view(JSGlobalObject* globalObject) const	3	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE Identifier JSString::toIdentifier(JSGlobalObject* globalObject) const	11	relaxed-atomic,gate-test				
+Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE JSString* jsSubstring(JSGlobalObject* globalObject, VM& vm, JSString* base, unsigned offset, unsigned length)	1	other				
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE bool isRope() const	1	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE unsigned JSString::length() const	3	other				
 Source/JavaScriptCore/runtime/JSString.h	ALWAYS_INLINE void JSString::swapToAtomString(VM& vm, RefPtr<AtomStringImpl>&& atom) const	8	debug-assert,relaxed-atomic,gate-test				
@@ -1490,7 +1508,6 @@ Source/JavaScriptCore/runtime/JSString.h	JSString(VM& vm, Ref<StringImpl>&& valu
 Source/JavaScriptCore/runtime/JSString.h	JSString* fiber0() const	1	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	JSString* fiber1() const	4	other				
 Source/JavaScriptCore/runtime/JSString.h	JSString* fiber2() const	5	other				
-Source/JavaScriptCore/runtime/JSString.h	inline JSString* jsSubstring(JSGlobalObject* globalObject, VM& vm, JSString* base, unsigned offset, unsigned length)	1	other				
 Source/JavaScriptCore/runtime/JSString.h	inline JSString* tryJSSubstringImpl(VM& vm, JSString* base, unsigned offset, unsigned length)	6	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	inline StringImpl* JSString::getValueImpl() const	1	relaxed-atomic				
 Source/JavaScriptCore/runtime/JSString.h	inline void JSString::value(jsstring_iterator* iterator) const	6	relaxed-atomic				
@@ -1671,7 +1688,7 @@ Source/JavaScriptCore/runtime/ScopedArgumentsTable.h	void lock()	1	relaxed-atomi
 Source/JavaScriptCore/runtime/ScriptExecutable.cpp	bool ScriptExecutable::hasClearableCode() const	2	other				
 Source/JavaScriptCore/runtime/ScriptExecutable.cpp	void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)	4	relaxed-atomic				
 Source/JavaScriptCore/runtime/ScriptExecutable.cpp	void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType codeType, CodeSpecializationKind kind, Profiler::JettisonReason reason)	25	lock,gate-test				
-Source/JavaScriptCore/runtime/ScriptExecutable.cpp	void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSScope* scope, CodeSpecializationKind kind, CodeBlock*& resultCodeBlock)	3	lock,relaxed-atomic,gate-test				
+Source/JavaScriptCore/runtime/ScriptExecutable.cpp	void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSScope* scope, CodeSpecializationKind kind, CodeBlock*& resultCodeBlock)	3	lock,gate-test				
 Source/JavaScriptCore/runtime/ScriptExecutable.h	void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)	3	relaxed-atomic				
 Source/JavaScriptCore/runtime/ShadowRealmConstructor.cpp	JSC_DEFINE_HOST_FUNCTION(constructWithShadowRealmConstructor, (JSGlobalObject* globalObject, CallFrame*))	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/SimpleTypedArrayController.cpp	JSArrayBuffer* SimpleTypedArrayController::toJS(JSGlobalObject* lexicalGlobalObject, JSGlobalObject* globalObject, ArrayBuffer& native)	4	relaxed-atomic				
@@ -1708,9 +1725,9 @@ Source/JavaScriptCore/runtime/StringPrototypeInlines.h	ALWAYS_INLINE JSString* r
 Source/JavaScriptCore/runtime/StringPrototypeInlines.h	ALWAYS_INLINE JSString* replaceOneWithStringUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, cons	1	other				
 Source/JavaScriptCore/runtime/StringPrototypeInlines.h	static ALWAYS_INLINE JSString* removeAllUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp)	2	other				
 Source/JavaScriptCore/runtime/StringPrototypeInlines.h	static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObject, const String& source, JSString* string, RegExp* regExp)	4	other				
-Source/JavaScriptCore/runtime/StringRecursionChecker.h	inline JSValue StringRecursionChecker::performCheck()	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/StringRecursionChecker.h	ALWAYS_INLINE JSValue StringRecursionChecker::performCheck()	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StringRecursionChecker.h	inline StringRecursionChecker::~StringRecursionChecker()	5	debug-assert	debug-assert	assertion only: no release-build code	tool	
-Source/JavaScriptCore/runtime/Structure.cpp	PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attributes)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/Structure.cpp	PropertyOffset Structure::getConcurrently(UniquedStringImpl* uid, unsigned& attributes)	23	fence,relaxed-atomic,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/Structure.cpp	PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable)	9	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/Structure.cpp	PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm, Structure* transition)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/Structure.cpp	Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutProperty	17	relaxed-atomic,gate-test				
@@ -1769,13 +1786,13 @@ Source/JavaScriptCore/runtime/StructureCreateInlines.h	inline Structure* Structu
 Source/JavaScriptCore/runtime/StructureCreateInlines.h	inline void JSObject::didBecomePrototype(VM& vm)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructure(Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffse	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	ALWAYS_INLINE bool Structure::shouldConvertToPolyProto(const Structure* a, const Structure* b)	4	debug-assert	debug-assert	assertion only: no release-build code	tool	
+Source/JavaScriptCore/runtime/StructureInlines.h	ALWAYS_INLINE void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)	1	other				
 Source/JavaScriptCore/runtime/StructureInlines.h	ALWAYS_INLINE void Structure::setPropertyTable(VM& vm, PropertyTable* table)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	inline JSValue Structure::prototypeForLookup(JSGlobalObject* globalObject, JSCell* base) const	1	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	inline Structure* StructureTransitionTable::trySingleTransition() const	3	relaxed-atomic,gate-test				
 Source/JavaScriptCore/runtime/StructureInlines.h	inline StructureChain* Structure::prototypeChain(VM& vm, JSGlobalObject* globalObject, JSObject* base) const	1	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	inline bool Structure::isValid(JSGlobalObject* globalObject, StructureChain* cachedPrototypeChain, JSObject* base) const	9	relaxed-atomic				
 Source/JavaScriptCore/runtime/StructureInlines.h	inline void Structure::clearCachedPrototypeChain()	5	relaxed-atomic,gate-test				
-Source/JavaScriptCore/runtime/StructureInlines.h	inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)	1	other				
 Source/JavaScriptCore/runtime/StructureInlines.h	template<Structure::ShouldPin shouldPin, typename Func> inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned attributes, const Func&	2	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	template<Structure::ShouldPin shouldPin, typename Func> inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, unsigned attributes,	2	debug-assert	debug-assert	assertion only: no release-build code	tool	
 Source/JavaScriptCore/runtime/StructureInlines.h	template<Structure::ShouldPin shouldPin, typename Func> inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const Func& func)	2	debug-assert	debug-assert	assertion only: no release-build code	tool	
@@ -1843,6 +1860,7 @@ Source/JavaScriptCore/runtime/VM.cpp	void VM::beginMarking()	1	gate-test	gate	an
 Source/JavaScriptCore/runtime/VM.cpp	void VM::clearNativeStackTraceOfLastThrow()	2	other				
 Source/JavaScriptCore/runtime/VM.cpp	void VM::clearScratchBuffers()	3	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.cpp	void VM::deleteAllCode(DeleteAllCodeEffort effort)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/VM.cpp	void VM::deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort effort)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.cpp	void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.cpp	void VM::deleteAllRegExpCode()	1	other				
 Source/JavaScriptCore/runtime/VM.cpp	void VM::didExhaustMicrotaskQueue()	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
@@ -1865,7 +1883,7 @@ Source/JavaScriptCore/runtime/VM.cpp	void VM::updateStackLimits()	19	gate-test	g
 Source/JavaScriptCore/runtime/VM.cpp	void VM::verifyExceptionCheckNeedIsSatisfied(unsigned recursionDepth, ExceptionEventLocation& location)	5	other				
 Source/JavaScriptCore/runtime/VM.cpp	void VM::whenIdle(Function<void()>&& callback)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.cpp	void sanitizeStackForVM(VM& vm)	1	other				
-Source/JavaScriptCore/runtime/VM.cpp	void sanitizeStackForVMInCallSlowPath(VM& vm)	2	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/runtime/VM.cpp	void sanitizeStackForVMInCallSlowPath(VM& vm)	5	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.h	(no enclosing function found)	3	relaxed-atomic				
 Source/JavaScriptCore/runtime/VM.h	CONCURRENT_SAFE void requestEntryScopeService(ConcurrentEntryScopeService service)	1	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/VM.h	CONCURRENT_SAFE void requestStop()	1	other				
@@ -1930,7 +1948,7 @@ Source/JavaScriptCore/runtime/Watchdog.cpp	void Watchdog::setTimeLimit(Seconds l
 Source/JavaScriptCore/runtime/Watchdog.cpp	void Watchdog::startTimer(Seconds timeLimit)	4	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/Watchdog.cpp	void Watchdog::stopTimer()	2	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/JavaScriptCore/runtime/WeakGCMap.h	AddResult set(const KeyType& key, ValueType value)	4	lock				
-Source/JavaScriptCore/runtime/WeakGCMap.h	ValueArg* get(const KeyType& key) const	4	other				
+Source/JavaScriptCore/runtime/WeakGCMap.h	NEVER_INLINE ValueArg* getLocked(const KeyType& key) const	1	lock				
 Source/JavaScriptCore/runtime/WeakGCMap.h	bool remove(const KeyType& key)	4	lock				
 Source/JavaScriptCore/runtime/WeakGCMap.h	private: ValueArg* addIfAbsentImpl(const KeyType& key, ValueType&& newEntry, ValueArg* value)	8	other				
 Source/JavaScriptCore/runtime/WeakGCMap.h	template<typename Functor> ValueArg* ensureValue(const KeyType& key, Functor&& functor)	23	lock				
@@ -2001,8 +2019,8 @@ Source/JavaScriptCore/wasm/js/WebAssemblyModuleConstructor.cpp	JSC_DEFINE_HOST_F
 Source/JavaScriptCore/wasm/js/WebAssemblyTableConstructor.cpp	JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTable, (JSGlobalObject* globalObject, CallFrame* callFrame))	2	other				
 Source/JavaScriptCore/wasm/js/WebAssemblyTagConstructor.cpp	JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTag, (JSGlobalObject* globalObject, CallFrame* callFrame))	2	other				
 Source/JavaScriptCore/yarr/YarrInterpreter.cpp	unsigned interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS	7	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/yarr/YarrMatchingContextHolder.h	inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, MatchFrom matchFrom) : m_matchFrom(matchFrom)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
-Source/JavaScriptCore/yarr/YarrMatchingContextHolder.h	inline MatchingContextHolder::~MatchingContextHolder()	1	other				
+Source/JavaScriptCore/yarr/YarrMatchingContextHolder.h	ALWAYS_INLINE MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, MatchFrom matchFrom) : m_matchFrom(matchFrom)	4	gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
+Source/JavaScriptCore/yarr/YarrMatchingContextHolder.h	ALWAYS_INLINE MatchingContextHolder::~MatchingContextHolder()	1	other				
 Source/WTF/wtf/Atomics.h	template<typename T> static Dependency loadAndFence(const T* pointer, T& output)	6	relaxed-atomic				
 Source/WTF/wtf/BitSet.h	template<size_t bitSetSize, typename WordType> inline constexpr void BitSet<bitSetSize, WordType>::concurrentFilter(const BitSet& other)	3	relaxed-atomic				
 Source/WTF/wtf/CagedPtr.h	(no enclosing function found)	3	relaxed-atomic				
@@ -2061,7 +2079,6 @@ Source/WTF/wtf/WeakRandom.h	private: uint64_t advance()	6	other
 Source/WTF/wtf/WeakRandom.h	void setSeed(unsigned seed)	2	other				
 Source/WTF/wtf/WordLock.cpp	NEVER_INLINE void WordLock::lockSlow()	2	other				
 Source/WTF/wtf/WordLock.cpp	NEVER_INLINE void WordLock::unlockSlow()	1	other				
-Source/WTF/wtf/posix/ThreadingPOSIX.cpp	void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)	4	other				
 Source/WTF/wtf/text/AtomStringImpl.cpp	Ref<AtomStringImpl> AtomStringImpl::addSlowCase(AtomStringTable& stringTable, StringImpl& string)	2	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/WTF/wtf/text/AtomStringImpl.cpp	Ref<AtomStringImpl> AtomStringImpl::addSlowCase(Ref<StringImpl>&& string)	3	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	
 Source/WTF/wtf/text/AtomStringImpl.cpp	Ref<AtomStringImpl> AtomStringImpl::addSlowCase(StringImpl& string)	3	debug-assert,gate-test	gate	an inserted gate test: one predicted-false byte test of a frozen Config or option byte flag off	tool	

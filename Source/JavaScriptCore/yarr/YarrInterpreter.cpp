@@ -2304,6 +2304,7 @@ public:
     // WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function does conditional locking.
     unsigned interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
+        JSC_PER_THREADS_MODE_BEGIN(unsigned)
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=195970
         // [Yarr Interpreter] The interpreter doesn't have checks for stack overflow due to deep recursion
         if (!input.isAvailableInput(0))
@@ -2321,7 +2322,7 @@ public:
         // unchanged.
         BumpPointerAllocator* allocator = pattern->m_allocator;
         std::optional<ConcurrentJSLocker> locker;
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             allocator = &threadLocalRegExpAllocator();
         else
             locker.emplace(pattern->m_lock);
@@ -2357,6 +2358,7 @@ public:
         ASSERT((result == JSRegExpResult::Match) == (output[0] != offsetNoMatch));
 
         return output[0];
+        JSC_PER_THREADS_MODE_END
     }
 
     Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start)

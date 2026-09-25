@@ -177,7 +177,7 @@ public:
     void setObservedInt32Overflow() { setBit(ObservedResults::Int32Overflow); }
     void setObservedInt52Overflow() { setBit(ObservedResults::Int52Overflow); }
 
-    void observeResult(JSValue value)
+    ALWAYS_INLINE void observeResult(JSValue value)
     {
         if (value.isInt32())
             return;
@@ -297,7 +297,7 @@ public:
     void argSawNumber() { setArgObservedType(argObservedType().withNumber()); }
     void argSawNonNumber() { setArgObservedType(argObservedType().withNonNumber()); }
 
-    void observeArg(JSValue arg)
+    ALWAYS_INLINE void observeArg(JSValue arg)
     {
         UnaryArithProfile newProfile = *this;
         if (arg.isNumber()) {
@@ -406,7 +406,7 @@ public:
     void rhsSawNumber() { setRhsObservedType(rhsObservedType().withNumber()); }
     void rhsSawNonNumber() { setRhsObservedType(rhsObservedType().withNonNumber()); }
 
-    void observeLHS(JSValue lhs)
+    ALWAYS_INLINE void observeLHS(JSValue lhs)
     {
         BinaryArithProfile newProfile = *this;
         if (lhs.isNumber()) {
@@ -420,7 +420,7 @@ public:
         m_bits = newProfile.bits();
     }
 
-    void observeLHSAndRHS(JSValue lhs, JSValue rhs)
+    ALWAYS_INLINE void observeLHSAndRHS(JSValue lhs, JSValue rhs)
     {
         observeLHS(lhs);
 

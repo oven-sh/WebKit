@@ -310,7 +310,7 @@ JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, doub
     UConstrainedFieldPosition* cfpos = m_cfpos.get();
     std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>> ownFormattedResult;
     std::unique_ptr<UConstrainedFieldPosition, ICUDeleter<ucfpos_close>> ownCfpos;
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         ownFormattedResult = std::unique_ptr<UFormattedRelativeDateTime, ICUDeleter<ureldatefmt_closeResult>>(ureldatefmt_openResult(&status));
         if (U_SUCCESS(status))
             ownCfpos = std::unique_ptr<UConstrainedFieldPosition, ICUDeleter<ucfpos_close>>(ucfpos_open(&status));

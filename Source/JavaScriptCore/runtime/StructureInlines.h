@@ -70,6 +70,7 @@ ALWAYS_INLINE uint32_t Structure::pinnedTableConcurrentEditCountForRead() const
 
 inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    JSC_PER_THREADS_MODE_BEGIN(Structure*)
     ASSERT(vm.structureStructure);
     switch (previous->variant()) {
     case StructureVariant::Normal: {
@@ -89,6 +90,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
         RELEASE_ASSERT_NOT_REACHED();
         return nullptr;
     }
+    JSC_PER_THREADS_MODE_END
 }
 
 template<typename Functor>
@@ -160,7 +162,7 @@ void Structure::forEachProperty(VM& vm, const Functor& functor)
     // passed here runs JS (they copy structure data), so nothing can mutate,
     // rehash or steal the table mid-walk - the same reason the flag-off walk
     // needs no lock against re-entrant JS. Flag-off: the lock-free walk below.
-    if (Options::useJSThreads() && g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processUsesJSThreads() && processIsGILOff()) [[unlikely]] {
         Vector<PropertyTableEntry, 64> entries;
         while (true) {
             PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
@@ -233,7 +235,7 @@ inline JSValue Structure::prototypeForLookup(JSGlobalObject* globalObject, JSCel
     // The body stays sound on the sample: mono-proto reads THIS structure's
     // immutable m_prototype; poly-proto reads base's inline slot (value
     // staleness blessed, OM C4). Flag-off: assert unchanged.
-    ASSERT(Options::useTaggedButterflies() || base->structure() == this);
+    ASSERT(processUsesTaggedButterflies() || base->structure() == this);
     if (isObject())
         return storedPrototype(asObject(base));
     return prototypeForLookupPrimitiveImpl(globalObject, this);
@@ -247,7 +249,7 @@ inline StructureChain* Structure::prototypeChain(VM& vm, JSGlobalObject* globalO
     // (which hold the sample) want; the cache-slot publication is already
     // relaxed-atomic against concurrent readers (TSAN §10.9 note below).
     // Flag-off: assert unchanged.
-    ASSERT(Options::useTaggedButterflies() || base->structure() == this);
+    ASSERT(processUsesTaggedButterflies() || base->structure() == this);
     // We cache our prototype chain so our clients can share it.
     if (!isValid(globalObject, m_cachedPrototypeChain.get(), base)) {
         JSValue prototype = prototypeForLookup(globalObject, base);
@@ -339,7 +341,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     // the value (PropertyTable::add's closing edit-count bump is the release
     // that orders those stores before a reader's getDirect(newOffset)). Any
     // change to one body must be mirrored in the other.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         return ([&]() NEVER_INLINE -> PropertyOffset {
         std::optional<GCSafeConcurrentJSLocker> l6Locker;
         if constexpr (shouldPin == ShouldPin::Yes) {
@@ -591,7 +593,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     // into a member sibling without a Structure.h declaration (and a
     // friend-free file-local helper cannot compile: pin() is private). Any
     // change to one tail MUST be mirrored in the other.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // ===== flag-on arm (mirror of the flag-off tail below) =====
         // F1 residual (AB17g): outlined into a NEVER_INLINE IIFE so that
         // flag-off instantiations of every put site carry only the
@@ -759,7 +761,7 @@ ALWAYS_INLINE void Structure::setPropertyTable(VM& vm, PropertyTable* table)
     // under useJSThreads the table's fill stores must be ordered before the
     // slot store. Locked readers are ordered by m_lock; flag-off readers are
     // same-thread.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // A release store, so that TSAN also sees the order (it does not model
         // the fence). getConcurrently loads the slot to match.
         WTF::atomicStore(m_propertyTableUnsafe.slot(), table, std::memory_order_release);
@@ -777,7 +779,7 @@ ALWAYS_INLINE void Structure::setPreviousID(VM& vm, Structure* structure)
         m_previousOrRareData.set(vm, this, structure);
 }
 
-inline void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
+ALWAYS_INLINE void Structure::pin(const AbstractLocker&, VM& vm, PropertyTable* table)
 {
     setIsPinnedPropertyTable(true);
     setPropertyTable(vm, table);
@@ -811,7 +813,7 @@ NEVER_INLINE inline void Structure::setBitFieldConcurrently(uint32_t setBits, ui
 // the instance being transitioned (JSObject::taggedButterflyWord()).
 ALWAYS_INLINE bool Structure::mayTransitionLockFreeFromThisStructure(const JSCell* cell, uint64_t taggedButterflyWord) const
 {
-    if (!Options::useTaggedButterflies()) [[likely]]
+    if (!processUsesTaggedButterflies()) [[likely]]
         return true; // E3/I22: flag-off, today's lock-free code is unconditionally correct.
 
     // I15: both SOURCE sets valid AND watched (I14).
@@ -981,7 +983,7 @@ ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructure(Str
     // hence the reroute; flag-off has one mutator, so the lock-free get
     // (trySingleTransition plain m_data load below) can never race an insert
     // and stays byte-identical to upstream.
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         return addPropertyTransitionToExistingStructureConcurrently(structure, propertyName.uid(), attributes, offset);
     return addPropertyTransitionToExistingStructureImpl(structure, propertyName.uid(), attributes, offset);
 }
@@ -1009,7 +1011,7 @@ inline Structure* StructureTransitionTable::trySingleTransition() const
     // load, pairing with setSingleTransition's release store: the JSON parser follows a single transition without the
     // structure's lock and reads the target's property name, which another thread may have created a moment ago
     // (tenth round: the one report of the final TSan lane, LiteralParser::equalIdentifier against the name's malloc).
-    uintptr_t pointer = Options::useTaggedButterflies()
+    uintptr_t pointer = processUsesTaggedButterflies()
         ? static_cast<uintptr_t>(WTF::atomicLoad(const_cast<intptr_t*>(&m_data), std::memory_order_acquire))
         : static_cast<uintptr_t>(dataConcurrently());
     if (pointer & UsingSingleSlotFlag)
@@ -1230,7 +1232,7 @@ inline JSString* Structure::defaultToPrimitiveFastAndNonObservable(VM& vm)
 
 inline void Structure::clearCachedPrototypeChain()
 {
-    if (!Options::useTaggedButterflies()) [[likely]] {
+    if (!processUsesTaggedButterflies()) [[likely]] {
         // Flag-off: today's code, bit-identical (I22).
         m_cachedPrototypeChain.clear();
         if (!hasRareData())
@@ -1269,7 +1271,7 @@ inline StructureTransitionTable::~StructureTransitionTable()
 }
 
 inline StructureCache::StructureCache(VM& vm)
-    : m_structures(vm, Options::useTaggedButterflies() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
+    : m_structures(vm, processUsesTaggedButterflies() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
 {
 }
 

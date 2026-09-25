@@ -54,7 +54,7 @@ ALWAYS_INLINE void* CompleteSubspace::allocate(VM& vm, size_t cellSize, GCDeferr
     // is invalidTlcIndex and cannot satisfy the size_t bound check by
     // wraparound) takes the resolver, which carries the access and stamping
     // ASSERTs.
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         if (vm.gilOff() && cellSize <= MarkedSpace::largeCutoff) {
             unsigned bound = GCClient::Heap::currentThreadTLCBound();
             size_t slot = static_cast<size_t>(tlcIndexBase()) + MarkedSpace::sizeClassToIndex(cellSize);
@@ -81,7 +81,7 @@ ALWAYS_INLINE void* CompleteSubspace::allocateForClient(GCClient::Heap& client, 
     // preludes (standalone harness clients have no VM). §5.5 keeps this a
     // C++ FreeList pop: the per-(client, directory) LocalAllocator lives in
     // the caller's GCThreadLocalCache.
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
     if (cellSize <= MarkedSpace::largeCutoff) {
         if (Allocator allocator = client.threadLocalCache().allocatorForSizeStep(*this, MarkedSpace::sizeClassToIndex(cellSize)))
             return allocator.allocate(client.server(), allocator.cellSize(), deferralContext, failureMode);

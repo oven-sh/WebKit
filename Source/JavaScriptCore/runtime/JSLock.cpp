@@ -1038,7 +1038,7 @@ void JSLock::lock(intptr_t lockCount) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     // ctor before the ctor's first JSLockHolder, so it is valid for every
     // lock() of a VM-owned JSLock, and flag-off it is a single byte test
     // on the read-only Config page.
-    if (m_vm && g_jscConfig.gilOffProcess && ThreadManager::isJSThreadCurrent()) [[unlikely]] {
+    if (m_vm && processIsGILOff() && ThreadManager::isJSThreadCurrent()) [[unlikely]] {
         VMLite* lite = VMLite::currentIfExists();
         RELEASE_ASSERT(lite && lite->vm == m_vm); // §F.6(e): no foreign-VM entry from spawned threads (A36 single-VM v1).
     }
@@ -1251,7 +1251,7 @@ void JSLock::didAcquireLock()
         if (!tookGILOffCarrierPath) {
             VMLite* cur = VMLite::currentIfExists();
             if ((!cur || cur->vm != m_vm) && m_vm->mainVMLite()) {
-                RELEASE_ASSERT(!Options::useJSThreads() || Options::useThreadGIL()
+                RELEASE_ASSERT(!processUsesJSThreads() || Options::useThreadGIL()
                     || (VM::isGILOffProcess() && !m_vm->gilOff()));
                 m_entryVMLite = VMLite::setCurrent(m_vm->mainVMLite());
                 m_didInstallVMLite = true;

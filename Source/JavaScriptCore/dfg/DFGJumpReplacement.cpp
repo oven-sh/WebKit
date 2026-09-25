@@ -52,7 +52,7 @@ void JumpReplacement::installVMTrapBreakpoint()
     // usePollingTraps, so no SignalSender is ever started and this path is
     // unreachable; the same guard sits at the caller,
     // DFG::CommonData::installVMTrapBreakpoints.
-    RELEASE_ASSERT(!Options::useJSThreads() || Options::useThreadGIL() || Options::usePollingTraps()); // GIL on: SPEC-jit I21, history §53
+    RELEASE_ASSERT(!processUsesJSThreads() || Options::useThreadGIL() || Options::usePollingTraps()); // GIL on: SPEC-jit I21, history §53
     dataLogLnIf(Options::dumpDisassembly(),
         "Inserting VMTrap breakpoint at ", RawPointer(m_source.dataLocation()));
 #if ENABLE(SIGNAL_BASED_VM_TRAPS)

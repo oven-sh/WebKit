@@ -36,8 +36,15 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-inline JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initialLength, unsigned vectorLengthHint)
+ALWAYS_INLINE JSArray* JSArray::tryCreate(VM& vm, Structure* structure, unsigned initialLength, unsigned vectorLengthHint)
 {
+    return JSC_CALL_PER_THREADS_MODE(tryCreatePerThreadsMode, vm, structure, initialLength, vectorLengthHint);
+}
+
+template<bool threaded>
+inline JSArray* JSArray::tryCreatePerThreadsMode(VM& vm, Structure* structure, unsigned initialLength, unsigned vectorLengthHint)
+{
+    JSC_THREADS_MODE_BODY(threaded);
     ASSERT(vectorLengthHint >= initialLength);
     unsigned outOfLineStorage = structure->outOfLineCapacity();
 
@@ -130,7 +137,7 @@ inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType
         // flag-off it never does; the copy is Contiguous with the Double lanes
         // boxed (every fast-copy site already has that leg for T4-C) instead of
         // the generic element-by-element concat (`stanford-crypto-sha256`).
-        if (g_jscConfig.gilOffProcess && (type == ArrayWithDouble || other == ArrayWithDouble) && (type == ArrayWithContiguous || other == ArrayWithContiguous)) [[unlikely]]
+        if (processIsGILOff() && (type == ArrayWithDouble || other == ArrayWithDouble) && (type == ArrayWithContiguous || other == ArrayWithContiguous)) [[unlikely]]
             return ArrayWithContiguous;
     }
 
@@ -273,7 +280,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     //   - AS words with a foreign SW=0 writer: the §4.6 per-event SW stop.
     // Residue (shape transition on a shared word, sparse territory) takes the
     // generic putByIndex protocol.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         uint64_t word = taggedButterflyWord();
         // T6-segmented-push-fastpath (SCALEBENCH §25 Phase A): once a posting
         // array segments, every per-doc push(d) was falling out of the inline
@@ -384,7 +391,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     Butterfly* butterfly;
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // The block above saw a flat word that this thread owns, or a null
         // word. butterfly() must not decode a segmented word, and a foreign
         // conversion can land between the two loads. So this load is decoded
@@ -426,7 +433,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguousInt32().at(this, length).setWithoutWriteBarrier(value);
-            if (g_jscConfig.gilOffProcess) [[unlikely]]
+            if (processIsGILOff()) [[unlikely]]
                 butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
             else
                 butterfly->setPublicLength(length + 1);
@@ -450,7 +457,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguous().at(this, length).setWithoutWriteBarrier(value);
-            if (g_jscConfig.gilOffProcess) [[unlikely]]
+            if (processIsGILOff()) [[unlikely]]
                 butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
             else
                 butterfly->setPublicLength(length + 1);
@@ -490,7 +497,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         ASSERT(length <= butterfly->vectorLength());
         if (length < butterfly->vectorLength()) {
             butterfly->contiguousDouble().at(this, length) = valueAsDouble;
-            if (g_jscConfig.gilOffProcess) [[unlikely]]
+            if (processIsGILOff()) [[unlikely]]
                 butterfly->bumpPublicLengthToAtLeast(length + 1); // SPEC-jit §5.5 length updates: a foreign writer may have raised it (R9-22).
             else
                 butterfly->setPublicLength(length + 1);
@@ -531,7 +538,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
         // m_numValuesInVector stores are the in-place stores §4.6 sanctions
         // under the lock. The beyond-vector paths run unlocked here; their
         // mutation sites (increaseVectorLength, sparse map) lock themselves.
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             {
                 Locker locker { cellLock() };
                 ArrayStorage* lockedStorage = this->butterfly()->arrayStorage();

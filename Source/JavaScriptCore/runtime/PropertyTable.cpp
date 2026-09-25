@@ -285,7 +285,7 @@ WTF::Atomic<uint64_t>& PropertyTable::ensureQuarantineEpochSlot(DeletedOffsets& 
 // (O1 - Vector growth is fastMalloc).
 void PropertyTable::quarantineDeletedOffset(PropertyOffset offset)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     DeletedOffsets& deletedOffsets = ensureDeletedOffsets();
     WTF::Atomic<uint64_t>& epochSlot = ensureQuarantineEpochSlot(deletedOffsets);
     // Stamp = the heap's epoch AT deletion. Promotion requires stamp <
@@ -310,7 +310,7 @@ void PropertyTable::quarantineDeletedOffset(PropertyOffset offset)
 // is a leaf under it; Vector growth is fastMalloc (O1-clean).
 void PropertyTable::quarantineIndexVector(uintptr_t indexVector)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     DeletedOffsets& deletedOffsets = ensureDeletedOffsets();
     uint64_t currentEpoch = ensureQuarantineEpochSlot(deletedOffsets).load(std::memory_order_seq_cst);
 
@@ -335,7 +335,7 @@ void PropertyTable::quarantineIndexVector(uintptr_t indexVector)
 // m_deletedOffsetCount counts both lists, so promotion leaves it unchanged.
 void PropertyTable::releaseQuarantinedSlots(uint64_t currentEpoch)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     if (!m_deletedOffsets)
         return;
     Vector<QuarantinedDeletedOffset>& quarantined = m_deletedOffsets->quarantined;

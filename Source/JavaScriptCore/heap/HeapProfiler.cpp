@@ -66,8 +66,8 @@ void HeapProfiler::clearSnapshots()
 // analyzeVariableNameEdge needs SymbolTable entries, which cannot be faulted in from inside marking.
 static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
 {
-    // Only a table decoded with useLazySymbolTableConstants can still be pending.
-    if (!Options::useLazySymbolTableConstants())
+    // GIL off no table is pending (Decoder::canDeferIntoPayload).
+    if (vm.gilOff()) [[unlikely]]
         return;
     // A HeapIterationScope stops allocation, which on a shared heap is legal only while no other client can allocate
     // (MarkedSpace::willStartIterating; SPEC-heap history, ninth round). The snapshot builders get here with

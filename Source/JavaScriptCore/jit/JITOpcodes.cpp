@@ -1683,7 +1683,7 @@ void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
     addSlowCase(branchIfNotFunction(calleeReg));
     loadPtr(Address(calleeReg, JSFunction::offsetOfExecutableOrRareData()), rareDataReg);
     addSlowCase(branchTestPtr(Zero, rareDataReg, TrustedImm32(JSFunction::rareDataTag)));
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Another thread can clear() or re-initialize this profile between our
         // loads (a .prototype store, a racing first fill), so a plain
         // {allocator, structure} pair can be torn: a non-null allocator with a

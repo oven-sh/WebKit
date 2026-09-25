@@ -99,7 +99,7 @@ public:
         // generic getDirectIndex() loop, which dispatches on the regime itself.
         // Flag-off the word is the plain butterfly pointer.
         Butterfly* butterfly = nullptr;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             uint64_t word = array->taggedButterflyWord();
             if (!isSegmentedButterfly(word))
                 butterfly = untaggedButterfly(word);
@@ -122,7 +122,7 @@ public:
             return result;
 
         unsigned copyLength = length;
-        if (Options::useJSThreads() && butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape || indexingType == DoubleShape)) [[unlikely]] {
+        if (processUsesJSThreads() && butterfly && (indexingType == ContiguousShape || indexingType == Int32Shape || indexingType == DoubleShape)) [[unlikely]] {
             // `length` was read from a word a racing owner resize may have
             // replaced since; the snapshot owns only [0, vectorLength) and the
             // slots past it are holes.

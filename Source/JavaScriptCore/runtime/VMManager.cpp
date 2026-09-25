@@ -919,7 +919,7 @@ unsigned s_vmManagerCounterEventNext;
 
 void VMManager::recordCounterEvent(const char* what, VM* vm) WTF_REQUIRES_LOCK(m_worldLock)
 {
-    if (!Options::useJSThreads())
+    if (!processUsesJSThreads())
         return;
     s_vmManagerCounterEvents[s_vmManagerCounterEventNext++ % vmManagerCounterEventCount] = {
         what, vm, Thread::currentSingleton().uid(), m_numberOfStoppedVMs, m_numberOfActiveVMs, m_numberOfBlockedVMs,
@@ -936,7 +936,7 @@ void VMManager::dumpCountersForAssertion(VM& vm) WTF_REQUIRES_LOCK(m_worldLock)
             " gilOff ", each.gilOff(), " servicing ", RawPointer(gilOffServicingThreads().get(&each)));
         return IterationStatus::Continue;
     });
-    if (!Options::useJSThreads())
+    if (!processUsesJSThreads())
         return;
     unsigned n = std::min(s_vmManagerCounterEventNext, vmManagerCounterEventCount);
     for (unsigned i = 0; i < n; ++i) {
@@ -1303,7 +1303,7 @@ void VMManager::notifyVMStop(VM& vm, StopTheWorldEvent event)
     // the VM as stopped a second time would break the
     // m_numberOfStoppedVMs <= m_numberOfActiveVMs invariant. Any request that
     // arrived meanwhile is fetched by the outer loop once the callback returns.
-    if (Options::useJSThreads() && t_stopTheWorldCallbackVM == &vm) [[unlikely]]
+    if (processUsesJSThreads() && t_stopTheWorldCallbackVM == &vm) [[unlikely]]
         return;
 
     // ========================================================================
@@ -1764,7 +1764,7 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         // Publish the servicing tenure for the nested-call guard at the top of
         // this function: the callback may poll traps (run JS), and its own GC
         // or thread-granular window can have re-armed this VM's stop bit.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             t_stopTheWorldCallbackVM = &vm;
         auto status = STW_RESUME();
         switch (m_currentStopReason) {
@@ -1784,7 +1784,7 @@ void VMManager::enterStopTheWorldParticipation(VM& vm, StopTheWorldEvent event)
         case StopReason::None:
             RELEASE_ASSERT_NOT_REACHED();
         }
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             t_stopTheWorldCallbackVM = nullptr;
 
         if (status.first == IterationStatus::Done) {

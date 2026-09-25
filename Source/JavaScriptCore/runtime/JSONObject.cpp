@@ -1573,7 +1573,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             // With JS threads another thread can transition a shared object while we
             // walk it; give the fast path up then (the generic stringifier re-reads
             // through the object) instead of pairing the old table with new slots.
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 if (object.structure() != &structure) {
                     recordFailure("structure changed concurrently"_s);
                     return false;

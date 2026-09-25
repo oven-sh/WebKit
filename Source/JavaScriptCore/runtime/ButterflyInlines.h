@@ -63,7 +63,7 @@ ALWAYS_INLINE unsigned Butterfly::optimalContiguousVectorLength(size_t propertyC
         vectorLength = BASE_CONTIGUOUS_VECTOR_LEN_EMPTY;
     else
         vectorLength = std::max(BASE_CONTIGUOUS_VECTOR_LEN, vectorLength);
-    if (Options::useSharedGCHeap()) [[unlikely]]
+    if (processUsesSharedGCHeap()) [[unlikely]]
         return optimalContiguousVectorLengthForSharedHeap(propertyCapacity, vectorLength); // out of line: main's function has no such arm
     return availableContiguousVectorLength(propertyCapacity, vectorLength);
 }
@@ -139,6 +139,7 @@ inline void* Butterfly::base(Structure* structure)
 inline Butterfly* Butterfly::createOrGrowPropertyStorage(
     Butterfly* oldButterfly, VM& vm, JSObject* intendedOwner, Structure* structure, size_t oldPropertyCapacity, size_t newPropertyCapacity)
 {
+    JSC_PER_THREADS_MODE_BEGIN(Butterfly*)
     RELEASE_ASSERT(newPropertyCapacity > oldPropertyCapacity);
     if (!oldButterfly)
         return create(vm, intendedOwner, 0, newPropertyCapacity, false, IndexingHeader(), 0);
@@ -155,6 +156,7 @@ inline Butterfly* Butterfly::createOrGrowPropertyStorage(
         totalSize(0, oldPropertyCapacity, hasIndexingHeader, indexingPayloadSizeInBytes));
     butterflyConcurrentZeroWords(result->propertyStorage() - newPropertyCapacity, (newPropertyCapacity - oldPropertyCapacity) * sizeof(EncodedJSValue));
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 inline Butterfly* Butterfly::createOrGrowArrayRight(
@@ -206,6 +208,7 @@ inline Butterfly* Butterfly::reallocArrayRightIfPossible(
     bool hadIndexingHeader, size_t oldIndexingPayloadSizeInBytes,
     size_t newIndexingPayloadSizeInBytes)
 {
+    JSC_PER_THREADS_MODE_BEGIN(Butterfly*)
     ASSERT_UNUSED(oldStructure, !indexingHeader()->preCapacity(oldStructure));
     ASSERT_UNUSED(intendedOwner, hadIndexingHeader == oldStructure->hasIndexingHeader(intendedOwner));
 
@@ -217,7 +220,7 @@ inline Butterfly* Butterfly::reallocArrayRightIfPossible(
     // We can eagerly destroy butterfly backed by PreciseAllocation if (1) concurrent collector is not active and (2) the butterfly does not contain any property storage.
     // This is because during deallocation concurrent collector can access butterfly and DFG concurrent compilers accesses properties.
     // Objects with no properties are common in arrays, and we are focusing on very large array crafted by repeating Array#push, so... that's fine!
-    bool canRealloc = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && !Options::useTaggedButterflies() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation(); // flag-on: never in place (M8 / manifest 4b)
+    bool canRealloc = !propertyCapacity && !vm.heap.mutatorShouldBeFenced() && !processUsesTaggedButterflies() && std::bit_cast<HeapCell*>(theBase)->isPreciseAllocation(); // flag-on: never in place (M8 / manifest 4b)
     if (canRealloc) {
         void* newBase = vm.auxiliarySpace().reallocatePreciseAllocationNonVirtual(vm, std::bit_cast<HeapCell*>(theBase), newSize, &deferralContext, AllocationFailureMode::ReturnNull);
         if (!newBase)
@@ -231,6 +234,7 @@ inline Butterfly* Butterfly::reallocArrayRightIfPossible(
     // Use memcpy since this butterfly is not tied to any object yet.
     memcpy(static_cast<JSValue*>(newBase), static_cast<JSValue*>(theBase), oldSize);
     return fromBase(newBase, 0, propertyCapacity);
+    JSC_PER_THREADS_MODE_END
 }
 
 inline Butterfly* Butterfly::resizeArray(

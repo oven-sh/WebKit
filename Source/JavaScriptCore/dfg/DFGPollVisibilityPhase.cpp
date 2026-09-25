@@ -52,7 +52,7 @@ public:
 
     bool run()
     {
-        if (!Options::useJSThreads() || Options::useThreadGIL())
+        if (!processUsesJSThreads() || Options::useThreadGIL())
             return false;
         if (m_graph.m_form != SSA || !m_graph.m_plan.isFTL())
             return false;

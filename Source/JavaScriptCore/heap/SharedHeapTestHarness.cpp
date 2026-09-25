@@ -246,7 +246,7 @@ unsigned clampThreads(unsigned threadCount, unsigned minimum = 2)
 
 bool requireSharedHeapOption(const char* scenario)
 {
-    if (Options::useSharedGCHeap())
+    if (processUsesSharedGCHeap())
         return true;
     dataLogLn("SharedHeapTestHarness: scenario \"", scenario, "\" requires --useSharedGCHeap=1.");
     return false;

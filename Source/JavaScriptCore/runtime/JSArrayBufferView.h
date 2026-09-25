@@ -312,7 +312,8 @@ public:
     JS_EXPORT_PRIVATE ArrayBuffer* unsharedBuffer();
     inline ArrayBuffer* possiblySharedBuffer();
     // Public (upstream: protected) for the threads-mode Atomics detach re-check, SPEC-ungil annex N6 arm 1.
-    ArrayBuffer* existingBufferInButterfly();
+    ALWAYS_INLINE ArrayBuffer* existingBufferInButterfly();
+    ArrayBuffer* existingBufferInButterflyWithJSThreads();
     JSArrayBuffer* unsharedJSBuffer(JSGlobalObject* globalObject);
     JSArrayBuffer* possiblySharedJSBuffer(JSGlobalObject* globalObject);
     inline RefPtr<ArrayBufferView> unsharedImpl();
@@ -333,7 +334,7 @@ public:
     // the mapping until the next stop, and no access runs across a stop. C++
     // reads the base through vector(), which is null for a detached view in
     // every mode.
-    static bool detachKeepsVector() { return g_jscConfig.gilOffProcess; }
+    static bool detachKeepsVector() { return processIsGILOff(); }
     bool isResizableOrGrowableShared() const { return JSC::isResizableOrGrowableShared(m_mode); }
     bool isGrowableShared() const { return JSC::isGrowableShared(m_mode); };
     bool isResizableNonShared() const { return JSC::isResizableNonShared(m_mode); };
@@ -470,9 +471,10 @@ protected:
 
 inline JSArrayBufferView* validateTypedArray(JSGlobalObject*, JSValue);
 
-inline ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()
+// The JS threads arm of existingBufferInButterfly(), a function of its own so that existingBufferInButterfly() is inlined where it
+// is without the threads work.
+inline ArrayBuffer* JSArrayBufferView::existingBufferInButterflyWithJSThreads()
 {
-    ASSERT(isWastefulTypedArray(m_mode));
     // r47-002 (FUZZ.md §47): pair with slowDownAndWasteMemory's
     // storeStoreFence before the m_mode flip - the caller's relaxed
     // m_mode==Wasteful (or any hasArrayBuffer()) observation must order
@@ -492,17 +494,22 @@ inline ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()
     // its u.typedArray.buffer) lives at indexed fragment 0 slot 0 (§4.1; the
     // I8 alias equation pins it to the flat-era B-8 location, so the buffer
     // pointer survives the conversion verbatim).
-    if (Options::useJSThreads()) [[unlikely]] {
-        WTF::loadLoadFence();
-        uint64_t word = taggedButterflyWord();
-        if (isSegmentedButterfly(word)) [[unlikely]] {
-            ButterflySpine* spine = butterflySpine(word);
-            spine->tsanConsume();
-            ASSERT(spine->indexedFragmentCountConcurrent()); // C2: hasIndexingHeader.
-            return std::bit_cast<IndexingHeader*>(&spine->indexedFragment(0)->slots[0])->arrayBuffer();
-        }
-        return untaggedButterfly(word)->indexingHeader()->arrayBuffer();
+    WTF::loadLoadFence();
+    uint64_t word = taggedButterflyWord();
+    if (isSegmentedButterfly(word)) [[unlikely]] {
+        ButterflySpine* spine = butterflySpine(word);
+        spine->tsanConsume();
+        ASSERT(spine->indexedFragmentCountConcurrent()); // C2: hasIndexingHeader.
+        return std::bit_cast<IndexingHeader*>(&spine->indexedFragment(0)->slots[0])->arrayBuffer();
     }
+    return untaggedButterfly(word)->indexingHeader()->arrayBuffer();
+}
+
+ALWAYS_INLINE ArrayBuffer* JSArrayBufferView::existingBufferInButterfly()
+{
+    ASSERT(isWastefulTypedArray(m_mode));
+    if (processUsesJSThreads()) [[unlikely]]
+        return existingBufferInButterflyWithJSThreads();
     return butterfly()->indexingHeader()->arrayBuffer();
 }
 

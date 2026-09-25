@@ -101,7 +101,7 @@ void Heap::setCurrentThreadTLCSnapshot(Allocator* table, unsigned bound)
 // the next stamp site re-stamps once the lite is installed.
 static ALWAYS_INLINE void stampTLCMirrorOnCurrentLite(Allocator* table, unsigned bound)
 {
-    if (!g_jscConfig.gilOffProcess) [[likely]]
+    if (!processIsGILOff()) [[likely]]
         return;
     VMLite* lite = VMLite::currentIfExists();
     if (!lite || !lite->gilOff)
@@ -150,7 +150,7 @@ GCThreadLocalCache::GCThreadLocalCache(JSC::Heap& server)
     // GCClient::Heap construction, which for the first client (vm.clientHeap)
     // is after JSC::Heap is fully constructed (VM member declaration order),
     // so the server subspaces exist and directoryLock is takeable.
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         server.primitiveGigacageAuxiliarySpace.ensureTlcIndexBaseReserved();
         server.auxiliarySpace.ensureTlcIndexBaseReserved();
         server.immutableButterflyAuxiliarySpace.ensureTlcIndexBaseReserved();
@@ -236,7 +236,7 @@ Allocator GCThreadLocalCache::allocatorForSizeStep(CompleteSubspace& subspace, s
 
 Allocator GCThreadLocalCache::materializeAllocator(BlockDirectory& directory)
 {
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
     // I2/§10A.1: only the owning thread materializes into its own cache; the
     // LocalAllocator ctor links into the directory's allocator list under
     // m_localAllocatorsLock (rank 8) — no MSPL needed here.

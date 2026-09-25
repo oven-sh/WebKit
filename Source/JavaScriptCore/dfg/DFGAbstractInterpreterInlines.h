@@ -2860,7 +2860,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     // With the flag on, the array can be segmented, and butterfly()
                     // asserts on that under --verifyConcurrentButterfly. A copy-on-write
                     // structure, which the check below requires, is never segmented (I35).
-                    Butterfly* butterfly = Options::useJSThreads() ? untaggedButterfly(array->taggedButterflyWord()) : array->butterfly();
+                    Butterfly* butterfly = processUsesJSThreads() ? untaggedButterfly(array->taggedButterflyWord()) : array->butterfly();
 
                     WTF::loadLoadFence();
                     StructureID structureIDLate = array->structureID();
@@ -5828,7 +5828,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         // clobberize's write(Heap).
         // GIL-on flag-on: nothing, as flag-off (see the CheckTraps case in
         // DFGClobberize.h for why no other mutator can run at this poll).
-        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+        if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
             if (node->origin.exitOK) {
                 m_state.setStructureClobberState(StructuresAreWatched);
                 m_state.observeInvalidationPoint();

@@ -63,7 +63,7 @@ class MembershipLocker {
 public:
     ALWAYS_INLINE MembershipLocker()
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             g_watchpointMembershipLock.lock();
             m_locked = true;
         }
@@ -167,6 +167,7 @@ WatchpointSet::WatchpointSet(WatchpointState state, WatchpointSetClassification 
 
 WatchpointSet::~WatchpointSet()
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // FIXME(rdar://165379969): This is here to silence a RefcountDebugger ASSERT. But the
     // ASSERT is correct and our code is incorrect!
     refCountDebugger().willDelete();
@@ -183,19 +184,21 @@ WatchpointSet::~WatchpointSet()
     // case no remover can be touching its sentinel: the temporary sets of the
     // deferred-fire scopes on the transition paths would otherwise take the
     // process-wide lock once per array conversion.
-    if (Options::useJSThreads() && !m_everLinked.loadRelaxed()) [[unlikely]] {
+    if (processUsesJSThreads() && !m_everLinked.loadRelaxed()) [[unlikely]] {
         ASSERT(m_set.isEmpty());
         return;
     }
     MembershipLocker locker;
     while (!m_set.isEmpty())
         m_set.begin()->remove();
+    JSC_PER_THREADS_MODE_END_WITHOUT_RETURN
 }
 
 bool WatchpointSet::add(Watchpoint* watchpoint)
 {
+    JSC_PER_THREADS_MODE_BEGIN(bool)
     ASSERT(!isCompilationThread());
-    ASSERT(Options::useJSThreads() || state() != IsInvalidated);
+    ASSERT(processUsesJSThreads() || state() != IsInvalidated);
     if (!watchpoint)
         return true;
     // AB18-G: flag-on, installs reach the same set from N mutators holding
@@ -203,7 +206,7 @@ bool WatchpointSet::add(Watchpoint* watchpoint)
     // SharedJITStubSet reuse; per-Structure transition sets on the shared
     // object model). Serialize the link against concurrent add/remove.
     MembershipLocker locker;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Fires flip m_state outside this lock (the deferred fireAllSlow's
         // claim, a Class-B fireAllNow, invalidate() on a clear set) and then
         // take or drain the members under it, so the state is settled first:
@@ -231,6 +234,7 @@ bool WatchpointSet::add(Watchpoint* watchpoint)
     m_setIsNotEmpty.storeRelaxed(true);
     m_state.storeRelaxed(IsWatched);
     return true;
+    JSC_PER_THREADS_MODE_END
 }
 
 // ===== SPEC-jit section 5.6: central Class-A fire protocol =====
@@ -375,7 +379,7 @@ void WatchpointSet::fireAllUnderClassAStop(VM& vm, const FireDetail& detail)
         if (!name && kept->size() < 30) { kept->append(text); name = kept->last().data(); }
         if (name) JSThreadsCounters::countNamed(name, 0);
     }
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(invalidatesCompiledCode());
 
     // Step (1): enqueue first so a concurrent winner can coalesce this fire.
@@ -434,15 +438,15 @@ void WatchpointSet::fireAllSlow(VM& vm, const FireDetail& detail)
     // claims atomically, so only the flag-off form of the assertion is exact,
     // and the loser has nothing left to do (the same outcome as losing at the
     // pre-check; without this it would queue a Class-A stop that fires nothing).
-    ASSERT(state() == IsWatched || (Options::useJSThreads() && state() == IsInvalidated));
-    if (Options::useJSThreads() && state() != IsWatched) [[unlikely]]
+    ASSERT(state() == IsWatched || (processUsesJSThreads() && state() == IsInvalidated));
+    if (processUsesJSThreads() && state() != IsWatched) [[unlikely]]
         return;
 
     // SPEC-jit section 5.6: flag on, Class-A fires ALWAYS run world-stopped —
     // deliberately no ">1 mutator" gate (G7/I10: VM construction does not
     // synchronize with an in-flight inline fire). Class-B sets and data-only
     // FireDetails (rare-site override) fire exactly as today.
-    if (Options::useJSThreads() && m_invalidatesCode.loadRelaxed() && !detail.fireIsDataOnly()) [[unlikely]] {
+    if (processUsesJSThreads() && m_invalidatesCode.loadRelaxed() && !detail.fireIsDataOnly()) [[unlikely]] {
         // §5.6 watcher-less fast path (seventh landing round, history §36):
         // the stop exists to run the members' code-patching fires with every
         // other mutator parked. A Class-A set that nobody watches — the
@@ -523,10 +527,10 @@ void WatchpointSet::fireAllSlow(VM&, DeferredWatchpointFire* deferredWatchpoints
     // IsInvalidated flag-on and take() installs IsWatched into the deferred
     // set explicitly — the state the source held when the claim succeeded.
     // Flag-off: single mutator, today's exact sequence, unchanged.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // §5.6 "Deferred claims in flight": counted BEFORE the CAS, so that whoever observes IsInvalidated from this
         // claim also observes the count; dropped by DeferredStructureTransitionWatchpointFire after its scope-exit fire.
-        const bool countClaim = g_jscConfig.gilOffProcess;
+        const bool countClaim = processIsGILOff();
         if (countClaim) [[unlikely]]
             s_deferredClaimsInFlight.fetch_add(1, std::memory_order_seq_cst);
         WTF::storeStoreFence();
@@ -619,7 +623,7 @@ void WatchpointSet::take(WatchpointSet* other)
     m_set.takeFrom(other->m_set);
     m_setIsNotEmpty.storeRelaxed(other->m_setIsNotEmpty.loadRelaxed());
     m_everLinked.storeRelaxed(true);
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // B-relabelrace: the claiming CAS in the deferred fireAllSlow flipped
         // the source to IsInvalidated BEFORE this transfer (claim-then-splice;
         // the deferred fireAllSlow is the sole caller, via
@@ -656,7 +660,7 @@ WatchpointSet* InlineWatchpointSet::inflateSlow()
     // fence-then-store, as before.)
     MembershipLocker locker;
     uintptr_t data = m_data.loadRelaxed();
-    if (Options::useJSThreads() && isFat(data)) [[unlikely]]
+    if (processUsesJSThreads() && isFat(data)) [[unlikely]]
         return fat(data);
     ASSERT(isThin(data));
     // Transfer the construction-time classification to the fat set (I10).
@@ -680,7 +684,7 @@ WatchpointSet* InlineWatchpointSet::inflateSlow()
     // release publish is the address dependency of every dereference on the
     // word loaded from m_data (InlineWatchpointSet::dataLoadOrder).
     uintptr_t prior = m_data.compareExchangeStrong(data, std::bit_cast<uintptr_t>(fat), std::memory_order_release);
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         while (prior != data) {
             ASSERT(isThin(prior));
             data = prior;
@@ -708,7 +712,7 @@ void DeferredWatchpointFire::takeWatchpointsToFire(WatchpointSet* watchpointsToF
     // invariant here is "source already claimed-invalid by this thread";
     // flag-off, the flip happens after the transfer and the source is still
     // IsWatched. Both arms assert the one exact state their protocol permits.
-    ASSERT(watchpointsToFire->state() == (Options::useJSThreads() ? IsInvalidated : IsWatched));
+    ASSERT(watchpointsToFire->state() == (processUsesJSThreads() ? IsInvalidated : IsWatched));
     m_watchpointsToFire.take(watchpointsToFire);
 }
 

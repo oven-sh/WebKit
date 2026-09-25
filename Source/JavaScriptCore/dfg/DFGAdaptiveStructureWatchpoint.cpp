@@ -63,7 +63,7 @@ bool AdaptiveStructureWatchpoint::install(VM&)
     // the condition may no longer hold. A refused install is a failed
     // adaptation the caller handles (reallyAdd fails the compile, or
     // fireInternal jettisons), so return false instead of asserting.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         if (!m_key.isWatchable(PropertyCondition::MakeNoChanges, Concurrency::MainThread))
             return false;
     } else

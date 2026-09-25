@@ -234,7 +234,7 @@ public:
     // predicted-false byte test on slow paths.
     ALWAYS_INLINE static bool usesPerThreadCaches()
     {
-        return Options::useJSThreads() && g_jscConfig.gilOffProcess;
+        return processUsesJSThreads() && processIsGILOff();
     }
     static uint32_t processEpoch() { return s_processEpoch.load(std::memory_order_acquire); }
     static const uint32_t* addressOfProcessEpoch() { return reinterpret_cast<const uint32_t*>(&s_processEpoch); } // JIT probes load its low 16 bits (little-endian).
@@ -316,7 +316,7 @@ public:
         // Flag-on the probe's transition arm is the claim-first form and refuses
         // PreciseAllocation, copy-on-write and ArrayStorage instances at runtime
         // (SPEC-jit §5.5); sources of those shapes are not worth an entry.
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             IndexingType mode = oldStructureID.decode()->indexingMode();
             if (hasAnyArrayStorage(mode) || isCopyOnWrite(mode))
                 return;

@@ -300,7 +300,7 @@ void JITThunks::finalize(Handle<Unknown> handle, void*)
     auto hostFunctionKey = std::make_tuple(nativeExecutable->function(), nativeExecutable->constructor(), nativeExecutable->implementationVisibility(), nativeExecutable->length(), nativeExecutable->name());
     {
         std::optional<Locker<RecursiveLock>> threadsLocker;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
@@ -330,7 +330,7 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
     auto hostFunctionKey = std::make_tuple(function, constructor, implementationVisibility, length, name);
     {
         std::optional<Locker<RecursiveLock>> threadsLocker;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto iterator = m_nativeExecutableSet.find<HostKeySearcher>(hostFunctionKey);
@@ -356,7 +356,7 @@ NativeExecutable* JITThunks::hostFunctionStub(VM& vm, TaggedNativeFunction funct
     NativeExecutable* nativeExecutable = NativeExecutable::create(vm, forCall.releaseNonNull(), function, WTF::move(forConstruct), constructor, implementationVisibility, length, name);
     {
         std::optional<Locker<RecursiveLock>> threadsLocker;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             threadsLocker.emplace(m_lock);
         AssertNoGC assertNoGC;
         auto addResult = m_nativeExecutableSet.add<NativeExecutableTranslator>(nativeExecutable);

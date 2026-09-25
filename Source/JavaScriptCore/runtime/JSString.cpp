@@ -103,6 +103,7 @@ size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 template<typename Visitor>
 void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     JSString* thisObject = asString(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
@@ -137,12 +138,14 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer))
         visitor.reportExtraMemoryVisited(impl->costDuringGC());
+    JSC_PER_THREADS_MODE_END
 }
 
 DEFINE_VISIT_CHILDREN(JSString);
 
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobalObject* globalObject) const
 {
+    JSC_PER_THREADS_MODE_BEGIN(GCOwnedDataScope<AtomStringImpl*>)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -218,10 +221,12 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobal
     // If we resolved a string that didn't previously exist, notify the heap that we've grown.
     vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
     return { this, static_cast<AtomStringImpl*>(publishedImpl) };
+    JSC_PER_THREADS_MODE_END
 }
 
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToExistingAtomString(JSGlobalObject* globalObject) const
 {
+    JSC_PER_THREADS_MODE_BEGIN(GCOwnedDataScope<AtomStringImpl*>)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -284,6 +289,7 @@ GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToExistingAtomString(
         return toExistingAtomString(globalObject);
     }
     return { this, existingAtomString.get() };
+    JSC_PER_THREADS_MODE_END
 }
 
 template<bool reportAllocation, typename Function>
@@ -380,10 +386,12 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
 
 const String& JSRopeString::resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const
 {
+    JSC_PER_THREADS_MODE_BEGIN(const String&)
     constexpr bool reportAllocation = true;
     return resolveRopeWithFunction<reportAllocation>(nullOrGlobalObjectForOOM, [](Ref<StringImpl>&& newImpl) {
         return WTF::move(newImpl);
     });
+    JSC_PER_THREADS_MODE_END
 }
 
 const String& JSRopeString::resolveRopeWithoutGC() const

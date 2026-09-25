@@ -41,7 +41,7 @@ inline void SymbolTable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope 
     m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
 }
 
-inline void SymbolTable::notifyCreation(VM& vm, JSScope* scope, const char* reason)
+ALWAYS_INLINE void SymbolTable::notifyCreation(VM& vm, JSScope* scope, const char* reason)
 {
     m_singleton.notifyWrite(vm, this, scope, reason);
     if (m_singleton.hasBeenInvalidated()) {

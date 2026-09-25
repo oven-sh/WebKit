@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "LLIntSlowPathTable.h"
 #include "LLIntSlowPaths.h"
 
 #include "AbortReason.h"
@@ -78,6 +79,11 @@
 #include "VMTrapsInlines.h"
 #include <wtf/Atomics.h>
 #include <wtf/NeverDestroyed.h>
+
+// The slow paths are compiled once per threads mode (ThreadsModePage.h).
+#undef LLINT_SLOW_PATH_DECL
+#define LLINT_SLOW_PATH_DECL(name) \
+    JSC_PER_THREADS_MODE_FUNCTIONS(extern "C", UGPRPair SYSV_ABI, llint_##name, (CallFrame* callFrame, const JSInstruction* pc), (callFrame, pc))
 #include <wtf/StringPrintStream.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -133,7 +139,7 @@ static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
     // useThreadedLLIntICs is publication-side only: with it off, flag-on
     // single-word caches are never published, and the asm threaded readers
     // (gated on useJSThreads alone) always miss.
-    return Options::useTaggedButterflies() && Options::useThreadedLLIntICs(); // untagged (SPEC-jit §5.5; OM G1): main's caches below
+    return processUsesTaggedButterflies() && Options::useThreadedLLIntICs(); // untagged (SPEC-jit §5.5; OM G1): main's caches below
 #else
     // D8: flag-on is unsupported on these platforms; never publish.
     return false;
@@ -142,7 +148,7 @@ static ALWAYS_INLINE bool useThreadedLLIntPropertyCaches()
 
 static ALWAYS_INLINE bool useUnthreadedLLIntPropertyCaches()
 {
-    return !Options::useTaggedButterflies();
+    return !processUsesTaggedButterflies();
 }
 
 // GIL-off, `slot` was resolved against whatever structure the cell had during
@@ -445,8 +451,10 @@ static inline bool shouldJIT(CodeBlock* codeBlock)
 }
 
 // Returns true if we should try to OSR.
-static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
+template<bool threaded>
+static bool jitCompileAndSetHeuristicsPerThreadsMode(VM& vm, CodeBlock* codeBlock)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     DeferGCForAWhile deferGC(vm); // My callers don't set top callframe, so we don't want to GC here at all.
     ASSERT(Options::useJIT());
 
@@ -455,7 +463,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
         // here can race another mutator's plan-finalize install (torn pointer /
         // ref-count corruption, see UnlinkedCodeBlock.h contract). Cold tier-up
         // slow path; the lock is uncontended flag-off.
-        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->unlinkedBaselineCodeConcurrently()) {
+        if (RefPtr<BaselineJITCode> baselineRef = unlinkedBaselineCodeSnapshot(*codeBlock->unlinkedCodeBlock())) {
             if (vm.gilOff()) [[unlikely]] {
                 // UNGIL §5.7.2 (AB18-B): this install is single-shot (setBaselineJITData asserts
                 // !m_jitData) but two mutators in the prologue/loop slow path can race it on the
@@ -529,8 +537,14 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     return false;
 }
 
+static ALWAYS_INLINE bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
+{
+    return JSC_CALL_PER_THREADS_MODE(jitCompileAndSetHeuristicsPerThreadsMode, vm, codeBlock);
+}
+
 static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
 {
+    JSC_PER_THREADS_MODE_BEGIN(UGPRPair)
     dataLogLnIf(Options::verboseOSR(),
         *codeBlock, ": Entered ", name, " with executeCounter = ",
         codeBlock->llintExecuteCounter());
@@ -549,6 +563,7 @@ static UGPRPair entryOSR(CodeBlock* codeBlock, const char *name, EntryKind kind)
         LLINT_RETURN_TWO(codeBlock->jitCodeRawPtr()->executableAddress(), nullptr);
     ASSERT(kind == ArityCheck);
     LLINT_RETURN_TWO(codeBlock->jitCodeRawPtr()->addressForCall(ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
+    JSC_PER_THREADS_MODE_END
 }
 #else // ENABLE(JIT)
 static UGPRPair entryOSR(CodeBlock* codeBlock, const char*, EntryKind)
@@ -580,8 +595,10 @@ static ALWAYS_INLINE void traceEntryFrameIfGILOff(CallFrame* callFrame)
 // it is still current, because tiering up installs it. A frame that runs an old
 // CodeBlock enters its baseline code if it has some, and stays in the LLInt
 // otherwise.
-static UGPRPair functionEntryOSR(CallFrame* callFrame, CodeBlock* executableCodeBlock, const char* name, EntryKind kind)
+template<bool threaded>
+static UGPRPair functionEntryOSRPerThreadsMode(CallFrame* callFrame, CodeBlock* executableCodeBlock, const char* name, EntryKind kind)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     CodeBlock* frameCodeBlock = callFrame->codeBlock();
     if (callFrame->deprecatedVM().gilOff() && frameCodeBlock != executableCodeBlock) [[unlikely]] {
 #if ENABLE(JIT)
@@ -595,6 +612,11 @@ static UGPRPair functionEntryOSR(CallFrame* callFrame, CodeBlock* executableCode
         LLINT_RETURN_TWO(nullptr, nullptr);
     }
     return entryOSR(executableCodeBlock, name, kind);
+}
+
+static ALWAYS_INLINE UGPRPair functionEntryOSR(CallFrame* callFrame, CodeBlock* executableCodeBlock, const char* name, EntryKind kind)
+{
+    return JSC_CALL_PER_THREADS_MODE(functionEntryOSRPerThreadsMode, callFrame, executableCodeBlock, name, kind);
 }
 
 LLINT_SLOW_PATH_DECL(entry_osr)
@@ -831,6 +853,7 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
 // prepareCallSiteForTailCall in the LLInt and JIT::compileOpCall); and the site does point at a shared CallLinkInfo.
 void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void*)
     auto scope = DECLARE_THROW_SCOPE(vm);
     CallFrame* callerFrame = calleeFrame->callerFrame();
     CodeBlock* owner = callerFrame->codeBlock();
@@ -885,9 +908,10 @@ void* handleUnlinkedCall(VM& vm, CallFrame* calleeFrame)
     ensureStillAliveHere(owner);
     scope.release(); // The caller checks.
     return callTarget;
+    JSC_PER_THREADS_MODE_END
 }
 
-extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, CallLinkInfo*)
+extern "C" UGPRPair SYSV_ABI llint_unlinked_call(CallFrame* calleeFrame, [[maybe_unused]] CallLinkInfo* callLinkInfo)
 {
     VM& vm = calleeFrame->callerFrame()->codeBlock()->vm();
     NativeCallFrameTracer tracer(vm, calleeFrame);
@@ -1084,13 +1108,15 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_with_this)
     LLINT_RETURN_PROFILED(result);
 }
 
-static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
+template<bool threaded>
+static void setupGetByIdPrototypeCachePerThreadsMode(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     // SPEC-jit §4.3 (Task 6): this is the SOLE ProtoLoad/Unset installer; it is
     // disabled wholesale under JS threads (I18) — those records cannot be
     // published as one word. Charter: proto caches return as immutable
     // single-pointer records (§5.8 pattern) if Task 13's budget is missed.
-    RELEASE_ASSERT(!Options::useTaggedButterflies());
+    RELEASE_ASSERT(!processUsesTaggedButterflies());
 
     Structure* structure = baseCell->structure();
 
@@ -1148,8 +1174,15 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     vm.writeBarrier(codeBlock);
 }
 
-static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+static ALWAYS_INLINE void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
 {
+    return JSC_CALL_PER_THREADS_MODE(setupGetByIdPrototypeCachePerThreadsMode, globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
+}
+
+template<bool threaded>
+static JSValue performLLIntGetByIDPerThreadsMode(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+{
+    JSC_THREADS_MODE_BODY(threaded);
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
@@ -1237,6 +1270,11 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
         metadata.setArrayLengthMode();
 
     return result;
+}
+
+static ALWAYS_INLINE JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
+{
+    return JSC_CALL_PER_THREADS_MODE(performLLIntGetByIDPerThreadsMode, bytecodeIndex, codeBlock, globalObject, baseValue, ident, metadata);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
@@ -1589,7 +1627,7 @@ static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, Code
             bool skipMarkingOutOfBounds = false;
 
             // With the flag on, the word may be segmented, which butterfly() must not decode.
-            if (object->indexingType() == ArrayWithContiguous && i < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
+            if (object->indexingType() == ArrayWithContiguous && i < (processUsesJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -2431,8 +2469,10 @@ LLINT_SLOW_PATH_DECL(slow_path_async_iterator_next_with_driver)
     LLINT_RETURN(result);
 }
 
-static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)
+template<bool threaded>
+static UGPRPair handleHostCallPerThreadsMode(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     slowPathLog("Performing host call.\n");
     
     CallFrame* callFrame = calleeFrame->callerFrame();
@@ -2490,8 +2530,15 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
     LLINT_CALL_THROW(globalObject, createNotAConstructorError(globalObject, callee));
 }
 
-static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)
+static ALWAYS_INLINE UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpecializationKind kind)
 {
+    return JSC_CALL_PER_THREADS_MODE(handleHostCallPerThreadsMode, calleeFrame, callee, kind);
+}
+
+template<bool threaded>
+static UGPRPair setUpCallPerThreadsMode(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)
+{
+    JSC_THREADS_MODE_BODY(threaded);
     CallFrame* callFrame = calleeFrame->callerFrame();
     CodeBlock* callerCodeBlock = callFrame->codeBlock();
     JSGlobalObject* globalObject = callerCodeBlock->globalObject();
@@ -2555,6 +2602,11 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
     assertIsTaggedWith<JSEntryPtrTag>(codePtr.taggedPtr());
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
+}
+
+static ALWAYS_INLINE UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind kind, JSValue calleeAsValue)
+{
+    return JSC_CALL_PER_THREADS_MODE(setUpCallPerThreadsMode, calleeFrame, kind, calleeAsValue);
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_ensure_call_link_info)
@@ -2643,7 +2695,7 @@ enum class SetArgumentsWith {
 };
 
 template<typename Op, SetArgumentsWith set>
-static inline UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
+static ALWAYS_INLINE UGPRPair varargsSetup(CallFrame* callFrame, const JSInstruction* pc, CodeSpecializationKind)
 {
     static_assert(set == SetArgumentsWith::Object, "CurrentArguments arm is uninstantiated: its sizer must write the t_llintVarargs*Echo pair before varargsSetup reloads it");
     LLINT_BEGIN_NO_SET_PC();
@@ -2891,7 +2943,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_to_scope)
     
     // SPEC-jit §5.5 (review round 1): scope metadata is frozen post-link
     // flag-on; see slow_path_get_from_scope above.
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, scope, slot, ident);
 
     LLINT_END();
@@ -3414,6 +3466,14 @@ extern "C" void SYSV_ABI llint_dump_value(EncodedJSValue value)
 extern "C" NO_RETURN_DUE_TO_CRASH void SYSV_ABI llint_crash()
 {
     CRASH();
+}
+
+void installLLIntSlowPaths(SlowPathTable& table)
+{
+#define JSC_INSTALL_SLOW_PATH(name) \
+    table._##name = threadsMode() ? std::bit_cast<void*>(&name##PerThreadsMode<true>) : std::bit_cast<void*>(&name##PerThreadsMode<false>);
+    FOR_EACH_LLINT_SLOW_PATH(JSC_INSTALL_SLOW_PATH)
+#undef JSC_INSTALL_SLOW_PATH
 }
 
 } } // namespace JSC::LLInt

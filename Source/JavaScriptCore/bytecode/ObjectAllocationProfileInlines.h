@@ -109,7 +109,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
     // SharedGC (§5.5 never-populate rule): the server allocator table stays
     // empty, so allocatorFor() answers no allocator. The client TLC still
     // allocates from this size class (CompleteSubspace::allocatorForSlow).
-    if (!allocator && Options::useSharedGCHeap() && allocationSize <= MarkedSpace::largeCutoff) [[unlikely]]
+    if (!allocator && processUsesSharedGCHeap() && allocationSize <= MarkedSpace::largeCutoff) [[unlikely]]
         cellSize = MarkedSpace::s_sizeClassForSizeStep[MarkedSpace::sizeClassToIndex(allocationSize)];
     if (cellSize) {
         size_t slop = (cellSize - allocationSize) / sizeof(WriteBarrier<Unknown>);

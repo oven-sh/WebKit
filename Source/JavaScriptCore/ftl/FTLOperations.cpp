@@ -81,6 +81,7 @@ static Lock ftlLazySlowPathGenerationLock;
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalObject* globalObject, ExitTimeObjectMaterialization* materialization, EncodedJSValue* encodedValue, EncodedJSValue* values))
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     using namespace DFG;
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -284,6 +285,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalO
         break;
 
     }
+    JSC_PER_THREADS_MODE_END
 }
 
 

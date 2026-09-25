@@ -563,7 +563,7 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
 void SlotVisitor::helperDrainPauseCheckpointIfRequested()
 {
     ASSERT(m_isDrainingFromSharedHelper);
-    ASSERT(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess);
+    ASSERT(Options::useConcurrentSharedGCMarking() || processIsGILOff());
     if (!WTF::atomicLoad(&m_heap.m_parallelMarkersShouldPause, std::memory_order_relaxed)) [[likely]]
         return;
 
@@ -840,7 +840,7 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
             // line, and the shared Heap line (m_parallelMarkersShouldPause
             // sits next to the m_markingMutex-protected marker counters) is
             // never touched by the checkpoint path.
-            m_isDrainingFromSharedHelper = (sharedDrainMode == HelperDrain) && (Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess);
+            m_isDrainingFromSharedHelper = (sharedDrainMode == HelperDrain) && (Options::useConcurrentSharedGCMarking() || processIsGILOff());
             drain(timeout);
             m_isDrainingFromSharedHelper = false;
         }

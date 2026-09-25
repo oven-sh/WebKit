@@ -89,7 +89,7 @@ JSCellButterfly* JSCellButterfly::createFromClonedArguments(JSGlobalObject* glob
     IndexingType indexingType = arguments->indexingType() & IndexingShapeMask;
     if (indexingType == ContiguousShape) {
         Butterfly* butterfly;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // Another thread can segment the storage at any time, and
             // butterfly() must not decode a segmented word. So the elements
             // are read through one load of the word, within that butterfly's

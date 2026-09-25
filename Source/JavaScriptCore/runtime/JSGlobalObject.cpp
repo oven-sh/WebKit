@@ -1246,8 +1246,8 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_weakRandom(Options::forceWeakRandomSeed() ? Options::forcedWeakRandomSeed() : cryptographicallyRandomNumber<uint32_t>())
     , m_runtimeFlags()
     , m_stackTraceLimitBits((1ull << 32) | Options::defaultErrorStackTraceLimit())
-    , m_customGetterFunctionSet(vm, Options::useJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
-    , m_customSetterFunctionSet(vm, Options::useJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
+    , m_customGetterFunctionSet(vm, processUsesJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
+    , m_customSetterFunctionSet(vm, processUsesJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
     , m_importMap(ImportMap::create())
     , m_intlLegacyConstructedSymbol(SymbolImpl::create(intlLegacyConstructedSymbolDescription))
     , m_globalObjectMethodTable(globalObjectMethodTable ? globalObjectMethodTable : baseGlobalObjectMethodTable())
@@ -2113,7 +2113,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     if (Options::useSharedArrayBuffer())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    if (Options::useJSThreads()) {
+    if (processUsesJSThreads()) {
         // Shared-memory Thread API (docs/threads/SPEC-api.md 9.2-2).
         putDirectWithoutTransition(vm, Identifier::fromString(vm, "Thread"_s), createThreadProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
         putDirectWithoutTransition(vm, Identifier::fromString(vm, "Lock"_s), createLockProperty(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -3476,7 +3476,7 @@ void JSGlobalObject::haveABadTimeImpl(VM& vm)
     // BUMP-EDGE LAW comment in bytecode/JSThreadsSafepoint.cpp), so this
     // bump is redundant there — harmless.
     // Flag-off: dead branch, behavior unchanged.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         JSThreadsSafepoint::noteConductorHeapFactRewrite();
 
     DeferGC deferGC(vm);
@@ -4678,7 +4678,7 @@ void JSGlobalObject::setConsoleClient(WeakPtr<ConsoleClient>&& consoleClient)
     // pointer is read on threads other than the one that made it; the client
     // lives as long as the embedder keeps it, on any thread. Drop the WeakPtr's
     // single-thread assertion in that configuration.
-    if (Options::useJSThreads() && consoleClient) [[unlikely]] {
+    if (processUsesJSThreads() && consoleClient) [[unlikely]] {
         m_consoleClient = WeakPtr<ConsoleClient>(consoleClient.get(), EnableWeakPtrThreadingAssertions::No);
         return;
     }

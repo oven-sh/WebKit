@@ -145,7 +145,7 @@ JSWebAssemblyInstance::JSWebAssemblyInstance(VM& vm, Structure* structure, JSWeb
         // prepareAllAllocators materializes server LocalAllocators, which a shared
         // GC heap never populates. The section parser (CompileError) and tryCreate
         // (LinkError) refuse wasm-GC modules first; this is the backstop.
-        RELEASE_ASSERT(!Options::useSharedGCHeap());
+        RELEASE_ASSERT(!processUsesSharedGCHeap());
         subspace->prepareAllAllocators();
         memcpySpan(allocators(), subspace->allocatorsForSizeSteps());
     }
@@ -343,7 +343,7 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     // A wasm-GC instance copies this VM's server LocalAllocators into the cell,
     // and a shared GC heap never materializes them. The section parser already
     // rejects such modules; this keeps the constructor's assert unreachable from JS.
-    if (Options::useSharedGCHeap() && moduleInformation.hasGCObjectTypes())
+    if (processUsesSharedGCHeap() && moduleInformation.hasGCObjectTypes())
         return exception(createJSWebAssemblyLinkError(globalObject, vm, "WebAssembly GC types are not supported when the GC heap is shared"_s));
 
     WebAssemblyModuleRecord* moduleRecord = WebAssemblyModuleRecord::create(globalObject, vm, globalObject->webAssemblyModuleRecordStructure(), moduleLoader, moduleKey, moduleInformation);

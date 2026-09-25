@@ -81,7 +81,7 @@ inline Structure* StructureCache::createEmptyStructure(JSGlobalObject* globalObj
             vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);
     }
     if (shouldCacheStructure == ShouldCacheStructure::Yes) {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // First-wins publish (the WeakGCMap canonicalization protocol; cf.
             // VM::symbolImplToSymbolMap): between our miss above and here another
             // thread may have created and published a structure for this key, and

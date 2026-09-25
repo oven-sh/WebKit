@@ -149,6 +149,7 @@ JSC_DEFINE_HOST_FUNCTION(mapProtoFuncDelete, (JSGlobalObject* globalObject, Call
 
 JSC_DEFINE_HOST_FUNCTION(mapProtoFuncGet, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -156,6 +157,7 @@ JSC_DEFINE_HOST_FUNCTION(mapProtoFuncGet, (JSGlobalObject* globalObject, CallFra
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(map->get(globalObject, callFrame->argument(0))));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(mapProtoFuncHas, (JSGlobalObject* globalObject, CallFrame* callFrame))

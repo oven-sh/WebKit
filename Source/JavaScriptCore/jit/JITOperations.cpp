@@ -507,6 +507,7 @@ static ALWAYS_INLINE JSValue getByIdMegamorphic(JSGlobalObject* globalObject, VM
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphic, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByIdMegamorphicMiss);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
@@ -518,10 +519,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphic, EncodedJSValue, (EncodedJS
     CacheableIdentifier identifier = propertyCache->identifier();
 
     OPERATION_RETURN(scope, JSValue::encode(getByIdMegamorphic<GetByKind::ById>(globalObject, vm, callFrame, propertyCache, baseValue, baseValue, identifier)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphicGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByIdMegamorphicMiss);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -532,10 +535,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdMegamorphicGeneric, EncodedJSValue, (JS
     CacheableIdentifier identifier = CacheableIdentifier::createFromRawBits(rawCacheableIdentifier);
 
     OPERATION_RETURN(scope, JSValue::encode(getByIdMegamorphic<GetByKind::ById>(globalObject, vm, callFrame, nullptr, baseValue, baseValue, identifier)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdGaveUp, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByIdGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
@@ -555,10 +560,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdGaveUp, EncodedJSValue, (EncodedJSValue
     LOG_IC((ICEvent::OperationGetByIdGaveUp, baseValue.classInfoOrNull(), baseValue == slot.slotBase()));
 
     OPERATION_RETURN(scope, JSValue::encode(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByIdGeneric);
     SuperSamplerScope superSamplerScope(false);
     
@@ -575,10 +582,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdGeneric, EncodedJSValue, (JSGlobalObjec
     LOG_IC((ICEvent::OperationGetByIdGeneric, baseValue.classInfoOrNull(), baseValue == slot.slotBase()));
     
     OPERATION_RETURN(scope, JSValue::encode(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
@@ -601,6 +610,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSVal
             repatchGetBy(globalObject, codeBlock, baseValue, identifier, slot, *propertyCache, GetByKind::ById, /* isNonStringPrimitiveKey */ false);
         return found ? slot.getValue(globalObject, identifier) : jsUndefined();
     })));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdWithThisGaveUp, EncodedJSValue, (EncodedJSValue base, EncodedJSValue thisEncoded, PropertyInlineCache* propertyCache))
@@ -732,6 +742,7 @@ JSC_DEFINE_JIT_OPERATION(operationInByIdGaveUp, EncodedJSValue, (EncodedJSValue 
 
 JSC_DEFINE_JIT_OPERATION(operationInByIdOptimize, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     SuperSamplerScope superSamplerScope(false);
 
     JSGlobalObject* globalObject = propertyCache->globalObject();
@@ -758,6 +769,7 @@ JSC_DEFINE_JIT_OPERATION(operationInByIdOptimize, EncodedJSValue, (EncodedJSValu
     if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, baseObject->structure(), identifier))
         repatchInBy(globalObject, codeBlock, baseObject, identifier, found, slot, *propertyCache, InByKind::ById);
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(found)));
+    JSC_PER_THREADS_MODE_END
 }
 
 static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM& vm, CallFrame* callFrame, PropertyInlineCache* propertyCache, JSValue baseValue, CacheableIdentifier identifier)
@@ -850,6 +862,7 @@ static ALWAYS_INLINE JSValue inByIdMegamorphic(JSGlobalObject* globalObject, VM&
 
 JSC_DEFINE_JIT_OPERATION(operationInByIdMegamorphic, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -860,10 +873,12 @@ JSC_DEFINE_JIT_OPERATION(operationInByIdMegamorphic, EncodedJSValue, (EncodedJSV
     CacheableIdentifier identifier = propertyCache->identifier();
 
     OPERATION_RETURN(scope, JSValue::encode(inByIdMegamorphic(globalObject, vm, callFrame, propertyCache, baseValue, identifier)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationInByIdMegamorphicGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -873,6 +888,7 @@ JSC_DEFINE_JIT_OPERATION(operationInByIdMegamorphicGeneric, EncodedJSValue, (JSG
     CacheableIdentifier identifier = CacheableIdentifier::createFromRawBits(rawCacheableIdentifier);
 
     OPERATION_RETURN(scope, JSValue::encode(inByIdMegamorphic(globalObject, vm, callFrame, nullptr, baseValue, identifier)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationInByValOptimize, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedKey, PropertyInlineCache* propertyCache, ArrayProfile* profile))
@@ -1177,6 +1193,7 @@ JSC_DEFINE_JIT_OPERATION(operationHasPrivateBrandGaveUp, EncodedJSValue, (Encode
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSTHREADS_COUNT(icPutByIdGaveUp);
     SuperSamplerScope superSamplerScope(false);
 
@@ -1195,6 +1212,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictGaveUp, void, (EncodedJSValue enc
     
     LOG_IC((ICEvent::OperationPutByIdStrictGaveUp, baseValue.classInfoOrNull(), slot.base() == baseValue));
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
@@ -1342,6 +1360,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphic, void, (EncodedJSValu
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphicGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedBase, uintptr_t rawCacheableIdentifier))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSTHREADS_COUNT(icPutByIdMegamorphicMiss);
     SuperSamplerScope superSamplerScope(false);
 
@@ -1356,10 +1375,12 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyMegamorphicGeneric, void, (JSGlob
 
     putByIdMegamorphic(globalObject, vm, callFrame, nullptr, baseValue, value, identifier, PutByKind::ByIdSloppy);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPointer, JSObject* baseObject, EncodedJSValue encodedValue, const MegamorphicCache::StoreEntry* entry))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     constexpr bool verbose = false;
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1370,7 +1391,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
     Structure* newStructure = WTF::opaque(entry->m_newStructureID.decode());
     PropertyOffset offset = entry->m_offset;
 
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // Flag-on a reallocating transition installs a new butterfly, which is a
         // tagged-word publication with its owner/claim protocol (SPEC-objectmodel
         // E4 / E4-C / §4.3): go through it, and take the generic add when it asks
@@ -1395,6 +1416,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByMegamorphicReallocating, void, (VM* vmPoi
     ensureStillAliveHere(oldStructure);
     ensureStillAliveHere(newStructure);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectStrictGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
@@ -1441,6 +1463,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectSloppyGaveUp, void, (EncodedJSVal
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSTHREADS_COUNT(icPutByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
@@ -1471,10 +1494,12 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictOptimize, void, (EncodedJSValue e
     if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, structure, identifier))
         repatchPutBy(globalObject, codeBlock, baseValue, structure, identifier, slot, *propertyCache, PutByKind::ByIdStrict, /* isNonStringPrimitiveKey */ false);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSTHREADS_COUNT(icPutByIdOptimize);
     SuperSamplerScope superSamplerScope(false);
 
@@ -1505,6 +1530,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyOptimize, void, (EncodedJSValue e
     if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, structure, identifier))
         repatchPutBy(globalObject, codeBlock, baseValue, structure, identifier, slot, *propertyCache, PutByKind::ByIdSloppy, /* isNonStringPrimitiveKey */ false);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectStrictOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
@@ -1763,7 +1789,7 @@ static void directPutByVal(JSGlobalObject* globalObject, JSObject* baseObject, J
         case ALL_DOUBLE_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
             if (arrayProfile) {
-                if (Options::useJSThreads()) [[unlikely]] {
+                if (processUsesJSThreads()) [[unlikely]] {
                     // The word may be segmented, which butterfly() must not decode.
                     if (index < baseObject->getVectorLength()) {
                         if (index >= baseObject->getArrayLength())
@@ -1877,6 +1903,7 @@ static ALWAYS_INLINE void putByValOptimize(JSGlobalObject* globalObject, CodeBlo
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValStrictOptimize, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1889,10 +1916,12 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValStrictOptimize, void, (EncodedJSValue 
 
     putByValOptimize(globalObject, callFrame->codeBlock(), baseValue, subscript, value, propertyCache, profile, PutByKind::ByValStrict);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyOptimize, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1905,6 +1934,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyOptimize, void, (EncodedJSValue 
 
     putByValOptimize(globalObject, callFrame->codeBlock(), baseValue, subscript, value, propertyCache, profile, PutByKind::ByValSloppy);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 static ALWAYS_INLINE void directPutByValOptimize(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, JSValue subscript, JSValue value, PropertyInlineCache* propertyCache, ArrayProfile* profile, PutByKind kind)
@@ -2172,6 +2202,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValStrictMegamorphicGeneric, void, (JSGlo
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyMegamorphic, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -2184,10 +2215,12 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyMegamorphic, void, (EncodedJSVal
 
     putByValMegamorphic(globalObject, vm, callFrame, propertyCache, profile, baseValue, subscript, value, PutByKind::ByValSloppy);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyMegamorphicGeneric, void, (JSGlobalObject* globalObject, EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<void>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2199,6 +2232,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByValSloppyMegamorphicGeneric, void, (JSGlo
 
     putByValMegamorphic(globalObject, vm, callFrame, nullptr, nullptr, baseValue, subscript, value, PutByKind::ByValSloppy);
     OPERATION_RETURN(scope);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationDirectPutByValSloppyGaveUp, void, (EncodedJSValue encodedBaseValue, EncodedJSValue encodedSubscript, EncodedJSValue encodedValue, PropertyInlineCache* propertyCache, ArrayProfile* profile))
@@ -2665,12 +2699,14 @@ JSC_DEFINE_JIT_OPERATION(operationUnlinkedCall, UCPURegister, (CallFrame* callee
 
 JSC_DEFINE_JIT_OPERATION(operationCompareLess, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<size_t>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     
     OPERATION_RETURN(scope, jsLess<true>(globalObject, JSValue::decode(encodedOp1), JSValue::decode(encodedOp2)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCompareLessEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2))
@@ -2695,22 +2731,26 @@ JSC_DEFINE_JIT_OPERATION(operationCompareGreater, size_t, (JSGlobalObject* globa
 
 JSC_DEFINE_JIT_OPERATION(operationCompareGreaterEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<size_t>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     OPERATION_RETURN(scope, jsLessEq<false>(globalObject, JSValue::decode(encodedOp2), JSValue::decode(encodedOp1)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCompareEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<size_t>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     OPERATION_RETURN(scope, JSValue::equalSlowCaseInline(globalObject, JSValue::decode(encodedOp1), JSValue::decode(encodedOp2)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCompareStringEq, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* left, JSCell* right))
@@ -2726,6 +2766,7 @@ JSC_DEFINE_JIT_OPERATION(operationCompareStringEq, EncodedJSValue, (JSGlobalObje
 
 JSC_DEFINE_JIT_OPERATION(operationCompareStrictEq, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<size_t>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2735,6 +2776,7 @@ JSC_DEFINE_JIT_OPERATION(operationCompareStrictEq, size_t, (JSGlobalObject* glob
     JSValue src2 = JSValue::decode(encodedOp2);
 
     OPERATION_RETURN(scope, JSValue::strictEqual(globalObject, src1, src2));
+    JSC_PER_THREADS_MODE_END
 }
 
 #if USE(BIGINT32)
@@ -2753,11 +2795,13 @@ JSC_DEFINE_JIT_OPERATION(operationCompareEqHeapBigIntToInt32, size_t, (JSGlobalO
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithProfile, EncodedJSValue, (JSGlobalObject* globalObject, ArrayAllocationProfile* profile, const JSValue* values, int size))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(constructArrayNegativeIndexed(globalObject, profile, values, size)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndProfile, EncodedJSValue, (JSGlobalObject* globalObject, ArrayAllocationProfile* profile, EncodedJSValue size))
@@ -2772,20 +2816,24 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndProfile, EncodedJSValue, (J
 
 JSC_DEFINE_JIT_OPERATION(operationCreateLexicalEnvironmentTDZ, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, SymbolTable* table))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(JSLexicalEnvironment::create(vm, globalObject->activationStructure(), environment, table, jsTDZValue())));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCreateLexicalEnvironmentUndefined, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, SymbolTable* table))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(JSLexicalEnvironment::create(vm, globalObject->activationStructure(), environment, table, jsUndefined())));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCreateDirectArgumentsBaseline, EncodedJSValue, (JSGlobalObject* globalObject))
@@ -2848,6 +2896,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewFunctionWithInvalidatedReallocationWatchpoi
 
 JSC_DEFINE_JIT_OPERATION(operationNewSloppyFunction, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2857,6 +2906,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewSloppyFunction, EncodedJSValue, (JSGlobalOb
     if (uncheckedDowncast<FunctionExecutable>(functionExecutable)->hasPrototypeProperty())
         OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->sloppyFunctionStructure(isBuiltin)));
     OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->sloppyMethodStructure(isBuiltin)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewSloppyFunctionWithInvalidatedReallocationWatchpoint, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
@@ -2874,6 +2924,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewSloppyFunctionWithInvalidatedReallocationWa
 
 JSC_DEFINE_JIT_OPERATION(operationNewStrictFunction, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2883,6 +2934,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewStrictFunction, EncodedJSValue, (JSGlobalOb
     if (uncheckedDowncast<FunctionExecutable>(functionExecutable)->hasPrototypeProperty())
         OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->strictFunctionStructure(isBuiltin)));
     OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->strictMethodStructure(isBuiltin)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewStrictFunctionWithInvalidatedReallocationWatchpoint, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
@@ -2900,6 +2952,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewStrictFunctionWithInvalidatedReallocationWa
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrowFunction, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2907,10 +2960,12 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrowFunction, EncodedJSValue, (JSGlobalObj
     constexpr bool isInvalidated = false;
     constexpr bool isBuiltin = false;
     OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->arrowFunctionStructure(isBuiltin)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewArrowFunctionWithInvalidatedReallocationWatchpoint, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -2918,6 +2973,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrowFunctionWithInvalidatedReallocationWat
     constexpr bool isInvalidated = true;
     constexpr bool isBuiltin = false;
     OPERATION_RETURN(scope, newFunctionCommon<JSFunction, isInvalidated>(vm, globalObject, environment, functionExecutable, globalObject->arrowFunctionStructure(isBuiltin)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewGeneratorFunction, EncodedJSValue, (JSGlobalObject* globalObject, JSScope* environment, JSCell* functionExecutable))
@@ -3005,12 +3061,14 @@ JSC_DEFINE_JIT_OPERATION(operationAsyncIteratorNextWithDriver, EncodedJSValue, (
 
 JSC_DEFINE_JIT_OPERATION(operationNewObject, JSCell*, (VM* vmPointer, Structure* structure))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<JSCell*>)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewPromise, JSCell*, (VM* vmPointer, Structure* structure))
@@ -3055,6 +3113,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewAsyncGenerator, JSCell*, (VM* vmPointer, St
 
 JSC_DEFINE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject* globalObject, JSCell* regexpPtr))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<JSCell*>)
     SuperSamplerScope superSamplerScope(false);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -3064,6 +3123,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewRegExp, JSCell*, (JSGlobalObject* globalObj
     RegExp* regexp = static_cast<RegExp*>(regexpPtr);
     static constexpr bool areLegacyFeaturesEnabled = true;
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regexp, areLegacyFeaturesEnabled));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewRegExpShared, JSCell*, (JSGlobalObject* globalObject, JSCell* regexpPtr, WriteBarrier<JSCell>* cachedObject, int32_t forTest))
@@ -3126,6 +3186,7 @@ static void updateAllPredictionsAndOptimizeAfterWarmUp(CodeBlock* codeBlock)
 
 JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t bytecodeIndexBits))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<UGPRPair>)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -3425,10 +3486,12 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
 
     CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("OSR failed"));
     OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (VM* vmPointer, uint32_t bytecodeIndexBits))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<UGPRPair>)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -3460,6 +3523,7 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
     });
 
     OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    JSC_PER_THREADS_MODE_END
 }
 
 #endif
@@ -3572,6 +3636,7 @@ JSC_DEFINE_JIT_OPERATION(operationInstanceOfCustom, size_t, (JSGlobalObject* glo
 
 JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject* globalObject, JSObject* iterator, JSCell*, void* metadataPointer))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<UGPRPair>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -3685,10 +3750,12 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
 
     RELEASE_ASSERT_NOT_REACHED();
     OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationIteratorNextWithIndexInFrame, UGPRPair, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable, EncodedJSValue* indexInFrame, void* metadataPointer))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<UGPRPair>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -3702,6 +3769,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextWithIndexInFrame, UGPRPair, (JSGlo
     OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
 
     OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(jsBoolean(!hasNext)), JSValue::encode(value)));
+    JSC_PER_THREADS_MODE_END
 }
 
 #endif
@@ -3746,7 +3814,7 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
             // With the flag on, the word may be segmented, which butterfly() must not decode.
             if (object->indexingType() == ArrayWithContiguous
-                && static_cast<uint32_t>(i) < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
+                && static_cast<uint32_t>(i) < (processUsesJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -3782,6 +3850,7 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValGaveUp, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByValGaveUp);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
@@ -3799,10 +3868,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValGaveUp, EncodedJSValue, (EncodedJSValu
     LOG_IC((ICEvent::OperationGetByValGaveUp, baseValue.classInfoOrNull()));
 
     OPERATION_RETURN(scope, JSValue::encode(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValOptimize, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByValOptimize);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
@@ -3849,6 +3920,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValOptimize, EncodedJSValue, (EncodedJSVa
     }
 
     OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, callFrame, profile, baseValue, subscript)));
+    JSC_PER_THREADS_MODE_END
 }
 
 ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, CallFrame* callFrame, ArrayProfile* arrayProfile, JSValue baseValue, JSValue subscript, JSValue thisValue)
@@ -3891,7 +3963,7 @@ ALWAYS_INLINE static JSValue getByValWithThis(JSGlobalObject* globalObject, Call
 
             // With the flag on, the word may be segmented, which butterfly() must not decode.
             if (object->indexingType() == ArrayWithContiguous
-                && static_cast<uint32_t>(i) < (Options::useJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
+                && static_cast<uint32_t>(i) < (processUsesJSThreads() ? object->getArrayLength() : object->butterfly()->publicLength())) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
@@ -4036,6 +4108,7 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphic, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, PropertyInlineCache* propertyCache, ArrayProfile* profile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByValGeneric);
     JSGlobalObject* globalObject = propertyCache->globalObject();
     VM& vm = globalObject->vm();
@@ -4045,10 +4118,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphic, EncodedJSValue, (EncodedJ
 
     JSValue baseValue = JSValue::decode(encodedBase);
     OPERATION_RETURN(scope, JSValue::encode(getByValMegamorphic(globalObject, vm, callFrame, propertyCache, profile, baseValue, baseValue, JSValue::decode(encodedSubscript), GetByKind::ByVal)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphicGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedSubscript))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByValGeneric);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -4056,10 +4131,12 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValMegamorphicGeneric, EncodedJSValue, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue baseValue = JSValue::decode(encodedBase);
     OPERATION_RETURN(scope, JSValue::encode(getByValMegamorphic(globalObject, vm, callFrame, nullptr, nullptr, baseValue, baseValue, JSValue::decode(encodedSubscript), GetByKind::ByVal)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValGeneric, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedSubscript))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     JSTHREADS_COUNT(icGetByValGeneric);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -4074,6 +4151,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetByValGeneric, EncodedJSValue, (JSGlobalObje
     LOG_IC((ICEvent::OperationGetByValGeneric, baseValue.classInfoOrNull()));
 
     OPERATION_RETURN(scope, JSValue::encode(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByValWithThisGaveUp, EncodedJSValue, (EncodedJSValue encodedBase, EncodedJSValue encodedSubscript, EncodedJSValue encodedThis, PropertyInlineCache* propertyCache, ArrayProfile* profile))
@@ -4715,12 +4793,14 @@ JSC_DEFINE_JIT_OPERATION(operationSizeFrameForForwardArguments, size_t, (JSGloba
 
 JSC_DEFINE_JIT_OPERATION(operationSizeFrameForVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedArguments, int32_t numUsedStackSlots, int32_t firstVarArgOffset))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<size_t>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arguments = JSValue::decode(encodedArguments);
     OPERATION_RETURN(scope, sizeFrameForVarargs(globalObject, callFrame, vm, arguments, numUsedStackSlots, firstVarArgOffset));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSetupForwardArgumentsFrame, CallFrame*, (JSGlobalObject* globalObject, CallFrame* newCallFrame, EncodedJSValue, int32_t, int32_t length))
@@ -4735,6 +4815,7 @@ JSC_DEFINE_JIT_OPERATION(operationSetupForwardArgumentsFrame, CallFrame*, (JSGlo
 
 JSC_DEFINE_JIT_OPERATION(operationSetupVarargsFrame, CallFrame*, (JSGlobalObject* globalObject, CallFrame* newCallFrame, EncodedJSValue encodedArguments, int32_t firstVarArgOffset, int32_t length))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<CallFrame*>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4742,6 +4823,7 @@ JSC_DEFINE_JIT_OPERATION(operationSetupVarargsFrame, CallFrame*, (JSGlobalObject
     JSValue arguments = JSValue::decode(encodedArguments);
     setupVarargsFrame(globalObject, callFrame, newCallFrame, arguments, firstVarArgOffset, length);
     OPERATION_RETURN(scope, newCallFrame);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationResolveRope, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
@@ -4756,6 +4838,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveRope, StringImpl*, (JSGlobalObject* glo
 
 JSC_DEFINE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject* globalObject, JSRopeString* string))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<JSString*>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4763,10 +4846,12 @@ JSC_DEFINE_JIT_OPERATION(operationResolveRopeString, JSString*, (JSGlobalObject*
 
     string->resolveRope(globalObject);
     OPERATION_RETURN(scope, string);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlobalObject* globalObject, EncodedJSValue encodedKey, size_t tableIndex))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<char*>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4795,6 +4880,7 @@ JSC_DEFINE_JIT_OPERATION(operationSwitchStringWithUnknownKeyType, char*, (JSGlob
 
     assertIsTaggedWith<JSSwitchPtrTag>(result);
     OPERATION_RETURN(scope, reinterpret_cast<char*>(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGlobalObject* globalObject, const JSInstruction* pc))
@@ -4829,7 +4915,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForBaseline, EncodedJSValue, (JSGl
     case UnresolvedPropertyWithVarInjectionChecks: {
         // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking;
         // see slow_path_resolve_scope in runtime/CommonSlowPaths.cpp.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
@@ -4958,7 +5044,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutToScope, void, (JSGlobalObject* globalObjec
 
     // SPEC-jit §5.5 (review round 1): scope metadata frozen post-link flag-on;
     // see operationGetFromScope above.
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         CommonSlowPaths::tryCachePutToScopeGlobal(globalObject, codeBlock, bytecode, jsScope, slot, ident);
     OPERATION_RETURN(scope);
 }
@@ -5021,7 +5107,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationReallocateButterflyAndTransition, voi
     Structure* oldStructure = WTF::opaque(handler->structureID().decode());
     Structure* newStructure = WTF::opaque(handler->newStructureID().decode());
 
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // Flag-on (r17): the (re)allocating transition installs a new butterfly,
         // a tagged-word publication with its owner/claim protocol (SPEC-objectmodel
         // E4 / E4-C / §4.3). The handler's inline path sends its non-owner,
@@ -5056,7 +5142,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPutByTransitionReallocatingConcurrent
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    RELEASE_ASSERT(Options::useJSThreads());
+    RELEASE_ASSERT(processUsesJSThreads());
     // TSAN only: the AFTER side of the BEFORE keyed on the access case where
     // the stub that calls this was compiled (InlineCacheCompiler.cpp); the
     // case pointer arrives from JIT'd code. No-op otherwise.
@@ -5083,19 +5169,23 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationOSRWriteBarrier, void, (VM* vmPointer
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWriteBarrierSlowPath, void, (VM* vmPointer, JSCell* cell))
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     vm.writeBarrierSlowPath(cell);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandler, void, (VM* vmPointer))
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     genericUnwind(vm, callFrame);
     ASSERT(vm.group3Primitives().targetMachinePCForThrow); // UNGIL §A.1.3 mode split (see operationThrowStackOverflowErrorFromThunk).
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationLookupExceptionHandlerFromCallerFrame, void, (VM* vmPointer))
@@ -5161,12 +5251,14 @@ JSC_DEFINE_JIT_OPERATION(operationValueAdd, EncodedJSValue, (JSGlobalObject* glo
 
 JSC_DEFINE_JIT_OPERATION(operationValueAddProfiled, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2, BinaryArithProfile* arithProfile))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     ASSERT(arithProfile);
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, JSValue::encode(profiledAdd(globalObject, JSValue::decode(encodedOp1), JSValue::decode(encodedOp2), *arithProfile)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationValueAddProfiledOptimize, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2, JITAddIC* addIC))
@@ -5197,6 +5289,7 @@ JSC_DEFINE_JIT_OPERATION(operationValueAddProfiledOptimize, EncodedJSValue, (JSG
 
 JSC_DEFINE_JIT_OPERATION(operationValueAddProfiledNoOptimize, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2, JITAddIC* addIC))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -5205,6 +5298,7 @@ JSC_DEFINE_JIT_OPERATION(operationValueAddProfiledNoOptimize, EncodedJSValue, (J
     BinaryArithProfile* arithProfile = addIC->arithProfile();
     ASSERT(arithProfile);
     OPERATION_RETURN(scope, JSValue::encode(profiledAdd(globalObject, JSValue::decode(encodedOp1), JSValue::decode(encodedOp2), *arithProfile)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_JIT_OPERATION(operationValueAddOptimize, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2, JITAddIC* addIC))
@@ -5340,6 +5434,7 @@ JSC_DEFINE_JIT_OPERATION(operationValueMulProfiledOptimize, EncodedJSValue, (JSG
 
 JSC_DEFINE_JIT_OPERATION(operationValueMulProfiledNoOptimize, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2, JITMulIC* mulIC))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::OperationReturnType<EncodedJSValue>)
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -5348,6 +5443,7 @@ JSC_DEFINE_JIT_OPERATION(operationValueMulProfiledNoOptimize, EncodedJSValue, (J
     BinaryArithProfile* arithProfile = mulIC->arithProfile();
     ASSERT(arithProfile);
     OPERATION_RETURN(scope, profiledMul(globalObject, encodedOp1, encodedOp2, *arithProfile));
+    JSC_PER_THREADS_MODE_END
 }
 
 // FIXME: it would be better to call those operationValueNegate, since the operand can be a BigInt
@@ -5640,6 +5736,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAcquireShadowChickenPacket, void*, (V
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable, JSCell*, (VM* vmPointer))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSCell*)
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -5657,6 +5754,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationRetrieveAndClearExceptionIfCatchable,
     }
 
     return exception;
+    JSC_PER_THREADS_MODE_END
 }
 
 } // namespace JSC

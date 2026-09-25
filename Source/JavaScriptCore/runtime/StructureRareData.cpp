@@ -291,7 +291,7 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
         // it summarizes; foreign fast-path readers load it single-word
         // (unlocked). Flag-off: single mutator, no lock.
         std::optional<GCSafeConcurrentJSLocker> locker;
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             locker.emplace(ownStructure->lock(), vm);
         auto& cache = ensureSpecialPropertyCache().m_cache[static_cast<unsigned>(key)];
         if (cache.m_value.get())
@@ -311,7 +311,7 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
             // checks above (another thread transitioned a prototype). Drop the
             // half-built entry (the watchpoint destructors unlink whatever was
             // installed) and leave the slot empty so a later call retries.
-            ASSERT(Options::useJSThreads());
+            ASSERT(processUsesJSThreads());
             cache.m_missWatchpoints.clear();
             cache.m_equivalenceWatchpoint = nullptr;
             return;
@@ -357,7 +357,7 @@ void RetiredStructureChainInvalidationWatchpoints::destroyAll()
 // meantime only clears this cache again.
 void StructureRareData::retireCachedPropertyNameEnumeratorWatchpoints()
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     if (m_cachedPropertyNameEnumeratorWatchpoints.isEmpty())
         return;
     heap()->retiredStructureChainInvalidationWatchpoints().add(WTF::move(m_cachedPropertyNameEnumeratorWatchpoints));
@@ -377,7 +377,7 @@ void StructureRareData::retireCachedPropertyNameEnumeratorWatchpoints()
 // first is observably identical. Flag-off never reaches here.
 void StructureRareData::setSharedPolyProtoWatchpointConcurrently(Box<InlineWatchpointSet>&& box)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t), "single-word CAS publish treats the Box as one pointer word");
     // Detach the incoming Box's pointer word without giving up its ref: on
     // CAS success that ref becomes the member's; on failure we re-form the
@@ -401,7 +401,7 @@ void StructureRareData::setSharedPolyProtoWatchpointConcurrently(Box<InlineWatch
 
 Box<InlineWatchpointSet> StructureRareData::copySharedPolyProtoWatchpointConcurrently() const
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     static_assert(sizeof(Box<InlineWatchpointSet>) == sizeof(uintptr_t));
     // Acquire load of the pointer word, then a thread-safe ref through
     // a borrowed (non-owning) view. Lifetime: the slot is publish-once

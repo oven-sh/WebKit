@@ -462,9 +462,9 @@ void JSGenericTypedArrayView<Adaptor>::copyFromInt32ShapeArray(size_t offset, JS
     // us) keeps the per-element path, whose stores re-check.
     Butterfly* sourceButterfly;
     typename Adaptor::Type* destination = typedVector();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if ((g_jscConfig.gilOffProcess && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if ((processIsGILOff() && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -525,9 +525,9 @@ void JSGenericTypedArrayView<Adaptor>::copyFromDoubleShapeArray(size_t offset, J
     // GIL off: one destination snapshot, as in copyFromInt32ShapeArray.
     Butterfly* sourceButterfly;
     typename Adaptor::Type* destination = typedVector();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         uint64_t snapshotWord = array->taggedButterflyWord();
-        if ((g_jscConfig.gilOffProcess && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
+        if ((processIsGILOff() && (!destination || !canUseRawFieldsDirectly())) || isSegmentedButterfly(snapshotWord) || !(snapshotWord & butterflyPointerMask)
             || (objectOffset + length) > untaggedButterfly(snapshotWord)->vectorLength()) [[unlikely]] {
             for (size_t i = 0; i < length; ++i) {
                 JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -677,7 +677,7 @@ bool JSGenericTypedArrayView<Adaptor>::setFromArrayLike(JSGlobalObject* globalOb
             // that one index, so semantics are identical to the generic
             // loop. Flag-off this block is dead (I22) and the original
             // generic loop below is the unchanged byte-identical path.
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 for (size_t i = 0; i < safeLength; ++i) {
                     ASSERT(i + objectOffset <= MAX_ARRAY_INDEX);
                     JSValue value = array->tryGetIndexQuickly(static_cast<unsigned>(i + objectOffset));
@@ -776,6 +776,7 @@ template<typename Adaptor>
 bool JSGenericTypedArrayView<Adaptor>::getOwnPropertySlot(
     JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
+    JSC_PER_THREADS_MODE_BEGIN(bool)
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(object);
 
     if (std::optional<uint32_t> index = parseIndex(propertyName))
@@ -806,6 +807,7 @@ bool JSGenericTypedArrayView<Adaptor>::getOwnPropertySlot(
     }
 
     return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
+    JSC_PER_THREADS_MODE_END
 }
 
 template<typename Adaptor>
@@ -1105,7 +1107,7 @@ template<typename Adaptor> inline typename Adaptor::Type JSGenericTypedArrayView
     // Flag-off/GIL-on pays one predicted-false Config-page byte test before the
     // original load.
     const typename Adaptor::Type* vector = typedVector();
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         if (!vector || !inBounds(i)) [[unlikely]]
             return typename Adaptor::Type();
         return typedArrayLaneLoadRelaxed(vector + i);
@@ -1125,7 +1127,7 @@ template<typename Adaptor> inline void JSGenericTypedArrayView<Adaptor>::setInde
     // GIL-off, a null base or a stale index drops the store, which is the lost
     // write a raced detach or shrink is allowed to produce.
     typename Adaptor::Type* vector = typedVector();
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         if (!vector || !inBounds(i)) [[unlikely]]
             return;
         typedArrayLaneStoreRelaxed(vector + i, value);
@@ -1205,7 +1207,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
         return false;
     };
 
-    if (!g_jscConfig.gilOffProcess) [[likely]] {
+    if (!processIsGILOff()) [[likely]] {
         if (sortLargeInPlace(originalSpan.first(length)))
             return SortResult::Success;
     }
@@ -1221,7 +1223,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     // keeps the in-place sort and the bulk copies behind one predicted-false
     // Config-page byte test.
     bool mustCopyOut = isShared();
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         if (!array)
             return SortResult::Failed;
         // main's radix path starts by returning an already sorted input untouched, before any allocation; keep that
@@ -1254,7 +1256,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     if (mustCopyOut) {
         if (!forShared.tryGrow(length)) [[unlikely]]
             return SortResult::OutOfMemory;
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             auto* dst = forShared.mutableSpan().data();
             auto* src = originalSpan.data();
             for (size_t i = 0; i < length; ++i)
@@ -1264,7 +1266,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
         array = forShared.mutableSpan().data();
     }
 
-    bool sorted = g_jscConfig.gilOffProcess && sortLargeInPlace(forShared.mutableSpan().first(length));
+    bool sorted = processIsGILOff() && sortLargeInPlace(forShared.mutableSpan().first(length));
     if (!sorted) {
         switch (Adaptor::typeValue) {
         case TypeFloat16:
@@ -1283,7 +1285,7 @@ template<typename Adaptor> inline auto JSGenericTypedArrayView<Adaptor>::sort() 
     }
 
     if (mustCopyOut) {
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             auto* dst = originalSpan.data();
             auto* src = forShared.span().data();
             for (size_t i = 0; i < length; ++i)

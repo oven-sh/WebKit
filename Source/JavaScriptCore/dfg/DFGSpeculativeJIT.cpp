@@ -2414,7 +2414,7 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
     // (byte-identical LAW: the lint never fires flag-off, so no flag-off
     // codegen path can depend on it). The same holds for a GIL-on process
     // with one owner (OM G1).
-    if (!Options::useTaggedButterflies())
+    if (!processUsesTaggedButterflies())
         return;
 
     // (a) I14: tag-masking / tag-zero-by-construction producer set.
@@ -2582,7 +2582,7 @@ void validateButterflyTagDisciplineForGraph(Graph& graph)
 void SpeculativeJIT::compileBody()
 {
     validateButterflyTagDisciplineForGraph(m_graph);
-    if (Options::useTaggedButterflies()) [[unlikely]]
+    if (processUsesTaggedButterflies()) [[unlikely]]
         m_graph.markButterflyLoadsThatFeedElementWrites();
 
     checkArgumentTypes();
@@ -2680,7 +2680,7 @@ void SpeculativeJIT::compileCheckTraps(Node* node)
     // JITData::isInvalidated test) and calls noResult(node).
     // Gate MUST match DFGClobberize.h / AI / FTL compileCheckTraps. Flag-off
     // (and GIL-on flag-on) codegen is byte-identical to the previous code.
-    if (Options::useJSThreads() && !Options::useThreadGIL() && node->origin.exitOK) [[unlikely]] {
+    if (processUsesJSThreads() && !Options::useThreadGIL() && node->origin.exitOK) [[unlikely]] {
         compileInvalidationPoint(node);
         return;
     }
@@ -2696,7 +2696,7 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
     // PutByValDirectResolved; it keeps the InBounds ArrayMode, so the
     // segmented-aware path simply re-checks publicLength and takes the
     // same InBounds arm.
-    if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+    if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
         && !m_graph.varArgChild(node, 3)) [[unlikely]] {
         compileContiguousPutByValSegmentedAware(node);
         return;
@@ -2781,7 +2781,7 @@ void SpeculativeJIT::compileContiguousPutByVal(Node* node)
 void SpeculativeJIT::compileDoublePutByVal(Node* node)
 {
     // T3-jit-segmented-arraymode: see compileContiguousPutByVal.
-    if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+    if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
         && !m_graph.varArgChild(node, 3)) [[unlikely]] {
         compileDoublePutByValSegmentedAware(node);
         return;
@@ -8446,7 +8446,7 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
     // (FixupPhase::checkArray, gated by consumerHasSegmentedAwareCodegen);
     // self-contained flat-vs-segmented dispatch. The !child2() check makes
     // this compose with callers that still wired a GetButterfly child.
-    if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+    if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
         && !node->child2()) [[unlikely]] {
         compileGetArrayLengthSegmentedAware(node);
         return;
@@ -9266,7 +9266,7 @@ void SpeculativeJIT::compileCreateRest(Node* node)
         // (JSObject::setButterflyConcurrent), so the reload must be masked.
         // Same-thread allocation: mask only, no ordering needed.
         loadPtr(Address(arrayResultGPR, JSObject::butterflyOffset()), butterflyGPR);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             maskButterflyTag(butterflyGPR);
 
         // The allocation slow path above could have clobbered our arrayLengthGPR temporary.
@@ -9338,7 +9338,7 @@ void SpeculativeJIT::compileSpread(Node* node)
         // today's register allocation and reloads.
         std::optional<GPRTemporary> butterfly;
         GPRReg butterflyGPR = InvalidGPRReg;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             butterfly.emplace(this);
             butterflyGPR = butterfly->gpr();
         }
@@ -9381,7 +9381,7 @@ void SpeculativeJIT::compileSpread(Node* node)
         slowPath.append(branch32(Above, scratch1GPR, TrustedImm32(ContiguousShape - Int32Shape)));
 
         GPRReg sourceGPR = scratch1GPR;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             sourceGPR = butterflyGPR;
             slowPath.append(loadButterflyForRead(argument, butterflyGPR, ConcurrentButterflyShape::KnownNonArrayStorage));
             load32(Address(butterflyGPR, Butterfly::offsetOfPublicLength()), lengthGPR);
@@ -9405,7 +9405,7 @@ void SpeculativeJIT::compileSpread(Node* node)
         static_assert(JSCellButterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == JSCellButterfly::offsetOfVectorLength());
         storePair32(lengthGPR, lengthGPR, resultGPR, TrustedImm32(JSCellButterfly::offsetOfPublicLength()));
 
-        if (!Options::useJSThreads()) [[likely]]
+        if (!processUsesJSThreads()) [[likely]]
             loadPtr(Address(argument, JSObject::butterflyOffset()), scratch1GPR);
 
         load8(Address(argument, JSCell::indexingTypeAndMiscOffset()), scratch2GPR);
@@ -9810,7 +9810,7 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
         // installs the butterfly TID-TAGGED flag-on, so the reload must be
         // masked (see compileCreateRest note).
         loadPtr(Address(resultGPR, JSObject::butterflyOffset()), storageGPR);
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             maskButterflyTag(storageGPR);
 
         for (unsigned i = 0; i < node->numChildren(); ++i) {
@@ -10051,7 +10051,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
 
         isInt32.link(this);
         move(TrustedImmPtr(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32))), tempValue);
-        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+        if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
             // OM I41 / SPEC-jit history §29: GIL-off, the lanes copied below come
             // from a butterfly loaded before this shape byte; if another thread owns
             // the source it may have relabelled Int32->Contiguous in between and can
@@ -10114,7 +10114,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
     // installs the butterfly TID-TAGGED flag-on, so the reload must be masked
     // (see compileCreateRest note).
     loadPtr(Address(resultGPR, JSObject::butterflyOffset()), resultButterfly);
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         maskButterflyTag(resultButterfly);
     zeroExtend32ToWord(tempGPR, tempGPR);
     zeroExtend32ToWord(loadIndex, loadIndex);
@@ -10574,7 +10574,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
     // operationArrayPush* fallback (operationArrayPush* §2-dispatches via
     // JSArray::push -> ensureLengthSlowConcurrent). The !storage check makes
     // this compose with callers that still wired a GetButterfly child.
-    if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+    if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
         && !m_graph.varArgChild(node, 0)) [[unlikely]] {
         compileArrayPushSegmentedAware(node);
         return;
@@ -11277,7 +11277,7 @@ void SpeculativeJIT::compileNukeStructureAndSetButterfly(Node* node)
     GPRReg baseGPR = base.gpr();
     GPRReg storageGPR = storage.gpr();
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit §5.5 Transition, (re)allocating form (r14 / OM r17 E4):
         // the parser inlines a transition only under the four watched
         // thread-local sets, planted CheckTransitionOwner first, the value
@@ -11329,7 +11329,7 @@ static_assert(tidTagSpan == 1ULL << 48);
 
 auto SpeculativeJIT::planThreadedButterflyAccess(Edge base) -> ThreadedButterflyPlan
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ThreadedButterflyPlan plan;
 
     const StructureAbstractValue& structures = m_state.forNode(base).m_structure;
@@ -11375,7 +11375,7 @@ auto SpeculativeJIT::planThreadedButterflyAccess(Edge base) -> ThreadedButterfly
 
 bool SpeculativeJIT::lengthRaiseUsesCAS(Edge base)
 {
-    if (!Options::useJSThreads() || !g_jscConfig.gilOffProcess)
+    if (!processUsesJSThreads() || !processIsGILOff())
         return false;
     return !planThreadedButterflyAccess(base).elideSharedWriteCheck;
 }
@@ -11411,10 +11411,10 @@ void SpeculativeJIT::emitButterflyLoadWithStructureDependency(GPRReg baseGPR, GP
 auto SpeculativeJIT::emitThreadedButterflyLoadForRead(GPRReg baseGPR, GPRReg destGPR, GPRReg scratchGPR, const ThreadedButterflyPlan& plan) -> JITCompiler::JumpList
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(destGPR != baseGPR && scratchGPR != InvalidGPRReg && scratchGPR != baseGPR && scratchGPR != destGPR);
     JumpList slowCases;
-    if (!Options::useTaggedButterflies()) {
+    if (!processUsesTaggedButterflies()) {
         // SPEC-jit §5.5 "Untagged words" (OM G1): the word is the pointer.
         loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
         return slowCases;
@@ -11454,11 +11454,11 @@ auto SpeculativeJIT::emitThreadedButterflyLoadForRead(GPRReg baseGPR, GPRReg des
 auto SpeculativeJIT::emitThreadedButterflyLoadForWrite(GPRReg baseGPR, GPRReg destGPR, GPRReg tidScratchGPR, GPRReg indexingScratchGPR, const ThreadedButterflyPlan& plan) -> JITCompiler::JumpList
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(destGPR != baseGPR);
     ASSERT(tidScratchGPR != InvalidGPRReg && tidScratchGPR != baseGPR && tidScratchGPR != destGPR);
     JumpList slowCases;
-    if (!Options::useTaggedButterflies()) {
+    if (!processUsesTaggedButterflies()) {
         // SPEC-jit §5.5 "Untagged words" (OM G1): every thread is the owner and the word is the pointer.
         loadPtr(Address(baseGPR, JSObject::butterflyOffset()), destGPR);
         return slowCases;
@@ -11534,7 +11534,7 @@ static_assert(fragmentSlots == 4);
 void SpeculativeJIT::emitLoadSegmentedPublicLength(GPRReg spineGPR, GPRReg destGPR, GPRReg scratchGPR)
 {
     using namespace DFGSegmentedSpineInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(spineGPR != destGPR && spineGPR != scratchGPR && destGPR != scratchGPR);
     // indexed fragment 0 = fragments()[outOfLineFragmentCount]; low 32 bits
     // of slot 0 = the live publicLength (C4: shared by every spine the object
@@ -11547,7 +11547,7 @@ void SpeculativeJIT::emitLoadSegmentedPublicLength(GPRReg spineGPR, GPRReg destG
 void SpeculativeJIT::emitSegmentedSpineSlotResolve(GPRReg spineGPR, GPRReg indexGPR, GPRReg slotOutGPR, GPRReg scratchGPR, JumpList& outOfBounds)
 {
     using namespace DFGSegmentedSpineInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(spineGPR != indexGPR && spineGPR != slotOutGPR && spineGPR != scratchGPR);
     ASSERT(indexGPR != slotOutGPR && indexGPR != scratchGPR && slotOutGPR != scratchGPR);
 
@@ -11581,7 +11581,7 @@ void SpeculativeJIT::emitSegmentedSpineSlotResolve(GPRReg spineGPR, GPRReg index
 void SpeculativeJIT::compileGetArrayLengthSegmentedAware(Node* node)
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     // FixupPhase intentionally left child2 (storage) unset; CheckArray
     // already validated the indexing shape (segmentation does not change it).
@@ -11615,7 +11615,7 @@ void SpeculativeJIT::compileGetArrayLengthSegmentedAware(Node* node)
 void SpeculativeJIT::compileContiguousPutByValSegmentedAware(Node* node)
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     ASSERT(node->arrayMode().type() == Array::Int32 || node->arrayMode().type() == Array::Contiguous);
 
@@ -11724,7 +11724,7 @@ void SpeculativeJIT::compileContiguousPutByValSegmentedAware(Node* node)
 void SpeculativeJIT::compileDoublePutByValSegmentedAware(Node* node)
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     ASSERT(node->arrayMode().type() == Array::Double);
 
@@ -11814,7 +11814,7 @@ void SpeculativeJIT::compileDoublePutByValSegmentedAware(Node* node)
 void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
 {
     using namespace DFGConcurrentButterflyInternal;
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     ASSERT(node->arrayMode().isJSArray());
 
@@ -11932,7 +11932,7 @@ void SpeculativeJIT::compileArrayPushSegmentedAware(Node* node)
 
 void SpeculativeJIT::compileGetButterfly(Node* node)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, SPEC-jit §5.5): the raw load below
+    if (processUsesTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, SPEC-jit §5.5): the raw load below
         // SPEC-jit section 5.5 / Task 9. This is the only flag-on arm: a
         // TID-tagged word cannot be read by the raw load below, so the
         // useThreadedDFG kill switch disables the tier in Options rather
@@ -15552,7 +15552,7 @@ void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg sizeG
     // SPEC-jit §5.5 (history §51): with the shared heap the vector length is rounded as C++ rounds it (7 for 0,
     // size | 3 otherwise), so that this path and the C++ slow path draw from the same size class; the header gets
     // the rounded value and emitInitializeButterfly clears up to it.
-    bool roundsVectorLength = Options::useSharedGCHeap();
+    bool roundsVectorLength = processUsesSharedGCHeap();
     if (roundsVectorLength) [[unlikely]] {
         static_assert(butterflyFragmentSlots == 4 && BASE_CONTIGUOUS_VECTOR_LEN <= 3 && (BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 3) == 7);
         or32(TrustedImm32(3), sizeGPR, scratch1);
@@ -16149,7 +16149,7 @@ void SpeculativeJIT::compilePutByOffset(Node* node)
 {
     StorageAccessData& storageAccessData = node->storageAccessData();
 
-    if (Options::useTaggedButterflies() && isOutOfLineOffset(storageAccessData.offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]] {
+    if (processUsesTaggedButterflies() && isOutOfLineOffset(storageAccessData.offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]] {
         // SPEC-jit section 5.5 / Task 9: out-of-line stores re-load the TAGGED
         // butterfly from the base and run the frozen WRITE predicate in the
         // same poll-free window as the store (I16). The storage child
@@ -16716,7 +16716,7 @@ void SpeculativeJIT::compileArraySortCommit(Node* node)
     // allocation is unchanged). Predicate failures OSR-exit BEFORE any store.
     std::optional<GPRTemporary> tidScratch;
     GPRReg tidScratchGPR = InvalidGPRReg;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         tidScratch.emplace(this);
         tidScratchGPR = tidScratch->gpr();
     }
@@ -17229,7 +17229,7 @@ void SpeculativeJIT::compileCreateThis(Node* node)
     slowPath.append(branchIfNotFunction(calleeGPR));
     loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), rareDataGPR);
     slowPath.append(branchTestPtr(Zero, rareDataGPR, TrustedImm32(JSFunction::rareDataTag)));
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Torn {allocator, structure} pair under a racing clear()/re-fill: see
         // JIT::emit_op_create_this. structureGPR aliases rareDataGPR, so the
         // first structure read goes to scratchGPR and the re-check compares it
@@ -18046,7 +18046,7 @@ void SpeculativeJIT::compileBitwiseStrictEq(Node* node)
 
 void SpeculativeJIT::emitInitializeButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg emptyValueGPR, GPRReg scratchGPR)
 {
-    if (Options::useSharedGCHeap()) [[unlikely]]
+    if (processUsesSharedGCHeap()) [[unlikely]]
         load32(Address(storageGPR, Butterfly::offsetOfVectorLength()), scratchGPR); // emitAllocateButterfly rounded it up (history §51)
     else
         zeroExtend32ToWord(sizeGPR, scratchGPR);
@@ -18806,7 +18806,7 @@ void SpeculativeJIT::compileMakeAtomString(Node* node)
         }
 
         if (cache) {
-            if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] { // GIL on no mutator races the probe (tenth round, SPEC-jit history §52)
+            if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] { // GIL on no mutator races the probe (tenth round, SPEC-jit history §52)
                 // SPEC-jit section 5.5 (Task 8 pattern): the quick-cache words
                 // are mutated by racing mutators through the shared CodeBlock;
                 // a key-compare + separate value load can pair a key with a
@@ -18855,7 +18855,7 @@ void SpeculativeJIT::compileMakeAtomString(Node* node)
         }
 
         if (cache) {
-            if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+            if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
                 // See the numOpGPRs==2 case above: flag-on, no inline
                 // quick-cache probes; defer to the locked generic operation.
                 move(TrustedImmPtr(cache), cachePtrGPR);

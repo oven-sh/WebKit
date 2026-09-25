@@ -1877,7 +1877,7 @@ private:
         return allowAutomaticSemicolon();
     }
     
-    bool canRecurse()
+    ALWAYS_INLINE bool canRecurse()
     {
         return m_vm.isSafeToRecurse();
     }

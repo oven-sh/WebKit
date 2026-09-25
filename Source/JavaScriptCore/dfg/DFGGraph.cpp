@@ -899,7 +899,7 @@ private:
 // Marking runs after the last phase, so no CSE merges a read into a write.
 void Graph::markButterflyLoadsThatFeedElementWrites()
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     for (BasicBlock* block : blocksInNaturalOrder()) {
         for (Node* node : *block) {
             switch (node->op()) {

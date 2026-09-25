@@ -1819,6 +1819,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ThreadManager.h
     runtime/ThreadObject.h
     runtime/ThreadsModeAtomics.h
+    runtime/ThreadsModePage.h
     runtime/ThreadsModeRefCounted.h
     runtime/ThrowScope.h
     runtime/ToNativeFromValue.h
@@ -2076,6 +2077,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/JITBitBinaryOpGenerator.h
     jit/JSInterfaceJIT.h
     llint/LLIntData.h
+    llint/LLIntSlowPathTable.h
     bytecode/FunctionCodeBlock.h
 
     dfg/DFGAbstractHeap.h

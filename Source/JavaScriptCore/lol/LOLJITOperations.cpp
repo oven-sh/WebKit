@@ -108,7 +108,7 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
     case UnresolvedPropertyWithVarInjectionChecks: {
         // Flag-on, op_resolve_scope metadata is frozen after CodeBlock linking;
         // see slow_path_resolve_scope in runtime/CommonSlowPaths.cpp.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);

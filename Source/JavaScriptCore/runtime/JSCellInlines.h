@@ -267,28 +267,61 @@ ALWAYS_INLINE void* tryAllocateCellHelper(VM& vm, size_t size, GCDeferralContext
     return result;
 }
 
+// allocateCell<T> and tryAllocateCell<T> are compiled once per threads mode (ThreadsModePage.h): the allocation paths test the mode
+// (which client allocates, which allocator), and a process without JS threads runs the copy in which those tests are gone.
+template<typename T, AllocationFailureMode failureMode, bool threaded>
+void* allocateCellPerThreadsMode(VM& vm, size_t size)
+{
+    JSC_THREADS_MODE_BODY(threaded);
+    return tryAllocateCellHelper<T, failureMode>(vm, size, nullptr);
+}
+
+template<typename T, AllocationFailureMode failureMode, bool threaded>
+void* allocateCellPerThreadsMode(VM& vm, GCDeferralContext* deferralContext, size_t size)
+{
+    JSC_THREADS_MODE_BODY(threaded);
+    return tryAllocateCellHelper<T, failureMode>(vm, size, deferralContext);
+}
+
+// allocateCell<T> is declared before it is defined and used in between, so it cannot be ALWAYS_INLINE (the attribute has to
+// be on a template's first declaration, and a translation unit that only has the declaration could not use it then): whether
+// it is inlined is the inliner's decision, as on main. For that decision to come out as on main, the copy with threads must
+// not count: the test is marked unlikely, which keeps that copy a call here. Where the mode is known (a caller compiled per
+// mode) the test is gone and the call is of the one copy.
+template<typename T, AllocationFailureMode failureMode, typename... Arguments>
+ALWAYS_INLINE void* allocateCellForThreadsMode(VM& vm, Arguments... arguments)
+{
+#if TSAN_ENABLED
+    return allocateCellPerThreadsMode<T, failureMode, true>(vm, arguments...);
+#else
+    if (threadsMode()) [[unlikely]]
+        return allocateCellPerThreadsMode<T, failureMode, true>(vm, arguments...);
+    return allocateCellPerThreadsMode<T, failureMode, false>(vm, arguments...);
+#endif
+}
+
 template<typename T>
 void* allocateCell(VM& vm, size_t size)
 {
-    return tryAllocateCellHelper<T, AllocationFailureMode::Assert>(vm, size, nullptr);
+    return allocateCellForThreadsMode<T, AllocationFailureMode::Assert>(vm, size);
 }
 
 template<typename T>
 void* tryAllocateCell(VM& vm, size_t size)
 {
-    return tryAllocateCellHelper<T, AllocationFailureMode::ReturnNull>(vm, size, nullptr);
+    return allocateCellForThreadsMode<T, AllocationFailureMode::ReturnNull>(vm, size);
 }
 
 template<typename T>
 void* allocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)
 {
-    return tryAllocateCellHelper<T, AllocationFailureMode::Assert>(vm, size, deferralContext);
+    return allocateCellForThreadsMode<T, AllocationFailureMode::Assert>(vm, deferralContext, size);
 }
 
 template<typename T>
 void* tryAllocateCell(VM& vm, GCDeferralContext* deferralContext, size_t size)
 {
-    return tryAllocateCellHelper<T, AllocationFailureMode::ReturnNull>(vm, size, deferralContext);
+    return allocateCellForThreadsMode<T, AllocationFailureMode::ReturnNull>(vm, deferralContext, size);
 }
 
 // FIXME: Consider making getCallData concurrency-safe once NPAPI support is removed.
@@ -387,11 +420,11 @@ ALWAYS_INLINE JSValue JSCell::fastGetOwnProperty(VM& vm, Structure& structure, P
     // structure's getter/setter flag is set IN PLACE by a racing defineProperty
     // kind change (SPEC-objectmodel §6 L4-K); the re-validation below is what
     // keeps the answer right, so the entry assertion is single-thread-only.
-    ASSERT(canUseFastGetOwnProperty(structure) || Options::useTaggedButterflies());
+    ASSERT(canUseFastGetOwnProperty(structure) || processUsesTaggedButterflies());
     PropertyOffset offset = structure.get(vm, name);
     if (offset != invalidOffset) {
         JSValue value = asObject(this)->locationForOffset(offset)->get();
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // I34/M7(c): structure.get() can materialize a property table,
             // which allocates and so can park this thread in another thread's
             // stop; a defineProperty that changes this property's kind
@@ -495,7 +528,7 @@ inline void JSCell::setPerCellBit(bool value)
     // side CAS-merges this lane from the freshest read (taxonomy (a)), and our
     // CAS retries across any concurrent flags-byte movement. Flag-off the
     // plain RMW below is byte-identical to today (I22).
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         auto* flagsByte = std::bit_cast<Atomic<TypeInfo::InlineTypeFlags>*>(&m_flags);
         while (true) {
             TypeInfo::InlineTypeFlags oldFlags = flagsByte->load(std::memory_order_relaxed);

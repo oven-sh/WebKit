@@ -67,7 +67,7 @@ PlainGregorianDateTime DateInstance::calculateGregorianDateTime(DateCache& cache
     if (std::isnan(milli))
         return { };
 
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         return cache.msToGregorianDateTime(milli, TimeType::LocalTime);
 
     m_cachedGregorianDateTime = cache.msToGregorianDateTime(milli, TimeType::LocalTime, useSharedCacheFor(m_cachedGregorianDateTime));
@@ -80,7 +80,7 @@ PlainGregorianDateTime DateInstance::calculateGregorianDateTimeUTC(DateCache& ca
     if (std::isnan(milli))
         return { };
 
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         return cache.msToGregorianDateTime(milli, TimeType::UTCTime);
 
     m_cachedGregorianDateTimeUTC = cache.msToGregorianDateTime(milli, TimeType::UTCTime, useSharedCacheFor(m_cachedGregorianDateTimeUTC));

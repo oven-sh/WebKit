@@ -70,7 +70,7 @@ void GCAwareJITStubRoutine::observeZeroRefCountImpl()
         // proves it off-stack, so deleting here would leave a dangling set
         // entry. Once the set has dropped it (dead owner, set teardown) this
         // deref is the last reference and must delete.
-        if (Options::useJSThreads() && m_isInJITStubRoutineSet) [[unlikely]]
+        if (processUsesJSThreads() && m_isInJITStubRoutineSet) [[unlikely]]
             return;
 IGNORE_GCC_WARNINGS_BEGIN("sequence-point")
         delete this;
@@ -344,7 +344,7 @@ Ref<PolymorphicAccessJITStubRoutine> createPreCompiledICJITStubRoutine(const Mac
     // stub would race makeGCAware() and double-append it to JITStubRoutineSet.
     // Flag-off keeps the create-without-makeGCAware optimization (data-only
     // handlers on shared immutable CTI thunks); flag-off nothing is retired.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         stub->makeGCAware(vm);
     return stub;
 }

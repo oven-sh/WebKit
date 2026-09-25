@@ -43,7 +43,7 @@ inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* sourceStructure, DeferredStructureTransitionWatchpointFire* deferred) {
                 if (sourceStructure->mayBePrototype())
                     return sourceStructure;

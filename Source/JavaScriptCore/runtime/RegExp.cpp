@@ -565,6 +565,7 @@ std::span<int> regExpGilOffPerThreadMatchOvector(RegExp& regExp)
 
 int RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset, std::span<int> ovector)
 {
+    JSC_PER_THREADS_MODE_BEGIN(int)
     // AUD1.N2 routing invariant (routing (1) lands with this change's
     // RegExp.h half): GIL-off, ovectorSpan(VM&) hands out the per-thread
     // scratch, so no mutator-side match may ever target the cell-resident
@@ -574,6 +575,7 @@ int RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffs
     if (globalObject->vm().gilOff()) [[unlikely]]
         RELEASE_ASSERT(ovector.empty() || ovector.data() != m_ovector.mutableSpan().data());
     return matchInline(globalObject, globalObject->vm(), s, startOffset, ovector);
+    JSC_PER_THREADS_MODE_END
 }
 
 bool RegExp::matchConcurrently(

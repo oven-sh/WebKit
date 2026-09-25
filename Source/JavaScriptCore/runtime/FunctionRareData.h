@@ -184,7 +184,7 @@ private:
     bool hasLazyFlag(LazyFlag flag) const { return WTF::atomicLoad(const_cast<uint8_t*>(&m_lazyFlags), std::memory_order_acquire) & flag; }
     void setLazyFlag(LazyFlag flag)
     {
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             WTF::atomicExchangeOr(&m_lazyFlags, static_cast<uint8_t>(flag), std::memory_order_release);
         else
             m_lazyFlags |= flag;

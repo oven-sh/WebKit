@@ -251,8 +251,10 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
     baseObject->putDirectAccessor(globalObject, propertyName, accessor, attribute);
 }
 
-inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)
+template<bool threaded>
+JSArray* allocateNewArrayBufferPerThreadsMode(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     JSGlobalObject* globalObject = structure->realm();
     Structure* originalStructure = globalObject->originalArrayStructureForIndexingType(immutableButterfly->indexingMode());
     ASSERT(originalStructure->indexingMode() == immutableButterfly->indexingMode());
@@ -275,6 +277,11 @@ inline JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButte
     }
 
     return result;
+}
+
+ALWAYS_INLINE JSArray* allocateNewArrayBuffer(VM& vm, Structure* structure, JSCellButterfly* immutableButterfly)
+{
+    return JSC_CALL_PER_THREADS_MODE(allocateNewArrayBufferPerThreadsMode, vm, structure, immutableButterfly);
 }
 
 } // namespace CommonSlowPaths

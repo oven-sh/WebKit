@@ -30,6 +30,7 @@
 #include <wtf/MonotonicTime.h>
 #include "JITCodeMap.h"
 #include "PropertyInlineCache.h"
+#include "UnlinkedCodeBlock.h"
 #include <wtf/Atomics.h>
 #include <wtf/ButterflyArray.h>
 #include <wtf/CompactPointerTuple.h>
@@ -179,6 +180,15 @@ public:
     BaselineExecutionCounter m_executeCounter;
     char m_padAfterCounter[64];
 };
+
+// The shared Baseline code of an UnlinkedCodeBlock, as a mutator reads it. With JS threads another mutator can be installing it:
+// the read is a snapshot under the UnlinkedCodeBlock's lock. Without them nothing else writes it while a mutator runs.
+ALWAYS_INLINE RefPtr<BaselineJITCode> unlinkedBaselineCodeSnapshot(UnlinkedCodeBlock& unlinkedCodeBlock)
+{
+    if (processUsesJSThreads()) [[unlikely]]
+        return unlinkedCodeBlock.unlinkedBaselineCodeConcurrently();
+    return unlinkedCodeBlock.m_unlinkedBaselineCode;
+}
 
 } // namespace JSC
 

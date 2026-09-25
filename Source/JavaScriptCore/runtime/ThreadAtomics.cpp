@@ -89,7 +89,7 @@ enum class OwnPropertyKind : uint8_t { Missing, Data, Accessor };
 enum class ArrayStorageElementProbe : uint8_t { NotArrayStorage, Plain, Hole, NotPlain };
 static ArrayStorageElementProbe probeArrayStorageElementForAtomics(JSObject* object, uint32_t index, JSValue& value)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     if (!hasAnyArrayStorage(object->indexingType()))
         return ArrayStorageElementProbe::NotArrayStorage;
     Locker locker { object->cellLock() }; // I31/L5: every flag-on runtime AS access is cell-locked, reads included.
@@ -146,7 +146,7 @@ static OwnPropertyKind getOwnPropertyForAtomics(JSGlobalObject* globalObject, JS
             // path flag-on) remain one atomic step. The Hole arm is
             // unreachable here (no GIL drop between getOwnPropertySlot and
             // this probe), so any non-Plain result falls to the TypeError.
-            if (Options::useJSThreads()) {
+            if (processUsesJSThreads()) {
                 JSValue stored;
                 if (probeArrayStorageElementForAtomics(object, index.value(), stored) == ArrayStorageElementProbe::Plain) {
                     value = stored;
@@ -515,7 +515,7 @@ static bool canUseConditionalIndexedMissingAdd(JSObject* object)
 // re-check discipline.
 ASCIILiteral JSObject::putDirectIndexForAtomicsMissingAdd(JSGlobalObject* globalObject, uint32_t i, JSValue value)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(i <= MAX_ARRAY_INDEX); // parseIndex never yields larger.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -62,7 +62,7 @@ class Heap;
 // flag implications) keys on.
 ALWAYS_INLINE bool useJSThreadsEnabled()
 {
-    return Options::useJSThreads();
+    return processUsesJSThreads();
 }
 
 class ThreadState;

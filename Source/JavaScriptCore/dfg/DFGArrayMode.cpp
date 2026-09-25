@@ -71,7 +71,7 @@ ArrayMode ArrayMode::fromObserved(ArrayProfile profile, Array::Action action, bo
     // the hooked generic entry points. An inline SlowPut store (an existing in-vector element) would bypass them;
     // the tagged write predicate used to send every other thread's store to the slow path, and with untagged words
     // (OM G1) nothing in the inline path tells the threads apart. SlowPut sites are generic whenever the flag is on.
-    if (Options::useJSThreads() && (observed & (asArrayModesIgnoringTypedArrays(NonArrayWithSlowPutArrayStorage) | asArrayModesIgnoringTypedArrays(ArrayWithSlowPutArrayStorage)))) [[unlikely]]
+    if (processUsesJSThreads() && (observed & (asArrayModesIgnoringTypedArrays(NonArrayWithSlowPutArrayStorage) | asArrayModesIgnoringTypedArrays(ArrayWithSlowPutArrayStorage)))) [[unlikely]]
         return ArrayMode(Array::Generic, nonArray, Array::AsIs, action).withProfile(profile, makeSafe);
     switch (observed) {
     case 0:
@@ -200,7 +200,7 @@ ArrayMode ArrayMode::fromObserved(ArrayProfile profile, Array::Action action, bo
         // get/put-by-val inline caches handle each shape without converting);
         // Int32/Undecided -> Contiguous stay conversions (stop-free relabels
         // for the allocating thread, OM T4-O).
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             bool convertsDoubleArrays = type == Array::Contiguous && (observed & (asArrayModesIgnoringTypedArrays(DoubleShape) | asArrayModesIgnoringTypedArrays(DoubleShape | IsArray) | asArrayModesIgnoringTypedArrays(DoubleShape | IsArray | CopyOnWrite)));
             bool convertsToArrayStorage = (type == Array::ArrayStorage || type == Array::SlowPutArrayStorage) && (observed & ~(asArrayModesIgnoringTypedArrays(ArrayStorageShape) | asArrayModesIgnoringTypedArrays(ArrayStorageShape | IsArray) | asArrayModesIgnoringTypedArrays(SlowPutArrayStorageShape) | asArrayModesIgnoringTypedArrays(SlowPutArrayStorageShape | IsArray)));
             if (convertsDoubleArrays || convertsToArrayStorage)
@@ -406,7 +406,7 @@ ArrayMode ArrayMode::refine(
 // ArrayifyToStructure.
 ArrayMode ArrayMode::withSegmentedFeedback(Graph& graph, Node* node) const
 {
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         return *this;
     switch (type()) {
     case Array::Int32:

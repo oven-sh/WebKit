@@ -890,15 +890,12 @@ static void applyGILOffActivationChecklist()
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // A bytecode cache's lazily decoded state (a thin child executable's members, a SymbolTable constant's entries) and a
-    // prelinked module record's by-name maps materialize on first use with one mutator in mind: GIL off they are decoded
-    // eagerly, under the compilation lock, as before the deferral existed (SPEC-ungil history, ninth round; AUDIT R9-1,
-    // R9-3, R9-4, R9-6, R9-8).
-    if (Options::useJSThreads() && !Options::useThreadGIL()) {
-        Options::useThinChildExecutables() = false;
-        Options::useLazySymbolTableConstants() = false;
+    // A prelinked module record's by-name maps materialize on first use with one mutator in mind: GIL off they are filled
+    // at creation (SPEC-ungil history, ninth round; AUDIT R9-8). The bytecode cache's lazily decoded state (a thin child
+    // executable's members, a SymbolTable constant's entries) has no option: GIL off a Decoder does not defer
+    // (Decoder::canDeferIntoPayload; AUDIT R9-1, R9-3, R9-4, R9-6).
+    if (Options::useJSThreads() && !Options::useThreadGIL())
         Options::usePrelinkedModuleInfo() = false;
-    }
 #endif
 
 #if !(CPU(X86_64) || CPU(ARM64)) || ENABLE(C_LOOP)

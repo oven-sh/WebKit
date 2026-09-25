@@ -546,7 +546,7 @@ void MarkedBlock::Handle::didRemoveFromDirectory()
     // (steal, shrink, teardown), so no cell in it is being converted and no
     // lock-free hint reader can race this clear. Same gate as every other
     // hint touch (see m_isDestructibleHint).
-    if (g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer()) [[unlikely]]
+    if (processIsGILOff() && m_directory->heap().isSharedServer()) [[unlikely]]
         WTF::atomicStore(&m_isDestructibleHint, false, std::memory_order_relaxed);
 
     m_index = std::numeric_limits<unsigned>::max();
@@ -728,6 +728,7 @@ void MarkedBlock::Handle::recommitPages()
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // Legal shared-mode contexts: allocation slow paths, synchronous sweeps
     // and the IncrementalSweeper's shared step (sweepNextBlockShared) under
     // MSPL, or the conductor while the world is stopped for all clients. The
@@ -856,6 +857,7 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
 
     // The template arguments don't matter because the first one is false.
     specializedSweep<false, IsEmpty, SweepOnly, BlockHasNoDestructors, DontScribble, HasNewlyAllocated, MarksStale>(freeList, emptyMode, sweepMode, BlockHasNoDestructors, scribbleMode, newlyAllocatedMode, marksMode, [] (VM&, JSCell*) { });
+    JSC_PER_THREADS_MODE_END
 }
 
 NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void crashDueToGarbageCollectorClientDanglingReference_CheckRootsAndBarriers(HeapCell* heapCell, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM)

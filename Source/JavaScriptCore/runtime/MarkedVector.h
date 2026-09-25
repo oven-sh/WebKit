@@ -216,7 +216,7 @@ protected:
     void removeFromMarkSetAndDeallocateBuffer()
     {
         if (m_markSet) {
-            if (Options::useSharedGCHeap()) [[unlikely]] {
+            if (processUsesSharedGCHeap()) [[unlikely]] {
                 // The GC walks each shard under its lock, so unregistering
                 // under it before freeing the spill buffer keeps the buffer
                 // alive for as long as marking can reach it.
@@ -246,7 +246,7 @@ protected:
                 // registered with; marking walks every shard, so shard choice
                 // only affects lock distribution.
                 m_markSet = other.m_markSet;
-                if (Options::useSharedGCHeap()) [[unlikely]] {
+                if (processUsesSharedGCHeap()) [[unlikely]] {
                     Locker locker { Heap::MarkListSetShard::fromSet(*m_markSet).lock };
                     m_markSet->remove(&other);
                     m_markSet->add(this);
@@ -480,7 +480,7 @@ public:
             if (!m_markSet) [[likely]] {
                 // With a shared GC heap this set is mutated by every thread's
                 // spill path, so registration goes through the locked shard.
-                if (Options::useSharedGCHeap()) [[unlikely]]
+                if (processUsesSharedGCHeap()) [[unlikely]]
                     addToSharedMarkSet(vm.heap);
                 else {
                     m_markSet = &vm.heap.markListSet();
@@ -509,7 +509,7 @@ public:
         m_size = 0;
         if (!isUsingInlineBuffer()) {
             if (!m_markSet) [[likely]] {
-                if (Options::useSharedGCHeap()) [[unlikely]]
+                if (processUsesSharedGCHeap()) [[unlikely]]
                     addToSharedMarkSet(vm.heap);
                 else {
                     m_markSet = &vm.heap.markListSet();

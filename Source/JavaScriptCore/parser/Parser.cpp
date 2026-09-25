@@ -742,6 +742,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSingleFu
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementListItem(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
+    JSC_PER_THREADS_MODE_BEGIN(TreeStatement)
     // The grammar is documented here:
     // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-statements
     DepthManager statementDepth(&m_statementDepth);
@@ -872,6 +873,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementList
     }
 
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 template <typename LexerType>
@@ -2099,6 +2101,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
+    JSC_PER_THREADS_MODE_BEGIN(TreeStatement)
     DepthManager statementDepth(&m_statementDepth);
     m_statementDepth++;
     int nonTrivialExpressionCount = 0;
@@ -2213,6 +2216,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(Tre
     }
 
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 template <typename LexerType>
@@ -4169,6 +4173,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseExportDeclara
 template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseExpression(TreeBuilder& context)
 {
+    JSC_PER_THREADS_MODE_BEGIN(TreeExpression)
     failIfStackOverflow();
     JSTokenLocation headLocation(tokenLocation());
     TreeExpression node = parseAssignmentExpression(context);
@@ -4198,6 +4203,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseExpression(T
     }
     context.setEndOffset(head, m_lastTokenLocation.endOffset);
     return head;
+    JSC_PER_THREADS_MODE_END
 }
 
 template <typename LexerType>
@@ -4279,6 +4285,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseArrowFunc
 template <typename LexerType>
 template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmentExpression(TreeBuilder& context)
 {
+    JSC_PER_THREADS_MODE_BEGIN(TreeExpression)
     ASSERT(!hasError());
     
     failIfStackOverflow();
@@ -4400,6 +4407,7 @@ end:
         lhs = context.createAssignment(location, assignmentStack, lhs, initialAssignmentCount, m_parserState.assignmentCount, lastTokenEndPosition());
     
     return lhs;
+    JSC_PER_THREADS_MODE_END
 }
 
 template <typename LexerType>
@@ -5371,6 +5379,7 @@ IGNORE_GCC_WARNINGS_END
 template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpression(TreeBuilder& context)
 {
+    JSC_PER_THREADS_MODE_BEGIN(TreeExpression)
     TreeExpression base = 0;
     JSTextPosition expressionStart = tokenStartPosition();
     JSTokenLocation location = tokenLocation();
@@ -5636,6 +5645,7 @@ endOfChain:
     while (newCount--)
         base = context.createNewExpr(location, base, expressionStart, newTokenStartPositions[newCount], lastTokenEndPosition());
     return base;
+    JSC_PER_THREADS_MODE_END
 }
 
 template <typename LexerType>

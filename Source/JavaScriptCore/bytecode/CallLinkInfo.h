@@ -294,7 +294,7 @@ public:
         // address-dependent on the record it dispatched through
         // (emitFastPathImpl / callLinkInfoDependsOnRecord), so they observe
         // the stub stored before that record was published, or a newer one.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             if (mode() != Mode::Polymorphic)
                 return nullptr;
             auto* stubSlot = std::bit_cast<PolymorphicCallStubRoutine**>(const_cast<RefPtr<PolymorphicCallStubRoutine>*>(&m_stub));
@@ -749,7 +749,7 @@ public:
         // calls must use data ICs - UseDataIC::No fast paths patch machine code
         // in place (repatchNearCall/replaceWithJump), which is forbidden under
         // concurrent execution (I2).
-        RELEASE_ASSERT(!Options::useJSThreads() || useDataIC == UseDataIC::Yes);
+        RELEASE_ASSERT(!processUsesJSThreads() || useDataIC == UseDataIC::Yes);
     }
 
     ~DirectCallLinkInfo()
@@ -764,7 +764,7 @@ public:
         // observes the node or block until the drain loop ends; after the
         // locked delist the object is unreachable from any list and the
         // teardown below cannot race a drain.
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             removeOnDestruction();
         m_target = { };
         m_codeBlock = nullptr;

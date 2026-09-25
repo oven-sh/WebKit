@@ -65,7 +65,7 @@ DisposableCallSiteIndex CodeOriginPool::addDisposableCallSiteIndex(CodeOrigin co
     if (!m_callSiteIndexFreeList.isEmpty()) {
         unsigned index = m_callSiteIndexFreeList.takeLast();
         m_codeOrigins[index] = codeOrigin;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             m_published[index] = codeOrigin; // slot is free: no frame can name it (its routine died at a GC end)
         return DisposableCallSiteIndex(index);
     }
@@ -81,7 +81,7 @@ void CodeOriginPool::removeDisposableCallSiteIndex(DisposableCallSiteIndex callS
     RELEASE_ASSERT(callSite.bits() < m_codeOrigins.size());
     m_callSiteIndexFreeList.append(callSite.bits());
     m_codeOrigins[callSite.bits()] = CodeOrigin();
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         m_published[callSite.bits()] = CodeOrigin();
 }
 
@@ -89,14 +89,14 @@ void CodeOriginPool::shrinkToFit()
 {
     m_codeOrigins.shrinkToFit();
     m_callSiteIndexFreeList.shrinkToFit();
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         republish(); // shrinkToFit reallocated the Vector; keep the published copy exact (called at link, before sharing)
 }
 
 void CodeOriginPool::appendEntry(CodeOrigin codeOrigin)
 {
     m_codeOrigins.append(codeOrigin);
-    if (!Options::useJSThreads()) [[likely]]
+    if (!processUsesJSThreads()) [[likely]]
         return;
     // The published array always has room for m_codeOrigins.capacity()
     // entries; a growth of the Vector republishes (copy + retire), otherwise

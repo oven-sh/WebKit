@@ -274,6 +274,7 @@ public:
         // revert would strand a stale-true hint across the isEmpty clear).
         bool m_isDestructibleHint { false };
         uint16_t m_zeroPagesDuringSweep { 0 }; // The pages that were decommitted, and so all zero, when the sweep in progress began.
+        HeapVersion m_markingVersionAtLastSweep; // A full collection is what moves MarkedSpace::markingVersion() on.
         unsigned m_index { std::numeric_limits<unsigned>::max() };
 
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };

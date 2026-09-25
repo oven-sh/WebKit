@@ -54,7 +54,7 @@ bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
     // structure between the caller's watchability check and this install
     // (DFGAdaptiveStructureWatchpoint.cpp). A refused install is handled by
     // the caller, so return false instead of asserting.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         if (!m_key.isWatchable(PropertyCondition::MakeNoChanges, Concurrency::MainThread))
             return false;
     } else
@@ -73,7 +73,7 @@ bool AdaptiveInferredPropertyValueWatchpointBase::install(VM& vm)
     // below (seventh round; the amplifier found the null set at about 1 in 100
     // runs of jit/global-property-cache-vs-global-transitions.js GIL off).
     WatchpointSet* set = isValidOffset(offset) ? structure->propertyReplacementWatchpointSet(offset) : nullptr;
-    ASSERT(set || Options::useJSThreads());
+    ASSERT(set || processUsesJSThreads());
     if (set && set->add(&m_propertyWatchpoint))
         return true;
 
@@ -91,7 +91,7 @@ void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail&
     // One of the watchpoints fired, but the other one didn't. Make sure that neither of them are
     // in any set anymore. This simplifies things by allowing us to reinstall the watchpoints
     // wherever from scratch.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // AB18-G: these unlink from sets (per-Structure transition /
         // replacement sets) that other mutators can concurrently add() to;
         // the check-and-remove must be one critical section under the
@@ -123,7 +123,7 @@ void AdaptiveInferredPropertyValueWatchpointBase::fire(VM& vm, const FireDetail&
     // ensured as before (objectmodel/indexing-transition-keeps-adaptive-
     // watchpoint.js depends on the re-install creating it).
     PropertyCondition::WatchabilityEffort effort = PropertyCondition::EnsureWatchability;
-    if (Options::useJSThreads() && vm.heap.mutatorState() != MutatorState::Running) [[unlikely]]
+    if (processUsesJSThreads() && vm.heap.mutatorState() != MutatorState::Running) [[unlikely]]
         effort = PropertyCondition::MakeNoChanges; // inside a collection phase on this thread: adapt only if the set already exists
     if (m_key.isWatchable(effort) && install(vm))
         return;

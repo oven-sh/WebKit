@@ -175,7 +175,7 @@ void RetiredJITArtifacts::retireCallLinkRecord(VM& vm, CallLinkRecord* record)
         return;
     // Records exist only with the flag on (CallLinkInfo::publishRecord is a
     // no-op flag-off), so this path is flag-on by construction.
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     retire(vm, std::unique_ptr<RetiredCallback>(new RetiredCallLinkRecord(record)));
 }
 

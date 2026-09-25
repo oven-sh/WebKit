@@ -203,7 +203,7 @@ public:
     // also restricted to carriers.
     static bool shouldBindCurrentThreadAsJSCExecutionThread()
     {
-        if (!Options::useJSThreads() || Options::useThreadGIL())
+        if (!processUsesJSThreads() || Options::useThreadGIL())
             return true;
         return !ThreadManager::isJSThreadCurrent();
     }

@@ -58,7 +58,7 @@ public:
         // before any drain observes the node or block until the drain loop
         // ends. ~CallLinkInfoBase's own gilOff delist would run only AFTER
         // this store — too late.
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             removeOnDestruction();
         WTF::atomicStore(&m_addressForCall, static_cast<void*>(nullptr), std::memory_order_relaxed); // THREADS: see unlinkOrUpgradeImpl.
     }

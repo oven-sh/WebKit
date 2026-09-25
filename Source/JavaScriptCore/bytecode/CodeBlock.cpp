@@ -744,7 +744,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 // post-link; see LLIntSlowPaths/JITOperations), and arming
                 // only the link-time snapshot is not worth carrying the
                 // dictionary/R7 audit burden. Conservative: sound, slower.
-                if (!Options::useJSThreads()) [[likely]]
+                if (!processUsesJSThreads()) [[likely]]
                     metadata.m_structureID.set(vm, this, op.structure);
             }
             metadata.m_operand = op.operand;
@@ -800,7 +800,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             } else if (op.structure) {
                 // SPEC-jit §5.5 (review round 1): GlobalProperty cache never
                 // armed flag-on; see op_get_from_scope above.
-                if (!Options::useJSThreads()) [[likely]]
+                if (!processUsesJSThreads()) [[likely]]
                     metadata.m_structureID.set(vm, this, op.structure);
             }
             metadata.m_operand = op.operand;
@@ -927,10 +927,6 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
     RETURN_IF_EXCEPTION(throwScope, false);
-
-    // Nothing was deferred, so there is nothing for prepareLazyStateForConcurrentCompilation() to do.
-    if (!Options::useThinChildExecutables() && !m_numberOfUnmaterializedFunctionExecutables)
-        setStateBit(IsLazyStatePreparedForConcurrentCompilation);
     return true;
 }
 
@@ -2098,7 +2094,7 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
                 && (!chain || vm.heap.isMarked(chain)))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing LLInt put transition.");
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 // SPEC-jit §4.3 (Task 6): flag-on, {m_oldStructureID, m_offset} is
                 // the surviving replace cache, read by the LLInt as ONE 64-bit
                 // word; invalidate it with one all-zero store (F3).
@@ -2750,7 +2746,7 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 {
     RELEASE_ASSERT(m_rareData);
     std::optional<Locker<Lock>> locker;
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         locker.emplace(m_rareData->m_exceptionHandlersLock);
     Vector<HandlerInfo>& exceptionHandlers = m_rareData->m_exceptionHandlers;
     unsigned index = callSiteIndex.bits();
@@ -3018,7 +3014,7 @@ CodeBlock* CodeBlock::gilOffDFGForLoopEntry() const
 
 void CodeBlock::setGILOffDFGForLoopEntry(VM& vm, CodeBlock* dfgCodeBlock)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(!dfgCodeBlock || dfgCodeBlock->jitType() == JITType::DFGJIT);
 #if ENABLE(JIT)
     auto* jitData = baselineJITData();
@@ -3079,7 +3075,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // still-reachable optimized code, runs un-stopped exactly as today.
     auto doJettison = [&] {
 
-    RELEASE_ASSERT(!Options::useJSThreads() || JSThreadsSafepoint::worldIsStopped(vm) || (reason == Profiler::JettisonDueToOldAge && vm.heap.worldIsStopped()));
+    RELEASE_ASSERT(!processUsesJSThreads() || JSThreadsSafepoint::worldIsStopped(vm) || (reason == Profiler::JettisonDueToOldAge && vm.heap.worldIsStopped()));
 
     m_isJettisoned = true;
 
@@ -3088,7 +3084,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
     // this same window). The old-age arm reaches here for a block the GC
     // found dead; its baseline alternative may be dead too, so only touch a
     // marked one there.
-    if (Options::useJSThreads() && JSC::JITCode::isOptimizingJIT(jitType()) && m_alternative) [[unlikely]] {
+    if (processUsesJSThreads() && JSC::JITCode::isOptimizingJIT(jitType()) && m_alternative) [[unlikely]] {
         CodeBlock* baseline = baselineAlternative();
         if (baseline != this && (reason != Profiler::JettisonDueToOldAge || vm.heap.isMarked(baseline)) && baseline->gilOffDFGForLoopEntry() == this)
             baseline->setGILOffDFGForLoopEntry(vm, nullptr);
@@ -3229,7 +3225,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
 
     }; // doJettison
 
-    if (Options::useJSThreads() && reason != Profiler::JettisonDueToOldAge) [[unlikely]] {
+    if (processUsesJSThreads() && reason != Profiler::JettisonDueToOldAge) [[unlikely]] {
         // S3-jettison-stw-batch (SCALEBENCH §27 stwrate2): CodeBlock-jettison
         // is 188/346 of §A.3 conducted windows at W=16 — N mutators kept in
         // the SAME shared DFG/FTL CodeBlock all cross the same shared
@@ -3757,7 +3753,7 @@ uint32_t CodeBlock::adjustedExitCountThreshold(uint32_t desiredThreshold)
 // threads). Flag-off / GIL-on: multiplier 1.
 static unsigned exitCountThreadMultiplier()
 {
-    if (!g_jscConfig.gilOffProcess) [[likely]]
+    if (!processIsGILOff()) [[likely]]
         return 1;
     return 1 + ThreadManager::liveSpawnedThreadCountApproximate();
 }

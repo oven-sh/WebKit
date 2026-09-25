@@ -164,7 +164,7 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
         // Flag on (GIL on only; GIL off forces the concurrent path, Options.cpp): the synchronous compilation claims
         // its key for its whole duration, so the dedup backstop below (§5.7.3) covers a second thread that reaches the
         // same tier-up after a handoff while this one's result is not installed yet. SPEC-jit history §49.
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             Locker locker { *m_lock };
             if (m_plans.contains(plan->key()) || m_finalizingPlans.contains(plan->key())) {
                 plan->cancel();
@@ -177,7 +177,7 @@ CompilationResult JITWorklist::enqueue(Ref<JITPlan> plan)
         if (plan->stage() != JITPlanStage::Canceled)
             plan->endSignpost();
         CompilationResult result = plan->finalize();
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             Locker locker { *m_lock };
             m_finalizingPlans.remove(plan->key());
         }

@@ -199,7 +199,7 @@ public:
         // (NativeExecutable.cpp) and never retract.
         // Flag-off: one predicted-false byte test on the read-only Config
         // page; byte-identical behavior otherwise.
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             JSC::JITCode* jitCode = (kind == CodeSpecializationKind::CodeForCall ? m_jitCodeForCall : m_jitCodeForConstruct).get();
             if (!jitCode)
                 return nullptr;

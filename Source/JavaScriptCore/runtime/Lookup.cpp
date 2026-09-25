@@ -79,7 +79,7 @@ bool staticPropertyAlreadyReified(VM& vm, JSObject& thisObj, const PropertyName&
     // S45-DUPLICATE-PROPERTY-NAME: out-of-line so reifyStaticProperty (inline in
     // Lookup.h, instantiated widely) does not grow a StructureInlines.h
     // dependency at every include site. Caller holds the reification lock.
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     unsigned ignoredAttributes;
     return isValidOffset(thisObj.getDirectOffset(vm, propertyName, ignoredAttributes));
 }
@@ -141,7 +141,7 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
             if (!isValidOffset(offset)) {
                 // Flag-on another thread may delete the property between the
                 // reification above and this probe; that is "not found".
-                if (Options::useJSThreads()) [[unlikely]]
+                if (processUsesJSThreads()) [[unlikely]]
                     return false;
                 dataLog("Static hashtable initialiation for ", propertyName, " did not produce a property.\n");
                 RELEASE_ASSERT_NOT_REACHED();
@@ -150,7 +150,7 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
     }
 
     JSValue value = thisObject->getDirect(offset);
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // The offset came from one structure sample and the slot load is a
         // second one, with a possible park between them (the reification lock,
         // a table materialization). A hole here means either the storage was

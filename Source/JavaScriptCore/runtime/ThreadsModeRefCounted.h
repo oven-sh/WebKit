@@ -41,7 +41,7 @@ class ThreadsModeRefCountedBase {
 public:
     void ref() const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             m_refCount.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -61,7 +61,7 @@ protected:
     // True if the object is to be destroyed.
     bool derefBase() const
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)
                 return false;
             std::atomic_thread_fence(std::memory_order_acquire);

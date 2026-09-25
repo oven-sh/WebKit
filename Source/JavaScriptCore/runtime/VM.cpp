@@ -178,6 +178,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
 #include <wtf/ReadWriteLock.h>
+#include <wtf/Scope.h>
 #include <wtf/SimpleStats.h>
 #include <wtf/StackTrace.h>
 #include <wtf/StringPrintStream.h>
@@ -1827,15 +1828,7 @@ void VM::deleteAllRegExpCode()
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
     if (m_gilOff) [[unlikely]] {
-        whenIdleWithOtherThreadsStopped(effort, [this](bool deleteHeapCode) {
-            clearCodeCaches();
-            if (deleteHeapCode) {
-                heap.deleteAllCodeBlocksWithCollectionPrevented();
-                // All of it: also what could be decoded again from a bytecode cache.
-                heap.deleteAllUnlinkedCodeBlocksWithCollectionPrevented({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
-            }
-            heap.reportAbandonedObjectGraph();
-        });
+        deleteAllCodeWithOtherThreadsStopped(effort, m_isDeletingAllCodeToGenerateItAgain);
         return;
     }
     whenIdle([=, this] () {
@@ -1847,11 +1840,42 @@ void VM::deleteAllCode(DeleteAllCodeEffort effort)
     });
 }
 
+void VM::deleteAllCodeWithOtherThreadsStopped(DeleteAllCodeEffort effort, bool toGenerateItAgain)
+{
+    // The work can run later than this call (at the last thread's exit), so the mark of deleteAllCodeToGenerateItAgain()
+    // is set where it runs.
+    whenIdleWithOtherThreadsStopped(effort, [this, toGenerateItAgain](bool deleteHeapCode) {
+        SetForScope generatingAgain(m_isDeletingAllCodeToGenerateItAgain, toGenerateItAgain);
+        clearCodeCaches();
+        if (deleteHeapCode) {
+            heap.deleteAllCodeBlocksWithCollectionPrevented();
+            // All of it: also what could be decoded again from a bytecode cache.
+            heap.deleteAllUnlinkedCodeBlocksWithCollectionPrevented({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
+        }
+        heap.reportAbandonedObjectGraph();
+    });
+}
+
 void VM::clearCodeCaches()
 {
-    m_codeCache->clear(*this);
+    if (keepsUnlinkedCode())
+        m_codeCache->write(); // what clear() does first
+    else
+        m_codeCache->clear(*this);
     m_builtinExecutables->clear();
     deleteAllRegExpCode();
+}
+
+void VM::deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort effort)
+{
+    if (m_gilOff) [[unlikely]] {
+        deleteAllCodeWithOtherThreadsStopped(effort, true);
+        return;
+    }
+    whenIdle([=, this] () {
+        SetForScope generatingAgain(m_isDeletingAllCodeToGenerateItAgain, true);
+        deleteAllCode(effort); // runs now: the VM is idle
+    });
 }
 
 bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
@@ -1883,7 +1907,7 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
         if (keepCodeInUse)
             unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
         heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
-        if (Options::useCodeRecoveryFromBytecodeCache())
+        if (!keepsUnlinkedCode())
             m_codeCache->clearCodeDecodedFromPersistentPayloads();
         if (!keepCodeInUse)
             deleteAllRegExpCode();
@@ -3132,6 +3156,7 @@ void VM::drainMicrotasksForGlobalObject(JSGlobalObject* globalObject)
 
 void sanitizeStackForVM(VM& vm)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     auto& thread = Thread::currentSingleton();
     auto& stack = thread.stack();
     // UNGIL §F.2 ANNEX F2 fixed ruling (U-T8): GIL-off this BRANCH consumes
@@ -3152,12 +3177,14 @@ void sanitizeStackForVM(VM& vm)
     sanitizeStackForVMImpl(&vm.group3Primitives().m_lastStackTop);
 #endif
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
+    JSC_PER_THREADS_MODE_END
 }
 
 // For the slow paths of calls: they run in the middle of JS, on the thread that holds the API lock, so that thread's stack
 // bounds come from the lock rather than from the two thread-local lookups sanitizeStackForVM() makes. Same checks.
 void sanitizeStackForVMInCallSlowPath(VM& vm)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // GIL off, the API lock has no single owner thread to take the stack bounds from.
     if (vm.gilOffWithProcessGate()) [[unlikely]] {
         sanitizeStackForVM(vm);
@@ -3172,6 +3199,7 @@ void sanitizeStackForVMInCallSlowPath(VM& vm)
     sanitizeStackForVMImpl(&vm.group3Primitives().m_lastStackTop);
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa40, vm.lastStackTop(), stack.origin(), stack.end());
 #endif
+    JSC_PER_THREADS_MODE_END
 }
 
 size_t VM::committedStackByteCount()
@@ -4005,6 +4033,7 @@ void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 
 MegamorphicCache& VM::megamorphicCacheForFill()
 {
+    JSC_PER_THREADS_MODE_BEGIN(MegamorphicCache&)
     if (MegamorphicCache::usesPerThreadCaches()) [[unlikely]] {
         MegamorphicCache*& slot = VMLite::current().megamorphicCache;
         if (!slot) [[unlikely]]
@@ -4013,6 +4042,7 @@ MegamorphicCache& VM::megamorphicCacheForFill()
         return *slot;
     }
     return ensureMegamorphicCache();
+    JSC_PER_THREADS_MODE_END
 }
 
 VM::DrainMicrotaskDelayScope::DrainMicrotaskDelayScope(VM& vm)

@@ -244,7 +244,7 @@ bool ClonedArguments::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
             slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::DontEnum), thisObject->realm()->arrayProtoValuesFunction());
             return true;
         }
-    } else if (Options::useJSThreads()) [[unlikely]] {
+    } else if (processUsesJSThreads()) [[unlikely]] {
         // Null m_callee means materialized. Pairs with the storeStoreFence
         // before m_callee.clear() in materializeSpecials() so the
         // structure/butterfly reads below see a foreign materializer's puts.
@@ -368,7 +368,7 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
 
     // The cleared flag must become visible only after the puts above; readers
     // that see it null loadLoadFence before reading the materialized keys.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         WTF::storeStoreFence();
     m_callee.clear();
 }
@@ -377,7 +377,7 @@ void ClonedArguments::materializeSpecialsIfNecessary(JSGlobalObject* globalObjec
 {
     if (!specialsMaterialized())
         materializeSpecials(globalObject);
-    else if (Options::useJSThreads()) [[unlikely]] {
+    else if (processUsesJSThreads()) [[unlikely]] {
         // Callers fall through to Base:: put/deleteProperty/defineOwnProperty
         // reads of the materialized keys; order those after the flag load.
         // Pairs with the storeStoreFence in materializeSpecials().
@@ -408,7 +408,7 @@ void ClonedArguments::copyToArguments(JSGlobalObject* globalObject, JSValue* fir
     // flat butterfly. Segmented and null words take the generic per-index path.
     Butterfly* butterfly = nullptr;
     IndexingType type;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         uint64_t word = taggedButterflyWord();
         type = this->indexingType();
         if (isSegmentedButterfly(word) || !(word & butterflyPointerMask))

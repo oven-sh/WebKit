@@ -46,7 +46,7 @@ inline JSLexicalEnvironment::JSLexicalEnvironment(VM& vm, Structure* structure, 
     }
 }
 
-inline JSLexicalEnvironment* JSLexicalEnvironment::create(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue)
+ALWAYS_INLINE JSLexicalEnvironment* JSLexicalEnvironment::create(VM& vm, Structure* structure, JSScope* currentScope, SymbolTable* symbolTable, JSValue initialValue)
 {
     JSLexicalEnvironment* result =
         new (

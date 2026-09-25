@@ -709,7 +709,7 @@ public:
     // thread that found it, before any other iteration on that thread.
     ALWAYS_INLINE static VMLite* iterationLiteIfGILOff()
     {
-        if (!g_jscConfig.gilOffProcess) [[likely]]
+        if (!processIsGILOff()) [[likely]]
             return nullptr;
         VMLite* lite = VMLite::currentIfExists();
         return lite && lite->gilOff ? lite : nullptr;

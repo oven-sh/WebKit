@@ -145,7 +145,7 @@ static std::atomic<uint32_t> s_butterflyTIDTagInitializedThreadCount { 0 };
 // Also the body run by initialize/clear below, so all writers agree.
 static void updateButterflyTIDTag(uint16_t tid)
 {
-    if (!Options::useTaggedButterflies())
+    if (!processUsesTaggedButterflies())
         tid = 0; // SPEC-objectmodel G1: one owner with the GIL (and flag off, where no lite is ever installed).
     uint64_t tag = static_cast<uint64_t>(tid) << 48;
     g_jscButterflyTIDTag = tag;
@@ -183,7 +183,7 @@ void initializeButterflyTIDTagForCurrentThread()
             if (s_butterflyTIDTagInitializedThreadCount.fetch_add(1, std::memory_order_relaxed)) {
                 // Second-thread startup on a platform with no JIT-visible TLS
                 // mechanism: unsupported flag-on (D8).
-                RELEASE_ASSERT(!Options::useJSThreads());
+                RELEASE_ASSERT(!processUsesJSThreads());
             }
         }
     }

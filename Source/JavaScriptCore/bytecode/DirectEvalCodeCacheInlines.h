@@ -37,7 +37,7 @@ namespace JSC {
 inline DirectEvalExecutable* DirectEvalCodeCache::get(const CacheLookupKey& cacheKey)
 {
     // With threads, another thread's set() can rehash the map during the lookup.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         Locker locker { m_lock };
         return m_cacheMap.inlineGet<CacheLookupKeyHashTranslator>(cacheKey).get();
     }

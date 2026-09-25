@@ -46,7 +46,7 @@ bool CachedSpecialPropertyAdaptiveStructureWatchpoint::install(VM&)
     // Flag-on, another thread can transition the watched object between the
     // caller's watchability check and this install; refuse (the caller drops
     // the cache entry) instead of asserting. Flag-off the check is exact.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         if (!m_key.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
     } else

@@ -274,8 +274,8 @@ void BytecodeGeneratorification::run()
     // SpeculativeJIT::compilePutInternalField, FTL compilePutInternalField),
     // so the relocated store below publishes the frame saves on arm64 and is
     // a compiler barrier in the optimizing tiers.
-    bool gilOffProcess = Options::useJSThreads() && !Options::useThreadGIL()
-        && Options::useVMLite() && Options::useSharedAtomStringTable() && Options::useSharedGCHeap();
+    bool gilOffProcess = processUsesJSThreads() && !Options::useThreadGIL()
+        && Options::useVMLite() && Options::useSharedAtomStringTable() && processUsesSharedGCHeap();
 
     for (const YieldData& data : m_yields) {
         if (!data.found)

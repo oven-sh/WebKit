@@ -113,7 +113,7 @@ inline Structure* JSFinalObject::createStructure(VM& vm, JSGlobalObject* globalO
 // cell+8 is 8-byte-aligned; I36 only forbids the 128-bit DCAS there).
 inline void JSObject::storeTaggedButterflyWordConcurrent(VM& vm, Butterfly* butterfly)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(type() != WebAssemblyGCObjectType);
     Atomic<uint64_t>* word = std::bit_cast<Atomic<uint64_t>*>(butterflyAddress());
     uint64_t old = word->load(std::memory_order_relaxed);
@@ -155,7 +155,7 @@ inline void JSObject::storeTaggedButterflyWordConcurrent(VM& vm, Butterfly* butt
         // and the installer becomes the word's owner, as when the word was 0.
         RELEASE_ASSERT(!(old & butterflyPointerMask) || (!isSegmentedButterfly(old) && butterflyTID(old) == currentButterflyTID()));
         uint64_t desired = butterfly ? encodeButterfly(butterfly, currentButterflyTID(), butterflySharedWrite(old)) : butterflyLessWordForCurrentThread(); // r16: a cleared word keeps the owner TID (I40)
-        if (!g_jscConfig.gilOffProcess) {
+        if (!processIsGILOff()) {
             // GIL on (E4-G extended, history §37): the CAS excludes a racing
             // foreign SW flip, i.e. another mutator; none runs inside this
             // window, and the marker only reads the word.
@@ -178,7 +178,7 @@ inline void JSObject::storeTaggedButterflyWordConcurrent(VM& vm, Butterfly* butt
 
 inline void JSObject::setButterflyConcurrent(VM& vm, Butterfly* butterfly)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     // M8: flag-on, the fenced publication order is the only branch (manifest
     // entry 4b forces heap.m_mutatorShouldBeFenced; we fence unconditionally
     // here so the protocol holds even before that entry is applied).
@@ -204,7 +204,7 @@ inline void JSObject::setButterflyConcurrent(VM& vm, Butterfly* butterfly)
 
 inline void JSObject::nukeStructureAndSetButterflyConcurrent(VM& vm, StructureID oldStructureID, Butterfly* butterfly)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     // M5: E4 transitions keep today's fenced nuke order — value (caller), nuke,
     // fence, tagged butterfly, fence, new StructureID (caller). This is also the
     // I36 publication order required on PreciseAllocation cells (which must
@@ -224,7 +224,7 @@ inline void JSObject::nukeStructureAndSetButterflyConcurrent(VM& vm, StructureID
 // SW flip (which requires the fire first) cannot complete (I12/I13).
 inline bool JSObject::classifyConcurrentLockedAdd(Structure* structure, ConcurrentLockedAddSlowAction& action)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     action = ConcurrentLockedAddSlowAction::None;
     uint64_t word = taggedButterflyWord();
     // Conservative growth bound for ONE add: the fresh-offset case assigns at
@@ -296,7 +296,7 @@ inline bool JSObject::classifyConcurrentLockedAdd(Structure* structure, Concurre
 
 inline void JSObject::performConcurrentLockedAddSlowAction(VM& vm, ConcurrentLockedAddSlowAction action)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     auto* object = static_cast<JSObjectWithButterfly*>(this);
     switch (action) {
     case ConcurrentLockedAddSlowAction::None:
@@ -322,7 +322,7 @@ inline void JSObject::performConcurrentLockedAddSlowAction(VM& vm, ConcurrentLoc
 // lock.
 inline void JSObject::growOutOfLineStorageForConcurrentLockedAdd(VM& vm, StructureID structureID, Structure* structure, PropertyOffset newMaxOffset, unsigned oldOutOfLineCapacity, unsigned newOutOfLineCapacity)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     uint64_t lockedWord = taggedButterflyWord();
     if (isSegmentedButterfly(lockedWord)) {
         // Pre-grown by the GrowSegmentedOutOfLine slow action; out-of-line
@@ -382,7 +382,7 @@ inline void JSObject::growOutOfLineStorageForConcurrentLockedAdd(VM& vm, Structu
 
 inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         setButterflyConcurrent(vm, butterfly);
         return;
     }
@@ -398,7 +398,7 @@ inline void JSObject::setButterfly(VM& vm, Butterfly* butterfly)
 
 inline void JSObject::nukeStructureAndSetButterfly(VM& vm, StructureID oldStructureID, Butterfly* butterfly)
 {
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, butterfly);
         return;
     }
@@ -573,7 +573,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
     JSObject* object = this;
     while (true) {
         Structure* structure = object->structureID().decode();
-        if (Options::useJSThreads() && structure->isUncacheableDictionary() && !slot.isVMInquiry() && !threadRestrictCheck(globalObject, object)) [[unlikely]] {
+        if (processUsesJSThreads() && structure->isUncacheableDictionary() && !slot.isVMInquiry() && !threadRestrictCheck(globalObject, object)) [[unlikely]] {
             EXCEPTION_ASSERT(scope.exception()); // threadRestrictCheck returned false, so it threw.
             return false;
         }
@@ -665,7 +665,7 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
 {
     ASSERT(!value.isGetterSetter() && !(attributes & PropertyAttribute::Accessor));
     ASSERT(!value.isCustomGetterSetter());
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // Review round 1: route through the cell-locked form (value stored in
         // the same critical section as the table edit - I9/L3/L4).
         putDirectWithoutTransitionConcurrent(vm, propertyName, value, attributes);
@@ -686,7 +686,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
     // Flag-on, "without transition" adds go through
     // putDirectWithoutTransitionConcurrent (cell-locked, value stored inside
     // the same window). This unlocked form is the flag-off path only (I22).
-    ASSERT(!Options::useTaggedButterflies());
+    ASSERT(!processUsesTaggedButterflies());
     unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
     PropertyOffset result;
     structure->addPropertyWithoutTransition(
@@ -735,7 +735,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
 // sanctioned pre-lock DeferGC form), and the lock spans no poll/park.
 inline NEVER_INLINE PropertyOffset JSObject::putDirectWithoutTransitionConcurrent(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     DeferGC deferGC(vm);
     PropertyOffset result = invalidOffset;
     bool isPrototype = false;
@@ -819,7 +819,7 @@ ALWAYS_INLINE bool JSObject::putInlineForJSObject(JSCell* cell, JSGlobalObject* 
     ASSERT(value);
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(thisObject));
 
-    if (Options::useJSThreads() && thisObject->structure()->isUncacheableDictionary() && !threadRestrictCheck(globalObject, thisObject)) [[unlikely]]
+    if (processUsesJSThreads() && thisObject->structure()->isUncacheableDictionary() && !threadRestrictCheck(globalObject, thisObject)) [[unlikely]]
         return false;
 
     // Try indexed put first. This is required for correctness, since loads on property names that appear like
@@ -897,7 +897,7 @@ ALWAYS_INLINE bool JSObject::hasOwnProperty(JSGlobalObject* globalObject, unsign
 // See the declaration in JSObject.h. false = RESTART the whole operation.
 inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Structure* expectedSource, StructureID sourceID, Structure* newStructure, PropertyOffset offset, JSValue value)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(!expectedSource->isDictionary());
     ASSERT(type() != WebAssemblyGCObjectType);
 
@@ -1010,7 +1010,7 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         AssertNoGC assertNoGC; // I29: fresh loads above (word) and below, no poll until the publish.
         auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
         bool claimed;
-        if (!g_jscConfig.gilOffProcess) {
+        if (!processIsGILOff()) {
             // GIL on (E4-G, history §33/§37): no other mutator is inside a window on this object; a plain nuke.
             claimed = structureID() == sourceID;
             if (claimed)
@@ -1062,7 +1062,7 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
         if (this->structureID() != sourceID || taggedButterflyWord() != word)
             return false; // Moved at the allocation poll: RESTART (the allocation drops unreferenced).
         auto* idAtomic = std::bit_cast<Atomic<uint32_t>*>(reinterpret_cast<char*>(this) + JSCell::structureIDOffset());
-        if (g_jscConfig.gilOffProcess) {
+        if (processIsGILOff()) {
             if (idAtomic->compareExchangeStrong(sourceID.bits(), sourceID.nuke().bits()) != sourceID.bits())
                 return false; // Lost the claim to a locked writer: RESTART, nothing written.
             if (taggedButterflyWord() != word) {
@@ -1075,7 +1075,7 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
             if (offset != invalidOffset)
                 reinterpret_cast<Atomic<uint64_t>*>(newButterfly->propertyStorage() - (outOfLineButterflyIndex(offset) + 1))->store(JSValue::encode(value), std::memory_order_release); // private copy
             WTF::storeStoreFence(); // Contents before the word.
-            if (!g_jscConfig.gilOffProcess)
+            if (!processIsGILOff())
                 std::bit_cast<Atomic<uint64_t>*>(butterflyAddress())->store(encodeButterfly(newButterfly, currentButterflyTID(), false), std::memory_order_release); // GIL on (history §37): no mutator can move the word inside this window.
             else if (!casButterfly(static_cast<JSObjectWithButterfly*>(this), word, encodeButterfly(newButterfly, currentButterflyTID(), false))) {
                 // Nothing can move the word of a claimed, owner-tagged SW=0
@@ -1176,13 +1176,14 @@ inline NEVER_INLINE bool JSObject::tryPutDirectTransitionConcurrent(VM& vm, Stru
 template<typename Functor>
 NEVER_INLINE auto putDirectInternalConcurrentOutOfLine(const Functor& functor) -> decltype(functor())
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     return functor();
 }
 
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
 {
+    JSC_PER_THREADS_MODE_BEGIN(ASCIILiteral)
     ASSERT(value);
     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
@@ -1215,11 +1216,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // all other callers.
     auto nukeStructureAndSetButterflyStatic = [&]<bool jsThreadsStatic>(StructureID oldStructureID, Butterfly* newButterfly) ALWAYS_INLINE_LAMBDA {
         if constexpr (jsThreadsStatic) {
-            ASSERT(Options::useJSThreads());
+            ASSERT(processUsesJSThreads());
             nukeStructureAndSetButterflyConcurrent(vm, oldStructureID, newButterfly);
             return;
         }
-        ASSERT(!Options::useTaggedButterflies());
+        ASSERT(!processUsesTaggedButterflies());
         if (isX86() || vm.heap.mutatorShouldBeFenced()) {
             setStructureIDDirectly(oldStructureID.nuke());
             WTF::storeStoreFence();
@@ -1714,12 +1715,13 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // put sites carry the pre-threads body plus this single predicted-false
     // branch and a cold call — insensitive to future growth of the
     // concurrent arm. See the trampoline comment for the full race statement.
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         return putDirectInternalConcurrentOutOfLine([&]() ALWAYS_INLINE_LAMBDA {
             return impl.template operator()</* jsThreads */ true>();
         });
     }
     return impl.template operator()</* jsThreads */ false>();
+    JSC_PER_THREADS_MODE_END
 }
 
 inline bool JSObject::mayBePrototype() const
@@ -1727,8 +1729,30 @@ inline bool JSObject::mayBePrototype() const
     return structure()->mayBePrototype();
 }
 
-inline bool JSObject::canGetIndexQuicklyForTypedArray(unsigned i) const
+ALWAYS_INLINE bool JSObject::canGetIndexQuicklyForTypedArray(unsigned i) const
 {
+    return JSC_CALL_PER_THREADS_MODE(canGetIndexQuicklyForTypedArrayPerThreadsMode, i);
+}
+
+ALWAYS_INLINE JSValue JSObject::getIndexQuicklyForTypedArray(unsigned i, ArrayProfile* arrayProfile) const
+{
+    return JSC_CALL_PER_THREADS_MODE(getIndexQuicklyForTypedArrayPerThreadsMode, i, arrayProfile);
+}
+
+ALWAYS_INLINE void JSObject::setIndexQuicklyForTypedArray(unsigned i, JSValue value)
+{
+    JSC_CALL_PER_THREADS_MODE(setIndexQuicklyForTypedArrayPerThreadsMode, i, value);
+}
+
+ALWAYS_INLINE bool JSObject::trySetIndexQuicklyForTypedArray(unsigned i, JSValue v, ArrayProfile* arrayProfile)
+{
+    return JSC_CALL_PER_THREADS_MODE(trySetIndexQuicklyForTypedArrayPerThreadsMode, i, v, arrayProfile);
+}
+
+template<bool threaded>
+inline bool JSObject::canGetIndexQuicklyForTypedArrayPerThreadsMode(unsigned i) const
+{
+    JSC_THREADS_MODE_BODY(threaded);
     switch (type()) {
 #define CASE_TYPED_ARRAY_TYPE(name) \
     case name ## ArrayType :\
@@ -1740,8 +1764,10 @@ inline bool JSObject::canGetIndexQuicklyForTypedArray(unsigned i) const
     }
 }
 
-inline JSValue JSObject::getIndexQuicklyForTypedArray(unsigned i, ArrayProfile* arrayProfile) const
+template<bool threaded>
+inline JSValue JSObject::getIndexQuicklyForTypedArrayPerThreadsMode(unsigned i, ArrayProfile* arrayProfile) const
 {
+    JSC_THREADS_MODE_BODY(threaded);
 #if USE(LARGE_TYPED_ARRAYS)
     if (i > ArrayProfile::s_smallTypedArrayMaxLength && arrayProfile)
         arrayProfile->setMayBeLargeTypedArray();
@@ -1764,8 +1790,10 @@ inline JSValue JSObject::getIndexQuicklyForTypedArray(unsigned i, ArrayProfile* 
     }
 }
 
-inline void JSObject::setIndexQuicklyForTypedArray(unsigned i, JSValue value)
+template<bool threaded>
+inline void JSObject::setIndexQuicklyForTypedArrayPerThreadsMode(unsigned i, JSValue value)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     switch (type()) {
 #define CASE_TYPED_ARRAY_TYPE(name) \
     case name ## ArrayType : {\
@@ -1795,8 +1823,10 @@ ALWAYS_INLINE void JSObject::setIndexQuicklyForArrayStorageIndexingType(VM& vm, 
     }
 }
 
-inline bool JSObject::trySetIndexQuicklyForTypedArray(unsigned i, JSValue v, ArrayProfile* arrayProfile)
+template<bool threaded>
+inline bool JSObject::trySetIndexQuicklyForTypedArrayPerThreadsMode(unsigned i, JSValue v, ArrayProfile* arrayProfile)
 {
+    JSC_THREADS_MODE_BODY(threaded);
     switch (type()) {
 #if USE(LARGE_TYPED_ARRAYS)
 #define UPDATE_ARRAY_PROFILE(i, arrayProfile) do { \
@@ -2101,7 +2131,7 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
 
-    if (Options::useTaggedButterflies()) [[unlikely]] {
+    if (processUsesTaggedButterflies()) [[unlikely]] {
         // Another thread can brand the object first. That is the error above.
         bool alreadyBranded = false;
         publishStructureOnlyTransitionConcurrently(vm, StructureOnlyTransitionPlan([&](Structure* oldStructure, DeferredStructureTransitionWatchpointFire* deferred) {
@@ -2144,7 +2174,7 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES: {
         // With the flag on, the word may be segmented, which butterfly() must not decode.
-        unsigned usedLength = Options::useTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
+        unsigned usedLength = processUsesTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
         for (unsigned i = 0; i < usedLength; ++i) {
             JSValue value = getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, void());
@@ -2208,8 +2238,15 @@ void JSObject::forEachOwnIndexedProperty(JSGlobalObject* globalObject, const Fun
     }
 }
 
-inline void JSObject::initializeIndex(ObjectInitializationScope& scope, unsigned i, JSValue v)
+ALWAYS_INLINE void JSObject::initializeIndex(ObjectInitializationScope& scope, unsigned i, JSValue v)
 {
+    JSC_CALL_PER_THREADS_MODE(initializeIndexPerThreadsMode, scope, i, v);
+}
+
+template<bool threaded>
+inline void JSObject::initializeIndexPerThreadsMode(ObjectInitializationScope& scope, unsigned i, JSValue v)
+{
+    JSC_THREADS_MODE_BODY(threaded);
     initializeIndex(scope, i, v, indexingType());
 }
 
@@ -2346,7 +2383,7 @@ inline unsigned JSObject::canHaveExistingOwnIndexedProperties() const
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
         // With the flag on, the word may be segmented, which butterfly() must not decode.
-        return Options::useTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
+        return processUsesTaggedButterflies() ? getArrayLength() : butterfly()->publicLength();
     case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         auto* storage = butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());

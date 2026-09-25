@@ -193,6 +193,7 @@ void LocalAllocator::stopAllocatingForClientTeardown()
 
 void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void*)
     JSTHREADS_COUNT(allocateSlowCase);
     SuperSamplerScope superSamplerScope(false);
     // SharedGC (§5.2(1)/I2): access-based ownership, not thread-pinned. !ISS
@@ -386,6 +387,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     result = allocateIn(block, cellSize);
     ASSERT(result);
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 void LocalAllocator::didConsumeFreeList()
@@ -496,6 +498,7 @@ void* LocalAllocator::allocateIn(MarkedBlock::Handle* block, size_t cellSize)
 
 void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void*)
     ASSERT(block);
     ASSERT(!block->isFreeListed());
     m_directory->assertIsMutatorOrMutatorIsStopped();
@@ -564,6 +567,7 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
             m_directory->cellSize(), MarkedBlock::atomsPerBlock));
     }
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 void LocalAllocator::doTestCollectionsIfNeeded(JSC::Heap& heap, GCDeferralContext* deferralContext)

@@ -3131,7 +3131,16 @@ the in-stop clear. Gain: only programs that split the same atom repeatedly (JetS
 of 7,285 samples; OfflineAssembler none). Test: `shared-objects/split-cache-per-thread-gil-off.js`, a counter of cache
 hits per thread (before 0, after n-1 of n identical splits), results compared with a fresh split.
 
-#### F-D4. Flag off and GIL on run `main`'s code in these entry points: mode-instantiated entry points - **Status: proposed**
+#### F-D4. Flag off and GIL on run `main`'s code in these entry points: mode-instantiated entry points - **Status: implemented for flag off in another form, thirteenth round**
+
+*Thirteenth round.* Implemented for the flag-off half, not by a template parameter handed through the helpers but by a
+process-wide mode byte that the compiler treats as constant and that a copy compiled per mode states once
+(`runtime/ThreadsModePage.h`; SPEC-ungil history, thirteenth round). The entry points named below are compiled per mode, with
+the interpreter's 192 slow paths, 109 JIT operations, 15 host functions, 96 other out-of-line functions and 25 inline ones; `Yarr::MatchingContextHolder`,
+`RegExpObject::create`, `jsSubstring` and the cell allocation are inlined again where `main` inlines them. GIL on runs the
+threaded copy, which is the code it ran before: the half of this proposal that gives GIL on `main`'s code is not done (the
+copy with threads would need the GIL-on/GIL-off distinction as a second mode).
+
 
 Problem. F-I2 and F-I3: the cost is not any one gate but their number (17 to 53 per call) and the code growth that
 un-inlines helpers. Hoisting gates helps partly (F-D1's interim form); only removing the GIL-off arms from the code
@@ -3200,7 +3209,12 @@ gate): restores inlining and most of the text, keeps every test (17-53 per call)
 off by a call per exception check unless F-D5 lands. (c) A function-pointer table in the VM consulted at each call:
 an indirect call per helper, worse than the gates.
 
-#### F-D5. The exception check and call-frame gates (cross-cutting; owner: the flag-off proposals) - **Status: proposed, outline**
+#### F-D5. The exception check and call-frame gates (cross-cutting; owner: the flag-off proposals) - **Status: implemented for flag off by F-D4's mechanism, thirteenth round**
+
+*Thirteenth round.* In a copy compiled without threads the exception check, the call-frame tracer and the stack-limit accessors
+are `main`'s (their gates fold). In code that is not compiled per mode they are what they were: one test of the mode byte each,
+which the compiler now merges within a function because the byte is constant memory to it.
+
 
 `RETURN_IF_EXCEPTION` flag off is `movzx Config.gilOffProcess; test; jne` ahead of `main`'s three instructions, 23 times
 in one regexp `split`; the macro is written about 3,600 times in JavaScriptCore (each use expands once per template or inline instantiation, and the binary has 26,150 sites that test the byte in all). GIL off it is about 10 instructions because the thread's word

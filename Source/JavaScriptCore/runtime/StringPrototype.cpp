@@ -336,6 +336,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncRepeatCharacter, (JSGlobalObject* global
 
 JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, const CallData& callData, const String& replacementString, JSValue replaceValue)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto source = string->value(globalObject);
@@ -592,10 +593,12 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
             OUT_OF_MEMORY(globalObject, scope);
     }
     RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, sourceRanges.span().data(), sourceRanges.size(), replacements.span().data(), replacements.size()));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, JSValue searchValue, JSValue replaceValue)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String replacementString;
@@ -607,12 +610,14 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
 
     RELEASE_AND_RETURN(scope, replaceUsingRegExpSearch(
         vm, globalObject, string, searchValue, callData, replacementString, replaceValue));
+    JSC_PER_THREADS_MODE_END
 }
 
 // 22.1.3.19 String.prototype.replace ( searchValue, replaceValue )
 // https://tc39.es/ecma262/#sec-string.prototype.replace
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplace, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -668,6 +673,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplace, (JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(replaceUsingStringSearch<StringReplaceMode::Single>(vm, globalObject, string, thisString, searchString, replaceValue)));
+    JSC_PER_THREADS_MODE_END
 }
 
 // 22.1.3.20 String.prototype.replaceAll ( searchValue, replaceValue )
@@ -758,6 +764,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToString, (JSGlobalObject* globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCharAt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -780,10 +787,12 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCharAt, (JSGlobalObject* globalObject, C
     if (dpos >= 0 && dpos < view->length())
         return JSValue::encode(jsSingleCharacterString(vm, view[static_cast<unsigned>(dpos)]));
     return JSValue::encode(jsEmptyString(vm));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCharCodeAt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -806,10 +815,12 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCharCodeAt, (JSGlobalObject* globalObjec
     if (dpos >= 0 && dpos < view->length())
         return JSValue::encode(jsNumber(view[static_cast<int>(dpos)]));
     return JSValue::encode(jsNaN());
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCodePointAt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -836,10 +847,12 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncCodePointAt, (JSGlobalObject* globalObje
     if (doublePosition >= 0 && doublePosition < length)
         return JSValue::encode(jsNumber(codePointAt(string, static_cast<unsigned>(doublePosition), length)));
     return JSValue::encode(jsUndefined());
+    JSC_PER_THREADS_MODE_END
 }
 
 static EncodedJSValue stringIndexOfImpl(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    JSC_PER_THREADS_MODE_BEGIN(EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -894,6 +907,7 @@ static EncodedJSValue stringIndexOfImpl(JSGlobalObject* globalObject, CallFrame*
     if (result == notFound)
         return JSValue::encode(jsNumber(-1));
     return JSValue::encode(jsNumber(result));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncIndexOf, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -996,6 +1010,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncLastIndexOf, (JSGlobalObject* globalObje
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSlice, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1017,6 +1032,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSlice, (JSGlobalObject* globalObject, Ca
     double end = a1.isUndefined() ? length : a1.toIntegerOrInfinity(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     RELEASE_AND_RETURN(scope, JSValue::encode(stringSlice<double>(globalObject, vm, string, length, start, end)));
+    JSC_PER_THREADS_MODE_END
 }
 
 // Return true in case of early return (resultLength got to limitLength).
@@ -1360,6 +1376,7 @@ JSValue stringMatchSlow(JSGlobalObject* globalObject, JSString* thisString, JSVa
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatch, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1405,6 +1422,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatch, (JSGlobalObject* globalObject, Ca
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(stringMatchSlow(globalObject, thisString, regexpValue)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSValue stringSearchSlow(JSGlobalObject* globalObject, JSString* thisString, JSValue regexpValue)
@@ -1656,6 +1674,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSubstr, (JSGlobalObject* globalObject, C
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSubstring, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1689,6 +1708,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSubstring, (JSGlobalObject* globalObject
     auto [substringStart, substringEnd] = std::minmax(start, end);
     unsigned substringLength = substringEnd - substringStart;
     RELEASE_AND_RETURN(scope, JSValue::encode(jsSubstring(globalObject, jsString, substringStart, substringLength)));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToLowerCase, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1765,6 +1785,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToUpperCase, (JSGlobalObject* globalObje
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncLocaleCompare, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSC::EncodedJSValue)
     // 13.1.1 String.prototype.localeCompare (that [, locales [, options ]]) (ECMA-402 2.0)
     // http://ecma-international.org/publications/standards/Ecma-402.htm
 
@@ -1806,6 +1827,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncLocaleCompare, (JSGlobalObject* globalOb
     }
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(collator->compareStrings(globalObject, string, that))));
+    JSC_PER_THREADS_MODE_END
 }
 
 enum class CaseConversionMode {

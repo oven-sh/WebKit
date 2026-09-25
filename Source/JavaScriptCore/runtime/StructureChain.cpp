@@ -62,7 +62,7 @@ StructureChain* StructureChain::create(VM& vm, JSObject* head)
     // those pairs is C++-defined too; a reader observing the zero just hits
     // its sentinel/decline exit. Flag-off keeps today's memset (identical
     // behavior, no codegen change, per the flag-off rule).
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         for (size_t i = 0; i < size; ++i)
             WTF::atomicStore(static_cast<uint32_t*>(vector) + i, 0u, std::memory_order_relaxed);
     } else
@@ -77,7 +77,7 @@ void StructureChain::finishCreation(VM& vm, JSObject* head, size_t size)
     Base::finishCreation(vm);
     size_t i = 0;
     static_assert(sizeof(StructureID) == sizeof(uint32_t));
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // The vector holds size - 1 lanes plus the zero sentinel, sized by
         // create()'s walk. Nothing serializes that walk against a foreign
         // Object.setPrototypeOf on an object in the chain, which can lengthen

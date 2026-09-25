@@ -498,7 +498,7 @@ CodePtr<JSEntryPtrTag> RTT::jsToWasmICEntrypoint() const
     // SPEC-ungil §I (tenth round): flag on, this entry is only handed out with the GIL on and before the first spawn
     // (WebAssemblyFunction::jsCallICEntrypoint); call sites linked to it then go to the cold entry, which refuses a
     // spawned thread, once a Thread has been spawned.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         slowPath.append(jit.branchTest8(CCallHelpers::NonZero, CCallHelpers::AbsoluteAddress(addressOfAnyJSThreadEverSpawned())));
 
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::wasmContextInstancePointer);

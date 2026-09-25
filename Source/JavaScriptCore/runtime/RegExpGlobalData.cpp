@@ -41,6 +41,7 @@ DEFINE_VISIT_AGGREGATE(RegExpGlobalData);
 
 JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -55,6 +56,7 @@ JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
             return result;
     }
     return jsEmptyString(vm);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject)

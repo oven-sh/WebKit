@@ -68,7 +68,7 @@ inline void tryCachePutToScopeGlobal(
     // operand} as separate plain stores races the LLInt/Baseline fast-path
     // readers. The owned llint/jit callers are already gated; this gate
     // covers lol/ and future callers.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return;
 
     // Covers implicit globals. Since they don't exist until they first execute, we didn't know how to cache them at compile time.
@@ -148,7 +148,7 @@ inline void tryCacheGetFromScopeGlobal(
     // frozen flag-on (the site keeps taking the slow path); so does the put
     // side (tryCachePutToScopeGlobal), whose fast path would also need the
     // butterfly write predicate.
-    const bool threaded = Options::useJSThreads();
+    const bool threaded = processUsesJSThreads();
 #if !CPU(X86_64)
     if (threaded) [[unlikely]]
         return;

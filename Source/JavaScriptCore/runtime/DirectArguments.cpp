@@ -70,11 +70,13 @@ DirectArguments::DirectArguments(VM& vm, Structure* structure, unsigned length, 
 DirectArguments* DirectArguments::createUninitialized(
     VM& vm, Structure* structure, unsigned length, unsigned capacity)
 {
+    JSC_PER_THREADS_MODE_BEGIN(DirectArguments*)
     DirectArguments* result =
         new (NotNull, allocateCell<DirectArguments>(vm, allocationSize(capacity)))
         DirectArguments(vm, structure, length, capacity);
     result->finishCreation(vm);
     return result;
+    JSC_PER_THREADS_MODE_END
 }
 
 DirectArguments* DirectArguments::create(VM& vm, Structure* structure, unsigned length, unsigned capacity)

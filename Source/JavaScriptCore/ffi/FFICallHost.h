@@ -49,7 +49,7 @@ JSC_DECLARE_HOST_FUNCTION(ffiHostCall);
 bool throwIfFFIRefusedOnCurrentThreadSlow(JSGlobalObject*, ThrowScope&);
 ALWAYS_INLINE bool throwIfFFIRefusedOnCurrentThread(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return throwIfFFIRefusedOnCurrentThreadSlow(globalObject, scope);
     return false;
 }

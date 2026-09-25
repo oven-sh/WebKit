@@ -495,6 +495,7 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToPrecision, (JSGlobalObject* globalObje
 
 JSString* NumericStrings::addJSString(VM& vm, int i)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     if (static_cast<unsigned>(i) < cacheSize) {
         auto& entry = lookupSmallString(static_cast<unsigned>(i));
         if (entry.jsString)
@@ -524,10 +525,12 @@ JSString* NumericStrings::addJSString(VM& vm, int i)
     if (!m_jsStringCachingDisabled) [[likely]]
         entry.jsString = string;
     return string;
+    JSC_PER_THREADS_MODE_END
 }
 
 JSString* NumericStrings::addJSString(VM& vm, double value)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     if (!m_doubleCache) [[unlikely]]
         initializeDoubleCache();
     auto& entry = lookup(value);
@@ -542,6 +545,7 @@ JSString* NumericStrings::addJSString(VM& vm, double value)
     if (!m_jsStringCachingDisabled) [[likely]]
         entry.jsString = string;
     return string;
+    JSC_PER_THREADS_MODE_END
 }
 
 void NumericStrings::initializeSmallIntCache(VM& vm)
@@ -593,7 +597,9 @@ static ALWAYS_INLINE JSString* numberToStringInternal(VM& vm, double doubleValue
 
 JSString* int32ToString(VM& vm, int32_t value, int32_t radix)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSString*)
     return int32ToStringInternal(vm, value, radix);
+    JSC_PER_THREADS_MODE_END
 }
 
 JSString* int52ToString(VM& vm, int64_t value, int32_t radix)

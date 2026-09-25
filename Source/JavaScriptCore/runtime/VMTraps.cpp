@@ -759,7 +759,7 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     // the static modeling predicate in DFGClobberize.h (useJSThreads && !useThreadGIL),
     // NOT vm.gilOff(): the compile-time model is per-process, so the runtime
     // check must be at least as broad. Flag-off: zero behavior change.
-    bool checkConductorHeapFactRewriteEpoch = Options::useJSThreads() && !Options::useThreadGIL();
+    bool checkConductorHeapFactRewriteEpoch = processUsesJSThreads() && !Options::useThreadGIL();
     uint64_t heapFactRewriteEpochOnEntry = 0;
     if (checkConductorHeapFactRewriteEpoch) [[unlikely]]
         heapFactRewriteEpochOnEntry = JSThreadsSafepoint::conductorHeapFactRewriteEpoch();
@@ -996,7 +996,7 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
             // CheckTraps modeling is still conservative, so this bump is
             // belt-and-braces there; it becomes load-bearing if the GIL-on
             // model is ever de-janked too.) Flag-off: dead branch.
-            if (Options::useJSThreads()) [[unlikely]]
+            if (processUsesJSThreads()) [[unlikely]]
                 JSThreadsSafepoint::noteConductorHeapFactRewrite();
             invalidateCodeBlocksOnStack(vm.group3Primitives().topCallFrame);
             didHandleTrap = true;

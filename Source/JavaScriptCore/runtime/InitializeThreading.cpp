@@ -114,6 +114,9 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
         }
         Options::finalize();
+        // The threads mode is decided by the finalized options. Latched here, before any VM and before any code that
+        // reads it (ThreadsModePage.h); the VM constructor's call finds it done.
+        Config::latchGILOffProcess();
 
         // SPEC-vmstate §3 R1: read once, latched, immutable after. §4.8/§8
         // ordering contract: no other thread may atomize before

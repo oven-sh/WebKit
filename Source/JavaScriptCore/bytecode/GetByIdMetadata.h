@@ -183,7 +183,7 @@ static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, defaultMode.cachedOffset) == 
 inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
 {
 #if CPU(LITTLE_ENDIAN) && CPU(ADDRESS64)
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit §4.3: invalidate word 1 with ONE all-zero 64-bit store (F3);
         // mode-byte writes are 1-byte relaxed stores. A racing reader either
         // sees the old, internally-coherent word (stale-but-sound: the id half
@@ -202,7 +202,7 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
 {
     // SPEC-jit §4.3/I18: Unset mode is poison under JS threads (the asm reads
     // the mode byte and word 1 non-coherently); flag-on this must be unreachable.
-    ASSERT(!Options::useTaggedButterflies());
+    ASSERT(!processUsesTaggedButterflies());
     WTF::atomicStore(&mode, GetByIdMode::Unset, std::memory_order_relaxed); // A Baseline compiler thread reads it (loadModeConcurrently).
     unsetMode.structureID = structure->id();
     defaultMode.cachedOffset = 0;
@@ -211,7 +211,7 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
 inline void GetByIdModeMetadata::setArrayLengthMode()
 {
 #if CPU(LITTLE_ENDIAN) && CPU(ADDRESS64)
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // SPEC-jit §4.3: ArrayLength never reads word 1 and self-validates via
         // the cell's indexing byte, so it may publish flag-on. Clear word 1
         // first (one store), then flip the mode byte; a reader seeing the stale
@@ -237,7 +237,7 @@ inline void GetByIdModeMetadata::setDefaultModeCacheConcurrently(StructureID str
     // SPEC-jit §4.3: one-word publish of Default mode's {structureID, cachedOffset},
     // no lock (last-writer-wins). Caller must have set mode = Default already
     // (clearToDefaultModeWithoutCache).
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     WTF::atomicStore(defaultModeCacheWord(), LLIntCachedIdAndOffset::encode(structureID, static_cast<int32_t>(offset)), std::memory_order_relaxed);
 }
 #endif
@@ -247,7 +247,7 @@ inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, Property
     // SPEC-jit §4.3/I18: ProtoLoad's 16-byte record cannot be published as one
     // word; flag-on its sole installer (setupGetByIdPrototypeCache) is disabled
     // wholesale, so this must be unreachable.
-    ASSERT(!Options::useTaggedButterflies());
+    ASSERT(!processUsesTaggedButterflies());
     // We rely on ProtoLoad being 0, or else the high bits of cachedSlot would write the wrong mode and hit count.
     static_assert(!static_cast<std::underlying_type_t<GetByIdMode>>(GetByIdMode::ProtoLoad));
 

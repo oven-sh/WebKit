@@ -54,7 +54,7 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object) WTF_IGNOR
     // Heap::arrayBufferIncomingReferencesLock()). With the GIL, and flag-off,
     // exactly one mutator runs at a time and the upstream lock-free shape is kept.
     std::optional<Locker<Lock>> locker;
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         locker.emplace(m_lock);
     if (!object->addIncomingReference(cell)) {
         ASSERT(object->isDeferred());

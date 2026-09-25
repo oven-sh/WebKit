@@ -321,7 +321,7 @@ public:
         // T3-jit-segmented-arraymode: pull the side-band bit from the profile.
         // Also gate on the option here so a stale profile bit (set in a prior
         // flag-on run) cannot leak into a flag-off compilation.
-        bool maySeg = Options::useJSThreads() && profile.mayBeSegmentedButterfly();
+        bool maySeg = processUsesJSThreads() && profile.mayBeSegmentedButterfly();
         return withArrayClassAndSpeculationAndFlags(myArrayClass, speculation, profile.mayBeLargeTypedArray(), profile.mayBeResizableOrGrowableSharedTypedArray(), maySeg);
     }
     

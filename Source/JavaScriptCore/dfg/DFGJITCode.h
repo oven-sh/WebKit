@@ -192,7 +192,7 @@ public:
         // (jsThreadsSyncToStopGenerationBeforeJITEntry) replaces an
         // unconditional serializing instruction per exit. Flag-off/GIL-on:
         // a counter increment on a once-per-exit-compile path.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             jsThreadsBumpStopGeneration();
         WTF::storeStoreFence();
         void** slotCodePtrWord = std::bit_cast<void**>(std::bit_cast<char*>(&slot) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());

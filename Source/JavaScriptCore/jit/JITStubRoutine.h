@@ -114,7 +114,7 @@ public:
     // count is `main`'s: a load and a store, no locked instruction.
     void ref()
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             m_refCount.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -127,7 +127,7 @@ public:
     bool tryRef()
     {
         unsigned count = m_refCount.load(std::memory_order_relaxed);
-        if (!Options::useJSThreads()) [[likely]] {
+        if (!processUsesJSThreads()) [[likely]] {
             if (!count)
                 return false;
             m_refCount.store(count + 1, std::memory_order_relaxed);
@@ -142,7 +142,7 @@ public:
 
     void deref()
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             if (m_refCount.fetch_sub(1, std::memory_order_release) != 1)
                 return;
             std::atomic_thread_fence(std::memory_order_acquire);

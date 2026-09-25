@@ -56,6 +56,7 @@ DEFINE_VISIT_AGGREGATE(RegExpCachedResult);
 
 JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* owner)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSArray*)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -108,6 +109,7 @@ JSArray* RegExpCachedResult::lastResult(JSGlobalObject* globalObject, JSObject* 
         vm.writeBarrier(owner);
     }
     return m_reifiedResult.get();
+    JSC_PER_THREADS_MODE_END
 }
 
 JSString* RegExpCachedResult::leftContext(JSGlobalObject* globalObject, JSObject* owner)

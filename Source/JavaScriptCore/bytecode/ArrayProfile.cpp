@@ -141,6 +141,7 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock)
 
 void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* lastSeenStructure)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // THREADS §5.7.5: relaxed atomic ORs for all merges; the first-run-pruning overwrite
     // is a word-atomic last-writer-wins store (heuristic only; a racing OR that loses a
     // bit, or a stale pruned value, never breaks soundness — profiles select, guards
@@ -169,6 +170,7 @@ void ArrayProfile::computeUpdatedPrediction(CodeBlock* codeBlock, Structure* las
         if (isResizableOrGrowableSharedTypedArrayIncludingDataView(lastSeenStructure->classInfoForCells()))
             addArrayProfileFlagsConcurrently(ArrayProfileFlag::MayBeResizableOrGrowableSharedTypedArray);
     }
+    JSC_PER_THREADS_MODE_END
 }
 
 void ArrayProfile::observeIndexedRead(JSCell* cell, unsigned index)

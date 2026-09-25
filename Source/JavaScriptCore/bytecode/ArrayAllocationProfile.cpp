@@ -103,6 +103,7 @@ static bool lastArrayLooksLikeDoubles(JSArray* array)
 
 void ArrayAllocationProfile::updateProfile()
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // This is awkwardly racy but totally sound even when executed concurrently. The
     // worst cases go something like this:
     //
@@ -138,7 +139,7 @@ void ArrayAllocationProfile::updateProfile()
     if (Options::useArrayAllocationProfiling()) [[likely]] {
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
         IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
-        if (g_jscConfig.gilOffProcess && hasContiguous(indexingType) && !hasContiguous(current.indexingType()) && !hasDouble(current.indexingType())
+        if (processIsGILOff() && hasContiguous(indexingType) && !hasContiguous(current.indexingType()) && !hasDouble(current.indexingType())
             && m_gilOffDoubleDemotionSet.isStillValid() && (wasSubstitutedDoubleRequestGILOff(lastArray) || lastArrayLooksLikeDoubles(lastArray))) [[unlikely]] {
             // Once only per site: if Double turns out wrong, the demotion below
             // fires the set and this branch is never taken again.
@@ -157,11 +158,12 @@ void ArrayAllocationProfile::updateProfile()
         // array unless the optimized allocation follows; tell the code that
         // baked Double. Published after the type store so the recompile reads
         // the new recommendation.
-        if (g_jscConfig.gilOffProcess && hasDouble(current.indexingType()) && !hasDouble(indexingType) && !hasUndecided(indexingType) && m_gilOffDoubleDemotionSet.isStillValid()) [[unlikely]] {
+        if (processIsGILOff() && hasDouble(current.indexingType()) && !hasDouble(indexingType) && !hasUndecided(indexingType) && m_gilOffDoubleDemotionSet.isStillValid()) [[unlikely]] {
             JSTHREADS_COUNT(arrayAllocationProfileLeftDoubleGILOff);
             m_gilOffDoubleDemotionSet.fireAll(lastArray->vm(), "GIL off: array allocation profile left Double");
         }
     }
+    JSC_PER_THREADS_MODE_END
 }
 
 } // namespace JSC

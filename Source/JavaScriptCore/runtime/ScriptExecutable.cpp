@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include "BaselineJITCode.h"
 #include "CodeBlock.h"
 #include "CompilationResult.h"
 #include "Debugger.h"
@@ -670,7 +671,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     // §12.2: snapshot under the UnlinkedCodeBlock lock — a bare RefPtr load can
     // race a concurrent plan-finalize install on another mutator (see the
     // contract comment in UnlinkedCodeBlock.h). Cold codeBlock-creation path.
-    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->unlinkedBaselineCodeConcurrently()) {
+    if (RefPtr<BaselineJITCode> baselineRef = unlinkedBaselineCodeSnapshot(*codeBlock->unlinkedCodeBlock())) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }

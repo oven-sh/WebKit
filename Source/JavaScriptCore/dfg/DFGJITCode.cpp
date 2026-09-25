@@ -410,7 +410,7 @@ void JITCode::setOSREntryBlock(VM& vm, const JSCell* owner, CodeBlock* osrEntryB
 void JITCode::clearOSREntryBlockAndResetThresholds(CodeBlock *dfgCodeBlock)
 {
     CodeBlock* entry = m_osrEntryBlock.get();
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // P0-osr-entry-toctou (SCALEBENCH.md §27): with the GIL off, two mutators
         // can reach failedOSREntry for the same DFG JITCode concurrently. The
         // winner runs m_osrEntryBlock.clear() below; the loser would deref null
@@ -438,7 +438,7 @@ void JITCode::setTierUpEntryTrigger(BytecodeIndex bytecodeIndex, TriggerReason r
     // DFG-1, flag-gated (I22): flag-off this is `main`'s set() (the key exists, so it is an unlocked single-mutator in-place value
     // write). Flag-on the write is under a lock, whose release also supplies the release edge ordering setOSREntryBlock
     // before the CompilationDone publication (see DFGJITCode.h), and a missing key is a fail-stop.
-    if (!Options::useJSThreads()) [[likely]] {
+    if (!processUsesJSThreads()) [[likely]] {
         tierUpEntryTriggers.set(bytecodeIndex, reason);
         return;
     }

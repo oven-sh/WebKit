@@ -116,7 +116,7 @@ JSC_DEFINE_HOST_FUNCTION(remoteFunctionCallForJSFunction, (JSGlobalObject* globa
     // installCode retraction. Skip it; the call below derives a matched pair
     // through the CodeBlock snapshot in the call slow path. Flag-off: one
     // predicted-false byte test, behavior unchanged.
-    if (!g_jscConfig.gilOffProcess && executable->hasJITCodeForCall()) [[likely]] {
+    if (!processIsGILOff() && executable->hasJITCodeForCall()) [[likely]] {
         // Force the executable to cache its arity entrypoint.
         executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
     }

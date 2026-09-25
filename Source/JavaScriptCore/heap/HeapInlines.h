@@ -193,7 +193,7 @@ inline void Heap::releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&& object)
 // per-client — deferralDepthSlot() routes to the calling thread's client
 // counter (or the server counter pre-ISS / on client-less threads), so one
 // client's decrement can never close another client's DeferGC scope.
-inline void Heap::incrementDeferralDepth()
+ALWAYS_INLINE void Heap::incrementDeferralDepth()
 {
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
     deferralDepthSlot()++;
@@ -207,23 +207,21 @@ inline void Heap::decrementDeferralDepth()
     depth--;
 }
 
-inline void Heap::decrementDeferralDepthAndGCIfNeeded()
+ALWAYS_INLINE void Heap::decrementDeferralDepthAndGCIfNeeded()
 {
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped || worldIsStoppedForAllClients());
     // The depth and the deferred-GC hint route identically (per-client once
     // the server is shared, so one client closing its scope can neither
-    // observe nor swallow another client's pending hint); resolve both with
-    // a single routing test so the flag-off path pays it once.
-    unsigned* depth = &m_deferralDepth;
-    bool* didDeferGCWork = &m_didDeferGCWork;
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
-        depth = &deferralDepthSlot();
-        didDeferGCWork = &didDeferGCWorkSlot();
+    // observe nor swallow another client's pending hint). The shared server's
+    // form is out of line: this function is inlined into every ~DeferGC.
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]] {
+        decrementDeferralDepthAndGCIfNeededForSharedServer();
+        return;
     }
-    ASSERT(*depth);
-    (*depth)--;
+    ASSERT(m_deferralDepth);
+    m_deferralDepth--;
 
-    if (*didDeferGCWork || Options::forceDidDeferGCWork()) [[unlikely]] {
+    if (m_didDeferGCWork || Options::forceDidDeferGCWork()) [[unlikely]] {
         decrementDeferralDepthAndGCIfNeededSlow();
         
         // Here are the possible relationships between m_deferralDepth and m_didDeferGCWork.

@@ -47,7 +47,7 @@ void HeapClientSet::add(GCClient::Heap& client) WTF_IGNORES_THREAD_SAFETY_ANALYS
         {
             Locker locker { m_lock };
             ASSERT(!m_clients.isOnList(&client));
-            bool wouldShare = m_size && Options::useSharedGCHeap();
+            bool wouldShare = m_size && processUsesSharedGCHeap();
             if (!wouldShare) {
                 // First client, or option off: no stop protocol can exist
                 // yet, so the trivial insert needs only the registry lock

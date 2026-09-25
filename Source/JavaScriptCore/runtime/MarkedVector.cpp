@@ -35,7 +35,7 @@ void MarkedVectorBase::addToSharedMarkSet(JSC::Heap& heap)
     // mutated from every thread's spill path, so it lives in address-hashed
     // shards, each guarded by its own lock. The shard is picked by `this`, so
     // distinct concurrent vectors mostly take distinct locks.
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
     ASSERT(!m_markSet);
     auto& shard = heap.markListSetShard(this);
     Locker locker { shard.lock };
@@ -52,7 +52,7 @@ void MarkedVectorBase::addMarkSet(JSValue v)
     if (!heap)
         return;
 
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         addToSharedMarkSet(*heap);
         return;
     }
@@ -119,7 +119,7 @@ void MarkedVectorBase::addMarkSet(const void* pointer)
     if (!heap)
         return;
 
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         addToSharedMarkSet(*heap);
         return;
     }

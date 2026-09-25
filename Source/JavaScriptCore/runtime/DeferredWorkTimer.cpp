@@ -414,7 +414,7 @@ DeferredWorkTimer::WeakTicket DeferredWorkTimer::addPendingWork(WorkType type, V
             RELEASE_ASSERT(result.isNewEntry);
         } else
             onAddPendingWork(WTF::move(ticket), type);
-    } else if (Options::useJSThreads()) [[unlikely]] {
+    } else if (processUsesJSThreads()) [[unlikely]] {
         // GIL-on threads too: the carrier may be in runRunLoop() WITHOUT the
         // API lock (asserted there), so the GIL does not serialize this add
         // against its emptiness probe. m_taskLock is the only common lock.

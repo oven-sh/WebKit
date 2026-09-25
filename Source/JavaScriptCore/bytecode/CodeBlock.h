@@ -1192,7 +1192,7 @@ public:
     {
         createRareDataIfNecessary(); // We may be handling the exception of an inlined call frame.
         std::optional<Locker<Lock>> locker;
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             locker.emplace(m_rareData->m_exceptionHandlersLock);
         m_rareData->m_exceptionHandlers.append(handler);
     }
@@ -1201,7 +1201,7 @@ public:
     // HandlerInfo it found): the lock to hold across both, or null.
     Lock* exceptionHandlersLockForConcurrentLookup()
     {
-        if (Options::useJSThreads() && m_rareData) [[unlikely]]
+        if (processUsesJSThreads() && m_rareData) [[unlikely]]
             return &m_rareData->m_exceptionHandlersLock;
         return nullptr;
     }
@@ -1317,7 +1317,7 @@ private:
 
     void createRareDataIfNecessary()
     {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             createRareDataIfNecessaryConcurrently();
             return;
         }

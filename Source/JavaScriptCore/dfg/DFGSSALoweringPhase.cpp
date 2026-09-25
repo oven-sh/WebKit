@@ -204,7 +204,7 @@ private:
             // publicLength slot goes on growing, so bound the access by the
             // same storage's vectorLength as well (loop-invariant with the
             // storage, so LICM hoists the load; one compare stays).
-            if (Options::useJSThreads() && !Options::useThreadGIL() && op == GetArrayLength && storage) [[unlikely]] {
+            if (processUsesJSThreads() && !Options::useThreadGIL() && op == GetArrayLength && storage) [[unlikely]] {
                 switch (m_node->arrayMode().type()) {
                 case Array::Int32:
                 case Array::Double:

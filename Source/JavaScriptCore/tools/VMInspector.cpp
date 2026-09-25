@@ -99,7 +99,7 @@ namespace JSC {
 // =============================================================================
 static bool isGILOffProcessForInspection()
 {
-    return Options::useJSThreads() && !Options::useThreadGIL();
+    return processUsesJSThreads() && !Options::useThreadGIL();
 }
 
 #if ENABLE(JIT)

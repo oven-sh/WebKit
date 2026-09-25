@@ -382,7 +382,7 @@ void UnlinkedCodeBlock::ensureValueAndArrayProfiles()
         return;
     auto profiles = ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles);
     WTF::storeStoreFence(); // The collector and the compiler threads read m_valueAndArrayProfiles without a lock.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Threads that run the same UnlinkedCodeBlock can both get here: the first to publish wins, the other's is destroyed.
         static_assert(sizeof(m_valueAndArrayProfiles) == sizeof(ValueAndArrayProfiles*));
         auto** slot = std::bit_cast<ValueAndArrayProfiles**>(&m_valueAndArrayProfiles);

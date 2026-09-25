@@ -149,7 +149,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
 // storage (or a same-structure regrowth of it, a superset); null otherwise.
 ALWAYS_INLINE Butterfly* flatButterflySnapshotForStructure(JSObject* source, StructureID sourceStructureID)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     WTF::loadLoadFence();
     uint64_t word = source->taggedButterflyWord();
     WTF::loadLoadFence();
@@ -255,7 +255,7 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     if (propertyCapacity) {
         Butterfly* newButterfly = Butterfly::createUninitialized(vm, target, 0, propertyCapacity, /* hasIndexingHeader */ false, 0);
         Butterfly* sourceButterfly;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             sourceButterfly = flatButterflySnapshotForStructure(source, sourceStructureID);
             if (!sourceButterfly)
                 return false; // Segmented, or a racing transition: the generic path copies property by property.
@@ -342,7 +342,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
     DeferGC deferGC(vm);
     Butterfly* newButterfly = Butterfly::createUninitialized(vm, nullptr, 0, propertyCapacity, /* hasIndexingHeader */ false, 0);
     Butterfly* sourceButterfly;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         sourceButterfly = flatButterflySnapshotForStructure(source, sourceStructureID);
         if (!sourceButterfly)
             return nullptr; // Segmented, or a racing transition: the generic path copies property by property.

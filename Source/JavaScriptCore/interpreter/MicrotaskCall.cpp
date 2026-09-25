@@ -91,7 +91,7 @@ void MicrotaskCall::clear()
 {
     // The incoming-call list belongs to the CodeBlock, so another thread can
     // be walking it. Take the same lock as relink() (see removeOnDestruction).
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         removeOnDestruction();
     else if (isOnList())
         remove();

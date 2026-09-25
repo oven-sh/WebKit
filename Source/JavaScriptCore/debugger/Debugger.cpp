@@ -765,7 +765,7 @@ void Debugger::recompileAllJSFunctions()
     // stopTheWorldAndRun; the R1.h already-stopped path makes the nesting
     // inline.)
     runDebuggerWalkWithSpawnedThreadsStopped(m_vm, [&] {
-        m_vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+        m_vm.deleteAllCodeToGenerateItAgain(PreventCollectionAndDeleteAllCode);
     });
 }
 

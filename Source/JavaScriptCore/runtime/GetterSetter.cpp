@@ -48,6 +48,7 @@ DEFINE_VISIT_CHILDREN(GetterSetter);
 
 JSValue GetterSetter::callGetter(JSGlobalObject* globalObject, JSValue thisValue)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSValue)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // FIXME: Some callers may invoke get() without checking for an exception first.
@@ -58,6 +59,7 @@ JSValue GetterSetter::callGetter(JSGlobalObject* globalObject, JSValue thisValue
 
     auto callData = JSC::getCallDataInline(getter);
     RELEASE_AND_RETURN(scope, call(globalObject, getter, callData, thisValue, ArgList()));
+    JSC_PER_THREADS_MODE_END
 }
 
 bool GetterSetter::callSetter(JSGlobalObject* globalObject, JSValue thisValue, JSValue value, bool shouldThrow)

@@ -303,7 +303,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
         CCallHelpers::Address(GPRInfo::regT0, FunctionExecutable::offsetOfCodeBlockFor(kind)),
         GPRInfo::regT5);
     jit.storePtr(GPRInfo::regT5, CCallHelpers::calleeFrameCodeBlockBeforeTailCall());
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // ANNEX CBI item 3 (AB17c F4; AB17d amendment): the (arity-check
         // entrypoint, CodeBlock) pair above is two independent racy loads
         // against a live tier-up installCode on another thread. GIL off
@@ -1467,7 +1467,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
     CCallHelpers::Jump staleEntrypoint;
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // ANNEX CBI item 3 (AB17c F4): re-validate the arity-check
         // entrypoint AFTER the codeBlock load (see virtualThunkFor); a
         // mismatch (live tier-up install interleaved) routes to the
@@ -1676,7 +1676,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> remoteFunctionCallGenerator(VM& vm)
             GPRInfo::regT1, FunctionExecutable::offsetOfCodeBlockForCall()),
         GPRInfo::regT3);
     jit.storePtr(GPRInfo::regT3, CCallHelpers::calleeFrameCodeBlockBeforeCall());
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // ANNEX CBI item 3 (AB17c F4): re-validate the arity-check
         // entrypoint AFTER the codeBlock load (see virtualThunkFor /
         // boundFunctionCallGenerator); mismatch re-materializes a matched

@@ -74,6 +74,7 @@ void PropertyCondition::dump(PrintStream& out) const
 bool PropertyCondition::isStillValidAssumingImpurePropertyWatchpoint(
     Concurrency concurrency, Structure* structure, JSObject* base) const
 {
+    JSC_PER_THREADS_MODE_BEGIN(bool)
     dataLogLnIf(PropertyConditionInternal::verbose,
         "Determining validity of ", *this, " with structure ", pointerDump(structure), " and base ",
         JSValue(base), " assuming impure property watchpoints are set.");
@@ -302,6 +303,7 @@ bool PropertyCondition::isStillValidAssumingImpurePropertyWatchpoint(
     }
     
     RELEASE_ASSERT_NOT_REACHED();
+    JSC_PER_THREADS_MODE_END
 }
 
 IGNORE_RETURN_TYPE_WARNINGS_BEGIN

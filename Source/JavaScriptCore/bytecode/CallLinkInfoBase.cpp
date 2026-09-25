@@ -48,7 +48,7 @@ void CallLinkInfoBase::removeOnDestruction()
     // Config-page byte (g_jscConfig.gilOffProcess), not the 5-Options
     // VM::isGILOffProcess() re-derivation: this runs on every gilOff
     // call-link teardown.
-    if (g_jscConfig.gilOffProcess) [[unlikely]] {
+    if (processIsGILOff()) [[unlikely]] {
         Locker locker { CallLinkInfo::s_callLinkSerializationLock };
         if (isOnList())
             remove();

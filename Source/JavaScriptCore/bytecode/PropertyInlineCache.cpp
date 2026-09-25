@@ -61,14 +61,14 @@ RepatchingPropertyInlineCache::RepatchingPropertyInlineCache(AccessType accessTy
     // SPEC-jit I3: with shared-memory threads enabled, every property IC is
     // a handler IC (pure data dispatch); repatching ICs would patch machine
     // code in place under concurrent execution (sections 5.2/5.3).
-    RELEASE_ASSERT(!Options::useJSThreads());
+    RELEASE_ASSERT(!processUsesJSThreads());
 }
 
 RepatchingPropertyInlineCache::~RepatchingPropertyInlineCache() = default;
 
 void PropertyInlineCache::setInlineAccessSelfState(VM& vm, CodeBlock* codeBlock, Structure* structure, PropertyOffset offset)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Review round 1: a packed self word keyed on a DICTIONARY structure
         // is unsound (same structureID across butterfly growth; see the
         // dictionary gate in addAccessCase). All flag-on feeders are
@@ -94,7 +94,7 @@ void PropertyInlineCache::setInlineAccessSelfState(VM& vm, CodeBlock* codeBlock,
 
 void PropertyInlineCache::clearInlineAccessSelfState()
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // Section 4.2: invalidation = one 64-bit store {0, StructureID()}.
         // Structure id 0 never matches a live cell, so this is barrier-free
         // and ABA-safe; a racing reader either matched the old pair (and uses
@@ -165,7 +165,7 @@ private:
 
 void PropertyInlineCache::deref(VM& vm, DisarmClearingWatchpoints disarm)
 {
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         // TSAN ic-stubinfo x-malloc family (SPEC-jit §4.4/I7,
         // "ICSlowPathCallFrameTracer x malloc" stub-reuse pairs): deref() is
         // the jettison/teardown-time neutralization hook (CodeBlock::jettison
@@ -199,7 +199,7 @@ void PropertyInlineCache::deref(VM& vm, DisarmClearingWatchpoints disarm)
             RetiredJITArtifacts::retireHandlerChain(vm, RefPtr<InlineCacheHandler> { m_handler }, disarm);
     }
     if (auto* repatchingIC = dynamicDowncast<RepatchingPropertyInlineCache>(*this)) {
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit section 5.1 ("Jettison-time IC deref() same")/I9: never
             // free JIT-reachable IC dispatch state inline; a resumed mutator
             // can still be executing this (jettisoned) code until its next
@@ -296,7 +296,7 @@ AccessGenerationResult PropertyInlineCache::addAccessCase(const GCSafeConcurrent
     // inlined packed self word (setInlinedHandler), which is only fed from
     // handlers admitted here. The mirroring LLInt rule lives in
     // LLIntSlowPaths.cpp (threaded publish gates).
-    if (Options::useJSThreads() && accessCase->structure() && accessCase->structure()->isDictionary()) [[unlikely]] {
+    if (processUsesJSThreads() && accessCase->structure() && accessCase->structure()->isDictionary()) [[unlikely]] {
         JSTHREADS_COUNT(icDictionaryStructureRefused);
         return AccessGenerationResult::GaveUp;
     }
@@ -422,7 +422,7 @@ void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locker, VM& vm, Co
             // the time the per-accessType reset functions run; that arm
             // remains live for its other callers.
             RefPtr<InlineCacheHandler> displacedInlinedHandler;
-            if (Options::useJSThreads()) [[unlikely]]
+            if (processUsesJSThreads()) [[unlikely]]
                 displacedInlinedHandler = handlerIC->m_inlinedHandler;
             handlerIC->clearInlinedHandler(codeBlock);
             // AB18-E rule: retire against the CALLER's VM&, never
@@ -922,6 +922,7 @@ PropertyInlineCache::Registers PropertyInlineCache::registers() const
 
 void HandlerPropertyInlineCache::initializeFromUnlinkedPropertyInlineCache(VM& vm, CodeBlock* codeBlock, const BaselineUnlinkedPropertyInlineCache& unlinkedPropertyCache)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     ASSERT(!isCompilationThread());
     accessType = unlinkedPropertyCache.accessType;
     preconfiguredCacheType = unlinkedPropertyCache.preconfiguredCacheType;
@@ -944,6 +945,7 @@ void HandlerPropertyInlineCache::initializeFromUnlinkedPropertyInlineCache(VM& v
     canBeMegamorphic = unlinkedPropertyCache.canBeMegamorphic;
 
     m_slowOperation = slowOperationFromUnlinkedPropertyInlineCache(unlinkedPropertyCache);
+    JSC_PER_THREADS_MODE_END
 }
 
 #if ENABLE(DFG_JIT)
@@ -1020,7 +1022,7 @@ void HandlerPropertyInlineCache::setInlinedHandler(CodeBlock* codeBlock, Ref<Inl
         // SPEC-jit section 4.2: holder-free self-access only; the inlined
         // fast-path state must be exactly the packable {offset, structureID}
         // pair under useJSThreads.
-        ASSERT(!Options::useJSThreads() || !m_inlinedHandler->holder());
+        ASSERT(!processUsesJSThreads() || !m_inlinedHandler->holder());
         setInlineAccessSelfState(vm, codeBlock, m_inlinedHandler->structureID().decode(), m_inlinedHandler->offset());
         break;
     }
@@ -1030,19 +1032,19 @@ void HandlerPropertyInlineCache::setInlinedHandler(CodeBlock* codeBlock, Ref<Inl
         // could pair a fresh {offset, structureID} word with a stale holder).
         // prependHandler never routes them here under useJSThreads; such
         // accesses dispatch through the handler chain instead (F2).
-        RELEASE_ASSERT(!Options::useJSThreads());
+        RELEASE_ASSERT(!processUsesJSThreads());
         m_inlineAccessBaseStructureID.set(vm, codeBlock, m_inlinedHandler->structureID().decode());
         byIdSelfOffset = m_inlinedHandler->offset();
         m_inlineHolder = m_inlinedHandler->holder();
         break;
     }
     case CacheType::PutByIdReplace: {
-        ASSERT(!Options::useJSThreads() || !m_inlinedHandler->holder());
+        ASSERT(!processUsesJSThreads() || !m_inlinedHandler->holder());
         setInlineAccessSelfState(vm, codeBlock, m_inlinedHandler->structureID().decode(), m_inlinedHandler->offset());
         break;
     }
     case CacheType::InByIdSelf: {
-        ASSERT(!Options::useJSThreads() || !m_inlinedHandler->holder());
+        ASSERT(!processUsesJSThreads() || !m_inlinedHandler->holder());
         setInlineAccessSelfState(vm, codeBlock, m_inlinedHandler->structureID().decode(), m_inlinedHandler->offset());
         break;
     }
@@ -1123,14 +1125,14 @@ void PropertyInlineCache::initializeWithUnitHandler(VM& vm, CodeBlock* codeBlock
         // the heap's safepoint epoch afterwards.
         RefPtr<InlineCacheHandler> displacedInlinedHandler;
         if (handlerIC->m_inlinedHandler) {
-            if (Options::useJSThreads()) [[unlikely]]
+            if (processUsesJSThreads()) [[unlikely]]
                 displacedInlinedHandler = handlerIC->m_inlinedHandler;
             handlerIC->clearInlinedHandler(codeBlock);
         }
         ASSERT(!handlerIC->m_inlinedHandler);
         for (auto* cursor = m_handler.get(); cursor; cursor = cursor->next())
             cursor->removeOwner(codeBlock);
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // R2-1: COPY (never move out of) m_handler. `WTF::move(m_handler)`
             // would null the published slot before the publishing store, and
             // racing JIT'd readers call through it with no null check; see
@@ -1187,7 +1189,7 @@ void PropertyInlineCache::prependHandler(VM& vm, CodeBlock* codeBlock, Ref<Inlin
             // the chain without the handler and every such put on the
             // optimize slow path for good (measured 10x, sixth round).
             bool outOfLineReplace = handler->cacheType() == CacheType::PutByIdReplace && !isInlineOffset(handler->offset()) && !CCallHelpers::supportsXorButterflyTIDTagInPlace();
-            if (!Options::useJSThreads() || (!holderBearing && !outOfLineReplace)) [[likely]] {
+            if (!processUsesJSThreads() || (!holderBearing && !outOfLineReplace)) [[likely]] {
                 handlerIC.setInlinedHandler(codeBlock, WTF::move(handler));
                 return;
             }

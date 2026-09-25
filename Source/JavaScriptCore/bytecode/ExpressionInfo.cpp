@@ -866,7 +866,7 @@ static Lock s_lineColumnCacheLockForJSThreads;
 WTF_IGNORES_THREAD_SAFETY_ANALYSIS // The lock below is taken conditionally, by hand.
 auto ExpressionInfo::lineColumnForInstPC(InstPC instPC) -> LineColumn
 {
-    bool locked = Options::useJSThreads();
+    bool locked = processUsesJSThreads();
     if (locked) [[unlikely]]
         s_lineColumnCacheLockForJSThreads.lock();
     auto unlocker = makeScopeExit([&] {

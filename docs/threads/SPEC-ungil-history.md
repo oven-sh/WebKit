@@ -9417,3 +9417,99 @@ the same one predicted byte test.
 (`useRunOnceCodeRelease`); with the GIL off another thread can be running that code, so both sites (`Interpreter::executeProgram`,
 `ModuleProgramExecutable::didFinishEvaluation`) skip it when `vm.gilOff()`. `CodeCache::forgetUnlinkedModuleProgramCodeBlock` takes the
 GIL-off compilation lock, as the cache's other writers do.
+
+## Thirteenth landing round: the process's threads mode is one byte the compiler may treat as constant, and functions are compiled once per mode
+
+The twelfth round ended on a measurement: with every test of the process-wide byte compiled as `false` the flag-off cost all but
+disappears (whole run 1.002 of `main`, first iteration 1.008), so what a flag-off process pays is the tests themselves and what
+they do to the code around them (arms that are never taken but count against inlining). DESIGN-PROPOSALS F-D4 and F-D5 proposed
+compiling the hot entry points once per mode with the mode as a template parameter handed down through every helper. This round
+implements the same thing without touching the helpers' signatures.
+
+**The byte (`runtime/ThreadsModePage.h`, `.cpp`).** `g_jscThreadsModePage[0]` holds four bits: `useJSThreads`,
+`useTaggedButterflies`, `Config::gilOffProcess` and `useSharedGCHeap`. It is on a page of its own, written at most once, in
+`JSC::initialize()` right after `Options::finalize()` (`Config::latchGILOffProcess()`, which the VM's constructor still calls and
+which does nothing the second time), and frozen read-only together with the Config page. With the flag off nothing is ever
+written to it. C++ sees it declared `const`; the one file that writes it defines it under another C++ name with the same symbol.
+That declaration is the point: to the compiler a load of it is a load of constant memory, so the value is the same before and after
+any call or store, and one load serves every test of a function.
+`processUsesJSThreads()`, `processUsesTaggedButterflies()`, `processIsGILOff()` and `processUsesSharedGCHeap()` read it; they replace
+the reads of the four options and of the Config byte in C++ that runs after the latch (938 sites in about 130 files). Generated
+code, the interpreter's assembly and the code that runs before the latch (`Options`, the executable allocator's and the structure
+heap's initialization, the JIT operation list, `VM.cpp`'s process-wide setup, the shell) read what they read before.
+
+**Functions compiled once per mode.** A body that begins with `JSC_THREADS_MODE_BODY(threaded)` states the mode to the compiler
+(`__builtin_assume` on the byte; a check that crashes in builds with assertions). In the copy for `threaded == false` every test of
+the mode folds, in the body and in everything inlined into it, and the threaded arms are not compiled into it: that copy is the code
+the function has on `main`, plus whatever the branch changed outside a gate. The copy for `true` is the function as it was. Three
+forms, by what calls the function:
+
+- *An entry point that is called through a table*: `JSC_PER_THREADS_MODE_FUNCTIONS`. Both copies are functions of their own. The
+  interpreter's slow paths (`LLINT_SLOW_PATH_DECL`, `JSC_DEFINE_COMMON_SLOW_PATH`: 192 of them) are of this form, and the
+  interpreter calls them through `LLInt::SlowPathTable` (`llint/LLIntSlowPathTable.h`), a member of the opcode config that
+  `LLInt::initialize()` fills with the copies of the process's mode before the config is frozen. `callSlowPath` loads the config's
+  address and calls through the slot (x86-64 and arm64; the C loop and arm64e call the function that has the name). A slow path
+  call costs one instruction more than on `main` and no test. The function that has the slow path's name tests the mode and goes
+  to a copy; the Baseline JIT and everything else that holds the name call that.
+- *Any other function, in place*: `JSC_PER_THREADS_MODE_BEGIN(type)` / `JSC_PER_THREADS_MODE_END` around the body, which becomes a
+  lambda templated on the mode and is inlined twice into the function. The function keeps its name, linkage and frame
+  (`DECLARE_CALL_FRAME` reads what it read), and tests the mode once at its entry. JIT operations (109), host functions (15) and
+  out-of-line runtime functions (96) are of this form.
+- *An inline function that `main` inlines into its callers*: an `ALWAYS_INLINE` wrapper over a template body
+  (`JSC_CALL_PER_THREADS_MODE`; 25 functions: the typed-array index accessors, `trySetIndexQuickly`, `initializeIndex`,
+  `JSArray::tryCreate`, the cell allocation, the interpreter's helpers). Called from a copy compiled per mode the wrapper's test
+  folds and the call is of the copy of the same mode; doubling such a function in place would have doubled what the inliner counts and lost the inlining `main` has.
+
+**Rules.**
+1. `JSC_THREADS_MODE_BODY` is the first statement of a per-mode body, and a per-mode body is only ever entered through a test of
+   the byte. Builds with assertions check both on every entry.
+2. A conversion stays only if the function got cheaper with the flag off, measured (exact instruction counts, before and after, of
+   that function: `Tools/threads/perf/flagoff/parity/`). The entry test costs three instructions; a function without a gate in it,
+   or whose gates are in helpers that are not inlined into it, only gets slower. Every JIT operation that was tried got cheaper
+   (the call frame tracer, the throw scope and the exception checks are gates); of the other functions about a third did not.
+3. A helper that `main` inlines and the branch does not (its threaded arm counts against the inliner) is either marked
+   `ALWAYS_INLINE` or gets the arm moved out of line. For a function template the attribute has to be on the first declaration;
+   clang ignores it on a later definition when the specialization was named before. A declaration whose definition lives in another
+   header must not carry it: a translation unit that has only the declaration fails with `-Wundefined-inline` in builds without
+   precompiled headers. `allocateCell<T>` is such a template: it keeps `main`'s plain declaration, and its test is marked unlikely so
+   that the threaded copy stays a call and the inliner's count of the wrapper is `main`'s.
+4. The test that picks the copy is weighted towards the copy without threads (`JSC_THREADS_MODE_IS_THREADED`), so that copy is the
+   fall-through; it is not marked unlikely, because the inliner stops inlining into code it takes for cold.
+5. Code that can run before the latch must not be compiled per mode and must not read the byte: it would run the copy without
+   threads in a process that is about to have them.
+6. A second VM of a GIL-off process (one that lost the claim) runs the threaded copies with its own `m_gilOff` false: the threaded
+   copies keep every per-VM test.
+7. The lambda of the in-place form is inlined in every build, builds without optimization included
+   (`JSC_PER_THREADS_MODE_INLINE_LAMBDA`; `ALWAYS_INLINE_LAMBDA` forces nothing without `NDEBUG`): a JIT operation's body reads the
+   frame and the return address of the function it is the body of. Found by the Debug corpus, where every converted operation
+   failed `isFromJSCode(__builtin_return_address(0))`.
+8. The eight call slow paths that run in the cleared stack (`operationDefaultCall`, `operationVirtualCall`,
+   `operationPolymorphicCall`, `operationUnlinkedCall` and the interpreter's four) are not compiled per mode: their frame has a
+   budget (`ASSERT_CALL_SLOW_PATH_RUNS_IN_CLEARED_STACK`), and two copies of the body in one frame exceed it in a build without
+   optimization.
+9. In a build for ThreadSanitizer nothing is compiled per mode (`JSC_THREADS_MODE_IS_THREADED()` is `true` and
+   `JSC_THREADS_MODE_BODY` states nothing): the sanitizer names a racing access by the functions inlined around it and the
+   suppression file matches those names, and code that the two copies have in common is hoisted above the test that picks the
+   copy and loses them. Found by the sanitizer corpus: the inline caches' relaxed loads (`icConcurrentRelaxedLoad`, suppressed by
+   name) were reported at the last line of `operationInByIdOptimize` and `operationPutByValSloppyOptimize`.
+
+`Tools/threads/lint-threads-mode.py` checks what a compiler does not: that the in-place macros pair up, and rules 5 and 8.
+
+**What else was found by counting instructions, and changed.**
+- `UnlinkedMetadataTable::link()` zero-filled the table twice: the allocator returns zeroed memory since upstream's #494, which
+  removed the two `memset` calls; a rebase had kept them. They touched every page of every code block's metadata.
+  `Tools/threads/lint-upstream-removed-lines.py` looks for the same kind of leftover after a rebase.
+- `UnlinkedCodeBlock::unlinkedBaselineCodeConcurrently()` took a lock on every tier-up check of the interpreter; without JS
+  threads the reference is read as on `main` (`unlinkedBaselineCodeSnapshot`).
+- The threaded arm of `JSArrayBufferView::slowDownAndWasteMemory()` reported an adopted vector to the collector a second time
+  (upstream's #684 fixed `main`'s arm). Test: upstream's `stress/oversize-typed-array-buffer-is-not-allocated-twice.js` with
+  the flag set fails before and passes after, GIL on and GIL off.
+
+**What was found and not changed (open).**
+- `sizeof(Structure)` is 128 on the branch and 112 on `main` (the two thread-locality watchpoint sets). Structure IDs are
+  addresses, so their stride went from 7 to 8 units of 16 bytes, and every table hashed on the raw ID (`StructureIDHash` is the
+  identity) uses an eighth of its buckets: `DFG::DesiredWeakReferences`'s set costs 1.6 to 2.0 times `main`'s instructions per
+  compilation. With the structure padded to 144 bytes the cost is `main`'s again (measured). The fix that also gives the memory
+  back is to keep the two sets behind the structure, in a cell that is that much larger only with JS threads.
+- The marker's drain loop differs from `main`'s with the flag off (the counters of paused markers, a broadcast at termination
+  that upstream removed): same algorithm, more work per collection.

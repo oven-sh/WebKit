@@ -407,7 +407,7 @@ std::expected<PageCount, GrowFailReason> Memory::grow(VM& vm, PageCount delta)
         // the GIL is off, so no Wasm::Memory exists in a gilOffProcess and
         // this path has never executed. The relocating-grow tests in
         // JSTests/threads/cve exercise it only once that refusal is lifted.
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             // Keeps the old mapping alive across the swap; a resizable buffer
             // over it takes its own quarantine ref inside success().
             Ref<BufferMemoryHandle> retiredHandle = m_handle.copyRef();

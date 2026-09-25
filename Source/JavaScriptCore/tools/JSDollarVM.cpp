@@ -5032,15 +5032,17 @@ JSC_DEFINE_HOST_FUNCTION(functionUseThreadGIL, (JSGlobalObject*, CallFrame*))
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// [useThinChildExecutables, useLazySymbolTableConstants, usePrelinkedModuleInfo] after option validation: the bytecode
-// cache's deferred decoding, which the GIL-off activation checklist turns off.
+// [thin child executables, lazy SymbolTable constants, usePrelinkedModuleInfo]: whether the bytecode cache defers decoding
+// into a payload in this VM (Decoder::canDeferIntoPayload: not GIL off) and the option the GIL-off activation checklist
+// turns off.
 // Usage: $vm.lazyDecodingOptions()
 JSC_DEFINE_HOST_FUNCTION(functionLazyDecodingOptions, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
     MarkedArgumentBuffer values;
-    values.append(jsBoolean(Options::useThinChildExecutables()));
-    values.append(jsBoolean(Options::useLazySymbolTableConstants()));
+    bool defersIntoPayloads = !globalObject->vm().gilOff();
+    values.append(jsBoolean(defersIntoPayloads));
+    values.append(jsBoolean(defersIntoPayloads));
     values.append(jsBoolean(Options::usePrelinkedModuleInfo()));
     return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
 }

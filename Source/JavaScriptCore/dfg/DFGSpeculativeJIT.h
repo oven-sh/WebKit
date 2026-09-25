@@ -1414,7 +1414,7 @@ public:
     // without a stop); verify it before it is typed Int32. No-op otherwise.
     static bool needsInt32LaneSpeculation(ArrayMode mode)
     {
-        return mode.type() == Array::Int32 && Options::useJSThreads() && !Options::useThreadGIL();
+        return mode.type() == Array::Int32 && processUsesJSThreads() && !Options::useThreadGIL();
     }
     void speculateInt32LaneIfRelabellable(ArrayMode mode, GPRReg laneGPR)
     {

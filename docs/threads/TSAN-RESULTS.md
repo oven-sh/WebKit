@@ -1075,3 +1075,27 @@ under the amplifier, clean.
 
 Final tree: the corpus in both lanes, 0 reports, 0 failures; GIL off 391 pass, 10 skip; GIL on 364 pass, 37 skip
 (the tool hang above was on the tree before it, which had one more test; it did not recur).
+
+### Thirteenth round (2026-09-25)
+
+Build: TSanJIT (full JIT), the round's final tree, rebased onto `35e8970dfd92`. The twelfth round's final tree had no
+sanitizer run; its last run (on an intermediate tree) is the reference for "new".
+
+| Lane | Tests | Reports | In |
+|---|---|---|---|
+| GIL off | 459 run (10 exit with the code of a refused configuration, as before) | 1 | `cve/mc-tear-date-cache.js` |
+| GIL on | 459 run | 0 | |
+
+The one report is not new: the twelfth round's run has it, and so does this round's tree before any of its changes. It is a
+read of `DateInstance`'s cached `PlainGregorianDateTime` (`gregorianDateTimeUTC`, under `Date.prototype.toISOString` and
+`getUTCHours`) against another thread's `setTime` on the same `Date` (`DateInstance::setInternalNumber` resets the
+instance's cached fields), GIL off. **Open**: the instance's cache is read and reset without a lock; the test passes (its
+assertions are about the values it reads), the report is of the unordered access.
+
+Three reports appeared on the way and are gone in the final tree. With JIT operations compiled once per threads mode
+(SPEC-ungil history, thirteenth round) the relaxed loads of the inline caches in `operationInByIdOptimize` and
+`operationPutByValSloppyOptimize` were reported against the allocation of the DFG's `JITData` (`jit/megamorphic-cache-gil-off.js`,
+2 reports; `cve/mc-jit-double-relabel-stale-shape.js`, 1). They are the accesses the suppression `race:icConcurrentRelaxedLoad`
+names (10 matches in the same test before the round): the optimizer hoists code that the two copies of an operation have in
+common above the test that picks the copy, the hoisted load loses its inlined frames, and the suppression no longer matches.
+A sanitizer build compiles nothing per mode now (rule 9 of that entry): 0 reports in the two tests, the suppression matching again.

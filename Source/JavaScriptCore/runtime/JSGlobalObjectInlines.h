@@ -274,6 +274,7 @@ inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const Prop
 
 inline JSArray* constructEmptyArray(JSGlobalObject* globalObject, ArrayAllocationProfile* profile, unsigned initialLength = 0, JSValue newTarget = JSValue())
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSArray*)
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -290,6 +291,7 @@ inline JSArray* constructEmptyArray(JSGlobalObject* globalObject, ArrayAllocatio
         return nullptr;
     }
     return ArrayAllocationProfile::updateLastAllocationFor(profile, result);
+    JSC_PER_THREADS_MODE_END
 }
 
 inline JSArray* constructArray(JSGlobalObject* globalObject, ArrayAllocationProfile* profile, const ArgList& values, JSValue newTarget = JSValue())

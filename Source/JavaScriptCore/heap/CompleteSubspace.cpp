@@ -125,7 +125,7 @@ Allocator CompleteSubspace::allocatorForSlow(size_t size)
 
     Locker locker { m_space.directoryLock() };
 
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         // SharedGC (§5.5 never-populate rule; T4): with the shared-heap
         // option on, no server-side non-iso Allocator/LocalAllocator is EVER
         // materialized — m_allocatorForSizeStep stays null, so every JS-tier
@@ -200,7 +200,7 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
     // (Heap::allocationClientForCurrentThread is identity GIL-on/flag-off);
     // the currentThreadClient() ASSERT in tryAllocateSlowForClient is the
     // per-site verification anchor.
-    if (Options::useSharedGCHeap()) [[unlikely]]
+    if (processUsesSharedGCHeap()) [[unlikely]]
         return tryAllocateSlowForClient(Heap::allocationClientForCurrentThread(vm, vm.clientHeap), size, deferralContext);
 
     if (Allocator allocator = allocatorForNonInline(size, AllocatorForMode::EnsureAllocator))
@@ -259,7 +259,7 @@ void* CompleteSubspace::tryAllocateSlowForClient(GCClient::Heap& client, size_t 
     // standalone harness clients have no VM. collectIfNecessaryOrDefer IS
     // called (I17 consults the calling client's deferral depth via the
     // §10A.1 TLS stamp).
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
     JSC::Heap& heap = client.server();
     ASSERT(&heap == &m_space.heap());
     ASSERT(!heap.isSharedServer() || GCClient::Heap::currentThreadClient() == &client);
@@ -376,7 +376,7 @@ void CompleteSubspace::prepareAllAllocators()
     // assume non-null — unsupported when the heap may be shared. The
     // INTEGRATE-heap.md manifest item 11 rejects wasm-GC instantiation under
     // the option; this backstops any other caller.
-    RELEASE_ASSERT(!Options::useSharedGCHeap());
+    RELEASE_ASSERT(!processUsesSharedGCHeap());
 
     for (unsigned i = MarkedSpace::numSizeClasses; i--;) {
         if (!m_allocatorForSizeStep[i])

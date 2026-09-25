@@ -85,7 +85,7 @@ void VMEntryScope::setUpSlow()
     // SPEC-jit I19: the per-thread butterfly TID tag must be coherent before
     // any JS runs on this thread (CS3; zero-init is correct only for the
     // main thread).
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         assertButterflyTIDTagCoherent();
 #endif
 

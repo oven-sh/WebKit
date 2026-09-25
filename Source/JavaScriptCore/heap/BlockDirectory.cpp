@@ -122,6 +122,7 @@ MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
 
 MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allocator)
 {
+    JSC_PER_THREADS_MODE_BEGIN(MarkedBlock::Handle*)
     // Shared server: the caller holds this directory's refill stripe
     // (tryAllocateFromOwnDirectory) or the exclusive MSPL
     // (tryAllocateWithoutCollecting), either of which excludes addBlock's
@@ -165,6 +166,7 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
         setIsInUse(blockIndex, true);
         return result;
     }
+    JSC_PER_THREADS_MODE_END
 }
 
 MarkedBlock::Handle* BlockDirectory::tryAllocateBlock(const AbstractLocker& mutatorSlowPathLocker, JSC::Heap& heap)
@@ -774,7 +776,7 @@ void BlockDirectory::assertIsMutatorOrMutatorIsStopped() const
     }
 
     if (!heap.worldIsStopped()) {
-        if (Options::useSharedGCHeap()) [[unlikely]] {
+        if (processUsesSharedGCHeap()) [[unlikely]] {
             // SharedGC (T8/T9): option on, pre-sticky — a single registered
             // client, possibly standalone (§12.1), where vm() is asserted.
             // The single mutator thread is the one that attached the client

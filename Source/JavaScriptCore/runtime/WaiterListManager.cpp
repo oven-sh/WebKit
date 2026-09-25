@@ -170,7 +170,7 @@ WaiterListManager& WaiterListManager::singleton()
 template <typename ValueType>
 static WaiterListManager::WaitSyncResult waitSyncWithPerWaitNode(VM& vm, Ref<WaiterList> list, ValueType* ptr, ValueType expectedValue, Seconds timeout) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
 
     static constexpr Seconds parkQuantum = Seconds::fromMilliseconds(10); // D9 (§A.2.6; U2's bound).
 

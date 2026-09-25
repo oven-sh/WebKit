@@ -2404,7 +2404,7 @@ private:
                 // Flag on (SPEC-jit §5.5 Transition, (re)allocating form; the parser's sequence): the PutByOffset above
                 // stored into fresh, unpublished storage and does not clobber exit state; an InvalidationPoint between it
                 // and the install retires this code if a watched set fired while the allocation parked.
-                if (Options::useTaggedButterflies()) [[unlikely]]
+                if (processUsesTaggedButterflies()) [[unlikely]]
                     m_insertionSet.insertNode(indexInBlock + 1, SpecNone, InvalidationPoint, origin);
                 m_insertionSet.insertNode(
                     indexInBlock + 1, SpecNone, NukeStructureAndSetButterfly,
@@ -2645,7 +2645,7 @@ private:
             return;
 
         Structure* transitionOwnerCheckStructure = nullptr;
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (history §48): the parser's admission rules, verbatim. Every Transition variant
             // must be inlinable on its own terms - source not ArrayStorage or copy-on-write, its four thread-local sets
             // watchable by this plan, and GIL off no (re)allocating variant inside a MultiPutByOffset (its allocation

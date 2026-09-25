@@ -235,7 +235,7 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
         if (rawArray) [[likely]] {
             Butterfly* butterfly = nullptr;
             IndexingType indexingType;
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 indexingType = rawArray->indexingType();
                 // A segmented word takes the generic path. The publicLength slot is shared
                 // with a spine, so it can be past this snapshot's storage.
@@ -268,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(stringRaw, (JSGlobalObject* globalObject, CallFrame* ca
             case ALL_ARRAY_STORAGE_INDEXING_TYPES: [[likely]] {
                 // This is the hot case because String.raw is used with tagged-templates,
                 // and its template callsite object is a frozen array.
-                if (Options::useJSThreads()) [[unlikely]] {
+                if (processUsesJSThreads()) [[unlikely]] {
                     // A writer can install a new ArrayStorage under the cell lock, so
                     // read under it and re-load the word.
                     Locker locker { rawArray->cellLock() };

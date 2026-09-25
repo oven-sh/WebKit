@@ -136,7 +136,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case GetButterfly:
         // Under Options::useJSThreads() the butterfly load runs the TID/SW
         // predicate and OSR-exits when it fails. Flag-off it does not exit.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             result = Exits;
         break;
 
@@ -146,7 +146,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         // Inline stores are cell-internal and never checked; they must not
         // report Exits because ConstantFolding and ObjectAllocationSinking
         // place inline PutByOffset nodes at ExitInvalid positions.
-        if (Options::useJSThreads() && isOutOfLineOffset(node->storageAccessData().offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]]
+        if (processUsesJSThreads() && isOutOfLineOffset(node->storageAccessData().offset) && !putByOffsetStoresIntoFreshTransitionStorage(node)) [[unlikely]]
             result = Exits;
         break;
 
@@ -198,7 +198,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
         // Under Options::useJSThreads() a segmented-aware store runs the write
         // predicate and OSR-exits on an in-bounds miss (compileContiguousPutByVal).
         // CSE only turns an exiting PutByVal into this node, so exiting is legal.
-        if (Options::useJSThreads() && node->arrayMode().needsSegmentedAwareCodegen()) [[unlikely]]
+        if (processUsesJSThreads() && node->arrayMode().needsSegmentedAwareCodegen()) [[unlikely]]
             return Exits;
         break;
     }

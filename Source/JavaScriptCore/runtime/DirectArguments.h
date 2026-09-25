@@ -106,7 +106,7 @@ public:
         // load-bearing for memory safety; keep it unconditional. The full
         // mapped-ness assertion stays in force whenever JS threads are off.
         ASSERT_WITH_SECURITY_IMPLICATION(i < internalLength());
-        ASSERT(Options::useJSThreads() || isMappedArgument(i));
+        ASSERT(processUsesJSThreads() || isMappedArgument(i));
         return const_cast<DirectArguments*>(this)->storage()[i].get();
     }
 
@@ -117,7 +117,7 @@ public:
         // whose reads have been rerouted to the materialized property, so the
         // store is simply dead, never unsafe (bounds still asserted).
         ASSERT_WITH_SECURITY_IMPLICATION(i < internalLength());
-        ASSERT(Options::useJSThreads() || isMappedArgument(i));
+        ASSERT(processUsesJSThreads() || isMappedArgument(i));
         storage()[i].set(vm, this, value);
     }
     
@@ -143,7 +143,7 @@ public:
     {
         if (!m_mappedArguments)
             return false;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // THREADS (AUD1.N3 RESOLVED-3 reader-acquire half): callers that
             // observe the published bitmap go on to read the MATERIALIZED
             // length/callee/@@iterator properties, which are NOT

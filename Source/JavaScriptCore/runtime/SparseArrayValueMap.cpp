@@ -169,7 +169,7 @@ bool SparseArrayValueMap::putEntry(JSGlobalObject* globalObject, JSObject* array
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(value);
 
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         RELEASE_AND_RETURN(scope, putEntryConcurrent(globalObject, array, i, value, shouldThrow));
 
     AddResult result = add(array, i);
@@ -238,7 +238,7 @@ bool SparseArrayValueMap::putDirect(JSGlobalObject* globalObject, JSObject* arra
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(value);
     
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         RELEASE_AND_RETURN(scope, putDirectConcurrent(globalObject, array, i, value, attributes, mode));
 
     bool shouldThrow = (mode == PutDirectIndexShouldThrow);

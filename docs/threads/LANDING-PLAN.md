@@ -20,6 +20,10 @@ Bun pins; the ninth round's base was `dfd696443b9b`, the eighth's
 oven-sh/WebKit#549 and the fixes the rebases needed. The tenth round is one
 commit on top of the ninth's.
 
+The twelfth round rebased onto `000c48997255` and the thirteenth onto `35e8970dfd92`; each is one commit on top of the
+one before. Their subject is the flag-off configuration (`FLAG-OFF-LANDING.md`); their results are in "Results, twelfth
+and thirteenth rounds".
+
 The table below is the state before the safety round of 2026-09-02. For the
 state after it, see the "Results" sections at the end of Part 1 (one per
 round; the tenth, 2026-09-14, is the latest; the design session that followed it, 2026-09-17, changed no code and
@@ -4079,6 +4083,129 @@ established for it in this session:
   and collection counts are equal. Not explained; L5.12.
 - Known by reading only: the arm64 build breaks in two places that are compiled flag off too; the 32-bit LLInt was not
   updated for the repacked metadata. Nothing has ever been built off Linux x86-64.
+
+### Results, twelfth and thirteenth rounds (2026-09-22 to 2026-09-25)
+
+Both rounds worked on one goal only, FLAG-OFF-LANDING's: the branch built and run without `useJSThreads` is `main`, in safety
+and in speed. The threaded modes were not optimized; they were kept from getting worse. The twelfth round wrote no results
+section; what it did is in the histories (SPEC-jit history §59, SPEC-ungil history "Twelfth landing round", SPEC-heap history
+§25, SPEC-objectmodel history §42, SPEC-congc history CGD9) and is summarized here with the thirteenth's.
+
+**Base.** The twelfth round rebased onto `000c48997255`, the thirteenth onto `35e8970dfd92` (eight commits of the fork later;
+AUDIT section 10). Nine files conflicted in the thirteenth's merge. Upstream removed two options that GIL off forced off
+(`useThinChildExecutables`, `useLazySymbolTableConstants`): GIL off a bytecode-cache `Decoder` now refuses to defer into the
+payload, which covers both and the lazy module function declarations. Upstream's new `VM::deleteAllCodeToGenerateItAgain` goes
+through the stop window GIL off, like `deleteAllCode`.
+
+**Twelfth round, in one paragraph.** The interpreter got two bodies for the 27 opcodes that carry a gate (`main`'s under the
+opcode's label, the threaded one installed by `LLInt::initialize()` when the flag is set); the locks, counters and reference
+counts that the flag-on protocols need became flag-dependent (`ThreadsModeLocker`, `threadsModeFetchAddRelaxed`); array
+profile updates took `main`'s form; `VM::gilOff()` and `Heap::isSharedServer()` are decided on the Config page first; the
+flag-off ledger (`Tools/threads/flagoff-ledger.py`, `FLAG-OFF-LEDGER.tsv`) and the golden compare
+(`Tools/threads/golden-compare.py`) were written. Its last measurement: score 0.970, first iteration 1.030, whole run 1.011 in
+main-thread cycles. Its last experiment is what the thirteenth round starts from: with every test of the process-wide byte
+compiled as false the whole run is 1.002 and the first iteration 1.008, so what is left is the tests themselves and what
+they do to the code around them.
+
+**Thirteenth round: what was done.**
+
+1. *The threads-mode page and functions compiled once per mode* (SPEC-ungil history, thirteenth round; DESIGN-PROPOSALS F-D4,
+   F-D5). The process's mode is one byte that the compiler treats as constant memory; 938 reads of the options and of the
+   Config byte in C++ became reads of it; 192 interpreter slow paths, 109 JIT operations, 15 host functions, 96 other
+   out-of-line functions and 25 inline functions are compiled once per mode, the copy without threads with every gate folded
+   away. The interpreter calls its slow paths through a table of the copies for the process's mode.
+2. *Inlining `main` has and the branch had lost* restored for the cell allocation, `DeferGC`, the typed-array index accessors,
+   `Yarr::MatchingContextHolder`, `RegExpObject::create`, `jsSubstring`, `JSLexicalEnvironment::create`,
+   `JSFunction::getCallDataInline`, `StringRecursionChecker::performCheck`, `Structure::pin`, `WeakGCMap::get`,
+   `Parser::canRecurse`, the arithmetic profiles' observers.
+3. *Work that `main` does not do*: the double zero-fill of every metadata table (a leftover of an earlier rebase), the lock
+   on every tier-up check of the interpreter.
+4. *Tools*: exact per-function instruction counts under callgrind and their difference against `main`, per test and for the
+   suite in one process; a census of executed gate tests; the conversion driven by both; a lint for lines a rebase brought
+   back; `multi.sh` and `pertest.sh` for several binaries in one session (`Tools/threads/perf/flagoff/`, `parity/` in it);
+   `arm64-llint-check.sh`.
+
+**Method, and what it taught.** Sampled instruction profiles skid on the machine used and put the excess on the wrong
+functions; every decision of the round was taken on exact counts. A census showed that after the const view the gate tests
+themselves are 0.15 % of the instructions executed: the cost is lost inlining and the dispatch at the entry of a per-mode
+function. Conversions were judged one by one, before and after: a function without a gate in it only gets slower by the
+entry test, and 13 of 35 functions converted by their excess alone were reverted; 54 of 60 JIT operations got cheaper.
+The Debug corpus found two things the Release build cannot show: the body's lambda has to be inlined in builds without
+optimization too (the body reads its function's frame), and the eight call slow paths that run in the cleared stack cannot
+hold two copies of their body in one frame. The sanitizer corpus found that code common to the two copies is hoisted above
+the test that picks one and loses the inlined frames a suppression matches: a sanitizer build compiles nothing per mode.
+
+**Safety, final tree** (Release, Debug, DevRelease, TSanJIT and C loop builds of the same sources).
+
+| Check | Result |
+|---|---|
+| Threads corpus, Release, four modes | 62 / 48 / 392 / 365 passed, 0 failed |
+| Threads corpus, Debug (assertions, ASan), four modes | 62 / 48 / 392 / 365 passed, 0 failed |
+| Sanitizer corpus (TSanJIT) | GIL on 0 reports; GIL off 1 report, not new (TSAN-RESULTS, thirteenth round) |
+| `JSTests/stress`, flag off, every configuration of the runner | 87,451 passed, 21 failed; the same 21 fail on `main` |
+| test262, flag off | identical to `main` on all 102,475 records |
+| `testmasm`, `testair`, `testb3`, `testdfg`, `testRegExp` | pass, output of the same length as `main`'s; `testRegExp` 698 tests |
+| `testapi` | aborts on `main` and on the branch alike (the fork's atom-table assertion) |
+| Golden compare (`main`'s generated code against the branch's, flag off, every eighth stress test) | Baseline 43,985 blocks, 15 differ; DFG 64,367, 51; FTL 64,159, 57. `main` against a second run of itself differs in 50, 186 and 384. The differing blocks that were read are of two kinds: an immediate that is an address is blinded in one binary and not in the other (one `ror` more or less), and the tests whose code depends on timing (`waitasync-*`, the shared array buffer tests) |
+| Interpreter lints | 81 flag-off bodies without a gate test; 27 twins, all installed |
+| `JSTests/stress` with the flag set, every configuration of the runner | GIL on 87,411 passed, 61 failed; GIL off 87,234 passed, 238 failed. No plan fails that passed before the round; one that failed passes in both modes (`oversize-typed-array-buffer-is-not-allocated-twice.js`, upstream's test of #684: the threaded arm of `slowDownAndWasteMemory` reported the adopted vector twice) |
+
+**Portability.**
+
+| Target | How checked | Result |
+|---|---|---|
+| C loop (`ENABLE_C_LOOP`, no JIT) | built and run | builds and runs flag off and GIL on (GIL off is refused there by design). Three fixes: `put_by_val`'s length update had no form the C loop can assemble, two files missed an include. `main` itself does not build in this configuration (`LowLevelInterpreter.cpp`: `DOMJITEffect.h` needs DFG types) |
+| arm64, C++ | `arm64-syntax-check.sh`: every translation unit compiled with `-fsyntax-only --target=aarch64-linux-gnu`, without the precompiled header | 7 of 548 units with errors, all three kinds the host's headers cause (`mcontext_t`, `asm/hwcap.h`, the offsets table generated for x86-64); `main` has 6 of the same kinds |
+| arm64, interpreter | `arm64-llint-check.sh` (new): the offline assembler's arm64 backend, then clang's assembler | generated (177,729 lines) and assembled |
+| arm64, macOS, Windows, musl: built and run | not done: no sysroot or hardware in the session, and the CI lanes' Docker builds could not be run from it | open |
+
+**Speed** (flag off against `main` at the same base, same session, main-thread counters; FLAG-OFF-LANDING L5 has the
+targets). "Before" is the tree after the rebase and before the round's changes.
+
+| Metric (flag off / `main`) | Before | After | Target |
+|---|---|---|---|
+| First iteration, the suite in one process: cycles (instructions), five rounds | 1.028 (1.031) | 1.015 (1.016) | 1.010 |
+| the same, the harness's three rounds | | 1.008 (1.015) | |
+| Interpreter only, per-test geometric mean: cycles (instructions) | 1.025 (1.038) | 1.011 (1.011) | 1.010 |
+| Interpreter only, the suite in one process | | 1.004 (1.004) | |
+| Baseline-capped: cycles (instructions) | 1.013 (1.014) | 1.012 (1.007); harness 1.008 (1.007) | 1.005 |
+| DFG-capped: cycles (instructions) | 1.012 (1.010) | 1.016 (1.005); harness 1.007 (1.006) | 1.010 |
+| Whole run: cycles (instructions) | 1.015 (1.013) | 1.013 (1.007); harness 1.013 (1.008) | 1.005 |
+| Locked loads, whole run / first iteration | 0.96 / 1.03 | 0.96 / 1.02 | 1.02 / 1.03 |
+| Quiet pass, five rounds, medians: score (Startup / Worst Case / Average) | not run (twelfth round: 0.970) | 0.989 (0.986 / 0.983 / 0.991) | 0.99 (0.985 / 0.985 / 0.992) |
+| Score of the whole-run pass, three rounds | 0.977 | 0.985 | |
+| Exact instructions, interpreter only, per test | 1.031 | 1.001 | |
+| Exact instructions, the suite in one process, JIT compiling on the main thread | | 1.014 (1.017 before the last three batches) | |
+| Start-up, empty script: instructions, resident set | | +2.3 %, +1.7 MB | +1 %, +0.5 MB |
+| Peak resident set, the suite in one process, median of five | 1.015 | 0.968 (`main` itself ranges from 1.84 to 2.32 GB) | +2 % |
+
+Read with the measurement rules in mind: between two sessions the first iteration's cycles move by a point for the same
+binary, the tier-capped passes by half a point. What the round moved for certain is the instruction count: the excess is
+about half of what it was in every metric. Cycles followed in the interpreter and in the first iteration, and hardly in
+the whole run (1.015 to 1.013). What is left of the whole run's gap is therefore not mainly instructions executed; the
+candidates are what the branch changed in data (`Structure`, `CodeBlock`, the call records; ledger class D) and the
+text, which the copies made 1.1 MB larger. Neither was measured this round.
+
+
+**Threaded modes** (not optimized; kept from getting worse). Exact instruction counts, per test, JIT compiling on the main
+thread, the final tree against the tree before the round's changes: GIL on 1.0006, GIL off 1.0008. Natively (the suite, six iterations, five rounds, main thread): GIL on instructions 1.006, score 322.9 against 322.2; GIL off instructions 1.005, score 258.4 against 260.2. Cycles of these runs differ by up to 1.4 % in either direction between sessions.
+
+**Size.** Text of the shell: `main` 30,652,337 bytes, the branch before the round 35,420,874 (+15.6 %), after it 36,515,354
+(+19.1 %): the copies cost 1.09 MB.
+
+**Bun.** The embedder's patch is refitted to Bun's current `main` on a branch of its own (one hunk dropped, its
+function no longer exists). It was not built: Bun's build needs clang 23.1, which the machine did not have.
+
+**Not done, in order of what it is worth.**
+1. The rest of the flag-off gap (the table above). What the exact counts attribute it to, largest first: object model and
+   structure functions that are not converted or whose helpers are not inlined; the marker (`visitChildren`, the drain loop's
+   counters and a broadcast upstream removed) and the sweep; the optimizing compilers (their gates run on compiler threads,
+   which delays tier-up); strings and atoms (`addToStringTable` out of line); the entry test of JIT operations (a table
+   at link time, as for the slow paths, would remove it).
+2. `Structure` is 128 bytes, 112 on `main`: tables hashed on structure IDs collide (SPEC-ungil history, thirteenth round).
+3. The two open rows of AUDIT section 10 (embedder-only paths of upstream's new code, GIL off) and the `DateInstance` report.
+4. The quiet pass and the L5 table on the thin-LTO configuration the embedder ships (L5.14): not measured this round.
+5. Everything the tenth round's "Open items" lists for the threaded modes: unchanged.
 
 ### Open items
 

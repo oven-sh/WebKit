@@ -9,7 +9,7 @@ The branch has no build flag that compiles the threads work out: every differenc
 Method. It splits `git diff <base> <head> -- Source/{JavaScriptCore,WTF,bmalloc}` into added lines, takes the head version of
 every changed C/C++ file with comments and string literals blanked, tracks brace scopes, and gives every added line one class:
 
-    C   comment or blank
+    C   comment or blank, or a line that only makes the function compiled once per threads mode (JSC_PER_THREADS_MODE_BEGIN/END)
     N   in a file that is flag-on only by construction (NEW_FLAG_ON_FILES)
     M   whitespace-identical to a line the same file removes (moved or re-indented original code)
     D   outside any function body (declaration, member, include, macro)
@@ -35,7 +35,9 @@ GATE = (r"(useJSThreads|useTaggedButterflies|gilOffProcess|gilOff\(\)|gilOffWith
         r"useThreadGILOffUnsafe|useConcurrentSharedGCMarking|useSharedGC\w+|isSharedAtomStringTable|sharedAtomStringTableEnabled|"
         r"useAtomicDeferrableRefCount|RaceAmplifier::isEnabled|randomYieldPeriod|countJSThreadsCounters|reportJSThreadsCounters|"
         r"jsThreadsCountersEnabled|TaggedButterflies|GILOff\w*\(|isGILOff|\bgilOff\b|\bthreaded\b|useThreaded\w+|hasSpawnedThreads|"
-        r"numberOfSpawnedThreads|liveSpawnedThread|ThreadsMode\w*|threadsMode\w+)")
+        r"numberOfSpawnedThreads|liveSpawnedThread|ThreadsMode\w*|threadsMode\w*|processUses\w+|processIsGILOff|JSC_THREADS_MODE_IS_THREADED)")
+# The lines that make a function compiled once per threads mode (runtime/ThreadsModePage.h): they select a copy, they are not code of either.
+PER_MODE_SCAFFOLD = re.compile(r"^\s*(JSC_PER_THREADS_MODE_BEGIN\(.*\)|JSC_PER_THREADS_MODE_END(_WITHOUT_RETURN)?|JSC_THREADS_MODE_BODY\(\w+\);)\s*$")
 NEW_FLAG_ON_FILES = set("""bytecode/JSThreadsSafepoint.cpp bytecode/RetiredJITArtifacts.cpp dfg/DFGPollVisibilityPhase.cpp
 heap/GCThreadLocalCache.cpp heap/HeapClientSet.cpp heap/SharedHeapTestHarness.cpp jit/ConcurrentButterflyOperations.cpp
 runtime/ConcurrentButterfly.cpp runtime/ConditionObject.cpp runtime/LockObject.cpp runtime/ThreadAtomics.cpp
@@ -164,7 +166,7 @@ class Classifier:
         for ln in added_lines:
             idx = ln - 1
             if idx >= len(code): res[ln] = "U"; continue
-            if not code[idx].strip(): res[ln] = "C"; continue
+            if not code[idx].strip() or PER_MODE_SCAFFOLD.match(raw[idx]): res[ln] = "C"; continue
             if short in NEW_FLAG_ON_FILES: res[ln] = "N"; continue
             norm = re.sub(r"\s+", "", raw[idx])
             if norm in removed_norm and len(norm) > 3: res[ln] = "M"; continue

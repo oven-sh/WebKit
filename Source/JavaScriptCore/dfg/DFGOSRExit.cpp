@@ -319,6 +319,7 @@ void OSRExit::emitRestoreArguments(CCallHelpers& jit, VM& vm, const Operands<Val
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* callFrame, void* bufferToPreserve))
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     VM& vm = callFrame->deprecatedVM();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(bufferToPreserve), GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters);
@@ -498,6 +499,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     // UNGIL §A.1.3 (U-T4a): publish through the exiting thread's lite when
     // gilOff — the thunk's farJump reads the per-lite word.
     vm.group3Primitives().osrExitJumpDestination = exitCode.code().taggedPtr();
+    JSC_PER_THREADS_MODE_END
 }
 
 IGNORE_WARNINGS_BEGIN("frame-address")

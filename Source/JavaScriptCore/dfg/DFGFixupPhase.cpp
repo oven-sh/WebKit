@@ -4840,7 +4840,7 @@ private:
             // back to the now-segmented-aware DFG, and the FTL exit counter
             // disables FTL for that CodeBlock — no worse than today, and the
             // tier-regression tax (BigInt bit-ops in baseline) is gone.
-            if (arrayMode.needsSegmentedAwareCodegen() && Options::useJSThreads()
+            if (arrayMode.needsSegmentedAwareCodegen() && processUsesJSThreads()
                 && !m_graph.m_plan.isFTL() && consumerHasSegmentedAwareCodegen(m_currentNode)) [[unlikely]]
                 return nullptr;
             return m_insertionSet.insertNode(

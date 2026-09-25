@@ -48,7 +48,7 @@ public:
     static constexpr uintptr_t regExpMask = ~flagsMask;
     static_assert(flagsMask < MarkedBlock::atomSize);
 
-    static RegExpObject* create(VM& vm, Structure* structure, RegExp* regExp, bool areLegacyFeaturesEnabled = true)
+    static ALWAYS_INLINE RegExpObject* create(VM& vm, Structure* structure, RegExp* regExp, bool areLegacyFeaturesEnabled = true)
     {
         RegExpObject* object = new (NotNull, allocateCell<RegExpObject>(vm)) RegExpObject(vm, structure, regExp, areLegacyFeaturesEnabled);
         object->finishCreation(vm);

@@ -75,7 +75,7 @@ public:
     // those cells ref and deref it on whichever thread creates or sweeps them.
     RefPtr<const IntlDateTimeFormatImpl> findCachedDateTimeFormatImpl(const IntlDateTimeFormatImplKey& key)
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return nullptr;
         if (auto cached = m_cachedDateTimeFormatImpls.findIfCached(key))
             return *cached;
@@ -84,7 +84,7 @@ public:
 
     void cacheDateTimeFormatImpl(const IntlDateTimeFormatImplKey& key, Ref<const IntlDateTimeFormatImpl>&& impl)
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return;
         m_cachedDateTimeFormatImpls.insert(key, RefPtr<const IntlDateTimeFormatImpl>(WTF::move(impl)));
     }
@@ -101,7 +101,7 @@ public:
 private:
     void clearDateTimeFormatImplCache()
     {
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             return;
         m_cachedDateTimeFormatImpls.clear();
     }

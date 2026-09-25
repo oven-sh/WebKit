@@ -15,6 +15,9 @@ with the same flags, run them interleaved, on an idle machine.
 | `quiet-pass.sh [rounds]` | full JetStream score, main and flag off interleaved | `quiet/js-<round>-<cfg>.txt`; `score-compare.py [-v]` (score with Startup, Worst Case and Average) |
 | `profile.sh [rounds]` | cycle samples of the suite, JIT code attributed by address and time | `profile/*.json`; `profile-diff.py full -s 40` |
 | `per-test.sh` | one test: first iteration, interpreter only, peak resident set | one line |
+| `multi.sh <rounds> <phases> <name=jsc>...` | the phases of `phases.sh` for any number of binaries in one session (before and after a change beside `main`); `sjit` is the first iteration with the JIT compiling on the main thread | `multi.txt`; `multi-compare.py` |
+| `pertest.sh <rounds> <parallel> <interp\|first> <name=jsc>...` | the per-test geometric mean of the L5 table, for any number of binaries | `pertest-<mode>.txt` |
+| `parity/` | exact instruction counts per function under callgrind, their difference against `main`, and the tools that convert functions to the per-mode form (its own README) | |
 
 Rules (learned the hard way, FLAG-OFF-LANDING Part 2):
 
@@ -29,3 +32,6 @@ Rules (learned the hard way, FLAG-OFF-LANDING Part 2):
   minima for counters, medians for scores, and never conclude from one run.
 - `perf record -c` periods below about 4 M instructions can be throttled; `profile.sh` samples cycles at 2 M and 300 k.
 - zsh does not word-split an unquoted variable: run these with bash.
+- The first iteration's instruction count moves by about 0.4 % between sessions for one binary (how far the compiler threads
+  got decides what the main thread runs), its cycles by about 1 %: take five rounds, and use `multi.sh ... sjit` and the exact
+  counts of `parity/` to decide whether a change helped.

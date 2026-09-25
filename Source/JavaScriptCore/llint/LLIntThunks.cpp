@@ -301,7 +301,7 @@ MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueThunk()
         // which gilOffProcess requires). The branch is therefore never-taken
         // defense-in-depth keeping the reader's discriminator equal to the
         // writer's by construction, not a behavior change.
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             jit.loadVMLite(GPRInfo::regT2);
             auto noLite = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2);
             auto gilOnLite = jit.branchTest8(CCallHelpers::Zero, CCallHelpers::Address(GPRInfo::regT2, VMLite::offsetOfGilOff()));

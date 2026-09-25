@@ -605,6 +605,7 @@ ArgumentListNode* ArrayNode::toArgumentList(ParserArena& parserArena, int startP
 
 RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    JSC_PER_THREADS_MODE_BEGIN(RegisterID*)
     if (!m_list) {
         if (dst == generator.ignoredResult())
             return nullptr;
@@ -651,6 +652,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
         newObject = generator.emitNewObject(generator.tempDestination(dst));
     generator.emitNode(newObject.get(), propertyList);
     return generator.move(dst, newObject.get());
+    JSC_PER_THREADS_MODE_END
 }
 
 // ------------------------------ PropertyListNode -----------------------------
@@ -942,6 +944,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
 
 void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, RegisterID* newObj, PropertyNode& node)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // Private fields are handled in a synthetic classFieldInitializer function, not here.
     ASSERT(!(node.type() & PropertyNode::PrivateField));
 
@@ -1003,6 +1006,7 @@ void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, Reg
     if (shouldSetFunctionName)
         generator.emitSetFunctionName(value.get(), propertyName.get());
     generator.emitDirectPutByVal(newObj, propertyName.get(), value.get());
+    JSC_PER_THREADS_MODE_END
 }
 
 void PropertyListNode::emitSaveComputedFieldName(BytecodeGenerator& generator, PropertyNode& node)
@@ -1085,6 +1089,7 @@ RegisterID* BracketAccessorNode::emitBytecode(BytecodeGenerator& generator, Regi
 
 RegisterID* DotAccessorNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    JSC_PER_THREADS_MODE_BEGIN(RegisterID*)
     RefPtr<RegisterID> finalDest = generator.finalDestination(dst);
 
     if (generator.shouldGetArgumentsDotLengthFast(this))
@@ -1106,6 +1111,7 @@ RegisterID* DotAccessorNode::emitBytecode(BytecodeGenerator& generator, Register
 
     generator.emitProfileType(finalDest.get(), divotStart(), divotEnd());
     return ret;
+    JSC_PER_THREADS_MODE_END
 }
 
 RegisterID* BaseDotNode::emitGetPropertyValue(BytecodeGenerator& generator, RegisterID* dst, RegisterID* base, RefPtr<RegisterID>& thisValue)
@@ -1237,8 +1243,10 @@ RegisterID* BaseDotNode::emitPutProperty(BytecodeGenerator& generator, RegisterI
 
 RegisterID* ArgumentListNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    JSC_PER_THREADS_MODE_BEGIN(RegisterID*)
     ASSERT(m_expr);
     return generator.emitNode(dst, m_expr);
+    JSC_PER_THREADS_MODE_END
 }
 
 // ------------------------------ NewExprNode ----------------------------------
@@ -4319,8 +4327,10 @@ void DebuggerStatementNode::emitBytecode(BytecodeGenerator& generator, RegisterI
 
 void ExprStatementNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     ASSERT(m_expr);
     generator.emitNodeInTailPositionFromExprStatementNode(dst, m_expr);
+    JSC_PER_THREADS_MODE_END
 }
 
 // ------------------------------ DeclarationStatement ----------------------------

@@ -613,11 +613,29 @@ macro restoreStateAfterCCall()
     subp PB, PC
 end
 
+# A slow path is compiled once per threads mode (ThreadsModePage.h). The function that has its name tests the mode;
+# the interpreter calls the copy for the process's mode instead, through the table LLInt::initialize() filled
+# (LLIntSlowPathTable.h), so a call costs what it costs on main plus the load of the table's address.
+macro cCall2PerThreadsMode(function)
+    if X86_64
+        checkStackPointerAlignment(t5, 0xbad0c002)
+        leap _os_script_config_storage, t5
+        call JSC::LLInt::OpcodeConfig::slowPaths + JSC::LLInt::SlowPathTable::%function%[t5]
+    elsif ARM64
+        checkStackPointerAlignment(t9, 0xbad0c002)
+        leap _os_script_config_storage, t9
+        loadp JSC::LLInt::OpcodeConfig::slowPaths + JSC::LLInt::SlowPathTable::%function%[t9], t9
+        call t9
+    else
+        cCall2(function)
+    end
+end
+
 macro callSlowPath(slowPath)
     prepareStateForCCall()
     move cfr, a0
     move PC, a1
-    cCall2(slowPath)
+    cCall2PerThreadsMode(slowPath)
     restoreStateAfterCCall()
 end
 
@@ -2692,6 +2710,9 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
                 loadi -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t0
                 biaeq t0, t2, .casMaxLengthDone
                 batomicweakcasi t0, t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], .casMaxLengthRetry
+            elsif C_LOOP
+                # Never reached: a build with the C loop refuses the GIL-off configuration (Options.cpp). It only has to assemble.
+                storei t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1]
             else
                 # Load-linked and store-conditional, where there is no compare-and-swap instruction the assembler knows: the same loop.
                 leap -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t1], t9

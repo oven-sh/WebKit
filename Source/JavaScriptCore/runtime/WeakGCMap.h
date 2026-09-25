@@ -64,7 +64,7 @@ public:
     explicit WeakGCMap(VM&, WeakGCMapLocking = WeakGCMapLocking::No);
     ~WeakGCMap() final;
 
-    ValueArg* get(const KeyType& key) const
+    ALWAYS_INLINE ValueArg* get(const KeyType& key) const
     {
         // The locked lookup is out of line so the unlocked one inlines as upstream's does (flag off never locks).
         if (m_locking == WeakGCMapLocking::Yes) [[unlikely]]

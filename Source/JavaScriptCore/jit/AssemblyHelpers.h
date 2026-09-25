@@ -1013,7 +1013,7 @@ public:
     {
         ASSERT(noOverlap(stringGPR, implGPR));
         JumpList notAtomCases;
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             // SPEC-ungil §N.2, reader rule for the known-atom bit. GIL off another
             // thread can resolve this rope, or swap in the atom, between the
             // caller's impl load and the bit test below; the writer publishes the
@@ -1923,7 +1923,7 @@ public:
     void emitAllocateJSObject(GPRReg resultGPR, const JITAllocator& allocator, GPRReg allocatorGPR, StructureType structure, StorageType storage, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult slowAllocationResult = SlowAllocationResult::ClearToNull)
     {
         emitAllocateJSCell(resultGPR, allocator, allocatorGPR, structure, scratchGPR, slowPath, slowAllocationResult);
-        if (Options::useTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, OM G1): the plain store below
+        if (processUsesTaggedButterflies()) [[unlikely]] { // untagged (flag off; GIL on with one owner, OM G1): the plain store below
             // SPEC-objectmodel §2 (r16 N1-I, I40): every object is born with
             // the allocating thread's TID in its butterfly word, butterfly or
             // not: word = g_jscButterflyTIDTag | storage (storage may be 0).

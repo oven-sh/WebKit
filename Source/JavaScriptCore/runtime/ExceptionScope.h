@@ -163,7 +163,7 @@ bool ExceptionScope::tryClearException()
    word GIL-on and flag-off, so the bit<->word assert and the poll gate read
    the current thread's view. The poll gate selects that word through
    VM::gilOffWithProcessGate(), so flag-off every expansion pays one
-   predicted-not-taken g_jscConfig.gilOffProcess byte test and a cold
+   predicted-not-taken processIsGILOff() byte test and a cold
    lite-dispatch block ahead of the VM-word test that used to be the whole
    check; it is not byte-identical to the pre-threads macro. */
 #define RETURN_IF_EXCEPTION(scope__, value__) do { \

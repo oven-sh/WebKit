@@ -181,7 +181,7 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
         return nullptr;
 
     std::optional<Locker<Lock>> threadsLocker;
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         threadsLocker.emplace(m_linkLock);
 
     unsigned valueProfileSize = m_numValueProfiles * sizeof(EncodedJSValue);
@@ -220,9 +220,6 @@ ALWAYS_INLINE RefPtr<MetadataTable> UnlinkedMetadataTable::link()
         MetadataStatistics::linkingCopyMemory += sizeof(LinkingData) + totalSize;
 #endif
     }
-    // FIXME: Is this needed since we'll clear the data in the CodeBlock Constructor... Plus I could see caching value profiles being profitable.
-    memset(buffer, 0, valueProfileSize);
-    memset(buffer + valueProfileSize + sizeof(LinkingData) + offsetTableSize, 0, totalSize - offsetTableSize - valueProfileSize);
     return adoptRef(*new (buffer + valueProfileSize + sizeof(LinkingData)) MetadataTable(*this));
 }
 
@@ -233,7 +230,7 @@ ALWAYS_INLINE void UnlinkedMetadataTable::unlink(MetadataTable& metadataTable)
         return;
 
     std::optional<Locker<Lock>> threadsLocker;
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         threadsLocker.emplace(m_linkLock);
 
     if (metadataTable.buffer() == buffer()) {

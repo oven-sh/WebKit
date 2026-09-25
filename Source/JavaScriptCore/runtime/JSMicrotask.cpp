@@ -642,6 +642,7 @@ static void asyncGeneratorDrainQueue(JSGlobalObject* globalObject, JSAsyncGenera
 // https://tc39.es/ecma262/#sec-asyncgeneratorresume (then AsyncGeneratorStart's completion handling).
 static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -685,6 +686,7 @@ static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerato
     RETURN_IF_EXCEPTION(scope, void());
     // 4.k. Perform AsyncGeneratorDrainQueue(acGen).
     RELEASE_AND_RETURN(scope, asyncGeneratorDrainQueue(globalObject, generator));
+    JSC_PER_THREADS_MODE_END
 }
 
 // https://tc39.es/ecma262/#sec-asyncgeneratorunwrapyieldresumption

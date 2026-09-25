@@ -434,7 +434,7 @@ ALWAYS_INLINE void JSRopeString::convertToNonRope(String&& string) const
     // The process byte first, so flag-off and GIL-on pay one predicted-untaken
     // test and no vm() lookup; the GIL-off body is out of line so this stays
     // small enough to inline into resolveRope as on main.
-    if (g_jscConfig.gilOffProcess && vm().gilOff()) [[unlikely]]
+    if (processIsGILOff() && vm().gilOff()) [[unlikely]]
         return convertToNonRopeGILOff(WTF::move(string), isAtom);
     ASSERT(JSString::isRope());
     // GIL-on / flag-off: single mutator; release store == plain store + the

@@ -73,7 +73,7 @@ void JITStubRoutineSet::add(GCAwareJITStubRoutine* routine)
     // no-new-unconditional-flag-off-work rule (ab17c) the lock is taken only
     // under useJSThreads(), matching the makeGCAware-at-creation gating one
     // frame up.
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         Locker locker { m_lock };
         addImpl(routine);
         return;

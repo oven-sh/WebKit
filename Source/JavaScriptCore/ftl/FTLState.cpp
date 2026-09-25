@@ -178,7 +178,7 @@ PropertyInlineCache* State::addPropertyInlineCache()
     // must never allocate a RepatchingPropertyInlineCache (M2b forces
     // useHandlerICInFTL on under useJSThreads; the Repatching constructor
     // RELEASE_ASSERTs as well, this just fails closer to the decision point).
-    RELEASE_ASSERT(!Options::useJSThreads());
+    RELEASE_ASSERT(!processUsesJSThreads());
     return jitCode->common.m_repatchingPropertyInlineCaches.add();
 }
 

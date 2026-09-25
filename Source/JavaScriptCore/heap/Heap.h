@@ -697,7 +697,7 @@ public:
     // relaxed reads here are coherence-bound to return true.
     // A heap becomes a shared server only for a process that has the shared collector; the option is on the frozen Config page,
     // so a process without it answers false without reading m_isSharedServer, which is ordinary memory.
-    bool isSharedServer() const { return Options::useSharedGCHeap() && m_isSharedServer.load(std::memory_order_relaxed); }
+    bool isSharedServer() const { return processUsesSharedGCHeap() && m_isSharedServer.load(std::memory_order_relaxed); }
     struct WeakBearingSweepStats { uint64_t cycles; uint64_t blocks; unsigned maxUnrequested; };
     WeakBearingSweepStats weakBearingSweepStats() const { return { m_weakBearingSweepCycles.load(std::memory_order_relaxed), m_weakBearingSweptBlocks.load(std::memory_order_relaxed), m_weakBearingSweepMaxUnrequested.load(std::memory_order_relaxed) }; }
 
@@ -1549,9 +1549,9 @@ private:
 
     bool shouldDoFullCollection();
 
-    inline void incrementDeferralDepth();
+    ALWAYS_INLINE void incrementDeferralDepth();
     inline void decrementDeferralDepth();
-    inline void decrementDeferralDepthAndGCIfNeeded();
+    ALWAYS_INLINE void decrementDeferralDepthAndGCIfNeeded();
     JS_EXPORT_PRIVATE void decrementDeferralDepthAndGCIfNeededSlow();
 
     // SharedGC (§5.4/I17): the calling thread's deferral-depth slot. Once
@@ -1560,6 +1560,7 @@ private:
     // client TLS stamp (GC helpers world-stopped), the server counter.
     // Defined at the bottom of this header (needs GCClient::Heap).
     inline unsigned& deferralDepthSlot();
+    JS_EXPORT_PRIVATE void decrementDeferralDepthAndGCIfNeededForSharedServer();
     unsigned& deferralDepthSlotShared();
     inline unsigned currentDeferralDepth() const;
 
@@ -2774,7 +2775,7 @@ ALWAYS_INLINE unsigned& Heap::deferralDepthSlot()
 {
     // The shared-server arm is out of line: every DeferGC scope inlines this,
     // and flag-off it must stay the option-byte test plus the member access.
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]]
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]]
         return deferralDepthSlotShared();
     return m_deferralDepth;
 }
@@ -2799,7 +2800,7 @@ NEVER_INLINE inline unsigned& Heap::deferralDepthSlotShared()
 // deferralDepthSlot() exactly so the hint always pairs with the depth.
 ALWAYS_INLINE bool& Heap::didDeferGCWorkSlot()
 {
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]] {
         GCClient::Heap* client = GCClient::Heap::currentThreadClient();
         if (client && &client->server() == this) {
             ASSERT(client->hasHeapAccess() || worldIsStoppedForAllClients());
@@ -2813,7 +2814,7 @@ ALWAYS_INLINE bool& Heap::didDeferGCWorkSlot()
 
 ALWAYS_INLINE unsigned Heap::currentDeferralDepth() const
 {
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]] {
         GCClient::Heap* client = GCClient::Heap::currentThreadClient();
         if (client && &client->server() == this)
             return client->m_deferralDepth;
@@ -2825,7 +2826,7 @@ ALWAYS_INLINE unsigned Heap::currentDeferralDepth() const
 // declaration comment at mutatorStateSlot() above.
 ALWAYS_INLINE MutatorState& Heap::mutatorStateSlot()
 {
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]] {
         GCClient::Heap* client = GCClient::Heap::currentThreadClient();
         if (client && &client->server() == this)
             return client->m_mutatorState;
@@ -2896,7 +2897,7 @@ ALWAYS_INLINE GCClient::Heap& Heap::allocationClientForCurrentThread(VMType& vm,
 
 ALWAYS_INLINE MutatorState Heap::mutatorState() const
 {
-    if (Options::useSharedGCHeap() && isSharedServer()) [[unlikely]] {
+    if (processUsesSharedGCHeap() && isSharedServer()) [[unlikely]] {
         GCClient::Heap* client = GCClient::Heap::currentThreadClient();
         if (client && &client->server() == this)
             return client->m_mutatorState;

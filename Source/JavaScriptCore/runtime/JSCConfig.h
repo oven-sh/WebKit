@@ -29,6 +29,7 @@
 #include "OptionsList.h"
 #include "SecureARM64EHashPins.h"
 #include "StopTheWorldCallback.h"
+#include "ThreadsModePage.h"
 #include <mutex>
 #include <wtf/PtrTag.h>
 #include <wtf/WTFConfig.h>
@@ -106,6 +107,10 @@ struct Config {
                 // concurrent mutators without the JSLock only in this shape.
                 g_wtfConfig.useAtomicDeferrableRefCount = true;
             }
+            latchThreadsModePage((config.options.useJSThreads ? ThreadsModeJSThreads : 0)
+                | (config.options.useTaggedButterflies ? ThreadsModeTaggedButterflies : 0)
+                | (gilOffProcess ? ThreadsModeGILOffProcess : 0)
+                | (config.options.useSharedGCHeap ? ThreadsModeSharedGCHeap : 0));
         });
     }
 
@@ -115,6 +120,7 @@ struct Config {
         // m_gilOff designation); kept here so embedder/direct callers of
         // Config::finalize() still latch before the freeze.
         latchGILOffProcess();
+        freezeThreadsModePage();
         WTF::Config::finalize();
     }
 

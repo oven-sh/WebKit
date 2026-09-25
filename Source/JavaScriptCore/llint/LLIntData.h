@@ -27,6 +27,7 @@
 
 #include "GPRInfo.h"
 #include "Instruction.h"
+#include "LLIntSlowPathTable.h"
 #include "MacroAssemblerCodeRef.h"
 #include "Opcode.h"
 
@@ -54,6 +55,9 @@ struct OpcodeConfig {
     JSC::Opcode opcodeMap[numOpcodeIDs];
     JSC::Opcode opcodeMapWide16[numOpcodeIDs];
     JSC::Opcode opcodeMapWide32[numOpcodeIDs];
+
+    // The copies of the slow paths for the process's threads mode (LLIntSlowPathTable.h).
+    SlowPathTable slowPaths;
 
     void* ipint_dispatch_base;
     void* ipint_gc_dispatch_base;

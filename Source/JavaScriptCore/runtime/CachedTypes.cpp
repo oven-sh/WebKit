@@ -288,7 +288,7 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
         }
     }
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::useFastCachedAtoms() && !vm.gilOff()) { // GIL off: plain-store cache (AUDIT R9-5)
+    if (!vm.gilOff()) [[likely]] { // GIL off: plain-store cache (AUDIT R9-5)
         uint32_t packed = characters[0] | characters[1] << 8 | (length == 3 ? characters[2] << 16 : 0xff0000);
         AtomStringImpl*& entry = vm.ensureCachedBytecodeThreeCharacterAtoms()[(packed * 0x9E3779B1u) >> (32 - VM::cachedBytecodeThreeCharacterAtomsLog2Size)];
         if (entry && entry->length() == length && entry->is8Bit()) [[likely]] {
@@ -302,11 +302,7 @@ Ref<AtomStringImpl> Decoder::atomForInlineString(VM& vm, std::span<const uint8_t
             evicted->deref();
         return atom;
     }
-    Ref<AtomStringImpl> atom = AtomStringImpl::add(characters).releaseNonNull();
-    atom->ref();
-    if (AtomStringImpl* evicted = std::exchange(entry, atom.ptr()))
-        evicted->deref();
-    return atom;
+    return AtomStringImpl::add(characters).releaseNonNull();
 #else
     return AtomStringImpl::add(characters).releaseNonNull();
 #endif
@@ -1468,7 +1464,7 @@ Decoder::Decoder(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvid
     , m_payloadSize(m_cachedBytecode->span().size())
     , m_provider(provider)
 #if USE(BUN_JSC_ADDITIONS)
-    , m_canDeferIntoPayload(m_cachedBytecode->payloadIsOwnedOrPersistent())
+    , m_canDeferIntoPayload(m_cachedBytecode->payloadIsOwnedOrPersistent() && !vm.gilOff()) // GIL off: decoded eagerly, under the compilation lock (AUDIT R9-1, R9-3, R9-4, R9-6)
     , m_canBorrowPayload(m_cachedBytecode->payloadIsPersistent())
 #endif
 {
@@ -4785,7 +4781,7 @@ auto CachedFunctionExecutable::view(ScalarsToView scalarsToView) const -> View
 #if USE(BUN_JSC_ADDITIONS)
 std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMaterializing() const
 {
-    if (!m_membersAreDeferred) {
+    if (!isDeferred(MembersAreDeferred)) {
         auto* rareData = m_members.live().rareData.get();
         return rareData && !rareData->m_classSource.isNull() ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
     }
@@ -4795,7 +4791,7 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMater
 
 std::optional<uint32_t> UnlinkedFunctionExecutable::firstClassElementOffsetWithoutMaterializing() const
 {
-    if (!m_membersAreDeferred) {
+    if (!isDeferred(MembersAreDeferred)) {
         auto* rareData = m_members.live().rareData.get();
         return rareData && !rareData->m_classElementDefinitions.isEmpty() ? std::optional<uint32_t>(rareData->m_classElementDefinitions.first().position.offset) : std::nullopt;
     }

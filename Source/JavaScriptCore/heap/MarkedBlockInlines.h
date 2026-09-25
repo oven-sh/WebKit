@@ -221,7 +221,7 @@ inline bool MarkedBlock::Handle::isLive(const HeapCell* cell)
     // directory's refill stripe); take the directory's bit-vector lock for the
     // one bit read then. The marker and the sweeper use the explicit-version
     // form above under their own witnesses and never come through here.
-    if (g_jscConfig.gilOffProcess && space()->heap().isSharedServer() && !space()->heap().worldIsStoppedForAllClients()
+    if (processIsGILOff() && space()->heap().isSharedServer() && !space()->heap().worldIsStoppedForAllClients()
         && !(jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor())) [[unlikely]] {
         bool allocated;
         {
@@ -301,7 +301,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     // concurrently (per-directory stripes); WeakRandom::getUint64() mutates
     // its state, so only that shape takes the lock. Flag-off and GIL-on
     // sweeps are serialized by the JSLock or the stop window.
-    const bool sweepsMayRunConcurrently = g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer();
+    const bool sweepsMayRunConcurrently = processIsGILOff() && m_directory->heap().isSharedServer();
     uint64_t secret;
     if (sweepsMayRunConcurrently) [[unlikely]]
         secret = vm.heapRandomUint64Concurrent();
@@ -631,7 +631,7 @@ inline void MarkedBlock::Handle::setIsDestructible(bool value)
     // (a revert would strand a stale-true hint across the isEmpty directory-
     // bit clear and a later notifyNeedsDestruction would never run
     // JSString::destroy).
-    if (g_jscConfig.gilOffProcess && m_directory->heap().isSharedServer()) [[unlikely]] {
+    if (processIsGILOff() && m_directory->heap().isSharedServer()) [[unlikely]] {
         if (value && WTF::atomicLoad(&m_isDestructibleHint, std::memory_order_relaxed))
             return;
         Locker locker { m_directory->bitvectorLock() };

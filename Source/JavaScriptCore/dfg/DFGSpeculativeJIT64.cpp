@@ -1076,7 +1076,7 @@ void SpeculativeJIT::emitCall(Node* node)
         // in place, forbidden under concurrent execution; I2/I3). The slow
         // cases the data-IC fast path returns are already handled below.
         // THREADS-INTEGRATE(jit)
-        auto directCallUseDataIC = Options::useJSThreads() ? DirectCallLinkInfo::UseDataIC::Yes : DirectCallLinkInfo::UseDataIC::No;
+        auto directCallUseDataIC = processUsesJSThreads() ? DirectCallLinkInfo::UseDataIC::Yes : DirectCallLinkInfo::UseDataIC::No;
         auto* callLinkInfo = jitCode()->common.m_directCallLinkInfos.add(m_currentNode->origin.semantic, directCallUseDataIC, m_graph.m_codeBlock, executable);
         callLinkInfo->setCallType(callType);
         callLinkInfo->setMaxArgumentCountIncludingThis(numAllocatedArgs);
@@ -2737,7 +2737,7 @@ void SpeculativeJIT::compileMapGet(Node* node)
 
 void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat, bool)>& prefix)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     ASSERT(node->arrayMode().type() == Array::Int32 || node->arrayMode().type() == Array::Contiguous);
 
@@ -2837,7 +2837,7 @@ void SpeculativeJIT::compileGetByValSegmentedAwareContiguous(Node* node, const S
 
 void SpeculativeJIT::compileGetByValSegmentedAwareDouble(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat, bool)>& prefix)
 {
-    ASSERT(Options::useJSThreads());
+    ASSERT(processUsesJSThreads());
     ASSERT(node->arrayMode().needsSegmentedAwareCodegen());
     ASSERT(node->arrayMode().type() == Array::Double);
 
@@ -3060,7 +3060,7 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
         // keep today's flat-only path, and GetButterfly's own
         // BadIndexingType exit already excludes the segmented case before
         // control reaches here.
-        if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+        if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
             && !m_graph.varArgChild(node, 2)) [[unlikely]] {
             compileGetByValSegmentedAwareContiguous(node, prefix);
             break;
@@ -3149,7 +3149,7 @@ void SpeculativeJIT::compileGetByVal(Node* node, const ScopedLambda<std::tuple<G
 
     case Array::Double: {
         // T3-jit-segmented-arraymode: see Array::Int32/Contiguous above.
-        if (node->arrayMode().needsSegmentedAwareCodegen() && Options::useJSThreads()
+        if (node->arrayMode().needsSegmentedAwareCodegen() && processUsesJSThreads()
             && !m_graph.varArgChild(node, 2)) [[unlikely]] {
             compileGetByValSegmentedAwareDouble(node, prefix);
             break;
@@ -5513,7 +5513,7 @@ void SpeculativeJIT::compile(Node* node)
         ASSERT_UNUSED(oldStructure, oldStructure->indexingMode() == newStructure->indexingMode());
         ASSERT(oldStructure->typeInfo().type() == newStructure->typeInfo().type());
         ASSERT(oldStructure->typeInfo().inlineTypeFlags() == newStructure->typeInfo().inlineTypeFlags());
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             // SPEC-jit §5.5 Transition (DFG form): the parser planted a
             // CheckTransitionOwner for oldStructure before the PutByOffset that
             // precedes this node, the plan watches the four thread-local sets,
@@ -5539,7 +5539,7 @@ void SpeculativeJIT::compile(Node* node)
         GPRReg baseGPR = base.gpr();
         GPRReg t1 = temp1.gpr();
         GPRReg t2 = temp2.gpr();
-        if (!Options::useTaggedButterflies()) {
+        if (!processUsesTaggedButterflies()) {
             // SPEC-jit §5.5 "Untagged words" (OM G1): every thread owns every object, and the
             // PreciseAllocation leg excludes a publication form nobody uses without foreign writers.
             noResult(node);
@@ -9068,7 +9068,7 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
         GPRTemporary storageTemporary(this);
         std::optional<GPRTemporary> tidScratch;
         GPRReg tidScratchGPR = InvalidGPRReg;
-        if (Options::useJSThreads()) [[unlikely]] {
+        if (processUsesJSThreads()) [[unlikely]] {
             tidScratch.emplace(this);
             tidScratchGPR = tidScratch->gpr();
         }
@@ -9115,7 +9115,7 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
 
             // Otherwise it's out of line
             outOfLineAccess.link(this);
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 // The structure check does not exclude a segmented or foreign-owned
                 // butterfly: a foreign out-of-line add leaves the object on the
                 // ordinary post-add Structure the enumerator caches. Run the write
@@ -9127,7 +9127,7 @@ void SpeculativeJIT::compileEnumeratorPutByVal(Node* node)
             sub32(Address(enumeratorGPR, JSPropertyNameEnumerator::cachedInlineCapacityOffset()), scratchGPR);
             neg32(scratchGPR);
             signExtend32ToPtr(scratchGPR, scratchGPR);
-            if (!Options::useJSThreads()) [[likely]]
+            if (!processUsesJSThreads()) [[likely]]
                 loadPtr(Address(baseGPR, JSObject::butterflyOffset()), storageGPR);
             constexpr intptr_t offsetOfFirstProperty = offsetInButterfly(firstOutOfLineOffset) * static_cast<intptr_t>(sizeof(EncodedJSValue));
             storeValue(valueGPR, BaseIndex(storageGPR, scratchGPR, TimesEight, offsetOfFirstProperty));
@@ -10013,7 +10013,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
         and32(TrustedImm32(IndexingTypeMask), scratch1GPR);
 
         auto handleJSArrayLoad = [&](IndexingType expectedType) {
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 // The dispatch above is on the indexing type, not the structure,
                 // so nothing is elided. The shape excludes ArrayStorage. scratch1GPR
                 // (the indexing type) is dead once this arm is entered.
@@ -10047,7 +10047,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                 } else {
                     load64(BaseIndex(scratch2GPR, indexGPR, TimesEight), resultGPR);
                     if (arrayMode.isInBoundsSaneChain()) {
-                        if (expectedType == ArrayWithInt32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+                        if (expectedType == ArrayWithInt32 && processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
                             Jump hole = branchIfEmpty(resultGPR);
                             speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
                             hole.link(this);
@@ -10056,7 +10056,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
                         moveConditionally64(Equal, resultGPR, TrustedImm32(0), scratch1GPR, resultGPR, resultGPR);
                     } else {
                         speculationCheck(LoadFromHole, JSValueSource(baseGPR), nullptr, branchIfEmpty(resultGPR));
-                        if (expectedType == ArrayWithInt32 && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+                        if (expectedType == ArrayWithInt32 && processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]]
                             speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41
                     }
                 }
@@ -10075,7 +10075,7 @@ void SpeculativeJIT::compileMultiGetByVal(Node* node)
             } else {
                 load64(BaseIndex(scratch2GPR, indexGPR, TimesEight), resultGPR);
                 slowJumps.append(branchIfEmpty(resultGPR));
-                if (expectedType == ArrayWithInt32 && arrayMode.isOutOfBoundsSaneChain() && Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]]
+                if (expectedType == ArrayWithInt32 && arrayMode.isOutOfBoundsSaneChain() && processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]]
                     speculationCheck(BadType, JSValueSource(baseGPR), nullptr, branchIfNotInt32(resultGPR)); // OM I41; the effectful form is HeapTop-typed
             }
             doneCases.append(jump());
@@ -10289,7 +10289,7 @@ void SpeculativeJIT::compileMultiPutByVal(Node* node)
 
         bool holeRaiseUsesCAS = lengthRaiseUsesCAS(baseEdge); // SPEC-jit §5.5 length updates (history §46).
         auto handleJSArrayStore = [&](IndexingType expectedMode) {
-            if (Options::useJSThreads()) [[unlikely]] {
+            if (processUsesJSThreads()) [[unlikely]] {
                 // As in compileMultiGetByVal, but with the write predicate.
                 ThreadedButterflyPlan plan;
                 plan.shape = CCallHelpers::ConcurrentButterflyShape::KnownNonArrayStorage;

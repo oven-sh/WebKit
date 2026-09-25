@@ -122,7 +122,7 @@ public:
         // under it. Flag-off: one predicted not-taken byte test on the
         // read-only Config page, then the historical inline pair — no
         // out-of-line call, no Options re-derivation.
-        if (g_jscConfig.gilOffProcess) [[unlikely]] {
+        if (processIsGILOff()) [[unlikely]] {
             removeOnDestruction();
             return;
         }

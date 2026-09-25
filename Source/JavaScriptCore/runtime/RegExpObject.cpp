@@ -155,6 +155,7 @@ JSC_DEFINE_CUSTOM_SETTER(regExpObjectSetLastIndexSloppy, (JSGlobalObject* global
 
 bool RegExpObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
+    JSC_PER_THREADS_MODE_BEGIN(bool)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RegExpObject* thisObject = uncheckedDowncast<RegExpObject>(cell);
@@ -174,11 +175,14 @@ bool RegExpObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
         return result;
     }
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    JSC_PER_THREADS_MODE_END
 }
 
 JSValue RegExpObject::exec(JSGlobalObject* globalObject, JSString* string)
 {
+    JSC_PER_THREADS_MODE_BEGIN(JSValue)
     return execInline(globalObject, string);
+    JSC_PER_THREADS_MODE_END
 }
 
 // Shared implementation used by test and exec.

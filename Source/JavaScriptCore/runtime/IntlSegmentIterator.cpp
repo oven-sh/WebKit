@@ -81,7 +81,7 @@ JSObject* IntlSegmentIterator::next(JSGlobalObject* globalObject)
     int32_t ruleStatus = 0;
     {
         std::optional<Locker<JSCellLock>> locker;
-        if (g_jscConfig.gilOffProcess) [[unlikely]]
+        if (processIsGILOff()) [[unlikely]]
             locker.emplace(cellLock());
         startIndex = ubrk_current(m_segmenter.get());
         endIndex = ubrk_next(m_segmenter.get());

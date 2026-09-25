@@ -538,7 +538,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     // here so bumpAndReclaim() can assert I11 and walk the client registry.
     m_safepointEpoch.setServer(*this);
 
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         m_retiredStructureChainInvalidationWatchpoints = makeUnique<RetiredStructureChainInvalidationWatchpoints>();
 
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
@@ -1638,6 +1638,9 @@ void Heap::deleteAllUnlinkedCodeBlocksWithCollectionPrevented(OptionSet<Unlinked
 {
     // Same callers and the same stop window as deleteAllCodeBlocksWithCollectionPrevented().
     VM& vm = this->vm();
+    // Shared Baseline code, below, still goes.
+    if (vm.keepsUnlinkedCode()) [[unlikely]]
+        which.remove({ UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
 
     RELEASE_ASSERT(!m_collectionScope);
 
@@ -1647,7 +1650,7 @@ void Heap::deleteAllUnlinkedCodeBlocksWithCollectionPrevented(OptionSet<Unlinked
     // happens before the heap is prepared for iteration, as in deleteAllCodeBlocks().
     // What they allocate must not start a collection either (this thread could still start one): returning code to its
     // cache rewrites an executable's code block slots into something a marker must not see half done.
-    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache) && Options::useCodeRecoveryFromBytecodeCache();
+    bool returnsCodeToCache = which.contains(UnlinkedCodeToDelete::RecoverableFromCache);
     UncheckedKeyHashSet<UnlinkedCodeBlock*> linkedAgainst;
     std::optional<DeferGC> deferGC;
     if (returnsCodeToCache) {
@@ -1775,6 +1778,7 @@ void Heap::releaseUnusedSharedBaselineCode()
 
 void Heap::addToRememberedSet(const JSCell* constCell)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     JSCell* cell = const_cast<JSCell*>(constCell);
     ASSERT(cell);
     ASSERT(!Options::useConcurrentJIT() || !isCompilationThread());
@@ -1869,12 +1873,13 @@ void Heap::addToRememberedSet(const JSCell* constCell)
         routedClient->m_mutatorMarkStack->append(cell);
         return;
     }
-    if (Options::useSharedGCHeap()) [[unlikely]] {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
         Locker locker { m_serverMutatorMarkStackLock };
         m_mutatorMarkStack->append(cell);
         return;
     }
     m_mutatorMarkStack->append(cell);
+    JSC_PER_THREADS_MODE_END
 }
 
 void Heap::clearConcurrentRetainedDataIfPossible()
@@ -2050,7 +2055,7 @@ ASCIILiteral Heap::reasonNotToEvacuateAuxiliaryBlocksNow()
         return "the collector is off"_s;
     // The butterfly protocols of the threads modes (tagged words, segmented spines, concurrent length raises) are not
     // something this function knows how to move storage under.
-    if (Options::useJSThreads()) [[unlikely]]
+    if (processUsesJSThreads()) [[unlikely]]
         return "the JS threads flag is on"_s;
 #if ENABLE(C_LOOP)
     return "the CLoop stack is not scanned"_s;
@@ -2756,7 +2761,7 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
     if (isFullGC) {
         m_opaqueRoots.clear();
         m_collectorSlotVisitor->clearMarkStacks();
-        if (Options::useSharedGCHeap()) [[unlikely]] {
+        if (processUsesSharedGCHeap()) [[unlikely]] {
             Locker locker { m_serverMutatorMarkStackLock };
             m_mutatorMarkStack->clear();
         } else
@@ -3736,7 +3741,7 @@ void Heap::waitForCollector(const Func& func)
                 // the amplifier: preventCollection on one thread, a jettison on
                 // another, the conductor's marking paused for the jettison's
                 // window - a three-way wait until the stop watchdog fired).
-                if (g_jscConfig.gilOffProcess) [[unlikely]]
+                if (processIsGILOff()) [[unlikely]]
                     JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm());
                 {
                     Locker locker { *m_threadLock };
@@ -4814,7 +4819,7 @@ void Heap::didFinishCollection()
     if (m_verifier) [[unlikely]]
         m_verifier->endGC();
 
-    if (g_jscConfig.gilOffProcess) [[unlikely]]
+    if (processIsGILOff()) [[unlikely]]
         ArrayAllocationProfile::clearSubstitutedDoubleRequestsGILOff(); // Cells freed by this collection may be reused (SPEC-objectmodel history §40).
 
     RELEASE_ASSERT(m_collectionScope);
@@ -4863,6 +4868,7 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
 constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     if (!isSharedServer()) [[likely]] {
         // Single-writer regime: plain load+store RMW (no lock-prefixed xadd on
         // the per-freelist-refill path). Why no increment can be lost:
@@ -4942,6 +4948,7 @@ void Heap::didAllocate(size_t bytes)
         m_edenActivityCallback->didAllocate(*this, totalBytesAllocatedThisCycle() + m_bytesAbandonedSinceLastFullCollect.load(std::memory_order_relaxed));
 
     performIncrement(bytes);
+    JSC_PER_THREADS_MODE_END
 }
 
 void Heap::addFinalizer(JSCell* cell, CFinalizer finalizer)
@@ -5226,6 +5233,7 @@ void Heap::forEachCodeBlockIgnoringJITPlansImpl(const AbstractLocker& locker, co
 
 void Heap::writeBarrierSlowPath(const JSCell* from)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     JSTHREADS_COUNT(writeBarrierSlowPath);
     if (mutatorShouldBeFenced()) [[unlikely]] {
         // In this case, the barrierThreshold is the tautological threshold, so from could still be
@@ -5236,6 +5244,7 @@ void Heap::writeBarrierSlowPath(const JSCell* from)
     }
     
     addToRememberedSet(from);
+    JSC_PER_THREADS_MODE_END
 }
 
 bool Heap::currentThreadIsDoingGCWork()
@@ -5276,6 +5285,7 @@ void Heap::reportExternalMemoryVisited(size_t size)
 
 void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     ASSERT(deferralContext || isDeferred() || !AssertNoGC::isInEffectOnCurrentThread());
     // SharedGC (T9): conductor-context OK — CIND is called by EVERY client
     // (incl. standalone, via the §12.1 allocateForClient seam); vm() is plain
@@ -5421,10 +5431,21 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
         collectAsync();
         stopIfNecessary(); // This will immediately start the collection if we have the conn.
     }
+    JSC_PER_THREADS_MODE_END
+}
+
+void Heap::decrementDeferralDepthAndGCIfNeededForSharedServer()
+{
+    unsigned& depth = deferralDepthSlot();
+    ASSERT(depth);
+    depth--;
+    if (didDeferGCWorkSlot() || Options::forceDidDeferGCWork()) [[unlikely]]
+        decrementDeferralDepthAndGCIfNeededSlow();
 }
 
 void Heap::decrementDeferralDepthAndGCIfNeededSlow()
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // Can't do anything if we're still deferred. SharedGC (§5.4/I17): this
     // consults the CALLING client's depth once ISS.
     if (currentDeferralDepth())
@@ -5439,6 +5460,7 @@ void Heap::decrementDeferralDepthAndGCIfNeededSlow()
     // FIXME: Bring back something like the DeferGCProbability mode.
     // https://bugs.webkit.org/show_bug.cgi?id=166627
     collectIfNecessaryOrDefer();
+    JSC_PER_THREADS_MODE_END
 }
 
 void Heap::registerWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
@@ -5951,7 +5973,7 @@ void Heap::addCoreConstraints()
                     visitor.appendUnbarriered(pair.key);
             }
 
-            if (Options::useSharedGCHeap()) [[unlikely]] {
+            if (processUsesSharedGCHeap()) [[unlikely]] {
                 // DW-2: shared mode keeps MarkedVector registrations in the
                 // per-shard locked sets (markListSetShard()); m_markListSet
                 // stays empty. Mutators with heap access are quiesced inside
@@ -6246,7 +6268,7 @@ void Heap::preventCollection() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     // collection needs this thread parked; blocking in lock() with heap access
     // held would wedge it (30 s watchdog). Wait for the lock the way every
     // other access-holding native wait does, polling for stops.
-    if (g_jscConfig.gilOffProcess && isSharedServer()) [[unlikely]] {
+    if (processIsGILOff() && isSharedServer()) [[unlikely]] {
         SpinBackoff backoff;
         while (!m_collectContinuouslyLock.tryLock()) {
             if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm()))
@@ -6398,6 +6420,7 @@ void Heap::setMutatorShouldBeFenced(bool value)
 
 void Heap::performIncrement(size_t bytes)
 {
+    JSC_PER_THREADS_MODE_BEGIN(void)
     // SharedGC (§5.4/deviation 4): the incremental-marking mutator assist is
     // disabled in shared mode — marking only happens inside the conducted
     // stop (I5), so there is never an active marking phase to assist here and
@@ -6433,6 +6456,7 @@ void Heap::performIncrement(size_t bytes)
     size_t bytesVisited = visitor.performIncrementOfDraining(static_cast<size_t>(targetBytes));
     // incrementBalance may go negative here because it'll remember how many bytes we overshot.
     m_incrementBalance -= bytesVisited;
+    JSC_PER_THREADS_MODE_END
 }
 
 void Heap::addGCCompletionCallback(const GCCompletionCallback& callback)
@@ -6688,7 +6712,7 @@ void Heap::noteSharedServerSticky() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     // rank 6).
     // THREADS-INTEGRATE(heap): Options::useSharedGCHeap() is added by
     // INTEGRATE-heap.md manifest item 2 (runtime/OptionsList.h).
-    if (!Options::useSharedGCHeap())
+    if (!processUsesSharedGCHeap())
         return;
     if (m_isSharedServer.load(std::memory_order_relaxed))
         return;
@@ -8180,7 +8204,7 @@ void Heap::stopIfNecessaryForAllClients()
     // the same holds without concurrent marking: a thread blocked on the
     // holder's lock has no safepoint, so a holder that stops or parks here
     // never sees the stop complete; and for a held ConcurrentJSLock likewise.
-    ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
+    ASSERT(!(Options::useConcurrentSharedGCMarking() || processIsGILOff()) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
 #endif
 
     if (!isSharedServer()) {
@@ -8358,7 +8382,7 @@ void Heap::verifyServerNonIsoAllocatorsNeverMaterialized()
 {
     // §5.5 (T4): called from noteSharedServerSticky() at the second-client
     // attach, before sticky ISS is set.
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
     objectSpace().forEachSubspace([&](Subspace& subspace) -> IterationStatus {
         if (subspace.kind() == SubspaceKind::CompleteSubspace)
             static_cast<CompleteSubspace&>(subspace).verifyNoAllocatorsMaterialized();
@@ -8790,7 +8814,7 @@ Heap::Heap(JSC::Heap& heap)
     // makes pre-publication construction safe against a concurrent legacy
     // collection or conducted stop. Option off: skipped (I10; server
     // teardown handles iso exactly as today).
-    if (Options::useSharedGCHeap()) [[unlikely]]
+    if (processUsesSharedGCHeap()) [[unlikely]]
         registerIsoSubspaceLocalAllocators();
     // SPEC-heap.md §5.1 (T2): every client registers with its server's
     // HeapClientSet. An add() that makes size() > 1 with the option on runs
@@ -8800,7 +8824,7 @@ Heap::Heap(JSC::Heap& heap)
 
 void Heap::registerIsoSubspaceLocalAllocators()
 {
-    ASSERT(Options::useSharedGCHeap());
+    ASSERT(processUsesSharedGCHeap());
 #define THREADS_REGISTER_CLIENT_ISO_LA(name, heapCellType, type) \
     m_threadLocalCache.registerExternalAllocator(&name.localAllocator());
     FOR_EACH_JSC_ISO_SUBSPACE(THREADS_REGISTER_CLIENT_ISO_LA)
@@ -8827,7 +8851,7 @@ Heap::~Heap()
     // sweepSynchronously contract) true on the teardown path too. Option
     // off: the TLC is empty, lastChanceToFinalize() is a no-op, and the
     // access bracket is skipped (I10).
-    bool sharedTeardown = Options::useSharedGCHeap();
+    bool sharedTeardown = processUsesSharedGCHeap();
 
     // SPEC-congc §9.2(4)/§3.7 (CG-3c): the detaching thread is never the
     // live conductor — EXIT1 (this dtor) on m_gcConductorThread mid-cycle is
@@ -9059,7 +9083,7 @@ void Heap::acquireHeapAccess()
             // CGN1 N3 in-window tryLock-termination argument). Stage-gated
             // so flag-off debug behavior is unchanged (CG-T5's CG-I18 storm
             // arm runs with the C1 flag on).
-            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || processIsGILOff()) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
 #endif
             uint8_t reverted = m_accessState.exchange(noAccessState, std::memory_order_seq_cst);
             ASSERT_UNUSED(reverted, reverted == hasAccessState);
@@ -9108,7 +9132,7 @@ void Heap::acquireHeapAccess()
             }
             jsThreadsNotifyMutatorQuiesced();
 #if ASSERT_ENABLED
-            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across an §A.3 park.
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || processIsGILOff()) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across an §A.3 park.
 #endif
             jsThreadsParkForStopWindow(*serverVM);
             continue; // Retry from step 1 (a GC stop may have arrived meanwhile; GSP re-polls).
@@ -9150,7 +9174,7 @@ void Heap::acquireHeapAccess()
             }
             jsThreadsNotifyMutatorQuiesced();
 #if ASSERT_ENABLED
-            ASSERT(!(Options::useConcurrentSharedGCMarking() || g_jscConfig.gilOffProcess) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across a Mode-machine park.
+            ASSERT(!(Options::useConcurrentSharedGCMarking() || processIsGILOff()) || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current())); // CG-I18 (CG-3c): no 10a hold across a Mode-machine park.
 #endif
             jsThreadsParkForModeStop(*serverVM);
             continue; // Retry from step 1 (GSP and the §A.3 word re-poll).
@@ -9193,7 +9217,7 @@ void Heap::releaseHeapAccess()
     // it, so it must not hold a lock that another mutator can block on with no
     // safepoint (a cell lock, a ConcurrentJSLock): that mutator would keep the
     // stop open and this thread could not re-acquire. Deterministic in Debug.
-    ASSERT(!g_jscConfig.gilOffProcess || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
+    ASSERT(!processIsGILOff() || (!GCCellLockDepth::current() && !ConcurrentJSLockDepth::current()));
     m_accessOwner.store(nullptr, std::memory_order_relaxed);
 
     // §10A RHA: seq_cst exchange -> NoAccess publishes all prior heap writes
@@ -9241,7 +9265,7 @@ void Heap::releaseHeapAccess()
         Locker locker { server().m_lock }; \
         JSC::IsoSubspace& serverSpace = *server().name<SubspaceAccess::OnMainThread>(); \
         auto space = makeUnique<IsoSubspace>(serverSpace); \
-        if (Options::useSharedGCHeap()) [[unlikely]] \
+        if (processUsesSharedGCHeap()) [[unlikely]] \
             m_threadLocalCache.registerExternalAllocator(&space->localAllocator()); \
         IsoSubspace* result = space.release(); \
         WTF::atomicStore(std::bit_cast<IsoSubspace**>(&m_##name), result, std::memory_order_release); \

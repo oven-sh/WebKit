@@ -61,6 +61,7 @@
 #include "JSWithScope.h"
 #include "LLIntCommon.h"
 #include "LLIntExceptions.h"
+#include "LLIntSlowPathTable.h"
 #include "MathCommon.h"
 #include "ObjectConstructor.h"
 #include "ScopedArguments.h"
@@ -71,6 +72,23 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+// The slow paths are compiled once per threads mode (ThreadsModePage.h).
+#undef JSC_DEFINE_COMMON_SLOW_PATH
+#define JSC_DEFINE_COMMON_SLOW_PATH(name) \
+    template<bool> static ALWAYS_INLINE UGPRPair name##Body(CallFrame*, const JSInstruction*); \
+    template<bool threaded> static NEVER_INLINE UGPRPair SYSV_ABI name##PerThreadsMode(CallFrame* callFrame, const JSInstruction* pc) \
+    { \
+        JSC_THREADS_MODE_BODY(threaded); \
+        return name##Body<threaded>(callFrame, pc); \
+    } \
+    JSC_DEFINE_JIT_OPERATION(name, UGPRPair, (CallFrame* callFrame, const JSInstruction* pc)) \
+    { \
+        if (JSC_THREADS_MODE_IS_THREADED()) \
+            return name##PerThreadsMode<true>(callFrame, pc); \
+        return name##PerThreadsMode<false>(callFrame, pc); \
+    } \
+    template<bool> ALWAYS_INLINE UGPRPair name##Body(CallFrame* callFrame, const JSInstruction* pc)
 
 #define BEGIN_NO_SET_PC() \
     CodeBlock* codeBlock = callFrame->codeBlock(); \
@@ -434,7 +452,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_string)
 }
 
 #if ENABLE(JIT)
-static void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
+static ALWAYS_INLINE void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
 {
     profile.observeArg(operand);
     ASSERT(result.isNumber() || result.isBigInt());
@@ -508,7 +526,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_negate)
 }
 
 #if ENABLE(DFG_JIT)
-static void updateArithProfileForBinaryArithOp(JSGlobalObject*, CodeBlock* codeBlock, const JSInstruction* pc, JSValue result, JSValue left, JSValue right)
+static ALWAYS_INLINE void updateArithProfileForBinaryArithOp(JSGlobalObject*, CodeBlock* codeBlock, const JSInstruction* pc, JSValue result, JSValue left, JSValue right)
 {
     BinaryArithProfile& profile = *codeBlock->binaryArithProfileForPC(pc);
 
@@ -1526,7 +1544,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_resolve_scope)
         // keys without a lock, so a post-link rewrite could hand it the null
         // scope an UnresolvedProperty op was linked with. Late-defined globals
         // stay on this slow path.
-        if (Options::useJSThreads()) [[unlikely]]
+        if (processUsesJSThreads()) [[unlikely]]
             break;
         if (resolvedScope->isGlobalObject()) {
             JSGlobalObject* globalObject = uncheckedDowncast<JSGlobalObject>(resolvedScope);
@@ -1843,6 +1861,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_spread)
     }
 
     RETURN(JSCellButterfly::createFromArray(globalObject, vm, array));
+}
+
+void LLInt::installCommonSlowPaths(LLInt::SlowPathTable& table)
+{
+#define JSC_INSTALL_SLOW_PATH(name) \
+    table._##name = threadsMode() ? std::bit_cast<void*>(&name##PerThreadsMode<true>) : std::bit_cast<void*>(&name##PerThreadsMode<false>);
+    FOR_EACH_COMMON_SLOW_PATH(JSC_INSTALL_SLOW_PATH)
+#undef JSC_INSTALL_SLOW_PATH
 }
 
 } // namespace JSC

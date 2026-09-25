@@ -92,7 +92,7 @@ public:
         // Tenth round (SPEC-ungil §I): with the GIL on the warm entry is handed out while no Thread has ever been
         // spawned in the process; its prologue tests the same byte and takes the cold path from the first spawn
         // on, so a call site linked before it cannot warm-call from a spawned thread either.
-        if (Options::useJSThreads() && (!Options::useThreadGIL() || anyJSThreadEverSpawned())) [[unlikely]]
+        if (processUsesJSThreads() && (!Options::useThreadGIL() || anyJSThreadEverSpawned())) [[unlikely]]
             return nullptr;
 
         if (m_taintedness >= SourceTaintedOrigin::IndirectlyTainted)

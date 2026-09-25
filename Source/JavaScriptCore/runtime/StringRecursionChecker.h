@@ -78,13 +78,13 @@ private:
     StackStats::CheckPoint stackCheckpoint;
 };
 
-inline JSValue StringRecursionChecker::performCheck()
+ALWAYS_INLINE JSValue StringRecursionChecker::performCheck()
 {
     VM& vm = getVM(m_globalObject);
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError();
 
-    if (Options::useJSThreads()) [[unlikely]] {
+    if (processUsesJSThreads()) [[unlikely]] {
         auto& state = perThreadState();
         m_firstObjectSlot = &state.firstObject;
         m_visitedObjects = &state.visitedObjects;

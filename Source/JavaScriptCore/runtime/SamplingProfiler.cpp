@@ -1223,7 +1223,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
     // collection (the profiler constraint) or acquisition notice then waits for m_lock forever: the holder defers
     // its traps. GIL off the whole body runs inside a stop (above), where nothing parks.
     std::optional<DeferTraps> deferTraps;
-    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+    if (processUsesJSThreads() && !m_vm.gilOff()) [[unlikely]]
         deferTraps.emplace(m_vm);
 
     UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
@@ -1372,7 +1372,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
 
     // With the GIL on, holders of m_lock that reach polls defer their traps (see stackTracesAsJSON).
     std::optional<DeferTraps> deferTraps;
-    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+    if (processUsesJSThreads() && !m_vm.gilOff()) [[unlikely]]
         deferTraps.emplace(m_vm);
 
     size_t totalSamples = 0;
@@ -1442,7 +1442,7 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
 
     // With the GIL on, holders of m_lock that reach polls defer their traps (see stackTracesAsJSON).
     std::optional<DeferTraps> deferTraps;
-    if (Options::useJSThreads() && !m_vm.gilOff()) [[unlikely]]
+    if (processUsesJSThreads() && !m_vm.gilOff()) [[unlikely]]
         deferTraps.emplace(m_vm);
 
     size_t totalSamples = 0;

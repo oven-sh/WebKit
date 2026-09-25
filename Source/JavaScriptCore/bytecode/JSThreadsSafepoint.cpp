@@ -552,7 +552,7 @@ ClassAStopWatchdogContext::ClassAStopWatchdogContext(const void* context, const 
     // the BUMP-EDGE LAW comment above). Flag-off: contexts are only published
     // flag-on, but gate anyway so an accidental flag-off publication changes
     // nothing.
-    if (Options::useJSThreads() && !t_pureCodeLifecycleStopWindowDepth) [[likely]]
+    if (processUsesJSThreads() && !t_pureCodeLifecycleStopWindowDepth) [[likely]]
         noteConductorHeapFactRewrite();
 }
 
@@ -566,7 +566,7 @@ ClassAStopWatchdogContext::~ClassAStopWatchdogContext()
     // own §A.3 window it is post-resume. A post-resume bump can at worst cause
     // a spurious jettison on an unrelated concurrently-parked thread — sound,
     // perf-only. Same suppression gate as the ctor.
-    if (Options::useJSThreads() && !t_pureCodeLifecycleStopWindowDepth) [[likely]]
+    if (processUsesJSThreads() && !t_pureCodeLifecycleStopWindowDepth) [[likely]]
         noteConductorHeapFactRewrite();
 
     t_pendingClassAStopContext = m_previousContext;

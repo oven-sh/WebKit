@@ -305,7 +305,7 @@ inline JSString* JSFunction::asStringConcurrently() const
     return jsExecutable()->asStringConcurrently();
 }
 
-inline CallData JSFunction::getCallDataInline(JSCell* cell)
+ALWAYS_INLINE CallData JSFunction::getCallDataInline(JSCell* cell)
 {
     // Keep this function OK for invocation from concurrent compilers.
     CallData callData;

@@ -1355,3 +1355,4 @@ ffi/JSFFIFunction.cpp
 ffi/tests/FFITestFixtures.cpp
 
 runtime/BufferAccessorRegistry.cpp
+runtime/ThreadsModePage.cpp @no-unify // Defines what ThreadsModePage.h declares const.

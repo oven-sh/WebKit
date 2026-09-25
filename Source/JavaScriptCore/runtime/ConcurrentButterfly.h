@@ -155,7 +155,7 @@ ALWAYS_INLINE bool butterflyWordOwnedByCurrentThread(uint64_t tagged)
 // cannot move except inside a stop they would have to park for.
 ALWAYS_INLINE bool butterflyWordMayBeRelabelledConcurrently(uint64_t tagged)
 {
-    return g_jscConfig.gilOffProcess && !(tagged & butterflySWBit) && !butterflyWordOwnedByCurrentThread(tagged); // SW=0 also excludes segmented words (I3)
+    return processIsGILOff() && !(tagged & butterflySWBit) && !butterflyWordOwnedByCurrentThread(tagged); // SW=0 also excludes segmented words (I3)
 }
 
 JS_EXPORT_PRIVATE uint64_t lockedTransitionCount(); // diagnostic: cell-locked property transitions so far ($vm)

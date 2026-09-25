@@ -76,7 +76,7 @@ inline bool jsThreadsParkableSlowPathClobbersHeapFactsGILOff(Graph&, Node*);
 // the early return (1.5 % of Babylon's instructions flag off).
 ALWAYS_INLINE bool jsThreadsParkableSlowPathClobbersHeapFacts(Graph& graph, Node* node)
 {
-    if (!Options::useJSThreads() || Options::useThreadGIL()) [[likely]]
+    if (!processUsesJSThreads() || Options::useThreadGIL()) [[likely]]
         return false;
     return jsThreadsParkableSlowPathClobbersHeapFactsGILOff(graph, node);
 }
@@ -840,7 +840,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         // this thread is parked here, and the trap services that run at a poll
         // (termination, watchdog, debugger, VMManager stop) are the flag-off
         // ones with the flag-off invalidation story. See SPEC-jit I21.
-        if (Options::useJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
+        if (processUsesJSThreads() && !Options::useThreadGIL()) [[unlikely]] {
             // UNGIL §K.5 / SPEC-jit I21 (AB-10 closure): flag-on, the polling
             // CheckTraps is a PARK SITE — a mutator that traps here parks for
             // the whole §A.3 thread-granular window (or a Mode-machine stop),
@@ -1974,7 +1974,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         
     case GetButterfly:
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 9: flag-on, GetButterfly emits the
             // read predicate (structureID for the ARM64 R7/F7 dependency,
             // indexing byte for the AS-rule SW test).
@@ -2178,7 +2178,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiGetByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on, the FTL lowering emits
             // the read predicate (indexing byte for the conservative AS-rule
             // SW test on prototype-base / MaybeArrayStorage cases).
@@ -2197,7 +2197,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiPutByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on write predicate
             // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
             read(JSCell_indexingType);
@@ -2230,7 +2230,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case MultiDeleteByOffset: {
         read(JSCell_structureID);
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 10: flag-on write predicate
             // (indexing byte for the AS-rule arm on MaybeArrayStorage plans).
             read(JSCell_indexingType);
@@ -2250,7 +2250,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         unsigned identifierNumber = node->storageAccessData().identifierNumber;
         AbstractHeap heap(NamedProperties, identifierNumber);
         write(heap);
-        if (Options::useTaggedButterflies()) [[unlikely]] {
+        if (processUsesTaggedButterflies()) [[unlikely]] {
             // SPEC-jit section 5.5 / Task 9: flag-on, out-of-line PutByOffset
             // re-loads the tagged butterfly from the base object (plus the
             // structureID for the ARM64 R7/F7 dependency and possibly the
@@ -2364,7 +2364,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::Contiguous:
             // GIL off only (SSA lowering's §39 bound); keyed on the storage
             // edge, whose flat vectorLength never changes in place GIL off.
-            ASSERT(Options::useJSThreads() && !Options::useThreadGIL());
+            ASSERT(processUsesJSThreads() && !Options::useThreadGIL());
             read(Butterfly_vectorLength);
             def(HeapLocation(VectorLengthLoc, Butterfly_vectorLength, node->child2()), LazyNode(node));
             return;
@@ -2511,7 +2511,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(sourceHeap);
@@ -2535,7 +2535,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         read(JSObject_butterfly);
-        if (Options::useTaggedButterflies()) [[unlikely]]
+        if (processUsesTaggedButterflies()) [[unlikely]]
             read(JSCell_structureID); // SPEC-jit section 5.5 / Task 10 (ARM64 R7/F7 dependency)
         read(Butterfly_publicLength);
         read(IndexedContiguousProperties);

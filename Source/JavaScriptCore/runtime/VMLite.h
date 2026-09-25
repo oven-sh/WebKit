@@ -646,7 +646,7 @@ ALWAYS_INLINE ButterflyTID currentButterflyTID()
         return 0;
     // SPEC-objectmodel G1: one owner with the GIL. lite->tid itself stays the ThreadManager's (thread identity,
     // teardown bookkeeping); only the butterfly tag derived from it is shared.
-    if (!Options::useTaggedButterflies()) [[unlikely]]
+    if (!processUsesTaggedButterflies()) [[unlikely]]
         return 0;
     return lite->tid;
 }
