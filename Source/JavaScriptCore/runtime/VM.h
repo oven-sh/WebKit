@@ -673,12 +673,9 @@ public:
     // For an embedder that decides whose an unhandled rejection is by the async context it is told of it in
     // (promiseRejectionTracker): from here on, a promise that a job which runs no script rejects is reported in
     // the async context that job was scheduled in. See JSPromise::keepAsyncContextForUnhandledRejection().
+    // Nothing is kept until async contexts are tracked.
     bool unhandledRejectionsAreReportedInAsyncContext() const { return m_unhandledRejectionsAreReportedInAsyncContext; }
-    void reportUnhandledRejectionsInAsyncContext()
-    {
-        m_asyncContextTrackingEnabled = true;
-        m_unhandledRejectionsAreReportedInAsyncContext = true;
-    }
+    void reportUnhandledRejectionsInAsyncContext() { m_unhandledRejectionsAreReportedInAsyncContext = true; }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }

@@ -25,6 +25,7 @@ function inContext(context, fn) {
 }
 
 const noop = () => { };
+class Subclass extends Promise { }
 const error = () => new Error("rejected");
 const rejecting = () => (async () => { throw error(); })();
 const rejectedLater = () => new Promise((_, reject) => { Promise.resolve().then(() => reject(error())); });
@@ -44,6 +45,11 @@ const forms = {
 
     "new Promise resolved with a promise that rejects": () => new Promise(resolve => resolve(rejecting())),
     "new Promise resolved with a promise that rejects later": () => new Promise(resolve => resolve(rejectedLater())),
+    "new Promise resolved with a promise that is given its own constructor before it is adopted": () => new Promise(resolve => {
+        const adopted = rejecting();
+        resolve(adopted);
+        Object.defineProperty(adopted, "constructor", { value: Promise, configurable: true });
+    }),
     "async function that returns a promise that rejects": () => (async () => rejecting())(),
     "then() whose handler returns a promise that rejects": () => Promise.resolve().then(() => rejecting()),
     "then() whose handler is an async function that throws": () => Promise.resolve().then(async () => { throw error(); }),
@@ -51,6 +57,7 @@ const forms = {
     "finally() whose handler is an async function that throws": () => Promise.resolve().finally(async () => { throw error(); }),
 
     "then() with no handler for the rejection, of a pending promise": () => rejectedLater().then(noop),
+    "then() with no handler for the rejection, of a pending instance of a subclass": () => new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }).then(noop),
     "then() with no handler for the rejection, of a rejected promise": () => alreadyRejected().then(noop),
     "then() with no handlers, of a rejected promise": () => alreadyRejected().then(),
     "finally() of a rejected promise": () => alreadyRejected().finally(noop),
@@ -64,18 +71,20 @@ const forms = {
 };
 
 const rejectedAtOnce = ["Promise.reject()", "new Promise, rejected by its executor", "async function that throws"];
-// Those are rejected by a job that runs script, in the async context it was scheduled in, even if that is none.
-const rejectedByScript = ["async function that throws after an await", "then() whose handler throws", "finally() of a rejected promise"];
 
 const A = { name: "A" };
 const B = { name: "B" };
 
-// then() with no handler for a rejection, called on a promise that is already rejected, keeps nothing: the
-// rejection is reported in whatever is current when the job runs, as a rejection scheduled in no async context
-// is.
+// then() with no handler for a rejection keeps nothing when it is called on a promise that is already rejected,
+// or in no async context: the rejection is reported in whatever is current when the job runs.
 const keepsNothing = [
     "then() with no handler for the rejection, of a rejected promise",
     "then() with no handlers, of a rejected promise",
+];
+const keepsNothingOfNoAsyncContext = [
+    "then() with no handler for the rejection, of a pending promise",
+    "then() with no handler for the rejection, of a pending instance of a subclass",
+    "a chain of then() with no handler for the rejection",
 ];
 
 function check(round) {
@@ -87,7 +96,8 @@ function check(round) {
             const whenTheJobsRun = context === A ? B : A;
             inContext(whenTheJobsRun, drainMicrotasks);
             shouldBe(asyncContextsWhenRejected.has(promise), true, `${name}: the embedder is told (${round})`);
-            const expected = context && !keepsNothing.includes(name) ? context : rejectedAtOnce.includes(name) || rejectedByScript.includes(name) ? context : whenTheJobsRun;
+            const reportedWhenTheJobsRun = keepsNothing.includes(name) || (!context && keepsNothingOfNoAsyncContext.includes(name));
+            const expected = reportedWhenTheJobsRun ? whenTheJobsRun : context;
             shouldBe(asyncContextsWhenRejected.get(promise)?.name, expected?.name, `${name}, in ${context?.name}: the async context the embedder is told in (${round})`);
         }
     }
@@ -126,7 +136,8 @@ function checkValues(round) {
         shouldBe(asyncContextsWhenRejected.has(promise), false, `a handled rejection is not reported (${round})`);
 }
 
-for (let round = 0; round < 200; round++) {
+// Enough rounds for the functions above to reach every tier.
+for (let round = 0; round < Math.max(2, testLoopCount / 50); round++) {
     check(round);
     checkValues(round);
 }

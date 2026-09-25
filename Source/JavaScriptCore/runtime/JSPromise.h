@@ -159,11 +159,12 @@ public:
     // This keeps `asyncContext`, the one the job is scheduled in, for that: where the promise's value will go,
     // which holds nothing while nothing has been done with the promise. A promise that has a reaction does
     // not keep it and does not need it, because a rejection of it is handled. Only rejectPromise() reads it.
+    // No async context (undefined) is kept too, as undefined: what was scheduled in none is reported in none.
     ALWAYS_INLINE void keepAsyncContextForUnhandledRejection(VM& vm, JSValue asyncContext)
     {
         ASSERT(vm.unhandledRejectionsAreReportedInAsyncContext());
-        if (asyncContext && asyncContext.isCell() && status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell())
-            setSlot(vm, asyncContext);
+        if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell())
+            setSlot(vm, asyncContext ? asyncContext : jsUndefined());
     }
 #endif
 

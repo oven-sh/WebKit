@@ -1818,20 +1818,22 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
 
-        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
-
 #if USE(BUN_JSC_ADDITIONS)
         if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
             AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
             // What rejects promiseToResolve, if `promise` is rejected, is a job that runs no script.
             if (vm.unhandledRejectionsAreReportedInAsyncContext())
                 promiseToResolve->keepAsyncContextForUnhandledRejection(vm, arguments[2]);
+            if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+                RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
             scope.release();
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
             return;
         }
 #endif
+
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
 
         scope.release();
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
