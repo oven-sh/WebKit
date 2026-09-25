@@ -124,6 +124,12 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 
 void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames)
 {
+    // materializeErrorInfoIfNeeded() is formatting m_stackTrace right now: the hook set the flag
+    // and still reads the frames. A capture from inside the hook's callback (Error.prepareStackTrace)
+    // on the error being formatted keeps the frames the callback was given.
+    if (m_errorInfoMaterialized && m_stackTrace)
+        return;
+
     std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>(WTF::move(stackFrames));
 
     Locker locker { cellLock() };
@@ -133,6 +139,10 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
 #endif
+    // New frames arm the lazy error info again: the next lookup of stack, line, column or
+    // sourceURL formats them, even if an earlier lookup already materialized the old frames.
+    m_errorInfoMaterialized = false;
+    m_stackPropertyAlreadyMaterialized = false;
     vm.writeBarrier(this);
 }
 
