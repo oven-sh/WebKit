@@ -75,8 +75,6 @@ public:
         return m_length;
     }
     
-    uint32_t length(JSGlobalObject*) const;
-    
     bool isMappedArgument(uint32_t i) const
     {
         return i < m_length && (!m_mappedArguments || !m_mappedArguments.at(i));
