@@ -160,6 +160,9 @@ public:
     // which holds nothing while nothing has been done with the promise. A promise that has a reaction does
     // not keep it and does not need it, because a rejection of it is handled. Only rejectPromise() reads it.
     // No async context (undefined) is kept too, as undefined: what was scheduled in none is reported in none.
+    // So is what such a job rejects when the promise kept nothing (then() with no handler for a rejection,
+    // called in no async context or on a promise that is rejected already, leaves nothing that carries one):
+    // never in whatever the job before left.
     ALWAYS_INLINE void keepAsyncContextForUnhandledRejection(VM& vm, JSValue asyncContext)
     {
         ASSERT(vm.unhandledRejectionsAreReportedInAsyncContext());
@@ -186,6 +189,12 @@ public:
     void performPromiseThenWithContext(VM&, JSGlobalObject*, JSValue onFulfilled, JSValue onRejected, JSValue, JSValue context);
 #endif
     void rejectPromise(VM&, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    // rejectPromise(), for a job that runs no script: see keepAsyncContextForUnhandledRejection().
+    void rejectPromiseInJobWithoutScript(VM&, JSValue);
+    enum class RejectedBy : uint8_t { Script, JobWithoutScript };
+    template<RejectedBy> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
+#endif
     void fulfillPromise(VM&, JSValue);
     void resolvePromise(JSGlobalObject*, VM&, JSValue);
 

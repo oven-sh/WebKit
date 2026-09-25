@@ -1647,6 +1647,12 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // As rejectPromiseInJobWithoutScript(): if the capability's promise kept no async context, it is rejected in
+    // none. (Entering none changes nothing unless async contexts are tracked.)
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, jsUndefined());
+#endif
+
     if (status == JSPromise::Status::Rejected) {
         JSValue reject = capability.get(globalObject, vm.propertyNames->reject);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1680,7 +1686,11 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
+#if USE(BUN_JSC_ADDITIONS)
+            promise->rejectPromiseInJobWithoutScript(vm, resolution);
+#else
             promise->rejectPromise(vm, resolution);
+#endif
             break;
         }
         return;

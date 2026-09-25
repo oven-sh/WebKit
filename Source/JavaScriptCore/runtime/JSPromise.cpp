@@ -693,7 +693,12 @@ static NEVER_INLINE void reportUnhandledRejectionInAsyncContext(VM& vm, JSGlobal
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+template<JSPromise::RejectedBy rejectedBy>
+ALWAYS_INLINE void JSPromise::rejectPromiseImpl(VM& vm, JSValue argument)
+#else
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
+#endif
 {
     ASSERT(status() == Status::Pending);
     JSGlobalObject* globalObject = realm();
@@ -717,6 +722,10 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
             JSValue keptAsyncContext = m_slot.get();
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
+            if constexpr (rejectedBy == RejectedBy::JobWithoutScript) {
+                if (!keptAsyncContext && vm.unhandledRejectionsAreReportedInAsyncContext())
+                    keptAsyncContext = jsUndefined();
+            }
             if (keptAsyncContext) [[unlikely]]
                 reportUnhandledRejectionInAsyncContext(vm, globalObject, this, keptAsyncContext);
             else
@@ -740,6 +749,18 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     }
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::rejectPromise(VM& vm, JSValue argument)
+{
+    rejectPromiseImpl<RejectedBy::Script>(vm, argument);
+}
+
+void JSPromise::rejectPromiseInJobWithoutScript(VM& vm, JSValue argument)
+{
+    rejectPromiseImpl<RejectedBy::JobWithoutScript>(vm, argument);
+}
+#endif
 
 void JSPromise::fulfillPromise(VM& vm, JSValue argument)
 {

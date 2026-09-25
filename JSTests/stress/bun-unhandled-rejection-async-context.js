@@ -75,16 +75,12 @@ const rejectedAtOnce = ["Promise.reject()", "new Promise, rejected by its execut
 const A = { name: "A" };
 const B = { name: "B" };
 
-// then() with no handler for a rejection keeps nothing when it is called on a promise that is already rejected,
-// or in no async context: the rejection is reported in whatever is current when the job runs.
+// then() with no handler for a rejection, called on a promise that is already rejected, keeps nothing: the
+// rejection is reported in no async context, as what is scheduled in none is. Never in whatever is current when
+// the job runs.
 const keepsNothing = [
     "then() with no handler for the rejection, of a rejected promise",
     "then() with no handlers, of a rejected promise",
-];
-const keepsNothingOfNoAsyncContext = [
-    "then() with no handler for the rejection, of a pending promise",
-    "then() with no handler for the rejection, of a pending instance of a subclass",
-    "a chain of then() with no handler for the rejection",
 ];
 
 function check(round) {
@@ -93,11 +89,9 @@ function check(round) {
             asyncContextsWhenRejected.clear();
             const promise = inContext(context, form);
             // What is current when the jobs run is not what counts.
-            const whenTheJobsRun = context === A ? B : A;
-            inContext(whenTheJobsRun, drainMicrotasks);
+            inContext(context === A ? B : A, drainMicrotasks);
             shouldBe(asyncContextsWhenRejected.has(promise), true, `${name}: the embedder is told (${round})`);
-            const reportedWhenTheJobsRun = keepsNothing.includes(name) || (!context && keepsNothingOfNoAsyncContext.includes(name));
-            const expected = reportedWhenTheJobsRun ? whenTheJobsRun : context;
+            const expected = keepsNothing.includes(name) ? undefined : context;
             shouldBe(asyncContextsWhenRejected.get(promise)?.name, expected?.name, `${name}, in ${context?.name}: the async context the embedder is told in (${round})`);
         }
     }
