@@ -57,6 +57,12 @@ public:
     WTF_EXPORT_PRIVATE static URLEncodedForm parseURLEncodedForm(StringView);
     WTF_EXPORT_PRIVATE static std::optional<KeyValuePair<String, String>> parseQueryNameAndValue(StringView);
     WTF_EXPORT_PRIVATE static String serialize(const URLEncodedForm&);
+    // std::nullopt when the result does not fit in a String. serialize() crashes then.
+    WTF_EXPORT_PRIVATE static std::optional<String> trySerialize(const URLEncodedForm&);
+
+    // The longest string that a parsed URL or trySerialize() gives. That is String::MaxLength, unless a test lowers it to
+    // reach the limit with input that is not gigabytes long.
+    WTF_EXPORT_PRIVATE static void setMaximumLengthForTesting(unsigned);
 
     WTF_EXPORT_PRIVATE static bool NODELETE isSpecialScheme(StringView);
     WTF_EXPORT_PRIVATE static std::optional<String> maybeCanonicalizeScheme(StringView scheme);
@@ -74,14 +80,32 @@ private:
 
     friend class URL;
 
+    // Vector::expandCapacity() asks for Malloc::nextCapacity(), and crashes when that is more than a Vector holds even if
+    // the capacity it needs is not. m_asciiBuffer holds up to String::MaxLength characters, so it never asks for more.
+    struct ASCIIBufferMalloc : VectorBufferMalloc {
+        static constexpr size_t nextCapacity(size_t capacity) { return std::min<size_t>(VectorBufferMalloc::nextCapacity(capacity), String::MaxLength); }
+    };
+
     URL& m_url;
-    Vector<Latin1Character, 256> m_asciiBuffer;
+    Vector<Latin1Character, 256, CrashOnOverflow, 16, ASCIIBufferMalloc> m_asciiBuffer;
     bool m_urlIsSpecial { false };
     bool m_urlIsFile { false };
     bool m_hostHasPercentOrNonASCII { false };
     bool m_didSeeSyntaxViolation { false };
+    // The URL does not fit in a String. failure() then gives the null URL, not an invalid URL that keeps the input.
+    bool m_resultIsTooLong { false };
     String m_inputString;
     const void* m_inputBegin { nullptr };
+
+    // This keeps m_asciiBuffer within s_maximumLength. Each append to it is one of three kinds. It copies characters of the
+    // input or of the base URL. It adds a bounded number of characters: a slash, a port, an IP address, an IDNA host. Or it
+    // percent-encodes, which alone can multiply the length. The constructor refuses an input that is longer than
+    // s_maximumLength together with the base URL and lengthReservedForBoundedAdditions. What is left is this budget: the
+    // number of characters percent-encoding may add on top of the one character per code unit that a copy adds.
+    size_t m_percentEncodingBudget { 0 };
+    static constexpr size_t lengthReservedForBoundedAdditions = 2 * hostnameBufferLength;
+    static std::atomic<unsigned> s_maximumLength;
+    bool takeFromPercentEncodingBudget(size_t);
 
     static constexpr size_t defaultInlineBufferSize = 2048;
     using Latin1Buffer = Vector<Latin1Character, defaultInlineBufferSize>;
