@@ -5,9 +5,10 @@
 //@ runDefault("--useJIT=0", "--collectContinuously=1")
 
 // The LLInt caches a get_by_id that finds its value on the prototype chain (GetByIdMode::ProtoLoad) after
-// a countdown. The countdown starts again when the cache is cleared by a watchpoint, when an own property
-// replaces it, and when the cache is made, so that a receiver of another structure can replace it. The
-// cache made after that must be as correct as the first one.
+// a countdown. With Options::useLLIntPrototypeCacheRearming() the countdown starts again after the site tried to
+// make the cache, and when a watchpoint, a collection or an own property takes the cache away. So a receiver of
+// another structure can get the cache. A site tries a limited number of times. The cache that a later try makes
+// must be as correct as the first one.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -19,6 +20,8 @@ const options = jscOptions();
 // The cache of a site can be told only while the function runs in the LLInt.
 const interpreterOnly = !options.useJIT && options.useLLIntICs && options.prototypeHitCountForLLIntCaching > 0;
 const rearms = options.useLLIntPrototypeCacheRearming;
+// GetByIdSiteCounts::maxCacheSetupCount
+const maxTries = rearms ? 4 : 1;
 
 // Functions of the same source share their code, and so their caches. Each getter has its own source.
 let getters = 0;
@@ -35,7 +38,7 @@ function makeClass() {
     return Unique;
 }
 
-// The site has a cache of this kind, and the fast path serves the receiver from it.
+// The site has a cache of this kind, and it is for this receiver.
 function expectCache(get, receiver, kind, message) {
     if (!interpreterOnly)
         return;
@@ -55,7 +58,12 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     shouldBe($vm.llintGetByIdCacheHits(get, receiver)[0], false, message);
 }
 
-// The receiver gets a new structure after the cache is made: "re-armed after a transition".
+function expectTries(get, expected, message) {
+    if (interpreterOnly)
+        shouldBe($vm.llintGetByIdCacheSetupCounts(get)[0], Math.min(expected, maxTries), message);
+}
+
+// The receiver gets a new structure after the cache is made.
 {
     const C = makeClass();
     C.prototype.value = "proto";
@@ -65,14 +73,17 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     for (let i = 0; i < warmUp; ++i)
         shouldBe(get(o), "proto");
     expectCache(get, o, "proto", "first cache");
+    expectTries(get, 1, "first cache");
     o.b = 2; // Transition.
     for (let i = 0; i < warmUp; ++i)
         shouldBe(get(o), "proto", "after the transition");
     expectLaterCache(get, o, "proto", "proto", "cache after the transition");
+    expectTries(get, 2, "cache after the transition");
     o.c = 3; // And again.
     for (let i = 0; i < warmUp; ++i)
         shouldBe(get(o), "proto", "after the second transition");
     expectLaterCache(get, o, "proto", "proto", "cache after the second transition");
+    expectTries(get, 3, "cache after the second transition");
     shouldBe(get(before), "proto");
 
     // The value is replaced on the prototype.
@@ -90,7 +101,6 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     shouldBe(get(o), "back");
     for (let i = 0; i < warmUp; ++i)
         shouldBe(get(o), "back");
-    expectLaterCache(get, o, "proto", "empty", "cache after the property came back");
     // The receiver gets the property.
     o.value = "own";
     shouldBe(get(o), "own");
@@ -101,6 +111,27 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     for (let i = 0; i < warmUp; ++i)
         shouldBe(get(o), "back", "after the own property is deleted");
     shouldBe(get(before), "back");
+    expectTries(get, maxTries, "at the end");
+}
+
+// A watchpoint clears the cache, and the property comes back.
+{
+    const C = makeClass();
+    C.prototype.value = "proto";
+    const get = makeGetter();
+    const o = new C;
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(get(o), "proto");
+    expectCache(get, o, "proto");
+    delete C.prototype.value;
+    if (interpreterOnly)
+        shouldBe($vm.llintGetByIdCaches(get)[0], "empty", "after the watchpoint");
+    shouldBe(get(o), undefined);
+    C.prototype.value = "back";
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(get(o), "back");
+    expectLaterCache(get, o, "proto", "empty", "cache after the property came back");
+    expectTries(get, 2, "cache after the property came back");
 }
 
 // The site sees an own property first. Without rearming that stops the prototype cache for the life of the code.
@@ -131,7 +162,26 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
         shouldBe(get(p), "proto");
 }
 
-// A watchpoint clears the cache, and the same structure is cached again.
+// An own property replaces the prototype load cache, and the site has no entry of that cache left.
+{
+    const C = makeClass();
+    C.prototype.value = "proto";
+    const get = makeGetter();
+    const o = new C;
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(get(o), "proto");
+    expectCache(get, o, "proto");
+    const own = { value: "own" };
+    shouldBe(get(own), "own");
+    expectCache(get, own, "self");
+    // What guarded the cache of o fires nothing at this site now.
+    delete C.prototype.value;
+    expectCache(get, own, "self", "after a change to the prototype of the cache that was replaced");
+    shouldBe(get(o), undefined);
+    shouldBe(get(own), "own");
+}
+
+// A watchpoint clears the cache, and the same structure is cached again, for as long as the site can try.
 {
     const top = { value: "top" };
     const middle = Object.create(top);
@@ -142,10 +192,10 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     for (let round = 0; round < 6; ++round) {
         for (let i = 0; i < warmUp; ++i)
             shouldBe(get(o), "top", "round " + round);
-        if (!round)
-            expectCache(get, o, "proto");
-        else
-            expectLaterCache(get, o, "proto", "empty", "cache in round " + round);
+        if (round < maxTries)
+            expectCache(get, o, "proto", "cache in round " + round);
+        else if (interpreterOnly)
+            shouldBe($vm.llintGetByIdCaches(get)[0], "empty", "no cache in round " + round);
         // The prototype of an object of the chain is replaced and put back: its structure changes and the watchpoint fires.
         Object.setPrototypeOf(middle, { value: "other top" });
         shouldBe(get(o), "other top", "after the watchpoint fired, round " + round);
@@ -171,15 +221,15 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     const get = new Function("a", "return a.indexOf;");
     const arrays = [[], [1, 2], [1.5, 2.5], ["a", { }], [, 1], new Array(100000)];
     arrays[5][99999] = 1;
+    let tries = 0;
     for (let round = 0; round < 5; ++round) {
         for (const array of arrays) {
             for (let i = 0; i < warmUp; ++i)
                 shouldBe(get(array), Array.prototype.indexOf);
             // Without rearming the site has the structure of the first array for the life of the code.
-            if (array === arrays[0])
-                expectCache(get, array, "proto");
-            else
-                expectLaterCache(get, array, "proto", "proto", "array " + arrays.indexOf(array) + " in round " + round);
+            if (++tries <= maxTries)
+                expectCache(get, array, "proto", "array " + arrays.indexOf(array) + " in round " + round);
+            expectTries(get, tries);
         }
     }
     const original = Array.prototype.indexOf;
@@ -196,7 +246,7 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     }
 }
 
-// Two structures that alternate at one site.
+// Two structures that alternate at one site: each try makes a cache that the next receiver misses.
 {
     const proto = { value: "shared" };
     const a = Object.create(proto);
@@ -206,6 +256,9 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     const get = makeGetter();
     for (let i = 0; i < warmUp * 4; ++i)
         shouldBe(get(i & 1 ? a : b), "shared");
+    expectTries(get, maxTries, "two structures that alternate");
+    if (interpreterOnly)
+        shouldBe($vm.llintGetByIdCaches(get)[0], "proto");
     proto.value = "changed";
     shouldBe(get(a), "changed");
     shouldBe(get(b), "changed");
@@ -218,9 +271,10 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
     shouldBe(get(a), "object");
     shouldBe(get(b), "object");
     delete Object.prototype.value;
+    expectTries(get, maxTries, "at the end");
 }
 
-// A present value, an absent value and an own value at one site, in turns. After 255 misses the site keeps what it has.
+// A present value, an absent value and an own value at one site, in turns.
 {
     const WithProto = makeClass();
     WithProto.prototype.value = "proto";
@@ -233,6 +287,7 @@ function expectLaterCache(get, receiver, kind, kindWithNoRearming, message) {
                 shouldBe(get(receiver), expected, "round " + round);
         }
     }
+    expectTries(get, maxTries, "three kinds of result");
     Without.prototype.value = "now present";
     shouldBe(get(receivers[1][0]), "now present");
     delete WithProto.prototype.value;
