@@ -144,10 +144,6 @@ Parser<LexerType>::Parser(VM& vm, const SourceCode& source, ImplementationVisibi
 {
     m_lexer = makeUnique<LexerType>(vm, builtinMode, scriptMode);
     m_lexer->setCode(source, &m_parserArena);
-    // The first parse of a source is of all of it, or of a function that is nearly all of it (a builtin with a source
-    // of its own, the Function constructor), so it reads the lines and the text need not be read again to find them.
-    if (source.provider()->wantsLineStarts())
-        m_lexer->collectLineStarts();
     m_token.m_startPosition.offset = source.startOffset();
     m_token.m_endPosition.offset = source.startOffset();
     m_functionCache = vm.addSourceProviderCache(source.provider());

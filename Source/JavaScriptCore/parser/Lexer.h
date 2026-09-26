@@ -27,7 +27,6 @@
 #include "ParserModes.h"
 #include "ParserTokens.h"
 #include "SourceCode.h"
-#include <optional>
 #include <wtf/ASCIICType.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -82,17 +81,6 @@ public:
     String sourceURLDirective() const { return m_sourceURLDirective; }
     String sourceMappingURLDirective() const { return m_sourceMappingURLDirective; }
     void clear();
-
-    // From here on, where each line of the source's text starts is collected, in shiftLineTerminator(): nothing may
-    // move m_code over a line terminator in another way. A function that the parser skips (SourceProviderCache) is one
-    // that this lexer has read: had a lexer before it, the source would have its line starts.
-    void collectLineStarts()
-    {
-        m_lineStarts.emplace();
-        m_lineStarts->scan(std::span { m_codeStart, m_codeEnd }, 0, currentOffset());
-    }
-    std::optional<LineStartTable::Builder> takeLineStarts() { return std::exchange(m_lineStarts, std::nullopt); }
-
     void clearErrorCodeAndBuffers()
     {
         m_error = 0;
@@ -227,7 +215,6 @@ private:
     JSParserScriptMode m_scriptMode;
     unsigned m_sourceOffset;
     const T* m_codeStartPlusOffset;
-    std::optional<LineStartTable::Builder> m_lineStarts;
 
     static void verifyLayout();
 };

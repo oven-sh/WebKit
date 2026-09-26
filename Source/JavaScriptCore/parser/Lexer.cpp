@@ -714,10 +714,6 @@ void Lexer<T>::shiftLineTerminator()
 
     if (isCRLFPair(prev, m_current))
         shift();
-
-    // Not again for a line that the parser went back over.
-    if (m_lineStarts && static_cast<unsigned>(currentOffset()) > m_lineStarts->lastLineStart())
-        m_lineStarts->append(currentOffset());
 }
 
 static ALWAYS_INLINE bool isRestrKeyword(JSTokenType token)
@@ -1265,14 +1261,8 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
         auto quotes = SIMD::equal(input, quoteMask);
         auto escapes = SIMD::equal(input, escapeMask);
         auto controls = SIMD::lessThan(input, controlMask);
-        if constexpr (std::is_same_v<T, Latin1Character>) {
+        if constexpr (std::is_same_v<T, Latin1Character> || !shouldBuildStrings) {
             auto mask = SIMD::bitOr(quotes, escapes, controls);
-            return SIMD::findFirstNonZeroIndex(mask);
-        } else if constexpr (!shouldBuildStrings) {
-            // U+2028 and U+2029 are allowed in a string and end a line there. Every line terminator has to get to
-            // shiftLineTerminator(), which is where the slow case takes these.
-            auto separators = SIMD::equal(SIMD::bitAnd(input, SIMD::splat<UnsignedType>(0xfffe)), SIMD::splat<UnsignedType>(0x2028));
-            auto mask = SIMD::bitOr(quotes, escapes, controls, separators);
             return SIMD::findFirstNonZeroIndex(mask);
         } else {
             auto nonLatin1 = SIMD::greaterThan(input, nonLatin1Mask);
@@ -1289,10 +1279,8 @@ template <bool shouldBuildStrings> ALWAYS_INLINE typename Lexer<T>::StringParseR
         if (character < 0xE)
             return true;
 
-        if constexpr (std::is_same_v<T, Latin1Character>)
+        if constexpr (std::is_same_v<T, Latin1Character> || !shouldBuildStrings)
             return false;
-        else if constexpr (!shouldBuildStrings)
-            return character == 0x2028 || character == 0x2029;
         else
             return !isLatin1(character);
     };
