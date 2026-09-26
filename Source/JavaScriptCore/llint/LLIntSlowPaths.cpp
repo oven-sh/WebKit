@@ -1024,7 +1024,11 @@ static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm
 static ALWAYS_INLINE void countDownToGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
 {
     // A site in ProtoLoad mode has a cache for a receiver of another structure, and counts down in its entry.
-    ASSERT(!!guardsInProtoLoadMode == (metadata.mode == GetByIdMode::ProtoLoad));
+    // The site has its counts in its metadata again if a watchpoint cleared that cache after the call was counted.
+    if (metadata.mode != GetByIdMode::ProtoLoad)
+        guardsInProtoLoadMode = nullptr;
+    else if (!guardsInProtoLoadMode)
+        return;
     uint8_t& hitCount = guardsInProtoLoadMode ? guardsInProtoLoadMode->counts.hitCountForLLIntCaching : metadata.hitCountForLLIntCaching;
     if (!hitCount || --hitCount)
         return;
