@@ -218,6 +218,28 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     expectCount(5, "after a collection");
 }
 
+// The count stays with the site when an own property takes the place of a prototype load cache.
+if (options.useLLIntICs && (missCount > 8 || !missCount)) {
+    class WithMethod {
+        method() { }
+    }
+    WithMethod.prototype.alsoUniqueToThisTest = true;
+    function replaced(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const viaPrototype = new WithMethod;
+    for (let i = 0; i < 3; ++i)
+        shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "proto");
+    const own = { method() { } };
+    shouldBe(replaced(own), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "self");
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 3 : 0, "the count of replaced()");
+    shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 4 : 0, "the count of replaced() after one more miss");
+}
+
 // One call with a long loop: the loop enters the Baseline JIT code.
 {
     function loop(objects, turns) {
