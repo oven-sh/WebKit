@@ -41,11 +41,18 @@ ModuleAnalyzer::ModuleAnalyzer(JSGlobalObject* globalObject, JSModuleLoader* mod
 {
 }
 
-void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, AbstractModuleRecord::ModulePhase phase)
+void ModuleAnalyzer::appendRequestedModule(const Identifier& specifier, RefPtr<ScriptFetchParameters>&& attributes, ImportAttributesListNode* attributesList, AbstractModuleRecord::ModulePhase phase)
 {
     ModuleMapKey key { specifier.impl(), attributes ? attributes->type() : ScriptFetchParameters::Type::JavaScript };
-    if (m_requestedModules[phase].add(key).isNewEntry)
+    if (m_requestedModules[phase].add(key).isNewEntry) {
         moduleRecord()->appendRequestedModule(specifier, WTF::move(attributes), phase);
+#if USE(BUN_JSC_ADDITIONS)
+        m_requestedModuleAttributesLists.append(attributesList);
+#endif
+    }
+#if !USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(attributesList);
+#endif
 }
 
 void ModuleAnalyzer::exportVariable(ModuleProgramNode& moduleProgramNode, const RefPtr<UniquedStringImpl>& localName, const VariableEnvironmentEntry& variable)
