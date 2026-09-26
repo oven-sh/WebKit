@@ -60,6 +60,11 @@ const forms = {
     "then() with no handler for the rejection, of a pending instance of a subclass": () => new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }).then(noop),
     "then() with no handler for the rejection, of a rejected promise": () => alreadyRejected().then(noop),
     "then() with no handlers, of a rejected promise": () => alreadyRejected().then(),
+    "then() with no handler for the rejection, of a rejected instance of a subclass": () => {
+        const rejected = Subclass.reject(error());
+        rejected.catch(noop);
+        return rejected.then(noop);
+    },
     "finally() of a rejected promise": () => alreadyRejected().finally(noop),
     "a chain of then() with no handler for the rejection": () => alreadyRejected().then(noop).then(noop).then(noop),
 
@@ -75,14 +80,6 @@ const rejectedAtOnce = ["Promise.reject()", "new Promise, rejected by its execut
 const A = { name: "A" };
 const B = { name: "B" };
 
-// then() with no handler for a rejection, called on a promise that is already rejected, keeps nothing: the
-// rejection is reported in no async context, as what is scheduled in none is. Never in whatever is current when
-// the job runs.
-const keepsNothing = [
-    "then() with no handler for the rejection, of a rejected promise",
-    "then() with no handlers, of a rejected promise",
-];
-
 function check(round) {
     for (const [name, form] of Object.entries(forms)) {
         for (const context of [A, B, undefined]) {
@@ -91,8 +88,7 @@ function check(round) {
             // What is current when the jobs run is not what counts.
             inContext(context === A ? B : A, drainMicrotasks);
             shouldBe(asyncContextsWhenRejected.has(promise), true, `${name}: the embedder is told (${round})`);
-            const expected = keepsNothing.includes(name) ? undefined : context;
-            shouldBe(asyncContextsWhenRejected.get(promise)?.name, expected?.name, `${name}, in ${context?.name}: the async context the embedder is told in (${round})`);
+            shouldBe(asyncContextsWhenRejected.get(promise)?.name, context?.name, `${name}, in ${context?.name}: the async context the embedder is told in (${round})`);
         }
     }
 }

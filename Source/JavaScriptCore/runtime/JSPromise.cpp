@@ -382,6 +382,22 @@ void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+static JSPromise* promiseOf(JSValue promiseOrCapability);
+
+// The end of performPromiseThen() for a rejected promise and no handler for the rejection, in an async context:
+// what rejects `promiseOrCapability` is a job with no handler.
+static NEVER_INLINE void passRejectionOnInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* rejected, JSValue promiseOrCapability, JSValue reason, JSValue asyncContext)
+{
+    rejected->markAsHandled();
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]] {
+        if (auto* promise = promiseOf(promiseOrCapability))
+            promise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
+    }
+    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(JSPromise::Status::Rejected), promiseOrCapability, reason, jsUndefined());
+}
+#endif
+
 void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue onFulfilled, JSValue onRejected, JSValue promiseOrCapability)
 {
     bool fulfilledCallable = onFulfilled.isCallable();
@@ -444,6 +460,10 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected) | payloadFlags, promiseOrCapability, onRejected, settled, asyncContext);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+        else if (hasAsyncContext) [[unlikely]]
+            return passRejectionOnInAsyncContext(vm, globalObject, this, promiseOrCapability, settled, asyncContext);
 #endif
         else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
