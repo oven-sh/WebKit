@@ -82,6 +82,9 @@ public:
         restoreEarly();
     }
 
+    // False until async contexts are tracked.
+    ALWAYS_INLINE bool hasEntered() const { return m_asyncContextData; }
+
     // Restore the previous async context before the scope's natural end. Later
     // destruction becomes a no-op. Use this when the tail of a case must run
     // with the caller's context restored (e.g. resolving a promise whose

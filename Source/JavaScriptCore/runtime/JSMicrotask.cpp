@@ -1855,6 +1855,19 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
     asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// promiseResolveThenableJobFastSlow() leaves a job that has a handler, which runs in the async context it is left in:
+// once VM::reportsUnhandledRejectionsInAsyncContext(), that is the one this job was scheduled in.
+static NEVER_INLINE void promiseResolveThenableJobFastSlowInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSPromise* promise, JSPromise* promiseToResolve, JSValue asyncContext)
+{
+    if (!vm.reportsUnhandledRejectionsInAsyncContext())
+        return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    promiseToResolve->keepAsyncContextForUnhandledRejection(vm, asyncContext);
+    promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+}
+#endif
+
 void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCallCache* microtaskCallCache)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1870,25 +1883,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
-            AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
-            // What rejects promiseToResolve, if `promise` is rejected, is a job with no handler.
-            if (vm.reportsUnhandledRejectionsInAsyncContext())
-                promiseToResolve->keepAsyncContextForUnhandledRejection(vm, arguments[2]);
-            if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]] {
-                // The slow path leaves a job that has a handler, which runs in the async context it is left in.
-                if (!vm.reportsUnhandledRejectionsInAsyncContext())
-                    asyncContextScope.restoreEarly();
-                RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
-            }
-            scope.release();
-            promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
-            return;
-        }
-#endif
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlowInAsyncContext(globalObject, vm, promise, promiseToResolve, arguments[2]));
 
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
+        // What rejects promiseToResolve, if `promise` is rejected, is a job with no handler.
+        if (asyncContextScope.hasEntered() && vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+            promiseToResolve->keepAsyncContextForUnhandledRejection(vm, arguments[2]);
+#else
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
             RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
+#endif
 
         scope.release();
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
