@@ -286,6 +286,8 @@ public:
     void removeExceptionHandlerForCallSite(DisposableCallSiteIndex);
 
     LineColumn lineColumnForBytecodeIndex(BytecodeIndex) const;
+    // For a thread that runs beside the mutator. It keeps nothing, so it decodes the expression info on every call.
+    LineColumn lineColumnForBytecodeIndexConcurrently(BytecodeIndex) const;
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex) const;
 
     std::optional<BytecodeIndex> bytecodeIndexFromCallSiteIndex(CallSiteIndex);

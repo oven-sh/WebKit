@@ -2580,6 +2580,11 @@ LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) co
     return provider.documentLineColumn(m_unlinkedCode->lineColumnInTextForBytecodeIndex(bytecodeIndex, provider, sourceOffset()));
 }
 
+LineColumn CodeBlock::lineColumnForBytecodeIndexConcurrently(BytecodeIndex bytecodeIndex) const
+{
+    return source().provider()->documentLineColumnForOffset(expressionInfoForBytecodeIndex(bytecodeIndex).divot);
+}
+
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);

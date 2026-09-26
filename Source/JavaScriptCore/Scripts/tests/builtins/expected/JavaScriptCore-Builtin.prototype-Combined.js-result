@@ -200,6 +200,8 @@ constinit const JSC::BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[JSC::numbe
 };
 static_assert(4 == JSC::numberOfBuiltinCodes);
 
+constinit const unsigned s_JSCBuiltinSourceStarts[JSC::numberOfBuiltinCodes] = { 0, 762, 1456, 2694 };
+
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

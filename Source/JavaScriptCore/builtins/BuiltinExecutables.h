@@ -62,6 +62,7 @@ struct BuiltinSourceMetadata {
 
 // Emitted by the builtins generator, indexed by BuiltinCodeIndex.
 extern constinit const BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[numberOfBuiltinCodes];
+extern constinit const unsigned s_JSCBuiltinSourceStarts[numberOfBuiltinCodes]; // in s_JSCCombinedCode
 
 class BuiltinExecutables {
     WTF_MAKE_TZONE_ALLOCATED(BuiltinExecutables);
@@ -91,7 +92,7 @@ private:
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
 
-    const Ref<StringSourceProvider> m_combinedSourceProvider;
+    const Ref<BuiltinsSourceProvider> m_combinedSourceProvider;
     UnlinkedFunctionExecutable* m_unlinkedExecutables[numberOfBuiltinCodes] { };
 };
 

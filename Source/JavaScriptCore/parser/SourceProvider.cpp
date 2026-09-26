@@ -29,6 +29,7 @@
 #include <numeric>
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
+#include <wtf/LEBDecoder.h>
 #include <wtf/ProcessID.h>
 #include <wtf/text/MakeString.h>
 
@@ -145,19 +146,15 @@ BaseWebAssemblySourceProvider::BaseWebAssemblySourceProvider(const SourceOrigin&
 }
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 // Where each line of a text starts, in about one byte per line:
 //
 //     u32 lineCount
 //     { u32 lineStart, u32 streamOffset }   one per block of linesPerBlock lines
 //     stream                                for each line but the last of its block: its length, terminator included, as a LEB128
 //
-// Every number is little-endian and read a byte at a time, so the bytes need no alignment.
+// The u32s are in the byte order of the machine and are copied out, so the bytes need no alignment.
 class EncodedLineStarts {
 public:
-    static constexpr unsigned linesPerBlock = 64;
-
     struct Line {
         unsigned line0Based;
         unsigned start;
@@ -194,6 +191,8 @@ public:
     }
 
 private:
+    static constexpr unsigned linesPerBlock = LineStartTable::linesPerBlock;
+
     unsigned load32(size_t at) const
     {
         uint32_t value;
@@ -211,11 +210,11 @@ private:
     {
         Line line { block * linesPerBlock, blockLineStart(block) };
         unsigned end = std::min(line.line0Based + linesPerBlock, m_lineCount);
-        const uint8_t* cursor = m_bytes.data() + sizeof(uint32_t) * (1 + 2 * blockCount()) + blockStreamOffset(block);
+        size_t cursor = sizeof(uint32_t) * (1 + 2 * blockCount()) + blockStreamOffset(block);
         while (line.line0Based + 1 < end) {
-            unsigned length = *cursor & 0x7f;
-            for (unsigned shift = 7; *cursor++ & 0x80; shift += 7)
-                length |= (*cursor & 0x7f) << shift;
+            uint32_t length;
+            bool decoded = WTF::LEBDecoder::decodeUInt(m_bytes, cursor, length);
+            ASSERT_UNUSED(decoded, decoded);
             Line next { line.line0Based + 1, line.start + length };
             if (!accepts(next))
                 break;
@@ -228,65 +227,75 @@ private:
     unsigned m_lineCount;
 };
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+void LineStartTable::Builder::appendSlow(unsigned length)
+{
+    // append() has counted the line.
+    if ((m_lineCount - 1) % linesPerBlock) {
+        for (; length >= 0x80; length >>= 7)
+            m_stream.append(static_cast<uint8_t>(length | 0x80));
+        m_stream.append(static_cast<uint8_t>(length));
+        return;
+    }
+    m_header.append(m_lastLineStart);
+    m_header.append(static_cast<uint32_t>(m_stream.size()));
+}
 
 template<typename CharType>
-Vector<uint8_t> LineStartTable::build(std::span<const CharType> text)
+void LineStartTable::Builder::scan(std::span<const CharType> text, size_t begin, size_t end)
 {
-    Vector<uint32_t> header;
-    Vector<uint8_t> stream;
-    header.append(0); // lineCount, below
-    header.append(0);
-    header.append(0);
-
-    const CharType* const begin = text.data();
-    const CharType* const end = std::to_address(text.end());
-    unsigned lineCount = 1;
-    size_t index = 0;
-    while (index < text.size()) {
-        const CharType* found = findLineTerminator(text.subspan(index));
-        if (found == end)
+    size_t index = begin;
+    while (index < end) {
+        auto rest = text.subspan(index, end - index);
+        const CharType* found = findLineTerminator(rest);
+        if (found == std::to_address(rest.end()))
             break;
-        size_t next = lineStartAfterTerminator(text, static_cast<size_t>(found - begin));
-        if (lineCount % EncodedLineStarts::linesPerBlock) {
-            unsigned length = static_cast<unsigned>(next - index);
-            for (; length >= 0x80; length >>= 7)
-                stream.append(static_cast<uint8_t>(length | 0x80));
-            stream.append(static_cast<uint8_t>(length));
-        } else {
-            header.append(static_cast<uint32_t>(next));
-            header.append(static_cast<uint32_t>(stream.size()));
-        }
-        ++lineCount;
-        index = next;
+        index = lineStartAfterTerminator(text, static_cast<size_t>(found - text.data()));
+        append(static_cast<unsigned>(index));
     }
-    header[0] = lineCount;
-
-    Vector<uint8_t> encoded;
-    encoded.reserveInitialCapacity(header.sizeInBytes() + stream.size());
-    encoded.append(asByteSpan(header.span()));
-    encoded.appendVector(stream);
-    return encoded;
 }
 
-Vector<uint8_t> LineStartTable::encode(StringView text)
+template void LineStartTable::Builder::scan(std::span<const Latin1Character>, size_t, size_t);
+template void LineStartTable::Builder::scan(std::span<const char16_t>, size_t, size_t);
+
+void LineStartTable::Builder::scan(StringView text, size_t begin, size_t end)
 {
-    return text.is8Bit() ? build(text.span8()) : build(text.span16());
+    if (text.is8Bit())
+        scan(text.span8(), begin, end);
+    else
+        scan(text.span16(), begin, end);
 }
 
-void LineStartTable::setEncoded(std::span<const uint8_t> encoded)
+LineStarts LineStartTable::Builder::finish(StringView text, unsigned readTo)
+{
+    // A parser that went back over lines stops before the last of them.
+    scan(text, std::max(readTo, m_lastLineStart), text.length());
+    m_header[0] = m_lineCount;
+
+    static constexpr std::array<uint32_t, 3> oneLine { 1, 0, 0 };
+    if (m_lineCount == 1)
+        return { asByteSpan(std::span { oneLine }), nullptr };
+
+    auto header = asByteSpan(m_header.span());
+    Ref owner = ThreadSafeRefCountedFixedVector<uint8_t>::create(header.size() + m_stream.size());
+    memcpySpan(owner->span().first(header.size()), header);
+    memcpySpan(owner->span().subspan(header.size()), m_stream.span());
+    return { owner->span(), WTF::move(owner) };
+}
+
+void LineStartTable::setLineStarts(LineStarts&& lineStarts)
 {
     Locker locker { m_lock };
-    m_encoded = encoded;
+    if (isBuilt())
+        return;
+    m_lineStarts = WTF::move(lineStarts);
+    m_isBuilt.store(true, std::memory_order_release);
 }
 
-std::span<const uint8_t> LineStartTable::ensureBuilt(StringView text)
+const LineStarts& LineStartTable::ensureBuilt(StringView text)
 {
-    if (m_encoded.empty()) {
-        m_owned = encode(text);
-        m_encoded = m_owned.span();
-    }
-    return m_encoded;
+    if (!isBuilt())
+        setLineStarts(Builder().finish(text, 0));
+    return m_lineStarts;
 }
 
 static unsigned lineEndFor(StringView text, const EncodedLineStarts& lineStarts, unsigned line0Based)
@@ -304,41 +313,40 @@ static unsigned lineEndFor(StringView text, const EncodedLineStarts& lineStarts,
     return lineEnd;
 }
 
-static LineStartTable::PositionInfo positionWithoutLineEnd(const EncodedLineStarts& lineStarts, unsigned offset)
+LineColumn LineStartTable::lineColumnForOffset(StringView text, unsigned offset)
 {
-    auto line = lineStarts.lineContaining(offset);
-    return {
-        line.line0Based,
-        offset > line.start ? offset - line.start : 0,
-        line.start,
-        0,
-    };
-}
-
-LineStartTable::PositionInfo LineStartTable::lineAndColumnForOffset(StringView text, unsigned offset)
-{
-    Locker locker { m_lock };
-    return positionWithoutLineEnd(EncodedLineStarts { ensureBuilt(text) }, offset);
+    auto line = EncodedLineStarts { ensureBuilt(text).bytes }.lineContaining(offset);
+    return { line.line0Based, offset - line.start };
 }
 
 LineStartTable::PositionInfo LineStartTable::positionInfoForOffset(StringView text, unsigned offset)
 {
-    Locker locker { m_lock };
-    EncodedLineStarts lineStarts { ensureBuilt(text) };
-    auto info = positionWithoutLineEnd(lineStarts, offset);
-    info.lineEnd = lineEndFor(text, lineStarts, info.line0Based);
-    return info;
+    EncodedLineStarts lineStarts { ensureBuilt(text).bytes };
+    auto line = lineStarts.lineContaining(offset);
+    return {
+        line.line0Based,
+        offset - line.start,
+        line.start,
+        lineEndFor(text, lineStarts, line.line0Based),
+    };
 }
 
 unsigned LineStartTable::offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based)
 {
-    Locker locker { m_lock };
-    EncodedLineStarts lineStarts { ensureBuilt(text) };
+    EncodedLineStarts lineStarts { ensureBuilt(text).bytes };
 
     if (line0Based >= lineStarts.lineCount())
         return text.length();
 
     return std::min(lineStarts.startOfLine(line0Based) + column0Based, lineEndFor(text, lineStarts, line0Based));
+}
+
+LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
+{
+    unsigned start = *(std::ranges::upper_bound(m_starts, offset) - 1);
+    LineStartTable::Builder lines;
+    lines.scan(source().substring(start), 0, offset - start);
+    return { lines.lineCount() - 1, offset - start - lines.lastLineStart() };
 }
 
 } // namespace JSC

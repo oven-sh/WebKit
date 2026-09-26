@@ -4225,6 +4225,34 @@ private:
     CachedPtr<CachedExpressionInfo> m_expressionInfo; // written by the deferred cold pass, so it stays a fixed slot
 };
 
+// With the expression info, which is what leads to it: only code that throws reads either.
+class CachedLineStarts {
+public:
+    void encode(Encoder& encoder, const LineStarts& lineStarts)
+    {
+        m_bytes.shareElements(encoder, 0, 0);
+        if (!lineStarts)
+            return;
+        encoder.deferCold([this, &encoder, lineStarts] {
+            auto allocation = encoder.malloc(lineStarts.bytes.size(), 1);
+            memcpySpan(std::span { allocation.buffer(), lineStarts.bytes.size() }, lineStarts.bytes);
+            m_bytes.shareElements(encoder, allocation.offset(), safeCast<unsigned>(lineStarts.bytes.size()));
+        });
+    }
+
+    LineStarts decode(Decoder& decoder) const
+    {
+        auto bytes = m_bytes.borrow();
+        if (bytes.empty() || decoder.canBorrowPayload())
+            return { bytes, nullptr };
+        Ref owner = ThreadSafeRefCountedFixedVector<uint8_t>::create(bytes.begin(), bytes.end());
+        return { owner->span(), WTF::move(owner) };
+    }
+
+private:
+    CachedVector<uint8_t> m_bytes;
+};
+
 // The members only Program/Eval/Module code has (UnlinkedGlobalCodeBlock); a function record does not pay for them.
 template<typename CodeBlockType>
 class CachedGlobalCodeBlock : public CachedCodeBlock<CodeBlockType> {
@@ -4238,6 +4266,7 @@ protected:
         m_hasCapturedVariables = codeBlock.m_hasCapturedVariables;
         m_sourceURLDirective.encode(encoder, codeBlock.m_sourceURLDirective.get());
         m_sourceMappingURLDirective.encode(encoder, codeBlock.m_sourceMappingURLDirective.get());
+        m_lineStarts.encode(encoder, codeBlock.m_lineStarts);
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedGlobalCodeBlock& codeBlock) const
     {
@@ -4246,6 +4275,7 @@ protected:
         codeBlock.m_hasCapturedVariables = m_hasCapturedVariables;
         codeBlock.m_sourceURLDirective = m_sourceURLDirective.decode(decoder);
         codeBlock.m_sourceMappingURLDirective = m_sourceMappingURLDirective.decode(decoder);
+        codeBlock.m_lineStarts = m_lineStarts.decode(decoder);
     }
 
 private:
@@ -4254,6 +4284,7 @@ private:
     bool m_hasCapturedVariables;
     CachedRefPtr<CachedStringImpl> m_sourceURLDirective;
     CachedRefPtr<CachedStringImpl> m_sourceMappingURLDirective;
+    CachedLineStarts m_lineStarts;
 };
 
 class CachedProgramCodeBlock : public CachedGlobalCodeBlock<UnlinkedProgramCodeBlock> {
@@ -5441,19 +5472,22 @@ public:
     {
     }
 
-    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, unsigned sourceLength, unsigned embedderStamp)
+    void encode(Encoder& encoder, const UnlinkedFunctionExecutable& executable, const SourceCode& source, unsigned embedderStamp)
     {
-        m_sourceLength = sourceLength;
+        m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
+        m_lineStarts.encode(encoder, source.provider()->lineStarts());
     }
 
-    UnlinkedFunctionExecutable* decode(Decoder& decoder, unsigned sourceLength, unsigned embedderStamp) const
+    UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
     {
         if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
             return nullptr;
-        if (m_sourceLength != sourceLength || m_embedderStamp != embedderStamp)
+        if (m_sourceLength != provider.source().length() || m_embedderStamp != embedderStamp)
             return nullptr;
+        if (auto lineStarts = m_lineStarts.decode(decoder))
+            provider.setLineStarts(WTF::move(lineStarts));
         return m_executable.decode(decoder);
     }
 
@@ -5461,15 +5495,16 @@ private:
     unsigned m_sourceLength { 0 };
     unsigned m_embedderStamp { 0 };
     CachedPtr<CachedFunctionExecutable> m_executable;
+    CachedLineStarts m_lineStarts;
 };
 
-RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, unsigned sourceLength, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
+RefPtr<CachedBytecode> encodeBuiltinFunction(VM& vm, const UnlinkedFunctionExecutable* executable, const SourceCode& source, unsigned embedderStamp, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
     BytecodeCacheError error;
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
     auto* entry = encoder.template malloc<BuiltinFunctionCacheEntry>(encoder);
-    entry->encode(encoder, *executable, sourceLength, embedderStamp);
+    entry->encode(encoder, *executable, source, embedderStamp);
     encoder.encodeDeferred();
     return encoder.release(error, entry->payloadSizeSlot());
 }
@@ -5498,10 +5533,9 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
-    unsigned sourceLength = provider.source().length();
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
     DeferGC deferGC(vm);
-    UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), sourceLength, embedderStamp);
+    UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), provider, embedderStamp);
 #if USE(BUN_JSC_ADDITIONS)
     // The builtin is the module; its code is recorded when it is run, like any function's.
     if (auto* recorder = executable && decoder->canBorrowPayload() ? BytecodeOrderRecorder::ofVM(vm) : nullptr) [[unlikely]]
@@ -5570,7 +5604,7 @@ struct BytecodeLinkEncoder::Impl {
         else {
             RELEASE_ASSERT(classInfo == UnlinkedFunctionExecutable::info());
             auto* entry = encoder.template malloc<BuiltinFunctionCacheEntry>(encoder);
-            entry->encode(encoder, *uncheckedDowncast<UnlinkedFunctionExecutable>(module.root.get()), static_cast<unsigned>(module.source.length()), module.builtinEmbedderStamp);
+            entry->encode(encoder, *uncheckedDowncast<UnlinkedFunctionExecutable>(module.root.get()), module.source, module.builtinEmbedderStamp);
             module.entry = entry;
         }
         module.entryOffset = safeCast<uint32_t>(encoder.offsetOf(module.entry));
@@ -5896,7 +5930,7 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
 static_assert(sizeof(GenericCacheEntry) == 16);
 static_assert(sizeof(CacheEntry<UnlinkedProgramCodeBlock>) == 48);
 static_assert(sizeof(CacheEntry<UnlinkedModuleProgramCodeBlock>) == 48);
-static_assert(sizeof(BuiltinFunctionCacheEntry) == 28);
+static_assert(sizeof(BuiltinFunctionCacheEntry) == 36);
 static_assert(sizeof(VariableLengthObjectBase) == 4);
 static_assert(sizeof(CachedPtr<CachedString>) == 4);
 static_assert(sizeof(CachedRefPtr<CachedUniquedStringImpl>) == 4);
@@ -5914,7 +5948,7 @@ static_assert(sizeof(CachedCodeBlockExtras) == 4);
 static_assert(sizeof(CachedCodeBlockRareData) == 68);
 static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
-static_assert(sizeof(CachedEvalCodeBlock) == 32);
+static_assert(sizeof(CachedEvalCodeBlock) == 40);
 static_assert(sizeof(CachedExpressionInfo) == 4);
 static_assert(sizeof(CachedFunctionCodeBlock) == 4);
 static_assert(sizeof(CachedFunctionExecutable) == 4);
@@ -5925,8 +5959,8 @@ static_assert(sizeof(CachedImmutableButterfly) == 12);
 static_assert(sizeof(CachedJSTextPosition) == 4);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
-static_assert(sizeof(CachedModuleCodeBlock) == 48);
-static_assert(sizeof(CachedProgramCodeBlock) == 48);
+static_assert(sizeof(CachedModuleCodeBlock) == 56);
+static_assert(sizeof(CachedProgramCodeBlock) == 56);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);
 static_assert(sizeof(CachedSimpleJumpTable) == 20);

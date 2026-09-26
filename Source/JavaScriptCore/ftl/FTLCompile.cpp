@@ -157,7 +157,7 @@ static void collectSourceCodeDumpDebugInfo(State& state, CodeBlock* codeBlock)
             continue;
 
         currentOrigin = codeOrigin;
-        currentLineColumn = originCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+        currentLineColumn = originCodeBlock->lineColumnForBytecodeIndexConcurrently(bytecodeIndex);
         currentProvider = originCodeBlock->ownerExecutable()->source().provider();
 
         auto location = state.b3CodeLinkBuffer->locationOf<DisassemblyPtrTag>(range.label);

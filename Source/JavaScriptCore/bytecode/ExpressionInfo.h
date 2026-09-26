@@ -29,7 +29,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
-#include <wtf/Lock.h>
 #include <wtf/MallocPtr.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
@@ -189,8 +188,10 @@ public:
 
     // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
     // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
-    // same instructions again, so this keeps each answer. Sources that share unlinked code have the same text
-    // (CodeCache), so the answer is the same for all of them. Where a source says its text starts is not in it.
+    // same instructions again, so this keeps each answer. Unlinked code is shared through the CodeCache only, whose
+    // keys are whole sources compared by their text, so the text and sourceOffset, and with them the answer, are the
+    // same for every source that shares this. Where a source says its text starts is not in the answer.
+    // Not for a thread that runs beside the mutator: nothing guards the map.
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
@@ -324,9 +325,7 @@ private:
 
     using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 
-    // With Options::useSourceCodeDump(), compiler threads ask too.
-    Lock m_cachedLineColumnsLock;
-    LineColumnMap m_cachedLineColumns WTF_GUARDED_BY_LOCK(m_cachedLineColumnsLock);
+    LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

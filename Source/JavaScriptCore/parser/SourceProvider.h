@@ -39,10 +39,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/SourceCharacters.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceTaintedOrigin.h>
-#include <optional>
+#include <atomic>
 #include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -74,6 +75,15 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
 
 using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;
 
+// What a line start table holds: see EncodedLineStarts. The sources that have one text and the code compiled from it
+// share the bytes. Those of code out of a bytecode cache that stays mapped are borrowed from it, and have no owner.
+struct LineStarts {
+    std::span<const uint8_t> bytes;
+    RefPtr<ThreadSafeRefCountedFixedVector<uint8_t>> owner;
+
+    explicit operator bool() const { return !bytes.empty(); }
+};
+
 class LineStartTable {
     WTF_MAKE_NONCOPYABLE(LineStartTable);
 public:
@@ -93,27 +103,67 @@ public:
     // and a column past the end of its line gives that line's end.
     JS_EXPORT_PRIVATE unsigned offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based);
 
-    // The line and the column of positionInfoForOffset(), without its line end: this reads none of the text.
-    JS_EXPORT_PRIVATE PositionInfo lineAndColumnForOffset(StringView text, unsigned offset);
+    // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
+    JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
 
-    // What this table holds for `text`, for an embedder that stores it beside the text. See EncodedLineStarts.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> encode(StringView text);
-    // What encode() gave for this table's text. It has to outlive the table, which then never scans the text.
-    JS_EXPORT_PRIVATE void setEncoded(std::span<const uint8_t>);
+    static constexpr unsigned linesPerBlock = 64;
+    // A table costs an allocation and a few reference counts, whatever its size. That is 3% of what it takes to
+    // evaluate 100 characters, and a scan of so few is as cheap, so a short text pays only if it is asked for a position.
+    static constexpr unsigned minimumLengthToCollect = 1024;
 
-    bool isBuilt() const
-    {
-        Locker locker { m_lock };
-        return !m_encoded.empty();
-    }
+    // Collects where the lines of a text start, from whoever reads the text: the lexer while it parses, or scan().
+    class Builder {
+    public:
+        Builder()
+            : m_header({ 0, 0, 0 })
+        {
+        }
+
+        unsigned lastLineStart() const { return m_lastLineStart; }
+        unsigned lineCount() const { return m_lineCount; }
+
+        // The line after the last one starts at lineStart.
+        ALWAYS_INLINE void append(unsigned lineStart)
+        {
+            ASSERT(lineStart > m_lastLineStart);
+            unsigned length = lineStart - m_lastLineStart;
+            m_lastLineStart = lineStart;
+            if (m_lineCount++ % linesPerBlock && length < 0x80) [[likely]] {
+                m_stream.append(static_cast<uint8_t>(length));
+                return;
+            }
+            appendSlow(length);
+        }
+
+        // Appends the lines whose terminator is in text between begin and end.
+        template<typename CharType> void scan(std::span<const CharType> text, size_t begin, size_t end);
+        void scan(StringView text, size_t begin, size_t end);
+
+        // Once the rest of text is scanned: what is before readTo has been read, though the last line may be long.
+        LineStarts finish(StringView text, unsigned readTo);
+
+    private:
+        JS_EXPORT_PRIVATE void appendSlow(unsigned length);
+
+        // A short text is done without an allocation.
+        Vector<uint32_t, 3> m_header;
+        Vector<uint8_t, 64> m_stream;
+        unsigned m_lineCount { 1 };
+        unsigned m_lastLineStart { 0 };
+    };
+
+    bool isBuilt() const { return m_isBuilt.load(std::memory_order_acquire); }
+    // Empty if !isBuilt().
+    LineStarts lineStarts() const { return isBuilt() ? m_lineStarts : LineStarts { }; }
+    // Of this table's text. The first ones stay.
+    JS_EXPORT_PRIVATE void setLineStarts(LineStarts&&);
 
 private:
-    template<typename CharType> static Vector<uint8_t> build(std::span<const CharType>);
-    std::span<const uint8_t> ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
+    const LineStarts& ensureBuilt(StringView);
 
-    mutable Lock m_lock;
-    Vector<uint8_t> m_owned WTF_GUARDED_BY_LOCK(m_lock);
-    std::span<const uint8_t> m_encoded WTF_GUARDED_BY_LOCK(m_lock); // m_owned, or what setEncoded() got
+    Lock m_lock; // For who sets m_lineStarts, which does not change once m_isBuilt says that it is there.
+    std::atomic<bool> m_isBuilt { false };
+    LineStarts m_lineStarts;
 };
 
 class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvider> {
@@ -198,10 +248,9 @@ public:
     }
 
     // Zero-based, in the provider's own text.
-    LineColumn lineColumnInTextForOffset(unsigned offset)
+    virtual LineColumn lineColumnInTextForOffset(unsigned offset)
     {
-        auto info = m_lineStartTable.lineAndColumnForOffset(source(), offset);
-        return { info.line0Based, info.column0Based };
+        return m_lineStartTable.lineColumnForOffset(source(), offset);
     }
 
     // An inline <script> shifts every line of its document, but shifts the column only on its first
@@ -221,15 +270,19 @@ public:
 
     LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
     {
-        auto info = m_lineStartTable.lineAndColumnForOffset(source(), offset);
+        auto inText = lineColumnInTextForOffset(offset);
         return {
-            m_startPosition.m_line.zeroBasedInt() + info.line0Based,
-            info.line0Based ? info.column0Based : m_startPosition.m_column.zeroBasedInt() + info.column0Based,
+            m_startPosition.m_line.zeroBasedInt() + inText.line,
+            inText.line ? inText.column : m_startPosition.m_column.zeroBasedInt() + inText.column,
         };
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }
-    void setEncodedLineStarts(std::span<const uint8_t> encoded) { m_lineStartTable.setEncoded(encoded); }
+    // The code compiled from a text has them too, and gives them to a source that has that text and is not parsed.
+    LineStarts lineStarts() const { return m_lineStartTable.lineStarts(); }
+    void setLineStarts(LineStarts&& lineStarts) { m_lineStartTable.setLineStarts(WTF::move(lineStarts)); }
+    // Whether a parse of the text, or of a part of it, is to collect them. What it does not read is scanned.
+    virtual bool wantsLineStarts() const { return !m_lineStartTable.isBuilt() && source().length() >= LineStartTable::minimumLengthToCollect; }
 
 private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
@@ -284,6 +337,29 @@ protected:
 
 private:
     const Ref<StringImpl> m_source;
+};
+
+// The texts of many builtins, one after the other. None of them knows of the others, so a line and column in one
+// counts from where it starts. That takes no table: a builtin is short, and few of them are ever asked about.
+class BuiltinsSourceProvider final : public StringSourceProvider {
+public:
+    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider.
+    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts)
+    {
+        return adoptRef(*new BuiltinsSourceProvider(source, starts));
+    }
+
+    JS_EXPORT_PRIVATE LineColumn lineColumnInTextForOffset(unsigned offset) final;
+    bool wantsLineStarts() const final { return false; }
+
+private:
+    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+        : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+        , m_starts(starts)
+    {
+    }
+
+    std::span<const unsigned> m_starts;
 };
 
     class SyntheticSourceProvider final : public SourceProvider {

@@ -204,8 +204,7 @@ namespace JSC {
 
     The shape of ExpressionInfo looks like this:
 
-            ExpressionInfo: [ m_cachedLineColumnsLock         ]
-                            [ m_cachedLineColumns             ]
+            ExpressionInfo: [ m_cachedLineColumns             ]
                             [ m_numberOfChapters              ]
                             [ m_numberOfEncodedInfo           ]
                             [ m_numberOfEncodedInfoExtensions ]
@@ -898,7 +897,6 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
 
 LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
 {
-    Locker locker { m_cachedLineColumnsLock };
     return m_cachedLineColumns.ensure(instPC, [&] {
         return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
     }).iterator->value;

@@ -714,6 +714,10 @@ void Lexer<T>::shiftLineTerminator()
 
     if (isCRLFPair(prev, m_current))
         shift();
+
+    // Not again for a line that the parser went back over.
+    if (m_lineStarts && static_cast<unsigned>(currentOffset()) > m_lineStarts->lastLineStart())
+        m_lineStarts->append(currentOffset());
 }
 
 static ALWAYS_INLINE bool isRestrKeyword(JSTokenType token)

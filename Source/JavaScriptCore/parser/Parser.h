@@ -2182,6 +2182,8 @@ std::unique_ptr<ParsedNode> Parser<LexerType>::parse(ParserError& error, const I
     bool lexError = m_lexer->sawError();
     String lexErrorMessage = lexError ? m_lexer->getErrorMessage() : String();
     ASSERT(lexErrorMessage.isNull() != lexError);
+    if (auto lineStarts = m_lexer->takeLineStarts())
+        m_source->provider()->setLineStarts(lineStarts->finish(m_source->provider()->source(), m_lexer->currentOffset()));
     m_lexer->clear();
 
     if (!parseResult || lexError) {
