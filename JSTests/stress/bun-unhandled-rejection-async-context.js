@@ -144,11 +144,21 @@ for (let round = 0; round < Math.max(2, testLoopCount / 50); round++) {
             other.$vm.setAsyncContext(undefined);
         }
     });
-    for (const context of [A, B]) {
-        asyncContextsWhenRejected.clear();
-        const promise = inBoth(context, () => other.Promise.prototype.then.call(new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }), noop));
-        inBoth(context === A ? B : A, drainMicrotasks);
-        shouldBe(asyncContextsWhenRejected.get(promise), context, `then() of another realm, in ${context.name}`);
+    const instances = {
+        pending: () => new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }),
+        rejected: () => {
+            const rejected = Subclass.reject(error());
+            rejected.catch(noop);
+            return rejected;
+        },
+    };
+    for (const [state, instance] of Object.entries(instances)) {
+        for (const context of [A, B]) {
+            asyncContextsWhenRejected.clear();
+            const promise = inBoth(context, () => other.Promise.prototype.then.call(instance(), noop));
+            inBoth(context === A ? B : A, drainMicrotasks);
+            shouldBe(asyncContextsWhenRejected.get(promise), context, `then() of another realm, of a ${state} instance, in ${context.name}`);
+        }
     }
 }
 

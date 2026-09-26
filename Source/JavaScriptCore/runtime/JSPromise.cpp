@@ -383,15 +383,13 @@ void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-static JSPromise* promiseOf(JSValue promiseOrCapability);
-
 // The end of performPromiseThen() for a rejected promise and no handler for the rejection, in an async context:
 // what rejects `promiseOrCapability` is a job with no handler.
 static NEVER_INLINE void passRejectionOnInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* rejected, JSValue promiseOrCapability, JSValue reason, JSValue asyncContext)
 {
     rejected->markAsHandled();
     if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]] {
-        if (auto* promise = promiseOf(promiseOrCapability))
+        if (auto* promise = JSPromise::promiseOf(promiseOrCapability))
             promise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
     }
     globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(JSPromise::Status::Rejected), promiseOrCapability, reason, jsUndefined());
@@ -791,7 +789,7 @@ void JSPromise::rejectWithoutHandler(VM& vm, JSValue value)
     }
 }
 
-static JSPromise* promiseOf(JSValue promiseOrCapability)
+JSPromise* JSPromise::promiseOf(JSValue promiseOrCapability)
 {
     if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability))
         return promise;
@@ -802,12 +800,11 @@ static JSPromise* promiseOf(JSValue promiseOrCapability)
     return dynamicDowncast<JSPromise>(capability->getDirect(promiseCapabilityPromisePropertyOffset));
 }
 
-JSValue JSPromise::asyncContextKeptForUnhandledRejection(JSValue promiseOrCapability)
+JSValue JSPromise::asyncContextKeptForUnhandledRejection() const
 {
-    auto* promise = promiseOf(promiseOrCapability);
-    if (!promise || !promise->hasNothingButAKeptAsyncContext())
+    if (!hasNothingButAKeptAsyncContext())
         return jsUndefined();
-    JSValue kept = promise->m_slot.get();
+    JSValue kept = m_slot.get();
     return kept ? kept : jsUndefined();
 }
 #endif
@@ -1077,7 +1074,7 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
 // job with no handler.
 static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
 {
-    auto* promise = promiseOf(promiseOrCapability);
+    auto* promise = JSPromise::promiseOf(promiseOrCapability);
     if (!promise)
         return;
     JSValue context = reaction->context();

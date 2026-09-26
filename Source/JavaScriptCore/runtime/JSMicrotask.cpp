@@ -1673,8 +1673,17 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
 #if USE(BUN_JSC_ADDITIONS)
     // The capability's resolve and reject are script. Once VM::reportsUnhandledRejectionsInAsyncContext() they run in
     // the async context its promise kept, as rejectPromiseWithoutHandler() reports in it; until then, in the one that
-    // is current.
-    AsyncContextSwapScope asyncContextScope(vm, globalObject, vm.reportsUnhandledRejectionsInAsyncContext() ? JSPromise::asyncContextKeptForUnhandledRejection(capability) : AsyncContextSwapScope::current(vm, globalObject));
+    // is current. The promise may be of another realm than then() was, and that is the realm the embedder is told in.
+    JSGlobalObject* realm = globalObject;
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]] {
+        asyncContext = jsUndefined();
+        if (auto* promise = JSPromise::promiseOf(capability)) {
+            realm = promise->realm();
+            asyncContext = promise->asyncContextKeptForUnhandledRejection();
+        }
+    }
+    AsyncContextSwapScope asyncContextScope(vm, realm, asyncContext);
 #endif
 
     if (status == JSPromise::Status::Rejected) {

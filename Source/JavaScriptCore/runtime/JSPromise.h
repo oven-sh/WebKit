@@ -161,9 +161,10 @@ public:
         if (asyncContext && asyncContext.isCell() && hasNothingButAKeptAsyncContext())
             setSlot(vm, asyncContext);
     }
-    // What keepAsyncContextForUnhandledRejection() kept in the promise, or in the promise of the capability.
-    // Undefined if nothing.
-    static JSValue asyncContextKeptForUnhandledRejection(JSValue promiseOrCapability);
+    // What keepAsyncContextForUnhandledRejection() kept. Undefined if nothing.
+    JSValue asyncContextKeptForUnhandledRejection() const;
+    // The promise, or the promise of the capability. Null if it is neither.
+    static JSPromise* promiseOf(JSValue promiseOrCapability);
     // reject() and rejectPromise(), for a job with no handler.
     void rejectWithoutHandler(VM&, JSValue);
     void rejectPromiseWithoutHandler(VM&, JSValue);
