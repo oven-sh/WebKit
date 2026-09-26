@@ -428,7 +428,11 @@ static void promiseRaceResolveJob(JSGlobalObject* globalObject, VM& vm, JSPromis
     }
     case JSPromise::Status::Rejected: {
         scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+        promise->rejectWithoutHandler(vm, resolution);
+#else
         promise->reject(vm, resolution);
+#endif
         break;
     }
     }
@@ -461,7 +465,11 @@ static void promiseAllResolveJob(JSGlobalObject* globalObject, VM& vm, JSPromise
     case JSPromise::Status::Rejected: {
         auto* promise = uncheckedDowncast<JSPromise>(globalContext->promise());
         scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+        promise->rejectWithoutHandler(vm, resolution);
+#else
         promise->reject(vm, resolution);
+#endif
         break;
     }
     }
@@ -528,7 +536,11 @@ static void promiseAnyResolveJob(JSGlobalObject* globalObject, VM& vm, JSPromise
             auto* promise = uncheckedDowncast<JSPromise>(globalContext->promise());
             auto* aggregateError = createAggregateError(vm, globalObject->errorStructure(ErrorType::AggregateError), errors, String(), jsUndefined());
             scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+            promise->rejectWithoutHandler(vm, aggregateError);
+#else
             promise->reject(vm, aggregateError);
+#endif
         }
         break;
     }
@@ -875,6 +887,17 @@ static void promiseFinallyAwaitJob(JSGlobalObject* globalObject, VM& vm, JSValue
     JSValue originalValue = context->handlerOrContext();
     bool wasFulfilled = context->isFulfillHandler();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (status == JSPromise::Status::Rejected) {
+        resultPromise->rejectPromiseWithoutHandler(vm, settledValue);
+        return;
+    }
+
+    if (wasFulfilled)
+        resultPromise->resolvePromise(globalObject, vm, originalValue);
+    else
+        resultPromise->rejectPromiseWithoutHandler(vm, originalValue);
+#else
     if (status == JSPromise::Status::Rejected) {
         resultPromise->rejectPromise(vm, settledValue);
         return;
@@ -884,6 +907,7 @@ static void promiseFinallyAwaitJob(JSGlobalObject* globalObject, VM& vm, JSValue
         resultPromise->resolvePromise(globalObject, vm, originalValue);
     else
         resultPromise->rejectPromise(vm, originalValue);
+#endif
 }
 
 static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPromise* resultPromise, JSValue valueOrReason, JSSlimPromiseReaction* context, JSPromise::Status status, MicrotaskCallCache* microtaskCallCache)
@@ -1646,6 +1670,21 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
 static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM& vm, JSValue capability, JSValue resolution, JSPromise::Status status)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    // The capability's resolve and reject are script. Once VM::reportsUnhandledRejectionsInAsyncContext() they run in
+    // the async context its promise kept, as rejectPromiseWithoutHandler() reports in it; until then, in the one that
+    // is current. The promise may be of another realm than then() was, and that is the realm the embedder is told in.
+    JSGlobalObject* realm = globalObject;
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]] {
+        asyncContext = jsUndefined();
+        if (auto* promise = JSPromise::promiseOf(capability)) {
+            realm = promise->realm();
+            asyncContext = promise->asyncContextKeptForUnhandledRejection();
+        }
+    }
+    AsyncContextSwapScope asyncContextScope(vm, realm, asyncContext);
+#endif
 
     if (status == JSPromise::Status::Rejected) {
         JSValue reject = capability.get(globalObject, vm.propertyNames->reject);
@@ -1680,7 +1719,11 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             promise->resolvePromise(promise->realm(), vm, resolution);
             break;
         case JSPromise::Status::Rejected:
+#if USE(BUN_JSC_ADDITIONS)
+            promise->rejectPromiseWithoutHandler(vm, resolution);
+#else
             promise->rejectPromise(vm, resolution);
+#endif
             break;
         }
         return;
@@ -1694,7 +1737,11 @@ static void webAssemblyCompileStreaming(JSGlobalObject* globalObject, VM& vm, JS
 {
     JSPromise* outerPromise = context->promise();
     if (status == JSPromise::Status::Rejected) {
+#if USE(BUN_JSC_ADDITIONS)
+        outerPromise->rejectWithoutHandler(vm, resolution);
+#else
         outerPromise->reject(vm, resolution);
+#endif
         return;
     }
     ASSERT(globalObject->globalObjectMethodTable()->compileStreaming);
@@ -1705,7 +1752,11 @@ static void webAssemblyInstantiateStreaming(JSGlobalObject* globalObject, VM& vm
 {
     JSPromise* outerPromise = context->promise();
     if (status == JSPromise::Status::Rejected) {
+#if USE(BUN_JSC_ADDITIONS)
+        outerPromise->rejectWithoutHandler(vm, resolution);
+#else
         outerPromise->reject(vm, resolution);
+#endif
         return;
     }
 
@@ -1804,6 +1855,19 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
     asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// promiseResolveThenableJobFastSlow() leaves a job that has a handler, which runs in the async context it is left in:
+// once VM::reportsUnhandledRejectionsInAsyncContext(), that is the one this job was scheduled in.
+static NEVER_INLINE void promiseResolveThenableJobFastSlowInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSPromise* promise, JSPromise* promiseToResolve, JSValue asyncContext)
+{
+    if (!vm.reportsUnhandledRejectionsInAsyncContext())
+        return promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    promiseToResolve->keepAsyncContextForUnhandledRejection(vm, asyncContext);
+    promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve);
+}
+#endif
+
 void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCallCache* microtaskCallCache)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1818,11 +1882,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlowInAsyncContext(globalObject, vm, promise, promiseToResolve, arguments[2]));
+
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
+        // What rejects promiseToResolve, if `promise` is rejected, is a job with no handler.
+        if (asyncContextScope.hasEntered() && vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+            promiseToResolve->keepAsyncContextForUnhandledRejection(vm, arguments[2]);
+#else
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
             RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
-
-#if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
 #endif
 
         scope.release();
@@ -1906,7 +1976,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             break;
         case JSPromise::Status::Rejected:
             scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+            promise->rejectPromiseWithoutHandler(vm, resolution);
+#else
             promise->rejectPromise(vm, resolution);
+#endif
             break;
         }
         return;

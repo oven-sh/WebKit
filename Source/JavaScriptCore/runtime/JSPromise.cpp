@@ -212,6 +212,9 @@ void JSPromise::pipeFrom(VM& vm, JSPromise* from)
         return;
     setFlags(flags() | isFirstResolvingFunctionCalledFlag);
 
+#if USE(BUN_JSC_ADDITIONS)
+    keepCurrentAsyncContextForUnhandledRejection(vm, realm(), this);
+#endif
     from->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFulfillWithoutHandlerJob, this, jsUndefined());
 }
 
@@ -379,6 +382,20 @@ void JSPromise::forEachPendingReaction(const ScopedLambda<bool(InternalMicrotask
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+// The end of performPromiseThen() for a rejected promise and no handler for the rejection, in an async context:
+// what rejects `promiseOrCapability` is a job with no handler.
+static NEVER_INLINE void passRejectionOnInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* rejected, JSValue promiseOrCapability, JSValue reason, JSValue asyncContext)
+{
+    rejected->markAsHandled();
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]] {
+        if (auto* promise = JSPromise::promiseOf(promiseOrCapability))
+            promise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
+    }
+    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(JSPromise::Status::Rejected), promiseOrCapability, reason, jsUndefined());
+}
+#endif
+
 void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue onFulfilled, JSValue onRejected, JSValue promiseOrCapability)
 {
     bool fulfilledCallable = onFulfilled.isCallable();
@@ -441,6 +458,10 @@ void JSPromise::performPromiseThen(VM& vm, JSGlobalObject* globalObject, JSValue
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected) | payloadFlags, promiseOrCapability, onRejected, settled, asyncContext);
 #else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseReactionJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, onRejected, settled);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+        else if (hasAsyncContext) [[unlikely]]
+            return passRejectionOnInAsyncContext(vm, globalObject, this, promiseOrCapability, settled, asyncContext);
 #endif
         else
             globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(Status::Rejected), promiseOrCapability, settled, jsUndefined());
@@ -684,7 +705,21 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
         globalObject->queueMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, static_cast<uint8_t>(newStatus), resultPromise, argument, jsUndefined());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Out of line so that rejectPromiseWithoutHandler() does not carry the swap scope's frame.
+static NEVER_INLINE void reportUnhandledRejectionInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* promise, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, JSPromiseRejectionOperation::Reject);
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+template<bool withoutHandler>
+ALWAYS_INLINE void JSPromise::rejectPromiseImpl(VM& vm, JSValue argument)
+#else
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
+#endif
 {
     ASSERT(status() == Status::Pending);
     JSGlobalObject* globalObject = realm();
@@ -701,11 +736,30 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     case InlineReactionKind::None: {
         JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payloadCell());
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
-        setSlot(vm, argument);
-        setPackedCell(vm, settledFlags, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+        if constexpr (withoutHandler) {
+            if (!(currentFlags & isHandledFlag)) {
+                // keepAsyncContextForUnhandledRejection().
+                JSValue keptAsyncContext = m_slot.get();
+                setSlot(vm, argument);
+                setPackedCell(vm, settledFlags, nullptr);
+                if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+                    reportUnhandledRejectionInAsyncContext(vm, globalObject, this, keptAsyncContext ? keptAsyncContext : jsUndefined());
+                else
+                    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            } else {
+                setSlot(vm, argument);
+                setPackedCell(vm, settledFlags, nullptr);
+            }
+        } else
+#endif
+        {
+            setSlot(vm, argument);
+            setPackedCell(vm, settledFlags, nullptr);
 
-        if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            if (!isHandled())
+                globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+        }
 
         if (!reactions)
             return;
@@ -714,6 +768,46 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
     }
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSPromise::rejectPromise(VM& vm, JSValue argument)
+{
+    rejectPromiseImpl<false>(vm, argument);
+}
+
+void JSPromise::rejectPromiseWithoutHandler(VM& vm, JSValue argument)
+{
+    rejectPromiseImpl<true>(vm, argument);
+}
+
+void JSPromise::rejectWithoutHandler(VM& vm, JSValue value)
+{
+    ASSERT(!value.inherits<Exception>());
+    if (!isFirstResolvingFunctionCalled()) {
+        setFlags(flags() | isFirstResolvingFunctionCalledFlag);
+        rejectPromiseImpl<true>(vm, value);
+    }
+}
+
+JSPromise* JSPromise::promiseOf(JSValue promiseOrCapability)
+{
+    if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability))
+        return promise;
+    // A capability is of the realm then() was called in.
+    auto* capability = dynamicDowncast<JSObject>(promiseOrCapability);
+    if (!capability || capability->structure() != capability->realm()->promiseCapabilityObjectStructure())
+        return nullptr;
+    return dynamicDowncast<JSPromise>(capability->getDirect(promiseCapabilityPromisePropertyOffset));
+}
+
+JSValue JSPromise::asyncContextKeptForUnhandledRejection() const
+{
+    if (!hasNothingButAKeptAsyncContext())
+        return jsUndefined();
+    JSValue kept = m_slot.get();
+    return kept ? kept : jsUndefined();
+}
+#endif
 
 void JSPromise::fulfillPromise(VM& vm, JSValue argument)
 {
@@ -975,6 +1069,19 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
     return std::tuple { resolve, reject };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// then() was called with no handler for a rejection and returned `promiseOrCapability`: what rejects that is a
+// job with no handler.
+static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
+{
+    auto* promise = JSPromise::promiseOf(promiseOrCapability);
+    if (!promise)
+        return;
+    JSValue context = reaction->context();
+    promise->keepAsyncContextForUnhandledRejection(vm, reaction->contextIsAsyncContext() ? context : AsyncContextSwapScope::unwrapContextTuple(context));
+}
+#endif
+
 void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, Status status, JSPromiseReaction* head, JSValue argument)
 {
     bool isResolved = status == JSPromise::Status::Fulfilled;
@@ -1026,6 +1133,8 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
                 arg = jsUndefined();
+                if (!isResolved && vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+                    keepAsyncContextOfThen(vm, promise, fullReaction);
                 break;
             }
             JSValue context = fullReaction->context();
