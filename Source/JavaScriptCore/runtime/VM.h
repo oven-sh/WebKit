@@ -1515,6 +1515,10 @@ public:
     // moved up into the VMLitePrimitives X-macro block near the top of VM.
     // §6.3 relocated member (kept here; deliberately NOT in VMLitePrimitives):
     RegExp* m_executingRegExp { nullptr };
+    // The return address of the exit entrance's call to the DFG exit generation thunk. Not a
+    // VMLitePrimitives word: GIL off no exit has an entrance (JITCompiler::linkOSRExits), the
+    // exit's index travels in the exiting thread's osrExitIndex instead.
+    void* osrExitReturnPC { nullptr };
 
     // The threading protocol here is as follows:
     // - You can call scratchBufferForSize from any thread.

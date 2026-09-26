@@ -702,7 +702,10 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                     }
 
                     if (didReachTermination(locker)) {
-                        m_heap.m_markingConditionVariable.notifyAll();
+                        // Without the threads work no marker needs waking here: there is no work which can be
+                        // processed in the helpers. With it a conductor may be parked in waitForTermination().
+                        if (threadsMode()) [[unlikely]]
+                            m_heap.m_markingConditionVariable.notifyAll();
                         m_heap.m_numberOfParallelMarkersInDrainFromShared--;
                         return SharedDrainResult::Done;
                     }

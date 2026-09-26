@@ -268,7 +268,7 @@ inline void Heap::acquireAccess()
     acquireAccessSlow();
 }
 
-inline void Heap::stopIfNecessary()
+ALWAYS_INLINE void Heap::stopIfNecessary()
 {
     // SharedGC (§10A): shared-mode stop polling goes through SINFAC; the
     // legacy m_worldState machinery is quiesced once ISS (I15).

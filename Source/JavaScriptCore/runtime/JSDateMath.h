@@ -50,6 +50,7 @@
 #include <wtf/Compiler.h>
 #include <wtf/DateMath.h>
 #include <wtf/HashFunctions.h>
+#include <wtf/PlainGregorianDateTime.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TimeZone.h>

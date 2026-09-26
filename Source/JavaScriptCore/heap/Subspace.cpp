@@ -70,19 +70,6 @@ void Subspace::prepareForAllocation()
         [&] (BlockDirectory& directory) {
             directory.prepareForAllocation();
         });
-
-    m_directoryForEmptyAllocation = m_alignedMemoryAllocator->firstDirectory();
-}
-
-MarkedBlock::Handle* Subspace::findEmptyBlockToSteal()
-{
-    // The cursor is shared by every client allocator of this subspace (shared
-    // heap); a racing advance only revisits or skips a directory this time.
-    for (BlockDirectory* directory = racyLoad(m_directoryForEmptyAllocation); directory; directory = directory->nextDirectoryInAlignedMemoryAllocator(), racyStore(m_directoryForEmptyAllocation, directory)) {
-        if (MarkedBlock::Handle* block = directory->findEmptyBlockToSteal())
-            return block;
-    }
-    return nullptr;
 }
 
 Ref<SharedTask<BlockDirectory*()>> Subspace::parallelDirectorySource()

@@ -9513,3 +9513,131 @@ forms, by what calls the function:
   back is to keep the two sets behind the structure, in a cell that is that much larger only with JS threads.
 - The marker's drain loop differs from `main`'s with the flag off (the counters of paused markers, a broadcast at termination
   that upstream removed): same algorithm, more work per collection.
+
+## Fourteenth landing round: what the whole run's cycles are made of, the data layout brought back to `main`'s, and a test of the mode that costs two instructions
+
+The thirteenth round halved the instruction excess of a flag-off process and the whole run's cycles did not follow (1.015 to
+1.013 of `main`). This round measured what the rest is, with the processor's counters, and removed what it could name. It also
+rebased onto `74650443cb1a` (upstream's new OSR exit entrances, weak blocks, weak tables and parser positions: AUDIT section 11).
+
+**What the gap is made of** (`Tools/threads/perf/flagoff/cycles-breakdown.sh`; the 36 tests in one process, all iterations, main
+thread, `main` and the branch interleaved, groups of four events beside cycles and instructions, 14 to 39 runs per binary).
+On the merged tree, before any of this round's changes, the whole run was 1.007 to 1.010 in cycles and 1.008 to 1.009 in
+instructions. By the top-down classes, in slots of the pipeline converted to cycles:
+
+| Class | Branch against `main` | Share of the whole run's cycles |
+|---|---|---|
+| Retiring (micro-operations retired) | +0.6 to +0.8 % | +0.3 to +0.4 % |
+| Front end (slots the front end left empty) | +2.7 to +3.4 % | +0.5 to +0.6 % |
+| Back end (memory and execution stalls) | +0.2 to +0.6 % | +0.1 to +0.3 % |
+| Bad speculation | none | 0 |
+
+Inside the front end: stalls on the instruction cache's data +7 to +8 % and on its tags +10 to +16 % (together +0.3 % of the
+cycles), walks of the instruction TLB +12 to +19 % (+0.05 %), and the micro-operations that come from the legacy decoder
++5 to +6 % while those from the micro-operation cache do not change. That last pair says what the extra instructions are: all
+of them are decoded, none is replayed from the cache, so they are instructions of code that runs rarely (slow paths, entries
+into C++, the collector), and each costs more than the average instruction. Inside the back end: stalls on first-level data
+misses +2 to +3 % (+0.15 to +0.3 % of the cycles).
+
+So the gap had three parts of the same order: the extra instructions themselves, what it costs to fetch them, and data that
+lay differently. The sections below are the three answers.
+
+**1. Data layout** (`type-sizes.py`, `type-fields.py`: sizes and member offsets of 75 classes read from the debug
+information of both binaries). Ninety-two classes differed in size. The ones the mutator touches all the time, and what
+was done:
+
+| Class | `main` | Before | After | How |
+|---|---|---|---|---|
+| `Structure` | 112 | 128 | 112 | The two thread-locality watchpoint sets live behind the cell, in a cell that is 16 bytes larger only when the process has JS threads (`Structure::allocationSize()`, `hasThreadLocalitySets()`); `BrandedStructure` and `WebAssemblyGCStructure` reserve the same tail. Closes the thirteenth round's open finding: structure IDs have `main`'s stride again, and the tables hashed on them `main`'s collisions |
+| `BaselineJITData` | 40 | 176 | 40 | The padding and the counters that keep GIL-off mutators off each other's cache lines are a `GILOffFields` block in reserved leading slots of the trailing constant pool, present only in a GIL-off process (`reservedPoolSlots()`) |
+| `DFG::JITData` | 104 | 232 | 104 | The same |
+| `PropertyInlineCache` | 64 | 72 | 64 | The nine flags that GIL off reads and writes concurrently are bits of one 16-bit word again, each accessed through `ICRacyFlag<bit>` (a relaxed atomic read-modify-write with JS threads, a plain bit operation without) |
+| `ArrayAllocationProfile` | 8 | 16 | 8 | The GIL-off double-demotion watchpoint set lives in a process-wide table keyed by the profile, which only a GIL-off process fills |
+| `UnlinkedFunctionExecutable` | 88 | 80 | 80 | Already smaller than `main`'s after the merge: the code features and the lexically scoped features are one 16-bit word that is read and written whole, the three "deferred" flags one byte |
+
+What still differs and why it stays: `CallLinkInfo` (+8, the published call record's pointer, which the threaded fast paths of every tier load; not measured
+without it), `ScriptExecutable` (+8, the cell's size class does not change), `PropertyTable`, `JSMap`/`JSSet` (+8), the
+allocator directories and the heap (`VM` is 22 KB larger, all of it in members a flag-off process does not touch).
+
+**2. The test of the mode.** A census of executed instructions (`parity/gate-exec.py`, `parity/option-exec.py`) showed that a
+flag-off process executes 0.14 % of its instructions just addressing the mode byte, and that every one of those tests was
+three or four instructions long, not the two the design assumed:
+
+- The byte is exported, so the compiler reaches it through the global offset table. The linker turns the table's load into
+  an address computation but cannot remove it: `lea page(%rip), reg; cmpb $0, (reg)`. Inside JavaScriptCore the byte is
+  now read through a second, hidden name of the same page (`g_jscThreadsModePageLocal`, an alias defined beside the page):
+  `cmpb $0, page(%rip)`.
+- The four bits were in one byte. A function compiled once per mode loaded the byte where it picks its copy and kept it in a
+  register for the bit tests of the threaded copy, which is a callee-saved register pushed and popped on the path without
+  threads too. Each bit now also has a byte of its own on the page (`ThreadsModeByte`), which is what a test of one bit reads:
+  every test is a compare with memory and nothing stays live. The copy without threads is told that all five bytes are
+  zero.
+- `JSTHREADS_COUNT` tested two options, not the mode, at 96 sites, some of them on paths `main` runs straight through
+  (`operationNewArrayWithSize`, the allocation slow path, every throw). The counters count with JS threads only: their test
+  begins with the mode byte and folds in the copies without threads.
+
+**3. Inlining that `main` has.** Found with exact counts, as in the thirteenth round: the shared atom table's arm inside
+`addToStringTable` (now out of line), the thread-local recursion state inside `StringRecursionChecker`'s constructor (its
+access and guard out of line), the polling lock acquisition inside `GILOffFirstUseLocker` and the GIL-off arms of
+`JSFunction`'s lazy `length` and `name` (out of line), `Heap::stopIfNecessary()` (forced inline).
+
+**4. Where the interpreter's threaded bodies are.** Each of the 27 opcodes that carry a gate has two bodies since the twelfth
+round. They were emitted next to each other, so the interpreter a flag-off process runs was interleaved with code it never
+executes: from `llint_entry` to `llint_op_call` it was 226,671 bytes, 137,831 on `main`. The threaded bodies are now emitted
+together after the last opcode (`gateMainBodies` where a group is defined, `gateThreadedBodies` for every group at one
+place): 161,094 bytes before the alignment of item 5. The remaining growth is inside the bodies a flag-off process runs
+(the slow-path calls through the table, the threaded arms that are still emitted into them, the Group 3 discriminator).
+
+**5. Where an opcode's body begins.** Interpreter-only runs of single tests were between 5 % faster and 8 % slower than on
+`main` with the same instructions executed (navier-stokes: 8.657 G instructions on both, 1.94 G cycles on `main`, 2.07 G
+on the branch; the same three tests in the thin-LTO pair). The counters put all of it in the front end: every
+micro-operation comes from the micro-operation cache on both, the branch mispredicts as often, and the cycles in which
+the cache delivers are 5 % more. An opcode's body is entered by an indirect jump, and what is delivered in the first
+cycles after it depends on where in its 64-byte window the body begins; the bodies are emitted one after the other, so
+the nine bytes that every body gained (the slow-path call through the table) and the threaded arms moved every body
+after them. On x86-64 every opcode's body now begins on a 64-byte boundary (`OFFLINE_ASM_OPCODE_ALIGNMENT`): a body's
+place no longer depends on the bodies before it. Interpreter only, per-test geometric mean of the cycles against `main`:
+1.0135 unaligned, 1.0175 aligned to 32 bytes, 1.0064 aligned to 64 (instructions 1.007 in all three). The interpreter's
+text grows by 46 KB of padding that is never executed.
+
+**The rebase.** Upstream replaced four designs that GIL-off protocols of the branch were built on: how an OSR exit is
+entered and patched, how weak handles are cleared, how the weak tables are pruned, and where the list of directories to
+steal blocks from lives. AUDIT section 11 has a row for each with what the branch does now. For a flag-off process each of
+them is upstream's code; the one addition is a test of the mode at the top of `WeakImpl::clear()`. The range is one
+commit of several weeks of upstream and was not read as a range.
+
+**Rules added.**
+10. Inside JavaScriptCore the mode is read through `JSC_THREADS_MODE_PAGE` only (the accessors of `ThreadsModePage.h`);
+    nothing else names the page.
+11. A test of one property of the mode reads that property's byte (`processUsesJSThreads()` and the other three accessors);
+    `threadsMode()` is for "is any of it on".
+12. A counter or a diagnostic of the threads work tests the mode before it tests its option.
+13. A member that only a threaded process reads does not go into a class the mutator touches without threads; it goes
+    behind the object (a tail that exists only in a threaded process) or into a side table.
+
+**What was found and not changed (open).** 
+- *The text.* It is 19 % larger than `main`'s (the `size` tool's text: 36.45 MB against 30.59 MB; the `.text` section alone
+  22 %). `text-by-symbol.py`: 1.95 MB are symbols `main` does not have, of which 0.79 MB are copies per mode; 4.3 MB are
+  growth of symbols both have, and the largest are the functions compiled per mode in place, which are twice their size
+  (`replaceUsingRegExpSearch` 62 to 124 KB, the eleven typed-array sorts 50 to 97 KB each). This is what the front end's share
+  of the gap and the start-up's resident set (+1.4 MB, of which the binary's text is 1.2 MB) point at. What would shrink it is
+  the form the slow paths already have: two functions of their own, the one without threads called directly. For JIT
+  operations that needs the JIT to pick the copy when it emits the call (a table at link time); the copy with threads can
+  then live in a section of its own, which a flag-off process never touches.
+- *The in-place form's frame.* The two copies share one frame: the copy without threads saves the callee-saved registers
+  the threaded copy needs, and code the copies have in common is merged behind a pointer (`operationSizeOfVarargs` reads
+  the exception through a register where `main` reads it at a fixed offset). Two to four instructions per call of a small
+  operation.
+- *The threaded arms inside the interpreter's bodies without threads.* The body of a gated opcode that a flag-off
+  process runs has no test of the mode, but it still carries the code of the threaded arm, which nothing jumps to:
+  `llint_op_get_by_id` is 840 bytes against 503 on `main`, `put_by_id` 968 against 637, `get_from_scope` 1,175 against
+  874; 16 KB over the 81 bodies. It sits behind the fast paths, in front of the slow path's call. Leaving it out needs the
+  arm to be a macro that the instance without threads expands to nothing.
+- *Group 3 in the interpreter.* The discriminator at VM entry and exit, in the prologue's stack check and after a slow
+  path reads `Config::gilOffProcess` (three instructions and a taken branch without threads). 9.6 M executions in one
+  iteration of the suite, 0.03 % of the instructions; `vmEntryToJavaScript` has four of them.
+- *What exact counts still show* (one iteration of the suite, the JIT on the main thread, one marker; the branch minus
+  `main` in percent of all instructions): the optimizing compilers +0.18, the object model +0.16 to +0.18 (the watchpoint
+  sets' atomic forms, `putDirectInternal`, the allocation profile), operations +0.07, strings +0.06, sweeping and the
+  allocation slow path +0.05, calls and entry +0.05, the interpreter's assembly +0.03.
+- `CallLinkInfo` is 8 bytes larger in every call opcode's metadata.

@@ -45,6 +45,19 @@
 // latch read; the byte is derived from them once.
 extern "C" JS_EXPORT_PRIVATE const uint8_t g_jscThreadsModePage[];
 
+// Inside JavaScriptCore the byte is read through a second, hidden name of the same page (ThreadsModePage.cpp). The
+// exported name may be defined in another image, so the compiler reaches it through the global offset table: two
+// instructions for each test (the linker turns the table's load into an address computation, it cannot remove it).
+// A hidden name is known to be in this image, and the test is one compare with memory. Code that is linked statically
+// with JavaScriptCore (the shell, an embedder) is in the same image and compiles its own copies of the inline functions
+// that test the mode, any of which the linker may pick: it reads through the hidden name too.
+#if COMPILER(GCC_COMPATIBLE) && defined(__ELF__) && (defined(BUILDING_JavaScriptCore) || defined(STATICALLY_LINKED_WITH_JavaScriptCore))
+extern "C" __attribute__((visibility("hidden"))) const uint8_t g_jscThreadsModePageLocal[];
+#define JSC_THREADS_MODE_PAGE g_jscThreadsModePageLocal
+#else
+#define JSC_THREADS_MODE_PAGE g_jscThreadsModePage
+#endif
+
 namespace JSC {
 
 // The byte. Zero: the process runs without JS threads and without the shared collector ("flag off").
@@ -55,11 +68,23 @@ enum ThreadsModeBit : uint8_t {
     ThreadsModeSharedGCHeap = 1 << 3, // Options::useSharedGCHeap(): forced by the JS threads flag, and on by itself in the shared-heap tests
 };
 
-ALWAYS_INLINE uint8_t threadsMode() { return g_jscThreadsModePage[0]; }
-ALWAYS_INLINE bool processUsesJSThreads() { return threadsMode() & ThreadsModeJSThreads; }
-ALWAYS_INLINE bool processUsesTaggedButterflies() { return threadsMode() & ThreadsModeTaggedButterflies; }
-ALWAYS_INLINE bool processIsGILOff() { return threadsMode() & ThreadsModeGILOffProcess; }
-ALWAYS_INLINE bool processUsesSharedGCHeap() { return threadsMode() & ThreadsModeSharedGCHeap; }
+// Each bit also has a byte of its own on the page, and that byte is what the test of one bit reads. With the bits in
+// one byte only, the compiler loads the byte where a function picks its copy and keeps it in a register for the bit
+// tests of the threaded copy: a register to save and restore on the path without threads as well. A byte per bit makes
+// every test a compare with memory that leaves nothing live.
+enum ThreadsModeByte : unsigned {
+    ThreadsModeByteMode = 0, // the bits above
+    ThreadsModeByteJSThreads = 1,
+    ThreadsModeByteTaggedButterflies = 2,
+    ThreadsModeByteGILOffProcess = 3,
+    ThreadsModeByteSharedGCHeap = 4,
+};
+
+ALWAYS_INLINE uint8_t threadsMode() { return JSC_THREADS_MODE_PAGE[ThreadsModeByteMode]; }
+ALWAYS_INLINE bool processUsesJSThreads() { return JSC_THREADS_MODE_PAGE[ThreadsModeByteJSThreads]; }
+ALWAYS_INLINE bool processUsesTaggedButterflies() { return JSC_THREADS_MODE_PAGE[ThreadsModeByteTaggedButterflies]; }
+ALWAYS_INLINE bool processIsGILOff() { return JSC_THREADS_MODE_PAGE[ThreadsModeByteGILOffProcess]; }
+ALWAYS_INLINE bool processUsesSharedGCHeap() { return JSC_THREADS_MODE_PAGE[ThreadsModeByteSharedGCHeap]; }
 
 // Functions compiled once per threads mode.
 //
@@ -98,15 +123,20 @@ ALWAYS_INLINE bool processUsesSharedGCHeap() { return threadsMode() & ThreadsMod
 #define JSC_THREADS_MODE_BODY(threaded) ((void)0)
 #elif ASSERT_ENABLED
 #define JSC_THREADS_MODE_BODY(threaded) do { \
-        if (!!g_jscThreadsModePage[0] != (threaded)) [[unlikely]] \
+        if (!!JSC_THREADS_MODE_PAGE[0] != (threaded)) [[unlikely]] \
             JSC::threadsModeBodyMismatch(); \
     } while (false)
 #else
 #define JSC_THREADS_MODE_BODY(threaded) do { \
         if constexpr (threaded) \
-            JSC_THREADS_MODE_ASSUME(g_jscThreadsModePage[0] != 0); \
-        else \
-            JSC_THREADS_MODE_ASSUME(g_jscThreadsModePage[0] == 0); \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[0] != 0); \
+        else { \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[0] == 0); \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[1] == 0); \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[2] == 0); \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[3] == 0); \
+            JSC_THREADS_MODE_ASSUME(JSC_THREADS_MODE_PAGE[4] == 0); \
+        } \
     } while (false)
 #endif
 

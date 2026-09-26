@@ -169,7 +169,7 @@ PerfLog::PerfLog()
     {
         // perf(1)'s jitdump support (perf inject --jit) recognises the marker
         // mmap only when the file is named jit-<pid>.dump.
-        m_file = FileSystem::createDumpFile(makeString("jit-"_s, WTF::getCurrentProcessID()), ".dump"_s, String::fromUTF8(Options::jitDumpDirectory()));
+        m_file = FileSystem::createDumpFile(makeString("jit-"_s, WTF::getCurrentProcessID()), ".dump"_s, String { Options::jitDumpDirectory() });
         RELEASE_ASSERT(m_file);
 
         if (Options::useIRDump())

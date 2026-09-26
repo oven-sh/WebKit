@@ -1103,12 +1103,12 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             switch (entry.type()) {
             case JITConstantPool::Type::FunctionDecl: {
                 unsigned index = std::bit_cast<uintptr_t>(entry.pointer());
-                baselineJITData->trailingSpan()[i] = functionDecl(index);
+                baselineJITData->constants()[i] = functionDecl(index);
                 break;
             }
             case JITConstantPool::Type::FunctionExpr: {
                 unsigned index = std::bit_cast<uintptr_t>(entry.pointer());
-                baselineJITData->trailingSpan()[i] = functionExpr(index);
+                baselineJITData->constants()[i] = functionExpr(index);
                 break;
             }
             }
@@ -3006,8 +3006,10 @@ DFG::CapabilityLevel CodeBlock::computeCapabilityLevel()
 CodeBlock* CodeBlock::gilOffDFGForLoopEntry() const
 {
 #if ENABLE(JIT)
+    if (!processIsGILOff())
+        return nullptr;
     if (auto* jitData = const_cast<CodeBlock*>(this)->baselineJITData())
-        return jitData->m_gilOffDFGForLoopEntry.loadRelaxed();
+        return jitData->gilOffFields().dfgForLoopEntry.loadRelaxed();
 #endif
     return nullptr;
 }
@@ -3020,7 +3022,9 @@ void CodeBlock::setGILOffDFGForLoopEntry(VM& vm, CodeBlock* dfgCodeBlock)
     auto* jitData = baselineJITData();
     if (!jitData)
         return;
-    jitData->m_gilOffDFGForLoopEntry.storeRelaxed(dfgCodeBlock);
+    if (!processIsGILOff())
+        return;
+    jitData->gilOffFields().dfgForLoopEntry.storeRelaxed(dfgCodeBlock);
     if (dfgCodeBlock)
         vm.writeBarrier(this, dfgCodeBlock);
 #else
@@ -3038,7 +3042,7 @@ void CodeBlock::jettison(Profiler::JettisonReason reason, ReoptimizationMode mod
         if (reason == Profiler::JettisonDueToUnprofiledWatchpoint && detail) {
             StringPrintStream out;
             out.print("jettison detail: ", *detail);
-            CString text = out.toCString();
+            CString text = out.toUTF8CString();
             // Keep a bounded set of distinct detail strings alive for the table.
             static Lock lock; static Vector<CString>* kept;
             Locker locker { lock };
@@ -4163,6 +4167,18 @@ void CodeBlock::tallyFrequentExitSites()
     case JITType::DFGJIT: {
         auto* jitCode = m_jitCode->dfg();
         if (auto* jitData = dfgJITData()) {
+            if (vm().gilOff()) [[unlikely]] {
+                // Another thread may be compiling an exit of this code block: DFG::osrExitStubsLock().
+                Vector<unsigned, 16> exitIndices;
+                {
+                    Locker locker { DFG::osrExitStubsLock() };
+                    for (auto& stub : jitData->exitStubs())
+                        exitIndices.append(stub.exitIndex);
+                }
+                for (unsigned exitIndex : exitIndices)
+                    jitCode->m_osrExits.at(exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
+                break;
+            }
             for (auto& stub : jitData->exitStubs())
                 jitCode->m_osrExits.at(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
         }
@@ -4172,6 +4188,17 @@ void CodeBlock::tallyFrequentExitSites()
 #if ENABLE(FTL_JIT)
     case JITType::FTLJIT: {
         auto* jitCode = m_jitCode->ftl();
+        if (vm().gilOff()) [[unlikely]] {
+            Vector<unsigned, 16> exitIndices;
+            {
+                Locker locker { DFG::osrExitStubsLock() };
+                for (auto& stub : jitCode->m_osrExitStubs)
+                    exitIndices.append(stub.exitIndex);
+            }
+            for (unsigned exitIndex : exitIndices)
+                jitCode->m_osrExit[exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
+            break;
+        }
         for (auto& stub : jitCode->m_osrExitStubs)
             jitCode->m_osrExit[stub.exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
         break;

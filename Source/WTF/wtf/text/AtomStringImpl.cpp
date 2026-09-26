@@ -130,14 +130,21 @@ static Ref<AtomStringImpl> addToSharedStringTable(SharedAtomStringTable::Shard& 
     return adoptRef(uncheckedDowncast<AtomStringImpl>(*reAddResult.iterator->get()));
 }
 
+// Out of line: with the shard's lock and the shared add inlined into it, addToStringTable() below is no longer
+// inlined into AtomStringImpl::add(), which is where a process without the shared table spends its time.
+template<typename T, typename HashTranslator>
+static NEVER_INLINE Ref<AtomStringImpl> addToSharedStringTable(const T& value)
+{
+    auto& shard = SharedAtomStringTable::singleton().shardForHash(HashTranslator::hash(value));
+    Locker locker { shard.lock };
+    return addToSharedStringTable<T, HashTranslator>(shard, value);
+}
+
 template<typename T, typename HashTranslator>
 static inline Ref<AtomStringImpl> addToStringTable(const T& value)
 {
-    if (sharedAtomStringTableEnabled()) [[unlikely]] {
-        auto& shard = SharedAtomStringTable::singleton().shardForHash(HashTranslator::hash(value));
-        Locker locker { shard.lock };
-        return addToSharedStringTable<T, HashTranslator>(shard, value);
-    }
+    if (sharedAtomStringTableEnabled()) [[unlikely]]
+        return addToSharedStringTable<T, HashTranslator>(value);
     AtomStringTableLocker locker;
     return addToStringTable<T, HashTranslator>(locker, stringTable(), value);
 }

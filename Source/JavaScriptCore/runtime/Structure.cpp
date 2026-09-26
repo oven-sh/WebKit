@@ -336,9 +336,11 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     // on the main thread; never notTTLTID). Flag-off the field keeps the 0
     // stored above and is never consulted (I22/E3), so skip the out-of-line
     // currentButterflyTID() call (cross-DSO + TLS read) entirely.
+    if (hasThreadLocalitySets()) [[unlikely]]
+        constructThreadLocalitySets();
     if (processUsesTaggedButterflies()) [[unlikely]] {
-        m_transitionThreadLocalWatchpointSet.startWatching();
-        m_writeThreadLocalWatchpointSet.startWatching();
+        transitionThreadLocalWatchpointSet().startWatching();
+        writeThreadLocalWatchpointSet().startWatching();
         tsanRelaxedStore(m_transitionThreadLocalTID, currentButterflyTID());
     }
 
@@ -411,9 +413,11 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     // Flag-off: keep the 0 stored above (TID) and both TTL sets' inert
     // ClearWatchpoint (I22), skip the out-of-line TLS read. Flag-on: start
     // watching both TTL sets (§5).
+    if (hasThreadLocalitySets()) [[unlikely]]
+        constructThreadLocalitySets();
     if (processUsesTaggedButterflies()) [[unlikely]] {
-        m_transitionThreadLocalWatchpointSet.startWatching();
-        m_writeThreadLocalWatchpointSet.startWatching();
+        transitionThreadLocalWatchpointSet().startWatching();
+        writeThreadLocalWatchpointSet().startWatching();
         tsanRelaxedStore(m_transitionThreadLocalTID, currentButterflyTID());
     }
 
@@ -516,15 +520,17 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     // optimizations on IsStillValid/IsValidAndWatched, so born-invalid merely
     // disables thread-locality elision for the new shape, exactly as F4
     // intends for a shared family. Flag-off unchanged (I22).
+    if (hasThreadLocalitySets()) [[unlikely]]
+        constructThreadLocalitySets();
     if (processUsesTaggedButterflies()) [[unlikely]] {
         if (previous->transitionThreadLocalIsStillValid()) [[likely]]
-            m_transitionThreadLocalWatchpointSet.startWatching();
+            transitionThreadLocalWatchpointSet().startWatching();
         else
-            m_transitionThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F4: transition target created from a structure whose transitionThreadLocal set already fired"));
+            transitionThreadLocalWatchpointSet().invalidate(vm, StringFireDetail("F4: transition target created from a structure whose transitionThreadLocal set already fired"));
         if (previous->writeThreadLocalIsStillValid()) [[likely]]
-            m_writeThreadLocalWatchpointSet.startWatching();
+            writeThreadLocalWatchpointSet().startWatching();
         else
-            m_writeThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F4: transition target created from a structure whose writeThreadLocal set already fired"));
+            writeThreadLocalWatchpointSet().invalidate(vm, StringFireDetail("F4: transition target created from a structure whose writeThreadLocal set already fired"));
     }
     // N1: the structure transition TID is the CREATOR's TID, copied to targets
     // (§2.1) - the shape's butterfly-less transition ownership follows the
@@ -589,7 +595,40 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
         WTF::storeStoreFence();
 }
 
-Structure::~Structure() = default;
+Structure::~Structure()
+{
+    if (hasThreadLocalitySets()) [[unlikely]]
+        destroyThreadLocalitySets();
+}
+
+// The sets are constructed where a member would be: before the structure is reachable from anywhere. Under TSAN the
+// stores are relaxed atomics, as for the members that are ConcurrentCtorMember (a recycled cell's previous readers).
+void Structure::constructThreadLocalitySets()
+{
+    InlineWatchpointSet* sets = threadLocalitySets();
+    for (unsigned i = 0; i < 2; ++i) {
+#if TSAN_ENABLED
+        static_assert(sizeof(InlineWatchpointSet) == sizeof(uintptr_t));
+        union Local {
+            Local() { }
+            ~Local() { }
+            InlineWatchpointSet value;
+        } local;
+        new (&local.value) InlineWatchpointSet(ClearWatchpoint);
+        __atomic_store_n(std::bit_cast<uintptr_t*>(&sets[i]), *std::bit_cast<uintptr_t*>(&local.value), __ATOMIC_RELAXED);
+        local.value.~InlineWatchpointSet();
+#else
+        new (NotNull, &sets[i]) InlineWatchpointSet(ClearWatchpoint);
+#endif
+    }
+}
+
+void Structure::destroyThreadLocalitySets()
+{
+    InlineWatchpointSet* sets = threadLocalitySets();
+    sets[1].~InlineWatchpointSet();
+    sets[0].~InlineWatchpointSet();
+}
 
 void Structure::destroy(JSCell* cell)
 {
@@ -1839,9 +1878,9 @@ Structure* Structure::flattenDictionaryStructureByTransitionConcurrent(VM& vm, J
             // mirrored them one by one).
             if (!source->transitionThreadLocalIsStillValid() || !source->writeThreadLocalIsStillValid()) {
                 if (flattened->transitionThreadLocalIsStillValid())
-                    flattened->m_transitionThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
+                    flattened->transitionThreadLocalWatchpointSet().invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
                 if (flattened->writeThreadLocalIsStillValid())
-                    flattened->m_writeThreadLocalWatchpointSet.invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
+                    flattened->writeThreadLocalWatchpointSet().invalidate(vm, StringFireDetail("F3: flatten-by-transition from a structure with a fired thread-locality set"));
             }
         }
 
@@ -1988,7 +2027,7 @@ Structure* Structure::flattenDictionaryStructureUnderStop(VM& vm, JSObject* obje
             // in-place compaction against lock-free readers (read-only
             // foreign sharing is undetectable, so the stop is unconditional).
             if (triggerIsShared
-                && (m_transitionThreadLocalWatchpointSet.isStillValid() || m_writeThreadLocalWatchpointSet.isStillValid()))
+                && (transitionThreadLocalIsStillValid() || writeThreadLocalIsStillValid()))
                 fireTransitionThreadLocal(vm, "F3: flattenDictionaryStructure on a shared structure/object");
         }), "OM flattenDictionary");
         if (!needsRefit) {
@@ -2010,10 +2049,11 @@ Structure* Structure::flattenDictionaryStructureImpl(VM& vm, JSObject* object, V
     // thread-local object on the fast path; world stopped on the shared path).
     const bool objectIsSegmented = processUsesTaggedButterflies() && isSegmentedButterfly(object->taggedButterflyWord());
 
-    // The DeferGC precedes the cell lock (O1): the GCSafeConcurrentJSLocker
-    // below would otherwise end its own deferral under that lock, and the
-    // release can conduct a collection whose markers take the lock.
+    // Must outlive cellLocker. The collection this defers until scope exit would otherwise run
+    // while the cell lock is held, and the collector takes that same cell lock to scan an array
+    // storage butterfly, so it would deadlock against us.
     DeferGC deferGC(vm);
+
     Locker<JSCellLock> cellLocker(NoLockingNecessary);
 
     PropertyTable* table = nullptr;
@@ -2153,13 +2193,13 @@ void Structure::fireThreadLocalSetsWithChainUnderStop(VM& vm, const char* reason
     ASSERT(butterflyWorldIsStopped(vm));
 
     auto fireOne = [&](Structure* structure) {
-        if (alsoFireTransitionThreadLocal && structure->m_transitionThreadLocalWatchpointSet.isStillValid()) {
+        if (alsoFireTransitionThreadLocal && structure->transitionThreadLocalIsStillValid()) {
             JSTHREADS_COUNT(f2ThreadLocalSetFire);
-            structure->m_transitionThreadLocalWatchpointSet.fireAll(vm, reason);
+            structure->transitionThreadLocalWatchpointSet().fireAll(vm, reason);
         }
-        if (structure->m_writeThreadLocalWatchpointSet.isStillValid()) {
+        if (structure->writeThreadLocalIsStillValid()) {
             JSTHREADS_COUNT(f1SharedWriteFire);
-            structure->m_writeThreadLocalWatchpointSet.fireAll(vm, reason);
+            structure->writeThreadLocalWatchpointSet().fireAll(vm, reason);
         }
     };
 

@@ -780,7 +780,7 @@ void Plan::cleanMustHandleValuesIfNecessary()
 std::unique_ptr<JITData> Plan::tryFinalizeJITData(const DFG::JITCode& jitCode)
 {
     JITData::ExitJumpTable exitJumpTable;
-    if (isUnlinked()) {
+    if (isUnlinked() || m_vm->gilOff()) { // GIL off dispatches every exit through the table: JITCompiler::linkOSRExits.
         auto osrExitThunk = m_vm->getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
         exitJumpTable = JITData::ExitJumpTable::createWithSizeAndConstructorArguments(jitCode.m_osrExits.size(), osrExitThunk.code());
     }

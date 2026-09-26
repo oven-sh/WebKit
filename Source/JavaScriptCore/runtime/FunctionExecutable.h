@@ -213,16 +213,13 @@ public:
     // web-reachable Function.prototype.toString path.
     int lineCount() const
     {
-        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
-            return rareData->m_lineCount;
-        return m_unlinkedExecutable->lineCount();
+        return static_cast<int>(sourceEndInfo().line0Based) - static_cast<int>(sourceStartInfo().line0Based);
     }
 
     int endColumn() const
     {
-        if (RareData* rareData = rareDataConcurrently()) [[unlikely]]
-            return rareData->m_endColumn;
-        return m_unlinkedExecutable->linkedEndColumn(m_source.startColumn().oneBasedInt());
+        SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
+        return m_source.provider()->documentLineColumnForOffset(m_source.endOffset() - 1).column;
     }
 
     int firstLine() const

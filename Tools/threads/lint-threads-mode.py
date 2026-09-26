@@ -10,6 +10,10 @@ does not check (runtime/ThreadsModePage.h; docs/threads/SPEC-ungil-history.md, t
      would run the copy without threads in a process that is about to have them.
   4. A body that calls a generic lambda by its template arguments is not compiled per mode in place (inside the templated
      lambda the call needs the `template` keyword, which the body as written does not have).
+  5. Nothing but runtime/ThreadsModePage.h and .cpp names the mode page: the rest of JavaScriptCore reads it through the
+     accessors, which go through the hidden name (one compare with memory instead of a load through the offset table).
+  6. The test of the threads counters begins with the test of the mode (JSThreadsCounters::enabled()), so that it
+     folds in the copies compiled for a process without threads.
 
 Exit status 1 when a rule is broken."""
 import glob, os, re, sys
@@ -19,8 +23,15 @@ PRE_LATCH = ["runtime/Options.cpp", "runtime/Options.h", "runtime/OptionsList.h"
 bad = 0; converted = 0
 for p in sorted(glob.glob(os.path.join(root, "**", "*.cpp"), recursive=True) + glob.glob(os.path.join(root, "**", "*.h"), recursive=True)):
     rel = os.path.relpath(p, root)
-    if rel == "runtime/ThreadsModePage.h": continue
+    if rel in ("runtime/ThreadsModePage.h", "runtime/ThreadsModePage.cpp"): continue
     text = open(p, errors="replace").read()
+    for i, l in enumerate(text.split("\n"), 1):
+        if re.search(r"\bg_jscThreadsModePage(Local)?\b", l) and not l.strip().startswith(("//", "*", "#")):
+            print("%s:%d: names the mode page; use the accessors of ThreadsModePage.h" % (rel, i)); bad += 1
+    if rel == "runtime/JSThreadsCounters.h":
+        m = re.search(r"static bool enabled\(\) \{ return ([^;]*);", text)
+        if not m or not m.group(1).lstrip().startswith("threadsMode()"):
+            print("%s: JSThreadsCounters::enabled() does not begin with the test of the mode" % rel); bad += 1
     if rel in PRE_LATCH:
         m = re.search(r"\b(processUses\w+|processIsGILOff|threadsMode)\s*\(|JSC_PER_THREADS_MODE|JSC_CALL_PER_THREADS_MODE", text)
         if m:

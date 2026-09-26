@@ -46,6 +46,7 @@
 #include "YarrJIT.h"
 #include <wtf/Atomics.h>
 #include <wtf/Bag.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/StringSearch.h>
 
@@ -84,6 +85,13 @@ struct OSRExitStub {
     MacroAssemblerCodeRef<OSRExitPtrTag> code;
 };
 using OSRExitStubs = Vector<OSRExitStub, 0, CrashOnOverflow, 1>;
+
+// GIL off, a code block's vector of compiled exit ramps (DFG::JITData::m_exitStubs,
+// FTL::JITCode::m_osrExitStubs) gains an entry whenever a thread compiles one of its exits, which
+// can be while another thread walks the vector (CodeBlock::tallyFrequentExitSites, findPC). One
+// process-wide leaf lock for the append and the walks; a walk that calls out copies what it needs
+// first. Nothing takes it GIL on or flag off.
+JS_EXPORT_PRIVATE Lock& osrExitStubsLock();
         
 class CommonData : public MathICHolder {
     WTF_MAKE_NONCOPYABLE(CommonData);

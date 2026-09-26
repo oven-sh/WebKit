@@ -1748,7 +1748,7 @@ UDateIntervalFormat* IntlDateTimeFormat::createDateIntervalFormatIfNecessary(JSG
             if (m_impl->m_hourCycle != HourCycle::None)
                 localeBuilder.append("-hc-"_s, hourCycleString(m_impl->m_hourCycle));
         }
-        CString dataLocaleWithExtensions = localeBuilder.toString().utf8();
+        auto dataLocaleWithExtensions = localeBuilder.toString().ascii();
 
         UErrorCode status = U_ZERO_ERROR;
         String timeZoneForICU = m_impl->m_timeZone.toICUString();

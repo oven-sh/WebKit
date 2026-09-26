@@ -382,28 +382,22 @@ private:
         return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
     }
 
-    unsigned m_firstLineOffset : 31;
     unsigned m_isGeneratedFromCache : 1;
-    unsigned m_lineCount : 31;
     unsigned m_unlinkedFunctionStart: 31;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_unlinkedBodyStartColumn : 31;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    // m_lineCount, m_unlinkedBodyEndColumn, m_parametersStartOffset and m_unlinkedFunctionEnd may be written late
-    // (ScalarsAreDeferred); the bit each shares its word with is one only the mutator reads.
-    unsigned m_unlinkedBodyEndColumn : 31;
-    unsigned m_superBinding : 1;
     unsigned m_startOffset : 31;
     unsigned m_isCached : 1;
     unsigned m_sourceLength : 31;
     unsigned m_constructAbility: 1;
-    // m_parametersStartOffset and m_unlinkedFunctionEnd may be written late (m_scalarsAreDeferred); the bit each
+    // m_parametersStartOffset and m_unlinkedFunctionEnd may be written late (ScalarsAreDeferred); the bit each
     // shares its word with is one only the mutator reads.
     unsigned m_parametersStartOffset : 31;
     unsigned m_scriptMode: 1; // JSParserScriptMode
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
+    unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
+    unsigned m_superBinding : 1;
     unsigned m_privateBrandRequirement : 1;
     // Every bit-field in this class is written only by the constructors.
     uint16_t m_constructorKind : 2;
@@ -442,7 +436,7 @@ private:
     enum DeferredStateBit : uint8_t {
         NameIsDeferred = 1 << 0, // m_ecmaName is still in the cache record; implies MembersAreDeferred
         MembersAreDeferred = 1 << 1, // TDZ variables + rare data are still in the cache record; the m_members Pending union member is live
-        ScalarsAreDeferred = 1 << 2, // the record's cold tail was not read yet (those four members are 0); implies MembersAreDeferred (that state holds the record)
+        ScalarsAreDeferred = 1 << 2, // the record's cold tail was not read yet (those two members are 0); implies MembersAreDeferred (that state holds the record)
     };
     bool isDeferred(DeferredStateBit bit) const { return WTF::atomicLoad(const_cast<uint8_t*>(&m_deferredState), std::memory_order_relaxed) & bit; }
     void setDeferred(DeferredStateBit bit) { WTF::atomicStore(&m_deferredState, static_cast<uint8_t>(m_deferredState | bit), std::memory_order_relaxed); }

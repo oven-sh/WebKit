@@ -75,11 +75,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 {
     CCallHelpers jit(nullptr);
 
-    jit.preserveReturnAddressAfterCall(GPRInfo::numberTagRegister);
-
-    // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
-    adjustFrameAndStackInOSRExitCompilerThunk<DFG::JITCode>(jit, vm, JITType::DFGJIT);
-
     // UNGIL §A.1.3/§A.1.6 (U-T4a — the DFG half of FTL's U-T4b fix): this
     // thunk is shared by every thread of the VM. gilOff, (a) osrExitIndex /
     // osrExitJumpDestination are per-lite Group-3 words (a baked &vm store
@@ -92,6 +87,15 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
     // JSTests/threads/jit/spawned-thread-butterfly-stress.js). GIL-on /
     // flag-off keeps today's baked-absolute emission byte-for-byte.
     const bool perLiteMode = vm.gilOff();
+
+    // GIL off no exit calls this thunk: every exit is dispatched through the exit jump
+    // table with its index in numberTagRegister (JITCompiler::linkOSRExits), so there is
+    // no return address to take.
+    if (!perLiteMode)
+        jit.preserveReturnAddressAfterCall(GPRInfo::numberTagRegister);
+
+    // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
+    adjustFrameAndStackInOSRExitCompilerThunk<DFG::JITCode>(jit, vm, JITType::DFGJIT);
 
     size_t scratchSize = sizeof(EncodedJSValue) * (GPRInfo::numberOfRegisters + FPRInfo::numberOfRegisters);
     // perLiteMode adds one trailing slot holding the address of the current
@@ -131,12 +135,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
         jit.store64(bufferGPR, buffer);
     }
 
-    // The trampoline put the exit index in numberTagRegister; publish it for
-    // operationCompileOSRExit. gilOff: deferred until after the register
-    // dump below (see the same-VM guard block) — only bufferGPR is free
-    // this early, and the guard needs it as the branchPtr immediate scratch.
+    // numberTagRegister holds the return address of the entrance's call; publish it for
+    // operationCompileOSRExit. gilOff it holds the exit index, and the store is deferred
+    // until after the register dump below (see the same-VM guard block) — only
+    // bufferGPR is free this early, and the guard needs it as the branchPtr immediate scratch.
     if (!perLiteMode)
-        jit.store32(GPRInfo::numberTagRegister, &vm.osrExitIndex);
+        jit.storePtr(GPRInfo::numberTagRegister, &vm.osrExitReturnPC);
 
     if (perLiteMode) [[unlikely]]
         materializePerLiteScratchBufferDataPointer(jit, bakedIndex, bufferGPR);

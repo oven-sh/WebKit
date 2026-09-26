@@ -61,6 +61,7 @@
 #include <wtf/Condition.h>
 #include <wtf/ConcurrentPtrHashSet.h>
 #include <wtf/Deque.h>
+#include <wtf/DoublyLinkedList.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashSet.h>
@@ -673,6 +674,7 @@ public:
     // allocation, sweep, or stop. Exclusive MSPL holders may also take it
     // (lock order: 7/7a -> 7r). Flag-off: never touched.
     Lock& markedSpaceRegistryLock() WTF_RETURNS_LOCK(m_markedSpaceRegistryLock) { return m_markedSpaceRegistryLock; }
+    Lock& weakHandleLock() WTF_RETURNS_LOCK(m_weakHandleLock) { return m_weakHandleLock; }
 
     // Sticky ISS (§5.1/I13): set once the client set EVER reaches size() > 1
     // with the option on; cleared only via §10D reversion.
@@ -2313,7 +2315,7 @@ public:
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
-    CString m_signpostMessage;
+    UTF8CString m_signpostMessage;
 
 private:
     // ---------------------------------------------------------------------
@@ -2347,6 +2349,10 @@ private:
     MutatorSlowPathLockFacade m_mutatorSlowPathLock;
     // T7-mspl-per-directory, rank 7r (leaf); see markedSpaceRegistryLock().
     Lock m_markedSpaceRegistryLock;
+    // Leaf. Once the server is shared, what a Weak<> owner does to a WeakBlock, its WeakSet and
+    // the heap's lists of detached and pooled WeakBlocks happens under it: WeakImpl::clearShared(),
+    // WeakSet::allocate(). See WeakSet::sweep().
+    Lock m_weakHandleLock;
 
     // T1-gc-siblings-mark: per-sibling parallel SlotVisitor pool. The W-1
     // gilOff Mode-machine SIBLINGS (parked access-released at

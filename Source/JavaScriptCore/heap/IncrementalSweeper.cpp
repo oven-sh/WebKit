@@ -151,7 +151,7 @@ bool IncrementalSweeper::sweepNextBlockShared(VM& vm)
     //    Blocks swept empty stay on the directories' empty lists, reusable by
     //    every client's allocator.
     //  - Weak-bearing blocks are skipped, like the carve-out at the other
-    //    MSPL sweep sites (WeakSet::head() is stable under MSPL); the
+    //    MSPL sweep sites (a set without blocks stays without under MSPL); the
     //    sweeper-owned cursor steps past them so the scan cannot livelock,
     //    and they wait for the next world-stopped sweep.
     MutatorSlowPathLocker mutatorSlowPathLocker(vm.heap);
@@ -164,7 +164,7 @@ bool IncrementalSweeper::sweepNextBlockShared(VM& vm)
             continue;
         }
 
-        if (block->weakSet().head()) [[unlikely]] {
+        if (block->weakSet().hasBlocksWhileShared()) [[unlikely]] {
             // Weak-bearing: leave unswept, release the inUse bit
             // findBlockToSweep took, and step the cursor past it.
             m_currentDirectory->didFinishUsingBlock(block);
@@ -178,15 +178,13 @@ bool IncrementalSweeper::sweepNextBlockShared(VM& vm)
         return true;
     }
 
-    // MSPL is still held, which is the shared-mode precondition of
-    // Heap::sweepNextLogicallyEmptyWeakBlock.
-    return vm.heap.sweepNextLogicallyEmptyWeakBlock();
+    return false;
 }
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
     // Also called by the shared conductor inside the stop window
-    // (Heap::notifyIncrementalSweeper) while the owning run-loop thread is
+    // (the end phase of a collection) while the owning run-loop thread is
     // parked, so these plain writes are published by the resume edge;
     // setTimeUntilFire locks internally.
     scheduleTimer();

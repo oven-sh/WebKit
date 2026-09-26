@@ -187,10 +187,15 @@ RegisterSet JITCode::liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBloc
 
 std::optional<CodeOrigin> JITCode::findPC(CodeBlock* codeBlock, void* pc)
 {
-    for (const DFG::OSRExitStub& stub : m_osrExitStubs) {
-        if (ExecutableMemoryHandle* handle = stub.code.executableMemory()) {
-            if (handle->contains(pc))
-                return std::optional<CodeOrigin>(m_osrExit[stub.exitIndex].m_codeOriginForExitProfile);
+    {
+        std::optional<Locker<Lock>> stubsLocker;
+        if (codeBlock->vm().gilOff()) [[unlikely]]
+            stubsLocker.emplace(DFG::osrExitStubsLock());
+        for (const DFG::OSRExitStub& stub : m_osrExitStubs) {
+            if (ExecutableMemoryHandle* handle = stub.code.executableMemory()) {
+                if (handle->contains(pc))
+                    return std::optional<CodeOrigin>(m_osrExit[stub.exitIndex].m_codeOriginForExitProfile);
+            }
         }
     }
 

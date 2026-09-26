@@ -1561,7 +1561,7 @@ private:
     {
         if (!m_vm->gilOff() || !hasDouble(indexingType)) [[likely]]
             return false;
-        if (!profile.gilOffDoubleDemotionSet().isStillValid()) {
+        if (!profile.gilOffDoubleDemotionSetIsStillValid()) {
             indexingType = (indexingType & ~IndexingShapeMask) | ContiguousShape;
             return false;
         }

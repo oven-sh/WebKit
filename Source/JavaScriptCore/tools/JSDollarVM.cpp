@@ -2273,7 +2273,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSThreadsCounter, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsNumber(static_cast<double>(JSThreadsCounters::valueByName(name.utf8().data()))));
+    return JSValue::encode(jsNumber(static_cast<double>(JSThreadsCounters::valueByName(byteCast<char>(name.utf8().data())))));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(functionCurrentButterflyTID);

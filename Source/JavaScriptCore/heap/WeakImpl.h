@@ -63,6 +63,8 @@ public:
     static WeakImpl* asWeakImpl(JSValue*);
 
 private:
+    JS_EXPORT_PRIVATE void clearShared(); // clear() in a process with the shared collector: WeakBlock.cpp.
+
     const JSValue m_jsValue;
     WeakHandleOwner* m_weakHandleOwner;
     void* m_context { nullptr };

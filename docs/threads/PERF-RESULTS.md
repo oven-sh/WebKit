@@ -1599,3 +1599,74 @@ also started by timers, and time under valgrind is not the program's.
 tree before the round: GIL on 1.0006, GIL off 1.0008. The copy with threads is the function as it was; the wrapper of the
 cell allocation costs a call there (+0.09 % GIL on, +0.24 % GIL off in the allocation rows), the restored inlining gives it
 back elsewhere.
+
+### 6.16 Fourteenth round: flag off by the processor's counters
+
+The thirteenth round left a whole run that was 1.3 % slower in cycles with 0.8 % more instructions. This round read where
+the cycles go with the performance counters (`Tools/threads/perf/flagoff/cycles-breakdown.sh`: the 36 tests in one
+process, all iterations, main thread, user mode, `main` and the branch interleaved; four events to a group beside cycles
+and instructions, so nothing is multiplexed and every run also measures the ratio itself). Both trees at `74650443cb1a`.
+The machine is a virtual machine on a Sapphire Rapids core: six slots per cycle; `topdown.slots` and the
+`frontend_retired.*` events are not available, `idq_bubbles.core` counts the slots the front end left empty. "Share" is
+the event's difference against `main` as a part of `main`'s cycles (slots divided by six). LANDING-PLAN, "Results,
+fourteenth round", has the metrics of the gate; this section has the breakdown.
+
+**Whole run.** Rebased tree before the round's changes (39 runs per binary over thirteen groups) and the final build (20
+runs for the first group, 3 for each of the others).
+
+| Event | Rebased: ratio | share of cycles | Final: ratio | share of cycles |
+|---|---|---|---|---|
+| cycles | 1.0097 | | 1.006 to 1.008 | |
+| instructions | 1.0083 | | 1.004 | |
+| slots the front end left empty | 1.027 | +0.49 % | 1.018 | +0.32 % |
+| slots lost to the back end | 1.022 | +0.58 % | 1.000 | 0.00 % |
+| slots lost to bad speculation | 0.992 | -0.06 % | 1.001 | +0.01 % |
+| micro-operations retired | 1.006 | +0.31 % | 1.006 | +0.28 % |
+| instruction cache, data stalls | 1.079 | +0.19 % | 1.063 | +0.16 % |
+| instruction cache, tag stalls | 1.163 | +0.16 % | 1.169 | +0.17 % |
+| code reads that miss the second-level cache | 1.065 | | 1.046 | |
+| instruction TLB, cycles walking | 1.100 | +0.05 % | 1.141 | +0.06 % |
+| micro-operations from the micro-operation cache | 0.999 | | 0.998 | |
+| micro-operations from the legacy decoder | 1.052 | | 1.045 | |
+| stalls with a first-level data miss outstanding | 1.017 | +0.14 % | 1.009 | +0.08 % |
+| stalls with a second-level data miss outstanding | 1.016 | +0.12 % | 1.008 | +0.07 % |
+| loads retired / that miss the first level | 1.009 / 1.024 | | not read | |
+| data TLB, load walks | 1.027 | +0.04 % | not read | |
+| branches retired / mispredicted | 1.011 / 1.002 | | not read | |
+
+Between two passes the ratio of one event moves by about a point (the back end's slots read +0.58 %, -0.06 % and +0.18 % of
+the cycles for the same binary in three passes); what repeats in every pass is the front end (+2 to +4 % of its slots),
+the instruction cache and TLB events, the decoder's share, and no difference in mispredictions. All the additional
+micro-operations come from the legacy decoder: the additional instructions are instructions of code that is not in the
+micro-operation cache.
+
+**The first six iterations** (20 runs per binary, final build; 27 % of the whole run's cycles): cycles 1.010, instructions
+1.006; front-end slots 1.031 (+0.59 % of the cycles), instruction cache data stalls 1.080 (+0.28 %), tag stalls 1.129
+(+0.23 %), instruction TLB 1.119 (+0.09 %), micro-operations retired 1.006 (+0.30 %), stalls on data 1.000.
+
+**The interpreter, one test** (navier-stokes, `--useJIT=0`, twelve iterations; the instruction counts are equal to four
+digits): cycles `main` 1.95 G, rebased tree 2.01 G, before the alignment 2.09 G; every micro-operation from the
+micro-operation cache in all three (7.5 to 7.7 G against 0.03 G decoded), mispredicted branches 0.38 M in all three; the
+cycles in which the cache delivers 1.62 G, 1.69 G, 1.70 G; slots the front end left empty 3.0 G, 3.8 G, 4.2 G. With the
+opcode bodies on 64-byte boundaries: 1.95 G cycles.
+
+**Exact instruction counts** (as in 6.15; the suite in one process, one iteration, JIT on the main thread, one marker;
+the branch minus `main` in percent of `main`'s 88.2 G instructions):
+
+| Family | Rebased, with the layout changes | After the mode test and the inlining |
+|---|---|---|
+| object model, arrays, structures | +0.232 | +0.162 to +0.183 |
+| optimizing compilers | +0.212 | +0.177 |
+| operations | +0.166 | +0.073 |
+| strings, atoms | +0.123 | +0.061 |
+| sweeping, allocation slow paths | +0.068 | +0.051 to +0.057 |
+| calls, exceptions, entry | +0.052 | +0.049 |
+| parser, bytecode generator | +0.035 | +0.005 |
+| interpreter (assembly) | +0.032 | +0.032 |
+| marking | +0.030 | +0.014 to +0.117 (it varies with when collections happen) |
+| all but generated code | +0.99 | +0.70 |
+
+Executed tests of the mode byte: 121 M in that iteration (0.136 % of the instructions), every one of them of the form
+`lea` + access before the round and a compare with memory after it. Executed reads of the options the branch added: 25 M
+(0.028 %), of which the threads counters 15 M (now behind the mode) and the Group 3 discriminator of the interpreter
+9.6 M (unchanged).

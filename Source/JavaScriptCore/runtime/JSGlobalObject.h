@@ -712,7 +712,6 @@ public:
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
-    uint64_t m_stackTraceLimitBits { 0 }; // {engaged:32, value:32}; see stackTraceLimit()
     // Leaf lock guarding the Weak slot below (TSAN triage §8.36 function-ctor-cache).
     // This per-global Function-constructor source cache is a pure cache, not blessed
     // racy by SPEC-ungil §K: with useThreadGIL=false, N threads can run
@@ -836,10 +835,7 @@ public:
     WatchpointSet& ensureReferencedPropertyWatchpointSet(UniquedStringImpl*);
 #endif
 
-    // Error.stackTraceLimit is a global setting any thread may set or delete
-    // (useJSThreads): one 64-bit word {engaged, value}, read and written whole.
-    std::optional<unsigned> stackTraceLimit() const { uint64_t bits = racyLoad(m_stackTraceLimitBits); return (bits >> 32) ? std::optional<unsigned>(static_cast<unsigned>(bits)) : std::nullopt; }
-    void setStackTraceLimit(std::optional<unsigned> value) { racyStore(m_stackTraceLimitBits, value ? ((1ull << 32) | *value) : 0ull); }
+    std::optional<unsigned> stackTraceLimit() const;
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);

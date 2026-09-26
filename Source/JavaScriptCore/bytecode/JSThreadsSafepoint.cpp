@@ -45,6 +45,7 @@
 #include <wtf/IterationStatus.h>
 #include <wtf/RecursiveLockAdapter.h> // B16 watchdog triage: gilOffCompilationLock / staticPropertyReificationLock isOwner() probe.
 #include <wtf/Seconds.h>
+#include <wtf/SpinBackoff.h>
 #include <wtf/Threading.h> // B16 watchdog triage: ThreadSuspendLocker / PlatformRegisters for the fail-stop backtrace dump.
 
 namespace JSC { namespace JSThreadsSafepoint {
@@ -954,4 +955,14 @@ bool worldIsStopped(VM& vm)
 }
 
 } // namespace JSThreadsSafepoint
+void lockForGILOffFirstUse(Lock& lock, VM& vm) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+{
+    SpinBackoff backoff;
+    while (!lock.tryLock()) {
+        if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
+            continue;
+        backoff.spinOnce();
+    }
+}
+
 } // namespace JSC

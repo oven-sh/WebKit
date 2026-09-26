@@ -369,8 +369,8 @@ void WatchpointSet::fireAllUnderClassAStop(VM& vm, const FireDetail& detail)
     if (JSThreadsCounters::enabled()) [[unlikely]] { // diagnostic: which sets fire under a stop
         StringPrintStream out;
         out.print("classA fire: ", detail);
-        CString text = out.toCString();
-        if (text.length() > 90) text = CString(std::span<const char>(text.data(), 90));
+        CString text = out.toUTF8CString();
+        if (text.length() > 90) text = CString(text.span().first(90));
         static Lock lock; static Vector<CString>* kept;
         Locker locker { lock };
         if (!kept) kept = new Vector<CString>();

@@ -48,15 +48,13 @@ template<typename ValueArg, typename HashArg, typename TraitsArg>
 NEVER_INLINE void WeakGCSet<ValueArg, HashArg, TraitsArg>::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 {
     // GC side; the leaf lock may be taken in the GC window, as for WeakGCMap.
-    if (m_locking == WeakGCMapLocking::Yes) {
-        Locker locker { m_lock };
-        m_set.removeIf([](auto& entry) {
-            return !entry;
-        });
-        return;
-    }
-    m_set.removeIf([](auto& entry) {
-        return !entry;
+    std::optional<Locker<Lock>> locker;
+    if (m_locking == WeakGCMapLocking::Yes) [[unlikely]]
+        locker.emplace(m_lock);
+    // A set entry is its own key, so unlike WeakGCMap there is no value to null out and leave for
+    // the next full collection: both scopes remove.
+    m_set.removeIf([&](ValueArg* value) {
+        return !vm.heap.isMarked(value);
     });
 }
 

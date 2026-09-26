@@ -39,6 +39,13 @@ JSValue StringRecursionChecker::emptyString()
     return jsEmptyString(m_globalObject->vm());
 }
 
+void StringRecursionChecker::selectPerThreadState()
+{
+    static thread_local PerThreadState state;
+    m_firstObjectSlot = &state.firstObject;
+    m_visitedObjects = &state.visitedObjects;
+}
+
 }
 
 #endif // USE(BUN_JSC_ADDITIONS)

@@ -740,9 +740,8 @@ JSFunction::PropertyStatus JSFunction::reifyLazyLengthIfNeeded(VM& vm, JSGlobalO
 {
     if (propertyName == vm.propertyNames->length) {
         if (!hasReifiedLength()) {
-            GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, vm.gilOffWithProcessGate());
-            if (hasReifiedLength())
-                return PropertyStatus::Lazy;
+            if (vm.gilOffWithProcessGate()) [[unlikely]]
+                return reifyLazyLengthGILOff(vm);
             reifyLength(vm);
             return PropertyStatus::Reified;
         }
@@ -751,18 +750,34 @@ JSFunction::PropertyStatus JSFunction::reifyLazyLengthIfNeeded(VM& vm, JSGlobalO
     return PropertyStatus::Eager;
 }
 
+NEVER_INLINE JSFunction::PropertyStatus JSFunction::reifyLazyLengthGILOff(VM& vm)
+{
+    GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, true);
+    if (hasReifiedLength())
+        return PropertyStatus::Lazy;
+    reifyLength(vm);
+    return PropertyStatus::Reified;
+}
+
 JSFunction::PropertyStatus JSFunction::reifyLazyNameIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     if (propertyName == vm.propertyNames->name) {
         if (!hasReifiedName()) {
-            GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, vm.gilOffWithProcessGate());
-            if (hasReifiedName())
-                return PropertyStatus::Lazy;
+            if (vm.gilOffWithProcessGate()) [[unlikely]]
+                return reifyLazyNameGILOff(vm, globalObject);
             return reifyName(vm, globalObject);
         }
         return PropertyStatus::Lazy;
     }
     return PropertyStatus::Eager;
+}
+
+NEVER_INLINE JSFunction::PropertyStatus JSFunction::reifyLazyNameGILOff(VM& vm, JSGlobalObject* globalObject)
+{
+    GILOffFirstUseLocker locker(s_lazyLengthOrNameLock, vm, true);
+    if (hasReifiedName())
+        return PropertyStatus::Lazy;
+    return reifyName(vm, globalObject);
 }
 
 JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)

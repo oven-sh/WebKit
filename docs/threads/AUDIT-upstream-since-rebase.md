@@ -2031,6 +2031,31 @@ of its 122 hits in 16 files this was the only one that was upstream's deleted wo
 repeats a line upstream once had, or code that moved between files). It is to be run after every rebase.
 
 
+## 11. The fourteenth round's rebase range
+
+The branch was rebased onto `74650443cb1a`. The range `35e8970dfd92..74650443cb1a` is one commit of the fork, #725, which
+takes the fork to upstream WebKit `7b485a76e9`: 612 files under `Source/JavaScriptCore`, `Source/WTF` and `Source/bmalloc`, of
+which the branch also changes 184. Fifty files conflicted (90 hunks). Unlike sections 8 to 10 this range was **not read as a
+range**: it is several weeks of upstream in one commit. What was read is every conflicted hunk, every file that failed to
+compile after the merge, and the designs below, which replaced state the branch's GIL-off protocols were built on. The rows
+are those designs. Everything else in the range is covered only by the tests (the threads corpus in four modes on Release
+and Debug, the sanitizer corpus, `JSTests/stress` with the flag set in both modes).
+
+| Row | Upstream change | New state | With several mutators in one VM | Verdict |
+|---|---|---|---|---|
+| R14-1 | OSR exits: exits are stored as a byte stream (`OSRExitStream`), an exit is entered through a fixed-size entrance that calls the generation thunk (the return address names the exit; `VM::osrExitReturnPC`), and the entrance is replaced by a jump once the exit's code exists (`replaceWithJump`); `JITCode::m_osrExitStubs` grows as exits are compiled | `VM::osrExitReturnPC` (one word per VM), the entrances (patched code), the stub vector, `ExitJumpTable` | GIL off nothing may patch reachable code outside a stop, and a word of the VM cannot carry a value from the entrance to the thunk | **guarded.** GIL off, DFG code dispatches every exit through the exit jump table, as unlinked code does (`DFG::Plan` allocates it, `JITCompiler` emits no entrances and does not store the index into the VM); the entry is published with `publishExitJumpTableEntryConcurrently` (bump of the stop generation, store-store fence, relaxed atomic store) and read lock-free. The thunk's per-lite form takes no return address. FTL keeps the read-the-published-ramp prefix in front of the entrance's call. The stub vectors are appended to and read under `DFG::osrExitStubsLock()` (`operationCompileOSRExit`, the FTL exit compiler, `CodeBlock::tallyFrequentExitSites`, both `findPC`). Flag off and GIL on take upstream's form unchanged |
+| R14-2 | The parser no longer tracks line and column; positions are derived from the source provider's table of line starts | `SourceProvider`'s line-start table, built on first use under its own lock | readers take the table's lock | no exposure. The branch's lock around the old line/column cache went with the cache. `SourceCode` equals upstream's. `UnlinkedFunctionExecutable`'s bit-fields were laid out again around the branch's two words |
+| R14-3 | `Error.stackTraceLimit` is read from the constructor's property | none (the branch's 64-bit word in `JSGlobalObject` is dropped) | a property read | no exposure |
+| R14-4 | `WeakGCMap` / `WeakGCSet` hold raw pointers and are reconciled at the end of a collection; a table that gained an entry puts itself on the heap's dirty list | `Heap`'s list of dirty tables; each table's dirty bit | tables that several threads use were already locking tables on the branch (`WeakGCMapLocking`); the dirty list is a plain vector | **guarded.** GIL off the dirty list is added to, removed from and snapshotted under the registry lock (`addDirtyWeakGCHashTable`, `unregisterWeakGCHashTable`, `reconcileWeakGCHashTables`); a locking table marks itself dirty and is reconciled under its own lock |
+| R14-5 | Weak blocks: a weak set keeps per-block free lists and counts, blocks are pooled, and `WeakImpl::clear()` edits the block (free list, count, possibly unlinking it from its set) | the block's free list and counts, the set's block list, the heap's pool | clearing a handle was a lock-free state flip, which the branch's shared-heap protocol relied on: any thread may clear a handle of any block | **guarded.** `Heap::m_weakHandleLock` (a leaf lock): taken by `WeakImpl::clearShared()` and inside `WeakSet::allocate`, `shrink` and the pool's teardown once the heap is a shared server. Flag off: one test of the mode at the top of `WeakImpl::clear()`. **Not verified** beyond the tests: that every reader of a set's block list on a thread other than the owner runs inside a stop or under the lock (`hasBlocksWhileShared()` is the one that was found and changed) |
+| R14-6 | The list of directories with empty blocks to steal from moved from `Subspace` to `AlignedMemoryAllocator` | the allocator's list | the branch's rule that a block bearing weak handles is not stolen with the heap shared | guarded: the skip is in `BlockDirectory::findEmptyBlockToSteal`, keyed on `hasBlocksWhileShared()` |
+| R14-7 | `shiftButterflyAfterFlattening` takes a `ConcurrentJSLocker` and upstream added the `DeferGC` the branch had | none | | no exposure; the branch's preallocated-butterfly parameter stays |
+| R14-8 | `doneLocation` moved out of `PropertyInlineCache`; handler inline caches finalize without it | none | | no exposure |
+| R14-9 | `CString` split into `ASCIICString` and `UTF8CString`; warnings are errors with `DEVELOPER_MODE` | none | | no exposure. The developer configuration of `main` itself does not build with clang 21 (its own libpas and `URLParser`); both trees are configured with `CMAKE_COMPILE_WARNING_AS_ERROR=OFF` for the test executables |
+
+**Open from this range.** The range was not read commit by commit (above). R14-5's unverified part. New upstream code that
+only an embedder reaches was not looked for.
+
 ## What this audit did not check
 
 - Nothing was built or run. No test was written. TSAN was not run.

@@ -163,55 +163,34 @@ public:
 
     void appendExitStub(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
-        // GIL-off, the lock-free DCLP probe in operationCompileOSRExit reads
-        // m_exits[i].m_codePtr without the OSR exit generation lock; this is
-        // the publishing writer (under that lock). Decompose the move-assign so
-        // m_executableMemory lands first (the slot's own RefPtr is the liveness
-        // anchor once m_codePtr publishes non-thunk), storeStoreFence, then
-        // publish m_codePtr with a relaxed atomic store paired with
-        // exitCodePtrConcurrent()'s relaxed load. offsetOfCodePtr() is the same
-        // JIT-visible word the unlinked-DFG farJump reads (DFGJITCompiler.cpp);
-        // the static_asserts pin m_executableMemory at the second word so a
-        // layout change in MacroAssemblerCodeRef trips here. Flag-off: the DCLP
-        // arm is gilOff-only, and a relaxed store of one word + a fence is
-        // codegen-equivalent on the slow path to the plain move-assign it
-        // replaces (once-per-exit-compile), so flag-off behavior is unchanged.
-        auto& slot = m_exits[exitIndex];
-        static_assert(!MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
-        static_assert(sizeof(CodePtr<OSRExitPtrTag>) == sizeof(void*));
-        static_assert(sizeof(MacroAssemblerCodeRef<OSRExitPtrTag>) == 2 * sizeof(void*));
-        constexpr ptrdiff_t executableMemoryOffset = sizeof(void*);
-        auto* slotExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&slot) + executableMemoryOffset);
-        auto* srcExecMem = std::bit_cast<RefPtr<ExecutableMemoryHandle>*>(std::bit_cast<char*>(&code) + executableMemoryOffset);
-        *slotExecMem = WTF::move(*srcExecMem);
-        // GIL-off: the ramp was compiled by SOME thread; every thread that
-        // later observes the published pointer must issue its context
-        // synchronization once before jumping into it. Bumping the process
-        // stop generation BEFORE the publish makes "saw the pointer" imply
-        // "saw the bump", so the reader's cheap generation compare
-        // (jsThreadsSyncToStopGenerationBeforeJITEntry) replaces an
-        // unconditional serializing instruction per exit. Flag-off/GIL-on:
-        // a counter increment on a once-per-exit-compile path.
-        if (processUsesJSThreads()) [[unlikely]]
-            jsThreadsBumpStopGeneration();
-        WTF::storeStoreFence();
-        void** slotCodePtrWord = std::bit_cast<void**>(std::bit_cast<char*>(&slot) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
-        WTF::atomicStore(slotCodePtrWord, code.code().taggedPtr(), std::memory_order_relaxed);
+        ASSERT(!m_exitStubs.containsIf([&](const OSRExitStub& stub) { return stub.exitIndex == exitIndex; }));
+        m_exitStubs.append({ exitIndex, WTF::move(code) });
     }
     void setExitJumpTableEntry(unsigned exitIndex, CodePtr<OSRExitPtrTag> code) { m_exitJumpTable[exitIndex] = code; }
     const OSRExitStubs& exitStubs() const LIFETIME_BOUND { return m_exitStubs; }
 
-    // Relaxed-atomic read of m_exits[i].m_codePtr for the gilOff lock-free
-    // DCLP probe in operationCompileOSRExit (TSAN-TRIAGE §20.3.5). Pairs with
-    // setExitCode()'s relaxed-atomic publish; the caller issues
-    // WTF::loadLoadFence() after observing a non-thunk value. Returns the
-    // tagged code pointer (same value exitCode(i).code().taggedPtr() would
-    // return under the lock).
-    void* exitCodePtrConcurrent(unsigned exitIndex) const
+    // GIL off, generated code never has an exit entrance patched under it (no patching of
+    // reachable code outside a stop): every DFG code block dispatches its exits through the
+    // exit jump table, as unlinked code does (JITCompiler::linkOSRExits). The entry is the one
+    // word the dispatch's far jump and the lock-free probe of operationCompileOSRExit read.
+    // The writer holds the OSR exit generation lock and has appended the stub, which keeps the
+    // ramp's memory alive, before it publishes. Bumping the stop generation before the store
+    // makes "saw the pointer" imply "saw the bump", so a reader's generation compare
+    // (jsThreadsSyncToStopGenerationBeforeJITEntry) stands in for a serializing instruction
+    // per exit.
+    void publishExitJumpTableEntryConcurrently(unsigned exitIndex, CodePtr<OSRExitPtrTag> code)
     {
         static_assert(sizeof(CodePtr<OSRExitPtrTag>) == sizeof(void*));
-        auto* word = std::bit_cast<void* const*>(std::bit_cast<const char*>(&m_exits[exitIndex]) + MacroAssemblerCodeRef<OSRExitPtrTag>::offsetOfCodePtr());
-        return WTF::atomicLoad(const_cast<void**>(word), std::memory_order_relaxed);
+        jsThreadsBumpStopGeneration();
+        WTF::storeStoreFence();
+        WTF::atomicStore(std::bit_cast<void**>(&m_exitJumpTable[exitIndex]), code.taggedPtr(), std::memory_order_relaxed);
+    }
+
+    // Pairs with publishExitJumpTableEntryConcurrently(); the caller issues WTF::loadLoadFence()
+    // after it sees a value that is not the generation thunk.
+    void* exitJumpTableEntryConcurrently(unsigned exitIndex) const
+    {
+        return WTF::atomicLoad(std::bit_cast<void**>(const_cast<CodePtr<OSRExitPtrTag>*>(&m_exitJumpTable[exitIndex])), std::memory_order_relaxed);
     }
 
     bool isInvalidated() const { return !!m_isInvalidated; }
@@ -234,17 +213,47 @@ public:
 
     FixedVector<OptimizingCallLinkInfo>& callLinkInfos() LIFETIME_BOUND { return m_callLinkInfos; }
 
-    UpperTierExecutionCounter& tierUpCounter() LIFETIME_BOUND { return m_tierUpCounter; }
-    const UpperTierExecutionCounter& tierUpCounter() const LIFETIME_BOUND { return m_tierUpCounter; }
+    UpperTierExecutionCounter& tierUpCounter() LIFETIME_BOUND
+    {
+        if (processIsGILOff()) [[unlikely]]
+            return gilOffFields().tierUpCounter;
+        return m_tierUpCounter;
+    }
+    const UpperTierExecutionCounter& tierUpCounter() const LIFETIME_BOUND { return const_cast<JITData*>(this)->tierUpCounter(); }
 
     uint8_t neverExecutedEntry() const { return m_neverExecutedEntry; }
 
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(JITData, m_globalObject); }
     static constexpr ptrdiff_t offsetOfStackOffset() { return OBJECT_OFFSETOF(JITData, m_stackOffset); }
     static constexpr ptrdiff_t offsetOfDummyArrayProfile() { return OBJECT_OFFSETOF(JITData, m_dummyArrayProfile); }
-    static constexpr ptrdiff_t offsetOfTierUpCounter() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_counter); }
-    static constexpr ptrdiff_t offsetOfTierUpActiveThreshold() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_activeThreshold); }
-    static constexpr ptrdiff_t offsetOfTierUpTotalCount() { return OBJECT_OFFSETOF(JITData, m_tierUpCounter) + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_totalCount); }
+    // As BaselineJITData::GILOffFields: with the GIL off every thread running this DFG code bumps
+    // the tier-up counter, and nothing read-mostly may share its line, so the counter is in the
+    // first slots of the trailing pool, between two lines of padding. Otherwise it is
+    // m_tierUpCounter and the object has the layout it has without the threads work.
+    struct GILOffFields {
+        char padBeforeCounter[64];
+        UpperTierExecutionCounter tierUpCounter;
+        char padAfterCounter[64];
+    };
+    static constexpr unsigned gilOffReservedPoolSlots = (sizeof(GILOffFields) + sizeof(void*) - 1) / sizeof(void*);
+    static unsigned reservedPoolSlots() { return processIsGILOff() ? gilOffReservedPoolSlots : 0; }
+    static ptrdiff_t offsetOfTierUpCounterObject()
+    {
+        if (processIsGILOff()) [[unlikely]]
+            return offsetOfTrailingData() + OBJECT_OFFSETOF(GILOffFields, tierUpCounter);
+        return OBJECT_OFFSETOF(JITData, m_tierUpCounter);
+    }
+    static ptrdiff_t offsetOfTierUpCounter() { return offsetOfTierUpCounterObject() + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_counter); }
+    static ptrdiff_t offsetOfTierUpActiveThreshold() { return offsetOfTierUpCounterObject() + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_activeThreshold); }
+    static ptrdiff_t offsetOfTierUpTotalCount() { return offsetOfTierUpCounterObject() + OBJECT_OFFSETOF(UpperTierExecutionCounter, m_totalCount); }
+    static ptrdiff_t offsetOfConstant(unsigned index) { return offsetOfTrailingData() + (reservedPoolSlots() + index) * sizeof(void*); }
+    std::span<void*> constants() LIFETIME_BOUND { return trailingSpan().subspan(reservedPoolSlots()); }
+    GILOffFields& gilOffFields() LIFETIME_BOUND
+    {
+        ASSERT(processIsGILOff());
+        return *std::bit_cast<GILOffFields*>(trailingSpan().data());
+    }
+    ~JITData();
     static constexpr ptrdiff_t offsetOfNeverExecutedEntry() { return OBJECT_OFFSETOF(JITData, m_neverExecutedEntry); }
 
     explicit JITData(unsigned propertyCacheSize, unsigned poolSize, const JITCode&, ExitJumpTable&&);
@@ -261,12 +270,7 @@ private:
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
     ArrayProfile m_dummyArrayProfile { };
-    // Same isolation as BaselineJITData::m_executeCounter: every thread
-    // running this DFG code bumps the tier-up counter; nothing read-mostly may
-    // share its line.
-    char m_padBeforeCounter[64];
-    UpperTierExecutionCounter m_tierUpCounter;
-    char m_padAfterCounter[64];
+    UpperTierExecutionCounter m_tierUpCounter; // Not the counter with the GIL off: GILOffFields.
     FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
     FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     ExitJumpTable m_exitJumpTable;
@@ -274,6 +278,10 @@ private:
     uint8_t m_isInvalidated { 0 };
     uint8_t m_neverExecutedEntry { 1 };
 };
+
+#if CPU(X86_64)
+static_assert(sizeof(JITData) == 104, "DFG::JITData has the size it has without the threads work");
+#endif
 
 class JITCode final : public DirectJITCode {
 public:
@@ -419,7 +427,7 @@ public:
 
 inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitJumpTable&& exitJumpTable)
 {
-    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedPropertyInlineCaches.size(), jitCode.m_linkerIR.size(), jitCode, WTF::move(exitJumpTable)) };
+    auto result = std::unique_ptr<JITData> { createImpl(jitCode.m_unlinkedPropertyInlineCaches.size(), jitCode.m_linkerIR.size() + reservedPoolSlots(), jitCode, WTF::move(exitJumpTable)) };
     if (result->tryInitialize(vm, codeBlock, jitCode))
         return result;
     return nullptr;

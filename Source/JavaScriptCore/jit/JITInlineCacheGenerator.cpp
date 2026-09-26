@@ -85,15 +85,16 @@ void JITInlineCacheGenerator::finalize(
     LinkBuffer& fastPath, LinkBuffer& slowPath, CodeLocationLabel<JITStubRoutinePtrTag> start)
 {
     ASSERT(m_propertyCache);
-    if (auto* handlerIC = dynamicDowncast<HandlerPropertyInlineCache>(*m_propertyCache)) {
+    if (is<HandlerPropertyInlineCache>(*m_propertyCache)) {
         // FTL handler-IC site (useHandlerICInFTL): there is no inline slab and no
-        // patchable slow-path call. doneLocation is where the IC continues; a
-        // miss ends in the chain's slow-path handler, which calls m_slowOperation
-        // and returns. The initial handler is installed on the main thread at plan
-        // finalization (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
+        // patchable slow-path call, and nothing to record: a hit returns to the
+        // site, a miss ends in the chain's slow-path handler, which calls
+        // m_slowOperation and returns. The initial handler is installed on the
+        // main thread at plan finalization
+        // (HandlerPropertyInlineCache::initializeHandlerForOptimizingJIT).
+        UNUSED_PARAM(fastPath);
         UNUSED_PARAM(start);
         UNUSED_PARAM(slowPath);
-        handlerIC->doneLocation = fastPath.locationOf<JSInternalPtrTag>(m_done);
         return;
     }
     auto& repatchingIC = downcast<RepatchingPropertyInlineCache>(*m_propertyCache);

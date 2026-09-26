@@ -56,16 +56,14 @@ private:
     // VM members would also be a data race. Entries exist only while a checker
     // for them is on this thread's stack, so the raw JSObject* pointers are
     // kept live by the active frames and the set is never visited by GC.
-    // Flag-off keeps the VM members.
+    // Flag-off keeps the VM members. The thread_local is reached out of line
+    // (selectPerThreadState): its access and its guard inside performCheck()
+    // made the constructor too large to be inlined where `main` inlines it.
     struct PerThreadState {
         JSObject* firstObject { nullptr };
         UncheckedKeyHashSet<JSObject*> visitedObjects;
     };
-    static PerThreadState& perThreadState()
-    {
-        static thread_local PerThreadState state;
-        return state;
-    }
+    JS_EXPORT_PRIVATE void selectPerThreadState();
 
     JSGlobalObject* m_globalObject;
     JSObject* m_thisObject;
@@ -84,11 +82,9 @@ ALWAYS_INLINE JSValue StringRecursionChecker::performCheck()
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError();
 
-    if (processUsesJSThreads()) [[unlikely]] {
-        auto& state = perThreadState();
-        m_firstObjectSlot = &state.firstObject;
-        m_visitedObjects = &state.visitedObjects;
-    } else {
+    if (processUsesJSThreads()) [[unlikely]]
+        selectPerThreadState();
+    else {
         m_firstObjectSlot = &vm.stringRecursionCheckFirstObject;
         m_visitedObjects = &vm.stringRecursionCheckVisitedObjects;
     }

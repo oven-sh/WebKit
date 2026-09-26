@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lint-llint-threaded-entries.sh <generated LLIntAssembly.h>: the threaded twin of every gated LLInt opcode must be installed by
-# _llint_threaded_entry, and nothing else may be. The twins are the labels threaded_llint_* that gateVariants() (LowLevelInterpreter64.asm)
+# _llint_threaded_entry, and nothing else may be. The twins are the labels threaded_llint_* that gateThreadedBodies() (LowLevelInterpreter64.asm)
 # makes; the entries are the setThreadedEntries() lines of LowLevelInterpreter.asm. Exit 0 when the two lists are equal.
 set -eu
 GEN=${1:?usage: $0 <path to LLIntAssembly.h>}

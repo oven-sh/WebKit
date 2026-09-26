@@ -103,7 +103,7 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
         std::optional<SharedVMState::StructureAllocationLocker> structureAllocationLocker;
         if (Options::useStructureAllocationLock()) [[unlikely]]
             structureAllocationLocker.emplace(vm);
-        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker ? structureAllocationLocker->deferralContext() : nullptr)) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
+        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker ? structureAllocationLocker->deferralContext() : nullptr, Structure::allocationSize())) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
         structure->finishCreation(vm);
     }
     ASSERT(structure->type() == StructureType);
@@ -121,7 +121,7 @@ inline Structure* Structure::createStructure(VM& vm)
         std::optional<SharedVMState::StructureAllocationLocker> structureAllocationLocker;
         if (Options::useStructureAllocationLock()) [[unlikely]]
             structureAllocationLocker.emplace(vm);
-        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker ? structureAllocationLocker->deferralContext() : nullptr)) Structure(vm, CreatingEarlyCell);
+        structure = new (NotNull, allocateCell<Structure>(vm, structureAllocationLocker ? structureAllocationLocker->deferralContext() : nullptr, Structure::allocationSize())) Structure(vm, CreatingEarlyCell);
         structure->finishCreation(vm, CreatingEarlyCell);
     }
     return structure;

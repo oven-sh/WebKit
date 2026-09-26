@@ -249,6 +249,10 @@ private:
     PropertyStatus reifyLazyPrototypeIfNeeded(VM&, JSGlobalObject*, PropertyName);
     PropertyStatus reifyLazyLengthIfNeeded(VM&, JSGlobalObject*, PropertyName);
     PropertyStatus reifyLazyNameIfNeeded(VM&, JSGlobalObject*, PropertyName);
+    // The same under the lock that makes the check and the store one step with the GIL off. Out of line, so that the
+    // two functions above stay as small as on `main`, which inlines them into every property lookup on a function.
+    PropertyStatus reifyLazyLengthGILOff(VM&);
+    PropertyStatus reifyLazyNameGILOff(VM&, JSGlobalObject*);
     PropertyStatus reifyLazyBoundNameIfNeeded(VM&, JSGlobalObject*, PropertyName);
 
 #if ASSERT_ENABLED

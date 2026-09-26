@@ -86,7 +86,7 @@ public:
         // line, including on parts that prefetch 128-byte line pairs.
         // (Lower bound on payload; interior padding only grows the struct.)
         static constexpr size_t minimumPayloadBytes = sizeof(Lock) + sizeof(AtomStringTable::StringTableImpl);
-        char m_padding[minimumPayloadBytes >= 128 ? 1 : 128 - minimumPayloadBytes] { };
+        [[maybe_unused]] char m_padding[minimumPayloadBytes >= 128 ? 1 : 128 - minimumPayloadBytes] { };
     };
     static_assert(sizeof(Shard) >= 128, "shards must not share cache lines");
     static_assert(alignof(Shard) >= 64);

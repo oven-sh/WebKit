@@ -46,27 +46,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Thunks);
 using namespace DFG;
 
 static MacroAssemblerCodeRef<JITThunkPtrTag> genericGenerationThunkGenerator(
-    VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name, unsigned extraPopsToRestore, FrameAndStackAdjustmentRequirement frameAndStackAdjustmentRequirement,
-    void (*thinPrefix)(AssemblyHelpers&) = nullptr)
+    AssemblyHelpers& jit, VM& vm, CodePtr<CFunctionPtrTag> generationFunction, PtrTag resultTag, const char* name)
 {
-    AssemblyHelpers jit(nullptr);
-
-    // SCALEBENCH §42 thin-thunk: gilOff-only fast prefix that bypasses the
-    // saveAllRegisters / operation-call / restoreAllRegisters body when the
-    // steady-state answer is already published (lazy slow path's
-    // m_stubCodePtr). nullptr for OSR-exit and for GIL-on, so flag-off /
-    // GIL-on emit the IDENTICAL byte sequence below (no prefix → first
-    // emitted instruction is the pushToSave(framePointerRegister) that
-    // upstream emits today).
-    if (thinPrefix) [[unlikely]]
-        thinPrefix(jit);
-
-    if (frameAndStackAdjustmentRequirement == FrameAndStackAdjustmentRequirement::Needed) {
-        // This needs to happen before we use the scratch buffer because this function also uses the scratch buffer.
-        adjustFrameAndStackInOSRExitCompilerThunk<FTL::JITCode>(jit, vm, JITType::FTLJIT);
-    }
-    
-    // Note that the "return address" will be the ID that we pass to the generation function.
+    // Note that the ID that we pass to the generation function is on top of the stack.
 
     constexpr GPRReg stackPointerRegister = MacroAssembler::stackPointerRegister;
     constexpr GPRReg framePointerRegister = MacroAssembler::framePointerRegister;
@@ -193,7 +175,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> osrExitGenerationThunkGenerator(VM& vm)
 // codeBlock → m_jitCode (ConcurrentJITCodePtr; one raw word, JITCode.h:428)
 // → FTL::JITCode::lazySlowPaths[index] → m_stubCodePtr. Non-null (steady
 // state after first compile) → restore the two spilled scratches, pop the
-// late-path's index push (the same push the full body's extraPopsToRestore=1
+// late-path's index push (the same push the full body pops before it returns
 // removes), tail-jump to the stub. Null → restore both scratches and FALL
 // THROUGH to today's full body with sp at exactly its on-entry layout, so
 // first-compile / race-loser semantics are byte-for-byte the existing
@@ -266,7 +248,7 @@ static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
     jit.move(scratch1, targetGPR);
     jit.popToRestore(scratch1);
     jit.popToRestore(scratch0);
-    jit.addPtr(MA::TrustedImm32(pushToSaveByteOffset), MacroAssembler::stackPointerRegister); // drop index push (= extraPopsToRestore=1).
+    jit.addPtr(MA::TrustedImm32(pushToSaveByteOffset), MacroAssembler::stackPointerRegister); // drop the index push, as the full body does.
 #if CPU(ARM64)
     // Instruction side: the stub was written and cache-flushed by whichever
     // thread generated it; that flush's ISB synchronized only the generating
@@ -287,12 +269,15 @@ static void emitLazySlowPathThinPrefix(AssemblyHelpers& jit)
 
 MacroAssemblerCodeRef<JITThunkPtrTag> lazySlowPathGenerationThunkGenerator(VM& vm)
 {
-    unsigned extraPopsToRestore = 1;
-    // SCALEBENCH §42 thin-thunk: gilOff-only thin prefix; GIL-on / flag-off
-    // pass no prefix and emit the byte-identical upstream thunk.
-    return genericGenerationThunkGenerator(
-        vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk", extraPopsToRestore, FrameAndStackAdjustmentRequirement::NotNeeded,
-        vm.gilOff() ? emitLazySlowPathThinPrefix : nullptr);
+    AssemblyHelpers jit(nullptr);
+    // SCALEBENCH §42 thin-thunk: gilOff-only fast prefix that bypasses the
+    // saveAllRegisters / operation-call / restoreAllRegisters body when the
+    // steady-state answer is already published (the lazy slow path's
+    // m_stubCodePtr). GIL-on / flag-off emit no prefix and the byte-identical
+    // upstream thunk.
+    if (vm.gilOff()) [[unlikely]]
+        emitLazySlowPathThinPrefix(jit);
+    return genericGenerationThunkGenerator(jit, vm, operationCompileFTLLazySlowPath, JITStubRoutinePtrTag, "FTL lazy slow path generation thunk");
 }
 
 static void registerClobberCheck(AssemblyHelpers& jit, RegisterSet dontClobber)

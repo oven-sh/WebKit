@@ -419,7 +419,7 @@ private:
     , name ISO_SUBSPACE_INIT(*this, heapCellType, type)
 
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
-    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
+    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(type::allocationSize()), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
 Heap::Heap(VM& vm, HeapType heapType)
     : m_heapType(heapType)
@@ -587,8 +587,8 @@ Heap::~Heap()
         });
     m_mutatorMarkStack->clear();
     m_raceMarkStack->clear();
-
-    for (WeakBlock* block : m_logicallyEmptyWeakBlocks)
+    
+    while (WeakBlock* block = m_detachedWeakBlocks.removeHead())
         WeakBlock::destroy(*this, block);
     destroyAllPooledWeakBlocks();
     ASSERT(!m_weakBlockCount);
@@ -755,13 +755,11 @@ void Heap::lastChanceToFinalize()
 
     m_safepointEpoch.drainForTeardown();
 
-    sweepAllLogicallyEmptyWeakBlocks(); // Takes MSPL itself when shared (T8).
-
     {
         MutatorSlowPathLocker mutatorSlowPathLocker(*this);
         m_objectSpace.freeMemory();
     }
-    
+
     dataLogIf(Options::logGC(), (MonotonicTime::now() - before).milliseconds(), "ms]\n");
 }
 
@@ -1968,6 +1966,7 @@ void Heap::sweepSynchronously()
     // so this cannot starve allocation.
     if (!isSharedServer() || worldIsStoppedForAllClients())
         m_objectSpace.shrink();
+    destroyAllPooledWeakBlocks();
 #if ENABLE(WEBASSEMBLY)
     Wasm::TypeInformation::cleanupIfRequested();
 #endif
@@ -2465,8 +2464,6 @@ void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
         // needed. Only assert when this heap serves a single client.
         if (!isSharedServer())
             m_objectSpace.assertNoUnswept();
-        
-        sweepAllLogicallyEmptyWeakBlocks();
         return;
     } }
     RELEASE_ASSERT_NOT_REACHED();
@@ -2794,7 +2791,7 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
             m_siblingSlotVisitorPoolMayGrow.store(true, std::memory_order_relaxed);
             Locker locker { m_parallelSlotVisitorLock };
             while (m_siblingSlotVisitors.size() < wanted) {
-                auto visitor = makeUnique<SlotVisitor>(*this, toCString("S", m_siblingSlotVisitors.size() + 1));
+                auto visitor = makeUnique<SlotVisitor>(*this, toASCIICString("S", m_siblingSlotVisitors.size() + 1));
                 if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
                     visitor->optimizeForStoppedMutator();
                 m_availableSiblingSlotVisitors.append(visitor.get());
@@ -2904,16 +2901,9 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
             [&] (SlotVisitor& visitor) {
                 visitMap.add(visitor.codeName(), visitor.bytesVisited() / 1024);
             });
-        
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        auto perVisitorDump = sortedMapDump(
-            visitMap,
-            [] (const char* a, const char* b) -> bool {
-                return strcmp(a, b) < 0;
-            },
-            ":"_s, " "_s);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-        
+
+        auto perVisitorDump = sortedMapDump(visitMap, std::less<>(), ":"_s, " "_s);
+
         dataLog("v=", bytesVisited() / 1024, "kb (", perVisitorDump, ") o=", m_opaqueRoots.size(), " b=", WTF::atomicLoad(&m_barriersExecuted, std::memory_order_relaxed), " ");
     }
         
@@ -3826,7 +3816,7 @@ NEVER_INLINE void Heap::dumpSharedGCAccessBarrierStall(Seconds elapsed)
         holders.print(" client=", RawPointer(&client), &client == m_mainClient ? "(main)" : "", " ownerThread=", RawPointer(owner), " ownerUID=", owner ? owner->uid() : 0);
     });
     dataLogLn("JSC SharedGC: the stop-the-world access barrier has waited ", elapsed.seconds(),
-        "s for every client to release heap access. Still holding:", holders.toCString().data(),
+        "s for every client to release heap access. Still holding:", holders.toUTF8CString(),
         ". A GC stop traps only threads executing JS; a client holding access while blocked in native code or idle in an "
         "event loop is reached only by its own releaseHeapAccess()/stopIfNecessary(), so embedders must release heap access "
         "(ReleaseHeapAccessScope) across blocking sections.");
@@ -4296,6 +4286,38 @@ void Heap::reapWeakHandles()
 void Heap::reconcileWeakGCHashTables()
 {
     CollectionScope collectionScope = m_collectionScope.value_or(CollectionScope::Full);
+
+    // SharedGC (CVE-AUDIT A3 / map-MC-GC S12b): End phase, world stopped —
+    // but under gilOff take the registry leaf lock anyway so (a) TSAN sees
+    // one consistent guard for the set and the list of dirty tables (same
+    // discipline as m_possiblyAccessedStringsFromConcurrentThreadsLock
+    // above), and (b) the walk is defended against the K4.VIII.9 secondary
+    // signature (.stw-variant.txt — a non-quiescent lite still inside
+    // register() while a Class-A stop is wedged; that wedge is a SEPARATE
+    // filed bug, FIX-2 family). Snapshot under the lock, walk outside it:
+    // reconcileWeakReferencesAtGCEnd() overrides do real work (WeakGCMap
+    // removeIf) and the lock is leaf-rank, so we don't hold it across
+    // callouts. Flag-off: byte-identical (no lock, no snapshot).
+    if (vm().gilOff()) [[unlikely]] {
+        Vector<WeakGCHashTable*, 16> snapshot;
+        {
+            Locker locker { m_weakGCHashTablesLock };
+            if (collectionScope == CollectionScope::Full) {
+                snapshot.reserveInitialCapacity(m_weakGCHashTables.size());
+                for (auto* weakGCHashTable : m_weakGCHashTables)
+                    snapshot.append(weakGCHashTable);
+            }
+            m_dirtyWeakGCHashTables.forEach([&](WeakGCHashTable* weakGCHashTable) {
+                weakGCHashTable->remove();
+                if (collectionScope != CollectionScope::Full)
+                    snapshot.append(weakGCHashTable);
+            });
+        }
+        for (auto* weakGCHashTable : snapshot)
+            weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+        return;
+    }
+
     if (collectionScope == CollectionScope::Full) {
         for (auto* weakGCHashTable : m_weakGCHashTables)
             weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
@@ -4303,31 +4325,14 @@ void Heap::reconcileWeakGCHashTables()
             weakGCHashTable->remove();
         });
         return;
-    // SharedGC (CVE-AUDIT A3 / map-MC-GC S12b): End phase, world stopped —
-    // but under gilOff take the registry leaf lock anyway so (a) TSAN sees
-    // one consistent guard for the set (same discipline as
-    // m_possiblyAccessedStringsFromConcurrentThreadsLock above), and (b) the
-    // walk is defended against the K4.VIII.9 secondary signature
-    // (.stw-variant.txt — a non-quiescent lite still inside register() while
-    // a Class-A stop is wedged; that wedge is a SEPARATE filed bug, FIX-2
-    // family). Snapshot under the lock, walk outside it: pruneStaleEntries()
-    // overrides do real work (WeakGCMap removeIf) and the lock is leaf-rank,
-    // so we don't hold it across callouts. Flag-off: byte-identical (no
-    // lock, no snapshot).
-    if (vm().gilOff()) [[unlikely]] {
-        Vector<WeakGCHashTable*, 16> snapshot;
-        {
-            Locker locker { m_weakGCHashTablesLock };
-            snapshot.reserveInitialCapacity(m_weakGCHashTables.size());
-            for (auto* weakGCHashTable : m_weakGCHashTables)
-                snapshot.append(weakGCHashTable);
-        }
-        for (auto* weakGCHashTable : snapshot)
-            weakGCHashTable->pruneStaleEntries();
-        return;
     }
-    for (auto* weakGCHashTable : m_weakGCHashTables)
-        weakGCHashTable->pruneStaleEntries();
+
+    // Only a table that gained an entry since the last collection can hold an entry that dies here:
+    // everything that survived that collection is old, and an eden collection cannot free it.
+    m_dirtyWeakGCHashTables.forEach([&](WeakGCHashTable* weakGCHashTable) {
+        weakGCHashTable->remove();
+        weakGCHashTable->reconcileWeakReferencesAtGCEnd(vm(), collectionScope);
+    });
 }
 
 void Heap::sweepArrayBuffers()
@@ -4350,25 +4355,6 @@ void Heap::deleteSourceProviderCaches()
     // VM-global caches of the one main VM (see finalize()).
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full)
         vm().clearSourceProviderCaches();
-}
-
-void Heap::notifyIncrementalSweeper()
-{
-    if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full) {
-        if (!m_logicallyEmptyWeakBlocks.isEmpty())
-            m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    }
-
-    // The sweeper also runs when the server is shared: it sweeps
-    // mutator-concurrently on the main VM's run loop, one block per exclusive
-    // MSPL hold, never frees or shrinks a block (physical reclamation stays
-    // world-stopped, see reclaimSharedGCMemoryAtCycleEnd) and skips
-    // weak-bearing blocks (IncrementalSweeper::sweepNextBlockShared). Arming
-    // the timer from the conductor thread is safe: setTimeUntilFire locks
-    // internally, and the owning run-loop thread is parked for the stop while
-    // we run here, so the sweeper's plain members are published by the
-    // resume edge.
-    m_sweeper->startSweeping(*this);
 }
 
 void Heap::updateAllocationLimits()
@@ -5119,9 +5105,8 @@ bool Heap::shouldDoFullCollection()
 
 void Heap::addDetachedWeakBlock(WeakBlock* block)
 {
-    // SharedGC (T8 audit): reached only from WeakSet::sweep, which runs under
-    // MSPL (in-lock block sweeps, §5.2) or on the conductor while stopped.
-    ASSERT(!isSharedServer() || worldIsStoppedForAllClients() || mutatorSlowPathLock().isHeld());
+    // SharedGC: this list and the pool below belong to the weak-mutation protocol (WeakSet::sweep):
+    // the caller holds the weak handle lock, or is the collector with the world stopped.
     RELEASE_ASSERT(!block->next() && !block->prev());
     ASSERT(&block->heap() == this);
     block->setDetached();
@@ -5130,30 +5115,13 @@ void Heap::addDetachedWeakBlock(WeakBlock* block)
 
 void Heap::releaseDetachedWeakBlock(WeakBlock* block)
 {
-    // SharedGC (T8): collectNow(Sync)'s tail and server teardown call this on
-    // an access-holding thread; serialize against WeakSet::sweep's
-    // m_logicallyEmptyWeakBlocks mutations (no-op when !isSharedServer()).
-    MutatorSlowPathLocker mutatorSlowPathLocker(*this);
-
-    if (m_logicallyEmptyWeakBlocks.isEmpty())
-        return;
-
-    m_indexOfNextLogicallyEmptyWeakBlockToSweep = 0;
-    while (sweepNextLogicallyEmptyWeakBlock()) { }
+    ASSERT(&block->heap() == this);
+    m_detachedWeakBlocks.remove(block);
+    returnWeakBlockToPool(block);
 }
 
 void Heap::returnWeakBlockToPool(WeakBlock* block)
 {
-    // SharedGC (T8 audit): callers — WeakSet::sweep (MSPL or conductor,
-    // including the §A.3 class-4 conductor, AB-10 — see WeakSet.cpp),
-    // IncrementalSweeper (T4(d): holds MSPL once shared —
-    // sweepNextBlockShared), and sweepAllLogicallyEmptyWeakBlocks (takes
-    // MSPL).
-    ASSERT(!isSharedServer() || worldIsStoppedForAllClients() || mutatorSlowPathLock().isHeld() || (jsThreadsThreadGranularWorldIsStopped() && jsThreadsCurrentThreadIsStopConductor()));
-    if (m_indexOfNextLogicallyEmptyWeakBlockToSweep == WTF::notFound)
-        return false;
-
-    WeakBlock* block = m_logicallyEmptyWeakBlocks[m_indexOfNextLogicallyEmptyWeakBlockToSweep];
     RELEASE_ASSERT(!block->next() && !block->prev());
     ASSERT(&block->heap() == this);
     ASSERT(block->isEmpty());
@@ -5193,6 +5161,9 @@ WeakBlock* Heap::takeWeakBlockFromPool()
 
 void Heap::destroyAllPooledWeakBlocks()
 {
+    std::optional<Locker<Lock>> weakHandleLocker;
+    if (isSharedServer()) [[unlikely]]
+        weakHandleLocker.emplace(m_weakHandleLock);
     while (WeakBlock* block = m_pooledWeakBlocks.removeHead())
         WeakBlock::destroy(*this, block);
     m_pooledWeakBlockCount = 0;
@@ -5487,14 +5458,26 @@ void Heap::unregisterWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
     // SharedGC (CVE-AUDIT A3 / map-MC-GC S12b): see registerWeakGCHashTable.
     if (vm().gilOff()) [[unlikely]] {
         Locker locker { m_weakGCHashTablesLock };
+        if (weakGCHashTable->isOnList())
+            weakGCHashTable->remove();
         m_weakGCHashTables.remove(weakGCHashTable);
         return;
     }
+    if (weakGCHashTable->isOnList())
+        weakGCHashTable->remove();
     m_weakGCHashTables.remove(weakGCHashTable);
 }
 
 void Heap::addDirtyWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 {
+    // SharedGC: one list for every table of the heap, and with the GIL off any thread may be the
+    // first to add to a table since the last collection. Same leaf lock as the registry.
+    if (vm().gilOff()) [[unlikely]] {
+        Locker locker { m_weakGCHashTablesLock };
+        if (!weakGCHashTable->isOnList())
+            m_dirtyWeakGCHashTables.append(weakGCHashTable);
+        return;
+    }
     ASSERT(!weakGCHashTable->isOnList());
     m_dirtyWeakGCHashTables.append(weakGCHashTable);
 }
@@ -5601,7 +5584,7 @@ void Heap::addCoreConstraints()
         Options::sharedGCMaxSiblingMarkingAssists() ? ConstraintConcurrency::Sequential : ConstraintConcurrency::Concurrent);
 
     m_constraintSet->add(
-        "Wlr", "Window Liveness Retention",
+        "Wlr"_s, "Window Liveness Retention"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this, lastVersion = static_cast<uint64_t>(0)] (auto& visitor) mutable {
             // SPEC-heap I4/I5 — shared-server window-liveness retention
             // (EVIDENCE.md §10/§11). With N parked mutators, a cell allocated

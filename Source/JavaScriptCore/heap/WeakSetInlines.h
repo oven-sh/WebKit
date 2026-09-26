@@ -45,31 +45,33 @@ inline WeakImpl* WeakSet::allocate(JSValue jsValue, WeakHandleOwner* weakHandleO
     JSC::Heap& heap = container.vm().heap;
     WeakImpl* weakImpl;
     {
-        // SharedGC (review round 4): once the server is shared, ALL WeakSet
-        // mutation runs under MSPL or world-stopped (the weak-mutation
-        // protocol; asserted in WeakSet::sweep/shrink). Without this lock,
-        // the freelist pop / findAllocator walk / m_blocks append below race
-        // another client's MSPL-held in-lock block sweep of the same
-        // container's WeakSet (LocalAllocator::tryAllocateIn, the steal
-        // path, Heap::sweepSynchronously), which rewrites the very sweep
-        // results m_allocator points into and re-frees a popped-but-not-yet-
-        // constructed cell (state still Deallocated) — lost/aliased
-        // WeakImpls. The WeakImpl construction (state -> Live) must also be
-        // inside the section for that reason. Option off / !ISS: no-op
-        // locker, today's code (I10). Lock-order: callers hold no rank >= 7
+        // SharedGC: once the server is shared, a Weak<> is created under
+        // MSPL and the heap's weak handle lock (the weak-mutation protocol;
+        // see WeakSet::sweep). MSPL keeps a WeakSet without blocks that way
+        // while another client's MSPL-held block sweep of the same container
+        // is going on (LocalAllocator::tryAllocateIn, the steal path,
+        // Heap::sweepSynchronously: they skip weak-bearing blocks). The weak
+        // handle lock excludes WeakImpl::clear on any other thread, which
+        // pushes onto the free lists popped here and unlinks emptied blocks
+        // from the lists walked here. The WeakImpl construction (state ->
+        // Live) is inside the section too: a slot taken but not yet Live
+        // would read as Deallocated to a sweep. Option off / !ISS: no-op
+        // lockers, main's code (I10). Lock-order: callers hold no rank >= 7
         // lock (in-lock block sweeps run destructors, which never CREATE
-        // Weaks — they only deallocate, which is lock-free; see
-        // WeakSet::deallocate). L2 holds: no collection request or stop
-        // inside the section (didAllocate is outside; addAllocator's
-        // didAllocate(blockSize) only feeds counters/activity timer, the
-        // same call registerPreciseAllocation already makes under MSPL).
+        // Weaks — they only clear them, which takes the weak handle lock
+        // alone). L2 holds: no collection request or stop inside the section
+        // (didAllocate is outside; addAllocator's didAllocate(blockSize) only
+        // feeds counters/activity timer, the same call
+        // registerPreciseAllocation already makes under MSPL).
         MutatorSlowPathLocker mutatorSlowPathLocker(heap);
+        std::optional<Locker<Lock>> weakHandleLocker;
+        if (heap.isSharedServer()) [[unlikely]]
+            weakHandleLocker.emplace(heap.weakHandleLock());
         WeakSet& weakSet = container.weakSet();
-        WeakBlock::FreeCell* allocator = weakSet.m_allocator;
-        if (!allocator) [[unlikely]]
-            allocator = weakSet.findAllocator(container);
-        weakSet.m_allocator = allocator->next;
-        weakImpl = new (NotNull, WeakBlock::asWeakImpl(allocator)) WeakImpl(jsValue, weakHandleOwner, context);
+        WeakBlock* block = weakSet.m_currentBlock;
+        if (!block || !block->hasFreeCell()) [[unlikely]]
+            block = weakSet.findAllocator(container);
+        weakImpl = new (NotNull, WeakBlock::asWeakImpl(block->takeFreeCell())) WeakImpl(jsValue, weakHandleOwner, context);
     }
     heap.didAllocate(sizeof(WeakImpl));
     return weakImpl;

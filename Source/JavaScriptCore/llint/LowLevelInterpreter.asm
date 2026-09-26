@@ -1463,7 +1463,7 @@ macro defineJSTrampolineLabels(opcodeName, size)
     end
 end
 
-# For the threaded twin of an opcode (gateVariants in LowLevelInterpreter64.asm), which must not define the same global labels again.
+# For the threaded twin of an opcode (gateThreadedBodies in LowLevelInterpreter64.asm), which must not define the same global labels again.
 macro defineJSTrampolineLabelsNone(opcodeName, size)
     crash()
 end
@@ -2589,8 +2589,8 @@ entry(llint, macro()
     include InitBytecodes
 end)
 
-# The threaded bodies of the gated opcodes (gateVariants in LowLevelInterpreter64.asm): what LLInt::initialize() installs over the
-# opcode maps, through _llint_threaded_entry, when the flag is set. The list is the set of opcodes defined inside a gateVariants group;
+# The threaded bodies of the gated opcodes (gateThreadedBodies in LowLevelInterpreter64.asm): what LLInt::initialize() installs over the
+# opcode maps, through _llint_threaded_entry, when the flag is set. The list is the set of opcodes defined inside a gated group;
 # Tools/threads/lint-llint-threaded-entries.sh compares it with the labels the assembler emitted.
 macro setThreadedEntries(opcodeStruct, name)
     setEntryAddress(constexpr %opcodeStruct%::opcodeID, _threaded_llint_%name%)
@@ -2985,17 +2985,19 @@ end)
 
 
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
-gateVariants(macro ()
+macro gatedBodiesCommon0()
 commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)
-end)
+end
+gateMainBodies(gatedBodiesCommon0)
 
-gateVariants(macro ()
+macro gatedBodiesCommon1()
 commonCallOp(op_construct, OpConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
 end, dispatchAfterRegularCall)
-end)
+end
+gateMainBodies(gatedBodiesCommon1)
 
-gateVariants(macro ()
+macro gatedBodiesCommon2()
 commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, macro (getu, metadata)
     getu(m_argv, t1)
     lshifti 3, t1
@@ -3011,20 +3013,23 @@ commonCallOp(op_super_construct, OpSuperConstruct, prepareForRegularCall, invoke
     storep t1, OpSuperConstruct::Metadata::m_cachedCallee[t5]
 .done:
 end, dispatchAfterRegularCall)
-end)
+end
+gateMainBodies(gatedBodiesCommon2)
 
-gateVariants(macro ()
+macro gatedBodiesCommon3()
 commonCallOp(op_tail_call, OpTailCall, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, prepareCallSiteForTailCall, macro (getu, metadata)
     checkSwitchToJITForEpilogue()
     # reload metadata since checkSwitchToJITForEpilogue() might have trashed t5
     metadata(t5, t0)
 end, dispatchAfterTailCall)
-end)
+end
+gateMainBodies(gatedBodiesCommon3)
 
-gateVariants(macro ()
+macro gatedBodiesCommon4()
 commonCallOp(op_call_ignore_result, OpCallIgnoreResult, prepareForRegularCall, invokeForRegularCallIgnoreResult, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCallIgnoreResult)
-end)
+end
+gateMainBodies(gatedBodiesCommon4)
 
 macro branchIfException(exceptionTarget)
     loadp CodeBlock[cfr], t3
@@ -3043,27 +3048,30 @@ macro branchIfException(exceptionTarget)
 end
 
 
-gateVariants(macro ()
+macro gatedBodiesCommon5()
 llintOpWithMetadata(op_call_varargs, OpCallVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_call_varargs, size, get, OpCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_call_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
-end)
+end
+gateMainBodies(gatedBodiesCommon5)
 
-gateVariants(macro ()
+macro gatedBodiesCommon6()
 llintOpWithMetadata(op_tail_call_varargs, OpTailCallVarargs, macro (size, get, dispatch, metadata, return)
     checkSwitchToJITForEpilogue()
     # We lie and perform the tail call instead of preparing it since we can't
     # prepare the frame for a call opcode
     doCallVarargs(op_tail_call_varargs, size, get, OpTailCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_tail_call_varargs, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, dispatchAfterTailCall)
 end)
-end)
+end
+gateMainBodies(gatedBodiesCommon6)
 
 
-gateVariants(macro ()
+macro gatedBodiesCommon7()
 llintOpWithMetadata(op_construct_varargs, OpConstructVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_construct_varargs, size, get, OpConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
-end)
+end
+gateMainBodies(gatedBodiesCommon7)
 
 # Eval is executed in one of two modes:
 #
@@ -3517,6 +3525,18 @@ macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     loadp UnlinkedCodeBlock::m_binaryArithProfiles + BinaryArithProfileFixedVector::m_storage[scratch2], scratch2
     orh type, (constexpr (BinaryArithProfileFixedVector::Storage::offsetOfData())) + BinaryArithProfile::m_bits[scratch2, scratch1, 2]
 end
+
+# The threaded bodies of the gated opcodes (gateThreadedBodies in LowLevelInterpreter64.asm), after every body that a process without
+# the flag executes.
+threadedBodies64()
+gateThreadedBodies(gatedBodiesCommon0)
+gateThreadedBodies(gatedBodiesCommon1)
+gateThreadedBodies(gatedBodiesCommon2)
+gateThreadedBodies(gatedBodiesCommon3)
+gateThreadedBodies(gatedBodiesCommon4)
+gateThreadedBodies(gatedBodiesCommon5)
+gateThreadedBodies(gatedBodiesCommon6)
+gateThreadedBodies(gatedBodiesCommon7)
 
 if WEBASSEMBLY
 

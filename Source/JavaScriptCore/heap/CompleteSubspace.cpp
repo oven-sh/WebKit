@@ -79,7 +79,7 @@ BlockDirectory* CompleteSubspace::ensureDirectoryForSizeClass(const AbstractLock
         return directory;
 
     if (false)
-        dataLog("Creating BlockDirectory for ", m_name, ", ", attributes(), ", ", sizeClass, ".\n");
+        dataLog("Creating BlockDirectory for ", name(), ", ", attributes(), ", ", sizeClass, ".\n");
 
     // SharedGC (§5.3; T4): reserve this subspace's contiguous TLC slot range
     // on first directory creation (monotonic, never reused; directoryLock
@@ -110,7 +110,6 @@ BlockDirectory* CompleteSubspace::ensureDirectoryForSizeClass(const AbstractLock
     }
 
     directory->setNextDirectoryInSubspace(m_firstDirectory);
-    m_alignedMemoryAllocator->registerDirectory(m_space.heap(), directory);
     WTF::storeStoreFence();
     m_firstDirectory = directory;
     return directory;

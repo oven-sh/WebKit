@@ -64,6 +64,10 @@ public:
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(WeakSet, m_vm); }
 
     WeakBlock* head() { return m_blocks.head(); }
+    // head() for a sweep that runs alongside mutators on a shared server (the weak-bearing
+    // carve-out): a Weak<> owner may be unlinking the set's last block (WeakImpl::clearShared).
+    // The caller holds MSPL, so a set found without blocks stays without.
+    JS_EXPORT_PRIVATE bool hasBlocksWhileShared();
 
     template<typename Functor>
     void forEachBlock(const Functor& functor)

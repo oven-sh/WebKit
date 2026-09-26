@@ -1192,6 +1192,29 @@ harness each number is from):
 | quiet pass: Startup / Worst Case / Average / score | 0.986 / 0.983 / 0.991 / 0.989 | 0.985 / 0.985 / 0.992 / 0.99 | Startup yes; the others short by 0.001 to 0.002 |
 | start-up: instructions, resident set (empty script) | +2.3 %, +1.7 MB | +1 %, +0.5 MB | no (not worked on) |
 
+**After the fourteenth round** (rebased onto `74650443cb1a`; same session as its `main`; LANDING-PLAN, "Results,
+fourteenth round", has the thirteenth round's tree measured again in that session, the passes behind each number and
+the thin-LTO pair):
+
+| metric (flag off / `main`) | after the fourteenth round | target | met |
+|---|---|---|---|
+| first iteration, main-thread cycles | 1.000 and 1.017 (two passes of five rounds; instructions 1.010) | 1.010 | not reliably |
+| interpreter only, cycles, per-test geometric mean | 1.006 (instructions 1.008) | 1.010 | yes |
+| Baseline-capped / DFG-capped, cycles | 1.008 to 1.017 / 1.011 to 1.018 (instructions 1.004 / 1.002 to 1.006) | 1.005 / 1.010 | no |
+| whole run, main-thread cycles | 1.006 to 1.008 (four passes of 16 to 30 runs; instructions 1.004 to 1.005) | 1.005 | no, by 0.001 to 0.003 |
+| locked loads, first iteration | 1.01 | 1.03 | yes |
+| quiet pass: Startup / Worst Case / Average / score | 0.999 / 0.988 / 0.999 / 0.992 (seven rounds); 0.983 / 0.981 / 0.990 / 0.985 (five rounds, before the opcode bodies were aligned) | 0.985 / 0.985 / 0.992 / 0.99 | within the noise of the pass |
+| start-up: instructions (empty script) | -9.4 % in an ordinary environment, +0.5 % in an empty one, +1.8 % with a `JSC_` variable set (which is what the earlier rows measured) | +1 % | yes, except with `JSC_` variables |
+| start-up: resident set (empty script) | +1.6 MB, of which the binary's text 1.2 to 1.7 MB | +0.5 MB | no |
+| peak resident set, suite in one process (median of five) | 1.00 | +2 % | yes |
+| thin LTO (L5.14): whole run / first iteration / interpreter / quiet-pass score | 1.006 / 1.016 / 1.002 / 1.001 | as above | whole run and first iteration no |
+
+L5.13 is answered: the start-up's instructions were the shell looking every option up in an environment that held the
+harness's own `JSC_` variables (the branch skips the scan when there is none, and has 40 more options to look up when
+there is one); the resident set is pages of the larger text. L5.14 is measured. The data-layout part of L5.12 (the class D
+rows) is done for `Structure`, the JIT data, the inline caches and the allocation profile. What remains of the whole
+run's gap is instruction fetch out of the larger text (LANDING-PLAN, "Not done").
+
 Of the items below: the twelfth round's histories record the profile updates, the locks, the call-link flag bytes and the
 reference counts taking `main`'s form (L5.1 to L5.4), the interpreter's two bodies (L5.9) and `visitButterflyImpl` per mode (part
 of L5.7); the thirteenth round added the slow paths' table to L5.9 and did L5.6 and L5.10 by the per-mode copies. The marker's

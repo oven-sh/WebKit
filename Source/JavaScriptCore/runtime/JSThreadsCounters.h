@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Options.h"
+#include "ThreadsModePage.h"
 #include <atomic>
 #include <wtf/MonotonicTime.h>
 
@@ -138,7 +139,9 @@ struct JSThreadsCounters {
     JS_EXPORT_PRIVATE static JSThreadsCounters& singleton();
     JS_EXPORT_PRIVATE static void dump();
     JS_EXPORT_PRIVATE static void registerDumpAtExit();
-    static bool enabled() { return Options::reportJSThreadsCounters() | Options::countJSThreadsCounters(); } // one branch at each counted site
+    // One branch at each counted site. The counters count with JS threads only: the test of the mode comes first, so
+    // that the copy of a per-mode function that runs without threads has no test at all.
+    static bool enabled() { return threadsMode() && (static_cast<unsigned>(Options::reportJSThreadsCounters()) | static_cast<unsigned>(Options::countJSThreadsCounters())); }
 };
 
 #define JSTHREADS_COUNT(name) do { \

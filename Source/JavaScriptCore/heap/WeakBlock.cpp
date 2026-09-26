@@ -98,6 +98,26 @@ void WeakBlock::didBecomeEmpty()
     }
 }
 
+// WeakImpl::clear() in a process with the shared collector. Clearing a handle pushes its slot onto
+// its block's free list, adjusts the block's counts and, when the block falls empty, unlinks it from
+// its WeakSet and hands it to the heap's pool. Once the heap is a shared server any thread may be
+// doing the same to a handle of the same block, or creating one in it (WeakSet::allocate), so it all
+// happens under the heap's weak handle lock. The lock is a leaf: nothing under it calls out, waits or
+// takes another lock but the allocator's. It is taken alone here, never after MSPL is asked for:
+// a cell's destructor clears its handles inside an MSPL-held block sweep.
+void WeakImpl::clearShared()
+{
+    WeakBlock* block = WeakBlock::blockFor(this);
+    std::optional<Locker<Lock>> locker;
+    if (block->heap().isSharedServer())
+        locker.emplace(block->heap().weakHandleLock());
+
+    State previousState = state();
+    ASSERT(previousState != Deallocated);
+    m_weakHandleOwner = std::bit_cast<WeakHandleOwner*>(static_cast<uintptr_t>(Deallocated));
+    block->deallocate(this, previousState);
+}
+
 void WeakBlock::lastChanceToFinalize()
 {
     for (size_t i = 0; i < weakImplCount(); ++i) {

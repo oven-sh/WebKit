@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CellContainer.h"
+#include "ThreadsModePage.h"
 #include "WeakImpl.h"
 #include <wtf/DebugHeap.h>
 #include <wtf/DoublyLinkedList.h>
@@ -266,6 +267,11 @@ inline void WeakBlock::assertFreeListIsConsistent()
 // m_weakHandleOwner first: that tag is what every scanner filters on before reading the value.
 SUPPRESS_NODELETE inline void WeakImpl::clear()
 {
+    if (processUsesSharedGCHeap()) [[unlikely]] {
+        clearShared();
+        return;
+    }
+
     State previousState = state();
     ASSERT(previousState != Deallocated);
     m_weakHandleOwner = std::bit_cast<WeakHandleOwner*>(static_cast<uintptr_t>(Deallocated));

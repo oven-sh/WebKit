@@ -92,6 +92,15 @@ BaselineJITData::BaselineJITData(unsigned propertyCacheSize, unsigned poolSize, 
     // m_jitCode state.
     , m_stackOffset(JIT::stackPointerOffsetFor(codeBlock->unlinkedCodeBlock()) * sizeof(Register))
 {
+    static_assert(alignof(GILOffFields) <= alignof(void*));
+    if (processIsGILOff()) [[unlikely]]
+        new (NotNull, trailingSpan().data()) GILOffFields;
+}
+
+BaselineJITData::~BaselineJITData()
+{
+    if (processIsGILOff()) [[unlikely]]
+        gilOffFields().~GILOffFields();
 }
 
 } // namespace JSC

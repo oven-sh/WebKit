@@ -136,18 +136,61 @@ class BaselineJITData final : public ButterflyArray<BaselineJITData, HandlerProp
 public:
     using Base = ButterflyArray<BaselineJITData, HandlerPropertyInlineCache, void*>;
 
+    // What a process with the GIL off keeps in front of the constants, in the first slots of the trailing pool.
+    //
+    // The execute counter is incremented by every thread running this code's
+    // loop back-edges and returns (JS threads share CodeBlocks); the fields
+    // around it - the global object, the stack offset, and the constant pool
+    // right after this object - are loaded by nearly every slow path call and
+    // IC of the same code. With the GIL off the counter is on a cache line of
+    // its own so those loads do not miss on every other thread's increment
+    // (measured: a four-thread run of one baseline function spent half its
+    // samples on the constant load following the counter's line). Padding,
+    // not alignas: the object's placement inside its ButterflyArray
+    // allocation is not line-aligned.
+    //
+    // Without the GIL off nothing of this exists: the object is the forty bytes
+    // it is without the threads work, the counter is m_executeCounter, and the
+    // first constant follows it, on the line the code's first loads bring in.
+    // The offsets generated code uses for the counter and for a constant are
+    // therefore functions of the mode, read when the code is generated; the
+    // mode cannot change after the first VM exists.
+    struct GILOffFields {
+        Atomic<CodeBlock*> dfgForLoopEntry { nullptr }; // CodeBlock::gilOffDFGForLoopEntry(); the owner CodeBlock visits it
+        char padBeforeCounter[64];
+        BaselineExecutionCounter executeCounter;
+        char padAfterCounter[64];
+    };
+    static constexpr unsigned gilOffReservedPoolSlots = (sizeof(GILOffFields) + sizeof(void*) - 1) / sizeof(void*);
+    static unsigned reservedPoolSlots() { return processIsGILOff() ? gilOffReservedPoolSlots : 0; }
+
     static std::unique_ptr<BaselineJITData> create(unsigned propertyCacheSize, unsigned poolSize, CodeBlock* codeBlock)
     {
-        return std::unique_ptr<BaselineJITData> { createImpl(propertyCacheSize, poolSize, codeBlock) };
+        return std::unique_ptr<BaselineJITData> { createImpl(propertyCacheSize, poolSize + reservedPoolSlots(), codeBlock) };
     }
 
     explicit BaselineJITData(unsigned poolSize, unsigned propertyCacheSize, CodeBlock*);
+    ~BaselineJITData();
 
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(BaselineJITData, m_globalObject); }
     static constexpr ptrdiff_t offsetOfStackOffset() { return OBJECT_OFFSETOF(BaselineJITData, m_stackOffset); }
-    static constexpr ptrdiff_t offsetOfJITExecuteCounter() { return OBJECT_OFFSETOF(BaselineJITData, m_executeCounter) + OBJECT_OFFSETOF(BaselineExecutionCounter, m_counter); }
-    static constexpr ptrdiff_t offsetOfJITExecutionActiveThreshold() { return OBJECT_OFFSETOF(BaselineJITData, m_executeCounter) + OBJECT_OFFSETOF(BaselineExecutionCounter, m_activeThreshold); }
-    static constexpr ptrdiff_t offsetOfJITExecutionTotalCount() { return OBJECT_OFFSETOF(BaselineJITData, m_executeCounter) + OBJECT_OFFSETOF(BaselineExecutionCounter, m_totalCount); }
+    static ptrdiff_t offsetOfExecuteCounter()
+    {
+        if (processIsGILOff()) [[unlikely]]
+            return offsetOfTrailingData() + OBJECT_OFFSETOF(GILOffFields, executeCounter);
+        return OBJECT_OFFSETOF(BaselineJITData, m_executeCounter);
+    }
+    static ptrdiff_t offsetOfJITExecuteCounter() { return offsetOfExecuteCounter() + OBJECT_OFFSETOF(BaselineExecutionCounter, m_counter); }
+    static ptrdiff_t offsetOfJITExecutionActiveThreshold() { return offsetOfExecuteCounter() + OBJECT_OFFSETOF(BaselineExecutionCounter, m_activeThreshold); }
+    static ptrdiff_t offsetOfJITExecutionTotalCount() { return offsetOfExecuteCounter() + OBJECT_OFFSETOF(BaselineExecutionCounter, m_totalCount); }
+    static ptrdiff_t offsetOfConstant(unsigned index) { return offsetOfTrailingData() + (reservedPoolSlots() + index) * sizeof(void*); }
+
+    std::span<void*> constants() LIFETIME_BOUND { return trailingSpan().subspan(reservedPoolSlots()); }
+    GILOffFields& gilOffFields() LIFETIME_BOUND
+    {
+        ASSERT(processIsGILOff());
+        return *std::bit_cast<GILOffFields*>(trailingSpan().data());
+    }
 
     HandlerPropertyInlineCache& propertyCache(unsigned index)
     {
@@ -160,26 +203,23 @@ public:
         return leadingSpan();
     }
 
-    BaselineExecutionCounter& executeCounter() LIFETIME_BOUND { return m_executeCounter; }
-    const BaselineExecutionCounter& executeCounter() const LIFETIME_BOUND { return m_executeCounter; }
+    BaselineExecutionCounter& executeCounter() LIFETIME_BOUND
+    {
+        if (processIsGILOff()) [[unlikely]]
+            return gilOffFields().executeCounter;
+        return m_executeCounter;
+    }
+    const BaselineExecutionCounter& executeCounter() const LIFETIME_BOUND { return const_cast<BaselineJITData*>(this)->executeCounter(); }
 
     JSGlobalObject* m_globalObject { nullptr }; // This is not marked since owner CodeBlock will mark JSGlobalObject.
     intptr_t m_stackOffset { 0 };
-    Atomic<CodeBlock*> m_gilOffDFGForLoopEntry { nullptr }; // CodeBlock::gilOffDFGForLoopEntry(); the owner CodeBlock visits it
-    // The execute counter is incremented by every thread running this code's
-    // loop back-edges and returns (JS threads share CodeBlocks); the fields
-    // around it - the global object, the stack offset, and the trailing
-    // constant pool right after this object - are loaded by nearly every slow
-    // path call and IC of the same code. Keep the counter on a cache line of
-    // its own so those loads do not miss on every other thread's increment
-    // (measured: a four-thread run of one baseline function spent half its
-    // samples on the constant load following the counter's line). Padding,
-    // not alignas: the object's placement inside its ButterflyArray
-    // allocation is not line-aligned.
-    char m_padBeforeCounter[64];
-    BaselineExecutionCounter m_executeCounter;
-    char m_padAfterCounter[64];
+private:
+    BaselineExecutionCounter m_executeCounter; // Not the counter with the GIL off: GILOffFields.
 };
+
+#if CPU(X86_64)
+static_assert(sizeof(BaselineJITData) == 40, "BaselineJITData has the size it has without the threads work");
+#endif
 
 // The shared Baseline code of an UnlinkedCodeBlock, as a mutator reads it. With JS threads another mutator can be installing it:
 // the read is a snapshot under the UnlinkedCodeBlock's lock. Without them nothing else writes it while a mutator runs.

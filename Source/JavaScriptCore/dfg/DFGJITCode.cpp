@@ -77,6 +77,16 @@ JITData::JITData(unsigned propertyCacheSize, unsigned poolSize, const JITCode& j
         }
     }
     m_watchpoints = FixedVector<CodeBlockJettisoningWatchpoint>(numberOfWatchpoints);
+
+    static_assert(alignof(GILOffFields) <= alignof(void*));
+    if (processIsGILOff()) [[unlikely]]
+        new (NotNull, trailingSpan().data()) GILOffFields;
+}
+
+JITData::~JITData()
+{
+    if (processIsGILOff()) [[unlikely]]
+        gilOffFields().~GILOffFields();
 }
 
 template<typename WatchpointSet>
@@ -107,7 +117,7 @@ bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode
         auto entry = jitCode.m_linkerIR.at(i);
         switch (entry.type()) {
         case LinkerIR::Type::Invalid: {
-            trailingSpan()[i] = entry.pointer();
+            constants()[i] = entry.pointer();
             break;
         }
         case LinkerIR::Type::CallLinkInfo: {
@@ -115,19 +125,19 @@ bool JITData::tryInitialize(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode
             const UnlinkedCallLinkInfo& unlinkedCallLinkInfo = jitCode.m_unlinkedCallLinkInfos[index];
             OptimizingCallLinkInfo& callLinkInfo = m_callLinkInfos[index];
             callLinkInfo.initializeFromDFGUnlinkedCallLinkInfo(vm, unlinkedCallLinkInfo, codeBlock);
-            trailingSpan()[i] = &callLinkInfo;
+            constants()[i] = &callLinkInfo;
             break;
         }
         case LinkerIR::Type::CellPointer: {
-            trailingSpan()[i] = entry.pointer();
+            constants()[i] = entry.pointer();
             break;
         }
         case LinkerIR::Type::NonCellPointer: {
-            trailingSpan()[i] = entry.pointer();
+            constants()[i] = entry.pointer();
             break;
         }
         case LinkerIR::Type::GlobalObject: {
-            trailingSpan()[i] = codeBlock->globalObject();
+            constants()[i] = codeBlock->globalObject();
             break;
         }
         case LinkerIR::Type::HavingABadTimeWatchpointSet: {
@@ -461,6 +471,9 @@ void JITCode::validateReferences(const TrackedReferences& trackedReferences)
 
 std::optional<CodeOrigin> JITCode::findPC(CodeBlock* codeBlock, void* pc)
 {
+    std::optional<Locker<Lock>> stubsLocker;
+    if (codeBlock->vm().gilOff()) [[unlikely]]
+        stubsLocker.emplace(osrExitStubsLock());
     for (const OSRExitStub& stub : codeBlock->dfgJITData()->exitStubs()) {
         RefPtr<ExecutableMemoryHandle> handle = stub.code.executableMemory();
         if (handle && handle->contains(pc))

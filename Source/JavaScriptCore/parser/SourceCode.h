@@ -37,15 +37,6 @@ class SourceCode : public UnlinkedSourceCode {
     friend class CachedFunctionExecutableRareData;
 
 public:
-    // TSAN family 5 code-lifecycle ctor-publication annotation: see the
-    // SourceCodePodMember comment in UnlinkedSourceCode.h. The line/column
-    // members are atomic-only-storage wrappers (UNCONDITIONALLY, per the
-    // wave-5 review — relaxed scalar ops are codegen-identical to the plain
-    // access), so EVERY store — including the ones the implicit copy/move
-    // special members perform when a SourceCode is copied into an executable
-    // (the r4 `SourceCode::SourceCode(const SourceCode&)` writer frames) — is
-    // a relaxed atomic the concurrent readers pair against. Flag-off
-    // semantics and codegen unchanged.
     SourceCode()
         : UnlinkedSourceCode()
     {
@@ -53,8 +44,6 @@ public:
 
     SourceCode(Ref<SourceProvider>&& provider)
         : UnlinkedSourceCode(WTF::move(provider))
-        , m_firstLine(OrdinalNumber())
-        , m_startColumn(OrdinalNumber())
     {
     }
 
@@ -91,10 +80,6 @@ public:
     SourceCode subExpression(unsigned openBrace, unsigned closeBrace) const;
 
     friend bool operator==(const SourceCode&, const SourceCode&) = default;
-
-private:
-    SourceCodePodMember<OrdinalNumber> m_firstLine;
-    SourceCodePodMember<OrdinalNumber> m_startColumn;
 };
 
 inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin sourceTaintedOrigin, String filename = String(), const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)

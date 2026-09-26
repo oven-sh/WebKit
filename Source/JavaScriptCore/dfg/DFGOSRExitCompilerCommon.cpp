@@ -44,6 +44,12 @@
 namespace JSC { namespace DFG {
 
 static Lock osrExitGenerationLock;
+static Lock s_osrExitStubsLock;
+
+Lock& osrExitStubsLock()
+{
+    return s_osrExitStubsLock;
+}
 
 OSRExitGenerationLocker::OSRExitGenerationLocker(VM& vm, CallFrame* callFrame) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {

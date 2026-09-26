@@ -74,7 +74,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
     ASSERT(vm.structureStructure);
     switch (previous->variant()) {
     case StructureVariant::Normal: {
-        auto* result = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, previous->variant(), previous);
+        auto* result = new (NotNull, allocateCell<Structure>(vm, Structure::allocationSize())) Structure(vm, previous->variant(), previous);
         result->finishCreation(vm, previous, deferred);
         return result;
     }

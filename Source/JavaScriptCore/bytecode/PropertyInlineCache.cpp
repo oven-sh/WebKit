@@ -933,7 +933,6 @@ void HandlerPropertyInlineCache::initializeFromUnlinkedPropertyInlineCache(VM& v
     default:
         break;
     }
-    doneLocation = unlinkedPropertyCache.doneLocation;
     // TSAN ic-stubinfo "ctor-publication x identifier" (§10.4): relaxed store,
     // pairing with the relaxed identifier() reader (see PropertyInlineCache.h).
     setIdentifierConcurrently(unlinkedPropertyCache.m_identifier);
@@ -961,7 +960,6 @@ void HandlerPropertyInlineCache::initializeFromDFGUnlinkedPropertyInlineCache(Co
     default:
         break;
     }
-    doneLocation = unlinkedPropertyCache.doneLocation;
     // TSAN ic-stubinfo "ctor-publication x identifier" (§10.4): relaxed store,
     // pairing with the relaxed identifier() reader (see PropertyInlineCache.h).
     setIdentifierConcurrently(unlinkedPropertyCache.m_identifier);

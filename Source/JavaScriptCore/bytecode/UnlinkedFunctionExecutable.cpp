@@ -110,9 +110,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
 UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* structure, const SourceCode& parentSource, FunctionMetadataNode* node, UnlinkedFunctionKind kind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, JSParserScriptMode scriptMode, RefPtr<TDZEnvironmentLink> parentScopeTDZVariables, Vector<Identifier>&& generatorOrAsyncWrapperFunctionParameterNames, std::optional<PrivateNameEnvironment> parentPrivateNameEnvironment, DerivedContextType derivedContextType, EvalContextType evalContextType, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, bool isBuiltinDefaultClassConstructor)
     : Base(vm, structure)
-    , m_firstLineOffset(node->firstLine() - parentSource.firstLine().oneBasedInt())
     , m_isGeneratedFromCache(false)
-    , m_lineCount(node->lastLine() - node->firstLine())
     , m_unlinkedFunctionStart(node->functionStart())
     , m_startOffset(node->source().startOffset() - parentSource.startOffset())
     , m_isCached(false)
@@ -123,6 +121,9 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
     , m_unlinkedFunctionEnd(node->startStartOffset() + node->source().length() - 1)
     , m_needsClassFieldInitializer(static_cast<unsigned>(needsClassFieldInitializer))
     , m_parameterCount(node->parameterCount())
+    , m_isBuiltinFunction(kind == UnlinkedBuiltinFunction)
+    , m_isBuiltinDefaultClassConstructor(isBuiltinDefaultClassConstructor)
+    , m_superBinding(static_cast<unsigned>(node->superBinding()))
     , m_privateBrandRequirement(static_cast<unsigned>(privateBrandRequirement))
     , m_constructorKind(static_cast<unsigned>(node->constructorKind()))
     , m_implementationVisibility(static_cast<unsigned>(node->implementationVisibility()))
@@ -218,10 +219,8 @@ DEFINE_VISIT_CHILDREN(UnlinkedFunctionExecutable);
 SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passedParentSource) const
 {
     const SourceCode& parentSource = !m_isBuiltinDefaultClassConstructor ? passedParentSource : BuiltinExecutables::defaultConstructorSourceCode(constructorKind());
-    unsigned startColumn = linkedStartColumn(parentSource.startColumn().oneBasedInt());
     unsigned startOffset = static_cast<unsigned>(parentSource.startOffset()) + m_startOffset;
-    unsigned firstLine = static_cast<unsigned>(parentSource.firstLine().oneBasedInt()) + m_firstLineOffset;
-    return SourceCode(parentSource.provider(), startOffset, startOffset + m_sourceLength, firstLine, startColumn);
+    return SourceCode(parentSource.provider(), startOffset, startOffset + m_sourceLength);
 }
 
 FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> overrideLineNumber, Intrinsic intrinsic, bool isInsideOrdinaryFunction)

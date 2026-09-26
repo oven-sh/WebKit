@@ -56,7 +56,6 @@ BlockDirectory::BlockDirectory(Heap& heap, size_t cellSize)
     // THREADS/TSAN: see the member declarations.
     WTF::atomicStore(&m_nextDirectory, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
     WTF::atomicStore(&m_nextDirectoryInSubspace, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
-    WTF::atomicStore(&m_nextDirectoryInAlignedMemoryAllocator, static_cast<BlockDirectory*>(nullptr), std::memory_order_relaxed);
 }
 
 BlockDirectory::~BlockDirectory()
@@ -98,22 +97,23 @@ MarkedBlock::Handle* BlockDirectory::findEmptyBlockToSteal()
 {
     Locker locker(bitvectorLock());
     for (;;) {
-        m_emptyCursor = (emptyBits() & ~inUseBits()).findBit(m_emptyCursor, true);
+        m_emptyCursor = stealableBits().findBit(m_emptyCursor, true);
         if (m_emptyCursor >= m_blocks.size())
             return nullptr;
-        MarkedBlock::Handle* block = m_blocks[m_emptyCursor];
+        MarkedBlock::Handle* block = m_blocks[m_emptyCursor].first;
         // Shared server, world running: a block whose WeakSet still has
         // WeakBlocks cannot be swept by the stealer (the owning client's Weak<>
         // teardown is lock-free), so it is not stealable until the next
         // world-stopped sweep. Step the cursor past it instead of handing it
         // out; a cursor left on it would re-find the same block on every later
-        // steal walk and hide every empty block behind it. head() is stable:
-        // WeakSet::allocate mutates the list only under the exclusive MSPL,
-        // which the steal callers hold when the server is shared.
-        if (m_heap.isSharedServer() && !m_heap.worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]] {
+        // steal walk and hide every empty block behind it. A set found without
+        // blocks stays without: WeakSet::allocate adds one only under the
+        // exclusive MSPL, which the steal callers hold when the server is shared.
+        if (m_heap.isSharedServer() && !m_heap.worldIsStoppedForAllClients() && block->weakSet().hasBlocksWhileShared()) [[unlikely]] {
             m_emptyCursor++;
             continue;
         }
+
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", m_emptyCursor, " in use (findEmptyBlockToSteal) for ", *this);
         setIsInUse(m_emptyCursor, true);
         return block;
@@ -142,7 +142,8 @@ MarkedBlock::Handle* BlockDirectory::findBlockForAllocation(LocalAllocator& allo
         if (allocator.m_allocationCursor >= m_blocks.size())
             return nullptr;
         unsigned blockIndex = allocator.m_allocationCursor++;
-        MarkedBlock::Handle* result = m_blocks[blockIndex];
+        auto [result, block] = m_blocks[blockIndex];
+        __builtin_prefetch(block); // As below.
         Locker locker(bitvectorLock());
         setIsCanAllocate(blockIndex, false);
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", blockIndex, " in use (findBlockForAllocation) for ", *this);
@@ -328,6 +329,11 @@ void BlockDirectory::prepareForAllocation()
     m_emptyCursor = 0;
 
     assertSweeperIsSuspended();
+    // endMarking recomputes the empty bits wholesale rather than block by block, so none of the blocks
+    // that fell empty there announced themselves the way didFinishUsingBlock does. Re-derive
+    // membership from the bits here, once m_emptyCursor above has been rewound to match them.
+    if (!stealableBits().isEmpty())
+        subspace()->alignedMemoryAllocator()->addDirectoryWithEmptyBlocks(this);
     // SPEC-heap §10E (eighth round): remember which blocks this cycle
     // allocated into before the set is cleared for the next cycle; the
     // shared heap's cycle-end retention (shrinkWhileCapacityAbove, which runs
@@ -497,12 +503,12 @@ void BlockDirectory::sweep()
         // WeakSet::sweep / LocalAllocator::tryAllocateIn): when this full
         // sweep runs mutator-concurrently (Heap::sweepSynchronously under
         // MSPL, world running), skip blocks whose WeakSet has WeakBlocks —
-        // sweeping them would race the owning client's lock-free Weak<>
-        // deallocation and run weak finalizers under another client's feet.
+        // sweeping them would run weak finalizers under another client's feet.
         // The block stays unswept (lazy-sweep semantics) until the next
-        // world-stopped sweep. The head() read is stable: WeakSet::allocate
-        // mutates it only under MSPL, which our caller holds in this mode.
-        if (heap().isSharedServer() && !heap().worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]]
+        // world-stopped sweep. A set found without blocks stays without:
+        // WeakSet::allocate adds one only under MSPL, which our caller holds
+        // in this mode.
+        if (heap().isSharedServer() && !heap().worldIsStoppedForAllClients() && block->weakSet().hasBlocksWhileShared()) [[unlikely]]
             continue;
 
         dataLogLnIf(BlockDirectoryInternal::verbose, "Setting block ", index, " in use (sweep) for ", *this);
@@ -533,7 +539,7 @@ unsigned BlockDirectory::sweepWeakBearingBlocks(unsigned budget)
             index = (unsweptBits() & ~inUseBits()).findBit(index, true);
             if (index >= end)
                 break;
-            MarkedBlock::Handle* block = m_blocks[index];
+            MarkedBlock::Handle* block = m_blocks[index].first;
             if (!block->weakSet().head())
                 continue;
             setIsInUse(index, true);
@@ -599,7 +605,7 @@ bool BlockDirectory::shrinkWhileCapacityAbove(size_t targetCapacity)
         setIsInUse(index, true);
         {
             DropLockForScope scope(locker);
-            markedSpace().freeBlock(m_blocks[index]);
+            markedSpace().freeBlock(m_blocks[index].first);
         }
         setIsInUse(index, false);
     }

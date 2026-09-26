@@ -73,6 +73,7 @@ private:
 
     static Structure* create(VM&, Structure*, UniquedStringImpl* brand, DeferredStructureTransitionWatchpointFire* = nullptr);
 
+    JSC_STRUCTURE_SUBCLASS_RESERVES_THREAD_LOCALITY_SETS(BrandedStructure)
     CompactRefPtr<UniquedStringImpl> m_brand;
     WriteBarrierStructureID m_parentBrand;
 

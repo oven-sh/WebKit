@@ -334,8 +334,8 @@ public:
         return result;
     }
 
-    CString briefDescription(CodeBlock*);
-    CString briefDescriptionWithoutUpdating();
+    UTF8CString briefDescription(CodeBlock*);
+    UTF8CString briefDescriptionWithoutUpdating();
     
 private:
     friend class LLIntOffsetsExtractor;

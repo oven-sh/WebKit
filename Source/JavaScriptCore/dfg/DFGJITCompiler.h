@@ -327,7 +327,7 @@ public:
         Address unlinkedAddress()
         {
             ASSERT(isUnlinked());
-            return Address(GPRInfo::jitDataRegister, JITData::offsetOfTrailingData() + sizeof(void*) * m_index);
+            return Address(GPRInfo::jitDataRegister, JITData::offsetOfConstant(m_index));
         }
 
     private:

@@ -1171,7 +1171,7 @@ public:
     }
     // preallocatedButterfly: flag-on, the caller (Structure::flattenDictionaryStructureUnderStop) allocates the
     // shrunk butterfly before entering the stop window; flag-off it is null and allocated here.
-    void shiftButterflyAfterFlattening(const GCSafeConcurrentJSLocker&, VM&, Structure* structure, size_t outOfLineCapacityAfter, Butterfly* preallocatedButterfly);
+    void shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM&, Structure*, size_t outOfLineCapacityAfter, Butterfly* preallocatedButterfly);
 
     JSGlobalObject* realmMayBeNull() const
     {

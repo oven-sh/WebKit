@@ -27,6 +27,7 @@
 
 #include "IndexingType.h"
 #include "JSArray.h"
+#include "ThreadsModePage.h"
 #include "Watchpoint.h"
 
 namespace JSC {
@@ -49,6 +50,12 @@ public:
     ArrayAllocationProfile(IndexingType recommendedIndexingMode)
     {
         initializeIndexingMode(recommendedIndexingMode);
+    }
+
+    ~ArrayAllocationProfile()
+    {
+        if (processIsGILOff()) [[unlikely]]
+            removeGILOffDoubleDemotionSet();
     }
 
     IndexingType selectIndexingTypeConcurrently()
@@ -167,7 +174,13 @@ public:
     // allocations report their result into the last-array word GIL off so the
     // profile sees them (offsetOfLastArrayWord). Flag-off / GIL-on: never
     // fired, never watched.
-    InlineWatchpointSet& gilOffDoubleDemotionSet() { return m_gilOffDoubleDemotionSet; }
+    // The set is not a member: the profile is a word of the metadata of every
+    // array allocation site, and with the set it was two. It is in a
+    // process-wide table keyed by the profile, entered when first asked for; a
+    // profile without an entry has a valid set that nothing watches. Every use
+    // is at compile time or on the profile's slow path.
+    JS_EXPORT_PRIVATE InlineWatchpointSet& gilOffDoubleDemotionSet();
+    JS_EXPORT_PRIVATE bool gilOffDoubleDemotionSetIsStillValid() const;
     static constexpr ptrdiff_t offsetOfLastArrayWord() { return OBJECT_OFFSETOF(ArrayAllocationProfile, m_storage); }
     // The optimized report stores its array only when the word records none, or when the array's address has these
     // bits clear: about one allocation in 32 per thread, whose allocations of one size class are sequential. In the
@@ -183,9 +196,12 @@ public:
     JS_EXPORT_PRIVATE static void clearSubstitutedDoubleRequestsGILOff();
 
 private:
+    JS_EXPORT_PRIVATE void removeGILOffDoubleDemotionSet();
+
     using Storage = CompactPointerTuple<JSArray*, uint16_t>;
     Storage m_storage;
-    InlineWatchpointSet m_gilOffDoubleDemotionSet { IsWatched };
 };
+
+static_assert(sizeof(ArrayAllocationProfile) == sizeof(void*), "ArrayAllocationProfile has the size it has without the threads work");
 
 } // namespace JSC

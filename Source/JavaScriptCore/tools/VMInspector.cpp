@@ -412,19 +412,19 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
 
     VM& vm = *vmPtr;
 
-    auto valueAsString = [&] (JSValue v) -> CString {
+    auto valueAsString = [&] (JSValue v) -> UTF8CString {
         if (!v.isCell())
-            return toCString(v);
+            return toUTF8CString(v);
         if (isGILOffProcessForInspection()) [[unlikely]] {
             // K4.V.15 residual (header note): isValidCell() iterates the
-            // SHARED heap (forEachLiveCell) and toCString derefs the cell —
+            // SHARED heap (forEachLiveCell) and toUTF8CString derefs the cell —
             // neither is safe with other mutators running and no stop.
             // Print raw bits only (the caller already prints the encoded
             // word); GIL-on/flag-off behavior below is unchanged.
             return ""_s;
         }
         if (VMInspector::isValidCell(&vm.heap, reinterpret_cast<JSCell*>(JSValue::encode(v))))
-            return toCString(v);
+            return toUTF8CString(v);
         return ""_s;
     };
 

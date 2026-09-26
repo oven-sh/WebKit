@@ -121,9 +121,9 @@ public:
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
+        WTF::atomicStore(&m_features, features, std::memory_order_relaxed); // THREADS: see featuresConcurrently().
+        WTF::atomicStore(&m_lexicallyScopedFeatures, lexicallyScopedFeatures, std::memory_order_relaxed);
+        WTF::atomicStore(&m_hasCapturedVariables, hasCapturedVariables, std::memory_order_relaxed);
     }
 
     void installCode(CodeBlock*);
@@ -175,13 +175,6 @@ private:
 
 protected:
     ScriptExecutable(Structure*, VM&, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType, Intrinsic);
-
-    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
-    {
-        WTF::atomicStore(&m_features, features, std::memory_order_relaxed); // THREADS: see featuresConcurrently().
-        WTF::atomicStore(&m_lexicallyScopedFeatures, lexicallyScopedFeatures, std::memory_order_relaxed);
-        WTF::atomicStore(&m_hasCapturedVariables, hasCapturedVariables, std::memory_order_relaxed);
-    }
 
     static TemplateObjectMap& ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjectMap>& dest);
 

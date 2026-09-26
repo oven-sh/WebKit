@@ -164,21 +164,16 @@ enum class PropertyInlineCacheType : uint8_t { Handler, Repatching };
 // are defined. §5.7.7 blesses the value-level racing: every consumer treats
 // these as advisory profiling hints.
 //
-// FOOTPRINT COST, paid flag-off too: the nine advisory flags + m_icType were
-// 10 bits (2 bytes); as one byte each, plus retryWithoutProgressCount, the
-// tail after bufferingCountdown grows from 3 to 12 bytes, so
-// sizeof(PropertyInlineCache) goes 112 -> 128 on x86-64 and 120 -> 128 on
-// ARM64, and sizeof(HandlerPropertyInlineCache) 128 -> 144 / 136 -> 144.
-// That sizeof is the IC stride of the ButterflyArray behind BaselineJITData
-// and DFG::JITData and is baked into every Baseline/DFG IC site as an
-// immediate (JIT::loadPropertyInlineCache, DFG::JITCompiler::
-// loadPropertyInlineCache), so C++ and JIT'd code agree by construction and
-// the cost is memory only; no OBJECT_OFFSETOF or JIT-emitted offset names a
-// byte after bufferingCountdown. To recover the footprint, the nine mutable
-// flags can be co-packed into one ICRacyCell<uint16_t> accessed with relaxed
-// load/store bit ops (cross-flag lost updates are §5.7.7-blessed — the old
-// bitfield code already lost them); only m_icType must stay out of the racy
-// word, because it is const and read lock-free by isHandlerIC().
+// The nine mutable flags are bits of one 16-bit word (ICRacyFlag below): as a
+// byte each they made the IC eight bytes larger than it is without the threads
+// work, and sizeof(HandlerPropertyInlineCache) is the IC stride of the
+// ButterflyArray behind BaselineJITData and DFG::JITData, so every IC of every
+// code block moved. A flag is set by a relaxed load of the word, the bit
+// operation and a relaxed store of the word: the instructions a bit-field
+// assignment is, on storage every access to which is atomic. A store can
+// still undo a neighbouring flag's concurrent store; §5.7.7 blesses that (the
+// old bit-field code lost the same updates). m_icType stays out of the word,
+// because it is const and read lock-free by isHandlerIC().
 // TSAN ic-stubinfo ctor publication (TSAN-TRIAGE §10.4, campaign convention
 // mirroring Structure.h §9.1 concurrentRelaxedLoad/Store): UNCONDITIONAL
 // relaxed atomics over plain storage. A single-byte/single-word relaxed
@@ -228,9 +223,36 @@ private:
     T m_value;
 };
 
-using ICRacyStateBool = ICRacyCell<bool>;
-static_assert(sizeof(ICRacyStateBool) == 1);
 static_assert(sizeof(ICRacyCell<uint8_t>) == 1);
+
+// One bit of the IC's word of advisory flags. The flags are the members of an anonymous union
+// with the word, so that each reads and assigns like the bool it was.
+template<unsigned bit>
+class ICRacyFlag {
+public:
+    ALWAYS_INLINE operator bool() const { return icConcurrentRelaxedLoad(m_bits) & mask; }
+
+    ALWAYS_INLINE ICRacyFlag& operator=(bool value)
+    {
+        uint16_t bits = icConcurrentRelaxedLoad(m_bits);
+        uint16_t newBits = value ? (bits | mask) : (bits & ~mask);
+        // As ICRacyCell::operator=: with the flag on only a change is stored.
+        if (sharedProfileWriteAvoidance()) [[unlikely]] {
+            if (newBits == bits)
+                return *this;
+        }
+        icConcurrentRelaxedStore(m_bits, newBits);
+        return *this;
+    }
+
+    template<unsigned otherBit>
+    ALWAYS_INLINE ICRacyFlag& operator=(const ICRacyFlag<otherBit>& other) { return *this = static_cast<bool>(other); }
+
+private:
+    static constexpr uint16_t mask = 1 << bit;
+    static_assert(bit < 16);
+    uint16_t m_bits;
+};
 
 struct UnlinkedPropertyInlineCache;
 struct BaselineUnlinkedPropertyInlineCache;
@@ -391,6 +413,7 @@ protected:
         , accessType(accessType)
         , m_icType(icType)
     {
+        icConcurrentRelaxedStore(m_flagBits, static_cast<uint16_t>(0));
     }
 
     PropertyInlineCache(PropertyInlineCacheType icType)
@@ -513,7 +536,6 @@ public:
     };
     JSCell* m_inlineHolder { nullptr };
     ICRacyCell<CacheableIdentifier> m_identifier;
-    CodeLocationLabel<JSInternalPtrTag> doneLocation;
 
     // TSAN ic-stubinfo (TSAN-TRIAGE §10.4): written by IC initialization
     // (initializeFromUnlinkedPropertyInlineCache /
@@ -568,24 +590,32 @@ public:
     // them so offsetOfCountdown() is unchanged. Zero-initialized → flag-off
     // identical.
     ICRacyCell<uint8_t> retryWithoutProgressCount { 0 };
-    // See ICRacyStateBool above: advisory flags, each its own relaxed atomic
-    // byte (previously one shared bitfield byte whose RMW writes raced with
-    // every reader of every other bit, m_icType included).
-    ICRacyStateBool resetByGC { false };
-    ICRacyStateBool tookSlowPath { false };
-    ICRacyStateBool everConsidered { false };
-    ICRacyStateBool prototypeIsKnownObject { false }; // Only relevant for InstanceOf.
-    ICRacyStateBool sawNonCell { false };
-    ICRacyStateBool propertyIsString { false };
-    ICRacyStateBool propertyIsInt32 { false };
-    ICRacyStateBool propertyIsSymbol { false };
-    ICRacyStateBool canBeMegamorphic { false };
-    // No longer a bitfield: this const discriminator used to share its byte
-    // with the mutable flags above, so every racy flag write also "wrote" the
+    // Not a bitfield: this const discriminator used to share its byte
+    // with the mutable flags below, so every racy flag write also "wrote" the
     // m_icType bit, pairing with lock-free isHandlerIC() readers in TSAN.
     // It is written once at construction and immutable afterwards.
     const PropertyInlineCacheType m_icType;
+    // See ICRacyFlag above: advisory flags, bits of one word every access to
+    // which is a relaxed atomic (previously one shared bitfield byte whose RMW
+    // writes raced with every reader of every other bit, m_icType included).
+    // The constructor zeroes the word.
+    union {
+        uint16_t m_flagBits;
+        ICRacyFlag<0> resetByGC;
+        ICRacyFlag<1> tookSlowPath;
+        ICRacyFlag<2> everConsidered;
+        ICRacyFlag<3> prototypeIsKnownObject; // Only relevant for InstanceOf.
+        ICRacyFlag<4> sawNonCell;
+        ICRacyFlag<5> propertyIsString;
+        ICRacyFlag<6> propertyIsInt32;
+        ICRacyFlag<7> propertyIsSymbol;
+        ICRacyFlag<8> canBeMegamorphic;
+    };
 };
+
+#if CPU(X86_64)
+static_assert(sizeof(PropertyInlineCache) == 64, "PropertyInlineCache has the size it has without the threads work");
+#endif
 
 static_assert(sizeof(WTF::Atomic<uint8_t>) == 1);
 

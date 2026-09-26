@@ -191,13 +191,14 @@ public:
 #endif
     BlockDirectory* nextDirectory() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectory), linkLoadOrder); }
     BlockDirectory* nextDirectoryInSubspace() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectoryInSubspace), linkLoadOrder); }
-    BlockDirectory* nextDirectoryInAlignedMemoryAllocator() const { return WTF::atomicLoad(const_cast<BlockDirectory**>(&m_nextDirectoryInAlignedMemoryAllocator), linkLoadOrder); }
 
     void setNextDirectory(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectory, directory, linkStoreOrder); }
     void setNextDirectoryInSubspace(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectoryInSubspace, directory, linkStoreOrder); }
-    void setNextDirectoryInAlignedMemoryAllocator(BlockDirectory* directory) { WTF::atomicStore(&m_nextDirectoryInAlignedMemoryAllocator, directory, linkStoreOrder); }
-    
+
     MarkedBlock::Handle* findEmptyBlockToSteal();
+
+    // Callers must already have cleared the block's in-use bit.
+    void noteBlockMayBeStealable(unsigned index) WTF_REQUIRES_LOCK(m_bitvectorLock);
 
     inline MarkedBlock::Handle* findBlockToSweep();
     MarkedBlock::Handle* findBlockToSweep(unsigned& unsweptCursor);
@@ -287,7 +288,8 @@ private:
     // stale lock-free walkers' atomic loads).
     BlockDirectory* m_nextDirectory;
     BlockDirectory* m_nextDirectoryInSubspace;
-    BlockDirectory* m_nextDirectoryInAlignedMemoryAllocator;
+    BlockDirectory* m_nextDirectoryWithEmptyBlocks { nullptr };
+    Atomic<bool> m_isOnEmptyBlocksList { false };
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

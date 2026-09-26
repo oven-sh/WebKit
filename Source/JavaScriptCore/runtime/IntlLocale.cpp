@@ -670,7 +670,7 @@ const String& IntlLocale::language()
         if (!buffer.size())
             result = "und"_s;
         else
-            result = buffer.span();
+            result = String::fromLatin1(buffer.span());
         return result;
     });
 }
@@ -683,7 +683,7 @@ const String& IntlLocale::script()
         Vector<char, 4> buffer;
         auto status = callBufferProducingFunction(uloc_getScript, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        result = buffer.span();
+        result = String::fromLatin1(buffer.span());
         return result;
     });
 }
@@ -696,7 +696,7 @@ const String& IntlLocale::region()
         Vector<char, 3> buffer;
         auto status = callBufferProducingFunction(uloc_getCountry, m_localeID.data(), buffer);
         ASSERT_UNUSED(status, U_SUCCESS(status));
-        result = buffer.span();
+        result = String::fromLatin1(buffer.span());
         return result;
     });
 }

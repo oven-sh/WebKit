@@ -1887,7 +1887,7 @@ end
 # ===========================================================================
 # Two bodies per gated opcode. The gates above are one byte test per executed opcode: two to four instructions in
 # every property access and call of the interpreter, in a process that never sets the flag. The bodies of the gated opcodes are
-# therefore defined twice, by gateVariants(): once as `main`'s (every gate expands to nothing) under the opcode's usual label, and
+# therefore defined twice, by gateMainBodies() and gateThreadedBodies(): once as `main`'s (every gate expands to nothing) under the opcode's usual label, and
 # once as the threaded body (the flag is known to be set, so the gates on it are jumps; the gates on tagged butterfly words keep their byte test, as the
 # GIL-on process with one owner has untagged words with the flag set) under the same label with a `_threaded_` prefix (a label that starts with llint_op_ would be an opcode label to the assembler generator). LLInt::initialize() installs the
 # threaded labels into the opcode maps through _llint_threaded_entry when the flag is set; a process without it never executes a
@@ -1948,37 +1948,46 @@ macro byteGates(body)
     body()
 end
 
-macro gateVariants(body)
+# The two instances of a group of gated opcodes. gateMainBodies() is called where the group is defined; gateThreadedBodies() is
+# called for every group after the last opcode of LowLevelInterpreter.asm, so that the bodies a process without the flag executes
+# are laid out one after the other, as on `main`, and the threaded bodies follow the last of them.
+macro gateInstance(body, groupCommonOp, groupTagged, groupJS, groupGILOff, groupReturnLabel, groupJSTrampolineLabels)
     # The gate macros, the opcode-label macro and the return-label macro are defined again in the environment of the body, under the
     # names that the macros the body calls (callHelper, performGetByIDHelper, llintOp, ...) use: offlineasm resolves a macro name in the
     # environment of the call. Defining them here, in the instance's own scope, is what makes the two instances differ.
-    macro instance(groupCommonOp, groupTagged, groupJS, groupGILOff, groupReturnLabel, groupJSTrampolineLabels)
-        macro commonOp(label, prologue, fn)
-            groupCommonOp(label, prologue, fn)
-        end
-        macro ifTaggedButterfliesBranch(scratch, label)
-            groupTagged(scratch, label)
-        end
-        macro ifJSThreadsBranch(scratch, label)
-            groupJS(scratch, label)
-        end
-        macro ifGILOffProcessBranch(scratch, label)
-            groupGILOff(scratch, label)
-        end
-        macro defineReturnLabel(opcodeName, size)
-            groupReturnLabel(opcodeName, size)
-        end
-        macro defineJSTrampolineLabels(opcodeName, size)
-            groupJSTrampolineLabels(opcodeName, size)
-        end
-        body()
+    macro commonOp(label, prologue, fn)
+        groupCommonOp(label, prologue, fn)
     end
+    macro ifTaggedButterfliesBranch(scratch, label)
+        groupTagged(scratch, label)
+    end
+    macro ifJSThreadsBranch(scratch, label)
+        groupJS(scratch, label)
+    end
+    macro ifGILOffProcessBranch(scratch, label)
+        groupGILOff(scratch, label)
+    end
+    macro defineReturnLabel(opcodeName, size)
+        groupReturnLabel(opcodeName, size)
+    end
+    macro defineJSTrampolineLabels(opcodeName, size)
+        groupJSTrampolineLabels(opcodeName, size)
+    end
+    body()
+end
 
+macro gateMainBodies(body)
     if C_LOOP or ARM64E
-        instance(commonOp, ifTaggedButterfliesBranchByte, ifJSThreadsBranchByte, ifGILOffProcessBranchByte, defineReturnLabel, defineJSTrampolineLabels)
+        gateInstance(body, commonOp, ifTaggedButterfliesBranchByte, ifJSThreadsBranchByte, ifGILOffProcessBranchByte, defineReturnLabel, defineJSTrampolineLabels)
     else
-        instance(commonOp, gateNever, gateNever, gateNever, defineReturnLabel, defineJSTrampolineLabels)
-        instance(commonOpThreaded, ifTaggedButterfliesBranchByte, gateAlways, ifGILOffProcessBranchByte, defineReturnLabelNone, defineJSTrampolineLabelsNone)
+        gateInstance(body, commonOp, gateNever, gateNever, gateNever, defineReturnLabel, defineJSTrampolineLabels)
+    end
+end
+
+macro gateThreadedBodies(body)
+    if C_LOOP or ARM64E
+    else
+        gateInstance(body, commonOpThreaded, ifTaggedButterfliesBranchByte, gateAlways, ifGILOffProcessBranchByte, defineReturnLabelNone, defineJSTrampolineLabelsNone)
     end
 end
 
@@ -2152,7 +2161,7 @@ macro storePropertyAtVariableOffsetThreaded(propertyOffsetAsInt, objectAndStorag
     storeq value, (firstOutOfLineOffset - 2) * 8[objectAndStorage, propertyOffsetAsInt, 8]
 end
 
-gateVariants(macro ()
+macro gatedBodies0()
 llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
     get(m_base, t0)
@@ -2187,7 +2196,8 @@ llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, disp
     valueProfile(size, OpGetByIdDirect, m_valueProfile, r0, t2)
     return(r0)
 end)
-end)
+end
+gateMainBodies(gatedBodies0)
 
 # The base object is expected in t3
 # metadata needs to be loaded in t2
@@ -2273,7 +2283,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
 
 end
 
-gateVariants(macro ()
+macro gatedBodies1()
 llintOpWithMetadata(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetByIdSlow)
@@ -2289,10 +2299,11 @@ llintOpWithMetadata(op_get_by_id, OpGetById, macro (size, get, dispatch, metadat
     valueProfile(size, OpGetById, m_valueProfile, r0, t2)
     return(r0)
 end)
-end)
+end
+gateMainBodies(gatedBodies1)
 
 
-gateVariants(macro ()
+macro gatedBodies2()
 llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
@@ -2309,7 +2320,8 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     valueProfile(size, OpGetLength, m_valueProfile, r0, t2)
     return(r0)
 end)
-end)
+end
+gateMainBodies(gatedBodies2)
 
 
 llintOpWithProfile(op_get_prototype_of, OpGetPrototypeOf, macro (size, get, dispatch, return)
@@ -2336,7 +2348,7 @@ llintOpWithProfile(op_get_prototype_of, OpGetPrototypeOf, macro (size, get, disp
 end)
 
 
-gateVariants(macro ()
+macro gatedBodies3()
 llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opPutByIdSlow)
@@ -2438,10 +2450,11 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
     dispatch()
 
 end)
-end)
+end
+gateMainBodies(gatedBodies3)
 
 
-gateVariants(macro ()
+macro gatedBodies4()
 llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     macro finishGetByVal(result, scratch)
         get(m_dst, scratch)
@@ -2557,7 +2570,8 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     valueProfile(size, OpGetByVal, m_valueProfile, r0, t5)
     return(r0)
 end)
-end)
+end
+gateMainBodies(gatedBodies4)
 
 llintOpWithMetadata(op_get_private_name, OpGetPrivateName, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
@@ -2584,7 +2598,7 @@ llintOpWithMetadata(op_get_private_name, OpGetPrivateName, macro (size, get, dis
     dispatch()
 end)
 
-gateVariants(macro ()
+macro gatedBodies5()
 llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opPutPrivateNameSlow)
@@ -2632,9 +2646,10 @@ llintOpWithMetadata(op_put_private_name, OpPutPrivateName, macro (size, get, dis
     callSlowPath(_llint_slow_path_put_private_name)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies5)
 
-gateVariants(macro ()
+macro gatedBodies6()
 llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
     loadConstantOrVariableCell(size, t3, t0, .opSetPrivateBrandSlow)
@@ -2659,7 +2674,8 @@ llintOpWithMetadata(op_set_private_brand, OpSetPrivateBrand, macro (size, get, d
     callSlowPath(_llint_slow_path_set_private_brand)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies6)
 
 llintOpWithMetadata(op_check_private_brand, OpCheckPrivateBrand, macro (size, get, dispatch, metadata, return)
     metadata(t5, t2)
@@ -2826,21 +2842,23 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
     end)
 end
 
-gateVariants(macro ()
+macro gatedBodies7()
 putByValOp(put_by_val, OpPutByVal, macro (size, dispatch)
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_put_by_val, size)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies7)
 
-gateVariants(macro ()
+macro gatedBodies8()
 putByValOp(put_by_val_direct, OpPutByValDirect, macro (size, dispatch)
 .osrReturnPoint:
     getterSetterOSRExitReturnPoint(op_put_by_val_direct, size)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies8)
 
 macro llintJumpTrueOrFalseOp(opcodeName, opcodeStruct, miscConditionOp, truthyCellConditionOp)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
@@ -3875,7 +3893,7 @@ macro loadScopeWithStructureCheck(opcodeStruct, get, metadata, scope, scratch, s
     bineq scratch, %opcodeStruct%::Metadata::m_structureID[metadata], slowPath
 end
 
-gateVariants(macro ()
+macro gatedBodies9()
 llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -3982,10 +4000,11 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     callSlowPath(_llint_slow_path_get_from_scope)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies9)
 
 
-gateVariants(macro ()
+macro gatedBodies10()
 llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, return)
     macro putProperty()
         # Flag-on the store goes through the WRITE choke point (the global
@@ -4130,7 +4149,8 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     callSlowPath(_llint_slow_path_put_to_scope)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies10)
 
 
 llintOpWithProfile(op_get_from_arguments, OpGetFromArguments, macro (size, get, dispatch, return)
@@ -4158,7 +4178,7 @@ llintOpWithReturn(op_get_parent_scope, OpGetParentScope, macro (size, get, dispa
     return(t0)
 end)
 
-gateVariants(macro ()
+macro gatedBodies11()
 llintOpWithMetadata(op_super_construct_varargs, OpSuperConstructVarargs, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
     get(m_thisValue, t0)
@@ -4173,7 +4193,8 @@ llintOpWithMetadata(op_super_construct_varargs, OpSuperConstructVarargs, macro (
 .done:
     doCallVarargs(op_super_construct_varargs, size, get, OpSuperConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_super_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
-end)
+end
+gateMainBodies(gatedBodies11)
 
 
 llintOpWithMetadata(op_profile_type, OpProfileType, macro (size, get, dispatch, metadata, return)
@@ -4225,7 +4246,7 @@ llintOpWithMetadata(op_profile_control_flow, OpProfileControlFlow, macro (size, 
     dispatch()
 end)
 
-gateVariants(macro ()
+macro gatedBodies12()
 llintOpWithMetadata(op_instanceof, OpInstanceof, macro (size, get, dispatch, metadata, return)
 
     macro getAndLoadConstantOrVariable(fieldName, index, value)
@@ -4305,7 +4326,8 @@ llintOpWithMetadata(op_instanceof, OpInstanceof, macro (size, get, dispatch, met
     store(ValueFalse, m_dst)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies12)
 
 macro iteratorOpenGenericImpl(size, get, dispatch, metadata, opcodeStruct, opcodeName, tryFastNarrow, tryFastWide16, tryFastWide32, getNextSlowPath, updateArrayProfile)
     macro fastNarrow()
@@ -4364,7 +4386,7 @@ macro iteratorOpenGenericImpl(size, get, dispatch, metadata, opcodeStruct, opcod
     jmp _llint_throw_from_slow_path_trampoline
 end
 
-gateVariants(macro ()
+macro gatedBodies13()
 llintOpWithMetadata(op_iterator_open, OpIteratorOpen, macro (size, get, dispatch, metadata, return)
     macro updateArrayProfile(get, metadata)
         metadata(t5, t0)
@@ -4376,9 +4398,10 @@ llintOpWithMetadata(op_iterator_open, OpIteratorOpen, macro (size, get, dispatch
     end
     iteratorOpenGenericImpl(size, get, dispatch, metadata, OpIteratorOpen, op_iterator_open, _iterator_open_try_fast_narrow, _iterator_open_try_fast_wide16, _iterator_open_try_fast_wide32, _llint_slow_path_iterator_open_get_next, updateArrayProfile)
 end)
-end)
+end
+gateMainBodies(gatedBodies13)
 
-gateVariants(macro ()
+macro gatedBodies14()
 llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
 
     loadVariable(get, m_next, t0)
@@ -4525,7 +4548,8 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
     callSlowPath(_llint_slow_path_iterator_next_get_value)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies14)
 
 llintOpWithMetadata(op_new_reg_exp_shared, OpNewRegExpShared, macro (size, get, dispatch, metadata, return)
     # RegExpObject::literalAsReceiver(): the site's object, if it has one that is still in its initial state and the watchpoint
@@ -4579,7 +4603,7 @@ llintOpWithJump(op_iterator_close_check, OpIteratorCloseCheck, macro (size, get,
     jump(m_targetLabel)
 end)
 
-gateVariants(macro ()
+macro gatedBodies15()
 llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, get, dispatch, metadata, return)
     loadVariable(get, m_next, t0)
     btqnz t0, notCellMask, .asyncIteratorNextGeneric
@@ -4607,16 +4631,18 @@ llintOpWithMetadata(op_async_iterator_next, OpAsyncIteratorNext, macro (size, ge
     storeh t0, OpAsyncIteratorNext::Metadata::m_iterationMetadata + IterationModeMetadata::seenModes[t5]
     callHelper(op_async_iterator_next, OpAsyncIteratorNext, dispatchAfterRegularCall, m_valueProfile, m_dst, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, dispatch, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
 end)
-end)
+end
+gateMainBodies(gatedBodies15)
 
-gateVariants(macro ()
+macro gatedBodies16()
 llintOpWithMetadata(op_async_iterator_open, OpAsyncIteratorOpen, macro (size, get, dispatch, metadata, return)
     macro updateArrayProfile(get, metadata)
         metadata(t5, t0)
     end
     iteratorOpenGenericImpl(size, get, dispatch, metadata, OpAsyncIteratorOpen, op_async_iterator_open, _async_iterator_open_try_fast_narrow, _async_iterator_open_try_fast_wide16, _async_iterator_open_try_fast_wide32, _llint_slow_path_async_iterator_open_get_next, updateArrayProfile)
 end)
-end)
+end
+gateMainBodies(gatedBodies16)
 
 llintOpWithReturn(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dispatch, return)
     get(m_base, t1)
@@ -4673,7 +4699,7 @@ llintOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch)
     dispatch()
 end)
 
-gateVariants(macro ()
+macro gatedBodies17()
 llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -4743,9 +4769,10 @@ llintOpWithMetadata(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size,
     valueProfile(size, OpEnumeratorGetByVal, m_valueProfile, r0, t5)
     return(r0)
 end)
-end)
+end
+gateMainBodies(gatedBodies17)
 
-gateVariants(macro ()
+macro gatedBodies18()
 llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
 
@@ -4822,7 +4849,8 @@ llintOpWithMetadata(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size,
     getterSetterOSRExitReturnPoint(op_enumerator_put_by_val, size)
     dispatch()
 end)
-end)
+end
+gateMainBodies(gatedBodies18)
 
 macro hasPropertyImpl(opcodeStruct, size, get, dispatch, metadata, return, slowPath)
     metadata(t5, t0)
@@ -4956,3 +4984,26 @@ op(loop_osr_entry_gate, macro ()
         crash() # Should never reach here.
     end
 end)
+
+# The threaded bodies of the groups of this file: LowLevelInterpreter.asm emits them after the last opcode.
+macro threadedBodies64()
+    gateThreadedBodies(gatedBodies0)
+    gateThreadedBodies(gatedBodies1)
+    gateThreadedBodies(gatedBodies2)
+    gateThreadedBodies(gatedBodies3)
+    gateThreadedBodies(gatedBodies4)
+    gateThreadedBodies(gatedBodies5)
+    gateThreadedBodies(gatedBodies6)
+    gateThreadedBodies(gatedBodies7)
+    gateThreadedBodies(gatedBodies8)
+    gateThreadedBodies(gatedBodies9)
+    gateThreadedBodies(gatedBodies10)
+    gateThreadedBodies(gatedBodies11)
+    gateThreadedBodies(gatedBodies12)
+    gateThreadedBodies(gatedBodies13)
+    gateThreadedBodies(gatedBodies14)
+    gateThreadedBodies(gatedBodies15)
+    gateThreadedBodies(gatedBodies16)
+    gateThreadedBodies(gatedBodies17)
+    gateThreadedBodies(gatedBodies18)
+end

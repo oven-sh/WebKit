@@ -33,6 +33,9 @@
 #include "JSCellInlines.h"
 #include <algorithm>
 #include <atomic>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace JSC {
 
@@ -140,7 +143,7 @@ void ArrayAllocationProfile::updateProfile()
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
         IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
         if (processIsGILOff() && hasContiguous(indexingType) && !hasContiguous(current.indexingType()) && !hasDouble(current.indexingType())
-            && m_gilOffDoubleDemotionSet.isStillValid() && (wasSubstitutedDoubleRequestGILOff(lastArray) || lastArrayLooksLikeDoubles(lastArray))) [[unlikely]] {
+            && gilOffDoubleDemotionSetIsStillValid() && (wasSubstitutedDoubleRequestGILOff(lastArray) || lastArrayLooksLikeDoubles(lastArray))) [[unlikely]] {
             // Once only per site: if Double turns out wrong, the demotion below
             // fires the set and this branch is never taken again.
             JSTHREADS_COUNT(arrayAllocationProfilePromotedToDoubleGILOff);
@@ -158,12 +161,48 @@ void ArrayAllocationProfile::updateProfile()
         // array unless the optimized allocation follows; tell the code that
         // baked Double. Published after the type store so the recompile reads
         // the new recommendation.
-        if (processIsGILOff() && hasDouble(current.indexingType()) && !hasDouble(indexingType) && !hasUndecided(indexingType) && m_gilOffDoubleDemotionSet.isStillValid()) [[unlikely]] {
+        if (processIsGILOff() && hasDouble(current.indexingType()) && !hasDouble(indexingType) && !hasUndecided(indexingType) && gilOffDoubleDemotionSetIsStillValid()) [[unlikely]] {
             JSTHREADS_COUNT(arrayAllocationProfileLeftDoubleGILOff);
-            m_gilOffDoubleDemotionSet.fireAll(lastArray->vm(), "GIL off: array allocation profile left Double");
+            gilOffDoubleDemotionSet().fireAll(lastArray->vm(), "GIL off: array allocation profile left Double");
         }
     }
     JSC_PER_THREADS_MODE_END
+}
+
+// The GIL-off double demotion sets: see the declaration of gilOffDoubleDemotionSet(). The lock is a leaf, held for the
+// lookup only; a set's address is stable until its profile is destroyed, and what watches it holds the profile's code
+// block (as when the set was a member).
+static Lock s_gilOffDoubleDemotionSetsLock;
+static UncheckedKeyHashMap<const ArrayAllocationProfile*, std::unique_ptr<InlineWatchpointSet>>& gilOffDoubleDemotionSets() WTF_REQUIRES_LOCK(s_gilOffDoubleDemotionSetsLock)
+{
+    static NeverDestroyed<UncheckedKeyHashMap<const ArrayAllocationProfile*, std::unique_ptr<InlineWatchpointSet>>> sets;
+    return sets;
+}
+
+InlineWatchpointSet& ArrayAllocationProfile::gilOffDoubleDemotionSet()
+{
+    ASSERT(processIsGILOff());
+    Locker locker { s_gilOffDoubleDemotionSetsLock };
+    return *gilOffDoubleDemotionSets().ensure(this, [] {
+        return makeUniqueWithoutFastMallocCheck<InlineWatchpointSet>(IsWatched);
+    }).iterator->value;
+}
+
+bool ArrayAllocationProfile::gilOffDoubleDemotionSetIsStillValid() const
+{
+    ASSERT(processIsGILOff());
+    Locker locker { s_gilOffDoubleDemotionSetsLock };
+    auto iterator = gilOffDoubleDemotionSets().find(this);
+    return iterator == gilOffDoubleDemotionSets().end() || iterator->value->isStillValid();
+}
+
+void ArrayAllocationProfile::removeGILOffDoubleDemotionSet()
+{
+    std::unique_ptr<InlineWatchpointSet> set;
+    {
+        Locker locker { s_gilOffDoubleDemotionSetsLock };
+        set = gilOffDoubleDemotionSets().take(this);
+    }
 }
 
 } // namespace JSC

@@ -37,6 +37,10 @@
 // (it is not part of a unified source, so that nothing else in its translation unit does either).
 extern "C" {
 alignas(WTF::ConfigAlignment) JS_EXPORT_PRIVATE uint8_t g_jscThreadsModePageStorage[WTF::ConfigAlignment] __asm__(SYMBOL_STRING(g_jscThreadsModePage));
+#if COMPILER(GCC_COMPATIBLE) && defined(__ELF__)
+// The hidden name JavaScriptCore itself reads the page through (ThreadsModePage.h).
+extern uint8_t g_jscThreadsModePageLocalStorage[WTF::ConfigAlignment] __asm__("g_jscThreadsModePageLocal") __attribute__((alias("g_jscThreadsModePage"), visibility("hidden")));
+#endif
 }
 
 namespace JSC {
@@ -52,7 +56,11 @@ void latchThreadsModePage(uint8_t mode)
 #if PLATFORM(COCOA)
     WTF::makePagesFreezable(g_jscThreadsModePageStorage, WTF::ConfigAlignment);
 #endif
-    g_jscThreadsModePageStorage[0] = mode;
+    g_jscThreadsModePageStorage[ThreadsModeByteMode] = mode;
+    g_jscThreadsModePageStorage[ThreadsModeByteJSThreads] = !!(mode & ThreadsModeJSThreads);
+    g_jscThreadsModePageStorage[ThreadsModeByteTaggedButterflies] = !!(mode & ThreadsModeTaggedButterflies);
+    g_jscThreadsModePageStorage[ThreadsModeByteGILOffProcess] = !!(mode & ThreadsModeGILOffProcess);
+    g_jscThreadsModePageStorage[ThreadsModeByteSharedGCHeap] = !!(mode & ThreadsModeSharedGCHeap);
 }
 
 void threadsModeBodyMismatch()

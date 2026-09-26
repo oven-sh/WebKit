@@ -345,43 +345,43 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     // really be profitable.
     DeferGCForAWhile deferGC(vm);
 
-    // UNGIL §A.1.3 (U-T4a): the exit-generation thunk publishes the exit
-    // index through the exiting thread's lite when gilOff (mode-split read;
-    // GIL-on this is the VM-block word, bit-identical to today).
-    uint32_t exitIndex = vm.group3Primitives().osrExitIndex;
     // SCALEBENCH §36 jitcode-refptr-bounce-14pct: cache the DFG::JITCode* once
     // via the raw accessor (the by-value jitCode() was four `lock incl/decl`
     // pairs on the shared-CodeBlock refcount per traversal; gilOff every exit
     // traverses here forever). codeBlock is conservatively-live on this stack
     // and pins m_jitCode; flag-off output-identical.
-    DFG::JITCode* dfgJIT = codeBlock->jitCodeRawPtr()->dfg();
-    OSRExit& exit = dfgJIT->m_osrExit[exitIndex];
+    JITCode* jitCode = codeBlock->jitCodeRawPtr()->dfg();
+    // UNGIL §A.1.3 (U-T4a): gilOff every exit is dispatched through the exit
+    // jump table, and the exit-generation thunk publishes the exit index
+    // through the exiting thread's lite (mode-split read; GIL-on this is the
+    // VM-block word, bit-identical to today).
+    const bool dispatchedThroughExitJumpTable = jitCode->isUnlinked() || vm.gilOff();
+    uint32_t exitIndex = dispatchedThroughExitJumpTable ? vm.group3Primitives().osrExitIndex : jitCode->osrExitIndexForReturnPC(vm.osrExitReturnPC);
     JSTHREADS_COUNT(osrExitDFGOperation);
 
     if (vm.gilOff()) [[unlikely]] {
-        // gilOff never repatches the exit jump, so every exit of an
-        // already-compiled ramp lands here: the lock-free read of the
-        // published ramp comes first, ahead of the generation lock and the
-        // per-traversal variableEventStream.reconstruct() below. m_exits[i]
-        // is initialized to the process-singleton osrExitGenerationThunk
-        // (DFGPlan.cpp) and overwritten exactly once by setExitCode under the
-        // OSRExitGenerationLocker; setExitCode writes m_executableMemory
-        // first, storeStoreFence, then relaxed-atomic publishes m_codePtr (the
-        // single tagged word the JIT-emitted unlinked dispatch also reads
-        // lock-free, DFGJITCompiler.cpp) last, so a non-thunk codePtr implies
-        // the ramp's executable memory is fully constructed and held live by
-        // the m_exits slot's own RefPtr. The thunk codePtr is cached in a
+        // The lock-free read of the published ramp comes first, ahead of the
+        // generation lock, the decode of the exit and the
+        // variableEventStream.reconstruct() below: two threads can take the
+        // same not-yet-compiled exit, and the loser arrives here after the
+        // winner published. The exit jump table entry is initialized to the
+        // process-singleton osrExitGenerationThunk (DFGPlan.cpp) and
+        // overwritten exactly once by publishExitJumpTableEntryConcurrently
+        // under the OSRExitGenerationLocker, after the stub that keeps the
+        // ramp's executable memory alive was appended; it is the single
+        // tagged word the JIT-emitted dispatch also reads lock-free
+        // (DFGJITCompiler.cpp). The thunk codePtr is cached in a
         // function-static (process-lifetime CTI stub; thread-safe static-local
         // init avoids the per-traversal JITThunks lock).
         static void* const s_osrExitGenerationThunkCodePtr =
             vm.getCTIStub(osrExitGenerationThunkGenerator).retaggedCode<OSRExitPtrTag>().taggedPtr();
-        void* publishedCodePtr = codeBlock->dfgJITData()->exitCodePtrConcurrent(exitIndex);
+        void* publishedCodePtr = codeBlock->dfgJITData()->exitJumpTableEntryConcurrently(exitIndex);
         if (publishedCodePtr && publishedCodePtr != s_osrExitGenerationThunkCodePtr) [[likely]] {
-            WTF::loadLoadFence(); // pairs with FINALIZE_CODE's publish + setExitCode()'s internal storeStoreFence.
+            WTF::loadLoadFence(); // pairs with FINALIZE_CODE's publish + the publication's storeStoreFence.
             // The ramp may have been compiled and finalized on another thread;
             // the executing PE needs its own context synchronization before
             // the thunk far-jumps into it - ONCE per publication, not per exit:
-            // setExitCode bumps the stop generation before publishing, so the
+            // the publication bumps the stop generation first, so the
             // per-thread generation compare issues the serializing instruction
             // exactly when something new was published since this thread last
             // synced (an unconditional cpuid per exit cost 3x on throw-heavy
@@ -392,16 +392,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
         }
     }
 
+    OSRExit exit = jitCode->m_osrExits.at(exitIndex);
+
     ASSERT(!vm.group3Primitives().callFrameForCatch || exit.m_kind == GenericUnwind); // UNGIL §A.1.3 mode split.
     EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() || !exit.isOSRExitDueToException());
 
     // Compute the value recoveries.
     Operands<ValueRecovery> operands;
-    dfgJIT->variableEventStream.reconstruct(codeBlock, exit.m_codeOrigin, dfgJIT->minifiedDFG, exit.m_streamIndex, operands);
+    jitCode->variableEventStream.reconstruct(codeBlock, exit.m_codeOrigin, jitCode->minifiedDFG, exit.m_streamIndex, operands);
 
     SpeculationRecovery* recovery = nullptr;
     if (exit.m_recoveryIndex != UINT_MAX)
-        recovery = &dfgJIT->m_speculationRecovery[exit.m_recoveryIndex];
+        recovery = &jitCode->m_speculationRecovery[exit.m_recoveryIndex];
 
     // gilOff, N threads can fire the SAME not-yet-compiled exit concurrently;
     // the exit ramp must be compiled and published exactly once, under the
@@ -410,14 +412,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
     std::optional<OSRExitGenerationLocker> generationLocker;
     if (vm.gilOff()) [[unlikely]] {
         generationLocker.emplace(vm, callFrame);
-        auto osrExitThunk = vm.getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
-        const auto& existing = codeBlock->dfgJITData()->exitCode(exitIndex);
-        if (existing.executableMemory() && existing.executableMemory() != osrExitThunk.executableMemory()) {
+        static void* const s_osrExitGenerationThunkCodePtr =
+            vm.getCTIStub(osrExitGenerationThunkGenerator).retaggedCode<OSRExitPtrTag>().taggedPtr();
+        void* existing = codeBlock->dfgJITData()->exitJumpTableEntryConcurrently(exitIndex); // writers hold the lock we hold
+        if (existing && existing != s_osrExitGenerationThunkCodePtr) {
             // A racing thread compiled and published this exit while we were
             // contending for the lock: reuse its ramp, with the executing PE's
             // own context synchronization before the thunk far-jumps into it.
             jsThreadsSyncToStopGenerationBeforeJITEntry();
-            vm.group3Primitives().osrExitJumpDestination = existing.code().taggedPtr();
+            vm.group3Primitives().osrExitJumpDestination = existing;
             return;
         }
     }
@@ -473,28 +476,29 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileOSRExit, void, (CallFrame* cal
             shouldDumpDisassembly() || Options::verboseOSR() || Options::verboseDFGOSRExit(),
             patchBuffer, OSRExitPtrTag, nullptr,
             "DFG OSR exit #%u (D@%u, %s, %s) from %s, with operands = %s",
-                exitIndex, exit.m_dfgNodeIndex, toCString(exit.m_codeOrigin).data(),
-                toCString(exit.m_kind).data(), toCString(*codeBlock).data(),
-                toCString(ignoringContext<DumpContext>(operands)).data());
-        // SCALEBENCH §36 dfg-osrexit-genlock-dclp-precheck: pair with the
-        // gilOff lock-free reader's loadLoadFence above (and the JIT-emitted
-        // unlinked-DFG farJump that reads m_codePtr directly). LinkBuffer's
-        // performFinalization already issued a crossModifyingCodeFence for
-        // i-cache coherence; this fence orders the slot's m_codePtr store
-        // after the ramp's executable-memory writes for d-side readers.
-        // Once-per-exit-compile; flag-off output-identical.
-        WTF::storeStoreFence();
-        codeBlock->dfgJITData()->setExitCode(exitIndex, exitCode);
+                exitIndex, exit.m_dfgNodeIndex, toUTF8CString(exit.m_codeOrigin),
+                toUTF8CString(exit.m_kind), toUTF8CString(*codeBlock),
+                toUTF8CString(ignoringContext<DumpContext>(operands)));
+        if (vm.gilOff()) [[unlikely]] {
+            Locker locker { osrExitStubsLock() };
+            codeBlock->dfgJITData()->appendExitStub(exitIndex, exitCode);
+        } else
+            codeBlock->dfgJITData()->appendExitStub(exitIndex, exitCode);
     }
 
-    // gilOff, other mutators may be concurrently EXECUTING the exit jump, and
-    // repatchJump rewrites an unaligned rel32 on x86_64 with no atomicity
-    // guarantee (torn fetch -> wild jump). Keep the jump pointing at the
-    // generation thunk; the thunk re-enters here, the recheck above finds the
-    // published ramp, and the per-lite osrExitJumpDestination farJump
-    // completes the data-only protocol. GIL-on keeps today's repatch.
-    if (exit.codeLocationForRepatch() && !vm.gilOff())
-        MacroAssembler::repatchJump(exit.codeLocationForRepatch(), CodeLocationLabel<OSRExitPtrTag>(exitCode.code()));
+    // gilOff, other mutators may be concurrently EXECUTING the exit's
+    // dispatch, so nothing in the code is patched: the ramp's pointer is
+    // published into the exit jump table entry the dispatch's far jump reads
+    // (publishExitJumpTableEntryConcurrently orders it after the ramp's
+    // executable-memory writes for d-side readers; LinkBuffer's
+    // performFinalization already issued a crossModifyingCodeFence for
+    // i-cache coherence). GIL-on keeps main's forms.
+    if (vm.gilOff()) [[unlikely]]
+        codeBlock->dfgJITData()->publishExitJumpTableEntryConcurrently(exitIndex, exitCode.code());
+    else if (jitCode->isUnlinked())
+        codeBlock->dfgJITData()->setExitJumpTableEntry(exitIndex, exitCode.code());
+    else
+        MacroAssembler::replaceWithJump(jitCode->osrExitEntrance(exitIndex), CodeLocationLabel<OSRExitPtrTag>(exitCode.code()));
 
     // UNGIL §A.1.3 (U-T4a): publish through the exiting thread's lite when
     // gilOff — the thunk's farJump reads the per-lite word.
@@ -1024,10 +1028,10 @@ void OSRExit::compileExit(CCallHelpers& jit, VM& vm, const OSRExit& exit, const 
             // Registers are free here (state lives in the scratch buffer /
             // stack); materialize the CURRENT lite's tmp slice pointer.
             materializeScratchSlotPointer(GPRInfo::regT3, operands.tmpIndex(0));
-            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), GPRInfo::regT3);
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()), CCallHelpers::TrustedImm32(exit.m_codeOrigin.bytecodeIndex().asBits()), GPRInfo::regT3);
         } else {
             EncodedJSValue* tmpScratch = scratch + operands.tmpIndex(0);
-            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()), CCallHelpers::TrustedImm32(exit.m_codeOrigin.bytecodeIndex().asBits()), CCallHelpers::TrustedImmPtr(tmpScratch));
         }
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);

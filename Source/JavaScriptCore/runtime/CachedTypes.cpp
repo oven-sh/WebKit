@@ -3932,10 +3932,10 @@ static_assert(sizeof(CachedFunctionExecutableRareData) == sizeof(uint32_t));
 // Layout: a header word (what is present, parse mode), then only what is present, 4-byte slots first so they stay aligned:
 //   [mutable metadata 8]   updatable records (the jsc shell's disk cache patches them in place)
 //   [call slot][construct slot][name][TDZ link][rare data]
-//   varint tail, hot part (read when the cell is created): flags, lexically scoped features, parameter count, start
-//     offset, function start, source length, body start column, [first line offset]
+//   varint tail, hot part (read when the cell is created): flags, lexically scoped features, features, parameter count,
+//     start offset, function start, source length
 //   varint tail, cold part (read on first call / introspection, UnlinkedFunctionExecutable::ScalarsAreDeferred):
-//     features, parameters start, function end, body end column, [line count]
+//     parameters start, function end
 // A persistent payload (bun --compile) has no metadata row and only the slots it uses.
 class CachedFunctionExecutable : public CachedObject<UnlinkedFunctionExecutable> {
     friend struct CachedFunctionExecutableOffsets;
@@ -4833,8 +4833,6 @@ void UnlinkedFunctionExecutable::materializeDeferredScalarsSlow() const
     auto v = m_members.pending().record->view(); // re-reads the hot varints to find the cold ones; only introspection gets here
     self->m_parametersStartOffset = v.scalars.parametersStartOffset;
     self->m_unlinkedFunctionEnd = v.scalars.unlinkedFunctionEnd;
-    self->m_unlinkedBodyEndColumn = v.scalars.unlinkedBodyEndColumn;
-    self->m_lineCount = v.scalars.lineCount;
     self->clearDeferred(ScalarsAreDeferred);
     if (!isDeferred(NameIsDeferred) && !v.tdz && !v.rareData)
         materializeDeferredMembersSlow(); // nothing else is in the record, so let go of the Decoder now

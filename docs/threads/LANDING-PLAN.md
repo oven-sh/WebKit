@@ -4207,6 +4207,146 @@ function no longer exists). It was not built: Bun's build needs clang 23.1, whic
 4. The quiet pass and the L5 table on the thin-LTO configuration the embedder ships (L5.14): not measured this round.
 5. Everything the tenth round's "Open items" lists for the threaded modes: unchanged.
 
+### Results, fourteenth round (2026-09-25 to 2026-09-26)
+
+One goal, as in the two rounds before: the branch built and run without `useJSThreads` is `main`, in safety and in speed.
+The round's subject was the whole run's cycles, which the thirteenth round had not moved. The threaded modes were not
+optimized; they were kept from getting worse.
+
+**Base.** Rebased onto `74650443cb1a`, which takes the fork to upstream `7b485a76e9` in one commit (612 files of
+JavaScriptCore, WTF and bmalloc, 184 of them changed by the branch; 50 conflicted). Upstream replaced four designs that
+GIL-off protocols were built on (OSR exit entrances, weak blocks, weak tables, the steal list); AUDIT section 11 has a row
+for each. Flag off each of them is upstream's code. The range was not read commit by commit.
+
+**What the whole run's gap was made of.** Read with the processor's counters on the rebased tree before any change
+(`cycles-breakdown.sh`; SPEC-ungil history, fourteenth round, has the table): a third of it instructions (+0.8 %, all of
+them decoded, none from the micro-operation cache: rarely executed code), a half the front end (instruction cache and
+instruction TLB stalls), the rest stalls on data. Not branch mispredictions.
+
+**What was done** (SPEC-ungil history, fourteenth round).
+
+1. *Data layout.* `Structure` (128 to 112 bytes), `BaselineJITData` (176 to 40), `DFG::JITData` (232 to 104),
+   `PropertyInlineCache` (72 to 64) and `ArrayAllocationProfile` (16 to 8) have `main`'s size again; what a threaded
+   process needs lives behind the object or in a side table that only it fills.
+2. *The test of the mode* is one compare with memory and a branch (it was an address computation, a load, a test and a
+   branch, with a register kept for it): the page has a hidden name inside the image, and each bit a byte of its own.
+   The threads counters test the mode first, so they fold in the copies without threads.
+3. *Inlining `main` has*: the atom table's add, `StringRecursionChecker`, `JSFunction`'s lazy `length` and `name`,
+   `Heap::stopIfNecessary`.
+4. *The interpreter*: the threaded bodies are emitted after the last opcode instead of next to the bodies a flag-off
+   process runs; on x86-64 every opcode's body begins on a 64-byte boundary.
+5. *Tools*: `cycles-breakdown.sh`, `event-by-symbol.sh`, `type-fields.py`, `text-by-symbol.py`, `startup-smaps.py`;
+   `parity/option-exec.py`, `option-read-census.py`, `incdiff.py`; `lint-mode-test-form.sh`; two more rules in
+   `lint-threads-mode.py`. The harness no longer passes its binaries to the shell in `JSC_` variables.
+
+**Safety, final tree** (Release, Debug, DevRelease, TSanJIT, thin-LTO and C loop builds of the same sources).
+
+| Check | Result |
+|---|---|
+| Threads corpus, Release, four modes | 62 / 48 / 392 / 365 passed, 0 failed |
+| Threads corpus, Debug (assertions, ASan), four modes | 62 / 48 / 392 / 365 passed, 0 failed |
+| Sanitizer corpus (TSanJIT) | GIL on 0 reports; GIL off 1 report, not new (TSAN-RESULTS, fourteenth round) |
+| `JSTests/stress`, flag off, every configuration of the runner | 88,080 passed, 20 failed; the same 20 fail on `main` (88,063 passed: the round's one new test is not counted there) |
+| test262, flag off | identical to `main` on all 102,475 records |
+| `testmasm`, `testair`, `testb3`, `testdfg`, `testRegExp` | pass, output of the same length as `main`'s (`testb3` 434,593 lines) |
+| `testapi` | aborts on `main` and on the branch alike (the fork's atom-table assertion) |
+| Golden compare (`main`'s generated code against the branch's, flag off, every eighth stress test, both binaries with a fixed blinding seed) | Baseline 32,725 blocks, 18 differ; DFG 48,409, 139; FTL 48,290, 145. `main` against a second run of itself differs in 4, 128 and 133. Every differing block was classified: an address that is blinded in one binary and not in the other (`ror`, `or`, `xor` of an immediate: 52 %), the same instructions with other registers or one register move more (42 %), an absolute address that fits an instruction's immediate in one binary and not in the other (5 %), and five blocks of tests whose code depends on timing (`waitasync-*`, `shrink-footprint-while-compilations-are-ready`). The first three follow from addresses, which differ between two binaries of different size; two builds of the branch that differ only in addresses show them too. Without the fixed seed (the build as shipped) the counts are 65, 587 and 191 against 54, 241 and 696 for `main` against itself |
+| Interpreter lints | 81 flag-off bodies without a gate test; 27 twins, all installed; `lint-threads-mode.py` 220 functions compiled per mode in place, 0 findings; `lint-mode-test-form.sh` no test of the mode through the offset table (9,681 compares, 4,475 loads) |
+| `JSTests/stress` with the flag set, every configuration of the runner | GIL on 88,039 passed, 61 failed: the 61 that failed before the round. GIL off 87,845 passed, 255 failed: the 238 that failed before the round and the 17 plans of `stress/structured-clone.js`, a test upstream added in the rebase range that constructs a `WebAssembly.Module` (WebAssembly is off with the GIL off, by design). No plan fails that passed before the round |
+
+**Portability.**
+
+| Target | How checked | Result |
+|---|---|---|
+| C loop (`ENABLE_C_LOOP`, no JIT) | built and run (five tests of the suite, flag off and GIL on) | builds and runs |
+| arm64, C++ | `arm64-syntax-check.sh` | 7 of 549 units with errors, the three kinds the host's headers cause (`mcontext_t`, `asm/hwcap.h`, the offsets table generated for x86-64), as before the round |
+| arm64, interpreter | `arm64-llint-check.sh` | generated (177,033 lines) and assembled. The alignment of opcode bodies and the hidden name of the mode page are x86-64 and ELF only |
+| thin LTO (x86-64 Linux) | built and run, both trees | builds and runs; the hidden name of the mode page is an alias that the LTO link resolves |
+| arm64, macOS, Windows, musl: built and run | not done: no sysroot or hardware in the session | open |
+
+**Speed** (flag off against `main` at the same base, same session, main-thread counters; FLAG-OFF-LANDING L5 has the
+targets). "Before" is the thirteenth round's tree against its `main`, measured again in this session; "rebased" is the
+tree after the rebase and before the round's changes.
+
+| Metric (flag off / `main`), cycles (instructions) | Before | Rebased | After | Target |
+|---|---|---|---|---|
+| Whole run | 1.014 (1.008), 8 runs | 1.009 (1.008), 30 runs | 1.006 to 1.008 (1.004 to 1.005): four passes of 16 to 30 runs each read 1.0055, 1.0064, 1.0081 and, on the final build, 1.0059 | 1.005 |
+| First iteration, the suite in one process, five rounds | 1.020 (1.014) | 1.004 (1.019) | 1.000 and 1.017 in two passes (1.010) | 1.010 |
+| First six iterations | 1.013 (1.005) | 1.014 (1.007) | 1.015 (1.003 to 1.005); 1.010 (1.006) over 20 runs | |
+| Interpreter only, per-test geometric mean | 1.011 (1.011), thirteenth round | 1.010 (1.010) | 1.006 (1.008); 1.013 (1.007) before the opcode bodies were aligned | 1.010 |
+| Baseline-capped | 1.009 (1.006) | 1.008 (1.007) | 1.008 and 1.017 in two passes (1.004) | 1.005 |
+| DFG-capped | 1.012 (1.008) | 1.015 (1.006) | 1.011 and 1.018 in two passes (1.002 to 1.006) | 1.010 |
+| Locked loads, first iteration | 1.02 | 1.01 | 1.01 | 1.03 |
+| Quiet pass, medians: score (Startup / Worst Case / Average) | 0.989 (0.986 / 0.983 / 0.991), thirteenth round | not run | 0.992 (0.999 / 0.988 / 0.999), seven rounds, final build; 0.985 (0.983 / 0.981 / 0.990), five rounds, before the alignment | 0.99 (0.985 / 0.985 / 0.992) |
+| Exact instructions, the suite in one process, one iteration, JIT on the main thread, one marker | 1.014, thirteenth round | 1.010 | 1.008; without generated code, whose count depends on when collections happen, the excess went from 0.99 % to 0.70 % of all instructions | |
+| Start-up, empty script: instructions | +2.2 % | +2.3 % | +1.8 % measured as before (one `JSC_` variable in the environment); -9.4 % in an environment without one; +0.5 % in an empty environment | +1 % |
+| Start-up, empty script: resident set | +1.5 MB | +1.6 MB | +1.6 MB, of which 1.2 to 1.7 MB are pages of the binary's text | +0.5 MB |
+| Peak resident set, the suite in one process, median of five | 0.968, thirteenth round | 1.07 | 1.00 (1.89 GB on both; single runs range from 1.5 to 2.8 GB on either) | +2 % |
+
+How to read it. The whole run is the number with enough runs behind it: one pass of 30 interleaved runs has a standard
+error of 0.0013 on the ratio, and passes an hour apart differ by more than that (1.0055 to 1.0081 for one binary). On
+that scale the round moved the whole run by 0.3 points in cycles and in instructions alike (the rebased tree and the
+tree after the round, paired run by run: 0.9970 +- 0.0009 and 0.9971 +- 0.0003), on top of the half point that the new
+base itself gave. It is at 1.006 to 1.008 and the target is 1.005: not met, within one or two standard errors of it.
+The phases that last seconds (first iteration, the tier-capped runs) move by a point between two passes of five rounds;
+their instruction counts, which do not, all went down.
+
+What is left, by the counters (final build against `main`, whole run and first six iterations): instructions +0.4 to
++0.6 %; front-end stalls +2 to +3 % of the slots, of which instruction cache +6 to +8 % in data and +13 to +17 % in tags,
+and instruction TLB walks +12 to +15 %: together 0.4 % of the whole run's cycles and 0.6 % of the first six iterations';
+stalls on data: none (they were +0.1 to +0.3 % of the cycles before the layout changes). It is the text: the branch
+executes nearly `main`'s instructions out of a text that is 19 % larger, and the functions compiled per mode in place
+carry their threaded copy inside them.
+
+**The configuration the embedder ships (thin LTO)**, measured for the first time: both trees built with
+`-flto=thin`, the same harness.
+
+| Metric (flag off / `main`), thin LTO, cycles (instructions) | Measured | Target |
+|---|---|---|
+| Whole run, 10 runs | 1.006 +- 0.001 (1.006) | 1.005 |
+| First iteration, five rounds | 1.016 (1.006); 1.007 (1.013) before the alignment | 1.010 |
+| First six iterations | 1.007 (1.008) | |
+| Interpreter only, per-test geometric mean | 1.002 (1.009); 1.011 (1.009) before the alignment | 1.010 |
+| Baseline-capped / DFG-capped | 1.007 (1.004) / 1.013 (1.006); 0.977 / 1.002 before the alignment | 1.005 / 1.010 |
+| Quiet pass, five rounds: score (Startup / Worst Case / Average) | 1.001 (1.005 / 1.007 / 0.985); 1.000 (0.998 / 1.004 / 0.994) before the alignment | 0.99 (0.985 / 0.985 / 0.992) |
+| Start-up, empty script: instructions, resident set | -9.3 % (+2.3 % with a `JSC_` variable in the environment), +1.1 MB | +1 %, +0.5 MB |
+| Text (`size`) | 44.05 MB against 38.82 MB: +13.5 % | |
+
+The shell linked with thin LTO is not the embedder's binary (which adds its own code and its own link order), and
+neither tree was built with a profile. It is the closest configuration that could be built.
+
+**Threaded modes** (not optimized; kept from getting worse). The final tree against the rebased tree before the round's changes, the suite, six iterations, five rounds, main thread:
+GIL on instructions 1.000, cycles 1.008, score 324.0 against 320.3; GIL off instructions 0.999, cycles 1.005, score 255.1
+against 258.5. The same comparison before the opcode bodies were aligned read cycles 0.995 and 0.994: the cycles of these
+runs differ by a point between passes in either direction. The corpus and `JSTests/stress` with the flag set are in
+the safety table.
+
+**Size.** Text of the shell (`size`): `main` 30,587,479 bytes; the rebased tree 36,431,792 (+19.11 %); after the round
+36,445,328 (+19.15 %). The round added 50 KB of padding in the interpreter and took 37 KB out elsewhere. By symbol
+(`text-by-symbol.py`): 1.95 MB in symbols `main` does not have (0.79 MB of them copies per mode), 4.3 MB of growth in
+symbols both have.
+
+**Bun.** The embedder's patch is carried onto Bun's current `main` on a branch of its own, unchanged. It was not built:
+Bun's build needs clang 23.1, which the machine did not have.
+
+**Not done, in order of what it is worth.**
+1. **The text.** The rest of the whole run's gap and of the first iterations' is instruction fetch (above). The functions
+   compiled per mode in place are twice their size, and their threaded copy sits between the code a flag-off process
+   runs. The form that does not have this is the one the interpreter's slow paths have: two functions, the one without
+   threads called directly. For the 109 JIT operations it needs the JIT to pick the copy when it emits the call; the
+   threaded copies (and the 0.4 MB of threaded slow-path copies that exist already) can then go into a section of their
+   own. The same change removes the entry test and the shared frame (SPEC-ungil history, fourteenth round, open items).
+   The start-up's resident set (+1.6 MB against a target of +0.5 MB) is the same text.
+2. **The threaded arms inside the interpreter's flag-off bodies** (16 KB of code nothing jumps to), and the Group 3
+   discriminator at VM entry (four tests per entry).
+3. **The instruction excess that is left** (0.4 to 0.5 % of the whole run): the optimizing compilers, the watchpoint
+   sets' atomic forms, `putDirectInternal`, the allocation profile's initialization, the collector's end phases.
+4. `CallLinkInfo` is 8 bytes larger in every call opcode's metadata; its cost was not measured.
+5. AUDIT section 11: the rebase range was not read commit by commit; one row is not verified beyond the tests.
+6. arm64, macOS, Windows, musl: built and run. Still open; the hidden name of the mode page and the alignment of opcode
+   bodies are ELF and x86-64 only and do nothing elsewhere.
+7. Everything the tenth round's "Open items" lists for the threaded modes: unchanged.
+
 ### Open items
 
 Work that is not done, after the tenth round and the design session that followed it (the eleventh, 2026-09-17: no code
@@ -4218,7 +4358,9 @@ named. Closed by the tenth round and gone from this list: see the tenth round's 
 **First goal.** The project owner's order of goals (2026-09-17): first the branch built with the flag not set equals `main`
 in safety and speed, so that it can be merged and shipped as an experimental feature that is off by default;
 `FLAG-OFF-LANDING.md` is the state of that configuration and the plan for that landing, and its work packages come before
-everything below.
+everything below. Where that goal stands is in "Results, fourteenth round" above: safety identical to `main`, the
+interpreter and the quiet-pass score at their targets, the whole run at 1.006 to 1.008 against a target of 1.005, and what
+is left of it is instruction fetch out of a text that is 19 % larger.
 
 **Order and budget.** `PARITY-PLAN.md` orders the items below into work packages with acceptance lines, gives each its
 measured or estimated share of the distance to 0.90 of `main` in time, and adds what this list did not know: the

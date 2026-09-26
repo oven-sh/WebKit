@@ -70,6 +70,7 @@ private:
 
     void finishCreation(VM&);
 
+    JSC_STRUCTURE_SUBCLASS_RESERVES_THREAD_LOCALITY_SETS(WebAssemblyGCStructure)
     const Ref<const Wasm::RTT> m_rtt;
     std::array<WriteBarrierStructureID, inlinedDisplaySize> m_inlinedDisplay { };
 };

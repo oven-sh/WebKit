@@ -79,16 +79,24 @@ NEVER_INLINE void WeakGCMap<KeyArg, ValueArg, HashArg, KeyTraitsArg>::reconcileW
     // Called on the GC side. Taking the leaf lock here is permitted in the
     // GC window (SPEC-ungil §LK WS(ii): finalize-side may take class-2 cache
     // leaves in-window).
-    if (m_locking == WeakGCMapLocking::Yes) {
-        Locker locker { m_lock };
-        m_map.removeIf([](const typename HashMapType::KeyValuePairType& entry) {
-            return !entry.value;
+    std::optional<Locker<Lock>> locker;
+    if (m_locking == WeakGCMapLocking::Yes) [[unlikely]]
+        locker.emplace(m_lock);
+
+    if (collectionScope == CollectionScope::Full) {
+        m_map.removeIf([&](const typename HashMapType::KeyValuePairType& entry) {
+            return !entry.value || !vm.heap.isMarked(entry.value);
         });
         return;
     }
-    m_map.removeIf([](const typename HashMapType::KeyValuePairType& entry) {
-        return !entry.value;
-    });
+
+    // Rehashing here would have to run without allocating or touching the heap, and an eden
+    // collection frees little enough that it is not worth it. Leave a zombie entry for the next
+    // full collection to remove.
+    for (auto& entry : m_map) {
+        if (entry.value && !vm.heap.isMarked(entry.value))
+            entry.value = nullptr;
+    }
 }
 
 template<typename KeyArg, typename ValueArg, typename HashArg, typename KeyTraitsArg>

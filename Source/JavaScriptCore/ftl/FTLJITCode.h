@@ -40,11 +40,6 @@ class TrackedReferences;
 
 namespace FTL {
 
-struct OSRExitStub {
-    unsigned exitIndex;
-    MacroAssemblerCodeRef<OSRExitPtrTag> code;
-};
-
 // Handler ICs (data ICs) compiled by InlineCacheCompiler read the per-tier JIT
 // data through GPRInfo::jitDataRegister, using BaselineJITData's field offsets
 // (see e.g. the post-call stack-pointer restoration in InlineCacheCompiler.cpp,

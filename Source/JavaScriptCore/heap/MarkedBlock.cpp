@@ -747,7 +747,6 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     // weak-swept only world-stopped (conducted cycles) or at teardown
     // (Heap::lastChanceToFinalize: MSPL held and no other mutator left).
     // WeakSet::sweep asserts the lock/stop half of this protocol.
-    SweepingScope sweepingScope(*heap());
     m_directory->assertIsMutatorOrMutatorIsStopped();
     ASSERT(m_directory->isInUse(this));
 

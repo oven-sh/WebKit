@@ -14,6 +14,9 @@ not used. Build `main` and the branch with the same flags; the tools run a copy 
 | `famdiff.py <main> <branch>` | the same difference by family (interpreter, slow paths, collector, object model, ...) | text |
 | `gatepar.sh <name> <jsc> <iterations> <parallel> [options]` | how often each function executes a load of the threads-mode byte | `$OUT/<name>/summary.txt` |
 | `gate-census.py <jsc>` | which functions contain such a load at all (static) | text |
+| `option-exec.py <jsc with debug information> <callgrind file with --dump-instr=yes>` | how often the run executes a read of one of the options the branch added (the tests that the per-mode compilation does not fold), per option and per function | text |
+| `option-read-census.py <jsc> [<main jsc>]` | which bytes of the Config page the code reads, and in how many functions (static) | text |
+| `incdiff.py <main .inc> <branch .inc> [regex]` | inclusive counts (`INCLUSIVE=1` for `cg.sh`), branch minus main: what an entry point costs, whatever is inlined into what | text |
 | `auto-permode.py <jsc with debug information> <source root as built> <tree to edit> <list of functions>` | puts `JSC_PER_THREADS_MODE_BEGIN/END` into the listed functions, found through the binary's line table | edits the tree |
 | `../../../lint-upstream-removed-lines.py` | lines the branch still has that the base's history removed | text |
 
@@ -28,6 +31,19 @@ not used. Build `main` and the branch with the same flags; the tools run a copy 
    function got cheaper.** The test at the entry of a converted function costs three instructions: a function without a
    gate in it, or whose gates sit in helpers that are not inlined into it, only gets slower. Of 35 functions converted
    by their excess alone in one batch, 21 got cheaper (every JIT operation did) and 13 got dearer and were reverted.
+
+## What the fourteenth round added
+
+- Exclusive counts mislead where the two binaries inline differently: a function that `main` inlines into its caller has
+  no row on `main` and its whole count looks like excess. Decide on the inclusive count of the nearest function both
+  binaries have out of line (`incdiff.py`), or on the family sums of `famdiff.py`.
+- The count of generated code depends on when collections happen: 32.3 G or 33.0 G instructions for the same iteration
+  of the suite, for `main` as for the branch, by the number of markers or by chance. When the two binaries of a
+  comparison differ in generated code by more than a tenth of a percent, compare families, not totals.
+- Marking is only deterministic with `--numberOfGCMarkers=1`: with several markers the main thread's share of the marking
+  depends on scheduling (it read +25 % with several and +2 to +4 % with one).
+- `gate-exec.py` counts the instructions that address the mode page. Read the form of the test in the disassembly as
+  well: it was `lea` + load + test + branch with a register kept for later tests, where two instructions were assumed.
 
 ## Rules
 

@@ -856,33 +856,6 @@ size_t ExpressionInfo::byteSizeForGCPacing() const
     return totalSizeInBytes(m_numberOfChapters, m_numberOfEncodedInfo, m_numberOfEncodedInfoExtensions);
 }
 
-// With JS threads, several threads compute stack traces (an error's lazy
-// `stack`, for one) through the same code block's ExpressionInfo, and the
-// line/column cache is a plain HashMap. One process-wide lock serializes its
-// use then; the decode it saves is a binary search, so the lock is not held
-// long. Flag off, one option test.
-static Lock s_lineColumnCacheLockForJSThreads;
-
-WTF_IGNORES_THREAD_SAFETY_ANALYSIS // The lock below is taken conditionally, by hand.
-auto ExpressionInfo::lineColumnForInstPC(InstPC instPC) -> LineColumn
-{
-    bool locked = processUsesJSThreads();
-    if (locked) [[unlikely]]
-        s_lineColumnCacheLockForJSThreads.lock();
-    auto unlocker = makeScopeExit([&] {
-        if (locked) [[unlikely]]
-            s_lineColumnCacheLockForJSThreads.unlock();
-    });
-
-    auto iter = m_cachedLineColumns.find(instPC);
-    if (iter != m_cachedLineColumns.end())
-        return iter->value;
-
-    auto entry = entryForInstPC(instPC);
-    m_cachedLineColumns.add(instPC, entry.lineColumn);
-    return entry.lineColumn;
-}
-
 auto ExpressionInfo::findChapterEncodedInfoJustBelow(InstPC instPC) const -> EncodedInfo*
 {
     auto* chapters = this->chapters();

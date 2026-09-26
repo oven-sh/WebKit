@@ -32,6 +32,7 @@
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "RaceAmplifier.h"
@@ -326,7 +327,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
         // ----
         if (Options::stealEmptyBlocksFromOtherAllocators() && heap.mutatorSlowPathLock().tryLock()) {
             // Manual scope (tryLock has no RAII form): unlock on every exit.
-            if (MarkedBlock::Handle* block = subspace->findEmptyBlockToSteal()) {
+            if (MarkedBlock::Handle* block = subspace->alignedMemoryAllocator()->findEmptyBlockToSteal()) {
                 RELEASE_ASSERT(block->alignedMemoryAllocator() == subspace->alignedMemoryAllocator());
                 // BlockDirectory::findEmptyBlockToSteal steps past weak-bearing
                 // blocks while the world runs, so the sweep below only ever
@@ -462,8 +463,9 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
     }
     
     if (Options::stealEmptyBlocksFromOtherAllocators()) {
-        if (MarkedBlock::Handle* block = m_directory->m_subspace->findEmptyBlockToSteal()) {
-            RELEASE_ASSERT(block->alignedMemoryAllocator() == m_directory->m_subspace->alignedMemoryAllocator());
+        AlignedMemoryAllocator* allocator = m_directory->m_subspace->alignedMemoryAllocator();
+        if (MarkedBlock::Handle* block = allocator->findEmptyBlockToSteal()) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() == allocator);
 
             // When shared (MSPL held, world running), a weak-bearing block
             // must not be swept here (rationale at tryAllocateIn /
@@ -479,6 +481,11 @@ void* LocalAllocator::tryAllocateWithoutCollecting(size_t cellSize)
             RaceAmplifier::perturb();
 
             block->sweep(nullptr);
+            // A block must own no WeakBlock before it changes cell size and owner: a survivor would
+            // go on reading mark bits for cells that no longer exist at those addresses. Sweeping an
+            // empty block leaves it that way, since every handle in it is reaped dead and finalized.
+            RELEASE_ASSERT(!block->weakSet().head());
+            ASSERT(!block->weakSet().isOnList());
 
             block->removeFromDirectory();
             m_directory->addBlock(block);
@@ -514,14 +521,14 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     // blocks stay unswept and park until the next world-stopped sweep
     // (conducted cycle / teardown); canAllocate was already cleared by
     // findBlockForAllocation, so the caller's loop moves on — no livelock.
-    // Reading weakSet().head() is stable here: WeakSet::allocate mutates it
+    // A set found without blocks stays without: WeakSet::allocate adds one
     // only under MSPL, which we hold (weak-mutation protocol,
     // WeakSet::sweep). Unreachable via allocateIn(): fresh blocks have no
     // WeakBlocks and BlockDirectory::findEmptyBlockToSteal skips blocks that
     // fail the same predicate under the same MSPL hold.
     {
         JSC::Heap& heap = m_directory->markedSpace().heap();
-        if (heap.isSharedServer() && !heap.worldIsStoppedForAllClients() && block->weakSet().head()) [[unlikely]] {
+        if (heap.isSharedServer() && !heap.worldIsStoppedForAllClients() && block->weakSet().hasBlocksWhileShared()) [[unlikely]] {
             m_directory->didFinishUsingBlock(block);
             return nullptr;
         }

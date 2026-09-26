@@ -1099,3 +1099,19 @@ Three reports appeared on the way and are gone in the final tree. With JIT opera
 names (10 matches in the same test before the round): the optimizer hoists code that the two copies of an operation have in
 common above the test that picks the copy, the hoisted load loses its inlined frames, and the suppression no longer matches.
 A sanitizer build compiles nothing per mode now (rule 9 of that entry): 0 reports in the two tests, the suppression matching again.
+
+### Fourteenth round (2026-09-26)
+
+Build: TSanJIT (full JIT), the round's final tree, rebased onto `74650443cb1a`. An intermediate tree of the round (the
+rebase and the data-layout changes) was run as well, with the same result.
+
+| Lane | Tests | Reports | In |
+|---|---|---|---|
+| GIL off | 459 run | 1 | `cve/mc-tear-date-cache.js` |
+| GIL on | 459 run | 0 | |
+
+The one report is the `DateInstance` report of the thirteenth round, unchanged and still open. No report is new. The
+rebase changed code the sanitizer watches closely with the GIL off (how an OSR exit is published and entered, how a weak
+handle is cleared, how the weak tables are pruned: AUDIT section 11); the corpus runs those paths and reports nothing in
+them. A sanitizer build still compiles nothing per mode (thirteenth round, rule 9), so it does not run the copies without
+threads that the other builds run; the Debug corpus does.

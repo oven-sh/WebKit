@@ -374,24 +374,22 @@ inline void jsThreadsYieldToScheduler()
 // waiter polls the stop word instead of blocking in lock(). Callers re-check
 // their "already made" condition after acquiring. Each site keeps one
 // process-wide static Lock; only one VM per process runs GIL-off.
+// The acquisition is out of line: inlined, its loop made the functions that use the locker too
+// large to be inlined where `main` inlines them (JSFunction's lazy `length` and `name`).
+JS_EXPORT_PRIVATE void lockForGILOffFirstUse(Lock&, VM&);
+
 class GILOffFirstUseLocker {
     WTF_MAKE_NONCOPYABLE(GILOffFirstUseLocker);
 public:
-    GILOffFirstUseLocker(Lock& lock, VM& vm, bool shouldLock)
+    ALWAYS_INLINE GILOffFirstUseLocker(Lock& lock, VM& vm, bool shouldLock)
         : m_lock(lock)
         , m_shouldLock(shouldLock)
     {
-        if (!m_shouldLock) [[likely]]
-            return;
-        SpinBackoff backoff;
-        while (!m_lock.tryLock()) {
-            if (JSThreadsSafepoint::parkSitePollAndParkForStopTheWorld(vm))
-                continue;
-            backoff.spinOnce();
-        }
+        if (m_shouldLock) [[unlikely]]
+            lockForGILOffFirstUse(m_lock, vm);
     }
 
-    ~GILOffFirstUseLocker()
+    ALWAYS_INLINE ~GILOffFirstUseLocker()
     {
         if (m_shouldLock) [[unlikely]]
             m_lock.unlock();

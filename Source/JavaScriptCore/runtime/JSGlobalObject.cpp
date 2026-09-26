@@ -1245,7 +1245,6 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
     , m_arrayBufferDetachWatchpointSet(WatchpointSet::create(IsWatched))
     , m_weakRandom(Options::forceWeakRandomSeed() ? Options::forcedWeakRandomSeed() : cryptographicallyRandomNumber<uint32_t>())
     , m_runtimeFlags()
-    , m_stackTraceLimitBits((1ull << 32) | Options::defaultErrorStackTraceLimit())
     , m_customGetterFunctionSet(vm, processUsesJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
     , m_customSetterFunctionSet(vm, processUsesJSThreads() ? WeakGCMapLocking::Yes : WeakGCMapLocking::No)
     , m_importMap(ImportMap::create())

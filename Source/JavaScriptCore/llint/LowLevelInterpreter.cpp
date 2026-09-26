@@ -496,7 +496,25 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #define EMBED_OPCODE_ID_IF_NEEDED(__opcode)
 #endif
 
+// On x86-64 every opcode's body begins on a 64-byte boundary. An opcode is entered by an indirect jump, and what the
+// front end can deliver in the first cycles after it depends on where in its 64-byte window the target is. The
+// bodies are emitted one after the other, so every byte that a body gains moves all the bodies after it: with the
+// same instructions executed, interpreter-only runs of single tests were up to 8 % slower or 5 % faster than on
+// `main` by that alone (fourteenth landing round, docs/threads/SPEC-ungil-history.md). Aligned, a body's place does
+// not depend on the bodies before it. Where the opcode's number is embedded in front of the label nothing falls
+// through into a body (it would execute the number), and the padding traps; elsewhere it is no-ops.
+#if CPU(X86_64) && !OS(WINDOWS)
+#if ENABLE(LLINT_EMBEDDED_OPCODE_ID)
+#define OFFLINE_ASM_OPCODE_ALIGNMENT ".balign 64, 0xcc\n.skip 60, 0xcc\n" // the opcode's number is the four bytes before the label
+#else
+#define OFFLINE_ASM_OPCODE_ALIGNMENT ".balign 64\n"
+#endif
+#else
+#define OFFLINE_ASM_OPCODE_ALIGNMENT
+#endif
+
 #define OFFLINE_ASM_OPCODE_LABEL(__opcode) \
+    OFFLINE_ASM_OPCODE_ALIGNMENT \
     EMBED_OPCODE_ID_IF_NEEDED(__opcode) \
     OFFLINE_ASM_OPCODE_DEBUG_LABEL(llint_##__opcode) \
     OFFLINE_ASM_LOCAL_LABEL(llint_##__opcode)

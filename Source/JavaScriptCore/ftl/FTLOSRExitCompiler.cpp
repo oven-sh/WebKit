@@ -306,10 +306,8 @@ static MacroAssemblerCodeRef<OSRExitPtrTag> compileStub(VM& vm, unsigned exitID,
             valueReps,
             addressing, materializationToSlot);
     };
-
-    // Note that we come in here, the stack used to be as B3 left it except that someone called pushToSave().
-    // We don't care about the value they saved. But, we do appreciate the fact that they did it, because we use
-    // that slot for saveAllRegisters().
+    
+    // Note that the stack is as B3 left it except for the slot that we made above for saveAllRegisters().
 
     if (addressing.baked) [[unlikely]] {
         saveAllRegisters(jit, ScopedLambda<void(AssemblyHelpers&, GPRReg)>(
@@ -788,10 +786,10 @@ static MacroAssemblerCodeRef<OSRExitPtrTag> compileStub(VM& vm, unsigned exitID,
         if (addressing.baked) [[unlikely]] {
             addressing.materializeDataBase(jit, GPRInfo::regT2);
             jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(sizeof(EncodedJSValue) * exitValues.tmpIndex(0))), GPRInfo::regT2);
-            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), GPRInfo::regT2);
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()), CCallHelpers::TrustedImm32(exit.m_codeOrigin.bytecodeIndex().asBits()), GPRInfo::regT2);
         } else {
             EncodedJSValue* tmpScratch = scratch + exitValues.tmpIndex(0);
-            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(&exit), CCallHelpers::TrustedImmPtr(tmpScratch));
+            jit.setupArguments<decltype(operationMaterializeOSRExitSideState)>(CCallHelpers::TrustedImmPtr(&vm), CCallHelpers::TrustedImmPtr(exit.m_codeOrigin.inlineCallFrame()), CCallHelpers::TrustedImm32(exit.m_codeOrigin.bytecodeIndex().asBits()), CCallHelpers::TrustedImmPtr(tmpScratch));
         }
         jit.prepareCallOperation(vm);
         jit.move(AssemblyHelpers::TrustedImmPtr(tagCFunction<OperationPtrTag>(operationMaterializeOSRExitSideState)), GPRInfo::nonArgGPR0);
@@ -931,8 +929,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame*
         void* published = WTF::atomicLoad(&exit.m_codePtrForConcurrentReaders, std::memory_order_relaxed); // writers hold this lock
         if (!published) {
             JSTHREADS_COUNT(osrExitFTLCompile);
-            jitCode->m_osrExitStubs.append({ exitID, compileStub(vm, exitID, jitCode, exit, exitValues, valueReps, codeBlock) });
-            published = jitCode->m_osrExitStubs.last().code.code().taggedPtr();
+            DFG::OSRExitStub stub { exitID, compileStub(vm, exitID, jitCode, exit, exitValues, valueReps, codeBlock) };
+            published = stub.code.code().taggedPtr();
+            {
+                Locker stubsLocker { DFG::osrExitStubsLock() };
+                jitCode->m_osrExitStubs.append(WTF::move(stub));
+            }
             jsThreadsBumpStopGeneration(); // before the publish below: "saw the pointer" implies "saw the bump"
             WTF::atomicStore(&exit.m_codePtrForConcurrentReaders, published, std::memory_order_release);
         } else {

@@ -6723,7 +6723,7 @@ JSC_DEFINE_JIT_OPERATION(operationLinkDirectCall, void, (DirectCallLinkInfo* cal
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (CallFrame* callFrame, CodeBlock* codeBlock, CodeBlock* optimizedCodeBlock, OSRExitBase* exit))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerReoptimizationNow, void, (CallFrame* callFrame, CodeBlock* codeBlock, CodeBlock* optimizedCodeBlock, InlineCallFrame* exitInlineCallFrame))
 {
     // The jettison below can park for a stop-the-world, and a thread that resumes from a park
     // walks its stack from its top call frame. callFrame is the exiting frame.

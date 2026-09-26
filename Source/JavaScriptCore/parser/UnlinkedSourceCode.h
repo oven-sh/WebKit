@@ -260,7 +260,7 @@ namespace JSC {
             return m_provider->getRange(startOffset(), endOffset());
         }
 
-        CString toUTF8() const;
+        UTF8CString toUTF8() const;
 
         bool isNull() const { return !m_provider; }
         int startOffset() const { return m_startOffset; }

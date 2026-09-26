@@ -693,7 +693,7 @@ void ArrayBufferContents::shareWith(ArrayBufferContents& other) const
     other.m_destructor = nullptr;
     other.m_shared = m_shared;
     other.m_memoryHandle = m_memoryHandle;
-    WTF::atomicStore(&other.m_sizeInBytes, WTF::atomicLoad(&m_sizeInBytes, std::memory_order_relaxed), std::memory_order_relaxed);
+    WTF::atomicStore(&other.m_sizeInBytes, WTF::atomicLoad(const_cast<size_t*>(&m_sizeInBytes), std::memory_order_relaxed), std::memory_order_relaxed);
     other.m_maxByteLength = m_maxByteLength;
     other.m_hasMaxByteLength = m_hasMaxByteLength;
     RELEASE_ASSERT(WTF::atomicLoad(&other.m_sizeInBytes, std::memory_order_relaxed) <= MAX_ARRAY_BUFFER_SIZE);

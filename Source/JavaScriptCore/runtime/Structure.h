@@ -40,6 +40,7 @@
 #include "PutPropertySlot.h"
 #include "StructureRareData.h"
 #include "StructureTransitionTable.h"
+#include "ThreadsModePage.h"
 #include "TypeInfoBlob.h"
 #include "Watchpoint.h"
 #include <type_traits>
@@ -889,14 +890,31 @@ public:
     //   - transitionThreadLocal: valid <=> no instance of this structure ever
     //     carried butterfly TID == notTTLTID (I11).
     //   - writeThreadLocal: valid <=> no instance ever had the SW bit set (I12).
-    // Both start IsWatched for new structures flag-on; flag-off they are inert
-    // (ClearWatchpoint, never consulted, never fired - I22).
+    // Both start IsWatched for new structures flag-on; flag-off they do not
+    // exist (never consulted, never fired - I22).
+    //
+    // Where they are. The two sets are not members of the class: they are the
+    // sixteen bytes that follow the Structure in its cell, and only a process
+    // with the threads work on (a nonzero threads mode) allocates its
+    // Structures with them. Without it a Structure has the size it has without
+    // the threads work, so a StructureID is the same multiple of the same
+    // stride and as many Structures share a cache line. With it the cell is what
+    // it was when the sets were the last two members, at the same offsets. A
+    // subclass reserves the sixteen bytes as its first member
+    // (JSC_STRUCTURE_SUBCLASS_RESERVES_THREAD_LOCALITY_SETS), so that the sets
+    // are at sizeof(Structure) in every variant; its cell has them in either
+    // mode. The constructors of Structure construct them and its destructor
+    // destroys them.
+    static constexpr size_t threadLocalitySetsSize = 2 * sizeof(InlineWatchpointSet);
+    static bool hasThreadLocalitySets() { return !!threadsMode(); }
+    static size_t allocationSize() { return sizeof(Structure) + (hasThreadLocalitySets() ? threadLocalitySetsSize : 0); }
 
-    InlineWatchpointSet& transitionThreadLocalWatchpointSet() const { return m_transitionThreadLocalWatchpointSet; }
-    InlineWatchpointSet& writeThreadLocalWatchpointSet() const { return m_writeThreadLocalWatchpointSet; }
+    InlineWatchpointSet& transitionThreadLocalWatchpointSet() const { return threadLocalitySets()[0]; }
+    InlineWatchpointSet& writeThreadLocalWatchpointSet() const { return threadLocalitySets()[1]; }
 
-    bool transitionThreadLocalIsStillValid() const { return m_transitionThreadLocalWatchpointSet.isStillValid(); }
-    bool writeThreadLocalIsStillValid() const { return m_writeThreadLocalWatchpointSet.isStillValid(); }
+    // What a set that was never watched answers, without the set.
+    bool transitionThreadLocalIsStillValid() const { return !hasThreadLocalitySets() || transitionThreadLocalWatchpointSet().isStillValid(); }
+    bool writeThreadLocalIsStillValid() const { return !hasThreadLocalitySets() || writeThreadLocalWatchpointSet().isStillValid(); }
 
     // §2.1 N1: the sole lock-free BUTTERFLY-LESS transitioner of this shape
     // while the TTL sets are valid (creator's TID; copied to transition
@@ -917,10 +935,10 @@ public:
     // E1 (I14): fast paths may omit the TID != notTTLTID check iff this is true
     // and a watchpoint is installed on the set. M6: JIT-side state reads need no
     // fences - the sets change state only inside a stop.
-    bool transitionThreadLocalIsValidAndWatched() const { return m_transitionThreadLocalWatchpointSet.state() == IsWatched; }
+    bool transitionThreadLocalIsValidAndWatched() const { return hasThreadLocalitySets() && transitionThreadLocalWatchpointSet().state() == IsWatched; }
     // E2 (I14): write fast paths may omit the SW branch iff this is true and a
     // watchpoint is installed; writes always keep the fused TID compare (jit D9/CS5).
-    bool writeThreadLocalIsValidAndWatched() const { return m_writeThreadLocalWatchpointSet.state() == IsWatched; }
+    bool writeThreadLocalIsValidAndWatched() const { return hasThreadLocalitySets() && writeThreadLocalWatchpointSet().state() == IsWatched; }
 
     // E4 (r12, per-object keying) - may an owner transition from this structure
     // run today's lock-free code (no cell lock, no (D)CAS, today's nuke order)?
@@ -1616,15 +1634,20 @@ private:
 
     mutable ConcurrentCtorMember<InlineWatchpointSet> m_transitionWatchpointSet;
 
-    // SPEC-objectmodel §5 (frozen member set, Structure.h:1107 anchor): the two
-    // TTL watchpoint sets. NSDMI ClearWatchpoint (inert, I22) so the flag-off
-    // constructors pay only a constant store; flag-on each constructor's single
-    // Options::useJSThreads() block startWatching()es them, which for a thin
-    // ClearWatchpoint set yields the identical IsWatched encoding as
-    // constructing with IsWatched. Fired only world-stopped (I13), via the
-    // §9.4 fire functions above.
-    mutable ConcurrentCtorMember<InlineWatchpointSet> m_transitionThreadLocalWatchpointSet { ClearWatchpoint };
-    mutable ConcurrentCtorMember<InlineWatchpointSet> m_writeThreadLocalWatchpointSet { ClearWatchpoint };
+    // SPEC-objectmodel §5: the two TTL watchpoint sets follow the last member,
+    // in the cell of a process with a nonzero threads mode (see
+    // hasThreadLocalitySets()). Each constructor constructs them there as
+    // ClearWatchpoint and, with tagged butterflies, startWatching()es them,
+    // which for a thin ClearWatchpoint set yields the identical IsWatched
+    // encoding as constructing with IsWatched. Fired only world-stopped (I13),
+    // via the §9.4 fire functions above.
+    ALWAYS_INLINE InlineWatchpointSet* threadLocalitySets() const
+    {
+        ASSERT(hasThreadLocalitySets());
+        return std::bit_cast<InlineWatchpointSet*>(std::bit_cast<uint8_t*>(this) + sizeof(Structure));
+    }
+    void constructThreadLocalitySets();
+    void destroyThreadLocalitySets();
 
     static_assert(firstOutOfLineOffset < 256);
 
@@ -1632,6 +1655,19 @@ private:
     friend class JSDollarVMHelper;
     friend class Integrity::Analyzer;
 };
+
+// The first member of a class derived from Structure: see Structure::hasThreadLocalitySets().
+#define JSC_STRUCTURE_SUBCLASS_RESERVES_THREAD_LOCALITY_SETS(className) \
+    [[maybe_unused]] uint64_t m_threadLocalitySetsStorage[Structure::threadLocalitySetsSize / sizeof(uint64_t)]; \
+    static void checkThreadLocalitySetsStorage() { static_assert(OBJECT_OFFSETOF(className, m_threadLocalitySetsStorage) == sizeof(Structure)); } \
+public: \
+    static size_t allocationSize() { return sizeof(className); } \
+private:
+
+#if CPU(X86_64) && !TSAN_ENABLED
+static_assert(sizeof(Structure) == 112, "Structure has the size it has without the threads work: what the threads work adds to a Structure goes after it in the cell (Structure::hasThreadLocalitySets)");
+#endif
+static_assert(alignof(InlineWatchpointSet) <= alignof(Structure) && !(sizeof(Structure) % alignof(InlineWatchpointSet)));
 
 JS_EXPORT_PRIVATE void dumpTransitionKind(PrintStream&, TransitionKind);
 MAKE_PRINT_ADAPTOR(TransitionKindDump, TransitionKind, dumpTransitionKind);
