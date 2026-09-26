@@ -904,6 +904,26 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_with_this)
     LLINT_RETURN_PROFILED(result);
 }
 
+#if USE(JSVALUE64)
+// m_missCount is in what was padding: the metadata of put_by_id has the size that it had.
+static_assert(sizeof(OpPutById::Metadata) == 3 * sizeof(uint32_t) + sizeof(uint32_t) + sizeof(void*));
+#endif
+
+// Counts a call of the slow path from the site, see CodeBlock::noteLLIntInlineCacheMiss().
+static ALWAYS_INLINE void noteGetByIdMiss(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata)
+{
+    if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]] {
+        codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
+        return;
+    }
+    if (!Options::missCountForLLIntTierUp())
+        return;
+    auto& watchpointMap = codeBlock->llintGetByIdWatchpointMap();
+    auto iterator = watchpointMap.find(bytecodeIndex);
+    if (iterator != watchpointMap.end())
+        codeBlock->noteLLIntInlineCacheMiss(iterator->value.counts.missCount);
+}
+
 static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
 {
     Structure* structure = baseCell->structure();
@@ -946,14 +966,15 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     }
 
     ASSERT((offset == invalidOffset) == slot.isUnset());
-    // The countdown of a site runs once, so the site has no entry yet.
-    auto result = watchpointMap.add(bytecodeIndex, CodeBlock::LLIntGetByIdGuards { structure->id(), WTF::move(watchpoints) });
+    // The countdown of a site runs once, so the site has no entry yet, and it is not in ProtoLoad mode.
+    GetByIdSiteCounts counts = metadata.counts();
+    auto result = watchpointMap.add(bytecodeIndex, CodeBlock::LLIntGetByIdGuards { structure->id(), counts, WTF::move(watchpoints) });
     ASSERT_UNUSED(result, result.isNewEntry);
 
     {
         ConcurrentJSLocker locker(codeBlock->m_lock);
         if (slot.isUnset())
-            metadata.setUnsetMode(structure);
+            metadata.setUnsetMode(structure, counts);
         else {
             ASSERT(slot.isValue());
             metadata.setProtoLoadMode(structure, offset, slot.slotBase());
@@ -967,6 +988,8 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
+
+    noteGetByIdMiss(codeBlock, bytecodeIndex, metadata);
 
     JSValue result = baseValue.get<true>(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(throwScope, { });
@@ -1004,9 +1027,10 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
         JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
         if (slot.isValue() && slot.slotBase() == baseValue) {
+            GetByIdSiteCounts counts = codeBlock->llintGetByIdSiteCounts(bytecodeIndex, metadata);
             ConcurrentJSLocker locker(codeBlock->m_lock);
             // Start out by clearing out the old cache.
-            metadata.clearToDefaultModeWithoutCache();
+            metadata.clearToDefaultModeWithoutCache(counts);
 
             // Prevent the prototype cache from ever happening.
             metadata.hitCountForLLIntCaching = 0;
@@ -1023,7 +1047,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
                 setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
         }
     } else if (Options::useLLIntICs() && isJSArray(baseValue) && ident == vm.propertyNames->length)
-        metadata.setArrayLengthMode();
+        metadata.setArrayLengthMode(codeBlock->llintGetByIdSiteCounts(bytecodeIndex, metadata));
 
     return result;
 }
@@ -1185,7 +1209,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     auto bytecode = pc->as<OpPutById>();
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
-    
+
+    codeBlock->noteLLIntInlineCacheMiss(metadata.m_missCount);
+
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
     PutPropertySlot slot(baseValue, bytecode.m_flags.ecmaMode().isStrict(), codeBlock->putByIdContext());
 

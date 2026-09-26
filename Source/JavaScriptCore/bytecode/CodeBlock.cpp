@@ -1876,7 +1876,7 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing ", opName, " LLInt property access.");
-            modeMetadata.clearToDefaultModeWithoutCache();
+            modeMetadata.clearToDefaultModeWithoutCache(modeMetadata.counts());
         };
 
         m_metadata->forEach<OpIteratorOpen>([&] (auto& metadata) {
@@ -2060,7 +2060,7 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
     m_llintGetByIdWatchpointMap.removeIf([&] (const StructureWatchpointMap::KeyValuePairType& pair) -> bool {
         auto clear = [&] () {
             dataLogLnIf(Options::verboseOSR(), "Clearing LLInt property access at ", pair.key, ".");
-            clearLLIntGetByIdCache(pair.key);
+            clearLLIntGetByIdCache(pair.key, &pair.value);
             return true;
         };
 
@@ -2115,14 +2115,36 @@ GetByIdModeMetadata* CodeBlock::llintGetByIdModeMetadata(BytecodeIndex bytecodeI
     }
 }
 
+GetByIdSiteCounts CodeBlock::llintGetByIdSiteCountsInProtoLoadMode(BytecodeIndex bytecodeIndex)
+{
+    // A prototype load cache has a watchpoint for the slot base at least, so the site has an entry.
+    auto iterator = m_llintGetByIdWatchpointMap.find(bytecodeIndex);
+    ASSERT(iterator != m_llintGetByIdWatchpointMap.end());
+    if (iterator == m_llintGetByIdWatchpointMap.end()) [[unlikely]]
+        return { };
+    return iterator->value.counts;
+}
+
 void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex)
+{
+    auto iterator = m_llintGetByIdWatchpointMap.find(bytecodeIndex);
+    clearLLIntGetByIdCache(bytecodeIndex, iterator == m_llintGetByIdWatchpointMap.end() ? nullptr : &iterator->value);
+}
+
+void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex, const LLIntGetByIdGuards* guards)
 {
     GetByIdModeMetadata* metadata = llintGetByIdModeMetadata(bytecodeIndex);
     RELEASE_ASSERT(metadata);
     // The structure of the receiver guards a cache of an own property or of the length of an array.
     // Watchpoints are for the other two.
-    if (metadata->hasGuards())
-        metadata->clearToDefaultModeWithoutCache();
+    if (!metadata->hasGuards())
+        return;
+    GetByIdSiteCounts counts;
+    if (metadata->mode != GetByIdMode::ProtoLoad)
+        counts = metadata->counts();
+    else if (guards)
+        counts = guards->counts;
+    metadata->clearToDefaultModeWithoutCache(counts);
 }
 
 #if ENABLE(JIT)
@@ -4245,6 +4267,21 @@ void CodeBlock::jitSoon()
 void CodeBlock::jitNextInvocation()
 {
     m_unlinkedCode->llintExecuteCounter().setNewThreshold(0, this);
+}
+
+void CodeBlock::lowerJITThresholdForLLIntInlineCacheMisses()
+{
+#if ENABLE(JIT)
+    // With no inline caches in the LLInt, each execution of a site is a call of its slow path.
+    if (!Options::useBaselineJIT() || !Options::useLLIntICs() || jitType() != JITType::InterpreterThunk)
+        return;
+    if (!m_unlinkedCode->llintExecuteCounter().lowerThreshold(m_unlinkedCode->thresholdForJIT(Options::thresholdForJITSoon()), this))
+        return; // dontJITAnytimeSoon()
+    m_isExemptFromStartupJITDeferral = true;
+    CodeBlock* codeBlock = this; // Placate GCC for use in CODEBLOCK_LOG_EVENT  (does not like this).
+    CODEBLOCK_LOG_EVENT(codeBlock, "lowerJITThreshold", ("LLInt inline cache misses"));
+    dataLogLnIf(Options::verboseOSR(), *this, ": a get_by_id or put_by_id site keeps missing in the LLInt, so the threshold of the Baseline JIT is that of jitSoon().");
+#endif
 }
 
 CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSLocker&, ArityCheckMode arityCheck) const

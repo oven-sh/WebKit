@@ -316,6 +316,7 @@ op :put_by_id,
         oldStructureID: StructureID,
         offset: unsigned,
         newStructureID: StructureID,
+        missCount: uint8_t, # For CodeBlock::noteLLIntInlineCacheMiss(). It is in what was padding.
         structureChain: WriteBarrierBase[StructureChain],
     }
 

@@ -616,6 +616,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useFuzzerMode, false, Normal, nullptr) \
     \
     v(Unsigned, prototypeHitCountForLLIntCaching, 2, Normal, "Number of prototype property hits before caching a prototype in the LLInt. A count of 0 means never cache."_s) \
+    v(Unsigned, missCountForLLIntTierUp, 12, Normal, "The call of the LLInt slow path that makes this count at one get_by_id or put_by_id site lowers the threshold of the Baseline JIT for the CodeBlock to thresholdForJITSoon, with no startup deferral. The executions so far count. 0 means that the calls are not counted. At most 255."_s) \
     \
     v(Bool, dumpCompiledRegExpPatterns, false, Normal, nullptr) \
     v(Bool, verboseRegExpCompilation, false, Normal, nullptr) \
