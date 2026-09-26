@@ -26,29 +26,43 @@
 #include "config.h"
 #include <wtf/linux/CurrentProcessMemoryStatus.h>
 
-#include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <mutex>
 #include <stdlib.h>
 #include <unistd.h>
 #include <wtf/PageBlock.h>
 
 namespace WTF {
 
-IGNORE_CLANG_WARNINGS_BEGIN("unsafe-buffer-usage-in-libc-call")
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 void currentProcessMemoryStatus(ProcessMemoryStatus& memoryStatus)
 {
-    FILE* file = fopen("/proc/self/statm", "r");
-    if (!file)
+    // This is on the GC's heap-growth path (Heap::proportionalHeapSize via
+    // memoryFootprint()), so open /proc/self/statm once and pread() it rather
+    // than fopen/fclose on every call. If it can't be opened, latch to "no data".
+    static int statmFd = -1;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        do {
+            statmFd = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+        } while (statmFd == -1 && errno == EINTR);
+    });
+    if (statmFd < 0)
         return;
 
     char buffer[128];
-    char* line = fgets(buffer, 128, file);
-    fclose(file);
-    if (!line)
+    ssize_t length;
+    do {
+        length = pread(statmFd, buffer, sizeof(buffer) - 1, 0);
+    } while (length == -1 && errno == EINTR);
+    if (length <= 0)
         return;
+    buffer[length] = '\0';
 
     size_t pageSize = WTF::pageSize();
     char* end = nullptr;
-    unsigned long long intValue = strtoull(line, &end, 10);
+    unsigned long long intValue = strtoull(buffer, &end, 10);
     memoryStatus.size = intValue * pageSize;
     intValue = strtoull(end, &end, 10);
     memoryStatus.resident = intValue * pageSize;
@@ -63,6 +77,6 @@ void currentProcessMemoryStatus(ProcessMemoryStatus& memoryStatus)
     intValue = strtoull(end, &end, 10);
     memoryStatus.dt = intValue * pageSize;
 }
-IGNORE_CLANG_WARNINGS_END
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace WTF
