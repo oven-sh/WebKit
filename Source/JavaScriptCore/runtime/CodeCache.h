@@ -302,6 +302,13 @@ JS_EXPORT_PRIVATE void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM&, Unl
 // (newCodeBlockFor() requires them) and the provider the //# sourceURL / sourceMappingURL directives.
 void recordParseFromUnlinkedCodeBlock(GlobalExecutable*, const SourceCode&, UnlinkedGlobalCodeBlock*);
 
+#if USE(BUN_JSC_ADDITIONS)
+// Parse a builtin function source (with @-prefixed private identifiers) and
+// recursively generate bytecode for all nested functions. Used by Bun to
+// pre-generate bytecode for internal modules at build time.
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* recursivelyGenerateUnlinkedCodeBlockForBuiltinFunction(VM&, const SourceCode&, const Identifier& name, ParserError&, ImplementationVisibility = ImplementationVisibility::Public, ConstructorKind = ConstructorKind::None, ConstructAbility = ConstructAbility::CannotConstruct, InlineAttribute = InlineAttribute::None);
+#endif
+
 void writeCodeBlock(const SourceCodeKey&, const SourceCodeValue&);
 RefPtr<CachedBytecode> serializeBytecode(VM&, UnlinkedCodeBlock*, const SourceCode&, SourceCodeType, LexicallyScopedFeatures, JSParserScriptMode, FileSystem::FileHandle&, BytecodeCacheError&, OptionSet<CodeGenerationMode>);
 SourceCodeKey sourceCodeKeyForSerializedProgram(VM&, const SourceCode&);
