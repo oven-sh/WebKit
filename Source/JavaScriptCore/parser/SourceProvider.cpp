@@ -233,11 +233,10 @@ private:
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 template<typename CharType>
-LineStarts LineStartTable::build(std::span<const CharType> text)
+Vector<unsigned> LineStartTable::build(std::span<const CharType> text)
 {
-    Vector<uint32_t> header { 0, 0, 0 }; // The line count, which is filled in below, and the first block.
-    Vector<uint8_t> stream;
-    unsigned lineCount = 1;
+    Vector<unsigned> lineStarts;
+    lineStarts.append(0);
 
     const CharType* const begin = text.data();
     const CharType* const end = std::to_address(text.end());
@@ -247,19 +246,28 @@ LineStarts LineStartTable::build(std::span<const CharType> text)
         if (found == end)
             break;
         size_t next = lineStartAfterTerminator(text, static_cast<size_t>(found - begin));
-        if (lineCount % EncodedLineStarts::linesPerBlock) {
-            unsigned length = static_cast<unsigned>(next - index);
+        lineStarts.append(static_cast<unsigned>(next));
+        index = next;
+    }
+
+    return lineStarts;
+}
+
+LineStarts LineStartTable::encode(const Vector<unsigned>& lineStarts)
+{
+    Vector<uint32_t> header { static_cast<uint32_t>(lineStarts.size()) };
+    Vector<uint8_t> stream;
+    for (size_t line = 0; line < lineStarts.size(); ++line) {
+        if (line % EncodedLineStarts::linesPerBlock) {
+            unsigned length = lineStarts[line] - lineStarts[line - 1];
             for (; length >= 0x80; length >>= 7)
                 stream.append(static_cast<uint8_t>(length | 0x80));
             stream.append(static_cast<uint8_t>(length));
         } else {
-            header.append(static_cast<uint32_t>(next));
+            header.append(lineStarts[line]);
             header.append(static_cast<uint32_t>(stream.size()));
         }
-        ++lineCount;
-        index = next;
     }
-    header[0] = lineCount;
 
     auto headerBytes = asByteSpan(header.span());
     Ref owner = ThreadSafeRefCountedFixedVector<uint8_t>::create(headerBytes.size() + stream.size());
@@ -271,7 +279,7 @@ LineStarts LineStartTable::build(std::span<const CharType> text)
 const LineStarts& LineStartTable::ensureBuilt(StringView text)
 {
     if (!m_lineStarts)
-        m_lineStarts = text.is8Bit() ? build(text.span8()) : build(text.span16());
+        m_lineStarts = encode(text.is8Bit() ? build(text.span8()) : build(text.span16()));
     return m_lineStarts;
 }
 
@@ -279,6 +287,12 @@ LineStarts LineStartTable::lineStarts(StringView text)
 {
     Locker locker { m_lock };
     return ensureBuilt(text);
+}
+
+LineStarts LineStartTable::lineStartsIfBuilt() const
+{
+    Locker locker { m_lock };
+    return m_lineStarts;
 }
 
 void LineStartTable::setLineStarts(LineStarts&& lineStarts)

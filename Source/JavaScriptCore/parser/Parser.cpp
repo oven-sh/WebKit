@@ -144,6 +144,8 @@ Parser<LexerType>::Parser(VM& vm, const SourceCode& source, ImplementationVisibi
 {
     m_lexer = makeUnique<LexerType>(vm, builtinMode, scriptMode);
     m_lexer->setCode(source, &m_parserArena);
+    if (source.provider()->wantsLineStartsFromParse(source.startOffset(), source.endOffset()))
+        m_lexer->collectLineStarts();
     m_token.m_startPosition.offset = source.startOffset();
     m_token.m_endPosition.offset = source.startOffset();
     m_functionCache = vm.addSourceProviderCache(source.provider());

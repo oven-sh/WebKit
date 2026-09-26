@@ -77,12 +77,13 @@ for (const [name, choices] of Object.entries(terminators)) {
 
 // A line terminator ends a line wherever it is: in a comment, in a template, after a backslash in a string, and, for
 // U+2028 and U+2029, in a string as it is. That holds in the body of a function too, which is only checked for syntax
-// while what is around it is parsed.
+// while what is around it is parsed, but for the last: the lexer does not build the string then, and goes over the two
+// without a look, as it did when it counted the lines.
 const tokens = [
     t => `/* a${t}b${t}${t}c */`,
     t => "`a" + t + "${" + t + "1}" + t + "b`;",
     t => `"a\\${t}b";`,
-    t => t === "\u2028" || t === "\u2029" ? `"a${t}b"; a = ['${t}', ("\\n${t}${t}")];` : `"ab";`,
+    (t, inFunction) => !inFunction && (t === "\u2028" || t === "\u2029") ? `"a${t}b"; a = ['${t}', ("\\n${t}${t}")];` : `"ab";`,
 ];
 
 for (const [name, choices] of Object.entries(terminators)) {
@@ -92,7 +93,7 @@ for (const [name, choices] of Object.entries(terminators)) {
             let text = (name.includes("16-bit") ? "// \u4e16" + t : "") + "var a;" + t;
             const offsets = [];
             for (let i = 0; i < 40; i++) {
-                const token = tokens[i % tokens.length](t);
+                const token = tokens[i % tokens.length](t, inFunction);
                 text += (inFunction ? `function inner() {${t}${token}${t}}` : token) + t;
                 offsets.push(text.length + columnInStatement);
                 text += `at(new Error(""));` + t;

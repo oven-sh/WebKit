@@ -2,9 +2,9 @@
 //@ runBytecodeCache
 //@ runBytecodeCache("--diskCachePayloadIsPersistentForTesting=1")
 
-// A source's line start table is made when its code is compiled, and the code has it too, and so does its bytecode: in
-// the second run of the last two configurations this file's text is not read. Either way, asking for a line or column
-// later does not read the source.
+// A parse of all of a source leaves the source's line start table behind. The code that is compiled has it too, and so
+// does its bytecode: in the second run of the last two configurations this file is not parsed. Either way, asking for a
+// line or column later does not read the source.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -26,7 +26,7 @@ const long = `/* ${"x".repeat(1024)} */\n`;
 shouldBe($vm.lineStartTableIsBuilt((0, eval)(long + "(function () { })")), true, "indirect eval");
 shouldBe($vm.lineStartTableIsBuilt(eval(long + "(function () { })")), true, "direct eval");
 
-// The same text again is not compiled again: the code is shared, and the new source gets its table from the code.
+// The same text again is not parsed again: the code is shared, and the new source gets its table from the code.
 shouldBe($vm.lineStartTableIsBuilt((0, eval)(long + "(function () { })")), true, "indirect eval of the same text");
 
 // A table is not worth its cost to a short source, which has none until it is asked for a position.

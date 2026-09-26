@@ -105,9 +105,12 @@ public:
     // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
     JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
 
-    // For the code that is compiled from the text.
+    // What a table holds, from where each line starts, the first at 0.
+    JS_EXPORT_PRIVATE static LineStarts encode(const Vector<unsigned>&);
+
     JS_EXPORT_PRIVATE LineStarts lineStarts(StringView text);
-    // From code that was compiled from this table's text. The first ones stay.
+    JS_EXPORT_PRIVATE LineStarts lineStartsIfBuilt() const;
+    // Of this table's text. The first ones stay.
     JS_EXPORT_PRIVATE void setLineStarts(LineStarts&&);
 
     bool isBuilt() const
@@ -117,7 +120,7 @@ public:
     }
 
 private:
-    template<typename CharType> static LineStarts build(std::span<const CharType>);
+    template<typename CharType> static Vector<unsigned> build(std::span<const CharType>);
     const LineStarts& ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
@@ -236,16 +239,25 @@ public:
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }
-    // The code that is compiled from a text has its line starts, and so has bytecode made from that code. A source that
-    // has the text and gets the code without compiling it gets them from the code: what runs from bytecode has no
-    // other reason to read its text. Compiling is also when the text is in memory, so a first stack trace does not wait
-    // for a scan of it. A table costs an allocation and a few reference counts whatever its size, though, and a short
-    // text is scanned as cheaply when it is asked for a position, so its code has none.
-    static constexpr unsigned minimumLengthForCodeToHaveLineStarts = 1024;
-    LineStarts lineStartsForCode()
+    // A parse of all of a source passes every line of it, so the lexer notes where they start, and a first stack trace
+    // does not wait for a scan of the text. The code that is compiled has them too, and so has bytecode made from it. A
+    // source that has the text and gets the code without a parse gets them from the code: what runs from bytecode has no
+    // other reason to read its text. A table costs an allocation and a few reference counts whatever its size, though,
+    // and a short text is scanned as cheaply when it is asked for a position, so it does without all this.
+    static constexpr unsigned minimumLengthToHaveLineStartsWithTheCode = 1024;
+    bool wantsLineStartsFromParse(int startOffset, int endOffset) const
+    {
+        return !startOffset
+            && static_cast<unsigned>(endOffset) >= minimumLengthToHaveLineStartsWithTheCode
+            && static_cast<unsigned>(endOffset) == source().length()
+            && !m_lineStartTable.isBuilt();
+    }
+    LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
+    // A builtin with a source of its own is parsed as a function, which is not all of the source.
+    LineStarts lineStartsForBytecode()
     {
         StringView text = source();
-        if (text.length() < minimumLengthForCodeToHaveLineStarts)
+        if (text.length() < minimumLengthToHaveLineStartsWithTheCode)
             return { };
         return m_lineStartTable.lineStarts(text);
     }

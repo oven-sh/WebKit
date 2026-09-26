@@ -135,7 +135,7 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
         unlinkedCodeBlock->setSourceURLDirective(source.provider()->sourceURLDirective());
     if (!source.provider()->sourceMappingURLDirective().isNull())
         unlinkedCodeBlock->setSourceMappingURLDirective(source.provider()->sourceMappingURLDirective());
-    unlinkedCodeBlock->setLineStarts(source.provider()->lineStartsForCode());
+    unlinkedCodeBlock->setLineStarts(source.provider()->lineStartsIfBuilt());
 
     RefPtr<TDZEnvironmentLink> parentVariablesUnderTDZ;
     if (variablesUnderTDZ)

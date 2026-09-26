@@ -5478,7 +5478,7 @@ public:
         m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
-        m_lineStarts.encode(encoder, source.provider()->lineStartsForCode());
+        m_lineStarts.encode(encoder, source.provider()->lineStartsForBytecode());
     }
 
     UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
