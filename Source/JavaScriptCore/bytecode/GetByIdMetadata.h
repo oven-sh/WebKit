@@ -68,6 +68,12 @@ struct GetByIdModeMetadataProtoLoad {
 };
 static_assert(sizeof(GetByIdModeMetadataProtoLoad) == 16);
 
+// What a get_by_id site counts. The pointer to the slot base of a site in ProtoLoad mode is where the other
+// modes have their counts, so the counts of such a site are in its entry of CodeBlock::llintGetByIdWatchpointMap().
+struct GetByIdSiteCounts {
+    uint8_t missCount { 0 }; // Calls of the slow path, for CodeBlock::noteLLIntInlineCacheMiss().
+};
+
 // This union shares ProtoLoad's cachedSlot with "hitCountForLLIntCaching" and "mode".
 // This is possible because these values must be zero if we use ProtoLoad mode.
 union GetByIdModeMetadata {
@@ -76,23 +82,33 @@ union GetByIdModeMetadata {
         defaultMode.structureID = StructureID();
         defaultMode.cachedOffset = 0;
         defaultMode.padding1 = 0;
+        padding4 = 0;
+        missCount = 0;
         mode = GetByIdMode::Default;
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
 
-    // A site that leaves ProtoLoad mode has the low bytes of the pointer to the slot base in the bytes that
-    // mode and hitCountForLLIntCaching do not use. No mode but ProtoLoad reads them. They are zero from here.
-    void clearBytesOfCachedSlot();
-    void clearToDefaultModeWithoutCache();
-    void setUnsetMode(Structure*);
-    void setArrayLengthMode();
+    // The setters are for a site in any mode. One that leaves ProtoLoad mode has bytes of the pointer to the slot
+    // base where the counts are: the caller has the counts from CodeBlock::llintGetByIdSiteCounts().
+    void clearToDefaultModeWithoutCache(GetByIdSiteCounts);
+    void setUnsetMode(Structure*, GetByIdSiteCounts);
+    void setArrayLengthMode(GetByIdSiteCounts);
+    // The caller keeps counts() in the entry of the site in CodeBlock::llintGetByIdWatchpointMap().
     void setProtoLoadMode(Structure*, PropertyOffset, JSObject*);
+
+    GetByIdSiteCounts counts() const
+    {
+        ASSERT(mode != GetByIdMode::ProtoLoad);
+        return { missCount };
+    }
+    void setCounts(GetByIdSiteCounts);
 
     struct {
         uint32_t padding1;
         uint32_t padding2;
         uint32_t padding3;
-        uint16_t padding4;
+        uint8_t padding4;
+        uint8_t missCount; // Not in ProtoLoad mode.
         GetByIdMode mode;
         uint8_t hitCountForLLIntCaching; // This must be zero when we use ProtoLoad mode.
     };
@@ -104,35 +120,36 @@ union GetByIdModeMetadata {
 };
 static_assert(sizeof(GetByIdModeMetadata) == 16);
 
-inline void GetByIdModeMetadata::clearBytesOfCachedSlot()
+inline void GetByIdModeMetadata::setCounts(GetByIdSiteCounts counts)
 {
     padding3 = 0;
     padding4 = 0;
+    missCount = counts.missCount;
 }
 
-inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
+inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache(GetByIdSiteCounts counts)
 {
     mode = GetByIdMode::Default;
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
-    clearBytesOfCachedSlot();
+    setCounts(counts);
 }
 
-inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
+inline void GetByIdModeMetadata::setUnsetMode(Structure* structure, GetByIdSiteCounts counts)
 {
     mode = GetByIdMode::Unset;
     unsetMode.structureID = structure->id();
     defaultMode.cachedOffset = 0;
-    clearBytesOfCachedSlot();
+    setCounts(counts);
 }
 
-inline void GetByIdModeMetadata::setArrayLengthMode()
+inline void GetByIdModeMetadata::setArrayLengthMode(GetByIdSiteCounts counts)
 {
     mode = GetByIdMode::ArrayLength;
     // We should clear the structure ID to avoid the old structure ID being saved.
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
-    clearBytesOfCachedSlot();
+    setCounts(counts);
     // Prevent the prototype cache from ever happening.
     hitCountForLLIntCaching = 0;
 }
