@@ -119,14 +119,15 @@ for (const [name, choices] of Object.entries(terminators)) {
 // A parse that fails stops in the middle of the text. The line of the error is asked for right away.
 for (const before of [0, 1, 63, 64, 200]) {
     const line = "var someName = 12345678;\n";
-    let error;
+    // It only parses, and throws a string that ends with the line. The error of eval() has the line of the call, and
+    // a program that does not compile is not for the bytecode cache configuration, where every program has to be cached.
+    let message;
     try {
-        loadString(line.repeat(before) + "var = ;\n" + line.repeat(100));
+        checkModuleSyntax(line.repeat(before) + "var = ;\n" + line.repeat(100));
     } catch (e) {
-        error = e;
+        message = e;
     }
-    shouldBe(error instanceof SyntaxError, true, "a syntax error");
-    shouldBe(error.line, before + 1, `a syntax error after ${before} lines`);
+    shouldBe(/^SyntaxError: .*:(\d+)$/.exec(message)?.[1], String(before + 1), `a syntax error after ${before} lines`);
 }
 
 // A first line whose length, terminator included, is the most that one, two and three bytes hold, and one more.
