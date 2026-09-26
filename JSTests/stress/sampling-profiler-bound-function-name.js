@@ -1,3 +1,6 @@
+// Bun: upstream has no requireOptions here. ftl-eager-no-cjit fails executable allocations at random; when the DFG compile of baz
+// is the one that fails, baz is never optimized and the inlined baz -> foo frame below never shows up.
+//@ requireOptions("--useExecutableAllocationFuzz=false")
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplingProfiler.js", "caller relative");
 
