@@ -90,6 +90,7 @@
 #include <bmalloc/BPlatform.h>
 #include <errno.h>
 #include <process.h>
+#include <stdlib.h>
 #include <windows.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -173,6 +174,30 @@ static unsigned __stdcall wtfThreadEntryPoint(void* data)
     return 0;
 }
 
+// A failed _beginthreadex is classified by the Win32 code the CRT stores in
+// _doserrno, not by errno: the CRT maps CreateThread's error through a small
+// table that turns ERROR_COMMITMENT_LIMIT into EINVAL, and the CRT-heap
+// allocation of its parameter block only reports ENOMEM. Retried codes are the
+// commit/memory family (the codes OSAllocatorWin.cpp retries) plus the two
+// thread creation errors other runtimes retry: ERROR_ACCESS_DENIED, which
+// CreateThread uses for "insufficient resources" (Go), and
+// ERROR_MAX_THRDS_REACHED, errno EAGAIN (HotSpot).
+static bool threadCreationFailedForLackOfResources()
+{
+    unsigned long win32Error = 0;
+    _get_doserrno(&win32Error);
+    switch (win32Error) {
+    case ERROR_COMMITMENT_LIMIT:
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+    case ERROR_ACCESS_DENIED:
+    case ERROR_MAX_THRDS_REACHED:
+        return true;
+    default:
+        return errno == ENOMEM;
+    }
+}
+
 bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecification stackSpec, QOS, SchedulingPolicy)
 {
     RELEASE_ASSERT(stackSpec.kind() != StackAllocationSpecification::Kind::SizeAndLocation && "Custom stacks not supported on windows");
@@ -181,10 +206,27 @@ bool Thread::establishHandle(NewThreadContext& data, StackAllocationSpecificatio
     if (stackSpec.kind() == StackAllocationSpecification::Kind::SizeOnly)
         stackSize = stackSpec.sizeBytes();
     unsigned initFlag = stackSize ? STACK_SIZE_PARAM_IS_A_RESERVATION : 0;
-    HANDLE threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
-    if (!threadHandle) {
-        LOG_ERROR("Failed to create thread at entry point %p with data %p: %d", wtfThreadEntryPoint, &data, errno);
-        return false;
+    // _beginthreadex fails when either its parameter block (CRT heap) or the
+    // new thread's initial stack cannot be committed. Such refusals are
+    // frequently transient (see virtualAllocWithRetry in OSAllocatorWin.cpp)
+    // and the caller RELEASE_ASSERTs on failure, so wait them out; any other
+    // failure is reported at once.
+    static constexpr unsigned maxAttempts = 10;
+    static constexpr DWORD delayMs = 50;
+    HANDLE threadHandle = nullptr;
+    for (unsigned attempt = 1;; ++attempt) {
+        errno = 0;
+        _set_doserrno(0);
+        threadHandle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, stackSize, wtfThreadEntryPoint, &data, initFlag, &threadIdentifier));
+        if (threadHandle) [[likely]]
+            break;
+        if (attempt == maxAttempts || !threadCreationFailedForLackOfResources()) {
+            unsigned long win32Error = 0;
+            _get_doserrno(&win32Error);
+            LOG_ERROR("Failed to create thread at entry point %p with data %p (attempt %u): errno %d, error %lu", wtfThreadEntryPoint, &data, attempt, errno, win32Error);
+            return false;
+        }
+        Sleep(delayMs);
     }
     establishPlatformSpecificHandle(threadHandle, threadIdentifier);
     return true;
