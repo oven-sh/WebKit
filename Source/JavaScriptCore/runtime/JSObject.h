@@ -1240,6 +1240,10 @@ ALWAYS_INLINE bool JSObject::getPropertySlot(JSGlobalObject* globalObject, Prope
         }
         // FIXME: This doesn't look like it's following the specification:
         // https://bugs.webkit.org/show_bug.cgi?id=172572
+        // Reload the structure: reifying a static lazy property above can transition
+        // the object and still miss (its PropertyCallback builder threw), like the
+        // megamorphic slow paths in JITOperations.cpp do.
+        structure = object->structureID().decode();
         JSValue prototype = structure->storedPrototype(object);
         if (!prototype.isObject())
             break;
