@@ -39,10 +39,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/SourceCharacters.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceTaintedOrigin.h>
-#include <optional>
 #include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/RefCountedFixedVector.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -74,6 +74,15 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
 
 using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;
 
+// What a line start table holds: see EncodedLineStarts. The sources that have one text and the code compiled from it
+// share the bytes. Those of code out of a bytecode cache that stays mapped are borrowed from it, and have no owner.
+struct LineStarts {
+    std::span<const uint8_t> bytes;
+    RefPtr<ThreadSafeRefCountedFixedVector<uint8_t>> owner;
+
+    explicit operator bool() const { return !bytes.empty(); }
+};
+
 class LineStartTable {
     WTF_MAKE_NONCOPYABLE(LineStartTable);
 public:
@@ -93,6 +102,17 @@ public:
     // and a column past the end of its line gives that line's end.
     JS_EXPORT_PRIVATE unsigned offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based);
 
+    // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
+    JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
+
+    // What a table holds, from where each line starts, the first at 0.
+    JS_EXPORT_PRIVATE static LineStarts encode(const Vector<unsigned>&);
+
+    JS_EXPORT_PRIVATE LineStarts lineStarts(StringView text);
+    JS_EXPORT_PRIVATE LineStarts lineStartsIfBuilt() const;
+    // Of this table's text. The first ones stay.
+    JS_EXPORT_PRIVATE void setLineStarts(LineStarts&&);
+
     bool isBuilt() const
     {
         Locker locker { m_lock };
@@ -101,11 +121,10 @@ public:
 
 private:
     template<typename CharType> static Vector<unsigned> build(std::span<const CharType>);
-    const Vector<unsigned>& ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
+    const LineStarts& ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
-    std::optional<Vector<unsigned>> m_lineStarts WTF_GUARDED_BY_LOCK(m_lock);
-    unsigned m_builtForLength WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    LineStarts m_lineStarts WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvider> {
@@ -189,27 +208,60 @@ public:
         return m_lineStartTable.offsetForPosition(source(), line0Based, column0Based);
     }
 
+    // Zero-based, in the provider's own text.
+    virtual LineColumn lineColumnInTextForOffset(unsigned offset)
+    {
+        return m_lineStartTable.lineColumnForOffset(source(), offset);
+    }
+
     // An inline <script> shifts every line of its document, but shifts the column only on its first
     // line, since later lines begin where their own line begins.
+    LineColumn documentLineColumn(LineColumn inText) const
+    {
+        return {
+            m_startPosition.m_line.oneBasedInt() + inText.line,
+            inText.line ? inText.column + 1 : m_startPosition.m_column.oneBasedInt() + inText.column,
+        };
+    }
+
     LineColumn documentLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
-        return {
-            m_startPosition.m_line.oneBasedInt() + info.line0Based,
-            info.line0Based ? info.column0Based + 1 : m_startPosition.m_column.oneBasedInt() + info.column0Based,
-        };
+        return documentLineColumn(lineColumnInTextForOffset(offset));
     }
 
     LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
+        auto inText = lineColumnInTextForOffset(offset);
         return {
-            m_startPosition.m_line.zeroBasedInt() + info.line0Based,
-            info.line0Based ? info.column0Based : m_startPosition.m_column.zeroBasedInt() + info.column0Based,
+            m_startPosition.m_line.zeroBasedInt() + inText.line,
+            inText.line ? inText.column : m_startPosition.m_column.zeroBasedInt() + inText.column,
         };
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }
+    // A parse of all of a source passes every line of it, so the lexer notes where they start, and a first stack trace
+    // does not wait for a scan of the text. The code that is compiled has them too, and so has bytecode made from it. A
+    // source that has the text and gets the code without a parse gets them from the code: what runs from bytecode has no
+    // other reason to read its text. A table costs an allocation and a few reference counts whatever its size, though,
+    // and a short text is scanned as cheaply when it is asked for a position, so it does without all this.
+    static constexpr unsigned minimumLengthToHaveLineStartsWithTheCode = 1024;
+    bool wantsLineStartsFromParse(int startOffset, int endOffset) const
+    {
+        return !startOffset
+            && static_cast<unsigned>(endOffset) >= minimumLengthToHaveLineStartsWithTheCode
+            && static_cast<unsigned>(endOffset) == source().length()
+            && !m_lineStartTable.isBuilt();
+    }
+    LineStarts lineStartsIfBuilt() const { return m_lineStartTable.lineStartsIfBuilt(); }
+    // A builtin with a source of its own is parsed as a function, which is not all of the source.
+    LineStarts lineStartsForBytecode()
+    {
+        StringView text = source();
+        if (text.length() < minimumLengthToHaveLineStartsWithTheCode)
+            return { };
+        return m_lineStartTable.lineStarts(text);
+    }
+    void setLineStarts(LineStarts&& lineStarts) { m_lineStartTable.setLineStarts(WTF::move(lineStarts)); }
 
 private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
@@ -264,6 +316,28 @@ protected:
 
 private:
     const Ref<StringImpl> m_source;
+};
+
+// The texts of many builtins, one after the other. None of them knows of the others, so a line and column in one
+// counts from where it starts. That takes no table: a builtin is short, and few of them are ever asked about.
+class BuiltinsSourceProvider final : public StringSourceProvider {
+public:
+    // Where each builtin starts, ascending, the first at 0. It has to outlive the provider.
+    static Ref<BuiltinsSourceProvider> create(const String& source, std::span<const unsigned> starts)
+    {
+        return adoptRef(*new BuiltinsSourceProvider(source, starts));
+    }
+
+    JS_EXPORT_PRIVATE LineColumn lineColumnInTextForOffset(unsigned offset) final;
+
+private:
+    BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+        : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+        , m_starts(starts)
+    {
+    }
+
+    std::span<const unsigned> m_starts;
 };
 
     class SyntheticSourceProvider final : public SourceProvider {

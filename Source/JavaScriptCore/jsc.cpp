@@ -2090,7 +2090,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
             recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error, depth);
             if (error.isValid())
                 return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
-            bytes = encodeBuiltinFunction(vm, original, source.length(), stamp);
+            bytes = encodeBuiltinFunction(vm, original, source, stamp);
             if (!bytes)
                 return throwVMError(globalObject, scope, "encodeBuiltinFunction failed"_s);
         }
@@ -2183,7 +2183,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinBytecodeSize, (JSGlobalObject* globalObj
     recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
-    RefPtr<CachedBytecode> bytes = encodeBuiltinFunction(vm, executable, source.length(), 1);
+    RefPtr<CachedBytecode> bytes = encodeBuiltinFunction(vm, executable, source, 1);
     return JSValue::encode(jsNumber(bytes ? bytes->size() : 0));
 }
 

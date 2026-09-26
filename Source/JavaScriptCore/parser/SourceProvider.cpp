@@ -29,6 +29,7 @@
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/ProcessID.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -144,6 +145,93 @@ BaseWebAssemblySourceProvider::BaseWebAssemblySourceProvider(const SourceOrigin&
 }
 #endif
 
+// Where each line of a text starts, in about one byte per line:
+//
+//     u32 lineCount
+//     { u32 lineStart, u32 streamOffset }   one per block of linesPerBlock lines
+//     stream                                for each line but the last of its block: its length, terminator included, as a LEB128
+//
+// The u32s are in the byte order of the machine, and the bytes need no alignment. The bytecode cache holds these bytes as
+// they are: a change to the layout comes with a new cachedTypesFormatRevision.
+//
+// A lookup is what the first stack trace through a call site pays for each of its frames, so this reads the bytes
+// directly. With checked spans and WTF::LEBDecoder such a stack trace of 12 frames executed 20% more instructions than
+// when the code had its lines and columns, and it executes 8% more with this.
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+class EncodedLineStarts {
+public:
+    static constexpr unsigned linesPerBlock = 64;
+
+    struct Line {
+        unsigned line0Based;
+        unsigned start;
+    };
+
+    explicit EncodedLineStarts(std::span<const uint8_t> bytes)
+        : m_blocks(bytes.data() + sizeof(uint32_t))
+        , m_lineCount(WTF::unalignedLoad<uint32_t>(bytes.data()))
+    {
+    }
+
+    unsigned lineCount() const { return m_lineCount; }
+
+    // An offset past the end of the text clamps to the last line rather than being refused, because
+    // callers reach here from error reporting, where an approximate answer beats none.
+    Line lineContaining(unsigned offset) const
+    {
+        unsigned block = 0;
+        for (unsigned count = blockCount(); count > 1;) {
+            unsigned half = count / 2;
+            block += blockLineStart(block + half) <= offset ? half : 0;
+            count -= half;
+        }
+        return walk(block, [&](Line next) { return next.start <= offset; });
+    }
+
+    unsigned startOfLine(unsigned line0Based) const
+    {
+        ASSERT(line0Based < m_lineCount);
+        return walk(line0Based / linesPerBlock, [&](Line next) { return next.line0Based <= line0Based; }).start;
+    }
+
+private:
+    unsigned blockCount() const { return (m_lineCount + linesPerBlock - 1) / linesPerBlock; }
+    unsigned blockLineStart(unsigned block) const { return WTF::unalignedLoad<uint32_t>(m_blocks + 2 * sizeof(uint32_t) * block); }
+    unsigned blockStreamOffset(unsigned block) const { return WTF::unalignedLoad<uint32_t>(m_blocks + 2 * sizeof(uint32_t) * block + sizeof(uint32_t)); }
+
+    // The last line of the block that `accepts` takes, from the block's first line on.
+    template<typename Functor>
+    ALWAYS_INLINE Line walk(unsigned block, const Functor& accepts) const
+    {
+        Line line { block * linesPerBlock, blockLineStart(block) };
+        unsigned end = std::min(line.line0Based + linesPerBlock, m_lineCount);
+        const uint8_t* cursor = m_blocks + 2 * sizeof(uint32_t) * blockCount() + blockStreamOffset(block);
+        while (line.line0Based + 1 < end) {
+            unsigned length = *cursor++;
+            if (length & 0x80) [[unlikely]] {
+                length &= 0x7f;
+                for (unsigned shift = 7;; shift += 7) {
+                    unsigned byte = *cursor++;
+                    length |= (byte & 0x7f) << shift;
+                    if (!(byte & 0x80))
+                        break;
+                }
+            }
+            Line next { line.line0Based + 1, line.start + length };
+            if (!accepts(next))
+                break;
+            line = next;
+        }
+        return line;
+    }
+
+    const uint8_t* m_blocks;
+    unsigned m_lineCount;
+};
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 template<typename CharType>
 Vector<unsigned> LineStartTable::build(std::span<const CharType> text)
 {
@@ -162,26 +250,64 @@ Vector<unsigned> LineStartTable::build(std::span<const CharType> text)
         index = next;
     }
 
-    lineStarts.shrinkToFit();
     return lineStarts;
 }
 
-const Vector<unsigned>& LineStartTable::ensureBuilt(StringView text)
+LineStarts LineStartTable::encode(const Vector<unsigned>& lineStarts)
 {
-    if (!m_lineStarts) {
-        m_lineStarts = text.is8Bit() ? build(text.span8()) : build(text.span16());
-        m_builtForLength = text.length();
+    Vector<uint32_t> header { static_cast<uint32_t>(lineStarts.size()) };
+    Vector<uint8_t> stream;
+    for (size_t line = 0; line < lineStarts.size(); ++line) {
+        if (line % EncodedLineStarts::linesPerBlock) {
+            unsigned length = lineStarts[line] - lineStarts[line - 1];
+            for (; length >= 0x80; length >>= 7)
+                stream.append(static_cast<uint8_t>(length | 0x80));
+            stream.append(static_cast<uint8_t>(length));
+        } else {
+            header.append(lineStarts[line]);
+            header.append(static_cast<uint32_t>(stream.size()));
+        }
     }
-    ASSERT(m_builtForLength == text.length());
-    return *m_lineStarts;
+
+    auto headerBytes = asByteSpan(header.span());
+    Ref owner = ThreadSafeRefCountedFixedVector<uint8_t>::create(headerBytes.size() + stream.size());
+    memcpySpan(owner->span().first(headerBytes.size()), headerBytes);
+    memcpySpan(owner->span().subspan(headerBytes.size()), stream.span());
+    return { owner->span(), WTF::move(owner) };
 }
 
-static unsigned lineEndFor(StringView text, const Vector<unsigned>& lineStarts, size_t line0Based)
+const LineStarts& LineStartTable::ensureBuilt(StringView text)
+{
+    if (!m_lineStarts)
+        m_lineStarts = encode(text.is8Bit() ? build(text.span8()) : build(text.span16()));
+    return m_lineStarts;
+}
+
+LineStarts LineStartTable::lineStarts(StringView text)
+{
+    Locker locker { m_lock };
+    return ensureBuilt(text);
+}
+
+LineStarts LineStartTable::lineStartsIfBuilt() const
+{
+    Locker locker { m_lock };
+    return m_lineStarts;
+}
+
+void LineStartTable::setLineStarts(LineStarts&& lineStarts)
+{
+    Locker locker { m_lock };
+    if (!m_lineStarts)
+        m_lineStarts = WTF::move(lineStarts);
+}
+
+static unsigned lineEndFor(StringView text, const EncodedLineStarts& lineStarts, unsigned line0Based)
 {
     unsigned length = text.length();
     // A non-final line's end comes from the next line's start, which is past the terminator, so the
     // terminator has to be backed over.
-    unsigned lineEnd = (line0Based + 1 < lineStarts.size()) ? lineStarts[line0Based + 1] : length;
+    unsigned lineEnd = (line0Based + 1 < lineStarts.lineCount()) ? lineStarts.startOfLine(line0Based + 1) : length;
     if (lineEnd < length) {
         if (lineEnd >= 2 && isCRLFPair(text[lineEnd - 2], text[lineEnd - 1]))
             lineEnd -= 2;
@@ -191,40 +317,51 @@ static unsigned lineEndFor(StringView text, const Vector<unsigned>& lineStarts, 
     return lineEnd;
 }
 
+LineColumn LineStartTable::lineColumnForOffset(StringView text, unsigned offset)
+{
+    Locker locker { m_lock };
+    auto line = EncodedLineStarts { ensureBuilt(text).bytes }.lineContaining(offset);
+    return { line.line0Based, offset - line.start };
+}
+
 LineStartTable::PositionInfo LineStartTable::positionInfoForOffset(StringView text, unsigned offset)
 {
     Locker locker { m_lock };
-    const Vector<unsigned>& lineStarts = ensureBuilt(text);
-
-    // An offset past the end of the text clamps to the last line rather than being refused, because
-    // callers reach here from error reporting, where an approximate answer beats none.
-    size_t line0Based = lineStarts.size() - 1;
-    if (offset < lineStarts.last()) {
-        auto it = std::upper_bound(lineStarts.begin(), lineStarts.end(), offset);
-        ASSERT(it != lineStarts.begin());
-        line0Based = static_cast<size_t>(it - lineStarts.begin()) - 1;
-    }
-
-    unsigned lineStart = lineStarts[line0Based];
-
+    EncodedLineStarts lineStarts { ensureBuilt(text).bytes };
+    auto line = lineStarts.lineContaining(offset);
     return {
-        static_cast<unsigned>(line0Based),
-        offset > lineStart ? offset - lineStart : 0,
-        lineStart,
-        lineEndFor(text, lineStarts, line0Based),
+        line.line0Based,
+        offset - line.start,
+        line.start,
+        lineEndFor(text, lineStarts, line.line0Based),
     };
 }
 
 unsigned LineStartTable::offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based)
 {
     Locker locker { m_lock };
-    const Vector<unsigned>& lineStarts = ensureBuilt(text);
+    EncodedLineStarts lineStarts { ensureBuilt(text).bytes };
 
-    unsigned length = text.length();
-    if (line0Based >= lineStarts.size())
-        return length;
+    if (line0Based >= lineStarts.lineCount())
+        return text.length();
 
-    return std::min(lineStarts[line0Based] + column0Based, lineEndFor(text, lineStarts, line0Based));
+    return std::min(lineStarts.startOfLine(line0Based) + column0Based, lineEndFor(text, lineStarts, line0Based));
+}
+
+LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
+{
+    unsigned start = *(std::ranges::upper_bound(m_starts, offset) - 1);
+    auto text = source().span8().subspan(start, offset - start);
+    unsigned line = 0;
+    size_t lineStart = 0;
+    while (lineStart < text.size()) {
+        const Latin1Character* found = findLineTerminator(text.subspan(lineStart));
+        if (found == std::to_address(text.end()))
+            break;
+        lineStart = lineStartAfterTerminator(text, static_cast<size_t>(found - text.data()));
+        ++line;
+    }
+    return { line, static_cast<unsigned>(text.size() - lineStart) };
 }
 
 } // namespace JSC

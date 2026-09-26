@@ -404,7 +404,7 @@ void JITCompiler::collectSourceCodeDumpDebugInfo(LinkBuffer& linkBuffer)
         if (bytecodeIndex.offset() >= codeBlock->instructionsSize())
             continue;
 
-        LineColumn lineColumn = codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+        LineColumn lineColumn = codeBlock->lineColumnForBytecodeIndexConcurrently(bytecodeIndex);
         RefPtr provider = codeBlock->ownerExecutable()->source().provider();
         if (!provider)
             continue;

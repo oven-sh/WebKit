@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ExpressionInfo.h"
 
+#include "SourceProvider.h"
 #include "VM.h"
 #include <numeric>
 #include <wtf/DataLog.h>
@@ -48,6 +49,9 @@ namespace JSC {
        b. Chapter marks in the list of EncodedInfo entries.
           This is just an optimization aid to speed up reconstruction of expression info
           from the EncodedInfo.
+
+       c. A LineColumnMap cache.
+          This is to speed up look up of LineColumn values we have looked up before.
 
     Encoding of EncodedInfo words
     =============================
@@ -194,13 +198,14 @@ namespace JSC {
 
     Backing Store and Shape
     =======================
-    The ExpressionInfo and its backing store is allocated as a contiguous slab. We first compute
-    the size of the slab, then allocate it, and lastly use placement new to instantiate the
-    ExpressionInfo.
+    The ExpressionInfo and its backing store (with the exception of the contents of the
+    LineColumnMap cache) is allocated as a contiguous slab. We first compute the size of the slab,
+    then allocate it, and lastly use placement new to instantiate the ExpressionInfo.
 
     The shape of ExpressionInfo looks like this:
 
-            ExpressionInfo: [ m_numberOfChapters              ]
+            ExpressionInfo: [ m_cachedLineColumns             ]
+                            [ m_numberOfChapters              ]
                             [ m_numberOfEncodedInfo           ]
                             [ m_numberOfEncodedInfoExtensions ]
             Chapters Start: [ chapters()[0]                      ]
@@ -888,6 +893,13 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
     decoder.setNextInfo(chapterStart);
     while (decoder.decode(instPC) != IterationStatus::Done) { }
     return decoder.entry();
+}
+
+LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
+{
+    return m_cachedLineColumns.ensure(instPC, [&] {
+        return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
+    }).iterator->value;
 }
 
 template<unsigned bitCount>

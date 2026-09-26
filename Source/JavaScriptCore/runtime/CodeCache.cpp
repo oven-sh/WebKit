@@ -135,6 +135,7 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
         unlinkedCodeBlock->setSourceURLDirective(source.provider()->sourceURLDirective());
     if (!source.provider()->sourceMappingURLDirective().isNull())
         unlinkedCodeBlock->setSourceMappingURLDirective(source.provider()->sourceMappingURLDirective());
+    unlinkedCodeBlock->setLineStarts(source.provider()->lineStartsIfBuilt());
 
     RefPtr<TDZEnvironmentLink> parentVariablesUnderTDZ;
     if (variablesUnderTDZ)
@@ -196,6 +197,8 @@ void recordParseFromUnlinkedCodeBlock(GlobalExecutable* executable, const Source
         source.provider()->setSourceURLDirective(unlinkedCodeBlock->sourceURLDirective());
     if (unlinkedCodeBlock->sourceMappingURLDirective())
         source.provider()->setSourceMappingURLDirective(unlinkedCodeBlock->sourceMappingURLDirective());
+    if (unlinkedCodeBlock->lineStarts())
+        source.provider()->setLineStarts(LineStarts { unlinkedCodeBlock->lineStarts() });
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType>
