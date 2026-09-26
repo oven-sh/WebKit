@@ -1870,7 +1870,8 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
         // We need to add optimizations for op_resolve_scope_for_hoisting_func_decl_in_eval to do link time scope resolution.
 
         auto clearIfNeeded = [&] (GetByIdModeMetadata& modeMetadata, ASCIILiteral opName) {
-            if (modeMetadata.mode != GetByIdMode::Default)
+            // An unset cache of a receiver with no prototype has no watchpoint, so m_llintGetByIdWatchpointMap does not know it.
+            if (modeMetadata.mode != GetByIdMode::Default && modeMetadata.mode != GetByIdMode::Unset)
                 return;
             StructureID oldStructureID = modeMetadata.defaultMode.structureID;
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
