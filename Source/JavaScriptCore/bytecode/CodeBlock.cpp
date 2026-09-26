@@ -2064,7 +2064,7 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
     m_llintGetByIdWatchpointMap.removeIf([&] (const StructureWatchpointMap::KeyValuePairType& pair) -> bool {
         auto clear = [&] () {
             dataLogLnIf(Options::verboseOSR(), "Clearing LLInt property access at ", pair.key, ".");
-            clearLLIntGetByIdCache(pair.key);
+            clearLLIntGetByIdCache(pair.key, &pair.value);
             return true;
         };
 
@@ -2119,10 +2119,8 @@ GetByIdModeMetadata* CodeBlock::llintGetByIdModeMetadata(BytecodeIndex bytecodeI
     }
 }
 
-GetByIdSiteCounts CodeBlock::llintGetByIdSiteCounts(BytecodeIndex bytecodeIndex, const GetByIdModeMetadata& metadata)
+GetByIdSiteCounts CodeBlock::llintGetByIdSiteCountsInProtoLoadMode(BytecodeIndex bytecodeIndex)
 {
-    if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
-        return metadata.counts();
     // A prototype load cache has a watchpoint for the slot base at least, so the site has an entry.
     auto iterator = m_llintGetByIdWatchpointMap.find(bytecodeIndex);
     ASSERT(iterator != m_llintGetByIdWatchpointMap.end());
@@ -2133,13 +2131,23 @@ GetByIdSiteCounts CodeBlock::llintGetByIdSiteCounts(BytecodeIndex bytecodeIndex,
 
 void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex)
 {
+    auto iterator = m_llintGetByIdWatchpointMap.find(bytecodeIndex);
+    clearLLIntGetByIdCache(bytecodeIndex, iterator == m_llintGetByIdWatchpointMap.end() ? nullptr : &iterator->value);
+}
+
+void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex, const LLIntGetByIdGuards* guards)
+{
     GetByIdModeMetadata* metadata = llintGetByIdModeMetadata(bytecodeIndex);
     RELEASE_ASSERT(metadata);
     // The structure of the receiver guards a cache of an own property or of the length of an array.
     // Watchpoints are for the other two.
     if (!metadata->hasGuards())
         return;
-    GetByIdSiteCounts counts = llintGetByIdSiteCounts(bytecodeIndex, *metadata);
+    GetByIdSiteCounts counts;
+    if (metadata->mode != GetByIdMode::ProtoLoad)
+        counts = metadata->counts();
+    else if (guards)
+        counts = guards->counts;
     counts.rearm();
     metadata->clearToDefaultModeWithoutCache(counts);
 }

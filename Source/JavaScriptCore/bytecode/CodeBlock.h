@@ -681,8 +681,13 @@ public:
     // The LLInt cache of the get_by_id site. Null if the instruction there has no such site.
     GetByIdModeMetadata* llintGetByIdModeMetadata(BytecodeIndex);
     // The counts of the site, from where a site in its mode keeps them.
-    GetByIdSiteCounts llintGetByIdSiteCounts(BytecodeIndex, const GetByIdModeMetadata&);
-    // For a watchpoint of the site that fired, and for the collector.
+    ALWAYS_INLINE GetByIdSiteCounts llintGetByIdSiteCounts(BytecodeIndex bytecodeIndex, const GetByIdModeMetadata& metadata)
+    {
+        if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
+            return metadata.counts();
+        return llintGetByIdSiteCountsInProtoLoadMode(bytecodeIndex);
+    }
+    // For a watchpoint of the site that fired.
     void clearLLIntGetByIdCache(BytecodeIndex);
 
     // Functions for controlling when tiered compilation kicks in. This
@@ -1132,6 +1137,9 @@ private:
     uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
     uint8_t m_isExemptFromStartupJITDeferral : 1 { false }; // Options::missCountForLLIntTierUp()
     void lowerJITThresholdForLLIntInlineCacheMisses();
+    GetByIdSiteCounts llintGetByIdSiteCountsInProtoLoadMode(BytecodeIndex);
+    // The guards are those of the site. They are the entry of the site if the site has a cache with guards.
+    void clearLLIntGetByIdCache(BytecodeIndex, const LLIntGetByIdGuards*);
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);

@@ -619,7 +619,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, missCountForLLIntTierUp, 12, Normal, "The call of the LLInt slow path that makes this count at one get_by_id or put_by_id site lowers the threshold of the Baseline JIT for the CodeBlock to thresholdForJITSoon, with no startup deferral. The executions so far count. 0 means that the calls are not counted. At most 255."_s) \
     v(Bool, useLLIntUnsetCaching, true, Normal, "If true, the LLInt caches a get_by_id that finds no property (GetByIdMode::Unset), after prototypeHitCountForLLIntCaching such results at the site."_s) \
     v(Bool, useLLIntStringLengthFastPath, true, Normal, "If true, a get_length in the LLInt that misses its cache reads the length of a string with no call of the slow path."_s) \
-    v(Bool, useLLIntPrototypeCacheRearming, true, Normal, "If true, the prototypeHitCountForLLIntCaching countdown of an LLInt get_by_id site starts again after the site tried to cache a result, and when a watchpoint, a collection or an own property takes the cache away. A site tries GetByIdModeMetadata::maxCacheSetupCount times at most. If false, the countdown of a site runs once."_s) \
+    v(Bool, useLLIntPrototypeCacheRearming, true, Normal, "If true, the prototypeHitCountForLLIntCaching countdown of an LLInt get_by_id site starts again after the site tried to cache a result, and when a watchpoint, a collection or an own property takes the cache away. A site tries GetByIdSiteCounts::maxCacheSetupCount times at most. If false, the countdown of a site runs once."_s) \
     \
     v(Bool, dumpCompiledRegExpPatterns, false, Normal, nullptr) \
     v(Bool, verboseRegExpCompilation, false, Normal, nullptr) \

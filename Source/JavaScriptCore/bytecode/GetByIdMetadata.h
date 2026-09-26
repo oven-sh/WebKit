@@ -112,6 +112,14 @@ union GetByIdModeMetadata {
     // True if the cache is one that watchpoints guard. The structure of the receiver is enough for the others.
     bool hasGuards() const { return mode == GetByIdMode::ProtoLoad || mode == GetByIdMode::Unset; }
 
+    // False if the countdown of the site is over. True for a site in ProtoLoad mode whose entry has to say.
+    bool mayCountDown() const
+    {
+        if (mode == GetByIdMode::ProtoLoad)
+            return Options::useLLIntPrototypeCacheRearming();
+        return !!hitCountForLLIntCaching;
+    }
+
     GetByIdSiteCounts counts() const
     {
         ASSERT(mode != GetByIdMode::ProtoLoad);
