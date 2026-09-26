@@ -94,25 +94,33 @@ const constructs = [
     t => `(class {${t}x =${t}1;${t}static {${t}}${t}m() {${t}}${t}});`,
     t => `a =${t}/x/${t}.test("x");`,
     t => `if (a)${t}b;${t}else${t}a;`,
+    // In a string, U+2028 and U+2029 end a line and are characters of the string.
+    t => t === "\u2028" || t === "\u2029" ? `"a${t}b"; a = "a${t}b"; a = ['${t}', ("\\n${t}${t}")];` : `"ab";`,
 ];
+
+// The body of a function is only checked for syntax while what is around it is parsed. The lexer then does less: it
+// does not need what a string holds, for one.
+const places = {
+    "at the top level": (code, t) => code,
+    "in a function": (code, t) => `function inner() {${t}${code}${t}}`,
+    "in an arrow function in a function": (code, t) => `function outer() { return () => {${t}${code}${t}}; }`,
+    "in a method": (code, t) => `({ method() {${t}${code}${t}} });`,
+};
 
 for (const [name, choices] of Object.entries(terminators)) {
     for (const t of choices) {
-        let text = "var a, b;" + t;
-        const offsets = [];
-        // Three times, so that the constructs fall on both sides of the end of a block.
-        for (const construct of [...constructs, ...constructs, ...constructs]) {
-            text += construct(t) + t;
-            offsets.push(text.length + columnInStatement);
-            text += `at(new Error(""));` + t;
+        for (const [place, put] of Object.entries(places)) {
+            // 16-bit where the terminators of the set are, whichever of them this is.
+            let text = (name.includes("16-bit") ? "// \u4e16" + t : "") + "var a, b;" + t;
+            const offsets = [];
+            // Three times, so that the constructs fall on both sides of the end of a block.
+            for (const construct of [...constructs, ...constructs, ...constructs]) {
+                text += put(construct(t), t) + t;
+                offsets.push(text.length + columnInStatement);
+                text += `at(new Error(""));` + t;
+            }
+            shouldBe(positionsOf(text), positionsAt(text, offsets), `constructs ${place}, ${name}, ${escape(t)}`);
         }
-        // In a string, these two end a line and are characters of the string.
-        if (t === "\u2028" || t === "\u2029") {
-            text += `"a${t}b";`;
-            offsets.push(text.length + columnInStatement);
-            text += `at(new Error(""));`;
-        }
-        shouldBe(positionsOf(text), positionsAt(text, offsets), `constructs, ${name}, ${escape(t)}`);
     }
 }
 

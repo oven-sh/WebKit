@@ -83,8 +83,9 @@ public:
     String sourceMappingURLDirective() const { return m_sourceMappingURLDirective; }
     void clear();
 
-    // From here on, where each line of the source's text starts is collected. A function that the parser skips
-    // (SourceProviderCache) is one that this lexer has read: had a lexer before it, the source would have its line starts.
+    // From here on, where each line of the source's text starts is collected, in shiftLineTerminator(): nothing may
+    // move m_code over a line terminator in another way. A function that the parser skips (SourceProviderCache) is one
+    // that this lexer has read: had a lexer before it, the source would have its line starts.
     void collectLineStarts()
     {
         m_lineStarts.emplace();

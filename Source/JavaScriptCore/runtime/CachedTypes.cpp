@@ -5317,7 +5317,8 @@ protected:
     // 10: GenericCacheEntry records the payload's size.
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
-    static constexpr uint32_t cachedTypesFormatRevision = 11;
+    // 12: a global code block and the entry of a builtin function have the line starts of their source.
+    static constexpr uint32_t cachedTypesFormatRevision = 12;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
