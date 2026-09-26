@@ -1249,6 +1249,8 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     Butterfly* butterfly = this->butterfly();
     switch (indexingMode()) {
     case ArrayClass:
+        if (!isLengthWritable()) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         if (!newLength)
             return true;
         if (newLength >= MIN_SPARSE_ARRAY_INDEX) {
@@ -1320,6 +1322,16 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     }
 }
 
+NEVER_INLINE void JSArray::pushToNonExtensibleArrayClass(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    methodTable()->putByIndex(this, globalObject, 0, value, true);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    setLength(globalObject, 1, true);
+}
+
 JSValue JSArray::pop(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1331,6 +1343,8 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
 
     switch (indexingType()) {
     case ArrayClass:
+        if (!isLengthWritable()) [[unlikely]]
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return jsUndefined();
         
     case ArrayWithUndecided:

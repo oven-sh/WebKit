@@ -281,7 +281,7 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
     return JSFinalObject::createWithButterflyCopyingInlineStorage(vm, sourceStructure, newButterfly, source->inlineStorage());
 }
 
-ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject* target, JSObject* source, Vector<UniquedStringImpl*, 8>& properties, MarkedArgumentBuffer& values)
+ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject* target, JSObject* source, Vector<UniquedStringImpl*, 8>& properties, MarkedArgumentBuffer& values, bool mustCheckPrototypeProperties)
 {
     // |source| Structure does not have any getters. And target can perform fast put.
     // So enumerating properties and putting properties are non observable.
@@ -308,6 +308,26 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     Structure* sourceStructure = source->structure();
     if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
         return false;
+
+    if (mustCheckPrototypeProperties) {
+        if (source->canHaveExistingOwnIndexedProperties())
+            return false;
+        bool prototypeDefinesProperty = false;
+        sourceStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (entry.attributes() & PropertyAttribute::DontEnum)
+                return true;
+            PropertyName propertyName(entry.key());
+            if (propertyName.isPrivateName())
+                return true;
+            if (target->prototypeChainHasReadOnlyOrAccessorProperty(vm, propertyName)) {
+                prototypeDefinesProperty = true;
+                return false;
+            }
+            return true;
+        });
+        if (prototypeDefinesProperty)
+            return false;
+    }
 
     if (objectCloneFast(vm, target, source))
         return true;
