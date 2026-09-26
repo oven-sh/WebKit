@@ -187,6 +187,11 @@ ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(Bytecode
     return expressionInfo().entryForInstPC(bytecodeIndex.offset());
 }
 
+LineColumn UnlinkedCodeBlock::lineColumnInTextForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)
+{
+    return expressionInfo().lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
+}
+
 #ifndef NDEBUG
 static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, unsigned divot, unsigned startOffset, unsigned endOffset)
 {

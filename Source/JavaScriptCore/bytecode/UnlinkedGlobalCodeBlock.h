@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "SourceProvider.h"
 #include "UnlinkedCodeBlock.h"
 
 namespace JSC {
@@ -47,6 +48,8 @@ public:
     StringImpl* sourceMappingURLDirective() const { return m_sourceMappingURLDirective.get(); }
     void setSourceURLDirective(const String& sourceURL) { m_sourceURLDirective = sourceURL.impl(); }
     void setSourceMappingURLDirective(const String& sourceMappingURL) { m_sourceMappingURLDirective = sourceMappingURL.impl(); }
+    const LineStarts& lineStarts() const LIFETIME_BOUND { return m_lineStarts; }
+    void setLineStarts(LineStarts&& lineStarts) { m_lineStarts = WTF::move(lineStarts); }
 
     CodeFeatures codeFeatures() const { return m_features; }
     bool allowDirectEvalCache() const { return !(m_features & NoEvalCacheFeature); }
@@ -75,6 +78,7 @@ private:
 
     PackedRefPtr<StringImpl> m_sourceURLDirective;
     PackedRefPtr<StringImpl> m_sourceMappingURLDirective;
+    LineStarts m_lineStarts;
 };
 
 }

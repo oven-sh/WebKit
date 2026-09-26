@@ -27,6 +27,7 @@
 #include "ParserModes.h"
 #include "ParserTokens.h"
 #include "SourceCode.h"
+#include <optional>
 #include <wtf/ASCIICType.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -81,6 +82,10 @@ public:
     String sourceURLDirective() const { return m_sourceURLDirective; }
     String sourceMappingURLDirective() const { return m_sourceMappingURLDirective; }
     void clear();
+
+    // For a parse of all of a source: where its lines start, for the source's LineStartTable.
+    void collectLineStarts() { m_lineStarts = Vector<unsigned> { 0 }; }
+    std::optional<Vector<unsigned>> takeLineStarts() { return std::exchange(m_lineStarts, std::nullopt); }
     void clearErrorCodeAndBuffers()
     {
         m_error = 0;
@@ -215,6 +220,7 @@ private:
     JSParserScriptMode m_scriptMode;
     unsigned m_sourceOffset;
     const T* m_codeStartPlusOffset;
+    std::optional<Vector<unsigned>> m_lineStarts;
 
     static void verifyLayout();
 };

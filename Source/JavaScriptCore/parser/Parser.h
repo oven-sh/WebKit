@@ -2191,6 +2191,9 @@ std::unique_ptr<ParsedNode> Parser<LexerType>::parse(ParserError& error, const I
 
     std::unique_ptr<ParsedNode> result;
     if (parseResult) {
+        if (auto lineStarts = m_lexer->takeLineStarts(); lineStarts && !lexError)
+            m_source->provider()->setLineStarts(LineStartTable::encode(*lineStarts));
+
         JSTokenLocation endLocation;
         endLocation.startOffset = m_lexer->currentOffset();
         result = makeUnique<ParsedNode>(m_parserArena,

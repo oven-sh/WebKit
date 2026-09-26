@@ -981,7 +981,7 @@ RefPtr<BaselineJITCode> JIT::link(LinkBuffer& patchBuffer)
                 BytecodeIndex bytecodeIndex(bytecodeOffset);
                 if (bytecodeIndex.offset() >= m_profiledCodeBlock->instructionsSize())
                     continue;
-                LineColumn lineColumn = m_profiledCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+                LineColumn lineColumn = m_profiledCodeBlock->lineColumnForBytecodeIndexConcurrently(bytecodeIndex);
                 auto location = patchBuffer.locationOf<DisassemblyPtrTag>(m_labels[bytecodeOffset]);
                 uint32_t codeOffset = static_cast<uint32_t>(location.dataLocation<uintptr_t>() - reinterpret_cast<uintptr_t>(codeStart));
                 debugInfo->codeEntries.append({ codeOffset, lineColumn, Ref { *provider } });
