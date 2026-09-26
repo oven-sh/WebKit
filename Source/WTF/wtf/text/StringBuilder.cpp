@@ -196,4 +196,137 @@ bool StringBuilder::containsOnlyASCII() const
     return StringView { *this }.containsOnlyASCII();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+
+// Gives the builder a buffer of CharacterType that has this capacity and holds the characters of the builder.
+template<typename CharacterType> bool StringBuilder::tryReallocateBuffer(unsigned capacity)
+{
+    ASSERT(!hasOverflowed());
+    ASSERT(capacity);
+    ASSERT(capacity >= m_length);
+    ASSERT(sizeof(CharacterType) == sizeof(char16_t) || is8Bit());
+
+    if (m_buffer && m_buffer->is8Bit() == (sizeof(CharacterType) == sizeof(Latin1Character))) {
+        m_string = { }; // The string can hold a reference to the buffer.
+        if (m_buffer->hasOneRef()) {
+            std::span<CharacterType> characters;
+            auto buffer = StringImpl::tryReallocateOrKeep(m_buffer.releaseNonNull(), capacity, characters);
+            bool reallocated = buffer.has_value();
+            m_buffer = reallocated ? WTF::move(buffer.value()) : WTF::move(buffer.error());
+            return reallocated;
+        }
+    }
+
+    std::span<CharacterType> characters;
+    auto buffer = StringImpl::tryCreateUninitialized(capacity, characters);
+    if (!buffer) [[unlikely]]
+        return false;
+
+    if (is8Bit())
+        StringImpl::copyCharacters(characters, span8());
+    else
+        StringImpl::copyCharacters(characters, span16());
+
+    m_buffer = WTF::move(buffer);
+    m_string = { };
+    return true;
+}
+
+// As extendBufferForAppending, for a builder whose buffer is of CharacterType or is 8-bit.
+template<typename CharacterType> std::span<CharacterType> StringBuilder::tryExtendBufferForAppending(size_t additionalLength)
+{
+    ASSERT(!hasOverflowed());
+    ASSERT(additionalLength);
+
+    constexpr unsigned maxLength = StringImpl::maxValidLength<CharacterType>();
+    if (m_length > maxLength || additionalLength > maxLength - m_length) [[unlikely]]
+        return { };
+    unsigned requiredLength = m_length + static_cast<unsigned>(additionalLength);
+
+    if (m_buffer && requiredLength <= m_buffer->length() && m_buffer->is8Bit() == (sizeof(CharacterType) == sizeof(Latin1Character)))
+        m_string = { };
+    else {
+        // expandedCapacity() can return more than the longest string of CharacterType.
+        unsigned newCapacity = std::min(expandedCapacity(capacity(), requiredLength), maxLength);
+        // The buffer does not have to grow by its own size. When that much is refused, the required length can still fit.
+        if (!tryReallocateBuffer<CharacterType>(newCapacity) && (newCapacity == requiredLength || !tryReallocateBuffer<CharacterType>(requiredLength))) [[unlikely]]
+            return { };
+    }
+
+    return spanConstCast<CharacterType>(m_buffer->span<CharacterType>().subspan(std::exchange(m_length, requiredLength)));
+}
+
+bool StringBuilder::tryAppend(std::span<const Latin1Character> characters)
+{
+    if (hasOverflowed())
+        return false;
+    if (characters.empty())
+        return true;
+
+    if (is8Bit()) {
+        auto destination = tryExtendBufferForAppending<Latin1Character>(characters.size());
+        if (!destination.data())
+            return false;
+        StringImpl::copyCharacters(destination, characters);
+        return true;
+    }
+
+    auto destination = tryExtendBufferForAppending<char16_t>(characters.size());
+    if (!destination.data())
+        return false;
+    StringImpl::copyCharacters(destination, characters);
+    return true;
+}
+
+bool StringBuilder::tryAppend(std::span<const char16_t> characters)
+{
+    if (hasOverflowed())
+        return false;
+    if (characters.empty())
+        return true;
+
+    // As in append(), one Latin-1 character keeps an 8-bit builder 8-bit.
+    if (characters.size() == 1 && isLatin1(characters[0]) && is8Bit()) {
+        auto destination = tryExtendBufferForAppending<Latin1Character>(1);
+        if (!destination.data())
+            return false;
+        destination[0] = static_cast<Latin1Character>(characters[0]);
+        return true;
+    }
+
+    auto destination = tryExtendBufferForAppending<char16_t>(characters.size());
+    if (!destination.data())
+        return false;
+    StringImpl::copyCharacters(destination, characters);
+    return true;
+}
+
+bool StringBuilder::tryReserveCapacity(unsigned newCapacity)
+{
+    if (hasOverflowed())
+        return false;
+    if (newCapacity <= (m_buffer ? m_buffer->length() : m_length))
+        return true;
+
+    if (is8Bit())
+        return tryReallocateBuffer<Latin1Character>(newCapacity);
+    return tryReallocateBuffer<char16_t>(newCapacity);
+}
+
+String StringBuilder::tryToString()
+{
+    if (hasOverflowed())
+        return { };
+
+    if (m_string.isNull()) {
+        // A buffer that cannot shrink stays as it is, and the string is a part of it.
+        if (m_length && shouldShrinkToFit() && (is8Bit() ? tryReallocateBuffer<Latin1Character>(m_length) : tryReallocateBuffer<char16_t>(m_length)))
+            m_string = std::exchange(m_buffer, nullptr);
+        reifyString();
+    }
+    return m_string;
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
+
 } // namespace WTF
