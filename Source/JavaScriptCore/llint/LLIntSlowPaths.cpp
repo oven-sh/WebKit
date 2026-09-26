@@ -904,23 +904,74 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_with_this)
     LLINT_RETURN_PROFILED(result);
 }
 
-static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
+#if USE(JSVALUE64)
+// m_missCount is in what was padding: the metadata of put_by_id has the size that it had.
+static_assert(sizeof(OpPutById::Metadata) == 3 * sizeof(uint32_t) + sizeof(uint32_t) + sizeof(void*));
+#endif
+
+// The entry of a site in ProtoLoad mode in the watchpoint map, where the counts of the site are. Null if nothing
+// counts for such a site.
+static NEVER_INLINE CodeBlock::LLIntGetByIdGuards* guardsOfSiteInProtoLoadMode(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex)
+{
+    if (!Options::missCountForLLIntTierUp() && !Options::useLLIntPrototypeCacheRearming())
+        return nullptr;
+    auto& watchpointMap = codeBlock->llintGetByIdWatchpointMap();
+    auto iterator = watchpointMap.find(bytecodeIndex);
+    // A prototype load cache has a watchpoint for the slot base at least, so the site has an entry.
+    ASSERT(iterator != watchpointMap.end());
+    return iterator == watchpointMap.end() ? nullptr : &iterator->value;
+}
+
+// A cache of an own property or of the length of an array takes the place of a cache with guards.
+// The site gets its counts back in its metadata, and the guards go away.
+static NEVER_INLINE void dropGuardedGetByIdCache(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata)
+{
+    GetByIdSiteCounts counts = codeBlock->llintGetByIdSiteCounts(bytecodeIndex, metadata);
+    {
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        metadata.clearToDefaultModeWithoutCache(counts);
+    }
+    codeBlock->llintGetByIdWatchpointMap().remove(bytecodeIndex);
+}
+
+// True if the structure of the receiver can be the proof that the receiver still does not have a property.
+static bool canCacheAbsenceFor(Structure* structure)
+{
+    TypeInfo typeInfo = structure->typeInfo();
+    if (typeInfo.prohibitsPropertyCaching() || typeInfo.getOwnPropertySlotIsImpure() || typeInfo.getOwnPropertySlotIsImpureForPropertyAbsence())
+        return false;
+    // A global object gets a variable of a later script with no new structure.
+    if (typeInfo.type() == GlobalObjectType || structure->isProxy())
+        return false;
+    // A dictionary gets a property with no new structure. tryToSetUpGetByIdPrototypeCache() makes it flat first, once.
+    return !structure->isDictionary() || !structure->hasBeenFlattenedBefore();
+}
+
+// Makes the prototype load or unset cache of the site for this receiver, with the counts that the site has from
+// here. Returns false if the site has the cache that it had.
+static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, JSCell* baseCell, PropertySlot& slot, const Identifier& ident, GetByIdSiteCounts counts)
 {
     Structure* structure = baseCell->structure();
 
     if (structure->typeInfo().prohibitsPropertyCaching())
-        return;
+        return false;
     
     if (structure->needImpurePropertyWatchpoint())
-        return;
+        return false;
+
+    if (slot.isUnset() && !canCacheAbsenceFor(structure))
+        return false;
 
     if (structure->isDictionary()) {
         if (structure->hasBeenFlattenedBefore())
-            return;
+            return false;
         structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
     }
 
-    prepareChainForCaching(globalObject, baseCell, ident.impl(), slot);
+    auto cacheStatus = prepareChainForCaching(globalObject, baseCell, ident.impl(), slot);
+    // As for the inline cache of the JIT, see tryCacheGetBy().
+    if (slot.isUnset() && (!cacheStatus || cacheStatus->usesPolyProto || !structure->propertyAccessesAreCacheable()))
+        return false;
 
     ObjectPropertyConditionSet conditions;
     if (slot.isUnset())
@@ -929,7 +980,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         conditions = generateConditionsForPrototypePropertyHit(vm, codeBlock, globalObject, structure, slot.slotBase(), ident.impl());
 
     if (!conditions.isValid())
-        return;
+        return false;
 
     PropertyOffset offset = invalidOffset;
     CodeBlock::StructureWatchpointMap& watchpointMap = codeBlock->llintGetByIdWatchpointMap();
@@ -938,7 +989,9 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     for (ObjectPropertyCondition condition : conditions) {
         auto& watchpoint = watchpoints[index++];
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
-            return;
+            return false;
+        if (slot.isUnset() && condition.object()->type() == GlobalObjectType)
+            return false;
         if (condition.condition().kind() == PropertyCondition::Presence)
             offset = condition.condition().offset();
         watchpoint.initialize(codeBlock, condition, bytecodeIndex);
@@ -946,20 +999,56 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     }
 
     ASSERT((offset == invalidOffset) == slot.isUnset());
-    // The countdown of a site runs once, so the site has no entry yet.
-    auto result = watchpointMap.add(bytecodeIndex, CodeBlock::LLIntGetByIdGuards { structure->id(), WTF::move(watchpoints) });
-    ASSERT_UNUSED(result, result.isNewEntry);
+    // From here the new cache is certain. The entry that the site has, of its cache or of an older one, goes away.
+    // A receiver with no prototype has no condition. The collector clears its cache when the structure dies.
+    if (watchpoints.isEmpty())
+        watchpointMap.remove(bytecodeIndex);
+    else
+        watchpointMap.set(bytecodeIndex, CodeBlock::LLIntGetByIdGuards { structure->id(), counts, WTF::move(watchpoints) });
 
     {
         ConcurrentJSLocker locker(codeBlock->m_lock);
         if (slot.isUnset())
-            metadata.setUnsetMode(structure);
+            metadata.setUnsetMode(structure, counts);
         else {
             ASSERT(slot.isValue());
             metadata.setProtoLoadMode(structure, offset, slot.slotBase());
         }
     }
     vm.writeBarrier(codeBlock);
+    return true;
+}
+
+// Counts one result that a prototype load or unset cache can be for. The site tries to cache the result that
+// ends its countdown.
+static ALWAYS_INLINE void countDownToGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
+{
+    // A site in ProtoLoad mode has a cache for a receiver of another structure, and counts down in its entry.
+    // The site has its counts in its metadata again if a watchpoint cleared that cache after the call was counted.
+    if (metadata.mode != GetByIdMode::ProtoLoad)
+        guardsInProtoLoadMode = nullptr;
+    else if (!guardsInProtoLoadMode)
+        return;
+    uint8_t& hitCount = guardsInProtoLoadMode ? guardsInProtoLoadMode->counts.hitCountForLLIntCaching : metadata.hitCountForLLIntCaching;
+    if (!hitCount || --hitCount)
+        return;
+
+    GetByIdSiteCounts counts = guardsInProtoLoadMode ? guardsInProtoLoadMode->counts : metadata.counts();
+    counts.cacheSetupCount++;
+    counts.rearm();
+    if (tryToSetUpGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident, counts))
+        return;
+    // The try counts, and the site has the cache that it had.
+    if (metadata.mode != GetByIdMode::ProtoLoad) {
+        metadata.cacheSetupCount = counts.cacheSetupCount;
+        metadata.hitCountForLLIntCaching = counts.hitCountForLLIntCaching;
+        return;
+    }
+    // The try can change the watchpoint map: the chain of the receiver can have the objects of the chain of the cache.
+    auto& watchpointMap = codeBlock->llintGetByIdWatchpointMap();
+    auto iterator = watchpointMap.find(bytecodeIndex);
+    if (iterator != watchpointMap.end())
+        iterator->value.counts = counts;
 }
 
 static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeBlock, JSGlobalObject* globalObject, JSValue baseValue, const Identifier& ident, GetByIdModeMetadata& metadata)
@@ -969,12 +1058,21 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     PropertySlot slot(baseValue, PropertySlot::PropertySlot::InternalMethodType::Get);
 
     JSValue result = baseValue.get<true>(globalObject, ident, slot);
+
+    // The call counts also when the read throws. From here to the end nothing runs that can change the watchpoint
+    // map, but for the try to make a cache.
+    CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode = nullptr;
+    if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
+        codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
+    else if ((guardsInProtoLoadMode = guardsOfSiteInProtoLoadMode(codeBlock, bytecodeIndex)))
+        codeBlock->noteLLIntInlineCacheMiss(guardsInProtoLoadMode->counts.missCount);
     RETURN_IF_EXCEPTION(throwScope, { });
 
-    if (Options::useLLIntICs()
-        && baseValue.isCell()
-        && slot.isCacheable()
-        && !slot.isUnset()) {
+    if (!Options::useLLIntICs() || !baseValue.isCell())
+        return result;
+
+    JSCell* baseCell = baseValue.asCell();
+    if (slot.isCacheable() && !slot.isUnset()) {
         {
             StructureID oldStructureID;
             switch (metadata.mode) {
@@ -1001,29 +1099,36 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
             }
         }
 
-        JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
         if (slot.isValue() && slot.slotBase() == baseValue) {
+            if (metadata.hasGuards()) [[unlikely]]
+                dropGuardedGetByIdCache(codeBlock, bytecodeIndex, metadata);
+
             ConcurrentJSLocker locker(codeBlock->m_lock);
             // Start out by clearing out the old cache.
             metadata.clearToDefaultModeWithoutCache();
 
-            // Prevent the prototype cache from ever happening.
-            metadata.hitCountForLLIntCaching = 0;
+            // Without rearming, this prevents the prototype cache from ever happening.
+            metadata.hitCountForLLIntCaching = GetByIdSiteCounts::rearmedHitCount(metadata.cacheSetupCount);
         
             if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
                 metadata.defaultMode.structureID = structure->id();
                 metadata.defaultMode.cachedOffset = slot.cachedOffset();
                 vm.writeBarrier(codeBlock);
             }
-        } else if (metadata.hitCountForLLIntCaching && slot.isValue()) [[unlikely]] {
+        } else if (slot.isValue() && metadata.mayCountDown(guardsInProtoLoadMode)) [[unlikely]] {
             ASSERT(slot.slotBase() != baseValue);
-
-            if (!(--metadata.hitCountForLLIntCaching))
-                setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
+            countDownToGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, guardsInProtoLoadMode, baseCell, slot, ident);
         }
-    } else if (Options::useLLIntICs() && isJSArray(baseValue) && ident == vm.propertyNames->length)
+    } else if (slot.isUnset()) {
+        // A receiver that can never have this cache does not use up the countdown.
+        if (Options::useLLIntUnsetCaching() && metadata.mayCountDown(guardsInProtoLoadMode) && !slot.isTaintedByOpaqueObject() && canCacheAbsenceFor(baseCell->structure()))
+            countDownToGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, guardsInProtoLoadMode, baseCell, slot, ident);
+    } else if (isJSArray(baseCell) && ident == vm.propertyNames->length) {
+        if (metadata.hasGuards()) [[unlikely]]
+            dropGuardedGetByIdCache(codeBlock, bytecodeIndex, metadata);
         metadata.setArrayLengthMode();
+    }
 
     return result;
 }
@@ -1185,7 +1290,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     auto bytecode = pc->as<OpPutById>();
     auto& metadata = bytecode.metadata(codeBlock);
     const Identifier& ident = codeBlock->identifier(bytecode.m_property);
-    
+
+    codeBlock->noteLLIntInlineCacheMiss(metadata.m_missCount);
+
     JSValue baseValue = getOperand(callFrame, bytecode.m_base);
     PutPropertySlot slot(baseValue, bytecode.m_flags.ecmaMode().isStrict(), codeBlock->putByIdContext());
 

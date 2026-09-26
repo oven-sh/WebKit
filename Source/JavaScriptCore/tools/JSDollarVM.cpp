@@ -33,6 +33,7 @@
 #include "ArrayPrototype.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
+#include "BytecodeStructs.h"
 #include "CachedCall.h"
 #include "CharacterPropertyDataGenerator.h"
 #include "CodeBlock.h"
@@ -2193,6 +2194,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockFor);
 static JSC_DECLARE_HOST_FUNCTION(functionHasDecodedExpressionInfo);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfOwnCallLinkInfos);
 static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCaches);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCacheHits);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdMissCounts);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCacheSetupCounts);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -2982,6 +2987,153 @@ JSC_DEFINE_HOST_FUNCTION(functionHasValueProfilePredictions, (JSGlobalObject* gl
         return JSValue::encode(jsUndefined());
     MetadataTable* metadataTable = codeBlock->baselineAlternative()->metadataTable();
     return JSValue::encode(jsBoolean(metadataTable && metadataTable->valueProfilePredictions()));
+}
+
+// The get_by_id and get_length sites of the function that the LLInt caches for, in bytecode order.
+struct LLIntGetByIdSite {
+    GetByIdModeMetadata metadata; // A copy.
+    GetByIdSiteCounts counts;
+};
+
+static Vector<LLIntGetByIdSite> llintGetByIdSitesFromArg(JSGlobalObject* globalObject, CallFrame* callFrame, bool& hasCode)
+{
+    Vector<LLIntGetByIdSite> result;
+    CodeBlock* codeBlock = codeBlockFromArg(globalObject, callFrame);
+    hasCode = !!codeBlock;
+    if (!codeBlock)
+        return result;
+    codeBlock = codeBlock->baselineAlternative();
+    for (const auto& instruction : codeBlock->instructions()) {
+        GetByIdModeMetadata* metadata = nullptr;
+        if (instruction->is<OpGetById>())
+            metadata = &instruction->as<OpGetById>().metadata(codeBlock).m_modeMetadata;
+        else if (instruction->is<OpGetLength>())
+            metadata = &instruction->as<OpGetLength>().metadata(codeBlock).m_modeMetadata;
+        else
+            continue;
+        result.append({ *metadata, codeBlock->llintGetByIdSiteCounts(BytecodeIndex(instruction.offset()), *metadata) });
+    }
+    return result;
+}
+
+// Usage: $vm.llintGetByIdCaches(functionObj)
+// What each get_by_id and get_length instruction of the function has in its LLInt cache, in bytecode order: "empty",
+// "self" (an own property), "proto" (a property of the prototype chain), "unset" (no property) or "arrayLength".
+// Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCaches, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasCode = false;
+    auto sites = llintGetByIdSitesFromArg(globalObject, callFrame, hasCode);
+    if (!hasCode)
+        return JSValue::encode(jsUndefined());
+
+    auto describe = [](const GetByIdModeMetadata& metadata) -> ASCIILiteral {
+        switch (metadata.mode) {
+        case GetByIdMode::Default:
+            return metadata.defaultMode.structureID ? "self"_s : "empty"_s;
+        case GetByIdMode::ProtoLoad:
+            return "proto"_s;
+        case GetByIdMode::Unset:
+            return "unset"_s;
+        case GetByIdMode::ArrayLength:
+            return "arrayLength"_s;
+        }
+        return "invalid"_s;
+    };
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& site : sites) {
+        result->push(globalObject, jsNontrivialString(vm, describe(site.metadata)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.llintGetByIdCacheHits(functionObj, receiver)
+// For each get_by_id and get_length instruction of the function, in bytecode order: whether the cache that the site
+// has now is for this receiver. Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCacheHits, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasCode = false;
+    auto sites = llintGetByIdSitesFromArg(globalObject, callFrame, hasCode);
+    if (!hasCode)
+        return JSValue::encode(jsUndefined());
+    JSValue receiver = callFrame->argument(1);
+
+    auto hits = [&](const GetByIdModeMetadata& metadata) {
+        if (!receiver.isCell())
+            return false;
+        JSCell* cell = receiver.asCell();
+        switch (metadata.mode) {
+        case GetByIdMode::Default:
+        case GetByIdMode::ProtoLoad:
+        case GetByIdMode::Unset:
+            return metadata.defaultMode.structureID == cell->structureID();
+        case GetByIdMode::ArrayLength:
+            return isJSArray(cell) && !!(cell->indexingType() & IndexingShapeMask);
+        }
+        return false;
+    };
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& site : sites) {
+        result->push(globalObject, jsBoolean(hits(site.metadata)));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.llintGetByIdMissCounts(functionObj)
+// For each get_by_id and get_length instruction of the function, in bytecode order: the calls of the LLInt slow path
+// that the site counted, see Options::missCountForLLIntTierUp(). Undefined if the function has no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdMissCounts, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasCode = false;
+    auto sites = llintGetByIdSitesFromArg(globalObject, callFrame, hasCode);
+    if (!hasCode)
+        return JSValue::encode(jsUndefined());
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& site : sites) {
+        result->push(globalObject, jsNumber(site.counts.missCount));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.llintGetByIdCacheSetupCounts(functionObj)
+// For each get_by_id and get_length instruction of the function, in bytecode order: the times that the site tried to
+// make a prototype load or unset cache, see Options::useLLIntPrototypeCacheRearming(). Undefined if the function has
+// no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCacheSetupCounts, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasCode = false;
+    auto sites = llintGetByIdSitesFromArg(globalObject, callFrame, hasCode);
+    if (!hasCode)
+        return JSValue::encode(jsUndefined());
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& site : sites) {
+        result->push(globalObject, jsNumber(site.counts.cacheSetupCount));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
 }
 
 // Usage: $vm.print("codeblock = ", $vm.codeBlockFor(functionObj))
@@ -5902,6 +6054,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "hasDecodedExpressionInfo"_s, functionHasDecodedExpressionInfo, 1);
     addFunction(vm, allowIfNotFuzz, "numberOfOwnCallLinkInfos"_s, functionNumberOfOwnCallLinkInfos, 1);
     addFunction(vm, allowIfNotFuzz, "hasValueProfilePredictions"_s, functionHasValueProfilePredictions, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCaches"_s, functionLLIntGetByIdCaches, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCacheHits"_s, functionLLIntGetByIdCacheHits, 2);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdMissCounts"_s, functionLLIntGetByIdMissCounts, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCacheSetupCounts"_s, functionLLIntGetByIdCacheSetupCounts, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "lineStartTableIsBuilt"_s, functionLineStartTableIsBuilt, 1);
