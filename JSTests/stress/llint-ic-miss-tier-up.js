@@ -1,5 +1,6 @@
 //@ skip if not $jitTests
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=150", "--missCountForLLIntTierUp=12")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=3")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=0")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0")
@@ -54,9 +55,11 @@ function expectEarly(name, call) {
     }
     if (!call)
         throw new Error(name + " did not leave the LLInt in " + calls + " calls");
-    // The call with the last of the misses has more than thresholdForJITSoon (30) already, at 15 for each call.
-    if (call > missCount + 2)
-        throw new Error(name + " left the LLInt in call " + call + ", expected call " + (missCount + 2) + " or earlier");
+    // The executions so far count, at 15 for each call. So the function waits for the last of the misses, or
+    // for thresholdForJITSoon from its first call, and not for thresholdForJITSoon from the last of the misses.
+    const latest = Math.max(missCount, Math.ceil(options.thresholdForJITSoon / 15)) + 2;
+    if (call > latest)
+        throw new Error(name + " left the LLInt in call " + call + ", expected call " + latest + " or earlier");
     if (call < missCount)
         throw new Error(name + " left the LLInt in call " + call + ", before " + missCount + " misses");
 }
@@ -218,6 +221,28 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     expectCount(5, "after a collection");
 }
 
+// The count stays with the site when an own property takes the place of a prototype load cache.
+if (options.useLLIntICs && (missCount > 8 || !missCount)) {
+    class WithMethod {
+        method() { }
+    }
+    WithMethod.prototype.alsoUniqueToThisTest = true;
+    function replaced(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const viaPrototype = new WithMethod;
+    for (let i = 0; i < 3; ++i)
+        shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "proto");
+    const own = { method() { } };
+    shouldBe(replaced(own), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "self");
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 3 : 0, "the count of replaced()");
+    shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 4 : 0, "the count of replaced() after one more miss");
+}
+
 // One call with a long loop: the loop enters the Baseline JIT code.
 {
     function loop(objects, turns) {
@@ -233,7 +258,7 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     if (expectTierUp) {
         if (!turn)
             throw new Error("the loop did not leave the LLInt in 2000 turns");
-        if (turn > missCount + 100)
+        if (turn > Math.max(missCount, options.thresholdForJITSoon) + 50)
             throw new Error("the loop left the LLInt in turn " + turn);
     } else
         shouldBe(turn, 0, "the loop must stay in the LLInt");
