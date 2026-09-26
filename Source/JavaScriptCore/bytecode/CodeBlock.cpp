@@ -1877,7 +1877,10 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing ", opName, " LLInt property access.");
-            modeMetadata.clearToDefaultModeWithoutCache(modeMetadata.counts());
+            GetByIdSiteCounts counts = modeMetadata.counts();
+            if (modeMetadata.mode == GetByIdMode::Unset)
+                counts.rearm();
+            modeMetadata.clearToDefaultModeWithoutCache(counts);
         };
 
         m_metadata->forEach<OpIteratorOpen>([&] (auto& metadata) {
@@ -2134,8 +2137,11 @@ void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex)
     RELEASE_ASSERT(metadata);
     // The structure of the receiver guards a cache of an own property or of the length of an array.
     // Watchpoints are for the other two.
-    if (metadata->mode == GetByIdMode::ProtoLoad || metadata->mode == GetByIdMode::Unset)
-        metadata->clearToDefaultModeWithoutCache(llintGetByIdSiteCounts(bytecodeIndex, *metadata));
+    if (!metadata->hasGuards())
+        return;
+    GetByIdSiteCounts counts = llintGetByIdSiteCounts(bytecodeIndex, *metadata);
+    counts.rearm();
+    metadata->clearToDefaultModeWithoutCache(counts);
 }
 
 #if ENABLE(JIT)
