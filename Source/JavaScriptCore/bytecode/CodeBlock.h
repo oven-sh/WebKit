@@ -77,6 +77,7 @@ class UnlinkedCodeBlock;
 struct OpCatch;
 struct SimpleJumpTable;
 struct StringJumpTable;
+union GetByIdModeMetadata;
 
 enum class AccessType : int8_t;
 enum class CompilationResult : uint8_t;
@@ -650,8 +651,18 @@ public:
         return m_unlinkedCode->llintExecuteCounter();
     }
 
-    typedef UncheckedKeyHashMap<std::tuple<StructureID, BytecodeIndex>, FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>> StructureWatchpointMap;
+    // What guards the prototype load cache of one get_by_id site in the LLInt.
+    struct LLIntGetByIdGuards {
+        StructureID structureID; // Of the receiver that the cache is for.
+        FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint> watchpoints;
+    };
+    // A site is a BytecodeIndex with its checkpoint: an instruction such as iterator_next has more than one.
+    typedef UncheckedKeyHashMap<BytecodeIndex, LLIntGetByIdGuards> StructureWatchpointMap;
     StructureWatchpointMap& llintGetByIdWatchpointMap() LIFETIME_BOUND { return m_llintGetByIdWatchpointMap; }
+    // The LLInt cache of the get_by_id site. Null if the instruction there has no such site.
+    GetByIdModeMetadata* llintGetByIdModeMetadata(BytecodeIndex);
+    // For a watchpoint of the site that fired, and for the collector.
+    void clearLLIntGetByIdCache(BytecodeIndex);
 
     // Functions for controlling when tiered compilation kicks in. This
     // controls both when the optimizing compiler is invoked and when OSR

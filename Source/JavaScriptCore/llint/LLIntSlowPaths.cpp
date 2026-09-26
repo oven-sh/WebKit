@@ -946,7 +946,8 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
     }
 
     ASSERT((offset == invalidOffset) == slot.isUnset());
-    auto result = watchpointMap.add(std::make_tuple(structure->id(), bytecodeIndex), WTF::move(watchpoints));
+    // The countdown of a site runs once, so the site has no entry yet.
+    auto result = watchpointMap.add(bytecodeIndex, CodeBlock::LLIntGetByIdGuards { structure->id(), WTF::move(watchpoints) });
     ASSERT_UNUSED(result, result.isNewEntry);
 
     {
