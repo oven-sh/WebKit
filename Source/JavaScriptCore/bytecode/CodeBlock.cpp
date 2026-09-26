@@ -1877,10 +1877,9 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing ", opName, " LLInt property access.");
-            GetByIdSiteCounts counts = modeMetadata.counts();
             if (modeMetadata.mode == GetByIdMode::Unset)
-                counts.rearm();
-            modeMetadata.clearToDefaultModeWithoutCache(counts);
+                modeMetadata.hitCountForLLIntCaching = GetByIdSiteCounts::rearmedHitCount(modeMetadata.cacheSetupCount);
+            modeMetadata.clearToDefaultModeWithoutCache();
         };
 
         m_metadata->forEach<OpIteratorOpen>([&] (auto& metadata) {

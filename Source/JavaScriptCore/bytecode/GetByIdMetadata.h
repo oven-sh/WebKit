@@ -79,12 +79,13 @@ struct GetByIdSiteCounts {
     // alternate makes a cache with each try and gets no hit from it, so the tries have a limit.
     static constexpr uint8_t maxCacheSetupCount = 4;
 
-    // Starts the countdown again, if the site can still try.
-    void rearm()
+    // The countdown that a site starts again with, if it can still try. 0 if it cannot.
+    static uint8_t rearmedHitCount(uint8_t cacheSetupCount)
     {
         bool canTry = Options::useLLIntPrototypeCacheRearming() && cacheSetupCount < maxCacheSetupCount;
-        hitCountForLLIntCaching = canTry ? static_cast<uint8_t>(Options::prototypeHitCountForLLIntCaching()) : 0;
+        return canTry ? static_cast<uint8_t>(Options::prototypeHitCountForLLIntCaching()) : 0;
     }
+    void rearm() { hitCountForLLIntCaching = rearmedHitCount(cacheSetupCount); }
 };
 
 // This union shares ProtoLoad's cachedSlot with "hitCountForLLIntCaching" and "mode".
@@ -101,22 +102,24 @@ union GetByIdModeMetadata {
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
 
-    // The setters are for a site in any mode. One that leaves ProtoLoad mode has bytes of the pointer to the slot
-    // base where the counts are: the caller has the counts from CodeBlock::llintGetByIdSiteCounts().
+    // The setters with counts are for a site in any mode. One that leaves ProtoLoad mode has bytes of the pointer to
+    // the slot base where the counts are: the caller has the counts from CodeBlock::llintGetByIdSiteCounts().
     void clearToDefaultModeWithoutCache(GetByIdSiteCounts);
     void setUnsetMode(Structure*, GetByIdSiteCounts);
-    void setArrayLengthMode(GetByIdSiteCounts);
+    // These two are for a site that is not in ProtoLoad mode. Its counts stay where they are.
+    void clearToDefaultModeWithoutCache();
+    void setArrayLengthMode();
     // The caller keeps counts() in the entry of the site in CodeBlock::llintGetByIdWatchpointMap().
     void setProtoLoadMode(Structure*, PropertyOffset, JSObject*);
 
     // True if the cache is one that watchpoints guard. The structure of the receiver is enough for the others.
     bool hasGuards() const { return mode == GetByIdMode::ProtoLoad || mode == GetByIdMode::Unset; }
 
-    // False if the countdown of the site is over. True for a site in ProtoLoad mode whose entry has to say.
-    bool mayCountDown() const
+    // False if the countdown of the site is over. The counts of a site in ProtoLoad mode are not in its metadata.
+    bool mayCountDown(const void* guardsInProtoLoadMode) const
     {
         if (mode == GetByIdMode::ProtoLoad)
-            return Options::useLLIntPrototypeCacheRearming();
+            return guardsInProtoLoadMode && Options::useLLIntPrototypeCacheRearming();
         return !!hitCountForLLIntCaching;
     }
 
@@ -160,6 +163,14 @@ inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache(GetByIdSiteCount
     setCounts(counts);
 }
 
+inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
+{
+    ASSERT(mode != GetByIdMode::ProtoLoad);
+    mode = GetByIdMode::Default;
+    defaultMode.structureID = StructureID();
+    defaultMode.cachedOffset = 0;
+}
+
 inline void GetByIdModeMetadata::setUnsetMode(Structure* structure, GetByIdSiteCounts counts)
 {
     mode = GetByIdMode::Unset;
@@ -168,15 +179,15 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure, GetByIdSiteC
     setCounts(counts);
 }
 
-inline void GetByIdModeMetadata::setArrayLengthMode(GetByIdSiteCounts counts)
+inline void GetByIdModeMetadata::setArrayLengthMode()
 {
+    ASSERT(mode != GetByIdMode::ProtoLoad);
     mode = GetByIdMode::ArrayLength;
     // We should clear the structure ID to avoid the old structure ID being saved.
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
     // Prevent the prototype cache from ever happening.
-    counts.hitCountForLLIntCaching = 0;
-    setCounts(counts);
+    hitCountForLLIntCaching = 0;
 }
 
 inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, PropertyOffset offset, JSObject* cachedSlot)
