@@ -1192,7 +1192,7 @@ CodeBlock::~CodeBlock()
         if (!m_llintGetByIdWatchpointMap.isEmpty()) {
             // Do some spot checks.
             auto iterator = m_llintGetByIdWatchpointMap.begin();
-            FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>& watchpoints = iterator.get()->value;
+            FixedVector<LLIntPrototypeLoadAdaptiveStructureWatchpoint>& watchpoints = iterator.get()->value.watchpoints;
             auto numberOfWatchpoints = watchpoints.size();
             RELEASE_ASSERT(numberOfWatchpoints);
 
@@ -1876,7 +1876,7 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
                 return;
             dataLogLnIf(Options::verboseOSR(), "Clearing ", opName, " LLInt property access.");
-            LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(modeMetadata);
+            modeMetadata.clearToDefaultModeWithoutCache();
         };
 
         m_metadata->forEach<OpIteratorOpen>([&] (auto& metadata) {
@@ -2059,62 +2059,70 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
     // then cleared the cache without GCing in between.
     m_llintGetByIdWatchpointMap.removeIf([&] (const StructureWatchpointMap::KeyValuePairType& pair) -> bool {
         auto clear = [&] () {
-            BytecodeIndex bytecodeIndex = std::get<1>(pair.key);
-            auto& instruction = instructions().at(bytecodeIndex.offset());
-            OpcodeID opcode = instruction->opcodeID();
-            switch (opcode) {
-            case op_get_by_id: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt property access.");
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpGetById>().metadata(this).m_modeMetadata);
-                break;
-            }
-            case op_get_length: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt property access.");
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpGetLength>().metadata(this).m_modeMetadata);
-                break;
-            }
-            case op_iterator_open: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt iterator open property access.");
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpIteratorOpen>().metadata(this).m_modeMetadata);
-                break;
-            }
-            case op_async_iterator_open: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt async iterator open property access.");
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(instruction->as<OpAsyncIteratorOpen>().metadata(this).m_modeMetadata);
-                break;
-            }
-            case op_iterator_next: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt iterator next property access.");
-                // FIXME: We don't really want to clear both caches here but it's kinda annoying to figure out which one this is referring to...
-                // See: https://bugs.webkit.org/show_bug.cgi?id=210693
-                auto& metadata = instruction->as<OpIteratorNext>().metadata(this);
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(metadata.m_doneModeMetadata);
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(metadata.m_valueModeMetadata);
-                break;
-            }
-            case op_instanceof: {
-                dataLogLnIf(Options::verboseOSR(), "Clearing LLInt instanceof property access.");
-                auto& metadata = instruction->as<OpInstanceof>().metadata(this);
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(metadata.m_hasInstanceModeMetadata);
-                LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(metadata.m_prototypeModeMetadata);
-                break;
-            }
-            default:
-                break;
-            }
+            dataLogLnIf(Options::verboseOSR(), "Clearing LLInt property access at ", pair.key, ".");
+            clearLLIntGetByIdCache(pair.key);
             return true;
         };
 
-        if (!vm.heap.isMarked(std::get<0>(pair.key).decode()))
+        if (!vm.heap.isMarked(pair.value.structureID.decode()))
             return clear();
 
-        for (const LLIntPrototypeLoadAdaptiveStructureWatchpoint& watchpoint : pair.value) {
+        for (const LLIntPrototypeLoadAdaptiveStructureWatchpoint& watchpoint : pair.value.watchpoints) {
             if (!watchpoint.key().isStillLive(vm))
                 return clear();
         }
 
         return false;
     });
+}
+
+GetByIdModeMetadata* CodeBlock::llintGetByIdModeMetadata(BytecodeIndex bytecodeIndex)
+{
+    auto& instruction = instructions().at(bytecodeIndex.offset());
+    switch (instruction->opcodeID()) {
+    case op_get_by_id:
+        return &instruction->as<OpGetById>().metadata(this).m_modeMetadata;
+    case op_get_length:
+        return &instruction->as<OpGetLength>().metadata(this).m_modeMetadata;
+    case op_iterator_open:
+        return &instruction->as<OpIteratorOpen>().metadata(this).m_modeMetadata;
+    case op_async_iterator_open:
+        return &instruction->as<OpAsyncIteratorOpen>().metadata(this).m_modeMetadata;
+    case op_iterator_next: {
+        auto& metadata = instruction->as<OpIteratorNext>().metadata(this);
+        switch (bytecodeIndex.checkpoint()) {
+        case OpIteratorNext::getDone:
+            return &metadata.m_doneModeMetadata;
+        case OpIteratorNext::getValue:
+            return &metadata.m_valueModeMetadata;
+        default:
+            return nullptr;
+        }
+    }
+    case op_instanceof: {
+        auto& metadata = instruction->as<OpInstanceof>().metadata(this);
+        switch (bytecodeIndex.checkpoint()) {
+        case OpInstanceof::getHasInstance:
+            return &metadata.m_hasInstanceModeMetadata;
+        case OpInstanceof::getPrototype:
+            return &metadata.m_prototypeModeMetadata;
+        default:
+            return nullptr;
+        }
+    }
+    default:
+        return nullptr;
+    }
+}
+
+void CodeBlock::clearLLIntGetByIdCache(BytecodeIndex bytecodeIndex)
+{
+    GetByIdModeMetadata* metadata = llintGetByIdModeMetadata(bytecodeIndex);
+    RELEASE_ASSERT(metadata);
+    // The structure of the receiver guards a cache of an own property or of the length of an array.
+    // Watchpoints are for the other two.
+    if (metadata->hasGuards())
+        metadata->clearToDefaultModeWithoutCache();
 }
 
 #if ENABLE(JIT)

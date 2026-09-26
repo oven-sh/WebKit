@@ -80,10 +80,16 @@ union GetByIdModeMetadata {
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
 
+    // A site that leaves ProtoLoad mode has the low bytes of the pointer to the slot base in the bytes that
+    // mode and hitCountForLLIntCaching do not use. No mode but ProtoLoad reads them. They are zero from here.
+    void clearBytesOfCachedSlot();
     void clearToDefaultModeWithoutCache();
     void setUnsetMode(Structure*);
     void setArrayLengthMode();
     void setProtoLoadMode(Structure*, PropertyOffset, JSObject*);
+
+    // True if the cache is one that watchpoints guard. The structure of the receiver is enough for the others.
+    bool hasGuards() const { return mode == GetByIdMode::ProtoLoad || mode == GetByIdMode::Unset; }
 
     struct {
         uint32_t padding1;
@@ -101,11 +107,18 @@ union GetByIdModeMetadata {
 };
 static_assert(sizeof(GetByIdModeMetadata) == 16);
 
+inline void GetByIdModeMetadata::clearBytesOfCachedSlot()
+{
+    padding3 = 0;
+    padding4 = 0;
+}
+
 inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
 {
     mode = GetByIdMode::Default;
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
+    clearBytesOfCachedSlot();
 }
 
 inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
@@ -113,6 +126,7 @@ inline void GetByIdModeMetadata::setUnsetMode(Structure* structure)
     mode = GetByIdMode::Unset;
     unsetMode.structureID = structure->id();
     defaultMode.cachedOffset = 0;
+    clearBytesOfCachedSlot();
 }
 
 inline void GetByIdModeMetadata::setArrayLengthMode()
@@ -121,6 +135,7 @@ inline void GetByIdModeMetadata::setArrayLengthMode()
     // We should clear the structure ID to avoid the old structure ID being saved.
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
+    clearBytesOfCachedSlot();
     // Prevent the prototype cache from ever happening.
     hitCountForLLIntCaching = 0;
 }
