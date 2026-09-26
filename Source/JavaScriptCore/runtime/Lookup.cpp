@@ -69,8 +69,9 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // slot as not found so JSValue::get / getOwnPropertyDescriptor's
         // EXCEPTION_ASSERT(!scope.exception() || !result) holds. No ThrowScope
         // here: a ThrowScope would simulate a throw on every first static-table
-        // lookup, and callers of getOwnPropertySlot don't check for one.
-        if (vm.exceptionForInspection()) [[unlikely]]
+        // lookup, and callers of getOwnPropertySlot don't check for one. This
+        // read is the exception check for the builder's own ThrowScope.
+        if (vm.exception()) [[unlikely]]
             return false;
 
         offset = thisObject->getDirectOffset(vm, propertyName, attributes);
