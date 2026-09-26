@@ -1788,13 +1788,13 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 #endif // ENABLE(FUZZILLI)
 
 #if USE(BUN_JSC_ADDITIONS) && !ENABLE(FUZZILLI)
-// For tests, once $vm.reportUnhandledRejectionsInAsyncContext(): if the global `asyncContextsWhenRejected` is a
-// Map, the async context ($vm.asyncContext()) the embedder is told of an unhandled rejection in is set in it
-// for the promise.
+// For tests, once $vm.setReportsUnhandledRejectionsInAsyncContext(): records, in the global Map
+// `asyncContextsWhenRejected` if there is one, the async context that is current when the tracker is told of each
+// promise.
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     VM& vm = globalObject->vm();
-    if (operation == JSPromiseRejectionOperation::Reject && vm.unhandledRejectionsAreReportedInAsyncContext() && Options::useDollarVM()) {
+    if (operation == JSPromiseRejectionOperation::Reject && vm.reportsUnhandledRejectionsInAsyncContext()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue contexts = globalObject->getDirect(vm, Identifier::fromString(vm, "asyncContextsWhenRejected"_s));
         if (auto* map = contexts ? dynamicDowncast<JSMap>(contexts) : nullptr)

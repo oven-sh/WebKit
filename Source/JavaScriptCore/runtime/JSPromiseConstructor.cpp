@@ -27,7 +27,6 @@
 #include "JSPromiseConstructor.h"
 
 #include "AggregateError.h"
-#include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
 #include "GetterSetter.h"
@@ -45,8 +44,12 @@
 #include "MicrotaskQueueInlines.h"
 #include "ObjectConstructor.h"
 #include "VMInlines.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 
 namespace JSC {
+
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
@@ -294,8 +297,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // What rejects it is a job with no handler.
-    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
-        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
 #endif
 
     auto callReject = [&]() -> void {
@@ -496,8 +498,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // What rejects it is a job with no handler.
-    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
-        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
 #endif
 
     auto callReject = [&]() -> void {
@@ -1262,8 +1263,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
     // What rejects it is a job with no handler.
-    if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
-        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
 #endif
 
     auto callReject = [&]() -> void {

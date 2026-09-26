@@ -534,7 +534,7 @@ public:
     bool m_mightBeExecutingTaintedCode { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_asyncContextTrackingEnabled { false };
-    bool m_unhandledRejectionsAreReportedInAsyncContext { false };
+    bool m_reportsUnhandledRejectionsInAsyncContext { false };
 #endif
     ClientData* clientData { nullptr };
 #if ENABLE(WEBASSEMBLY)
@@ -670,12 +670,12 @@ public:
     // been captured anywhere in this VM, so the capture/restore paths are skipped.
     bool isAsyncContextTrackingEnabled() const { return m_asyncContextTrackingEnabled; }
     void setAsyncContextTrackingEnabled() { m_asyncContextTrackingEnabled = true; }
-    // For an embedder that decides whose an unhandled rejection is by the async context it is told of it in
-    // (promiseRejectionTracker): from here on, a promise that a job with no handler rejects is reported in
-    // the async context that job was scheduled in. See JSPromise::keepAsyncContextForUnhandledRejection().
-    // Nothing is kept until async contexts are tracked.
-    bool unhandledRejectionsAreReportedInAsyncContext() const { return m_unhandledRejectionsAreReportedInAsyncContext; }
-    void reportUnhandledRejectionsInAsyncContext() { m_unhandledRejectionsAreReportedInAsyncContext = true; }
+    // For an embedder that attributes an unhandled rejection to an owner by reading the current async context
+    // inside promiseRejectionTracker. Set once, never cleared: from then on a promise that a job with no handler
+    // rejects is reported in the async context that job was scheduled in, or in none.
+    // See JSPromise::keepAsyncContextForUnhandledRejection().
+    bool reportsUnhandledRejectionsInAsyncContext() const { return m_reportsUnhandledRejectionsInAsyncContext; }
+    void setReportsUnhandledRejectionsInAsyncContext() { m_reportsUnhandledRejectionsInAsyncContext = true; }
 #endif
     bool* addressOfMightBeExecutingTaintedCode() LIFETIME_BOUND { return &m_mightBeExecutingTaintedCode; }
     void setMightBeExecutingTaintedCode(bool value = true) { m_mightBeExecutingTaintedCode = value; }

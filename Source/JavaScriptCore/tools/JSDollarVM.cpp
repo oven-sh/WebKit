@@ -2345,7 +2345,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
-static JSC_DECLARE_HOST_FUNCTION(functionReportUnhandledRejectionsInAsyncContext);
+static JSC_DECLARE_HOST_FUNCTION(functionSetReportsUnhandledRejectionsInAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4279,11 +4279,13 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext, (JSGlobalObject* globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-// VM::reportUnhandledRejectionsInAsyncContext().
-JSC_DEFINE_HOST_FUNCTION(functionReportUnhandledRejectionsInAsyncContext, (JSGlobalObject* globalObject, CallFrame*))
+// Makes a promise that a job with no handler rejects be reported, as an unhandled rejection, in the async
+// context that job was scheduled in (VM::setReportsUnhandledRejectionsInAsyncContext()).
+// Usage: $vm.setReportsUnhandledRejectionsInAsyncContext()
+JSC_DEFINE_HOST_FUNCTION(functionSetReportsUnhandledRejectionsInAsyncContext, (JSGlobalObject* globalObject, CallFrame*))
 {
     DollarVMAssertScope assertScope;
-    globalObject->vm().reportUnhandledRejectionsInAsyncContext();
+    globalObject->vm().setReportsUnhandledRejectionsInAsyncContext();
     return JSValue::encode(jsUndefined());
 }
 #endif
@@ -6107,7 +6109,7 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
-    addFunction(vm, alwaysAllow, "reportUnhandledRejectionsInAsyncContext"_s, functionReportUnhandledRejectionsInAsyncContext, 0);
+    addFunction(vm, alwaysAllow, "setReportsUnhandledRejectionsInAsyncContext"_s, functionSetReportsUnhandledRejectionsInAsyncContext, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

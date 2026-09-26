@@ -1,15 +1,15 @@
 //@ requireOptions("--useDollarVM=1")
-// A promise that a job with no handler rejects, with nothing handling the rejection: the embedder is
-// told (promiseRejectionTracker) in the async context that job was scheduled in, once it has asked for that
-// (VM::reportUnhandledRejectionsInAsyncContext()). The shell's tracker notes the async context it is called
-// in, for the promise, in the Map `asyncContextsWhenRejected`.
+// A promise that a job with no handler rejects, with nothing handling the rejection: the embedder is told
+// (promiseRejectionTracker) in the async context that job was scheduled in, once it has asked for that
+// (VM::setReportsUnhandledRejectionsInAsyncContext()). The shell's tracker records the async context it is
+// called in, for the promise, in the Map `asyncContextsWhenRejected`.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
         throw new Error(message + ": expected " + String(expected) + " but got " + String(actual));
 }
 
-$vm.reportUnhandledRejectionsInAsyncContext();
+$vm.setReportsUnhandledRejectionsInAsyncContext();
 globalThis.asyncContextsWhenRejected = new Map();
 
 const get = () => $vm.asyncContext();
@@ -135,6 +135,7 @@ for (let round = 0; round < Math.max(2, testLoopCount / 50); round++) {
     check(round);
     checkValues(round);
 }
+
 // then() of another realm, called on an instance of a subclass of this one: the promise it returns is this
 // realm's, and what then() leaves is the other realm's.
 {
@@ -152,6 +153,44 @@ for (let round = 0; round < Math.max(2, testLoopCount / 50); round++) {
         const promise = inBoth(context, () => other.Promise.prototype.then.call(new Subclass((_, reject) => { Promise.resolve().then(() => reject(error())); }), noop));
         inBoth(context === A ? B : A, drainMicrotasks);
         shouldBe(asyncContextsWhenRejected.get(promise), context, `then() of another realm, in ${context.name}`);
+    }
+}
+
+// What script rejects is reported in the async context the script runs in, whatever the promise kept.
+{
+    for (const [name, combinator] of Object.entries({ race: "race", all: "all", any: "any" })) {
+        asyncContextsWhenRejected.clear();
+        let reject;
+        const element = new Promise(noop);
+        element.then = (_, rejectTheResult) => { reject = rejectTheResult; };
+        const result = inContext(A, () => Promise[combinator]([element]));
+        drainMicrotasks();
+        inContext(B, () => reject(name === "any" ? error() : error()));
+        if (name === "any")
+            continue; // Promise.any() rejects once every element has, in a job.
+        shouldBe(asyncContextsWhenRejected.get(result), B, `Promise.${name}() rejected by script`);
+    }
+}
+
+// The reject function of a capability is script: it runs in the async context the tracker is told in.
+{
+    let rejectedIn;
+    class Recording extends Promise {
+        constructor(executor) {
+            super((resolve, reject) => executor(resolve, reason => {
+                rejectedIn = get();
+                reject(reason);
+            }));
+        }
+    }
+    for (const context of [A, B, undefined]) {
+        asyncContextsWhenRejected.clear();
+        rejectedIn = "not rejected";
+        const source = new Promise((_, reject) => { Promise.resolve().then(() => reject(error())); });
+        const derived = inContext(context, () => Recording.prototype.then.call(Object.setPrototypeOf(source, Recording.prototype), noop));
+        inContext(context === A ? B : A, drainMicrotasks);
+        shouldBe(rejectedIn, context, `the reject function of a capability, in ${context?.name}`);
+        shouldBe(asyncContextsWhenRejected.get(derived), context, `the promise of a capability, in ${context?.name}`);
     }
 }
 

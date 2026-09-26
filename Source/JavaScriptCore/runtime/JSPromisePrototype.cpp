@@ -293,13 +293,10 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
             JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
             auto* context = JSSlimPromiseReaction::create(vm, resultPromise, onFinally, /* isFulfill */ false, /* next */ nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-            JSValue asyncContext = jsUndefined();
-            if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
-                asyncContext = globalObject->m_asyncContextData->getInternalField(0);
-                // What rejects resultPromise, if onFinally returns a promise, is a job with no handler.
-                if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
-                    resultPromise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
-            }
+            JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
+            // What rejects resultPromise, if onFinally returns a promise, is a job with no handler.
+            if (vm.isAsyncContextTrackingEnabled() && vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+                resultPromise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, nullptr, context, asyncContext);
 #else
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyReactionJob, nullptr, context);

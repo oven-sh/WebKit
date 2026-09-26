@@ -212,6 +212,9 @@ void JSPromise::pipeFrom(VM& vm, JSPromise* from)
         return;
     setFlags(flags() | isFirstResolvingFunctionCalledFlag);
 
+#if USE(BUN_JSC_ADDITIONS)
+    keepCurrentAsyncContextForUnhandledRejection(vm, realm(), this);
+#endif
     from->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFulfillWithoutHandlerJob, this, jsUndefined());
 }
 
@@ -685,7 +688,7 @@ ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* global
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// keepAsyncContextForUnhandledRejection().
+// Out of line so that rejectPromiseWithoutHandler() does not carry the swap scope's frame.
 static NEVER_INLINE void reportUnhandledRejectionInAsyncContext(VM& vm, JSGlobalObject* globalObject, JSPromise* promise, JSValue asyncContext)
 {
     AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
@@ -716,31 +719,29 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
         JSPromiseReaction* reactions = uncheckedDowncast<JSPromiseReaction>(payloadCell());
         uint16_t settledFlags = currentFlags | static_cast<uint16_t>(Status::Rejected);
 #if USE(BUN_JSC_ADDITIONS)
-        if (!(currentFlags & isHandledFlag)) {
-            // Nothing handles it: the embedder is told, in the async context the promise kept for that
-            // (keepAsyncContextForUnhandledRejection()).
-            JSValue keptAsyncContext = m_slot.get();
-            setSlot(vm, argument);
-            setPackedCell(vm, settledFlags, nullptr);
-            if constexpr (withoutHandler) {
-                if (!keptAsyncContext && vm.unhandledRejectionsAreReportedInAsyncContext())
-                    keptAsyncContext = jsUndefined();
+        if constexpr (withoutHandler) {
+            if (!(currentFlags & isHandledFlag)) {
+                // keepAsyncContextForUnhandledRejection().
+                JSValue keptAsyncContext = m_slot.get();
+                setSlot(vm, argument);
+                setPackedCell(vm, settledFlags, nullptr);
+                if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+                    reportUnhandledRejectionInAsyncContext(vm, globalObject, this, keptAsyncContext ? keptAsyncContext : jsUndefined());
+                else
+                    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+            } else {
+                setSlot(vm, argument);
+                setPackedCell(vm, settledFlags, nullptr);
             }
-            if (keptAsyncContext) [[unlikely]]
-                reportUnhandledRejectionInAsyncContext(vm, globalObject, this, keptAsyncContext);
-            else
-                globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-        } else {
+        } else
+#endif
+        {
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
-        }
-#else
-        setSlot(vm, argument);
-        setPackedCell(vm, settledFlags, nullptr);
 
-        if (!isHandled())
-            globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
-#endif
+            if (!isHandled())
+                globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Reject);
+        }
 
         if (!reactions)
             return;
@@ -759,6 +760,35 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
 void JSPromise::rejectPromiseWithoutHandler(VM& vm, JSValue argument)
 {
     rejectPromiseImpl<true>(vm, argument);
+}
+
+void JSPromise::rejectWithoutHandler(VM& vm, JSValue value)
+{
+    ASSERT(!value.inherits<Exception>());
+    if (!isFirstResolvingFunctionCalled()) {
+        setFlags(flags() | isFirstResolvingFunctionCalledFlag);
+        rejectPromiseImpl<true>(vm, value);
+    }
+}
+
+static JSPromise* promiseOf(JSValue promiseOrCapability)
+{
+    if (auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability))
+        return promise;
+    // A capability is of the realm then() was called in.
+    auto* capability = dynamicDowncast<JSObject>(promiseOrCapability);
+    if (!capability || capability->structure() != capability->realm()->promiseCapabilityObjectStructure())
+        return nullptr;
+    return dynamicDowncast<JSPromise>(capability->getDirect(promiseCapabilityPromisePropertyOffset));
+}
+
+JSValue JSPromise::asyncContextKeptForUnhandledRejection(JSValue promiseOrCapability)
+{
+    auto* promise = promiseOf(promiseOrCapability);
+    if (!promise || !promise->hasNothingButAKeptAsyncContext())
+        return jsUndefined();
+    JSValue kept = promise->m_slot.get();
+    return kept ? kept : jsUndefined();
 }
 #endif
 
@@ -1023,21 +1053,13 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// then() was called with no handler for a rejection, in an async context, and returned `promiseOrCapability`:
-// what rejects that is a job with no handler. (keepAsyncContextForUnhandledRejection())
+// then() was called with no handler for a rejection and returned `promiseOrCapability`: what rejects that is a
+// job with no handler.
 static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
 {
-    auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability);
-    if (!promise) {
-        // then() of an instance of a subclass returned the promise of a capability, which is of the realm then()
-        // was called in.
-        auto* capability = dynamicDowncast<JSObject>(promiseOrCapability);
-        if (!capability || capability->structure() != capability->realm()->promiseCapabilityObjectStructure())
-            return;
-        promise = dynamicDowncast<JSPromise>(capability->getDirect(promiseCapabilityPromisePropertyOffset));
-        if (!promise)
-            return;
-    }
+    auto* promise = promiseOf(promiseOrCapability);
+    if (!promise)
+        return;
     JSValue context = reaction->context();
     promise->keepAsyncContextForUnhandledRejection(vm, reaction->contextIsAsyncContext() ? context : AsyncContextSwapScope::unwrapContextTuple(context));
 }
@@ -1094,7 +1116,7 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
                 task = InternalMicrotask::PromiseResolveWithoutHandlerJob;
                 handler = argument;
                 arg = jsUndefined();
-                if (!isResolved && vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
+                if (!isResolved && vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
                     keepAsyncContextOfThen(vm, promise, fullReaction);
                 break;
             }

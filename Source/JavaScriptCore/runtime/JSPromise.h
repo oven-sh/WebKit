@@ -150,25 +150,23 @@ public:
     void markAsHandled() { m_packed.setType(flags() | isHandledFlag); }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Once VM::unhandledRejectionsAreReportedInAsyncContext(), for a pending promise that a job which runs no
-    // script is going to settle: one that was resolved with a native promise, or that then(), finally() or a
-    // combinator returned.
-    // Such a job does not run in the async context it was scheduled in, because nothing it does can see one,
-    // with one exception: if it rejects the promise and nothing handles that, the embedder is told
-    // (promiseRejectionTracker), and the embedder asks what the async context is.
-    // This keeps `asyncContext`, the one the job is scheduled in, for that: where the promise's value will go,
-    // which holds nothing while nothing has been done with the promise. A promise that has a reaction does
-    // not keep it and does not need it, because a rejection of it is handled. Only rejectPromise() reads it.
-    // No async context (undefined) is kept too, as undefined: what was scheduled in none is reported in none.
-    // So is what such a job rejects when the promise kept nothing (then() with no handler for a rejection,
-    // called in no async context or on a promise that is rejected already, leaves nothing that carries one):
-    // never in whatever the job before left.
+    // A job with no handler (adopting a native promise, then() with no handler for the settlement, the second
+    // job of finally(), a combinator's job, pipeFrom()) does not enter the async context it was scheduled in.
+    // Once VM::reportsUnhandledRejectionsInAsyncContext(), whoever schedules such a job keeps that async context
+    // in the promise the job will settle: in m_slot, which is unused while a promise is pending with no reaction.
+    // rejectPromiseWithoutHandler() enters it around promiseRejectionTracker, and none if nothing was kept.
     ALWAYS_INLINE void keepAsyncContextForUnhandledRejection(VM& vm, JSValue asyncContext)
     {
-        ASSERT(vm.unhandledRejectionsAreReportedInAsyncContext());
-        if (status() == Status::Pending && inlineReactionKind() == InlineReactionKind::None && !payloadCell())
-            setSlot(vm, asyncContext ? asyncContext : jsUndefined());
+        ASSERT(vm.reportsUnhandledRejectionsInAsyncContext());
+        if (asyncContext && asyncContext.isCell() && hasNothingButAKeptAsyncContext())
+            setSlot(vm, asyncContext);
     }
+    // What keepAsyncContextForUnhandledRejection() kept in the promise, or in the promise of the capability.
+    // Undefined if nothing.
+    static JSValue asyncContextKeptForUnhandledRejection(JSValue promiseOrCapability);
+    // reject() and rejectPromise(), for a job with no handler.
+    void rejectWithoutHandler(VM&, JSValue);
+    void rejectPromiseWithoutHandler(VM&, JSValue);
 #endif
 
     struct DeferredData {
@@ -189,11 +187,6 @@ public:
     void performPromiseThenWithContext(VM&, JSGlobalObject*, JSValue onFulfilled, JSValue onRejected, JSValue, JSValue context);
 #endif
     void rejectPromise(VM&, JSValue);
-#if USE(BUN_JSC_ADDITIONS)
-    // rejectPromise(), for a job with no handler: see keepAsyncContextForUnhandledRejection().
-    void rejectPromiseWithoutHandler(VM&, JSValue);
-    template<bool withoutHandler> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
-#endif
     void fulfillPromise(VM&, JSValue);
     void resolvePromise(JSGlobalObject*, VM&, JSValue);
 
@@ -300,6 +293,11 @@ private:
     JSPromiseReaction* reactionHead(VM&);
     void settleInlineInternalMicrotask(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
     void settleInlineHandler(VM&, JSGlobalObject*, Status, JSValue argument, uint16_t flags);
+#if USE(BUN_JSC_ADDITIONS)
+    template<bool withoutHandler> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
+    // Pending, with no reaction and nothing handling a rejection: m_slot is unused, or holds a kept async context.
+    bool hasNothingButAKeptAsyncContext() const { return !(flags() & (stateMask | inlineReactionKindMask | isHandledFlag)) && !payloadCell(); }
+#endif
     static void triggerPromiseReactions(VM&, JSGlobalObject*, JSPromise::Status, JSPromiseReaction* head, JSValue argument);
 
     InternalMicrotask inlineReactionMicrotask() const
