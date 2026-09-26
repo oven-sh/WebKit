@@ -2197,6 +2197,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHasValueProfilePredictions);
 static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCaches);
 static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCacheHits);
 static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdMissCounts);
+static JSC_DECLARE_HOST_FUNCTION(functionLLIntGetByIdCacheSetupCounts);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSourceFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBytecodeFor);
 static JSC_DECLARE_HOST_FUNCTION(functionDataLog);
@@ -3107,6 +3108,29 @@ JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdMissCounts, (JSGlobalObject* global
     RETURN_IF_EXCEPTION(scope, { });
     for (auto& site : sites) {
         result->push(globalObject, jsNumber(site.counts.missCount));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+// Usage: $vm.llintGetByIdCacheSetupCounts(functionObj)
+// For each get_by_id and get_length instruction of the function, in bytecode order: the times that the site tried to
+// make a prototype load or unset cache, see Options::useLLIntPrototypeCacheRearming(). Undefined if the function has
+// no code yet.
+JSC_DEFINE_HOST_FUNCTION(functionLLIntGetByIdCacheSetupCounts, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasCode = false;
+    auto sites = llintGetByIdSitesFromArg(globalObject, callFrame, hasCode);
+    if (!hasCode)
+        return JSValue::encode(jsUndefined());
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& site : sites) {
+        result->push(globalObject, jsNumber(site.counts.cacheSetupCount));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);
@@ -6033,6 +6057,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "llintGetByIdCaches"_s, functionLLIntGetByIdCaches, 1);
     addFunction(vm, allowIfNotFuzz, "llintGetByIdCacheHits"_s, functionLLIntGetByIdCacheHits, 2);
     addFunction(vm, allowIfNotFuzz, "llintGetByIdMissCounts"_s, functionLLIntGetByIdMissCounts, 1);
+    addFunction(vm, allowIfNotFuzz, "llintGetByIdCacheSetupCounts"_s, functionLLIntGetByIdCacheSetupCounts, 1);
     addFunction(vm, allowIfNotFuzz, "codeBlockForFrame"_s, functionCodeBlockForFrame, 1);
     addFunction(vm, allowIfNotFuzz, "dumpSourceFor"_s, functionDumpSourceFor, 1);
     addFunction(vm, allowIfNotFuzz, "lineStartTableIsBuilt"_s, functionLineStartTableIsBuilt, 1);

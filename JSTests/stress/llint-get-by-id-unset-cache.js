@@ -1,6 +1,7 @@
 //@ runDefault
 //@ runDefault("--useJIT=0")
 //@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=0")
+//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=0")
 //@ runDefault("--useJIT=0", "--collectContinuously=1")
 
 // The LLInt caches a get_by_id that finds no property (GetByIdMode::Unset). Everything that makes the

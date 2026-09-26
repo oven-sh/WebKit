@@ -72,6 +72,19 @@ static_assert(sizeof(GetByIdModeMetadataProtoLoad) == 16);
 // modes have their counts, so the counts of such a site are in its entry of CodeBlock::llintGetByIdWatchpointMap().
 struct GetByIdSiteCounts {
     uint8_t missCount { 0 }; // Calls of the slow path, for CodeBlock::noteLLIntInlineCacheMiss().
+    uint8_t cacheSetupCount { 0 }; // Times that the site tried to make a prototype load or unset cache.
+    uint8_t hitCountForLLIntCaching { 0 }; // Results that such a cache can be for, until the site tries to make one.
+
+    // One try is what a site had before Options::useLLIntPrototypeCacheRearming(). A site whose receivers
+    // alternate makes a cache with each try and gets no hit from it, so the tries have a limit.
+    static constexpr uint8_t maxCacheSetupCount = 4;
+
+    // Starts the countdown again, if the site can still try.
+    void rearm()
+    {
+        bool canTry = Options::useLLIntPrototypeCacheRearming() && cacheSetupCount < maxCacheSetupCount;
+        hitCountForLLIntCaching = canTry ? static_cast<uint8_t>(Options::prototypeHitCountForLLIntCaching()) : 0;
+    }
 };
 
 // This union shares ProtoLoad's cachedSlot with "hitCountForLLIntCaching" and "mode".
@@ -82,7 +95,7 @@ union GetByIdModeMetadata {
         defaultMode.structureID = StructureID();
         defaultMode.cachedOffset = 0;
         defaultMode.padding1 = 0;
-        padding4 = 0;
+        cacheSetupCount = 0;
         missCount = 0;
         mode = GetByIdMode::Default;
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
@@ -99,10 +112,18 @@ union GetByIdModeMetadata {
     // True if the cache is one that watchpoints guard. The structure of the receiver is enough for the others.
     bool hasGuards() const { return mode == GetByIdMode::ProtoLoad || mode == GetByIdMode::Unset; }
 
+    // False if the countdown of the site is over. True for a site in ProtoLoad mode whose entry has to say.
+    bool mayCountDown() const
+    {
+        if (mode == GetByIdMode::ProtoLoad)
+            return Options::useLLIntPrototypeCacheRearming();
+        return !!hitCountForLLIntCaching;
+    }
+
     GetByIdSiteCounts counts() const
     {
         ASSERT(mode != GetByIdMode::ProtoLoad);
-        return { missCount };
+        return { missCount, cacheSetupCount, hitCountForLLIntCaching };
     }
     void setCounts(GetByIdSiteCounts);
 
@@ -110,7 +131,7 @@ union GetByIdModeMetadata {
         uint32_t padding1;
         uint32_t padding2;
         uint32_t padding3;
-        uint8_t padding4;
+        uint8_t cacheSetupCount; // Not in ProtoLoad mode.
         uint8_t missCount; // Not in ProtoLoad mode.
         GetByIdMode mode;
         uint8_t hitCountForLLIntCaching; // This must be zero when we use ProtoLoad mode.
@@ -126,8 +147,9 @@ static_assert(sizeof(GetByIdModeMetadata) == 16);
 inline void GetByIdModeMetadata::setCounts(GetByIdSiteCounts counts)
 {
     padding3 = 0;
-    padding4 = 0;
+    cacheSetupCount = counts.cacheSetupCount;
     missCount = counts.missCount;
+    hitCountForLLIntCaching = counts.hitCountForLLIntCaching;
 }
 
 inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache(GetByIdSiteCounts counts)
@@ -152,9 +174,9 @@ inline void GetByIdModeMetadata::setArrayLengthMode(GetByIdSiteCounts counts)
     // We should clear the structure ID to avoid the old structure ID being saved.
     defaultMode.structureID = StructureID();
     defaultMode.cachedOffset = 0;
-    setCounts(counts);
     // Prevent the prototype cache from ever happening.
-    hitCountForLLIntCaching = 0;
+    counts.hitCountForLLIntCaching = 0;
+    setCounts(counts);
 }
 
 inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, PropertyOffset offset, JSObject* cachedSlot)
