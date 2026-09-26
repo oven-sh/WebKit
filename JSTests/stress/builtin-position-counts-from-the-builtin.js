@@ -17,10 +17,15 @@ function thrownBy(f) {
     throw new Error("did not throw");
 }
 
-// A builtin has no expression info, so an error in it is where its parameters start: after "(function ".
+// A builtin has no expression info, so an error in it is where its parameters start: after "(function ". A build with
+// assertions keeps the expression info, and the error is where it is thrown in the builtin. In the text of all the
+// builtins the line would be in the thousands.
 for (const f of [() => [].reduce(() => { }), () => [].reduceRight(() => { }), () => Array.prototype.map.call(null)]) {
     const error = thrownBy(f);
-    shouldBe(`${error.line}:${error.column}`, "1:11", String(f));
+    if ($vm.assertEnabled())
+        shouldBe(error.line < 100, true, String(f));
+    else
+        shouldBe(`${error.line}:${error.column}`, "1:11", String(f));
 }
 
 shouldBe($vm.lineStartTableIsBuilt(Array.prototype.reduce), false, "no table");
