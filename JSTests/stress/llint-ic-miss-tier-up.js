@@ -159,13 +159,13 @@ function expectEarly(name, call) {
     const source = [];
     for (let i = 0; i < 40; ++i)
         source.push("t = o" + i + ".tag;");
-    const manySites = new Function("objects", "let t; const [" + Array.from({ length: 40 }, (_, i) => "o" + i).join(", ") + "] = objects;" + source.join("") + "return $vm.llintTrue();");
+    const manySites = new Function(...Array.from({ length: 40 }, (_, i) => "o" + i), "let t;" + source.join("") + "return $vm.llintTrue();");
     // Each of the 40 sites sees 4 structures once: 4 misses for each site, 160 in the function.
     const rounds = [makeObjects(40), makeObjects(41).slice(1), makeObjects(42).slice(2), makeObjects(43).slice(3)];
     if (missCount > 4 || !missCount) {
         for (let round = 0; round < 4; ++round)
-            shouldBe(manySites(rounds[round]), true, "manySites, round " + round);
-        shouldBe(manySites(rounds[3]), true, "manySites");
+            shouldBe(manySites(...rounds[round]), true, "manySites, round " + round);
+        shouldBe(manySites(...rounds[3]), true, "manySites");
         // The site after these 40 is the read of llintTrue.
         if (options.useLLIntICs)
             shouldBe($vm.llintGetByIdMissCounts(manySites).slice(0, 40).join(), new Array(40).fill(counts ? 4 : 0).join(), "the counts of manySites");
