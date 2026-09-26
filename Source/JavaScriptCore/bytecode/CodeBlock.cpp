@@ -2576,9 +2576,7 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
-    auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
-    unsigned divotInProvider = sourceOffset() + entry.divot;
-    return source().provider()->documentLineColumnForOffset(divotInProvider);
+    return m_unlinkedCode->lineColumnForBytecodeIndex(bytecodeIndex, *source().provider(), sourceOffset());
 }
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const

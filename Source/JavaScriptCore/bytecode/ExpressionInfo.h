@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <JavaScriptCore/LineColumn.h>
+#include <JavaScriptCore/SourceID.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
@@ -36,6 +38,8 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
+
+class SourceProvider;
 
 // See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
 
@@ -183,6 +187,11 @@ public:
 
     Entry NODELETE entryForInstPC(InstPC);
 
+    // The line and column of the instruction's divot in the document of a provider, where this code starts at
+    // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
+    // same instructions again, so this keeps each answer.
+    LineColumn lineColumnForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
+
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
     size_t NODELETE byteSize() const; // owned by this object
     size_t NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
@@ -312,7 +321,15 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
+    // Unlinked code is shared by every source with the same text, so an answer says what it was computed for.
+    struct CachedLineColumn {
+        SourceID sourceID;
+        unsigned sourceOffset;
+        LineColumn lineColumn;
+    };
+    using LineColumnMap = UncheckedKeyHashMap<InstPC, CachedLineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 
+    LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

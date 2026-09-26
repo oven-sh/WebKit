@@ -291,6 +291,7 @@ public:
     bool hasRareData() const { return m_rareData.get(); }
 
     ExpressionInfo::Entry expressionInfoForBytecodeIndex(BytecodeIndex);
+    LineColumn lineColumnForBytecodeIndex(BytecodeIndex, SourceProvider&, unsigned sourceOffset);
 
     bool typeProfilerExpressionInfoForBytecodeOffset(unsigned bytecodeOffset, unsigned& startDivot, unsigned& endDivot);
 

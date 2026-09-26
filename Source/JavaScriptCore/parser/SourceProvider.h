@@ -93,19 +93,27 @@ public:
     // and a column past the end of its line gives that line's end.
     JS_EXPORT_PRIVATE unsigned offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based);
 
+    // The line and the column of positionInfoForOffset(), without its line end: this reads none of the text.
+    JS_EXPORT_PRIVATE PositionInfo lineAndColumnForOffset(StringView text, unsigned offset);
+
+    // What this table holds for `text`, for an embedder that stores it beside the text. See EncodedLineStarts.
+    JS_EXPORT_PRIVATE static Vector<uint8_t> encode(StringView text);
+    // What encode() gave for this table's text. It has to outlive the table, which then never scans the text.
+    JS_EXPORT_PRIVATE void setEncoded(std::span<const uint8_t>);
+
     bool isBuilt() const
     {
         Locker locker { m_lock };
-        return !!m_lineStarts;
+        return !m_encoded.empty();
     }
 
 private:
-    template<typename CharType> static Vector<unsigned> build(std::span<const CharType>);
-    const Vector<unsigned>& ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
+    template<typename CharType> static Vector<uint8_t> build(std::span<const CharType>);
+    std::span<const uint8_t> ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
 
     mutable Lock m_lock;
-    std::optional<Vector<unsigned>> m_lineStarts WTF_GUARDED_BY_LOCK(m_lock);
-    unsigned m_builtForLength WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    Vector<uint8_t> m_owned WTF_GUARDED_BY_LOCK(m_lock);
+    std::span<const uint8_t> m_encoded WTF_GUARDED_BY_LOCK(m_lock); // m_owned, or what setEncoded() got
 };
 
 class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvider> {
@@ -193,7 +201,7 @@ public:
     // line, since later lines begin where their own line begins.
     LineColumn documentLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
+        auto info = m_lineStartTable.lineAndColumnForOffset(source(), offset);
         return {
             m_startPosition.m_line.oneBasedInt() + info.line0Based,
             info.line0Based ? info.column0Based + 1 : m_startPosition.m_column.oneBasedInt() + info.column0Based,
@@ -202,7 +210,7 @@ public:
 
     LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
     {
-        auto info = positionInfoForOffset(offset);
+        auto info = m_lineStartTable.lineAndColumnForOffset(source(), offset);
         return {
             m_startPosition.m_line.zeroBasedInt() + info.line0Based,
             info.line0Based ? info.column0Based : m_startPosition.m_column.zeroBasedInt() + info.column0Based,
@@ -210,6 +218,7 @@ public:
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }
+    void setEncodedLineStarts(std::span<const uint8_t> encoded) { m_lineStartTable.setEncoded(encoded); }
 
 private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
