@@ -694,7 +694,7 @@ static NEVER_INLINE void reportUnhandledRejectionInAsyncContext(VM& vm, JSGlobal
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-template<JSPromise::RejectedBy rejectedBy>
+template<bool withoutHandler>
 ALWAYS_INLINE void JSPromise::rejectPromiseImpl(VM& vm, JSValue argument)
 #else
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
@@ -722,7 +722,7 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
             JSValue keptAsyncContext = m_slot.get();
             setSlot(vm, argument);
             setPackedCell(vm, settledFlags, nullptr);
-            if constexpr (rejectedBy == RejectedBy::JobWithoutScript) {
+            if constexpr (withoutHandler) {
                 if (!keptAsyncContext && vm.unhandledRejectionsAreReportedInAsyncContext())
                     keptAsyncContext = jsUndefined();
             }
@@ -753,12 +753,12 @@ void JSPromise::rejectPromise(VM& vm, JSValue argument)
 #if USE(BUN_JSC_ADDITIONS)
 void JSPromise::rejectPromise(VM& vm, JSValue argument)
 {
-    rejectPromiseImpl<RejectedBy::Script>(vm, argument);
+    rejectPromiseImpl<false>(vm, argument);
 }
 
-void JSPromise::rejectPromiseInJobWithoutScript(VM& vm, JSValue argument)
+void JSPromise::rejectPromiseWithoutHandler(VM& vm, JSValue argument)
 {
-    rejectPromiseImpl<RejectedBy::JobWithoutScript>(vm, argument);
+    rejectPromiseImpl<true>(vm, argument);
 }
 #endif
 
@@ -1024,7 +1024,7 @@ std::tuple<JSFunction*, JSFunction*> JSPromise::createResolvingFunctionsWithInte
 
 #if USE(BUN_JSC_ADDITIONS)
 // then() was called with no handler for a rejection, in an async context, and returned `promiseOrCapability`:
-// what rejects that is a job that runs no script. (keepAsyncContextForUnhandledRejection())
+// what rejects that is a job with no handler. (keepAsyncContextForUnhandledRejection())
 static NEVER_INLINE void keepAsyncContextOfThen(VM& vm, JSValue promiseOrCapability, JSFullPromiseReaction* reaction)
 {
     auto* promise = dynamicDowncast<JSPromise>(promiseOrCapability);

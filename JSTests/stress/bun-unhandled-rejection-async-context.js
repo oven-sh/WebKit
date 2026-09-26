@@ -1,5 +1,5 @@
 //@ requireOptions("--useDollarVM=1")
-// A promise that a job which runs no script rejects, with nothing handling the rejection: the embedder is
+// A promise that a job with no handler rejects, with nothing handling the rejection: the embedder is
 // told (promiseRejectionTracker) in the async context that job was scheduled in, once it has asked for that
 // (VM::reportUnhandledRejectionsInAsyncContext()). The shell's tracker notes the async context it is called
 // in, for the promise, in the Map `asyncContextsWhenRejected`.

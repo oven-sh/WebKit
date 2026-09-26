@@ -296,7 +296,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseProtoFuncFinally, (JSGlobalObject* globalObject,
             JSValue asyncContext = jsUndefined();
             if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
                 asyncContext = globalObject->m_asyncContextData->getInternalField(0);
-                // What rejects resultPromise, if onFinally returns a promise, is a job that runs no script.
+                // What rejects resultPromise, if onFinally returns a promise, is a job with no handler.
                 if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
                     resultPromise->keepAsyncContextForUnhandledRejection(vm, asyncContext);
             }

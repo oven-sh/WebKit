@@ -293,7 +293,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
-    // What rejects it is a job that runs no script.
+    // What rejects it is a job with no handler.
     if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
         promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
 #endif
@@ -495,7 +495,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
-    // What rejects it is a job that runs no script.
+    // What rejects it is a job with no handler.
     if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
         promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
 #endif
@@ -1261,7 +1261,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAny, (JSGlobalObject* globalObjec
 
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 #if USE(BUN_JSC_ADDITIONS)
-    // What rejects it is a job that runs no script.
+    // What rejects it is a job with no handler.
     if (vm.unhandledRejectionsAreReportedInAsyncContext()) [[unlikely]]
         promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
 #endif

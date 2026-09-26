@@ -190,10 +190,9 @@ public:
 #endif
     void rejectPromise(VM&, JSValue);
 #if USE(BUN_JSC_ADDITIONS)
-    // rejectPromise(), for a job that runs no script: see keepAsyncContextForUnhandledRejection().
-    void rejectPromiseInJobWithoutScript(VM&, JSValue);
-    enum class RejectedBy : uint8_t { Script, JobWithoutScript };
-    template<RejectedBy> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
+    // rejectPromise(), for a job with no handler: see keepAsyncContextForUnhandledRejection().
+    void rejectPromiseWithoutHandler(VM&, JSValue);
+    template<bool withoutHandler> ALWAYS_INLINE void rejectPromiseImpl(VM&, JSValue);
 #endif
     void fulfillPromise(VM&, JSValue);
     void resolvePromise(JSGlobalObject*, VM&, JSValue);

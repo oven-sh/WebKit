@@ -1648,7 +1648,7 @@ static void promiseResolveWithoutHandlerJobSlow(JSGlobalObject* globalObject, VM
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if USE(BUN_JSC_ADDITIONS)
-    // As rejectPromiseInJobWithoutScript(): if the capability's promise kept no async context, it is rejected in
+    // As rejectPromiseWithoutHandler(): if the capability's promise kept no async context, it is rejected in
     // none. (Entering none changes nothing unless async contexts are tracked.)
     AsyncContextSwapScope asyncContextScope(vm, globalObject, jsUndefined());
 #endif
@@ -1687,7 +1687,7 @@ static void promiseResolveWithoutHandlerJob(JSGlobalObject* globalObject, VM& vm
             break;
         case JSPromise::Status::Rejected:
 #if USE(BUN_JSC_ADDITIONS)
-            promise->rejectPromiseInJobWithoutScript(vm, resolution);
+            promise->rejectPromiseWithoutHandler(vm, resolution);
 #else
             promise->rejectPromise(vm, resolution);
 #endif
@@ -1831,7 +1831,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #if USE(BUN_JSC_ADDITIONS)
         if (vm.isAsyncContextTrackingEnabled()) [[unlikely]] {
             AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
-            // What rejects promiseToResolve, if `promise` is rejected, is a job that runs no script.
+            // What rejects promiseToResolve, if `promise` is rejected, is a job with no handler.
             if (vm.unhandledRejectionsAreReportedInAsyncContext())
                 promiseToResolve->keepAsyncContextForUnhandledRejection(vm, arguments[2]);
             if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
