@@ -132,8 +132,11 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> added a new SyncWaiter=", syncWaiter.get(), " to a waiterList for ptr ", RawPointer(ptr));
         syncWaiter->setParkedList(list.copyRef());
 
+        // Keep the deadline monotonic all the way down. A wall-clock copy of it moves when the system
+        // clock is set (a backward step of N seconds made Atomics.wait() block for the timeout plus N),
+        // and ParkingLot re-checks the deadline against its own clock after every wakeup.
         while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm))
-            syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
+            syncWaiter->condition().waitUntil(list->lock, time);
 
         syncWaiter->setParkedList(nullptr);
 
