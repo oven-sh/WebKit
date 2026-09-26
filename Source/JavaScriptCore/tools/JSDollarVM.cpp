@@ -2346,6 +2346,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetReportsUnhandledRejectionsInAsyncContext);
+static JSC_DECLARE_HOST_FUNCTION(functionShareAsyncContextWith);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
@@ -4288,6 +4289,17 @@ JSC_DEFINE_HOST_FUNCTION(functionSetReportsUnhandledRejectionsInAsyncContext, (J
     globalObject->vm().setReportsUnhandledRejectionsInAsyncContext();
     return JSValue::encode(jsUndefined());
 }
+
+// Makes the global object of `object` use this global object's async context, as the realms of an embedder may.
+// To be called before any code of that global object runs.
+// Usage: $vm.shareAsyncContextWith(object)
+JSC_DEFINE_HOST_FUNCTION(functionShareAsyncContextWith, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    if (auto* object = callFrame->argument(0).getObject())
+        object->realm()->m_asyncContextData.set(globalObject->vm(), object->realm(), globalObject->m_asyncContextData.get());
+    return JSValue::encode(jsUndefined());
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6110,6 +6122,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, alwaysAllow, "setReportsUnhandledRejectionsInAsyncContext"_s, functionSetReportsUnhandledRejectionsInAsyncContext, 0);
+    addFunction(vm, alwaysAllow, "shareAsyncContextWith"_s, functionShareAsyncContextWith, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);

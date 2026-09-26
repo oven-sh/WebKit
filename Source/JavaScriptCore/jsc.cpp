@@ -1790,15 +1790,19 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject*, JSPromise*, JSPromis
 #if USE(BUN_JSC_ADDITIONS) && !ENABLE(FUZZILLI)
 // For tests, once $vm.setReportsUnhandledRejectionsInAsyncContext(): records, in the global Map
 // `asyncContextsWhenRejected` if there is one, the async context that is current when the tracker is told of each
-// promise.
+// promise. A promise that is handled afterwards is taken out.
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)
 {
     VM& vm = globalObject->vm();
-    if (operation == JSPromiseRejectionOperation::Reject && vm.reportsUnhandledRejectionsInAsyncContext()) {
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue contexts = globalObject->getDirect(vm, Identifier::fromString(vm, "asyncContextsWhenRejected"_s));
-        if (auto* map = contexts ? dynamicDowncast<JSMap>(contexts) : nullptr)
-            map->set(globalObject, promise, globalObject->m_asyncContextData->getInternalField(0));
+        if (auto* map = contexts ? dynamicDowncast<JSMap>(contexts) : nullptr) {
+            if (operation == JSPromiseRejectionOperation::Reject)
+                map->set(globalObject, promise, globalObject->m_asyncContextData->getInternalField(0));
+            else
+                map->remove(globalObject, promise);
+        }
         (void)scope.tryClearException();
     }
     JSGlobalObject::promiseRejectionTracker(globalObject, promise, operation);
