@@ -75,56 +75,34 @@ for (const [name, choices] of Object.entries(terminators)) {
     shouldBe(positionsOf(text), expected, `${name}, second time`);
 }
 
-// The lexer finds the lines while it parses. These are the places where a line ends inside a token, where the
-// parser goes back and reads lines again, and where it skips a function that it has read before.
-const constructs = [
+// A line terminator ends a line wherever it is: in a comment, in a template, after a backslash in a string, and, for
+// U+2028 and U+2029, in a string as it is. That holds in the body of a function too, which is only checked for syntax
+// while what is around it is parsed.
+const tokens = [
     t => `/* a${t}b${t}${t}c */`,
-    t => `// a${t}`,
-    t => `<!-- a${t}`,
     t => "`a" + t + "${" + t + "1}" + t + "b`;",
-    t => "String.raw`a" + t + "b`;",
     t => `"a\\${t}b";`,
-    t => `'a\\${t}\\${t}b';`,
-    t => `(a,${t}b);`,
-    t => `(a,${t}b) =>${" "}{${t}return a;${t}};`,
-    t => `async (a,${t}b) => a;`,
-    t => `(a = function () {${t}${t}return "long enough to be remembered";${t}},${t}b) => a;`,
-    t => `({ a,${t}b } = { a,${t}b });`,
-    t => `function f() {${t}${t}return function () {${t}return "long enough to be remembered";${t}};${t}}`,
-    t => `(class {${t}x =${t}1;${t}static {${t}}${t}m() {${t}}${t}});`,
-    t => `a =${t}/x/${t}.test("x");`,
-    t => `if (a)${t}b;${t}else${t}a;`,
-    // In a string, U+2028 and U+2029 end a line and are characters of the string.
-    t => t === "\u2028" || t === "\u2029" ? `"a${t}b"; a = "a${t}b"; a = ['${t}', ("\\n${t}${t}")];` : `"ab";`,
+    t => t === "\u2028" || t === "\u2029" ? `"a${t}b"; a = ['${t}', ("\\n${t}${t}")];` : `"ab";`,
 ];
-
-// The body of a function is only checked for syntax while what is around it is parsed. The lexer then does less: it
-// does not need what a string holds, for one.
-const places = {
-    "at the top level": (code, t) => code,
-    "in a function": (code, t) => `function inner() {${t}${code}${t}}`,
-    "in an arrow function in a function": (code, t) => `function outer() { return () => {${t}${code}${t}}; }`,
-    "in a method": (code, t) => `({ method() {${t}${code}${t}} });`,
-};
 
 for (const [name, choices] of Object.entries(terminators)) {
     for (const t of choices) {
-        for (const [place, put] of Object.entries(places)) {
+        for (const inFunction of [false, true]) {
             // 16-bit where the terminators of the set are, whichever of them this is.
-            let text = (name.includes("16-bit") ? "// \u4e16" + t : "") + "var a, b;" + t;
+            let text = (name.includes("16-bit") ? "// \u4e16" + t : "") + "var a;" + t;
             const offsets = [];
-            // Three times, so that the constructs fall on both sides of the end of a block.
-            for (const construct of [...constructs, ...constructs, ...constructs]) {
-                text += put(construct(t), t) + t;
+            for (let i = 0; i < 40; i++) {
+                const token = tokens[i % tokens.length](t);
+                text += (inFunction ? `function inner() {${t}${token}${t}}` : token) + t;
                 offsets.push(text.length + columnInStatement);
                 text += `at(new Error(""));` + t;
             }
-            shouldBe(positionsOf(text), positionsAt(text, offsets), `constructs ${place}, ${name}, ${escape(t)}`);
+            shouldBe(positionsOf(text), positionsAt(text, offsets), `tokens${inFunction ? " in a function" : ""}, ${name}, ${escape(t)}`);
         }
     }
 }
 
-// A parse that fails stops in the middle of the text. The line of the error is asked for right away.
+// The line of a syntax error is asked for before there is any code.
 for (const before of [0, 1, 63, 64, 200]) {
     const line = "var someName = 12345678;\n";
     // It only parses, and throws a string that ends with the line. The error of eval() has the line of the call, and

@@ -5478,7 +5478,7 @@ public:
         m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
-        m_lineStarts.encode(encoder, source.provider()->lineStarts());
+        m_lineStarts.encode(encoder, source.provider()->lineStartsForCode());
     }
 
     UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
@@ -5958,6 +5958,7 @@ static_assert(sizeof(CachedHandlerInfo) == 16);
 static_assert(sizeof(CachedIdentifier) == 4);
 static_assert(sizeof(CachedImmutableButterfly) == 12);
 static_assert(sizeof(CachedJSTextPosition) == 4);
+static_assert(sizeof(CachedLineStarts) == 8);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
 static_assert(sizeof(CachedModuleCodeBlock) == 56);

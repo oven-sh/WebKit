@@ -92,7 +92,7 @@ private:
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
 
-    const Ref<BuiltinsSourceProvider> m_combinedSourceProvider;
+    const Ref<StringSourceProvider> m_combinedSourceProvider;
     UnlinkedFunctionExecutable* m_unlinkedExecutables[numberOfBuiltinCodes] { };
 };
 

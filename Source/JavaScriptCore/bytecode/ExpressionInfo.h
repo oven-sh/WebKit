@@ -188,9 +188,10 @@ public:
 
     // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
     // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
-    // same instructions again, so this keeps each answer. Unlinked code is shared through the CodeCache only, whose
-    // keys are whole sources compared by their text, so the text and sourceOffset, and with them the answer, are the
-    // same for every source that shares this. Where a source says its text starts is not in the answer.
+    // same instructions again, so this keeps each answer. Sources share unlinked code when the CodeCache finds their text
+    // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
+    // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
+    // that shares this. Where a source says its text starts is not in the answer.
     // Not for a thread that runs beside the mutator: nothing guards the map.
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 

@@ -39,7 +39,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/SourceCharacters.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/SourceTaintedOrigin.h>
-#include <atomic>
 #include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -106,64 +105,23 @@ public:
     // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
     JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
 
-    static constexpr unsigned linesPerBlock = 64;
-    // A table costs an allocation and a few reference counts, whatever its size. That is 3% of what it takes to
-    // evaluate 100 characters, and a scan of so few is as cheap, so a short text pays only if it is asked for a position.
-    static constexpr unsigned minimumLengthToCollect = 1024;
-
-    // Collects where the lines of a text start, from whoever reads the text: the lexer while it parses, or scan().
-    class Builder {
-    public:
-        Builder()
-            : m_header({ 0, 0, 0 })
-        {
-        }
-
-        unsigned lastLineStart() const { return m_lastLineStart; }
-        unsigned lineCount() const { return m_lineCount; }
-
-        // The line after the last one starts at lineStart.
-        ALWAYS_INLINE void append(unsigned lineStart)
-        {
-            ASSERT(lineStart > m_lastLineStart);
-            unsigned length = lineStart - m_lastLineStart;
-            m_lastLineStart = lineStart;
-            if (m_lineCount++ % linesPerBlock && length < 0x80) [[likely]] {
-                m_stream.append(static_cast<uint8_t>(length));
-                return;
-            }
-            appendSlow(length);
-        }
-
-        // Appends the lines whose terminator is in text between begin and end.
-        template<typename CharType> void scan(std::span<const CharType> text, size_t begin, size_t end);
-        void scan(StringView text, size_t begin, size_t end);
-
-        // Once the rest of text is scanned: what is before readTo has been read, though the last line may be long.
-        LineStarts finish(StringView text, unsigned readTo);
-
-    private:
-        JS_EXPORT_PRIVATE void appendSlow(unsigned length);
-
-        // A short text is done without an allocation.
-        Vector<uint32_t, 3> m_header;
-        Vector<uint8_t, 64> m_stream;
-        unsigned m_lineCount { 1 };
-        unsigned m_lastLineStart { 0 };
-    };
-
-    bool isBuilt() const { return m_isBuilt.load(std::memory_order_acquire); }
-    // Empty if !isBuilt().
-    LineStarts lineStarts() const { return isBuilt() ? m_lineStarts : LineStarts { }; }
-    // Of this table's text. The first ones stay.
+    // For the code that is compiled from the text.
+    JS_EXPORT_PRIVATE LineStarts lineStarts(StringView text);
+    // From code that was compiled from this table's text. The first ones stay.
     JS_EXPORT_PRIVATE void setLineStarts(LineStarts&&);
 
-private:
-    const LineStarts& ensureBuilt(StringView);
+    bool isBuilt() const
+    {
+        Locker locker { m_lock };
+        return !!m_lineStarts;
+    }
 
-    Lock m_lock; // For who sets m_lineStarts, which does not change once m_isBuilt says that it is there.
-    std::atomic<bool> m_isBuilt { false };
-    LineStarts m_lineStarts;
+private:
+    template<typename CharType> static LineStarts build(std::span<const CharType>);
+    const LineStarts& ensureBuilt(StringView) WTF_REQUIRES_LOCK(m_lock);
+
+    mutable Lock m_lock;
+    LineStarts m_lineStarts WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvider> {
@@ -278,11 +236,20 @@ public:
     }
 
     bool lineStartTableIsBuilt() const { return m_lineStartTable.isBuilt(); }
-    // The code compiled from a text has them too, and gives them to a source that has that text and is not parsed.
-    LineStarts lineStarts() const { return m_lineStartTable.lineStarts(); }
+    // The code that is compiled from a text has its line starts, and so has bytecode made from that code. A source that
+    // has the text and gets the code without compiling it gets them from the code: what runs from bytecode has no
+    // other reason to read its text. Compiling is also when the text is in memory, so a first stack trace does not wait
+    // for a scan of it. A table costs an allocation and a few reference counts whatever its size, though, and a short
+    // text is scanned as cheaply when it is asked for a position, so its code has none.
+    static constexpr unsigned minimumLengthForCodeToHaveLineStarts = 1024;
+    LineStarts lineStartsForCode()
+    {
+        StringView text = source();
+        if (text.length() < minimumLengthForCodeToHaveLineStarts)
+            return { };
+        return m_lineStartTable.lineStarts(text);
+    }
     void setLineStarts(LineStarts&& lineStarts) { m_lineStartTable.setLineStarts(WTF::move(lineStarts)); }
-    // Whether a parse of the text, or of a part of it, is to collect them. What it does not read is scanned.
-    virtual bool wantsLineStarts() const { return !m_lineStartTable.isBuilt() && source().length() >= LineStartTable::minimumLengthToCollect; }
 
 private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
@@ -350,7 +317,6 @@ public:
     }
 
     JS_EXPORT_PRIVATE LineColumn lineColumnInTextForOffset(unsigned offset) final;
-    bool wantsLineStarts() const final { return false; }
 
 private:
     BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
