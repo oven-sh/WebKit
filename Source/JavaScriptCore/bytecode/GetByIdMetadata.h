@@ -36,62 +36,91 @@ enum class GetByIdMode : uint8_t {
     Default = 1,
     Unset = 2,
     ArrayLength = 3,
+    StringLength = 4, // The length of a string. This mode also reads the length of an array, so that a site with both does not alternate.
 };
 
+// Every mode starts with the same eight bytes: the structure of the receiver, the offset of the
+// property, and the two counters of the site. A mode that does not use a field keeps it zero.
 struct GetByIdModeMetadataDefault {
     StructureID structureID;
-    PropertyOffset cachedOffset;
+    uint16_t cachedOffset;
+    uint8_t missCount;
+    uint8_t hitCountForLLIntCaching;
     unsigned padding1;
 };
 static_assert(sizeof(GetByIdModeMetadataDefault) == 12);
 
 struct GetByIdModeMetadataUnset {
     StructureID structureID;
-    unsigned padding1;
+    uint16_t padding1;
+    uint8_t missCount;
+    uint8_t hitCountForLLIntCaching;
     unsigned padding2;
 };
 static_assert(sizeof(GetByIdModeMetadataUnset) == 12);
 
 struct GetByIdModeMetadataArrayLength {
     unsigned padding1;
-    unsigned padding2;
+    uint16_t padding2;
+    uint8_t missCount;
+    uint8_t hitCountForLLIntCaching;
     unsigned padding3;
 };
 static_assert(sizeof(GetByIdModeMetadataArrayLength) == 12);
 
 struct GetByIdModeMetadataProtoLoad {
     StructureID structureID;
-    PropertyOffset cachedOffset;
+    uint16_t cachedOffset;
+    uint8_t missCount;
+    uint8_t hitCountForLLIntCaching;
     // Always 64 bits wide, so that the enclosing union has one layout on every target and
-    // storing the slot always clears the bytes that overlap mode and hitCountForLLIntCaching.
+    // storing the slot always clears the byte that overlaps mode.
     uint64_t cachedSlot;
 };
 static_assert(sizeof(GetByIdModeMetadataProtoLoad) == 16);
 
-// This union shares ProtoLoad's cachedSlot with "hitCountForLLIntCaching" and "mode".
-// This is possible because these values must be zero if we use ProtoLoad mode.
+// This union shares ProtoLoad's cachedSlot with "mode".
+// This is possible because this value must be zero if we use ProtoLoad mode.
 union GetByIdModeMetadata {
     GetByIdModeMetadata()
     {
         defaultMode.structureID = StructureID();
         defaultMode.cachedOffset = 0;
         defaultMode.padding1 = 0;
+        padding4 = 0;
         mode = GetByIdMode::Default;
+        padding5 = 0;
+        missCount = 0;
         hitCountForLLIntCaching = Options::prototypeHitCountForLLIntCaching();
     }
+
+    // The cached offset has 16 bits. A property with a larger offset is not cached.
+    static bool isCacheableOffset(PropertyOffset offset) { return static_cast<unsigned>(offset) <= std::numeric_limits<uint16_t>::max(); }
+
+    static constexpr uint8_t maxMissCount = std::numeric_limits<uint8_t>::max();
+
+    // A site that called the slow path maxMissCount times alternates between receivers that one
+    // cache cannot serve. The countdown does not start again for it, so what it costs has a limit.
+    bool canRearm() const { return Options::useLLIntPrototypeCacheRearming() && missCount != maxMissCount; }
+    static constexpr unsigned countdownScaleAfterFailure = 8;
+    void rearmIfPossible(unsigned scale = 1);
+    bool hasWatchedStructure() const { return (mode == GetByIdMode::ProtoLoad || mode == GetByIdMode::Unset) && !!defaultMode.structureID; }
 
     void clearToDefaultModeWithoutCache();
     void setUnsetMode(Structure*);
     void setArrayLengthMode();
+    void setStringLengthMode();
     void setProtoLoadMode(Structure*, PropertyOffset, JSObject*);
 
     struct {
         uint32_t padding1;
-        uint32_t padding2;
+        uint16_t padding2;
+        uint8_t missCount; // Calls of the slow path from this site. It stops at maxMissCount.
+        uint8_t hitCountForLLIntCaching; // Results from the prototype chain to see before one is cached. 0 means that none is.
         uint32_t padding3;
         uint16_t padding4;
         GetByIdMode mode;
-        uint8_t hitCountForLLIntCaching; // This must be zero when we use ProtoLoad mode.
+        uint8_t padding5; // This must be zero when we use ProtoLoad mode.
     };
     static constexpr ptrdiff_t offsetOfMode() { return OBJECT_OFFSETOF(GetByIdModeMetadata, mode); }
     GetByIdModeMetadataDefault defaultMode;
@@ -100,6 +129,23 @@ union GetByIdModeMetadata {
     GetByIdModeMetadataProtoLoad protoLoadMode;
 };
 static_assert(sizeof(GetByIdModeMetadata) == 16);
+// The counters are where every mode has them, and the mode is in the bytes of cachedSlot that a pointer leaves zero.
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, missCount) == OBJECT_OFFSETOF(GetByIdModeMetadataProtoLoad, missCount));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, missCount) == OBJECT_OFFSETOF(GetByIdModeMetadataDefault, missCount));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, missCount) == OBJECT_OFFSETOF(GetByIdModeMetadataUnset, missCount));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, missCount) == OBJECT_OFFSETOF(GetByIdModeMetadataArrayLength, missCount));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, hitCountForLLIntCaching) == OBJECT_OFFSETOF(GetByIdModeMetadataProtoLoad, hitCountForLLIntCaching));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, hitCountForLLIntCaching) == OBJECT_OFFSETOF(GetByIdModeMetadataDefault, hitCountForLLIntCaching));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, hitCountForLLIntCaching) == OBJECT_OFFSETOF(GetByIdModeMetadataUnset, hitCountForLLIntCaching));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, hitCountForLLIntCaching) == OBJECT_OFFSETOF(GetByIdModeMetadataArrayLength, hitCountForLLIntCaching));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, hitCountForLLIntCaching) < OBJECT_OFFSETOF(GetByIdModeMetadataProtoLoad, cachedSlot));
+static_assert(OBJECT_OFFSETOF(GetByIdModeMetadata, mode) == OBJECT_OFFSETOF(GetByIdModeMetadataProtoLoad, cachedSlot) + 6);
+
+inline void GetByIdModeMetadata::rearmIfPossible(unsigned scale)
+{
+    if (canRearm())
+        hitCountForLLIntCaching = static_cast<uint8_t>(std::min<unsigned>(Options::prototypeHitCountForLLIntCaching() * scale, std::numeric_limits<uint8_t>::max()));
+}
 
 inline void GetByIdModeMetadata::clearToDefaultModeWithoutCache()
 {
@@ -125,13 +171,22 @@ inline void GetByIdModeMetadata::setArrayLengthMode()
     hitCountForLLIntCaching = 0;
 }
 
+inline void GetByIdModeMetadata::setStringLengthMode()
+{
+    mode = GetByIdMode::StringLength;
+    defaultMode.structureID = StructureID();
+    defaultMode.cachedOffset = 0;
+    hitCountForLLIntCaching = 0;
+}
+
 inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, PropertyOffset offset, JSObject* cachedSlot)
 {
-    // We rely on ProtoLoad being 0, or else the high bits of cachedSlot would write the wrong mode and hit count.
+    // We rely on ProtoLoad being 0, or else the high bits of cachedSlot would write the wrong mode.
     static_assert(!static_cast<std::underlying_type_t<GetByIdMode>>(GetByIdMode::ProtoLoad));
+    ASSERT(isCacheableOffset(offset));
 
     protoLoadMode.structureID = structure->id();
-    protoLoadMode.cachedOffset = offset;
+    protoLoadMode.cachedOffset = static_cast<uint16_t>(offset);
 
     // We know that this pointer will remain valid because it will be cleared by either a watchpoint fire or
     // during GC when we clear the LLInt caches.
@@ -141,7 +196,6 @@ inline void GetByIdModeMetadata::setProtoLoadMode(Structure* structure, Property
     protoLoadMode.cachedSlot = static_cast<uint64_t>(std::bit_cast<uintptr_t>(cachedSlot));
 
     ASSERT(mode == GetByIdMode::ProtoLoad);
-    ASSERT(!hitCountForLLIntCaching);
     ASSERT(protoLoadMode.structureID == structure->id());
     ASSERT(protoLoadMode.cachedOffset == offset);
     ASSERT(protoLoadMode.cachedSlot == static_cast<uint64_t>(std::bit_cast<uintptr_t>(cachedSlot)));

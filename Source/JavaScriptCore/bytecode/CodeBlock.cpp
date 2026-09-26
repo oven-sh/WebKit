@@ -1872,7 +1872,8 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
         // We need to add optimizations for op_resolve_scope_for_hoisting_func_decl_in_eval to do link time scope resolution.
 
         auto clearIfNeeded = [&] (GetByIdModeMetadata& modeMetadata, ASCIILiteral opName) {
-            if (modeMetadata.mode != GetByIdMode::Default)
+            // An unset cache of a receiver with no prototype has no watchpoint, so m_llintGetByIdWatchpointMap does not know it.
+            if (modeMetadata.mode != GetByIdMode::Default && modeMetadata.mode != GetByIdMode::Unset)
                 return;
             StructureID oldStructureID = modeMetadata.defaultMode.structureID;
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))
@@ -4249,6 +4250,24 @@ void CodeBlock::jitSoon()
 void CodeBlock::jitNextInvocation()
 {
     m_unlinkedCode->llintExecuteCounter().setNewThreshold(0, this);
+}
+
+void CodeBlock::jitSoonAfterLLIntICMisses()
+{
+#if ENABLE(JIT)
+    if (!Options::useBaselineJIT() || jitType() != JITType::InterpreterThunk)
+        return;
+    int32_t activeThreshold = m_unlinkedCode->llintExecuteCounter().m_activeThreshold;
+    if (activeThreshold == std::numeric_limits<int32_t>::max())
+        return; // dontJITAnytimeSoon()
+    m_didAskForJITAfterLLIntICMisses = true;
+    if (activeThreshold <= m_unlinkedCode->thresholdForJIT(Options::thresholdForJITSoon()))
+        return; // The counter already waits for that, or for less.
+    CodeBlock* codeBlock = this; // Placate GCC for use in CODEBLOCK_LOG_EVENT  (does not like this).
+    CODEBLOCK_LOG_EVENT(codeBlock, "jitSoon", ("LLInt inline cache misses"));
+    dataLogLnIf(Options::verboseOSR(), *this, ": a get_by_id or put_by_id site keeps missing in the LLInt, so JIT soon.");
+    jitSoon();
+#endif
 }
 
 CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSLocker&, ArityCheckMode arityCheck) const

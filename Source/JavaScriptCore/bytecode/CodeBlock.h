@@ -636,7 +636,10 @@ public:
 
     bool checkIfJITThresholdReached()
     {
-        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
+        // The startup deferral keeps code in the LLInt for as long as an execution there costs what it usually costs.
+        // jitSoonAfterLLIntICMisses() is for code where it costs more, so the deferral does not apply to it.
+        bool isDeferred = jitType() != JITType::BaselineJIT && !m_didAskForJITAfterLLIntICMisses;
+        return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, isDeferred ? vm().startupJITDeferralScale() : 1);
     }
 
     void dontJITAnytimeSoon()
@@ -646,6 +649,9 @@ public:
 
     void jitSoon();
     void jitNextInvocation();
+    // One get_by_id or put_by_id site made Options::missCountForLLIntTierUp() calls of its LLInt slow path:
+    // the Baseline JIT compiles this CodeBlock after thresholdForJITSoon executions, whatever the startup deferral is.
+    void jitSoonAfterLLIntICMisses();
 
     const BaselineExecutionCounter& llintExecuteCounter() const
     {
@@ -1099,6 +1105,7 @@ private:
     // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
     uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
     uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
+    uint8_t m_didAskForJITAfterLLIntICMisses : 1 { false }; // Options::missCountForLLIntTierUp()
     unsigned firstLazilyMaterializedFunctionDecl() const;
     FunctionExecutable* materializeFunctionDeclSlow(unsigned index);
     FunctionExecutable* materializeFunctionExprSlow(unsigned index);

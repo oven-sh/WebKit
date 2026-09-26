@@ -614,6 +614,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useFuzzerMode, false, Normal, nullptr) \
     \
     v(Unsigned, prototypeHitCountForLLIntCaching, 2, Normal, "Number of prototype property hits before caching a prototype in the LLInt. A count of 0 means never cache."_s) \
+    v(Unsigned, missCountForLLIntTierUp, 12, Normal, "Number of slow path calls from one get_by_id or put_by_id site in the LLInt after which the CodeBlock waits for thresholdForJITSoon executions, not thresholdForJITAfterWarmUp, before the Baseline JIT compiles it, with no startup deferral. 0 means that misses do not count. At most 255."_s) \
+    v(Bool, useLLIntUnsetCaching, true, Normal, "If true, the LLInt caches a get_by_id that finds no property (GetByIdMode::Unset), after prototypeHitCountForLLIntCaching such results at the site."_s) \
+    v(Bool, useLLIntStringLengthCaching, true, Normal, "If true, the LLInt reads the length of a string in the fast path of get_length (GetByIdMode::StringLength)."_s) \
+    v(Bool, useLLIntPrototypeCacheRearming, true, Normal, "If true, the prototypeHitCountForLLIntCaching countdown of an LLInt get_by_id site starts again when a watchpoint or a collection clears its cache, when an own property replaces its cache, and when it ends, so that a receiver of another structure can replace the cache. If false, the countdown of a site runs once."_s) \
     \
     v(Bool, dumpCompiledRegExpPatterns, false, Normal, nullptr) \
     v(Bool, verboseRegExpCompilation, false, Normal, nullptr) \
