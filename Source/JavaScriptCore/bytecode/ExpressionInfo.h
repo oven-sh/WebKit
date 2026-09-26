@@ -26,10 +26,10 @@
 #pragma once
 
 #include <JavaScriptCore/LineColumn.h>
-#include <JavaScriptCore/SourceID.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashTraits.h>
 #include <wtf/IterationStatus.h>
+#include <wtf/Lock.h>
 #include <wtf/MallocPtr.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
@@ -187,10 +187,11 @@ public:
 
     Entry NODELETE entryForInstPC(InstPC);
 
-    // The line and column of the instruction's divot in the document of a provider, where this code starts at
+    // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
     // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
-    // same instructions again, so this keeps each answer.
-    LineColumn lineColumnForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
+    // same instructions again, so this keeps each answer. Sources that share unlinked code have the same text
+    // (CodeCache), so the answer is the same for all of them. Where a source says its text starts is not in it.
+    LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
     size_t NODELETE byteSize() const; // owned by this object
@@ -321,15 +322,11 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
-    // Unlinked code is shared by every source with the same text, so an answer says what it was computed for.
-    struct CachedLineColumn {
-        SourceID sourceID;
-        unsigned sourceOffset;
-        LineColumn lineColumn;
-    };
-    using LineColumnMap = UncheckedKeyHashMap<InstPC, CachedLineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+    using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
 
-    LineColumnMap m_cachedLineColumns;
+    // With Options::useSourceCodeDump(), compiler threads ask too.
+    Lock m_cachedLineColumnsLock;
+    LineColumnMap m_cachedLineColumns WTF_GUARDED_BY_LOCK(m_cachedLineColumnsLock);
     unsigned m_numberOfChapters;
     unsigned m_numberOfEncodedInfo;
     unsigned m_numberOfEncodedInfoExtensions;

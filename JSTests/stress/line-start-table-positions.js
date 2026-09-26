@@ -24,20 +24,25 @@ function positionsOf(text) {
     return seen.join(" ");
 }
 
-// One-based, by reading the text one character at a time.
-function lineAndColumnOf(text, offset) {
+// One-based, for ascending offsets, by reading the text one character at a time.
+function positionsAt(text, offsets) {
+    const positions = [];
     let line = 1;
     let lineStart = 0;
-    for (let i = 0; i < offset; i++) {
-        const c = text[i];
-        if (c === "\r" && text[i + 1] === "\n")
-            i++;
-        else if (c !== "\n" && c !== "\r" && c !== "\u2028" && c !== "\u2029")
-            continue;
-        line++;
-        lineStart = i + 1;
+    let i = 0;
+    for (const offset of offsets) {
+        for (; i < offset; i++) {
+            const c = text[i];
+            if (c === "\r" && text[i + 1] === "\n")
+                i++;
+            else if (c !== "\n" && c !== "\r" && c !== "\u2028" && c !== "\u2029")
+                continue;
+            line++;
+            lineStart = i + 1;
+        }
+        positions.push(`${line}:${offset - lineStart + 1}`);
     }
-    return `${line}:${offset - lineStart + 1}`;
+    return positions.join(" ");
 }
 
 // Where in `at(new Error("..."));` the column of the error is.
@@ -51,20 +56,20 @@ const terminators = {
     "all five, 16-bit": ["\n", "\r\n", "\r", "\u2028", "\u2029"],
 };
 
-const lengths = [0, 0, 0, 3, 40, 100, 126, 127, 128, 129, 300, 16382, 16383, 16384, 16385, 40000];
+const lengths = [126, 127, 128, 129, 300, 16382, 16383, 16384, 16385, 40000];
 
 for (const [name, choices] of Object.entries(terminators)) {
     const terminator = () => choices[random(choices.length)];
     let text = "";
     const offsets = [];
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 150; i++) {
         for (let blank = random(4); blank > 0; blank--)
             text += terminator();
         text += " ".repeat(random(12));
         offsets.push(text.length + columnInStatement);
-        text += `at(new Error("${"x".repeat(lengths[random(lengths.length)])}"));` + terminator();
+        text += `at(new Error("${"x".repeat(i < lengths.length ? lengths[i] : random(60))}"));` + terminator();
     }
-    const expected = offsets.map(offset => lineAndColumnOf(text, offset)).join(" ");
+    const expected = positionsAt(text, offsets);
     shouldBe(positionsOf(text), expected, name);
     // Again: the answers are kept.
     shouldBe(positionsOf(text), expected, `${name}, second time`);

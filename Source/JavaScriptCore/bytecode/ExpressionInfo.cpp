@@ -204,7 +204,8 @@ namespace JSC {
 
     The shape of ExpressionInfo looks like this:
 
-            ExpressionInfo: [ m_cachedLineColumns             ]
+            ExpressionInfo: [ m_cachedLineColumnsLock         ]
+                            [ m_cachedLineColumns             ]
                             [ m_numberOfChapters              ]
                             [ m_numberOfEncodedInfo           ]
                             [ m_numberOfEncodedInfoExtensions ]
@@ -895,16 +896,12 @@ auto ExpressionInfo::entryForInstPC(InstPC instPC) -> Entry
     return decoder.entry();
 }
 
-LineColumn ExpressionInfo::lineColumnForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
+LineColumn ExpressionInfo::lineColumnInTextForInstPC(InstPC instPC, SourceProvider& provider, unsigned sourceOffset)
 {
-    SourceID sourceID = provider.asID();
-    auto iter = m_cachedLineColumns.find(instPC);
-    if (iter != m_cachedLineColumns.end() && iter->value.sourceID == sourceID && iter->value.sourceOffset == sourceOffset)
-        return iter->value.lineColumn;
-
-    LineColumn lineColumn = provider.documentLineColumnForOffset(sourceOffset + entryForInstPC(instPC).divot);
-    m_cachedLineColumns.set(instPC, CachedLineColumn { sourceID, sourceOffset, lineColumn });
-    return lineColumn;
+    Locker locker { m_cachedLineColumnsLock };
+    return m_cachedLineColumns.ensure(instPC, [&] {
+        return provider.lineColumnInTextForOffset(sourceOffset + entryForInstPC(instPC).divot);
+    }).iterator->value;
 }
 
 template<unsigned bitCount>

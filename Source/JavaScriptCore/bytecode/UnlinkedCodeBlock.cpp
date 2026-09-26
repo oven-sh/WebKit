@@ -187,9 +187,9 @@ ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(Bytecode
     return expressionInfo().entryForInstPC(bytecodeIndex.offset());
 }
 
-LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)
+LineColumn UnlinkedCodeBlock::lineColumnInTextForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)
 {
-    return expressionInfo().lineColumnForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
+    return expressionInfo().lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
 }
 
 #ifndef NDEBUG

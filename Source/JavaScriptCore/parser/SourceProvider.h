@@ -197,15 +197,26 @@ public:
         return m_lineStartTable.offsetForPosition(source(), line0Based, column0Based);
     }
 
-    // An inline <script> shifts every line of its document, but shifts the column only on its first
-    // line, since later lines begin where their own line begins.
-    LineColumn documentLineColumnForOffset(unsigned offset)
+    // Zero-based, in the provider's own text.
+    LineColumn lineColumnInTextForOffset(unsigned offset)
     {
         auto info = m_lineStartTable.lineAndColumnForOffset(source(), offset);
+        return { info.line0Based, info.column0Based };
+    }
+
+    // An inline <script> shifts every line of its document, but shifts the column only on its first
+    // line, since later lines begin where their own line begins.
+    LineColumn documentLineColumn(LineColumn inText) const
+    {
         return {
-            m_startPosition.m_line.oneBasedInt() + info.line0Based,
-            info.line0Based ? info.column0Based + 1 : m_startPosition.m_column.oneBasedInt() + info.column0Based,
+            m_startPosition.m_line.oneBasedInt() + inText.line,
+            inText.line ? inText.column + 1 : m_startPosition.m_column.oneBasedInt() + inText.column,
         };
+    }
+
+    LineColumn documentLineColumnForOffset(unsigned offset)
+    {
+        return documentLineColumn(lineColumnInTextForOffset(offset));
     }
 
     LineColumn documentZeroBasedLineColumnForOffset(unsigned offset)
