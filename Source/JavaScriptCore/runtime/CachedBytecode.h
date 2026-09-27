@@ -76,8 +76,13 @@ public:
         return adoptRef(*new CachedBytecode(CachePayload::makePayloadWithDestructor(data, WTF::move(destructor)), WTF::move(leafExecutables)));
     }
 
-    LeafExecutableMap& leafExecutables() LIFETIME_BOUND { return m_leafExecutables; }
+    JS_EXPORT_PRIVATE ~CachedBytecode();
 
+    // A payload that takes updates starts out as the code of a program or module (addGlobalUpdate, or what was read
+    // from a file) and gets the code of each of its functions appended when that function is first generated
+    // (addFunctionUpdate), which also points the function's record at it. The functions that can get code this way are
+    // the leaves: the ones with a record in the payload, or in an update, whose code is not in it yet. Both functions
+    // read the executables of the leaves of what they are given: call them before a collection can free those.
     JS_EXPORT_PRIVATE void addGlobalUpdate(Ref<CachedBytecode>);
     JS_EXPORT_PRIVATE void addFunctionUpdate(const UnlinkedFunctionExecutable*, CodeSpecializationKind, Ref<CachedBytecode>);
 
@@ -98,17 +103,23 @@ public:
 #endif
     void setPayloadIsPersistent() { m_payload.setIsPersistent(); }
     bool payloadIsOwnedOrPersistent() const { return m_payload.isOwnedOrPersistent(); }
-    bool hasUpdates() const { return !m_updates.isEmpty(); }
+    JS_EXPORT_PRIVATE bool hasUpdates() const;
     size_t sizeForUpdate() const { return m_size; }
 
 private:
-    CachedBytecode(CachePayload&& payload, LeafExecutableMap&& leafExecutables = { })
-        : m_size(payload.size())
-        , m_payload(WTF::move(payload))
-        , m_leafExecutables(WTF::move(leafExecutables))
-    {
-    }
+    friend class Decoder; // registerLeaf, for the leaves of a payload that was read from a file
 
+    // What only a payload that takes updates has. Most payloads never take one (none of an embedder's that reads its
+    // bytecode from a file it wrote in one piece), and pay one pointer for it.
+    struct UpdateState;
+
+    JS_EXPORT_PRIVATE CachedBytecode(CachePayload&&, LeafExecutableMap&& = { });
+
+    UpdateState& ensureUpdateState();
+    // `base` is the offset of the function's record. Both read the executable, which is alive.
+    void registerLeaf(const UnlinkedFunctionExecutable*, ptrdiff_t base);
+    // The record to put the code of this executable's function into, if the payload or an update has one.
+    std::optional<ptrdiff_t> resolveLeaf(const UnlinkedFunctionExecutable*);
     void copyLeafExecutables(const CachedBytecode&);
 
     size_t m_size { 0 };
@@ -117,8 +128,10 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     size_t m_entryOffset { 0 };
 #endif
+    // The leaves of the code that was encoded into m_payload, by the offsets of their records in it: what the Encoder
+    // found. Read when this is appended to a payload that takes updates, and by nothing else.
     LeafExecutableMap m_leafExecutables;
-    Vector<CacheUpdate> m_updates;
+    std::unique_ptr<UpdateState> m_updateState;
 };
 
 #if USE(BUN_JSC_ADDITIONS)

@@ -158,7 +158,7 @@ public:
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
     unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
     unsigned startOffset() const { return m_startOffset; }
-    unsigned sourceLength() { return m_sourceLength; }
+    unsigned sourceLength() const { return m_sourceLength; }
     unsigned parametersStartOffset() const { materializeDeferredScalarsIfNeeded(); return m_parametersStartOffset; }
 
     UnlinkedFunctionCodeBlock* unlinkedCodeBlockFor(
@@ -228,12 +228,11 @@ public:
     }
     bool isClass() const { return m_isClass; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
-#if USE(BUN_JSC_ADDITIONS)
-    // Where classSource() starts and where the first of classElementDefinitions() is, for orderFunctionKey: read out
-    // of the cached record as they lie, so that nothing of a function that was decoded from a cache is materialized.
+    // Where classSource() starts and where the first of classElementDefinitions() is, for what has to know which
+    // function of a source this is (orderFunctionKey, CachedBytecode's leaves): read out of the cached record as they
+    // lie, so that nothing of a function that was decoded from a cache is materialized.
     std::optional<uint32_t> classSourceStartWithoutMaterializing() const;
     std::optional<uint32_t> firstClassElementOffsetWithoutMaterializing() const;
-#endif
 
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {
@@ -375,6 +374,8 @@ private:
     {
         // Currently, bytecode cache assumes that the tree of UnlinkedFunctionExecutable and UnlinkedCodeBlock will not be destroyed while the parent is live.
         // Bytecode cache uses this asumption to avoid duplicate materialization by bookkeeping the heap cells in the offste-to-pointer map.
+        // That is the code a cache was read into. The code a cache is written from can go, and executables with it:
+        // what the writer knows by the address of an executable, it checks (CachedBytecode::resolveLeaf).
         return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
     }
 

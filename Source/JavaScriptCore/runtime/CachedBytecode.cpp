@@ -332,38 +332,143 @@ auto PersistentBytecodePayloads::statistics() const -> Statistics
     return result;
 }
 
+// Which function of its source an executable is for. Every executable of one function has the same identity: a new one
+// is made each time the code of the function around it is generated, so a function in the condition of a loop has two
+// at a time, and so has one nested in a function that is both called and constructed. No two functions of one source
+// have the same identity. Where a function starts does not say which one it is: the body that JSC makes of an async
+// arrow function starts where a function that is the first thing in it does, the function that initializes a class's
+// fields has no text but theirs, and the text of a default constructor is a builtin's.
+static std::optional<uint64_t> leafIdentity(const UnlinkedFunctionExecutable& executable)
+{
+    enum class Kind : uint8_t { Function, InnerBody, ClassFields, DefaultConstructor };
+    auto identity = [&](Kind kind, std::optional<uint32_t> start) -> std::optional<uint64_t> {
+        // An offset into a source and the length of a function are 31 bits each in the executable itself.
+        static constexpr uint32_t limit = 1u << 31;
+        if (!start || *start >= limit || executable.sourceLength() >= limit)
+            return std::nullopt;
+        return static_cast<uint64_t>(kind) << 62 | static_cast<uint64_t>(*start) << 31 | executable.sourceLength();
+    };
+    if (executable.isBuiltinDefaultClassConstructor())
+        return identity(Kind::DefaultConstructor, executable.classSourceStartWithoutMaterializing());
+    switch (executable.parseMode()) {
+    case SourceParseMode::ClassFieldInitializerMode:
+        return identity(Kind::ClassFields, executable.firstClassElementOffsetWithoutMaterializing());
+    case SourceParseMode::GeneratorBodyMode:
+    case SourceParseMode::AsyncFunctionBodyMode:
+    case SourceParseMode::AsyncArrowFunctionBodyMode:
+    case SourceParseMode::AsyncGeneratorBodyMode:
+        return identity(Kind::InnerBody, executable.unlinkedFunctionStart());
+    default:
+        return identity(Kind::Function, executable.unlinkedFunctionStart());
+    }
+}
+
+struct CachedBytecode::UpdateState {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(UpdateState);
+
+    struct Leaf {
+        ptrdiff_t base { 0 }; // where the function's record is once the updates are committed
+        uint64_t identity { 0 }; // leafIdentity() of the function the record is for
+    };
+    // Every leaf of the payload and of the updates, by the address of the executable its record was written for.
+    // Nothing here keeps that executable alive, and nothing hears of its death: the executable at an address may be
+    // another one than the one that was registered under it.
+    UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, Leaf> leaves;
+    Vector<CacheUpdate> updates;
+};
+
+struct SameSizeAsCachedBytecode : public RefCounted<SameSizeAsCachedBytecode> {
+    size_t size;
+    CachePayload payload;
+    size_t rootOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    size_t entryOffset;
+#endif
+    LeafExecutableMap leafExecutables;
+    void* updateState;
+};
+static_assert(sizeof(CachedBytecode) == sizeof(SameSizeAsCachedBytecode), "CachedBytecode should stay small: what only a payload that takes updates needs goes into UpdateState");
+
+CachedBytecode::CachedBytecode(CachePayload&& payload, LeafExecutableMap&& leafExecutables)
+    : m_size(payload.size())
+    , m_payload(WTF::move(payload))
+    , m_leafExecutables(WTF::move(leafExecutables))
+{
+}
+
+CachedBytecode::~CachedBytecode() = default;
+
+auto CachedBytecode::ensureUpdateState() -> UpdateState&
+{
+    if (!m_updateState)
+        m_updateState = makeUnique<UpdateState>();
+    return *m_updateState;
+}
+
+bool CachedBytecode::hasUpdates() const
+{
+    return m_updateState && !m_updateState->updates.isEmpty();
+}
+
+void CachedBytecode::registerLeaf(const UnlinkedFunctionExecutable* executable, ptrdiff_t base)
+{
+    // What is already registered under the address is the record of an executable that died.
+    auto& leaves = ensureUpdateState().leaves;
+    if (std::optional<uint64_t> identity = leafIdentity(*executable))
+        leaves.set(executable, UpdateState::Leaf { base, *identity });
+    else
+        leaves.remove(executable);
+}
+
+std::optional<ptrdiff_t> CachedBytecode::resolveLeaf(const UnlinkedFunctionExecutable* executable)
+{
+    if (!m_updateState)
+        return std::nullopt;
+    auto& leaves = m_updateState->leaves;
+    auto it = leaves.find(executable);
+    if (it == leaves.end())
+        return std::nullopt;
+    // The record is for this function, whichever of its executables it was written for: the code of a function goes
+    // into no record but that function's.
+    if (leafIdentity(*executable) != it->value.identity) {
+        leaves.remove(it);
+        return std::nullopt;
+    }
+    return it->value.base;
+}
+
 void CachedBytecode::addGlobalUpdate(Ref<CachedBytecode> bytecode)
 {
-    ASSERT(m_updates.isEmpty());
-    m_leafExecutables.clear();
+    UpdateState& state = ensureUpdateState();
+    ASSERT(state.updates.isEmpty());
+    state.leaves.clear();
     copyLeafExecutables(bytecode.get());
-    m_updates.append(CacheUpdate::GlobalUpdate { WTF::move(bytecode->m_payload) });
+    state.updates.append(CacheUpdate::GlobalUpdate { WTF::move(bytecode->m_payload) });
 }
 
 void CachedBytecode::addFunctionUpdate(const UnlinkedFunctionExecutable* executable, CodeSpecializationKind kind, Ref<CachedBytecode> bytecode)
 {
-    auto it = m_leafExecutables.find(executable);
-    if (it == m_leafExecutables.end())
-        return; // not recorded as a leaf of this payload (lean decoder, or its cached block was rejected): nothing to append to
-    ptrdiff_t offset = it->value.base();
-    ASSERT(offset);
+    std::optional<ptrdiff_t> base = resolveLeaf(executable);
+    if (!base)
+        return; // not a leaf of this payload (lean decoder, its cached block was rejected, or the code it is nested in was not generated for this payload): nothing to append to
+    ASSERT(*base);
     copyLeafExecutables(bytecode.get());
-    m_updates.append(CacheUpdate::FunctionUpdate { offset, kind, { executable->features(), executable->lexicallyScopedFeatures(), executable->hasCapturedVariables() }, WTF::move(bytecode->m_payload), bytecode->rootOffset() });
+    m_updateState->updates.append(CacheUpdate::FunctionUpdate { *base, kind, { executable->features(), executable->lexicallyScopedFeatures(), executable->hasCapturedVariables() }, WTF::move(bytecode->m_payload), bytecode->rootOffset() });
 }
 
 void CachedBytecode::copyLeafExecutables(const CachedBytecode& bytecode)
 {
-    for (const auto& it : bytecode.m_leafExecutables) {
-        auto addResult = m_leafExecutables.add(it.key, it.value + m_size);
-        ASSERT_UNUSED(addResult, addResult.isNewEntry);
-    }
+    for (const auto& it : bytecode.m_leafExecutables)
+        registerLeaf(it.key, (it.value + m_size).base());
     m_size += bytecode.size();
 }
 
 void CachedBytecode::commitUpdates(const ForEachUpdateCallback& callback) const
 {
+    if (!m_updateState)
+        return;
     off_t offset = m_payload.size();
-    for (const auto& update : m_updates) {
+    for (const auto& update : m_updateState->updates) {
         const CachePayload* payload = nullptr;
         if (update.isGlobal())
             payload = &update.asGlobal().m_payload;

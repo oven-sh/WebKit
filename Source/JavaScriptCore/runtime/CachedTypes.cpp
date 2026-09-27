@@ -1521,11 +1521,11 @@ void Decoder::setHandleForTDZEnvironment(CompactTDZEnvironment* environment, con
 void Decoder::addLeafExecutable(const UnlinkedFunctionExecutable* executable, ptrdiff_t offset)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // Only CachedBytecode::addFunctionUpdate reads this map, and Bun never calls it.
+    // Only CachedBytecode::addFunctionUpdate reads what this registers, and Bun never calls it.
     UNUSED_PARAM(executable);
     UNUSED_PARAM(offset);
 #else
-    m_cachedBytecode->leafExecutables().add(executable, offset);
+    m_cachedBytecode->registerLeaf(executable, offset);
 #endif
 }
 
@@ -4802,7 +4802,6 @@ auto CachedFunctionExecutable::view(ScalarsToView scalarsToView) const -> View
     return v;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
 std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMaterializing() const
 {
     if (!m_membersAreDeferred) {
@@ -4822,7 +4821,6 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::firstClassElementOffsetWitho
     auto* rareData = m_members.pending().record->slotsView().rareData;
     return rareData ? (*rareData)->firstClassElementOffset() : std::nullopt;
 }
-#endif
 
 void UnlinkedFunctionExecutable::materializeDeferredNameSlow() const
 {
