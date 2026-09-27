@@ -60,6 +60,8 @@ public:
     JSValue of(JSGlobalObject*, JSValue) const;
     JSObject* resolvedOptions(JSGlobalObject*) const;
 
+    DECLARE_VISIT_CHILDREN;
+
 private:
     IntlDisplayNames(VM&, Structure*);
     DECLARE_DEFAULT_FINISH_CREATION;
