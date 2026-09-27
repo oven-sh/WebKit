@@ -151,19 +151,26 @@ void JSFinalizationRegistry::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionSc
     });
 
     if (!m_hasAlreadyScheduledWork && (readiedCell || deadCount(locker))) {
-        auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
-        bool queued = vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [this](DeferredWorkTimer::Ticket&) {
-            JSGlobalObject* globalObject = this->realm();
-            this->m_hasAlreadyScheduledWork = false;
-            this->runFinalizationCleanup(globalObject);
-        });
+        bool queued = scheduleCleanup(vm);
         #ifndef BUN_SKIP_FAILING_ASSERTIONS
         RELEASE_ASSERT(queued);
         #else
         (void)queued;
         #endif
-        m_hasAlreadyScheduledWork = true;
     }
+}
+
+bool JSFinalizationRegistry::scheduleCleanup(VM& vm)
+{
+    ASSERT(!m_hasAlreadyScheduledWork);
+    auto weakTicket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, this, { });
+    bool queued = vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [this](DeferredWorkTimer::Ticket&) {
+        JSGlobalObject* globalObject = this->realm();
+        this->m_hasAlreadyScheduledWork = false;
+        this->runFinalizationCleanup(globalObject);
+    });
+    m_hasAlreadyScheduledWork = true;
+    return queued;
 }
 
 void JSFinalizationRegistry::runFinalizationCleanup(JSGlobalObject* globalObject)
@@ -176,7 +183,18 @@ void JSFinalizationRegistry::runFinalizationCleanup(JSGlobalObject* globalObject
             JSValue::encode(value),
         });
         call(globalObject, callback(), ArgList { args.data(), args.size() }, "This should not be visible: please report a bug to bugs.webkit.org"_s);
-        RETURN_IF_EXCEPTION(scope, void());
+        if (scope.exception()) [[unlikely]] {
+            // The host reports this exception at the end of the task. The
+            // holdings still queued would otherwise wait for a later collection
+            // to notice them, so schedule another cleanup task for them now,
+            // the way V8 re-posts its cleanup task after a throw.
+            if (!vm.hasPendingTerminationException()) {
+                Locker locker { cellLock() };
+                if (!m_hasAlreadyScheduledWork && deadCount(locker))
+                    scheduleCleanup(vm);
+            }
+            return;
+        }
     }
 }
 
