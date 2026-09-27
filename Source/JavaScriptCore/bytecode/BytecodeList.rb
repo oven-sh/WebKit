@@ -1271,6 +1271,12 @@ op :check_tdz,
         identifier?: VirtualRegister,
     }
 
+op :check_type,
+    args: {
+        value: VirtualRegister,
+        mask: unsigned,
+    }
+
 op :new_array_with_spread,
     args: {
         dst: VirtualRegister,

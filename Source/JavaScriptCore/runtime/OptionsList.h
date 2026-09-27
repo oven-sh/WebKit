@@ -140,6 +140,29 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
+    v(Bool, useAOT, false, Normal, "Compile functions with the static (ahead-of-time) compiler. Without an image, functions are compiled in-process when they are first linked, which is how the compiler is tested."_s) \
+    v(Bool, aotVerbose, false, Normal, "Log what the static compiler compiles and why it declines a function."_s) \
+    v(Bool, aotDumpGraph, false, Normal, "Dump the static compiler's IR."_s) \
+    v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
+    v(Bool, aotDumpDisassembly, false, Normal, "Dump the machine code the static compiler produces."_s) \
+    v(Bool, aotReportStats, false, Normal, "At exit, report how many functions the static compiler compiled and the reasons it declined the others."_s) \
+    v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
+    v(Unsigned, aotB3OptLevel, 2, Normal, "B3 optimization level for the static compiler."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code. With aotWriteImage, where to write one."_s) \
+    v(Bool, aotValidateImage, false, Normal, "Code from an image is only used for a function whose bytecode is what the code was compiled from."_s) \
+    v(Bool, aotWriteImage, false, Normal, "With useAOT: what the static compiler compiles is written to aotImagePath when the process exits."_s) \
+    v(Bool, aotUseLiveScopes, false, Normal, "With useAOT: the static compiler looks at the scope chain the function was closed over, which it cannot do ahead of time."_s) \
+    v(Unsigned, aotReportSlowPaths, 0, Normal, "If not zero: every that many times an operation of the static compiler's that keeps count is called, say which were called most, and for what."_s) \
+    v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "The constructor of a class all of whose instance fields are a name and nothing else (class C { a; b; }) defines them itself, instead of calling a function that does."_s) \
+    v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "The values of the properties of an object literal are all worked out before the object is made, where nobody can tell: making the object and giving it its properties is then one run of instructions."_s) \
+    v(Bool, resolveAllScopeSlotsStatically, false, Normal, "The bytecode optimizer gives get_from_scope the slot of a variable it can prove the place of even where that makes the instruction wider."_s) \
+    v(Unsigned, aotThreads, 0, Normal, "How many threads compile an image. Zero: as many as there are processors."_s) \
+    v(Unsigned, aotLimit, 0, Normal, "If not zero, the static compiler only compiles this many functions."_s) \
+    v(Unsigned, aotDisableFastPaths, 0, Normal, "For debugging the static compiler. 1: get_by_id cache, 2: put_by_id replace, 4: put_by_id transition, 8: get_by_val, 16: put_by_val, 32: scope caches, 64: closure variable stores, 128: tail calls (made as calls), 256: get_by_id on the prototype chain, 512: put_by_id transitions that are not direct, 1024: the megamorphic cache, 2048: allocation without the runtime, 4096: the equality thunks."_s) \
+    v(Bool, aotUseLiveCalleeHints, false, Normal, "With useAOT: a call of a global variable is compiled for the function that the variable holds when the caller is compiled. For testing what is done, ahead of time, for calls of a module's functions."_s) \
+    v(Bool, aotSplitLoops, true, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
+    v(Unsigned, aotSkip, 0, Normal, "If not zero, the static compiler leaves out the function that would be this many-th."_s) \
+    \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
     v(Unsigned, repatchBufferingCountdown, 6, Normal, nullptr) \
@@ -148,6 +171,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useUnboxedFastArrayIteration, true, Normal, "for-of and array destructuring over an Array keep the index in the frame instead of allocating an Array Iterator object"_s) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
+    v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \
+    v(Bool, reportSoundTypeViolations, false, Normal, "A type check that fails says so, once for each place, instead of throwing. Not for code from the static compiler, which relies on the checks."_s) \
+    v(Bool, ignoreArgumentProfilesForTesting, false, Normal, "the DFG treats the value profiles of arguments as empty, as if the function had never been called"_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
     v(Bool, useBytecodeOptimizerTDZ, true, Normal, "bytecode optimizer: redundant TDZ check elimination") \
@@ -663,6 +689,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
+    v(Bool, useMiniVMModeWithoutJIT, true, Normal, "Having no JIT is taken to mean that memory matters more than speed. Not so where the code comes compiled."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \
     v(Bool, useCompilerSignpost, false, Normal, nullptr) \
     v(Bool, useGCSignpost, false, Normal, nullptr) \

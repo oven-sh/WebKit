@@ -54,5 +54,11 @@ private:
 JSC_DECLARE_HOST_FUNCTION(mathProtoFuncAbs);
 JSC_DECLARE_HOST_FUNCTION(mathProtoFuncFloor);
 JSC_DECLARE_HOST_FUNCTION(mathProtoFuncMin);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncCeil);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncFround);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncMax);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncSqrt);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncTrunc);
+JSC_DECLARE_HOST_FUNCTION(mathProtoFuncIMul);
 
 } // namespace JSC

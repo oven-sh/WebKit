@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JITExceptions.h"
 
+#include "AOTRuntime.h"
 #include "CallFrame.h"
 #include "CodeBlock.h"
 #include "Interpreter.h"
@@ -84,6 +85,14 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
 #endif
     } else
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
+
+#if ENABLE(FTL_JIT)
+    if (handler.m_valid && !callFrame->isNativeCalleeFrame() && callFrame->codeBlock() && callFrame->codeBlock()->jitType() == JITType::AOTJIT) {
+        // The handler has no way to find the VM before it has its frame: AOT::catchThunk() gives it that, and goes on to it.
+        dispatchAndCatchRoutine = catchRoutine;
+        catchRoutine = AOT::catchThunk();
+    }
+#endif
 
     ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(vm.topEntryFrame));
 

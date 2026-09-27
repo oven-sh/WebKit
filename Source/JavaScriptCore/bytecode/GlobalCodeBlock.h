@@ -45,8 +45,8 @@ protected:
     {
     }
 
-    GlobalCodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
-        : CodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope)
+    GlobalCodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope, LinkMode linkMode = LinkMode::Full)
+        : CodeBlock(vm, structure, ownerExecutable, unlinkedCodeBlock, scope, linkMode)
     {
     }
 };

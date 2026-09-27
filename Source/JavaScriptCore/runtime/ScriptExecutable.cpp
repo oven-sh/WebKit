@@ -25,6 +25,8 @@
 
 #include "config.h"
 
+#include "AOTCompiler.h"
+#include "AOTImage.h"
 #include "CodeBlock.h"
 #include "CompilationResult.h"
 #include "Debugger.h"
@@ -290,6 +292,17 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(kind == CodeSpecializationKind::CodeForCall);
         RELEASE_ASSERT(!executable->m_codeBlock);
         RELEASE_ASSERT(!function);
+#if ENABLE(FTL_JIT)
+        if (AOT::Image::hasAny() || Options::aotImagePath()) {
+            if (auto code = AOT::findInImage(executable, kind, executable->unlinkedCodeBlock(), scope)) {
+                ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
+                if (codeBlock)
+                    AOT::installFromImage(codeBlock, code);
+                return codeBlock;
+            }
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope));
     }
 
@@ -302,6 +315,19 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->getUnlinkedCodeBlock(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
+#if ENABLE(FTL_JIT)
+        if (AOT::Image::hasAny() || Options::aotImagePath()) {
+            if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
+                ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
+                if (codeBlock)
+                    AOT::installFromImage(codeBlock, code);
+                return codeBlock;
+            }
+            if (Options::aotReportStats()) [[unlikely]]
+                dataLogLn("AOT: not in an image: the module ", executable->source().provider()->sourceURL());
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 
@@ -331,6 +357,19 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
+#if ENABLE(FTL_JIT)
+    if (AOT::Image::hasAny() || Options::aotImagePath()) {
+        if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
+            FunctionCodeBlock* codeBlock = FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
+            if (codeBlock)
+                AOT::installFromImage(codeBlock, code);
+            return codeBlock;
+        }
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: not in an image: ", executable->ecmaName().string(), " of ", executable->source().provider()->sourceURL(), " at ", executable->source().startOffset(), kind == CodeSpecializationKind::CodeForCall ? "" : " (construct)");
+    }
+#endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
 
@@ -418,12 +457,17 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     if (Options::validateBytecode())
         codeBlock->validate();
 
-    bool installedUnlinkedBaselineCode = false;
+    // newCodeBlockFor() found it code in an image.
+    bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
 #if ENABLE(JIT)
-    if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
+    if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
     }
+#endif
+#if ENABLE(FTL_JIT)
+    if (!installedUnlinkedBaselineCode && Options::useAOT()) [[unlikely]]
+        installedUnlinkedBaselineCode = AOT::tryCompileAndInstall(vm, codeBlock, scope);
 #endif
     if (!installedUnlinkedBaselineCode) {
         if (Options::useLLInt())

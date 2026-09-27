@@ -1,0 +1,1760 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTGraph.h"
+
+#if ENABLE(FTL_JIT)
+
+#include "AOTProgram.h"
+#include "BytecodeStructs.h"
+#include "BytecodeUseDef.h"
+#include "JSCInlines.h"
+#include "PreciseJumpTargetsInlines.h"
+#include "UnlinkedCodeBlock.h"
+#include "UnlinkedFunctionCodeBlock.h"
+#include <wtf/ScopedLambda.h>
+
+namespace JSC { namespace AOT {
+
+Type typeOfValue(JSValue value)
+{
+    if (!value)
+        return TEmpty;
+    if (value.isInt32())
+        return TInt32;
+    if (value.isDouble())
+        return TDouble;
+    if (value.isBoolean())
+        return TBoolean;
+    if (value.isUndefined())
+        return TUndefined;
+    if (value.isNull())
+        return TNull;
+    if (!value.isCell())
+        return TTop;
+    JSCell* cell = value.asCell();
+    switch (cell->type()) {
+    case StringType:
+        return TString;
+    case SymbolType:
+        return TSymbol;
+    case HeapBigIntType:
+        return TBigInt;
+    case JSFunctionType:
+    case InternalFunctionType:
+        return TFunction;
+    case ArrayType:
+    case DerivedArrayType:
+        return TArray;
+    default:
+        if (isTypedArrayType(cell->type()))
+            return typeOfTypedArray(cell->type());
+        return cell->isObject() ? TObject : TCellOther;
+    }
+}
+
+void dumpType(PrintStream& out, Type type)
+{
+    if (!type) {
+        out.print("None");
+        return;
+    }
+    if (type == TAll) {
+        out.print("All");
+        return;
+    }
+    if (type == TTop) {
+        out.print("Top");
+        return;
+    }
+    CommaPrinter bar("|"_s);
+    auto take = [&](Type bits, ASCIILiteral name) {
+        if ((type & bits) == bits) {
+            out.print(bar, name);
+            type &= ~bits;
+        }
+    };
+    take(TNumber, "Number"_s);
+    take(TAnyObject, "AnyObject"_s);
+    take(TInt32, "Int32"_s);
+    take(TDouble, "Double"_s);
+    take(TBoolean, "Boolean"_s);
+    take(TUndefined, "Undefined"_s);
+    take(TNull, "Null"_s);
+    take(TString, "String"_s);
+    take(TSymbol, "Symbol"_s);
+    take(TBigInt, "BigInt"_s);
+    take(TFunction, "Function"_s);
+    take(TArray, "Array"_s);
+    take(TObject, "Object"_s);
+    take(TTypedArray, "TypedArray"_s);
+    for (unsigned i = 0; i < NumberOfTypedArrayTypesExcludingDataView; ++i) {
+        if (type & (1u << (firstTypedArrayBit + i))) {
+            out.print(bar, "TypedArray", i);
+            type &= ~(1u << (firstTypedArrayBit + i));
+        }
+    }
+    take(TCellOther, "CellOther"_s);
+    take(TEmpty, "Empty"_s);
+}
+
+Graph::Graph(VM& vm, UnlinkedCodeBlock* codeBlock, const ScopeChain& scopeChain)
+    : m_vm(vm)
+    , m_codeBlock(codeBlock)
+    , m_scopeChain(scopeChain)
+    , m_numArguments(codeBlock->numParameters())
+    , m_numLocals(codeBlock->numCalleeLocals())
+{
+}
+
+Graph::~Graph() = default;
+
+Node* Graph::addNode(NodeKind kind)
+{
+    Node& node = m_nodes.alloc();
+    node.kind = kind;
+    node.index = m_nodes.size() - 1;
+    return &node;
+}
+
+BasicBlock* Graph::addBlock()
+{
+    blocks.append(makeUniqueWithoutFastMallocCheck<BasicBlock>());
+    blocks.last()->index = blocks.size() - 1;
+    return blocks.last().get();
+}
+
+Node* Graph::constant(JSValue value)
+{
+    ASSERT(!value || !value.isCell());
+    if (!value) {
+        // Not a key the table can hold.
+        if (!m_emptyConstant) {
+            m_emptyConstant = addNode(NodeKind::Constant);
+            m_emptyConstant->type = TEmpty;
+            m_emptyConstant->range = IntegerRange::unknown();
+        }
+        return m_emptyConstant;
+    }
+    auto result = m_constants.add(JSValue::encode(value), nullptr);
+    if (result.isNewEntry) {
+        Node* node = addNode(NodeKind::Constant);
+        node->constant = value;
+        node->type = typeOfValue(value);
+        node->range = IntegerRange::ofNumber(value);
+        result.iterator->value = node;
+    }
+    return result.iterator->value;
+}
+
+NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructions, unsigned offsetOfCreateThis)
+{
+    NewObjectPlan plan;
+    auto createThis = instructions.at(offsetOfCreateThis);
+    Vector<VirtualRegister, 4> aliases;
+    aliases.append(createThis->as<OpCreateThis>().m_dst);
+    constexpr unsigned maximumCount = 64;
+    // Nothing gets in here from elsewhere: what a jump goes to is either after a jump or the top of a loop, and this stops at both.
+    for (unsigned offset = offsetOfCreateThis + createThis->size(); offset < instructions.size(); offset += instructions.at(offset)->size()) {
+        auto instruction = instructions.at(offset);
+        switch (instruction->opcodeID()) {
+        case op_mov: {
+            auto bytecode = instruction->as<OpMov>();
+            if (aliases.contains(bytecode.m_src)) {
+                if (!aliases.contains(bytecode.m_dst))
+                    aliases.append(bytecode.m_dst);
+            } else
+                aliases.removeAll(bytecode.m_dst);
+            if (aliases.isEmpty())
+                return plan;
+            continue;
+        }
+        case op_check_type:
+            // If it throws there is no object to be told anything by. That the object would have been made first can be told, if it
+            // is made on behalf of a proxy: not a thing to hold every constructor back for.
+            if (aliases.contains(instruction->as<OpCheckType>().m_value))
+                return plan;
+            continue;
+        case op_put_by_id: {
+            auto bytecode = instruction->as<OpPutById>();
+            if (!aliases.contains(bytecode.m_base) || aliases.contains(bytecode.m_value))
+                return plan;
+            size_t index = plan.properties.findIf([&](auto& property) { return property.identifier == bytecode.m_property; });
+            if (index == notFound) {
+                if (plan.properties.size() == maximumCount)
+                    return plan;
+                index = plan.properties.size();
+                plan.properties.append({ bytecode.m_property, bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict() });
+            } else if (!plan.properties[index].isDefined) {
+                // If a setter took the first it takes the second too, and only the last is kept.
+                return plan;
+            }
+            plan.stores.append({ offset, static_cast<unsigned>(index) });
+            continue;
+        }
+        default:
+            return plan;
+        }
+    }
+    return plan;
+}
+
+CallIntrinsic callIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis)
+{
+    static constexpr struct {
+        ASCIILiteral name;
+        unsigned argumentCount;
+        CallIntrinsic intrinsic;
+    } table[] = {
+        { "sqrt"_s, 1, CallIntrinsic::MathSqrt }, { "abs"_s, 1, CallIntrinsic::MathAbs }, { "floor"_s, 1, CallIntrinsic::MathFloor },
+        { "ceil"_s, 1, CallIntrinsic::MathCeil }, { "trunc"_s, 1, CallIntrinsic::MathTrunc }, { "fround"_s, 1, CallIntrinsic::MathFround },
+        { "min"_s, 2, CallIntrinsic::MathMin }, { "max"_s, 2, CallIntrinsic::MathMax }, { "imul"_s, 2, CallIntrinsic::MathIMul },
+        { "charCodeAt"_s, 1, CallIntrinsic::StringCharCodeAt }, { "push"_s, 1, CallIntrinsic::ArrayPush },
+    };
+    if (name->length() > 10 || name->isSymbol())
+        return CallIntrinsic::None;
+    for (auto& entry : table) {
+        if (entry.argumentCount + 1 == argumentCountIncludingThis && WTF::equal(name, entry.name))
+            return entry.intrinsic;
+    }
+    return CallIntrinsic::None;
+}
+
+Graph::CallOperands Graph::operandsOfCall(const JSInstruction* instruction)
+{
+    if (instruction->opcodeID() == op_call) {
+        auto bytecode = instruction->as<OpCall>();
+        return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
+    }
+    auto bytecode = instruction->as<OpCallIgnoreResult>();
+    return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
+}
+
+CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
+{
+    if (node->opcode != op_call && node->opcode != op_call_ignore_result)
+        return CallIntrinsic::None;
+    CallOperands operands = operandsOfCall(node->instruction);
+    Node* callee = node->use(operands.callee);
+    if (!callee->isBytecode(op_get_by_id))
+        return CallIntrinsic::None;
+    return callIntrinsicFor(m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl(), operands.argc);
+}
+
+std::optional<JSType> Graph::typedArrayAccessed(const Node* node)
+{
+    Node* base;
+    if (node->opcode == op_get_by_val)
+        base = node->use(node->as<OpGetByVal>().m_base);
+    else if (node->opcode == op_put_by_val)
+        base = node->use(node->as<OpPutByVal>().m_base);
+    else
+        return std::nullopt;
+    auto type = typedArrayTypeOf(base->type);
+    if (!type)
+        return std::nullopt;
+    switch (*type) {
+    case Int8ArrayType:
+    case Uint8ArrayType:
+    case Int16ArrayType:
+    case Uint16ArrayType:
+    case Int32ArrayType:
+    case Uint32ArrayType:
+    case Float32ArrayType:
+    case Float64ArrayType:
+        return type;
+    default:
+        return std::nullopt;
+    }
+}
+
+std::pair<Node*, Node*> Graph::arrayAndElementStored(const Node* node) const
+{
+    if (node->kind != NodeKind::Bytecode)
+        return { nullptr, nullptr };
+    if (node->opcode == op_put_by_val) {
+        auto bytecode = node->as<OpPutByVal>();
+        return { node->use(bytecode.m_base), node->use(bytecode.m_value) };
+    }
+    if (intrinsicOfCall(node) == CallIntrinsic::ArrayPush) {
+        auto operands = operandsOfCall(node->instruction);
+        return { node->use(operands.argument(0)), node->use(operands.argument(1)) };
+    }
+    return { nullptr, nullptr };
+}
+
+const KnownFunction* Graph::knownCallee(const Node* node) const
+{
+    if (!m_hints)
+        return nullptr;
+    VirtualRegister calleeRegister;
+    switch (node->opcode) {
+    case op_call:
+        calleeRegister = node->as<OpCall>().m_callee;
+        break;
+    case op_call_ignore_result:
+        calleeRegister = node->as<OpCallIgnoreResult>().m_callee;
+        break;
+    case op_construct:
+        calleeRegister = node->as<OpConstruct>().m_callee;
+        break;
+    default:
+        return nullptr;
+    }
+    // In the generic copy of a loop what was read comes by way of phis, from that copy and from the other.
+    Node* callee = node->use(calleeRegister);
+    for (unsigned depth = 0; callee->kind == NodeKind::Phi && depth < 4; ++depth) {
+        Node* source = nullptr;
+        for (auto& use : callee->uses) {
+            Node* input = use.node;
+            if (input == callee || input == source)
+                continue;
+            if (source && source->isBytecode(op_get_from_scope) && input->isBytecode(op_get_from_scope) && source->instruction == input->instruction)
+                continue;
+            if (source)
+                return nullptr;
+            source = input;
+        }
+        if (!source)
+            return nullptr;
+        callee = source;
+    }
+    if (!callee->isBytecode(op_get_from_scope))
+        return nullptr;
+    auto bytecode = callee->as<OpGetFromScope>();
+    UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
+    ResolveType type = bytecode.m_getPutInfo.resolveType();
+    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
+        return m_hints->find(name, bytecode.m_offset);
+    if (type == Dynamic)
+        return nullptr;
+    return m_hints->find(name, std::nullopt);
+}
+
+unsigned Graph::indexOfKnownCallee(const ImageKey& key)
+{
+    for (unsigned i = 0; i < knownCallees.size(); ++i) {
+        if (knownCallees[i].sameFunction(key))
+            return i;
+    }
+    knownCallees.append(key);
+    return knownCallees.size() - 1;
+}
+
+Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigned localScopeDepth, ResolveType type)
+{
+    StaticVariable result;
+    if (type == Dynamic || needsVarInjectionChecks(type))
+        return result;
+    UniquedStringImpl* uid = m_codeBlock->identifier(identifierIndex).impl();
+    unsigned depth = localScopeDepth;
+    for (const ScopeChainEntry& entry : m_scopeChain) {
+        switch (entry.kind) {
+        case ScopeChainEntry::Lexical: {
+            SymbolTable* symbolTable = entry.symbolTable;
+            ConcurrentJSLocker locker(symbolTable->m_lock);
+            auto iter = symbolTable->find(locker, uid);
+            if (iter != symbolTable->end(locker)) {
+                result.kind = StaticVariable::Closure;
+                result.depth = depth;
+                result.offset = iter->value.scopeOffset();
+                result.inModule = entry.isModule;
+                result.isReadOnly = iter->value.isReadOnly();
+                return result;
+            }
+            if (symbolTable->usesSloppyEval())
+                return result;
+            if (entry.isModule) {
+                // An import, or a global: which, and where, is for when the modules have been linked.
+                result.kind = StaticVariable::Unresolved;
+                return result;
+            }
+            break;
+        }
+        case ScopeChainEntry::Unknown:
+            if (m_declaredNames && type == GlobalProperty) {
+                auto resolution = m_declaredNames->resolve(uid);
+                if (resolution.kind == DeclaredNamesLink::Resolution::Global) {
+                    result.kind = StaticVariable::Unresolved;
+                    result.isInGlobalScopes = true;
+                    return result;
+                }
+                if (resolution.kind == DeclaredNamesLink::Resolution::Stable) {
+                    result.kind = StaticVariable::ModuleImport;
+                    result.depth = depth + resolution.hops;
+                    // Assigning to an import is an error that the environment of the module that imports it knows to throw.
+                    const StaticImport* import = m_linkage && !m_namesAssignedTo.get(identifierIndex) ? m_linkage->findImport(uid) : nullptr;
+                    if (import) {
+                        result.kind = StaticVariable::Import;
+                        result.import = *import;
+                        result.offset = ScopeOffset(import->scopeOffset);
+                        usesStaticImports = true;
+                    }
+                    return result;
+                }
+            }
+            [[fallthrough]];
+        case ScopeChainEntry::GlobalLexical:
+        case ScopeChainEntry::Global:
+            // The operations that fill the caches look at what the name turned out to be, and only cache what stays put.
+            result.kind = StaticVariable::Unresolved;
+            return result;
+        case ScopeChainEntry::Opaque:
+            return result;
+        }
+        ++depth;
+    }
+    return result;
+}
+
+unsigned Graph::extraOfResolveScope(const OpResolveScope& bytecode)
+{
+    if (resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType).isInGlobalScopes)
+        return Site::resolvesInGlobalScopes;
+    // Too deep to be told from that is too deep to fit.
+    return bytecode.m_localScopeDepth < Site::resolvesInGlobalScopes ? bytecode.m_localScopeDepth : std::numeric_limits<unsigned>::max();
+}
+
+unsigned Graph::extraOfGetFromScope(const OpGetFromScope& bytecode)
+{
+    unsigned result = bytecode.m_getPutInfo.resolveMode() == ThrowIfNotFound ? Site::throwsIfNotFound : 0;
+    if (resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_getPutInfo.resolveType()).kind == StaticVariable::ModuleImport)
+        result |= Site::isImport;
+    return result;
+}
+
+void Graph::setLinkage(const ModuleLinkage* linkage, const DeclaredNamesLink* declaredNames)
+{
+    m_linkage = linkage;
+    m_declaredNames = declaredNames;
+    if (!linkage)
+        return;
+    for (const auto& instruction : m_codeBlock->instructions()) {
+        if (instruction->opcodeID() != op_put_to_scope)
+            continue;
+        auto bytecode = instruction->as<OpPutToScope>();
+        if (bytecode.m_getPutInfo.resolveType() != ResolvedClosureVar)
+            m_namesAssignedTo.set(bytecode.m_var);
+    }
+}
+
+void Graph::fail(ASCIILiteral reason, OpcodeID opcode)
+{
+    if (failed())
+        return;
+    m_failureReason = reason;
+    m_failureOpcode = opcode;
+}
+
+void Node::dump(PrintStream& out) const
+{
+    out.print("@", index, "<");
+    dumpType(out, type);
+    if (range.isKnown())
+        out.print(" ", range.min, "..", range.max);
+    out.print("> = ");
+    switch (kind) {
+    case NodeKind::Bytecode:
+        out.print(opcode, " bc#", bytecodeIndex.offset());
+        break;
+    case NodeKind::Constant:
+        out.print("Constant(", constant, ")");
+        break;
+    case NodeKind::ConstantCell:
+        out.print("ConstantCell(", reg, ")");
+        break;
+    case NodeKind::Argument:
+        out.print("Argument(", reg, ")");
+        break;
+    case NodeKind::Phi:
+        out.print("Phi(", reg, ")");
+        break;
+    case NodeKind::Proj:
+        out.print("Proj(", reg, ")");
+        break;
+    case NodeKind::GetStack:
+        out.print("GetStack(", reg, ")");
+        break;
+    case NodeKind::SetStack:
+        out.print("SetStack(", reg, ")");
+        break;
+    case NodeKind::Narrow:
+        out.print("Narrow(", reg, ")");
+        break;
+    case NodeKind::Guard:
+        switch (guardKind) {
+        case GuardKind::Whole:
+            out.print("Guard(", opcode, " bc#", bytecodeIndex.offset(), structureIsChecked ? ", structure checked" : "", slotIsPlain ? ", plain" : "", calleeIsChecked ? ", callee checked" : "", ")");
+            break;
+        case GuardKind::Nothing:
+            out.print("Guard()");
+            break;
+        case GuardKind::Reentry:
+            out.print("GuardReentry");
+            break;
+        case GuardKind::Structure:
+            out.print("GuardStructure(@", site->index, ")");
+            break;
+        case GuardKind::SlotsAgree:
+            out.print("GuardSlotsAgree(@", site->index, ", @", otherSite->index, ")");
+            break;
+        case GuardKind::SlotIsPlain:
+            out.print("GuardSlotIsPlain(@", site->index, ")");
+            break;
+        case GuardKind::BeginSlotChecks:
+            out.print("BeginSlotChecks");
+            break;
+        case GuardKind::EndSlotChecks:
+            out.print("EndSlotChecks");
+            break;
+        case GuardKind::Callee:
+            out.print("GuardCallee(bc#", bytecodeIndex.offset(), ")");
+            break;
+        case GuardKind::KnownCallee:
+            out.print("GuardKnownCallee(bc#", bytecodeIndex.offset(), ")");
+            break;
+        case GuardKind::TypedArrayStorage:
+            out.print("GuardTypedArrayStorage");
+            break;
+        }
+        break;
+    }
+    if (!uses.isEmpty()) {
+        out.print(" [");
+        CommaPrinter comma;
+        for (auto& use : uses) {
+            out.print(comma);
+            if (use.reg.isValid())
+                out.print(use.reg, ":");
+            out.print("@", use.node ? use.node->index : UINT_MAX);
+        }
+        out.print("]");
+    }
+}
+
+void Graph::dump(PrintStream& out) const
+{
+    for (BasicBlock* block : m_rpo) {
+        out.print("Block #", block->index, " bc#[", block->bytecodeBegin, ", ", block->bytecodeEnd, ")");
+        if (block->isCatchEntrypoint)
+            out.print(" catch");
+        if (block->isLoopHeader)
+            out.print(" loop");
+        if (block->isGeneric)
+            out.print(" generic");
+        if (block->isPreHeader)
+            out.print(" pre-header");
+        if (block->isReentry)
+            out.print(" re-entry");
+        out.print(" preds:");
+        for (auto* predecessor : block->predecessors)
+            out.print(" #", predecessor->index);
+        out.print("\n");
+        for (Node* phi : block->phis)
+            out.print("    ", *phi, "\n");
+        for (Node* node : block->nodes)
+            out.print("    ", *node, "\n");
+        out.print("  succs:");
+        for (auto* successor : block->successors)
+            out.print(" #", successor->index);
+        out.print("\n");
+    }
+}
+
+namespace {
+
+class Parser {
+public:
+    Parser(Graph& graph)
+        : m_graph(graph)
+        , m_codeBlock(graph.codeBlock())
+        , m_instructions(m_codeBlock->instructions())
+    {
+    }
+
+    bool run()
+    {
+        if (!findBlocks())
+            return false;
+        computeReversePostOrder();
+        if (chooseGuards()) {
+            m_graph.blocks.clear();
+            m_graph.m_rpo.clear();
+            m_graph.catchEntrypoints.clear();
+            if (!findBlocks())
+                return false;
+            computeReversePostOrder();
+        }
+        computeLiveness();
+        chooseHomedRegisters();
+        for (BasicBlock* block : m_graph.m_rpo) {
+            parseBlock(block);
+            if (m_graph.failed())
+                return false;
+        }
+        fillPhis();
+        simplifyPhis();
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->kind != NodeKind::Bytecode)
+                    continue;
+                switch (node->opcode) {
+                case op_call:
+                case op_call_ignore_result:
+                case op_construct:
+                    if (auto* known = m_graph.knownCallee(node); known && (known->forCall == m_codeBlock || known->forConstruct == m_codeBlock))
+                        m_graph.callsItself = true;
+                    [[fallthrough]];
+                case op_tail_call:
+                case op_call_direct_eval:
+                case op_call_varargs:
+                case op_tail_call_varargs:
+                case op_construct_varargs:
+                case op_super_construct:
+                case op_super_construct_varargs:
+                case op_iterator_open:
+                case op_iterator_next:
+                case op_async_iterator_open:
+                case op_async_iterator_next:
+                case op_iterator_close_check:
+                case op_instanceof:
+                    m_graph.makesCalls = true;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        return !m_graph.failed();
+    }
+
+private:
+    template<typename Functor>
+    void forEachUse(const JSInstruction* instruction, const Functor& functor)
+    {
+        // What the instruction as a whole reads: a register that one of its checkpoints wrote first is its own business.
+        Vector<VirtualRegister, 4> defined;
+        Vector<VirtualRegister, 8> seen;
+        unsigned checkpoints = instruction->numberOfCheckpoints();
+        for (unsigned checkpoint = 0; checkpoint < checkpoints; ++checkpoint) {
+            computeUsesForBytecodeIndexImpl(instruction, checkpoint, [&](VirtualRegister reg) {
+                if (defined.contains(reg) || seen.contains(reg))
+                    return;
+                seen.append(reg);
+                functor(reg);
+            });
+            if (checkpoints > 1) {
+                computeDefsForBytecodeIndexImpl(m_codeBlock->numVars(), instruction, checkpoint, [&](VirtualRegister reg) {
+                    defined.append(reg);
+                });
+            }
+        }
+    }
+
+    template<typename Functor>
+    void forEachDef(const JSInstruction* instruction, const Functor& functor)
+    {
+        Vector<VirtualRegister, 4> seen;
+        unsigned checkpoints = instruction->numberOfCheckpoints();
+        for (unsigned checkpoint = 0; checkpoint < checkpoints; ++checkpoint) {
+            computeDefsForBytecodeIndexImpl(m_codeBlock->numVars(), instruction, checkpoint, [&](VirtualRegister reg) {
+                if (seen.contains(reg))
+                    return;
+                seen.append(reg);
+                functor(reg);
+            });
+        }
+    }
+
+    // What there is a short way of doing that is worth leaving the fast copy of a loop for when it does not apply.
+    bool canBeGuarded(const JSInstruction* instruction)
+    {
+        switch (instruction->opcodeID()) {
+        case op_resolve_scope:
+            return !isStaticClosureVarResolveType(instruction->as<OpResolveScope>().m_resolveType);
+        case op_get_from_scope:
+            return instruction->as<OpGetFromScope>().m_getPutInfo.resolveType() != ResolvedClosureVar;
+        case op_call:
+        case op_call_ignore_result: {
+            auto operands = Graph::operandsOfCall(instruction);
+            for (auto [reg, identifier] : m_recentProperties) {
+                if (reg == operands.callee)
+                    return callIntrinsicFor(m_codeBlock->identifier(identifier).impl(), operands.argc) != CallIntrinsic::None;
+            }
+            if (instruction->opcodeID() != op_call)
+                return false;
+            for (auto& [reg, known] : m_recentFunctions) {
+                if (reg == operands.callee)
+                    return canBeInlined(known, operands.argc);
+            }
+            return false;
+        }
+        case op_get_by_id:
+        case op_put_by_id:
+        case op_get_by_val:
+        case op_put_by_val:
+        case op_get_length:
+        case op_check_type:
+        case op_check_traps:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // A function that does nothing but work something out from its arguments, in a straight line, once it has checked that they are
+    // what it takes them for. In the fast copy of a loop a call of one is replaced by what it works out: if the callee turns out to
+    // be another function, or a check fails, nothing has happened yet, and the generic copy makes the call.
+    //
+    // Every operation has to be one that the types make simple. The lowering of anything else calls the runtime, on behalf of an
+    // instruction that is not the caller's.
+    bool canBeInlined(const KnownFunction* known, unsigned argumentCountIncludingThis)
+    {
+        UnlinkedFunctionCodeBlock* callee = known->forCall;
+        if (!callee || argumentCountIncludingThis < callee->numParameters())
+            return false;
+        return m_canBeInlined.ensure(callee, [&] {
+            return computeCanBeInlined(callee);
+        }).iterator->value;
+    }
+
+    static bool computeCanBeInlined(UnlinkedFunctionCodeBlock* callee)
+    {
+        if (callee->instructionsSize() > 256 || callee->numberOfExceptionHandlers() || callee->isConstructor())
+            return false;
+        unsigned numParameters = callee->numParameters();
+        Vector<Type, 16> types;
+        types.fill(TTop, numParameters + callee->numCalleeLocals());
+        auto slotOf = [&](VirtualRegister reg) -> Type* {
+            if (reg.isArgument() && static_cast<unsigned>(reg.toArgument()) < numParameters)
+                return &types[reg.toArgument()];
+            if (reg.isLocal() && static_cast<unsigned>(reg.toLocal()) < callee->numCalleeLocals())
+                return &types[numParameters + reg.toLocal()];
+            return nullptr;
+        };
+        bool ok = true;
+        auto typeOf = [&](VirtualRegister reg) -> Type {
+            if (reg.isConstant()) {
+                if (callee->constantSourceCodeRepresentation(reg) == SourceCodeRepresentation::LinkTimeConstant) {
+                    ok = false;
+                    return TTop;
+                }
+                JSValue value = callee->getConstant(reg);
+                if (!value || value.isCell())
+                    ok = false;
+                return typeOfValue(value);
+            }
+            if (Type* slot = slotOf(reg))
+                return *slot;
+            ok = false;
+            return TTop;
+        };
+        auto define = [&](VirtualRegister reg, Type type) {
+            if (Type* slot = slotOf(reg))
+                *slot = type;
+            else
+                ok = false;
+        };
+        auto numbers = [&](VirtualRegister lhs, VirtualRegister rhs) { return isSubtype(typeOf(lhs) | typeOf(rhs), TNumber); };
+
+        bool returned = false;
+        for (const auto& instruction : callee->instructions()) {
+            if (returned || !ok)
+                return false;
+            switch (instruction->opcodeID()) {
+            case op_enter:
+                break;
+            case op_mov: {
+                auto bytecode = instruction->as<OpMov>();
+                define(bytecode.m_dst, typeOf(bytecode.m_src));
+                break;
+            }
+            case op_check_type: {
+                auto bytecode = instruction->as<OpCheckType>();
+                Type type = typeOf(bytecode.m_value) & typeAdmittedByMask(bytecode.m_mask);
+                if (!bytecode.m_value.isConstant())
+                    define(bytecode.m_value, type);
+                break;
+            }
+#define AOT_ARITHMETIC(Struct, opcodeName, result) \
+            case opcodeName: { \
+                auto bytecode = instruction->as<Struct>(); \
+                if (!numbers(bytecode.m_lhs, bytecode.m_rhs)) \
+                    return false; \
+                define(bytecode.m_dst, result); \
+                break; \
+            }
+            AOT_ARITHMETIC(OpAdd, op_add, TNumber)
+            AOT_ARITHMETIC(OpSub, op_sub, TNumber)
+            AOT_ARITHMETIC(OpMul, op_mul, TNumber)
+            AOT_ARITHMETIC(OpDiv, op_div, TNumber)
+            AOT_ARITHMETIC(OpBitand, op_bitand, TInt32)
+            AOT_ARITHMETIC(OpBitor, op_bitor, TInt32)
+            AOT_ARITHMETIC(OpBitxor, op_bitxor, TInt32)
+            AOT_ARITHMETIC(OpLshift, op_lshift, TInt32)
+            AOT_ARITHMETIC(OpRshift, op_rshift, TInt32)
+            AOT_ARITHMETIC(OpLess, op_less, TBoolean)
+            AOT_ARITHMETIC(OpLesseq, op_lesseq, TBoolean)
+            AOT_ARITHMETIC(OpGreater, op_greater, TBoolean)
+            AOT_ARITHMETIC(OpGreatereq, op_greatereq, TBoolean)
+            AOT_ARITHMETIC(OpStricteq, op_stricteq, TBoolean)
+            AOT_ARITHMETIC(OpNstricteq, op_nstricteq, TBoolean)
+#undef AOT_ARITHMETIC
+            case op_negate: {
+                auto bytecode = instruction->as<OpNegate>();
+                if (!isSubtype(typeOf(bytecode.m_operand), TNumber))
+                    return false;
+                define(bytecode.m_dst, TNumber);
+                break;
+            }
+            case op_inc: {
+                auto bytecode = instruction->as<OpInc>();
+                if (!isSubtype(typeOf(bytecode.m_srcDst), TNumber))
+                    return false;
+                break;
+            }
+            case op_dec: {
+                auto bytecode = instruction->as<OpDec>();
+                if (!isSubtype(typeOf(bytecode.m_srcDst), TNumber))
+                    return false;
+                break;
+            }
+            case op_ret:
+                typeOf(instruction->as<OpRet>().m_value);
+                returned = true;
+                break;
+            default:
+                return false;
+            }
+        }
+        return returned && ok;
+    }
+
+    // What the call comes to, its guards and all, at the end of the block. Null if the call is not one to do this to after all.
+    Node* inlineCall(BasicBlock* block, const JSInstruction* call, unsigned offset)
+    {
+        if (call->opcodeID() != op_call)
+            return nullptr;
+        auto bytecode = call->as<OpCall>();
+        Node* guard = m_graph.addNode(NodeKind::Guard);
+        guard->guardKind = GuardKind::KnownCallee;
+        guard->opcode = op_call;
+        guard->instruction = call;
+        guard->bytecodeIndex = BytecodeIndex(offset);
+        guard->uses.append({ bytecode.m_callee, get(block, bytecode.m_callee) });
+        const KnownFunction* known = m_graph.knownCallee(guard);
+        if (!known || !canBeInlined(known, bytecode.m_argc))
+            return nullptr;
+        append(block, guard);
+
+        UnlinkedFunctionCodeBlock* callee = known->forCall;
+        unsigned numParameters = callee->numParameters();
+        Vector<Node*, 16> values;
+        values.fill(m_graph.constant(jsUndefined()), numParameters + callee->numCalleeLocals());
+        int firstArgument = -static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset();
+        for (unsigned i = 0; i < numParameters; ++i)
+            values[i] = get(block, VirtualRegister(firstArgument + i));
+        auto slotOf = [&](VirtualRegister reg) -> Node*& {
+            if (reg.isArgument())
+                return values[reg.toArgument()];
+            return values[numParameters + reg.toLocal()];
+        };
+        auto valueOf = [&](VirtualRegister reg) -> Node* {
+            if (reg.isConstant())
+                return m_graph.constant(callee->getConstant(reg));
+            return slotOf(reg);
+        };
+
+        for (const auto& instruction : callee->instructions()) {
+            OpcodeID opcode = instruction->opcodeID();
+            switch (opcode) {
+            case op_enter:
+                continue;
+            case op_mov: {
+                auto mov = instruction->as<OpMov>();
+                slotOf(mov.m_dst) = valueOf(mov.m_src);
+                continue;
+            }
+            case op_ret:
+                return valueOf(instruction->as<OpRet>().m_value);
+            default:
+                break;
+            }
+            auto make = [&](NodeKind kind) {
+                Node* node = m_graph.addNode(kind);
+                node->opcode = opcode;
+                node->instruction = instruction.ptr();
+                node->bytecodeIndex = BytecodeIndex(offset);
+                computeUsesForBytecodeIndexImpl(instruction.ptr(), noCheckpoints, [&](VirtualRegister reg) {
+                    for (auto& use : node->uses) {
+                        if (use.reg == reg)
+                            return;
+                    }
+                    node->uses.append({ reg, valueOf(reg) });
+                });
+                return append(block, node);
+            };
+            if (opcode == op_check_type) {
+                Node* check = make(NodeKind::Guard);
+                Node* node = make(NodeKind::Bytecode);
+                node->guard = check;
+                check->guarded = node;
+                VirtualRegister reg = instruction->as<OpCheckType>().m_value;
+                if (!reg.isConstant())
+                    slotOf(reg) = node;
+                continue;
+            }
+            Node* node = make(NodeKind::Bytecode);
+            computeDefsForBytecodeIndexImpl(callee->numVars(), instruction.ptr(), noCheckpoints, [&](VirtualRegister reg) {
+                slotOf(reg) = node;
+            });
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+
+    // { a: x, b: y }: an op_new_object and, right after it, an op_put_by_id for each property (Options::evaluateObjectLiteralValuesFirst()).
+    // How many of those there are.
+    unsigned numberOfLiteralPropertiesAt(unsigned offset)
+    {
+        auto newObject = m_instructions.at(offset);
+        if (newObject->opcodeID() != op_new_object)
+            return 0;
+        VirtualRegister object = newObject->as<OpNewObject>().m_dst;
+        unsigned count = 0;
+        constexpr unsigned maximumCount = 64;
+        for (unsigned next = offset + newObject->size(); next < m_instructions.size() && count < maximumCount; next += m_instructions.at(next)->size()) {
+            auto instruction = m_instructions.at(next);
+            if (instruction->opcodeID() != op_put_by_id || m_leaders.get(next))
+                break;
+            auto bytecode = instruction->as<OpPutById>();
+            if (bytecode.m_base != object || bytecode.m_value == object || !bytecode.m_flags.isDirect())
+                break;
+            ++count;
+        }
+        return count;
+    }
+
+    // With the blocks and the loops known: where the guards go. False if nowhere.
+    bool chooseGuards()
+    {
+        if (!Options::aotSplitLoops() || !usesStubs)
+            return false;
+        unsigned size = m_instructions.size();
+        bool found = false;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            if (!block->isInLoop)
+                continue;
+            if (m_inLoop.isEmpty()) {
+                m_inLoop.ensureSize(size + 1);
+                m_guards.ensureSize(size + 1);
+                m_loopHeaders.ensureSize(size + 1);
+            }
+            if (block->isLoopHeader)
+                m_loopHeaders.set(block->bytecodeBegin);
+            m_recentProperties.shrink(0);
+            m_recentFunctions.shrink(0);
+            unsigned partOfLiteral = 0;
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
+                m_inLoop.set(offset);
+                const JSInstruction* instruction = m_instructions.at(offset).ptr();
+                if (partOfLiteral) {
+                    --partOfLiteral;
+                    continue;
+                }
+                partOfLiteral = numberOfLiteralPropertiesAt(offset);
+                if (instruction->opcodeID() == op_get_by_id) {
+                    auto bytecode = instruction->as<OpGetById>();
+                    m_recentProperties.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
+                    m_recentProperties.append({ bytecode.m_dst, bytecode.m_property });
+                    m_recentFunctions.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
+                }
+                if (instruction->opcodeID() == op_get_from_scope && m_graph.calleeHints()) {
+                    auto bytecode = instruction->as<OpGetFromScope>();
+                    m_recentFunctions.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
+                    m_recentProperties.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
+                    ResolveType type = bytecode.m_getPutInfo.resolveType();
+                    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+                        if (auto* known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), bytecode.m_offset))
+                            m_recentFunctions.append({ bytecode.m_dst, known });
+                    } else if (type != Dynamic) {
+                        if (auto* known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), std::nullopt))
+                            m_recentFunctions.append({ bytecode.m_dst, known });
+                    }
+                }
+                if (canBeGuarded(instruction)) {
+                    m_guards.set(offset);
+                    found = true;
+                }
+            }
+        }
+        m_hasGuards = found;
+        if (found) {
+            for (auto [from, header] : m_backEdges)
+                m_graph.jumpsBack.add(static_cast<uint64_t>(header->bytecodeBegin) << 32 | from->bytecodeEnd);
+        }
+        return found;
+    }
+
+    bool findBlocks()
+    {
+        unsigned size = m_instructions.size();
+        BitVector& leaders = m_leaders;
+        leaders.clearAll();
+        leaders.ensureSize(size + 1);
+        leaders.set(0);
+        for (const auto& instruction : m_instructions) {
+            OpcodeID opcode = instruction->opcodeID();
+            unsigned next = instruction.offset() + instruction->size();
+            if (isBranch(opcode)) {
+                extractStoredJumpTargetsForInstruction(m_codeBlock, instruction, [&](int32_t relativeOffset) {
+                    leaders.set(instruction.offset() + relativeOffset);
+                });
+                leaders.set(next);
+            } else if (isTerminal(opcode) || isThrow(opcode))
+                leaders.set(next);
+        }
+        for (unsigned i = 0; i < m_codeBlock->numberOfExceptionHandlers(); ++i)
+            leaders.set(m_codeBlock->exceptionHandler(i).target);
+
+        // The root has no bytecode: it is where the arguments and the initial values of the locals are defined, so that
+        // bytecode offset 0 can be a jump target like any other.
+        m_graph.root = m_graph.addBlock();
+
+        m_graph.blockForOffset.fill(nullptr, size);
+        if (m_hasGuards)
+            m_graph.headerForOffset.fill(nullptr, size);
+        BasicBlock* current = nullptr;
+        Vector<BasicBlock*, 4> reentries;
+        for (const auto& instruction : m_instructions) {
+            unsigned offset = instruction.offset();
+            if (leaders.get(offset)) {
+                if (current)
+                    current->bytecodeEnd = offset;
+                if (m_hasGuards && m_loopHeaders.get(offset)) {
+                    // Each of the three is followed by what it goes on to.
+                    BasicBlock* reentry = m_graph.addBlock();
+                    reentry->bytecodeBegin = offset;
+                    reentry->bytecodeEnd = offset;
+                    reentry->endsWithGuard = true;
+                    reentry->isReentry = true;
+                    reentry->isGeneric = true;
+                    reentries.append(reentry);
+                }
+                current = m_graph.addBlock();
+                current->bytecodeBegin = offset;
+                m_graph.blockForOffset[offset] = current;
+                if (m_hasGuards && m_loopHeaders.get(offset)) {
+                    current->bytecodeEnd = offset;
+                    current->endsWithGuard = true;
+                    current->isPreHeader = true;
+                    current = m_graph.addBlock();
+                    current->bytecodeBegin = offset;
+                    m_graph.headerForOffset[offset] = current;
+                }
+            }
+            if (m_hasGuards && m_guards.get(offset)) {
+                // The block that comes right after is the one that goes on.
+                current->bytecodeEnd = offset;
+                current->endsWithGuard = true;
+                current = m_graph.addBlock();
+                current->bytecodeBegin = offset;
+            }
+        }
+        if (!current) {
+            m_graph.fail("no bytecode"_s);
+            return false;
+        }
+        current->bytecodeEnd = size;
+
+        Vector<BasicBlock*> genericBlockForOffset;
+        if (m_hasGuards) {
+            genericBlockForOffset.fill(nullptr, size);
+            m_graph.genericTargetForOffset.fill(nullptr, size);
+            current = nullptr;
+            for (const auto& instruction : m_instructions) {
+                unsigned offset = instruction.offset();
+                bool inLoop = m_inLoop.get(offset);
+                if (current && (!inLoop || leaders.get(offset) || m_guards.get(offset))) {
+                    current->bytecodeEnd = offset;
+                    current = nullptr;
+                }
+                if (!inLoop || current)
+                    continue;
+                current = m_graph.addBlock();
+                current->isGeneric = true;
+                current->bytecodeBegin = offset;
+                genericBlockForOffset[offset] = current;
+                if (!m_loopHeaders.get(offset))
+                    m_graph.genericTargetForOffset[offset] = current;
+            }
+            if (current)
+                current->bytecodeEnd = size;
+            for (BasicBlock* reentry : reentries)
+                m_graph.genericTargetForOffset[reentry->bytecodeBegin] = reentry;
+        }
+
+        auto link = [&](BasicBlock* from, BasicBlock* to) {
+            from->successors.append(to);
+            if (!to->predecessors.contains(from))
+                to->predecessors.append(from);
+        };
+
+        link(m_graph.root, m_graph.blockForOffset[0]);
+        for (auto& blockPtr : m_graph.blocks) {
+            BasicBlock* block = blockPtr.get();
+            if (block == m_graph.root)
+                continue;
+            if (block->endsWithGuard) {
+                link(block, m_graph.blocks[block->index + 1].get());
+                link(block, genericBlockForOffset[block->bytecodeEnd]);
+                continue;
+            }
+            // Find the last instruction.
+            unsigned lastOffset = block->bytecodeBegin;
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
+                lastOffset = offset;
+            auto instruction = m_instructions.at(lastOffset);
+            OpcodeID opcode = instruction->opcodeID();
+            if (isBranch(opcode)) {
+                extractStoredJumpTargetsForInstruction(m_codeBlock, instruction, [&](int32_t relativeOffset) {
+                    link(block, m_graph.targetFrom(block, lastOffset + relativeOffset));
+                });
+                if (!isUnconditionalBranch(opcode) && opcode != op_switch_imm && opcode != op_switch_char && opcode != op_switch_string)
+                    link(block, m_graph.targetFrom(block, block->bytecodeEnd));
+            } else if (!isTerminal(opcode) && !isThrow(opcode)) {
+                if (block->bytecodeEnd >= size) {
+                    m_graph.fail("falls off the end"_s);
+                    return false;
+                }
+                link(block, m_graph.targetFrom(block, block->bytecodeEnd));
+            }
+        }
+
+        for (unsigned i = 0; i < m_codeBlock->numberOfExceptionHandlers(); ++i) {
+            BasicBlock* target = m_graph.blockForOffset[m_codeBlock->exceptionHandler(i).target];
+            if (!target->isCatchEntrypoint) {
+                target->isCatchEntrypoint = true;
+                m_graph.catchEntrypoints.append(target);
+            }
+            if (m_instructions.at(target->bytecodeBegin)->opcodeID() != op_catch) {
+                m_graph.fail("handler does not start with op_catch"_s);
+                return false;
+            }
+            if (!target->predecessors.isEmpty()) {
+                m_graph.fail("handler is also a jump target"_s);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void computeReversePostOrder()
+    {
+        Vector<BasicBlock*> postOrder;
+        BitVector visited(m_graph.blocks.size());
+        BitVector onStack(m_graph.blocks.size());
+        Vector<std::pair<BasicBlock*, BasicBlock*>>& backEdges = m_backEdges; // From, to.
+        backEdges.shrink(0);
+        struct Frame {
+            BasicBlock* block;
+            unsigned next;
+        };
+        auto visitFrom = [&](BasicBlock* start) {
+            if (visited.get(start->index))
+                return;
+            Vector<Frame> stack;
+            visited.set(start->index);
+            onStack.set(start->index);
+            stack.append({ start, 0 });
+            while (!stack.isEmpty()) {
+                Frame& frame = stack.last();
+                if (frame.next < frame.block->successors.size()) {
+                    BasicBlock* successor = frame.block->successors[frame.next++];
+                    if (onStack.get(successor->index)) {
+                        successor->isLoopHeader = true;
+                        backEdges.append({ frame.block, successor });
+                    }
+                    if (!visited.get(successor->index)) {
+                        visited.set(successor->index);
+                        onStack.set(successor->index);
+                        stack.append({ successor, 0 });
+                    }
+                    continue;
+                }
+                onStack.clear(frame.block->index);
+                postOrder.append(frame.block);
+                stack.removeLast();
+            }
+        };
+        // Handlers last in post order means first in the reverse; visiting them first keeps the root at the front.
+        for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
+            visitFrom(entrypoint);
+        visitFrom(m_graph.root);
+        for (unsigned i = postOrder.size(); i--;) {
+            postOrder[i]->isReachable = true;
+            m_graph.m_rpo.append(postOrder[i]);
+        }
+        for (BasicBlock* block : m_graph.m_rpo) {
+            block->predecessors.removeAllMatching([](BasicBlock* predecessor) {
+                return !predecessor->isReachable;
+            });
+        }
+
+        // The body of a loop: whatever gets to the jump back without going through the header.
+        for (auto [from, header] : backEdges) {
+            header->isInLoop = true;
+            Vector<BasicBlock*> worklist;
+            worklist.append(from);
+            BitVector seen(m_graph.blocks.size());
+            seen.set(header->index);
+            while (!worklist.isEmpty()) {
+                BasicBlock* block = worklist.takeLast();
+                if (seen.get(block->index))
+                    continue;
+                seen.set(block->index);
+                block->isInLoop = true;
+                for (BasicBlock* predecessor : block->predecessors)
+                    worklist.append(predecessor);
+            }
+        }
+    }
+
+    void computeLiveness()
+    {
+        unsigned numRegisters = m_graph.numRegisters();
+        Vector<BitVector> uses(m_graph.blocks.size());
+        Vector<BitVector> defs(m_graph.blocks.size());
+        for (BasicBlock* block : m_graph.m_rpo) {
+            BitVector& use = uses[block->index];
+            BitVector& def = defs[block->index];
+            use.ensureSize(numRegisters);
+            def.ensureSize(numRegisters);
+            block->liveIn.ensureSize(numRegisters);
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
+                const JSInstruction* instruction = m_instructions.at(offset).ptr();
+                forEachUse(instruction, [&](VirtualRegister reg) {
+                    if (!m_graph.isTracked(reg))
+                        return;
+                    unsigned index = m_graph.registerIndex(reg);
+                    if (!def.get(index))
+                        use.set(index);
+                });
+                forEachDef(instruction, [&](VirtualRegister reg) {
+                    if (m_graph.isTracked(reg))
+                        def.set(m_graph.registerIndex(reg));
+                });
+            }
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (unsigned i = m_graph.m_rpo.size(); i--;) {
+                BasicBlock* block = m_graph.m_rpo[i];
+                BitVector live(numRegisters);
+                for (BasicBlock* successor : block->successors)
+                    live.merge(successor->liveIn);
+                live.exclude(defs[block->index]);
+                live.merge(uses[block->index]);
+                if (live != block->liveIn) {
+                    block->liveIn = WTF::move(live);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    void chooseHomedRegisters()
+    {
+        m_graph.m_homed.ensureSize(m_graph.numRegisters());
+        for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
+            m_graph.m_homed.merge(entrypoint->liveIn);
+        m_graph.homedTypes.fill(TNone, m_graph.numRegisters());
+    }
+
+    Node* append(BasicBlock* block, Node* node)
+    {
+        node->block = block;
+        block->nodes.append(node);
+        return node;
+    }
+
+    Node* constantFor(VirtualRegister reg)
+    {
+        ASSERT(reg.isConstant());
+        unsigned index = reg.toConstantIndex();
+        while (m_constantCells.size() <= index)
+            m_constantCells.append(nullptr);
+        if (m_codeBlock->constantSourceCodeRepresentation(reg) == SourceCodeRepresentation::LinkTimeConstant) {
+            if (!m_constantCells[index]) {
+                Node* node = m_graph.addNode(NodeKind::ConstantCell);
+                node->range = IntegerRange::unknown();
+                node->reg = reg;
+                node->type = TTop; // Which one it is is known, but not what the realm makes of it.
+                m_constantCells[index] = node;
+            }
+            return m_constantCells[index];
+        }
+        JSValue value = m_codeBlock->getConstant(reg);
+        if (!value || !value.isCell())
+            return m_graph.constant(value);
+        if (!m_constantCells[index]) {
+            Node* node = m_graph.addNode(NodeKind::ConstantCell);
+            node->range = IntegerRange::unknown();
+            node->reg = reg;
+            node->type = typeOfValue(value);
+            m_constantCells[index] = node;
+        }
+        return m_constantCells[index];
+    }
+
+    Node* get(BasicBlock* block, VirtualRegister reg)
+    {
+        if (reg.isConstant())
+            return constantFor(reg);
+        if (reg == VirtualRegister(CallFrameSlot::callee)) {
+            // Nothing writes it: read where it is wanted.
+            Node* node = m_graph.addNode(NodeKind::Argument);
+            node->reg = reg;
+            node->type = TAnyObject;
+            return append(block, node);
+        }
+        if (!m_graph.isTracked(reg)) {
+            m_graph.fail("reads a register outside the frame"_s);
+            return m_graph.constant(jsUndefined());
+        }
+        if (m_graph.isHomed(reg)) {
+            Node* node = m_graph.addNode(NodeKind::GetStack);
+            node->reg = reg;
+            return append(block, node);
+        }
+        Node* value = block->valuesAtTail[m_graph.registerIndex(reg)];
+        if (!value) {
+            // Bytecode liveness says nothing reads this, and yet: it is a register that is only read on a path where it was
+            // never written, which is to say that op_enter's undefined is what it holds.
+            return m_graph.constant(jsUndefined());
+        }
+        return value;
+    }
+
+    void set(BasicBlock* block, VirtualRegister reg, Node* value)
+    {
+        if (!m_graph.isTracked(reg)) {
+            m_graph.fail("writes a register outside the frame"_s);
+            return;
+        }
+        if (m_graph.isHomed(reg)) {
+            Node* node = m_graph.addNode(NodeKind::SetStack);
+            node->reg = reg;
+            node->uses.append({ VirtualRegister(), value });
+            append(block, node);
+            return;
+        }
+        block->valuesAtTail[m_graph.registerIndex(reg)] = value;
+    }
+
+    void parseBlock(BasicBlock* block)
+    {
+        unsigned numRegisters = m_graph.numRegisters();
+        block->valuesAtTail.fill(nullptr, numRegisters);
+
+        if (block == m_graph.root) {
+            for (unsigned i = 0; i < m_graph.numArguments(); ++i) {
+                Node* node = m_graph.addNode(NodeKind::Argument);
+                node->reg = virtualRegisterForArgumentIncludingThis(i);
+                node->type = TTop;
+                append(block, node);
+                set(block, node->reg, node);
+            }
+            // Every local is undefined until op_enter says so again; a homed one needs its slot to hold a value from the start.
+            for (unsigned i = 0; i < m_graph.numLocals(); ++i)
+                set(block, virtualRegisterForLocal(i), m_graph.constant(jsUndefined()));
+            return;
+        }
+
+        bool needsPhis = block->predecessors.size() != 1 || block->isLoopHeader || block->predecessors[0]->valuesAtTail.isEmpty();
+        if (!block->isCatchEntrypoint) {
+            for (unsigned index : block->liveIn) {
+                if (m_graph.m_homed.get(index))
+                    continue;
+                if (!needsPhis) {
+                    block->valuesAtTail[index] = valueLeaving(block->predecessors[0], block, index);
+                    continue;
+                }
+                Node* phi = m_graph.addNode(NodeKind::Phi);
+                phi->reg = m_graph.registerForIndex(index);
+                phi->block = block;
+                block->phis.append(phi);
+                block->valuesAtTail[index] = phi;
+            }
+        }
+
+        unsigned partOfLiteral = 0;
+        for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
+            const JSInstruction* instruction = m_instructions.at(offset).ptr();
+            OpcodeID opcode = instruction->opcodeID();
+            if (partOfLiteral) {
+                --partOfLiteral;
+                continue;
+            }
+            if (m_objectBeingPlanned && opcode == op_put_by_id) {
+                // One of the stores that the object is going to be made with the outcome of.
+                auto& stores = m_planOfObject.stores;
+                RELEASE_ASSERT(m_nextStoreOfPlan < stores.size() && stores[m_nextStoreOfPlan].offset == offset);
+                VirtualRegister reg = NewObjectPlan::registerOf(stores[m_nextStoreOfPlan].property);
+                Node* value = get(block, instruction->as<OpPutById>().m_value);
+                bool found = false;
+                for (auto& use : m_objectBeingPlanned->uses) {
+                    if (use.reg == reg) {
+                        use.node = value;
+                        found = true;
+                    }
+                }
+                if (!found)
+                    m_objectBeingPlanned->uses.append({ reg, value });
+                if (++m_nextStoreOfPlan == stores.size()) {
+                    append(block, m_objectBeingPlanned);
+                    m_objectBeingPlanned = nullptr;
+                }
+                continue;
+            }
+
+            switch (opcode) {
+            case op_create_this: {
+                // A register that lives in memory is written where the instruction is.
+                if (m_graph.hasHomedRegisters() || block->isInLoop)
+                    break;
+                m_planOfObject = NewObjectPlan::forCreateThis(m_instructions, offset);
+                if (m_planOfObject.stores.isEmpty() || m_planOfObject.stores.last().offset >= block->bytecodeEnd)
+                    break;
+                auto bytecode = instruction->as<OpCreateThis>();
+                Node* node = m_graph.addNode(NodeKind::Bytecode);
+                node->opcode = opcode;
+                node->instruction = instruction;
+                node->bytecodeIndex = BytecodeIndex(offset);
+                node->uses.append({ bytecode.m_callee, get(block, bytecode.m_callee) });
+                node->numberOfLiteralProperties = m_planOfObject.properties.size();
+                node->reg = bytecode.m_dst;
+                node->block = block;
+                set(block, bytecode.m_dst, node);
+                m_objectBeingPlanned = node;
+                m_nextStoreOfPlan = 0;
+                continue;
+            }
+            case op_mov: {
+                auto bytecode = instruction->as<OpMov>();
+                set(block, bytecode.m_dst, get(block, bytecode.m_src));
+                continue;
+            }
+            case op_enter:
+                for (unsigned i = m_codeBlock->numVars(); i--;)
+                    set(block, virtualRegisterForLocal(i), m_graph.constant(jsUndefined()));
+                // It also puts the callee's scope in the scope register.
+                if (m_codeBlock->scopeRegister().isValid()) {
+                    Node* scope = m_graph.addNode(NodeKind::Bytecode);
+                    scope->opcode = op_get_scope;
+                    scope->bytecodeIndex = BytecodeIndex(offset);
+                    scope->reg = m_codeBlock->scopeRegister();
+                    append(block, scope);
+                    set(block, scope->reg, scope);
+                }
+                continue;
+            case op_iterator_close_check: {
+                // A branch that also writes a register, which is one thing too many for a node: a terminal has to come last,
+                // and what it defines has to be there for the phis of the successors and for the store of a homed register.
+                // So it is two nodes. The first is the iterator as the instruction leaves it. The second is the branch, and
+                // needs nothing but that to tell where to go (see Lowering::lowerIteratorCloseCheck()).
+                auto bytecode = instruction->as<OpIteratorCloseCheck>();
+                auto addPart = [&] {
+                    Node* node = m_graph.addNode(NodeKind::Bytecode);
+                    node->opcode = opcode;
+                    node->instruction = instruction;
+                    node->bytecodeIndex = BytecodeIndex(offset);
+                    return node;
+                };
+                Node* iterator = addPart();
+                forEachUse(instruction, [&](VirtualRegister reg) {
+                    iterator->uses.append({ reg, get(block, reg) });
+                });
+                iterator->reg = bytecode.m_iterator;
+                append(block, iterator);
+                set(block, bytecode.m_iterator, iterator);
+                Node* branch = addPart();
+                branch->uses.append({ bytecode.m_iterator, iterator });
+                append(block, branch);
+                continue;
+            }
+            case op_nop:
+            case op_super_sampler_begin:
+            case op_super_sampler_end:
+            case op_identity_with_profile: // Leaves its operand as it is.
+                continue;
+            default:
+                break;
+            }
+
+            bool comesAfterGuard = offset == block->bytecodeBegin && !block->isGeneric && block->predecessors.size() == 1 && block->predecessors[0]->endsWithGuard && !block->predecessors[0]->isPreHeader;
+            if (comesAfterGuard && opcode == op_call) {
+                if (auto it = m_resultsOfInlinedCalls.find(offset); it != m_resultsOfInlinedCalls.end()) {
+                    set(block, instruction->as<OpCall>().m_dst, it->value);
+                    continue;
+                }
+            }
+
+            Node* node = m_graph.addNode(NodeKind::Bytecode);
+            node->opcode = opcode;
+            node->instruction = instruction;
+            node->bytecodeIndex = BytecodeIndex(offset);
+            forEachUse(instruction, [&](VirtualRegister reg) {
+                node->uses.append({ reg, get(block, reg) });
+            });
+            if (opcode == op_new_object) {
+                node->numberOfLiteralProperties = numberOfLiteralPropertiesAt(offset);
+                Graph::forEachLiteralProperty(instruction, node->numberOfLiteralProperties, [&](unsigned, VirtualRegister reg) {
+                    for (auto& use : node->uses) {
+                        if (use.reg == reg)
+                            return;
+                    }
+                    node->uses.append({ reg, get(block, reg) });
+                });
+                partOfLiteral = node->numberOfLiteralProperties;
+            }
+            append(block, node);
+            if (offset == block->bytecodeBegin && !block->isGeneric && block->predecessors.size() == 1 && block->predecessors[0]->endsWithGuard && !block->predecessors[0]->isPreHeader) {
+                node->guard = block->predecessors[0]->terminal();
+                node->guard->guarded = node;
+            }
+            if (opcode == op_get_by_val) {
+                unsigned next = offset + instruction->size();
+                if (next < m_instructions.size() && m_instructions.at(next)->opcodeID() == op_check_type) {
+                    auto check = m_instructions.at(next)->as<OpCheckType>();
+                    if (check.m_value == instruction->as<OpGetByVal>().m_dst)
+                        node->expectedMask = check.m_mask;
+                }
+            }
+
+            Vector<VirtualRegister, 4> defs;
+            forEachDef(instruction, [&](VirtualRegister reg) {
+                defs.append(reg);
+            });
+            if (opcode == op_check_type) {
+                // It leaves the register as it is, but from here on more is known about what is in it. That is what all of this
+                // is for: the check is a definition, of the same value with a smaller type.
+                VirtualRegister reg = instruction->as<OpCheckType>().m_value;
+                if (m_graph.isTracked(reg) && !m_graph.m_homed.get(m_graph.registerIndex(reg))) {
+                    node->reg = reg;
+                    set(block, reg, node);
+                }
+            } else if (defs.size() == 1) {
+                node->reg = defs[0];
+                set(block, defs[0], node);
+            } else {
+                for (VirtualRegister reg : defs) {
+                    Node* proj = m_graph.addNode(NodeKind::Proj);
+                    proj->reg = reg;
+                    proj->bytecodeIndex = node->bytecodeIndex;
+                    proj->uses.append({ VirtualRegister(), node });
+                    append(block, proj);
+                    set(block, reg, proj);
+                }
+            }
+            if (m_graph.failed())
+                return;
+        }
+
+        if (block->endsWithGuard) {
+            const JSInstruction* instruction = m_instructions.at(block->bytecodeEnd).ptr();
+            Node* guard = m_graph.addNode(NodeKind::Guard);
+            if (block->isReentry) {
+                for (unsigned index : block->liveIn) {
+                    Node* value = block->valuesAtTail[index];
+                    if (m_graph.m_homed.get(index) || !value)
+                        continue;
+                    Node* narrow = m_graph.addNode(NodeKind::Narrow);
+                    narrow->reg = m_graph.registerForIndex(index);
+                    narrow->uses.append({ VirtualRegister(), value });
+                    append(block, narrow);
+                    block->valuesAtTail[index] = narrow;
+                }
+                guard->guardKind = GuardKind::Reentry;
+                guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+                append(block, guard);
+                return;
+            }
+            if (block->isPreHeader) {
+                guard->guardKind = GuardKind::Nothing;
+                guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+                append(block, guard);
+                return;
+            }
+            if (Node* result = inlineCall(block, instruction, block->bytecodeEnd)) {
+                m_resultsOfInlinedCalls.set(block->bytecodeEnd, result);
+                guard->guardKind = GuardKind::Nothing;
+                guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+                append(block, guard);
+                return;
+            }
+            guard->opcode = instruction->opcodeID();
+            guard->instruction = instruction;
+            guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+            forEachUse(instruction, [&](VirtualRegister reg) {
+                guard->uses.append({ reg, get(block, reg) });
+            });
+            append(block, guard);
+            return;
+        }
+
+        // A terminal has to be the last node, and a SetStack or a Proj after it would not be.
+        if (Node* last = block->terminal(); last && last->kind != NodeKind::Bytecode) {
+            for (Node* node : block->nodes) {
+                if (node->kind == NodeKind::Bytecode && (isBranch(node->opcode) || isTerminal(node->opcode) || isThrow(node->opcode))) {
+                    m_graph.fail("terminal defines a register"_s, node->opcode);
+                    return;
+                }
+            }
+        }
+    }
+
+    // What is in the register on the way from one block to the other.
+    Node* valueLeaving(BasicBlock* from, BasicBlock* to, unsigned index)
+    {
+        Node* value = from->valuesAtTail[index];
+        // What did not pass the test goes on as what it was.
+        if (value && from->isReentry && to != from->successors[0] && value->kind == NodeKind::Narrow && value->block == from)
+            return value->uses[0].node;
+        return value;
+    }
+
+    void fillPhis()
+    {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            if (block->isReentry) {
+                BasicBlock* header = block->successors[0]->successors[0];
+                for (Node* node : block->nodes) {
+                    if (node->kind != NodeKind::Narrow)
+                        continue;
+                    for (Node* phi : header->phis) {
+                        if (phi->reg == node->reg)
+                            node->target = phi;
+                    }
+                }
+            }
+            for (Node* phi : block->phis) {
+                unsigned index = m_graph.registerIndex(phi->reg);
+                for (BasicBlock* predecessor : block->predecessors) {
+                    Node* value = valueLeaving(predecessor, block, index);
+                    if (!value)
+                        value = m_graph.constant(jsUndefined());
+                    phi->uses.append({ VirtualRegister(), value });
+                }
+            }
+        }
+    }
+
+    static Node* resolve(Node* node)
+    {
+        while (node->replacement)
+            node = node->replacement;
+        return node;
+    }
+
+    void simplifyPhis()
+    {
+        // A phi that only one value ever gets to is that value. The phis of a variable that a loop leaves alone have each other for
+        // inputs, all the way around the loop and through both copies of it, so this starts from the assumption that they are all
+        // nothing and looks for what contradicts it.
+        UncheckedKeyHashMap<Node*, Node*> origins; // Missing: nothing gets to it, so far. Itself: more than one value does.
+        auto originOf = [&](Node* node) -> Node* {
+            while (node->kind == NodeKind::Narrow)
+                node = node->uses[0].node;
+            return node->kind == NodeKind::Phi ? origins.get(node) : node;
+        };
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis) {
+                    Node* before = origins.get(phi);
+                    if (before == phi)
+                        continue;
+                    Node* origin = nullptr;
+                    for (auto& use : phi->uses) {
+                        Node* value = originOf(use.node);
+                        if (!value || value == origin)
+                            continue;
+                        if (origin) {
+                            origin = phi;
+                            break;
+                        }
+                        origin = value;
+                    }
+                    if (origin == before)
+                        continue;
+                    origins.set(phi, origin);
+                    changed = true;
+                }
+            }
+        }
+        for (auto& [phi, origin] : origins) {
+            if (origin != phi)
+                phi->replacement = origin;
+        }
+        for (BasicBlock* block : m_graph.m_rpo) {
+            block->phis.removeAllMatching([](Node* phi) {
+                return !!phi->replacement;
+            });
+            for (Node* phi : block->phis) {
+                for (auto& use : phi->uses)
+                    use.node = resolve(use.node);
+            }
+            for (Node* node : block->nodes) {
+                for (auto& use : node->uses)
+                    use.node = resolve(use.node);
+                // A variable that the loop leaves alone is on its way to the pre-header's phi, if to any.
+                if (node->target) {
+                    node->target = resolve(node->target);
+                    if (node->target->kind != NodeKind::Phi)
+                        node->target = nullptr;
+                }
+            }
+            for (auto& value : block->valuesAtTail) {
+                if (value)
+                    value = resolve(value);
+            }
+        }
+    }
+
+    Graph& m_graph;
+    UnlinkedCodeBlock* m_codeBlock;
+    const JSInstructionStream& m_instructions;
+    Vector<Node*> m_constantCells;
+    // By bytecode offset, once the loops are known.
+    bool m_hasGuards { false };
+    BitVector m_leaders;
+    BitVector m_inLoop;
+    BitVector m_guards;
+    BitVector m_loopHeaders;
+    Node* m_objectBeingPlanned { nullptr }; // An op_create_this that is going to be put where the last of its stores is.
+    NewObjectPlan m_planOfObject;
+    unsigned m_nextStoreOfPlan { 0 };
+    Vector<std::pair<BasicBlock*, BasicBlock*>> m_backEdges;
+    Vector<std::pair<VirtualRegister, unsigned>, 8> m_recentProperties; // In the block being looked at: what op_get_by_id put where.
+    Vector<std::pair<VirtualRegister, const KnownFunction*>, 8> m_recentFunctions; // And what op_get_from_scope probably did.
+    UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, bool> m_canBeInlined;
+    UncheckedKeyHashMap<unsigned, Node*, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_resultsOfInlinedCalls; // By the offset of the call.
+};
+
+} // anonymous namespace
+
+bool parseBytecode(Graph& graph)
+{
+    Parser parser(graph);
+    return parser.run();
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(FTL_JIT)

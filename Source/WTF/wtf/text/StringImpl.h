@@ -24,6 +24,8 @@
 
 #include <wtf/Compiler.h>
 
+#include <bmalloc/StaticRegion.h>
+
 #include <limits.h>
 #include <unicode/uchar.h>
 #include <unicode/ustring.h>
@@ -389,6 +391,14 @@ public:
     void ref();
     void deref();
 
+    // Of a string in memory that is never freed: from now on it is as a StaticStringImpl is. It has its hash.
+    void becomeStatic()
+    {
+        ASSERT(hasHash());
+        m_hashAndFlags |= s_hashFlagDidReportCost;
+        m_refCount.store(s_refCountFlagIsStaticString, std::memory_order_relaxed);
+    }
+
     class StaticStringImpl : private StringImplShape {
         WTF_MAKE_NONCOPYABLE(StaticStringImpl);
     public:
@@ -426,8 +436,10 @@ public:
         ASCIILiteral literal() const { return ASCIILiteral::fromLiteralUnsafe(m_data8Char); }
     };
 
-    WTF_EXPORT_PRIVATE static StaticStringImpl s_emptyAtomString;
-    ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(&s_emptyAtomString); }
+    // At the same address in every process, unlike what is in the executable: what is made when a program is built, to be there
+    // when it runs (bmalloc::StaticRegion), refers to it. It is there before any other static initializer of the process has run.
+    ALWAYS_INLINE static StaticStringImpl* emptyAsStaticStringImpl() { return reinterpret_cast<StaticStringImpl*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfEmptyStringInBss); }
+    ALWAYS_INLINE static StringImpl* empty() { SUPPRESS_MEMORY_UNSAFE_CAST return reinterpret_cast<StringImpl*>(emptyAsStaticStringImpl()); }
 
 
     template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
@@ -1187,10 +1199,9 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-#if TSAN_ENABLED
+    // Counting the references to what is never destroyed would only make a page that is a file's the process's (StaticRegion).
     if (isStatic())
         return;
-#endif
 
     m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed);
 }
@@ -1199,13 +1210,10 @@ inline void StringImpl::deref()
 {
     STRING_STATS_DEREF_STRING(*this);
 
-#if TSAN_ENABLED
-    if (isStatic())
-        return;
-#endif
-
     // When this is the only reference nobody else can be racing to add one, so skip the atomic read-modify-write.
     auto refCount = m_refCount.load(std::memory_order_relaxed);
+    if (refCount & s_refCountFlagIsStaticString)
+        return;
     if (refCount != s_refCountIncrement) {
         if (m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed) != s_refCountIncrement) [[likely]]
             return;

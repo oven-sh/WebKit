@@ -109,6 +109,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
 
     USES(OpToThis, srcDst)
     USES(OpCheckTdz, targetVirtualRegister)
+    USES(OpCheckType, value)
     USES(OpIdentityWithProfile, srcDst)
     USES(OpProfileType, targetVirtualRegister);
     USES(OpThrow, value)
@@ -406,6 +407,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_throw:
     case op_throw_static_error:
     case op_check_tdz:
+    case op_check_type:
     case op_debug:
     case op_ret:
     case op_jmp:

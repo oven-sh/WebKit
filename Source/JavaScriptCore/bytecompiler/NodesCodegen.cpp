@@ -604,6 +604,8 @@ ArgumentListNode* ArrayNode::toArgumentList(ParserArena& parserArena, int lineNu
 
 // ------------------------------ ObjectLiteralNode ----------------------------
 
+static ALWAYS_INLINE bool needsHomeObject(ExpressionNode*);
+
 RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     if (!m_list) {
@@ -648,6 +650,34 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
         }
     }
 
+    if (!newObject && Options::evaluateObjectLiteralValuesFirst()) {
+        // { a: x, b: f() }: until it has all its properties nothing has a way of getting at the object, so when it is made makes no
+        // difference to anybody.
+        constexpr unsigned maximumCount = 64;
+        unsigned count = 0;
+        bool isSimple = true;
+        for (auto* p = propertyList; p && isSimple; p = p->m_next) {
+            PropertyNode& node = *p->m_node;
+            isSimple = (node.m_type & PropertyNode::Constant) && node.name() && !node.isClassProperty() && !parseIndex(*node.name())
+                && !PropertyNode::isUnderscoreProtoSetter(generator.vm(), node) && !needsHomeObject(node.m_assign) && ++count <= maximumCount;
+        }
+        if (isSimple) {
+            Vector<RefPtr<RegisterID>, 8> values;
+            for (auto* p = propertyList; p; p = p->m_next) {
+                RefPtr<RegisterID> value = generator.emitNode(p->m_node->m_assign);
+                // A variable may be another value by the time it is wanted.
+                if (p->m_next && !value->isTemporary() && !value->virtualRegister().isConstant())
+                    value = generator.move(generator.newTemporary(), value.get());
+                values.append(WTF::move(value));
+            }
+            newObject = generator.emitNewObject(generator.tempDestination(dst));
+            unsigned index = 0;
+            for (auto* p = propertyList; p; p = p->m_next)
+                generator.emitDirectPutById(newObject.get(), *p->m_node->name(), values[index++].get());
+            return generator.move(dst, newObject.get());
+        }
+    }
+
     if (!newObject)
         newObject = generator.emitNewObject(generator.tempDestination(dst));
     generator.emitNode(newObject.get(), propertyList);
@@ -659,6 +689,20 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 static inline void emitPutHomeObject(BytecodeGenerator& generator, RegisterID* function, RegisterID* homeObject)
 {
     generator.emitPutById(function, generator.propertyNames().builtinNames().homeObjectPrivateName(), homeObject);
+}
+
+Vector<Identifier> PropertyListNode::plainInstanceFieldNames() const
+{
+    Vector<Identifier> names;
+    for (const PropertyListNode* p = this; p; p = p->m_next) {
+        const PropertyNode& node = *p->m_node;
+        if (!node.isInstanceClassField())
+            continue;
+        if (node.hasComputedName() || node.isPrivate() || node.m_assign || !node.name() || parseIndex(*node.name()))
+            return { };
+        names.append(*node.name());
+    }
+    return names;
 }
 
 void PropertyListNode::emitDeclarePrivateFieldNames(BytecodeGenerator& generator, RegisterID* scope)
@@ -2881,6 +2925,19 @@ RegisterID* TypeOfValueNode::emitBytecode(BytecodeGenerator& generator, Register
     }
     RefPtr<RegisterID> src = generator.emitNode(m_expr);
     return generator.emitTypeOf(generator.finalDestination(dst), src.get());
+}
+
+// ------------------------------ SoundTypeCheckNode ----------------------------------
+
+RegisterID* SoundTypeCheckNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    // op_check_type reads its operand in place. The value only goes straight into dst when dst is a temporary: a failed
+    // check must not have assigned a variable.
+    bool canEvaluateIntoDst = dst && dst != generator.ignoredResult() && dst->isTemporary();
+    RefPtr<RegisterID> value = generator.emitNode(canEvaluateIntoDst ? dst : nullptr, m_expr);
+    generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+    generator.emitCheckType(value.get(), m_mask);
+    return generator.move(dst, value.get());
 }
 
 // ------------------------------ PrefixNode ----------------------------------
@@ -5726,6 +5783,8 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         metadata->setClassSource(m_classSource);
         metadata->setNeedsClassFieldInitializer(needsClassFieldInitializer == NeedsClassFieldInitializer::Yes);
         metadata->setPrivateBrandRequirement(privateBrandRequirement);
+        if (Options::definePlainInstanceFieldsInConstructor() && needsClassFieldInitializer == NeedsClassFieldInitializer::Yes)
+            metadata->setPlainInstanceFieldNames(m_classElements->plainInstanceFieldNames());
         constructor = generator.emitNode(constructor.get(), m_constructorExpression);
         needsHomeObject = m_classHeritage || metadata->superBinding() == SuperBinding::Needed;
     } else

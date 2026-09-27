@@ -26,6 +26,7 @@
 #pragma once
 
 #include "MarkedBlock.h"
+#include "StaticHeap.h"
 #include "WeakSet.h"
 #include <wtf/StdLibExtras.h>
 
@@ -51,12 +52,19 @@ public:
 
     PreciseAllocation* reuseForLowerTierPrecise();
 
+    // See StaticHeap. It has no cell of its own, is on no list, and is marked whatever happens.
+    static PreciseAllocation* createForStaticCells(Heap&, Subspace*);
+    static void setContainerOfStaticCells(PreciseAllocation* container) { s_containerOfStaticCells = container; }
+    static PreciseAllocation* containerOfStaticCells() { return s_containerOfStaticCells; }
+
     PreciseAllocation* tryReallocate(size_t, Subspace*);
     
     ~PreciseAllocation();
     
     static PreciseAllocation* fromCell(const void* cell)
     {
+        if (StaticHeap::contains(cell)) [[unlikely]]
+            return s_containerOfStaticCells;
         return std::bit_cast<PreciseAllocation*>(std::bit_cast<char*>(cell) - headerSize());
     }
     
@@ -169,6 +177,8 @@ private:
     
     void* basePointer() const;
     
+    JS_EXPORT_PRIVATE static PreciseAllocation* s_containerOfStaticCells;
+
     unsigned m_indexInSpace { 0 };
     size_t m_cellSize;
     bool m_isNewlyAllocated : 1;

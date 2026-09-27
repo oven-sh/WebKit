@@ -134,6 +134,100 @@ static constexpr SpeculatedType SpecTypeofMightBeFunction             = SpecFunc
 // set that representing the values that flow through when testing that something is not a cell.
 static constexpr SpeculatedType SpecCellCheck          = SpecCell | SpecEmpty;
 
+// Sound type tags: the operand of op_check_type / CheckSoundType is a union of these. Every JSValue that user code can
+// observe has exactly one tag, computed by soundTypeTag(). The inline fast paths of the LLInt and the JITs only ever
+// accept a value that soundTypeTag() accepts, and defer to it whenever they cannot decide.
+static constexpr unsigned SoundTypeUndefined   = 1u << 0;
+static constexpr unsigned SoundTypeNull        = 1u << 1;
+static constexpr unsigned SoundTypeBoolean     = 1u << 2;
+static constexpr unsigned SoundTypeNumber      = 1u << 3; // Int32 or double, NaN included.
+static constexpr unsigned SoundTypeString      = 1u << 4; // JSType == StringType.
+static constexpr unsigned SoundTypeSymbol      = 1u << 5; // JSType == SymbolType.
+static constexpr unsigned SoundTypeBigInt      = 1u << 6; // JSType == HeapBigIntType, or a BigInt32 immediate.
+static constexpr unsigned SoundTypeFunction    = 1u << 7; // An object that is not an Array and for which JSCell::isCallable() holds.
+static constexpr unsigned SoundTypeArray       = 1u << 8; // JSType == ArrayType or DerivedArrayType. A Proxy for an array is not one.
+static constexpr unsigned SoundTypeOtherObject = 1u << 9; // Every other object.
+static constexpr unsigned SoundTypeAnyObject   = SoundTypeFunction | SoundTypeArray | SoundTypeOtherObject;
+static constexpr unsigned SoundTypeAll         = (1u << 10) - 1;
+
+// Above the tags a mask may say more about the objects that SoundTypeOtherObject lets by: that they are typed arrays of one type,
+// which is that many after FirstTypedArrayType, less one. Zero: any will do.
+static constexpr unsigned SoundTypeTypedArrayShift = 10;
+static constexpr unsigned SoundTypeMaskEnd = (NumberOfTypedArrayTypesExcludingDataView + 1) << SoundTypeTypedArrayShift; // No mask is this or more.
+constexpr unsigned soundTypeTagsOfMask(unsigned mask) { return mask & SoundTypeAll; }
+constexpr bool soundTypeMaskNamesTypedArray(unsigned mask) { return mask > SoundTypeAll; }
+constexpr JSType typedArrayTypeOfSoundTypeMask(unsigned mask) { return static_cast<JSType>(FirstTypedArrayType + (mask >> SoundTypeTypedArrayShift) - 1); }
+constexpr bool isValidSoundTypeMask(unsigned mask)
+{
+    if (!soundTypeMaskNamesTypedArray(mask))
+        return mask >= 1 && mask < SoundTypeAll;
+    return mask < SoundTypeMaskEnd && (mask & SoundTypeOtherObject);
+}
+
+// The tightest SpeculatedType that contains every value passing the check.
+constexpr SpeculatedType speculationFromSoundTypeMask(unsigned mask)
+{
+    SpeculatedType result = SpecNone;
+    if (mask & (SoundTypeUndefined | SoundTypeNull))
+        result |= SpecOther;
+    if (mask & SoundTypeBoolean)
+        result |= SpecBoolean;
+    if (mask & SoundTypeNumber)
+        result |= SpecBytecodeNumber;
+    if (mask & SoundTypeString)
+        result |= SpecString;
+    if (mask & SoundTypeSymbol)
+        result |= SpecSymbol;
+    if (mask & SoundTypeBigInt)
+        result |= SpecBigInt;
+    if (mask & SoundTypeFunction)
+        result |= SpecTypeofMightBeFunction;
+    if (mask & SoundTypeArray)
+        result |= SpecArray | SpecDerivedArray;
+    if (mask & SoundTypeOtherObject)
+        result |= SpecObject & ~(SpecFunction | SpecArray | SpecDerivedArray);
+    return result;
+}
+
+// The largest SpeculatedType all of whose values pass the check. Smaller than speculationFromSoundTypeMask() where a
+// SpeculatedType bit straddles tags: SpecOther (undefined, null), SpecObjectOther and SpecProxyObject (callable or not).
+constexpr SpeculatedType speculationProvingSoundTypeMask(unsigned mask)
+{
+    SpeculatedType result = SpecNone;
+    if ((mask & (SoundTypeUndefined | SoundTypeNull)) == (SoundTypeUndefined | SoundTypeNull))
+        result |= SpecOther;
+    if (mask & SoundTypeBoolean)
+        result |= SpecBoolean;
+    if (mask & SoundTypeNumber)
+        result |= SpecFullNumber;
+    if (mask & SoundTypeString)
+        result |= SpecString;
+    if (mask & SoundTypeSymbol)
+        result |= SpecSymbol;
+    if (mask & SoundTypeBigInt)
+        result |= SpecBigInt;
+    if (mask & SoundTypeFunction)
+        result |= SpecFunction;
+    if (mask & SoundTypeArray)
+        result |= SpecArray | SpecDerivedArray;
+    // Of a mask that names a typed array: no SpeculatedType is taken to say that an object is one of those and nothing else.
+    if (soundTypeMaskNamesTypedArray(mask))
+        return result;
+    if (mask & SoundTypeOtherObject)
+        result |= SpecObject & ~(SpecTypeofMightBeFunction | SpecArray | SpecDerivedArray);
+    if ((mask & (SoundTypeFunction | SoundTypeOtherObject)) == (SoundTypeFunction | SoundTypeOtherObject))
+        result |= SpecTypeofMightBeFunction;
+    return result;
+}
+
+// Main thread only: deciding callability may go through the method table. Returns 0 for the empty value and for cells
+// that are never exposed to user code.
+JS_EXPORT_PRIVATE unsigned soundTypeTag(JSValue);
+// The whole of what op_check_type asks.
+JS_EXPORT_PRIVATE bool soundTypeMaskAdmits(unsigned mask, JSValue);
+void dumpSoundTypeMask(PrintStream&, unsigned mask);
+MAKE_PRINT_ADAPTOR(SoundTypeMaskDump, unsigned, dumpSoundTypeMask);
+
 typedef bool (*SpeculatedTypeChecker)(SpeculatedType);
 
 // Dummy prediction checker, only useful if someone insists on requiring a prediction checker.

@@ -25,9 +25,14 @@
 
 #include "config.h"
 #include "CachedTypes.h"
+#include <wtf/NumberOfCores.h>
+#include <wtf/Threading.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 
+#include "AOTCompiler.h"
+#include "AOTImage.h"
+#include "AOTProgram.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BytecodeCacheError.h"
@@ -37,6 +42,9 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "JSModuleEnvironment.h"
+#include "PrelinkedModuleGraph.h"
+#include "StaticHeap.h"
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
 #include "StrongInlines.h"
@@ -359,6 +367,23 @@ uint32_t EncoderStringTable::slotFor(const StringImpl& string)
     return VariableLengthObjectBase::externalStringTag | ordinal << 2;
 }
 
+String EncoderStringTable::stringForSlot(uint32_t slot) const
+{
+    if (slot == VariableLengthObjectBase::emptySentinel)
+        return emptyString();
+    switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
+    case VariableLengthObjectBase::inlineStringTag: {
+        unsigned length = (slot >> 2) & 3;
+        auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
+        return length ? String(std::span<const Latin1Character> { bytes.subspan(1).first(length) }) : String();
+    }
+    case VariableLengthObjectBase::externalStringTag:
+        return (slot >> 2) < m_strings.size() ? String { m_strings[slot >> 2].ptr() } : String();
+    default:
+        return String();
+    }
+}
+
 // [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
 Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStringHashes) const
 {
@@ -429,8 +454,19 @@ DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes)
     }
 }
 
+DecoderStringTable::DecoderStringTable(std::span<const uint8_t> bytes, uintptr_t* slots)
+    : m_bytes(bytes)
+    , m_slots(slots)
+{
+    RELEASE_ASSERT(bytes.size() >= sizeof(uint32_t) && !(std::bit_cast<uintptr_t>(bytes.data()) % alignof(uint32_t)));
+    m_count = *std::bit_cast<const uint32_t*>(bytes.data());
+    RELEASE_ASSERT(m_count <= (bytes.size() - sizeof(uint32_t)) / sizeof(uint32_t), m_count, bytes.size());
+}
+
 DecoderStringTable::~DecoderStringTable()
 {
+    if (!m_slotsReservation)
+        return;
     // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
     for (uint32_t i = 0; i < m_count; ++i) {
         if (m_slots[i] && !isCell(m_slots[i]))
@@ -733,14 +769,18 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     RefPtr<StringImpl> value;
     if (!slot) {
         Record r = record(ordinal);
-        if (r.length == 1) {
+        if (r.length == 1 && !StaticHeap::isBuilding()) {
             char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
             if (c <= maxSingleCharacterString)
                 return vm.smallStrings.singleCharacterString(c); // already shared VM-wide; leave the slot empty
         }
         value = createImpl(r);
-    } else
+    } else {
+        // (StaticHeap: not a cell of this VM's.)
+        if (StringImpl* existing = impl(slot); existing->length() == 1 && (*existing)[0] <= maxSingleCharacterString && !StaticHeap::isBuilding())
+            return vm.smallStrings.singleCharacterString((*existing)[0]);
         value = adoptRef(*impl(slot)); // the cell takes over the table's reference
+    }
     // The impl's bytes belong to the table (or the executable), not the GC heap.
     JSString* string = JSString::createHasOtherOwner(vm, value.releaseNonNull());
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
@@ -1488,8 +1528,38 @@ Ref<Decoder> Decoder::create(VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<
             payloads.didCreateDecoder(index, decoder.get());
         }
     }
+    // BytecodeLinkEncoder numbers the modules of an image the same way.
+    if (decoder->m_provider && decoder->canBorrowPayload())
+        decoder->m_provider->setAOTModuleID(static_cast<uint32_t>(decoder->m_cachedBytecode->entryOffset()) + 1);
 #endif
     return decoder;
+}
+
+Decoder& Decoder::createForStaticHeap(void* address, VM& vm, Ref<CachedBytecode> cachedBytecode, RefPtr<SourceProvider> provider)
+{
+    auto* decoder = new (NotNull, address) Decoder(vm, WTF::move(cachedBytecode), WTF::move(provider));
+    RELEASE_ASSERT(decoder->canBorrowPayload());
+    decoder->m_isForStaticHeap = true;
+    if (decoder->m_provider)
+        decoder->m_provider->setAOTModuleID(static_cast<uint32_t>(decoder->m_cachedBytecode->entryOffset()) + 1);
+    return *decoder;
+}
+
+size_t Decoder::entryOffset() const
+{
+    return m_cachedBytecode->entryOffset();
+}
+
+void Decoder::forgetWhatWasDecoded()
+{
+    for (auto& finalizer : std::exchange(m_finalizers, { }))
+        finalizer();
+    m_offsetToPtrMap = { };
+    m_environmentToHandleMap = { };
+    for (AtomStringImpl* atom : std::exchange(m_atomsByOrdinal, { })) {
+        if (atom)
+            atom->deref();
+    }
 }
 
 void Decoder::cacheOffset(ptrdiff_t offset, void* ptr)
@@ -2973,6 +3043,9 @@ public:
     {
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
 #if USE(BUN_JSC_ADDITIONS)
+        // Whether it only ever has one scope is not to be found out by writing to it.
+        if (decoder.isForStaticHeap()) [[unlikely]]
+            symbolTable->singleton().invalidate(decoder.vm(), StringFireDetail("It is in the static heap"));
         if (decoder.canDeferIntoPayload() && m_map.entryCount())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
         else
@@ -3079,6 +3152,14 @@ public:
     RegExp* decode(Decoder& decoder) const
     {
         String pattern { m_patternString.decode(decoder) };
+        if (decoder.isForStaticHeap()) [[unlikely]] {
+            // Not through the VM's cache, which is not the cache of the VM that is going to use it. It is written to when it is used.
+            String atom { m_atom.decode(decoder) };
+            bmalloc::StaticRegion::MutableScope mutableScope;
+            if (!m_parsed)
+                return RegExp::createWithoutCaching(decoder.vm(), pattern, m_flags);
+            return RegExp::createFromCacheWithoutCaching(decoder.vm(), pattern, m_flags, m_numSubpatterns, WTF::move(atom), m_specificPattern);
+        }
         if (!m_parsed)
             return RegExp::create(decoder.vm(), pattern, m_flags);
         return RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern);
@@ -3263,6 +3344,12 @@ public:
         case Kind::SymbolTable:
             return this->buffer<CachedSymbolTable>()->decode(decoder);
         case Kind::String:
+            if (decoder.isForStaticHeap() && !this->hasExternalString()) [[unlikely]] {
+                // (Against a table of strings, as here, it is the only one that is not in the table.)
+                String string = this->hasInlineString() ? String { this->inlineString(decoder) } : this->buffer<CachedUniquedStringImpl>()->decodePlainString(decoder);
+                if (string.isEmpty())
+                    return StaticHeap::emptyStringWhileBuilding(decoder.vm());
+            }
             if (this->hasInlineString())
                 return jsOwnedString(decoder.vm(), String { this->inlineString(decoder) });
             if (this->hasExternalString())
@@ -4217,6 +4304,8 @@ public:
     {
         Tail storage;
         const Layout& layout = tail(decoder, storage).layout;
+        // (StaticHeap: linking the code for the interpreter writes to it.)
+        bmalloc::StaticRegion::MutableScope mutableScope;
         if (!(layout.flags & LayoutHasMetadata))
             return UnlinkedMetadataTable::empty();
         std::span<const uint32_t> steps { at<uint32_t>(layout, layout.steps), layout.steps.count };
@@ -4323,6 +4412,8 @@ private:
         m_varDeclarations.encode(encoder, codeBlock.m_varDeclarations);
         m_moduleEnvironmentSymbolTableConstantRegisterOffset = codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset;
         m_numberOfHeapAllocatedFunctionDecls = codeBlock.m_numberOfHeapAllocatedFunctionDecls;
+        m_firstVarScopeOffset = codeBlock.m_firstVarScopeOffset;
+        m_numberOfVarScopeOffsets = codeBlock.m_numberOfVarScopeOffsets;
         m_heapAllocatedFunctionDeclScopeOffsets.encode(encoder, codeBlock.m_heapAllocatedFunctionDeclSlots ? codeBlock.m_heapAllocatedFunctionDeclSlots->offsets() : FixedVector<uint32_t>());
     }
     void decodeOwnMembers(Decoder& decoder, UnlinkedModuleProgramCodeBlock& codeBlock) const
@@ -4331,6 +4422,8 @@ private:
         m_varDeclarations.decode(decoder, codeBlock.m_varDeclarations);
         codeBlock.m_moduleEnvironmentSymbolTableConstantRegisterOffset = m_moduleEnvironmentSymbolTableConstantRegisterOffset;
         codeBlock.m_numberOfHeapAllocatedFunctionDecls = m_numberOfHeapAllocatedFunctionDecls;
+        codeBlock.m_firstVarScopeOffset = m_firstVarScopeOffset;
+        codeBlock.m_numberOfVarScopeOffsets = m_numberOfVarScopeOffsets;
         FixedVector<uint32_t> heapAllocatedFunctionDeclScopeOffsets;
         m_heapAllocatedFunctionDeclScopeOffsets.decode(decoder, heapAllocatedFunctionDeclScopeOffsets);
         codeBlock.m_heapAllocatedFunctionDeclSlots = ModuleFunctionDeclarationSlots::create(WTF::move(heapAllocatedFunctionDeclScopeOffsets));
@@ -4339,6 +4432,8 @@ private:
     CachedVariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset;
     unsigned m_numberOfHeapAllocatedFunctionDecls; // cachedTypesFormatRevision 2
+    unsigned m_firstVarScopeOffset;
+    unsigned m_numberOfVarScopeOffsets;
     CachedVector<uint32_t> m_heapAllocatedFunctionDeclScopeOffsets;
 };
 
@@ -4496,7 +4591,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #if USE(BUN_JSC_ADDITIONS)
     // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
     // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-    if (decoder.canBorrowPayload())
+    if (decoder.canBorrowPayload() && !decoder.isForStaticHeap())
         codeBlock.m_cachedExpressionInfo = m_expressionInfo.operator->();
     else
 #endif
@@ -4586,7 +4681,7 @@ UnlinkedModuleProgramCodeBlock* CachedModuleCodeBlock::decode(Decoder& decoder) 
 // are never instantiated, so their UnlinkedFunctionExecutables need not be made either.
 unsigned CachedModuleCodeBlock::numberOfFunctionDeclsToLeaveInPayload(Decoder& decoder, const Tail& tail) const
 {
-    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload())
+    if (!Options::useLazyModuleFunctionDeclarations() || !decoder.canDeferIntoPayload() || decoder.isForStaticHeap())
         return 0;
     unsigned count = m_numberOfHeapAllocatedFunctionDecls;
     if (count > tail.layout.functionDecls.count || count != m_heapAllocatedFunctionDeclScopeOffsets.size())
@@ -4820,7 +4915,8 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMater
 {
     if (!m_membersAreDeferred) {
         auto* rareData = m_members.live().rareData.get();
-        return rareData && !rareData->m_classSource.isNull() ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
+        // (In StaticHeap it is without its provider.)
+        return rareData && (!rareData->m_classSource.isNull() || (StaticHeap::contains(this) && m_isClass)) ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
     }
     auto* rareData = m_members.pending().record->slotsView().rareData;
     return rareData ? (*rareData)->classSourceStart() : std::nullopt;
@@ -5012,7 +5108,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_unlinkedCodeBlockForConstruct()
     , m_members(nullptr)
 {
-    bool defer = decoder.canDeferIntoPayload();
+    bool defer = decoder.canDeferIntoPayload() && !decoder.isForStaticHeap();
     CachedFunctionExecutable::View v = cachedExecutable.view(defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
@@ -5026,6 +5122,12 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.name = nullptr;
         v.tdz = nullptr;
         v.rareData = nullptr;
+    } else if (decoder.isForStaticHeap()) {
+        m_singletonHasBeenInvalidated = true; // Likewise not to be found out by writing to it.
+        // They are for generating the code again, and have things of the VM in them.
+        if (v.tdz)
+            StaticHeap::noteParentScopeTDZVariables(*this, &cachedExecutable);
+        v.tdz = nullptr;
     }
     if (v.name)
         m_ecmaName = v.name->decode(decoder);
@@ -5333,8 +5435,8 @@ protected:
     // @importModule. 6: op_iterator_close_check (opcode numbering). 7: op_new_reg_exp_shared (opcode numbering). 8: op_iterator_close_check jumps.
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
-    // 10: GenericCacheEntry records the payload's size.
-    static constexpr uint32_t cachedTypesFormatRevision = 10;
+    // 10: GenericCacheEntry records the payload's size. 11: op_check_type (opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 12;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5602,6 +5704,7 @@ struct BytecodeLinkEncoder::Impl {
 
     Impl(VM& vm, EncoderStringTable* strings)
         : vm(vm)
+        , strings(strings)
         , encoder(vm, fileHandle, Encoder::NumberStrings::Yes, strings, BytecodeCacheUpdatable::No)
     {
     }
@@ -5649,12 +5752,20 @@ struct BytecodeLinkEncoder::Impl {
     void placeCodeOf(UnlinkedFunctionExecutable& executable, unsigned module, const SourceCode& around, Encoder::LinkClass aroundGoes)
     {
         auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
+        // All the code it is going to have has been generated (see generateUnlinkedFunctionCodeBlock()).
+        executable.takeParentDeclaredNames();
         if (!forCall && !forConstruct)
             return;
         SourceCode source = executable.linkedSourceCode(around);
         auto goes = encoder.placeLinkedFunction(executable, source, module, aroundGoes, forCall, forConstruct);
         if (!goes)
             return;
+#if ENABLE(FTL_JIT)
+        if (compilesAheadOfTime) {
+            if (auto key = orderFunctionKey(executable, source))
+                functionsToCompile.append({ module, *key, &executable, forCall, forConstruct });
+        }
+#endif
         for (UnlinkedFunctionCodeBlock* codeBlock : { forCall, forConstruct }) {
             if (!codeBlock)
                 continue;
@@ -5662,6 +5773,163 @@ struct BytecodeLinkEncoder::Impl {
             placeCodeOfFunctionsIn(*codeBlock, module, source, *goes);
         }
     }
+
+#if ENABLE(FTL_JIT)
+    // Where each import that the embedder resolved to a variable of another module is: the modules are all here, so what their
+    // environments are going to look like is known.
+    Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules()
+    {
+        using Graph = PrelinkedModuleGraph;
+        Vector<std::unique_ptr<AOT::ModuleLinkage>> result(modules.size());
+        if (prelinkedGraph.size() < sizeof(Graph::Header))
+            return result;
+        auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
+        auto arrayAt = [&]<typename T>(uint32_t offset, uint32_t count, const T*) -> std::span<const T> {
+            RELEASE_ASSERT(offset <= prelinkedGraph.size() && count <= (prelinkedGraph.size() - offset) / sizeof(T));
+            return { reinterpret_cast<const T*>(prelinkedGraph.data() + offset), count };
+        };
+        RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
+        auto graphModules = arrayAt(header.modulesOffset, header.moduleCount, static_cast<const Graph::Module*>(nullptr));
+        auto graphImports = arrayAt(header.importsOffset, header.importCount, static_cast<const Graph::Import*>(nullptr));
+
+        struct Linked {
+            UnlinkedModuleProgramCodeBlock* codeBlock { nullptr };
+            SymbolTable* symbolTable { nullptr };
+            unsigned index { 0 };
+        };
+        Vector<Linked> linked(graphModules.size());
+        for (unsigned index = 0; index < modules.size() && index < graphModuleOfEachAdd.size(); ++index) {
+            uint32_t graphModule = graphModuleOfEachAdd[index];
+            auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
+            if (graphModule >= linked.size() || !codeBlock)
+                continue;
+            JSValue symbolTable = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()));
+            linked[graphModule] = { codeBlock, uncheckedDowncast<SymbolTable>(symbolTable.asCell()), index };
+        }
+
+        auto nameOf = [&](uint32_t sid) -> Identifier {
+            if (sid == Graph::starDefaultSid)
+                return vm.propertyNames->starDefaultPrivateName;
+            if (sid >= prelinkedGraphStringSlots.size())
+                return Identifier();
+            String string = strings->stringForSlot(prelinkedGraphStringSlots[sid]);
+            return string.isNull() ? Identifier() : Identifier::fromString(vm, string);
+        };
+        for (unsigned graphModule = 0; graphModule < linked.size(); ++graphModule) {
+            auto& importer = linked[graphModule];
+            if (!importer.codeBlock)
+                continue;
+            auto& module = graphModules[graphModule];
+            RELEASE_ASSERT(module.firstImport <= graphImports.size() && module.importCount <= graphImports.size() - module.firstImport);
+            auto linkage = makeUnique<AOT::ModuleLinkage>();
+            for (unsigned slot = 0; slot < module.importCount; ++slot) {
+                auto& import = graphImports[module.firstImport + slot];
+                if (import.resolution() != Graph::ResolutionKind::Binding || import.isNamespace() || import.resolvedModule >= linked.size())
+                    continue;
+                auto& exporter = linked[import.resolvedModule];
+                Identifier localName = nameOf(import.localSid);
+                Identifier nameInExporter = nameOf(import.resolvedLocalSid);
+                if (!exporter.codeBlock || localName.isNull() || nameInExporter.isNull())
+                    continue;
+                SymbolTableEntry::Fast entry = exporter.symbolTable->get(nameInExporter.impl());
+                if (entry.isNull() || !entry.varOffset().isScope())
+                    continue;
+                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset() });
+                namesOfLinkage.append(WTF::move(localName));
+            }
+            result[importer.index] = WTF::move(linkage);
+        }
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", namesOfLinkage.size(), " of ", graphImports.size(), " imports are variables of other modules, of ", graphModules.size());
+        return result;
+    }
+    Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
+
+    // Every function of the link, compiled: there is nothing to wait for, all the code there is going to be is here.
+    Vector<uint8_t> compileImage()
+    {
+        struct Job {
+            AOT::ImageKey key;
+            uint64_t rank;
+            UnlinkedCodeBlock* codeBlock;
+            unsigned module;
+        };
+        Vector<Job> jobs;
+        for (unsigned index = 0; index < modules.size(); ++index) {
+            // The code of the module itself, which comes before its functions' as it runs before them.
+            if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get()))
+                jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), static_cast<uint64_t>(index) << 34, codeBlock, index });
+        }
+
+        // What the variables at the top of each module hold, as far as its code says.
+        UncheckedKeyHashMap<UnlinkedFunctionExecutable*, unsigned> indexOfFunction;
+        for (unsigned i = 0; i < functionsToCompile.size(); ++i)
+            indexOfFunction.add(functionsToCompile[i].executable, i);
+        Vector<std::unique_ptr<AOT::ModuleHints>> hints(modules.size());
+        for (unsigned index = 0; index < modules.size(); ++index) {
+            auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get());
+            if (!codeBlock)
+                continue;
+            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
+                auto it = indexOfFunction.find(executable);
+                if (it == indexOfFunction.end())
+                    return false;
+                auto& function = functionsToCompile[it->value];
+                known.forCall = function.forCall;
+                known.forConstruct = function.forConstruct;
+                known.key.module = modules[function.module].entryOffset + 1;
+                known.key.start = function.key.start;
+                known.key.kind = static_cast<uint32_t>(function.key.kind) << 1;
+                return true;
+            });
+        }
+        for (auto& function : functionsToCompile) {
+            for (bool isConstruct : { false, true }) {
+                UnlinkedFunctionCodeBlock* codeBlock = isConstruct ? function.forConstruct : function.forCall;
+                if (!codeBlock)
+                    continue;
+                AOT::ImageKey key;
+                key.module = modules[function.module].entryOffset + 1;
+                key.start = function.key.start;
+                key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
+                // In the order the modules are loaded in, and in a module in the order of the text.
+                jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module });
+            }
+        }
+
+        auto linkages = linkModules();
+        AOT::ImageBuilder builder;
+        std::atomic<size_t> next { 0 };
+        auto work = [&] {
+            for (size_t index = next++; index < jobs.size(); index = next++) {
+                AOT::CompiledCode code;
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get()))
+                    builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
+            }
+        };
+        // The compiler reads unlinked code and allocates nothing in the heap; this thread, which has the heap, waits.
+        DeferGC deferGC(vm);
+        unsigned numberOfThreads = Options::aotThreads() ? Options::aotThreads() : WTF::numberOfProcessorCores();
+        Vector<Ref<Thread>> threads;
+        for (unsigned i = 1; i < numberOfThreads; ++i)
+            threads.append(Thread::create("AOT compiler"_s, [&work] { work(); }));
+        work();
+        for (auto& thread : threads)
+            thread->waitForCompletion();
+        AOT::forgetDeclaredNames();
+        return builder.finish();
+    }
+
+    struct FunctionToCompile {
+        unsigned module;
+        OrderFunctionKey key;
+        UnlinkedFunctionExecutable* executable;
+        UnlinkedFunctionCodeBlock* forCall;
+        UnlinkedFunctionCodeBlock* forConstruct;
+    };
+    Vector<FunctionToCompile> functionsToCompile;
+    bool compilesAheadOfTime { false };
+#endif
 
     void placeCodeOfFunctionsIn(UnlinkedCodeBlock& codeBlock, unsigned module, const SourceCode& source, Encoder::LinkClass goes)
     {
@@ -5672,9 +5940,13 @@ struct BytecodeLinkEncoder::Impl {
     }
 
     VM& vm;
+    EncoderStringTable* strings;
     FileSystem::FileHandle fileHandle; // invalid: the payload is built in memory
     Encoder encoder;
     Vector<Module> modules;
+    std::span<const uint8_t> prelinkedGraph;
+    std::span<const uint32_t> prelinkedGraphStringSlots;
+    Vector<uint32_t> graphModuleOfEachAdd;
     OrderHashSet notEvaluatedModules;
 };
 
@@ -5686,6 +5958,9 @@ BytecodeLinkEncoder::BytecodeLinkEncoder(VM& vm, EncoderStringTable* strings, Hi
     // A function's record is written long after its module was added (with the body of the function around it, or when
     // the link is finished) from what its executable holds then.
     vm.keepUnlinkedCode();
+#if ENABLE(FTL_JIT)
+    m_impl->compilesAheadOfTime = hints.compileAheadOfTime;
+#endif
     m_impl->encoder.beginLink(hints.hotFunctions.span(), hints.knownFunctions.span());
     for (uint64_t hash : hints.notEvaluatedModules) {
         if (isValidOrderHash(hash))
@@ -5713,6 +5988,13 @@ void BytecodeLinkEncoder::addModule(const SourceCodeKey& key, UnlinkedCodeBlock*
 void BytecodeLinkEncoder::addBuiltinFunction(UnlinkedFunctionExecutable* executable, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames& names)
 {
     m_impl->add(Impl::Module { SourceCodeKey(), Strong<JSCell>(m_impl->vm, executable), source, embedderStamp }, names);
+}
+
+void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleOfEachAdd)
+{
+    m_impl->prelinkedGraph = blob;
+    m_impl->prelinkedGraphStringSlots = stringSlots;
+    m_impl->graphModuleOfEachAdd = WTF::move(graphModuleOfEachAdd);
 }
 
 auto BytecodeLinkEncoder::finish() -> Result
@@ -5743,6 +6025,11 @@ auto BytecodeLinkEncoder::finish() -> Result
     uint32_t payloadSize = safeCast<uint32_t>(encoder.currentOffset());
     for (auto& module : m_impl->modules)
         *module.entry->payloadSizeSlot() = payloadSize;
+#if ENABLE(FTL_JIT)
+    // While the code is still rooted, and now that every module has its number.
+    if (m_impl->compilesAheadOfTime)
+        result.aotImage = m_impl->compileImage();
+#endif
     BytecodeCacheError error;
     result.payload = encoder.release(error);
     RELEASE_ASSERT(result.payload && result.payload->size() == payloadSize && payloadSize <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
@@ -5750,8 +6037,11 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.namedHotFunctions = encoder.namedHotFunctions();
     result.placedHotFunctions = encoder.placedHotFunctions();
     result.functionsWithoutName = encoder.functionsWithoutName();
-    for (auto& module : m_impl->modules)
+    for (auto& module : m_impl->modules) {
         result.entryOffsets.append(module.entryOffset);
+        if (module.root->classInfo() != UnlinkedFunctionExecutable::info())
+            result.entryOffsetsOfModules.append(module.entryOffset);
+    }
     m_impl->modules.clear();
     m_impl->isFinished = true;
     return result;
@@ -5878,8 +6168,49 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder)
+{
+    VM& vm = decoder.vm();
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
+    std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
+    if (!cachedEntry->decode(decoder, entry) || !entry.second)
+        return nullptr;
+    Vector<UnlinkedCodeBlock*> worklist { entry.second };
+    while (!worklist.isEmpty()) {
+        UnlinkedCodeBlock& codeBlock = *worklist.takeLast();
+        auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
+            auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+            if (forCall)
+                worklist.append(forCall);
+            if (forConstruct)
+                worklist.append(forConstruct);
+        };
+        for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
+            decodeFunction(codeBlock.functionDecl(i));
+        for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
+            decodeFunction(codeBlock.functionExpr(i));
+    }
+    return entry.second;
+}
+
+RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder& decoder, const void* record)
+{
+    return static_cast<const CachedFunctionExecutable*>(record)->slotsView().tdz->decode(decoder);
+}
+
+bool isKeyOfCodeInStaticHeap(Decoder& decoder, const SourceCodeKey& key)
+{
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
+    SourceCodeKey decodedKey;
+    return cachedEntry->decode(decoder, decodedKey) && decodedKey == key;
+}
+
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)
 {
+    if (StaticHeap::vm() == &vm) [[unlikely]] {
+        if (UnlinkedCodeBlock* codeBlock = StaticHeap::codeFor(vm, key, cachedBytecode.get()))
+            return codeBlock;
+    }
     MonotonicTime before;
     size_t cachedBytecodeSize = cachedBytecode->size();
     bool payloadIsShared = false;
@@ -5973,7 +6304,7 @@ static_assert(sizeof(CachedImmutableButterfly) == 12);
 static_assert(sizeof(CachedJSTextPosition) == 12);
 static_assert(sizeof(CachedJSValue) == 4);
 static_assert(sizeof(CachedJSValuePoolRef) == 4);
-static_assert(sizeof(CachedModuleCodeBlock) == 56);
+static_assert(sizeof(CachedModuleCodeBlock) == 64);
 static_assert(sizeof(CachedProgramCodeBlock) == 56);
 static_assert(sizeof(CachedRegExp) == 16);
 static_assert(sizeof(CachedScopedArgumentsTable) == 8);

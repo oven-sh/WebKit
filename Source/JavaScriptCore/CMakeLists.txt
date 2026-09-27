@@ -17,6 +17,7 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}"
     "${JAVASCRIPTCORE_DIR}/API"
     "${JAVASCRIPTCORE_DIR}/assembler"
+    "${JAVASCRIPTCORE_DIR}/aot"
     "${JAVASCRIPTCORE_DIR}/b3"
     "${JAVASCRIPTCORE_DIR}/b3/air"
     "${JAVASCRIPTCORE_DIR}/bindings"
@@ -933,6 +934,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/SlotVisitorMacros.h
     heap/SpaceTimeMutatorScheduler.h
     heap/StochasticSpaceTimeMutatorScheduler.h
+    heap/StaticHeap.h
     heap/StopIfNecessaryTimer.h
     heap/Strong.h
     heap/StrongBlock.h

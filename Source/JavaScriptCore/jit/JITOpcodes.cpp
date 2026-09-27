@@ -1638,6 +1638,21 @@ void JIT::emit_op_check_tdz(const JSInstruction* currentInstruction)
     addSlowCase(branchIfEmpty(regT0));
 }
 
+void JIT::emit_op_check_type(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpCheckType>();
+    if (soundTypeMaskNamesTypedArray(bytecode.m_mask)) {
+        addSlowCase(jump());
+        return;
+    }
+    emitGetVirtualRegister(bytecode.m_value, regT0);
+    JumpList fail;
+    JumpList undecided;
+    emitSoundTypeCheck(regT0, regT1, bytecode.m_mask, fail, undecided);
+    addSlowCase(fail);
+    addSlowCase(undecided);
+}
+
 // Slow cases
 
 void JIT::emitSlow_op_eq(const JSInstruction* currentInstruction, Vector<SlowCaseEntry>::iterator& iter)

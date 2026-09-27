@@ -2046,6 +2046,12 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         return { UINT_MAX, InlineAttribute::None };
     }
 
+    if (codeBlock->jitType() == JITType::AOTJIT) {
+        // There is no Baseline or LLInt code to exit to, and no profiling to go by.
+        VERBOSE_LOG("    Failing because the callee is code from the static compiler.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+
     CodeBlock* targetCodeBlock = executable->codeBlockFor(specializationKind);
     if (!m_graph.m_plan.isFTL())
         targetCodeBlock = codeBlock;
@@ -8913,6 +8919,12 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto bytecode = currentInstruction->as<OpCheckTdz>();
             addToGraph(CheckNotEmpty, get(bytecode.m_targetVirtualRegister));
             NEXT_OPCODE(op_check_tdz);
+        }
+
+        case op_check_type: {
+            auto bytecode = currentInstruction->as<OpCheckType>();
+            addToGraph(CheckSoundType, OpInfo(bytecode.m_mask), get(bytecode.m_value));
+            NEXT_OPCODE(op_check_type);
         }
 
         case op_identity_with_profile: {

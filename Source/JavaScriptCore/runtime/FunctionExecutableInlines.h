@@ -40,7 +40,7 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
 inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, const char* reason)
 {
     m_singleton.notifyWrite(vm, this, function, reason);
-    if (m_singleton.hasBeenInvalidated())
+    if (m_singleton.hasBeenInvalidated() && !m_unlinkedExecutable->singletonHasBeenInvalidated())
         m_unlinkedExecutable->setSingletonHasBeenInvalidated();
 }
 

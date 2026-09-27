@@ -26,6 +26,7 @@
 #include "config.h"
 #include "Watchpoint.h"
 
+#include "AOTSlotWatchpoint.h"
 #include "AdaptiveInferredPropertyValueWatchpointBase.h"
 #include "CachedSpecialPropertyAdaptiveStructureWatchpoint.h"
 #include "ChainedWatchpoint.h"

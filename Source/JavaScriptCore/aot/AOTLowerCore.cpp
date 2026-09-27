@@ -1,0 +1,781 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTLowering.h"
+
+#if ENABLE(FTL_JIT)
+
+#include "AirCode.h"
+#include "B3PatchpointValue.h"
+#include "B3SlotBaseValue.h"
+#include "B3StackmapGenerationParams.h"
+#include "B3ValueInlines.h"
+#include "BytecodeStructs.h"
+#include "CCallHelpers.h"
+#include "JSCInlines.h"
+#include "UnlinkedCodeBlock.h"
+
+namespace JSC { namespace AOT {
+
+using namespace B3;
+
+Lowering::Lowering(Graph& graph, Procedure& proc)
+    : m_graph(graph)
+    , m_proc(proc)
+    , m_out(proc)
+{
+}
+
+// See Lowering::scratchWord().
+static unsigned scratchWordsFor(Node* node)
+{
+    if (node->kind != NodeKind::Bytecode || !node->instruction)
+        return 0;
+    switch (node->opcode) {
+    case op_new_object:
+    case op_create_this:
+        return node->numberOfLiteralProperties;
+    case op_new_array:
+        return node->as<OpNewArray>().m_argc;
+    case op_new_array_with_spread:
+        return node->as<OpNewArrayWithSpread>().m_argc;
+    case op_strcat:
+        return node->as<OpStrcat>().m_count;
+    case op_enumerator_next:
+        return 2;
+    case op_iterator_open:
+    case op_async_iterator_open:
+    case op_iterator_next:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+bool Lowering::run()
+{
+    m_out.initialize(m_heaps);
+    m_out.setFrequency(1);
+
+    unsigned numEntrypoints = 1 + m_graph.catchEntrypoints.size();
+    m_proc.setNumEntrypoints(numEntrypoints);
+
+    LBasicBlock prologue = m_out.newBlock();
+    m_handleExceptions = m_out.newBlock();
+    for (BasicBlock* block : m_graph.m_rpo) {
+        m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
+        block->lowered = m_out.newBlock();
+    }
+    m_out.setFrequency(1);
+
+    m_out.appendTo(prologue, m_handleExceptions);
+    m_out.initializeConstants(m_proc, prologue);
+
+    // Runs on every way in, so what it computes may only depend on the frame pointer.
+    m_callFrame = m_out.framePointer();
+    m_numberTag = m_out.constInt64(JSValue::NumberTag);
+    m_notCellMask = m_out.constInt64(JSValue::NotCellMask);
+    m_proc.addFastConstant(m_numberTag->key());
+    m_proc.addFastConstant(m_notCellMask->key());
+    m_codeBlock = m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::codeBlock)));
+    m_data = m_out.loadPtr(m_codeBlock, m_heaps.CodeBlock_jitData);
+    m_vm = m_out.loadPtr(m_data, m_heaps.AOTData_vm);
+    m_globalObject = m_out.loadPtr(m_data, m_heaps.AOTData_globalObject);
+    m_table = m_out.loadPtr(m_data, m_heaps.AOTData_runtimeTable);
+
+    unsigned scratchWords = 0;
+    for (BasicBlock* block : m_graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            scratchWords = std::max(scratchWords, scratchWordsFor(node));
+            for (auto& use : node->uses)
+                use.node->useCount++;
+        }
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                use.node->useCount++;
+        }
+    }
+    if (scratchWords)
+        m_scratch = m_out.lockedStackSlot(scratchWords * sizeof(EncodedJSValue));
+
+    if (numEntrypoints > 1) {
+        Vector<LBasicBlock> successors;
+        successors.append(m_graph.root->lowered);
+        for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
+            successors.append(entrypoint->lowered);
+        m_out.entrySwitch(successors);
+    } else
+        m_out.jump(m_graph.root->lowered);
+
+    m_out.appendTo(m_handleExceptions, m_graph.root->lowered);
+    {
+        LValue thunk = entry(Entry::HandleException);
+        PatchpointValue* patchpoint = m_out.patchpoint(Void);
+        patchpoint->append(thunk, ValueRep::SomeRegister);
+        patchpoint->effects.terminal = true;
+        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.farJump(params[0].gpr(), JITThunkPtrTag);
+        });
+    }
+
+    // Phis first: a block's phis are referred to from predecessors that may be lowered before it.
+    for (BasicBlock* block : m_graph.m_rpo) {
+        for (Node* phi : block->phis) {
+            LType type = Int64;
+            switch (phi->rep()) {
+            case Rep::JSValue:
+            case Rep::Int64:
+                type = Int64;
+                break;
+            case Rep::Int32:
+            case Rep::Boolean:
+                type = Int32;
+                break;
+            case Rep::Double:
+                type = Double;
+                break;
+            }
+            phi->lowered = m_proc.add<Value>(Phi, type, Origin());
+        }
+    }
+
+    for (BasicBlock* block : m_graph.m_rpo) {
+        lowerBlock(block);
+        if (m_graph.failed())
+            return false;
+    }
+
+    if (m_returnBlock) {
+        m_out.appendTo(m_returnBlock);
+        m_out.ret(m_out.phi(Int64, m_returnValues));
+    }
+    if (m_tailCallBlock) {
+        m_out.appendTo(m_tailCallBlock);
+        LValue callee = m_out.phi(Int64, m_tailCallCallees);
+        LValue target = m_out.phi(Int64, m_tailCallTargets);
+        PatchpointValue* patchpoint = m_out.patchpoint(Void);
+        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
+        patchpoint->append(ConstrainedValue(target, ValueRep::reg(GPRInfo::regT12)));
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->effects.terminal = true;
+        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            jit.emitRestore(params.proc().calleeSaveRegisterAtOffsetList());
+            stubCalls->tailCall(jit, Stub::TailCallFinish);
+        });
+    }
+    if (m_throwTDZBlock) {
+        m_out.appendTo(m_throwTDZBlock);
+        LValue site = m_out.phi(Int32, m_throwTDZSites);
+        callStub(Stub::OperationVoidWithGlobalObject, Void, { { site, GPRInfo::regT10 } },
+            { { GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(Entry::operationAOTThrowTDZError) * sizeof(void*)) }, { GPRInfo::argumentGPR1, 0 } });
+        m_out.unreachable();
+    }
+
+    // The registers that live in memory do so where the interpreter would have them.
+    unsigned numHomedLocals = 0;
+    for (unsigned i = 0; i < m_graph.numLocals(); ++i) {
+        if (m_graph.isHomed(virtualRegisterForLocal(i)))
+            numHomedLocals = i + 1;
+    }
+    if (numHomedLocals) {
+        size_t size = numHomedLocals * sizeof(Register);
+        m_proc.addStackSlot(size)->setOffsetFromFP(-static_cast<intptr_t>(size));
+    }
+
+    m_heaps.computeRangesAndDecorateInstructions();
+    m_proc.deleteOrphans();
+    m_out.applyBlockOrder();
+    return true;
+}
+
+void Lowering::unsupported(Node* node)
+{
+    m_graph.fail("no lowering"_s, node->opcode);
+}
+
+TypedPointer Lowering::addressFor(VirtualRegister reg, ptrdiff_t offset)
+{
+    return m_out.address(m_callFrame, m_heaps.variables[reg.offset()], offset);
+}
+
+TypedPointer Lowering::slotWord(unsigned slot, unsigned word)
+{
+    return m_out.address(m_data, m_heaps.AOTData_slotWords[slot * 2 + word]);
+}
+
+LValue Lowering::slotAddress(unsigned slot)
+{
+    return m_out.add(m_data, m_out.constIntPtr(Data::offsetOfSlots() + slot * sizeof(Slot)));
+}
+
+TypedPointer Lowering::scratchWord(unsigned index)
+{
+    RELEASE_ASSERT(m_scratch);
+    return m_out.address(m_heaps.root, m_scratch, index * sizeof(EncodedJSValue));
+}
+
+LValue Lowering::storeToScratch(Node* node, VirtualRegister first, unsigned count)
+{
+    if (!count)
+        return m_out.intPtrZero;
+    for (unsigned i = 0; i < count; ++i)
+        m_out.store64(lowJSValue(node->use(VirtualRegister(first.offset() - static_cast<int>(i)))), scratchWord(i));
+    return m_scratch;
+}
+
+LValue Lowering::structureOf(LValue cell)
+{
+    // A structure's ID is the low half of its address. The high half is the same for all of them, and this process's own.
+    return m_out.bitOr(m_out.zeroExtPtr(m_out.load32(cell, m_heaps.JSCell_structureID)), entry(Entry::StructureIDBase));
+}
+
+LValue Lowering::entry(Entry which)
+{
+    LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[static_cast<unsigned>(which)]));
+    static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
+    return result;
+}
+
+void Lowering::callPreflight(Node* node)
+{
+    m_out.store32(m_out.constInt32(CallSiteIndex(node->bytecodeIndex).bits()), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
+#if ASSERT_ENABLED
+    m_out.storePtr(m_callFrame, m_out.address(m_heaps.root, m_vm, VM::topCallFrameOffset()));
+#endif
+}
+
+void Lowering::checkException(LValue exception)
+{
+    if (!exception)
+        exception = m_out.load64(m_vm, m_heaps.VM_exception);
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.notZero64(exception), rarely(m_handleExceptions), usually(continuation));
+    m_out.appendTo(continuation);
+}
+
+LType Lowering::operationTuple(LType type)
+{
+    if (type == Void)
+        return pointerType();
+    LType& result = m_tuples[static_cast<unsigned>(type.kind())];
+    if (!result.isTuple())
+        result = m_proc.addTuple({ type, pointerType() });
+    return result;
+}
+
+PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers)
+{
+    bool callsJS = stub == Stub::GetById || stub == Stub::GetByIdWellKnown || stub == Stub::GetLength;
+    if (callsJS) {
+        // These call getters, from the frame of whoever called them.
+        m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((CallFrame::headerSizeInRegisters + 1) * sizeof(EncodedJSValue)));
+        RELEASE_ASSERT(clobbers == StubClobbers::WhatCDoes);
+        clobbers = StubClobbers::WhatJSDoes;
+    }
+
+    // The address of a slot is worked out where it is wanted. As a value it would be worked out ahead of every loop it is wanted
+    // in, and kept, for calls that are hardly ever made.
+    PatchpointValue* patchpoint = m_out.patchpoint(type);
+    std::optional<std::pair<GPRReg, int32_t>> slotArgument;
+    for (auto& argument : arguments) {
+        LValue value = argument.value;
+        if (!slotArgument && value->opcode() == Add && value->child(0) == m_data && value->child(1)->hasIntPtr()) {
+            slotArgument = { argument.reg.gpr(), static_cast<int32_t>(value->child(1)->asIntPtr()) };
+            continue;
+        }
+        patchpoint->append(ConstrainedValue(value, ValueRep::reg(argument.reg)));
+    }
+    if (slotArgument)
+        patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    switch (clobbers) {
+    case StubClobbers::WhatCDoes:
+        patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+        break;
+    case StubClobbers::WhatJSDoes:
+        patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+        break;
+    case StubClobbers::Temporaries: {
+        RegisterSet temporaries;
+        temporaries.add(GPRInfo::regT9, IgnoreVectors);
+        temporaries.add(GPRInfo::regT10, IgnoreVectors);
+        temporaries.add(GPRInfo::regT11, IgnoreVectors);
+        patchpoint->clobber(temporaries);
+        break;
+    }
+    }
+    if (type == Double)
+        patchpoint->resultConstraints = { ValueRep::reg(FPRInfo::returnValueFPR) };
+    else if (type.isTuple()) {
+        // Whoever asked for several results says where they are.
+    } else if (type != Void)
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, callsJS, slotArgument](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (slotArgument)
+            jit.addPtr(CCallHelpers::TrustedImm32(slotArgument->second), params[params.size() - 1].gpr(), slotArgument->first);
+        for (auto& immediate : immediates)
+            jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
+        stubCalls->call(jit, stub);
+        // A function that was passed too few arguments, or that ended in a tail call, does not leave the stack pointer where it was.
+        if (callsJS)
+            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+    });
+    return patchpoint;
+}
+
+LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
+{
+    bool throws = !!node;
+    bool withGlobalObject = !arguments.isEmpty() && arguments[0] == m_globalObject;
+    bool withVM = !throws && !arguments.isEmpty() && arguments[0] == m_vm;
+
+    Vector<StubArgument, 8> placed;
+    unsigned nextGPR = 0;
+    unsigned nextFPR = 0;
+    for (unsigned i = 0; i < arguments.size(); ++i) {
+        if (arguments[i]->type() == Double) {
+            placed.append({ arguments[i], FPRInfo::toArgumentRegister(nextFPR++) });
+            continue;
+        }
+        GPRReg reg = GPRInfo::toArgumentRegister(nextGPR++);
+        if (!i && (withGlobalObject || withVM))
+            continue;
+        placed.append({ arguments[i], reg });
+    }
+    RELEASE_ASSERT(nextGPR <= GPRInfo::numberOfArgumentRegisters && nextFPR <= FPRInfo::numberOfArgumentRegisters);
+
+    Stub stub;
+    if (!throws)
+        stub = withGlobalObject ? Stub::PlainOperationWithGlobalObject : withVM ? Stub::PlainOperationWithVM : Stub::PlainOperation;
+    else if (type == Double)
+        stub = withGlobalObject ? Stub::OperationDoubleWithGlobalObject : Stub::OperationDouble;
+    else if (type == Void)
+        stub = withGlobalObject ? Stub::OperationVoidWithGlobalObject : Stub::OperationVoid;
+    else
+        stub = withGlobalObject ? Stub::OperationValueWithGlobalObject : Stub::OperationValue;
+
+    Vector<StubImmediate, 2> immediates;
+    immediates.append({ GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
+    if (throws)
+        immediates.append({ GPRInfo::regT10, CallSiteIndex(node->bytecodeIndex).bits() });
+    PatchpointValue* result = callStub(stub, type, placed, immediates);
+    return type == Void ? nullptr : result;
+}
+
+unsigned Lowering::allocateSite(Node* node, unsigned identifier, unsigned extra)
+{
+    RELEASE_ASSERT(Site::fits(identifier, extra));
+    unsigned slot = allocateSlot();
+    while (m_graph.sites.size() <= slot)
+        m_graph.sites.append(Site { });
+    m_graph.sites[slot].identifierAndExtra = identifier | extra << Site::identifierBits;
+    m_graph.sites[slot].callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    return slot;
+}
+
+unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
+{
+    if (!m_graph.hasGuards())
+        return allocateSite(node, identifier, extra);
+    return m_sharedSites.ensure(static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | identifier, [&] {
+        return allocateSite(node, identifier, extra);
+    }).iterator->value;
+}
+
+unsigned Lowering::siteOfKnownCall(Node* node, unsigned knownCallee, bool isConstruct)
+{
+    auto allocate = [&] {
+        unsigned slot = allocateSite(node, knownCallee, isConstruct);
+        unsigned second = allocateSlot();
+        RELEASE_ASSERT(second == slot + 1);
+        return slot;
+    };
+    if (!m_graph.hasGuards())
+        return allocate();
+    return m_sharedSites.ensure(static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | 1u << 31 | knownCallee, allocate).iterator->value;
+}
+
+void Lowering::storeBarrier(LValue owner)
+{
+    if constexpr (usesStubs) {
+        // Nothing that compiled code looks at is any different afterwards.
+        PatchpointValue* patchpoint = callStub(Stub::WriteBarrier, Void, { { owner, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+        patchpoint->effects = Effects::none();
+        patchpoint->effects.controlDependent = true;
+        m_heaps.decoratePatchpointRead(&m_heaps.JSCell_cellState, patchpoint);
+        m_heaps.decoratePatchpointWrite(&m_heaps.JSCell_cellState, patchpoint);
+        return;
+    }
+    LBasicBlock slowPath = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue threshold = m_out.load32(m_vm, m_heaps.VM_heap_barrierThreshold);
+    m_out.branch(m_out.above(m_out.load8ZeroExt32(owner, m_heaps.JSCell_cellState), threshold), usually(continuation), rarely(slowPath));
+    m_out.appendTo(slowPath, continuation);
+    plainCall(Void, Entry::operationAOTWriteBarrier, m_vm, owner);
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+// ---- Values
+
+LValue Lowering::numberToDouble(LValue value)
+{
+    // Both are computed and one is picked: cheaper than a branch that does not predict.
+    return m_out.select(isInt32(value), m_out.intToDouble(unboxInt32(value)), unboxDouble(value));
+}
+
+LValue Lowering::doubleToInt32(LValue value)
+{
+#if CPU(ARM64)
+    if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+        patchpoint->append(ConstrainedValue(value, ValueRep::SomeRegister));
+        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
+        });
+        patchpoint->effects = Effects::none();
+        return patchpoint;
+    }
+#endif
+    return plainCall(Int32, Entry::operationAOTDoubleToInt32, value);
+}
+
+LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
+{
+    if (from == to)
+        return value;
+    switch (to) {
+    case Rep::JSValue:
+        switch (from) {
+        case Rep::Int32:
+            return boxInt32(value);
+        case Rep::Int64: {
+            LValue narrow = m_out.castToInt32(value);
+            return m_out.select(m_out.equal(m_out.signExt32To64(narrow), value), boxInt32(narrow), boxDouble(m_out.intToDouble(value)));
+        }
+        case Rep::Double:
+            return boxDouble(value);
+        case Rep::Boolean:
+            return boxBoolean(value);
+        case Rep::JSValue:
+            break;
+        }
+        break;
+    case Rep::Double:
+        if (from == Rep::Int32 || from == Rep::Int64)
+            return m_out.intToDouble(value);
+        if (from == Rep::JSValue) {
+            if (isSubtype(fromType, TInt32))
+                return m_out.intToDouble(unboxInt32(value));
+            return numberToDouble(value);
+        }
+        break;
+    // To an integer from anything else: it has been proven to be one, and one that fits.
+    case Rep::Int32:
+        if (from == Rep::JSValue) {
+            if (isSubtype(fromType, TInt32))
+                return unboxInt32(value);
+            return m_out.select(isInt32(value), unboxInt32(value), m_out.doubleToInt32(unboxDouble(value)));
+        }
+        if (from == Rep::Int64)
+            return m_out.castToInt32(value);
+        if (from == Rep::Double)
+            return m_out.doubleToInt32(value);
+        break;
+    case Rep::Int64:
+        if (from == Rep::JSValue) {
+            if (isSubtype(fromType, TInt32))
+                return m_out.signExt32To64(unboxInt32(value));
+            return m_out.select(isInt32(value), m_out.signExt32To64(unboxInt32(value)), m_out.doubleToInt64(unboxDouble(value)));
+        }
+        if (from == Rep::Int32)
+            return m_out.signExt32To64(value);
+        if (from == Rep::Double)
+            return m_out.doubleToInt64(value);
+        break;
+    case Rep::Boolean:
+        if (from == Rep::JSValue)
+            return unboxBoolean(value);
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return nullptr;
+}
+
+LValue Lowering::lowRaw(Node* node)
+{
+    switch (node->kind) {
+    case NodeKind::Constant:
+        switch (node->rep()) {
+        case Rep::Int32:
+            return m_out.constInt32(static_cast<int32_t>(node->constant.asNumber()));
+        case Rep::Int64:
+            m_graph.wideIntegerConstants.add(static_cast<int64_t>(node->constant.asNumber()));
+            return m_out.constInt64(static_cast<int64_t>(node->constant.asNumber()));
+        case Rep::Double:
+            return m_out.constDouble(node->constant.asNumber());
+        case Rep::Boolean:
+            return m_out.constInt32(node->constant.asBoolean());
+        case Rep::JSValue:
+            return m_out.constInt64(JSValue::encode(node->constant));
+        }
+        break;
+    case NodeKind::ConstantCell:
+        return lowConstantRegister(node->reg);
+    default:
+        break;
+    }
+    RELEASE_ASSERT(node->lowered);
+    return node->lowered;
+}
+
+LValue Lowering::lowConstantRegister(VirtualRegister reg)
+{
+    LValue constants = m_out.loadPtr(m_data, m_heaps.AOTData_constants);
+    return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
+}
+
+LValue Lowering::lowJSValue(Node* node) { return convert(lowRaw(node), node->rep(), node->type, Rep::JSValue); }
+
+LValue Lowering::lowInt32(Node* node)
+{
+    RELEASE_ASSERT(node->rep() == Rep::Int32);
+    return lowRaw(node);
+}
+
+LValue Lowering::lowInt64(Node* node)
+{
+    RELEASE_ASSERT(node->isInteger());
+    return convert(lowRaw(node), node->rep(), node->type, Rep::Int64);
+}
+
+LValue Lowering::lowDouble(Node* node)
+{
+    RELEASE_ASSERT(isSubtype(node->type, TNumber));
+    return convert(lowRaw(node), node->rep(), node->type, Rep::Double);
+}
+
+LValue Lowering::lowBoolean(Node* node)
+{
+    RELEASE_ASSERT(node->rep() == Rep::Boolean);
+    return lowRaw(node);
+}
+
+void Lowering::setResult(Node* node, LValue value, Rep rep)
+{
+    // What a lowering makes may be less specific than what the node is known to be, never the other way around.
+    node->lowered = convert(value, rep, node->type, node->rep());
+}
+
+void Lowering::setProj(Node* node, VirtualRegister reg, LValue value, Rep rep)
+{
+    // The projections come right after the instruction, with at most the stores of homed registers among them.
+    auto& nodes = m_block->nodes;
+    RELEASE_ASSERT(nodes[m_nodeIndex] == node);
+    for (unsigned i = m_nodeIndex + 1; i < nodes.size(); ++i) {
+        Node* candidate = nodes[i];
+        if (candidate->kind == NodeKind::SetStack)
+            continue;
+        if (candidate->kind != NodeKind::Proj || candidate->uses[0].node != node)
+            break;
+        if (candidate->reg == reg) {
+            setResult(candidate, value, rep);
+            return;
+        }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void Lowering::setJSValue(Node* node, LValue value) { setResult(node, value, Rep::JSValue); }
+void Lowering::setInt32(Node* node, LValue value) { setResult(node, value, Rep::Int32); }
+void Lowering::setInt64(Node* node, LValue value) { setResult(node, value, Rep::Int64); }
+void Lowering::setDouble(Node* node, LValue value) { setResult(node, value, Rep::Double); }
+void Lowering::setBoolean(Node* node, LValue value) { setResult(node, value, Rep::Boolean); }
+
+LValue Lowering::toBoolean(Node* node)
+{
+    switch (node->rep()) {
+    case Rep::Boolean:
+        return lowRaw(node);
+    case Rep::Int32:
+        return m_out.notZero32(lowRaw(node));
+    case Rep::Int64:
+        return m_out.notZero64(lowRaw(node));
+    case Rep::Double:
+        return m_out.doubleNotEqualAndOrdered(lowRaw(node), m_out.constDouble(0));
+    case Rep::JSValue:
+        break;
+    }
+    LValue value = lowRaw(node);
+    if (isSubtype(node->type, TOther))
+        return m_out.booleanFalse;
+    if (isSubtype(node->type, TBoolean | TOther))
+        return m_out.equal(value, m_out.constInt64(JSValue::ValueTrue));
+    if (isCompact())
+        return callStub(Stub::ToBoolean, Int32, { { value, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+
+    LBasicBlock notBoolean = m_out.newBlock();
+    LBasicBlock notInt32 = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 3> results;
+
+    results.append(m_out.anchor(unboxBoolean(value)));
+    m_out.branch(isBoolean(value), unsure(continuation), unsure(notBoolean));
+
+    m_out.appendTo(notBoolean, notInt32);
+    results.append(m_out.anchor(m_out.notZero32(unboxInt32(value))));
+    m_out.branch(isInt32(value), unsure(continuation), unsure(notInt32));
+
+    m_out.appendTo(notInt32, continuation);
+    results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_globalObject, value))));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, results);
+}
+
+// ---- Structure
+
+// Where the block that is being lowered goes to get to a successor.
+LBasicBlock Lowering::edgeTo(BasicBlock* successor)
+{
+    for (auto& [to, edge] : m_edges) {
+        if (to == successor)
+            return edge;
+    }
+    return successor->lowered;
+}
+
+void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
+{
+    unsigned predecessorIndex = successor->predecessors.find(block);
+    RELEASE_ASSERT(predecessorIndex != notFound);
+    for (Node* phi : successor->phis) {
+        Node* input = phi->uses[predecessorIndex].node;
+        LValue value = convert(lowRaw(input), input->rep(), input->type, phi->rep());
+        m_out.addIncomingToPhi(phi->lowered, m_out.anchor(value));
+    }
+}
+
+void Lowering::lowerBlock(BasicBlock* block)
+{
+    m_block = block;
+    m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
+    m_out.appendTo(block->lowered);
+    for (Node* phi : block->phis)
+        m_out.m_block->append(phi->lowered);
+    if (block->endsWithGuard)
+        m_exit = newColdBlock();
+
+    Node* terminal = block->terminal();
+    if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
+        terminal = nullptr;
+
+    // The origin of a B3 value is the opcode it was made for, plus one: for saying what the code's bytes went to.
+    auto setOrigin = [&](Node* node) {
+        unsigned tag = !node ? 0 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
+        m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(tag) << 4));
+    };
+    for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
+        Node* node = block->nodes[m_nodeIndex];
+        if (node == terminal)
+            break;
+        setOrigin(node);
+        lowerNode(node);
+        if (m_graph.failed())
+            return;
+    }
+    if (terminal && terminal->kind == NodeKind::Guard) {
+        setOrigin(terminal);
+        lowerGuard(block, terminal);
+        setOrigin(nullptr);
+        return;
+    }
+    setOrigin(nullptr);
+    // What a successor's phis are given is given on the way there. Ahead of a branch, a loop would do on every turn what is only wanted
+    // when it ends; and of two moves of one value, to a phi at the top of the loop and to one past the end, only one can be done
+    // away with.
+    bool branches = std::ranges::any_of(block->successors, [&](BasicBlock* successor) { return successor != block->successors[0]; });
+    for (BasicBlock* successor : block->successors) {
+        if (!branches) {
+            emitUpsilons(block, successor);
+            break;
+        }
+        if (!successor->phis.isEmpty() && edgeTo(successor) == successor->lowered)
+            m_edges.append({ successor, m_out.newBlock() });
+    }
+    setOrigin(terminal);
+    lowerTerminalOrFallThrough(block, terminal);
+    setOrigin(nullptr);
+    for (auto& [successor, edge] : std::exchange(m_edges, { })) {
+        m_out.appendTo(edge);
+        emitUpsilons(block, successor);
+        m_out.jump(successor->lowered);
+    }
+}
+
+void Lowering::lowerNode(Node* node)
+{
+    switch (node->kind) {
+    case NodeKind::Constant:
+    case NodeKind::ConstantCell:
+    case NodeKind::Phi:
+        RELEASE_ASSERT_NOT_REACHED();
+        return;
+    case NodeKind::Guard:
+        // One that has been moved to a pre-header.
+        emitGuard(node);
+        return;
+    case NodeKind::Narrow:
+        // The guard that the block ends in sees to these.
+        return;
+    case NodeKind::Argument:
+        setJSValue(node, m_out.load64(addressFor(node->reg)));
+        return;
+    case NodeKind::GetStack:
+        setJSValue(node, m_out.load64(addressFor(node->reg)));
+        return;
+    case NodeKind::SetStack:
+        // An argument's home is its own slot in the frame, which it is in already.
+        if (node->uses[0].node->kind == NodeKind::Argument && node->uses[0].node->reg == node->reg)
+            return;
+        m_out.store64(lowJSValue(node->uses[0].node), addressFor(node->reg));
+        return;
+    case NodeKind::Proj:
+        // The instruction has seen to it (setProj()).
+        RELEASE_ASSERT(node->lowered);
+        return;
+    case NodeKind::Bytecode:
+        lowerBytecode(node);
+        return;
+    }
+}
+
+void Lowering::lowerBytecode(Node* node)
+{
+    if (node->guard && node->guard->isHandled) {
+        lowerGuarded(node);
+        return;
+    }
+    if (tryLowerArith(node) || tryLowerAccess(node) || tryLowerCallVariant(node) || tryLowerCall(node) || tryLowerMisc(node) || tryLowerObjects(node) || tryLowerIteration(node))
+        return;
+    if (m_graph.failed())
+        return;
+    unsupported(node);
+}
+
+LBasicBlock Lowering::blockFor(Node* branch, int relativeOffset)
+{
+    BasicBlock* target = m_graph.targetFrom(m_block, branch->bytecodeIndex.offset() + relativeOffset);
+    RELEASE_ASSERT(target && target->lowered);
+    return edgeTo(target);
+}
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(FTL_JIT)

@@ -107,6 +107,12 @@ public:
     // resolveImport(localName) and, for a resolved binding, its import slot.
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether the imports that the graph of modules the embedder resolved ahead of time says are variables of other modules of
+    // the graph are those variables for this record: code that was compiled with the graph to go by (AOT::ModuleLinkage) reads them
+    // from where they are without asking. To be asked once the module is linked; the answer is kept.
+    JS_EXPORT_PRIVATE bool isLinkedAsInImage(JSGlobalObject*);
+#endif
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
     // Whether every import binding of this record is at the same place for `executable`'s code as for the record it
     // was linked for (its linker): the same slot, and the same variable of a module with the same source (or, for an
@@ -127,6 +133,7 @@ private:
     std::optional<Vector<Identifier>> m_importSlotNames;
     HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
+    TriState m_isLinkedAsInImage { TriState::Indeterminate };
 
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);

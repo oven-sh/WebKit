@@ -182,6 +182,9 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 #endif
 
 #if ENABLE(FTL_JIT)
+namespace AOT {
+class RuntimeTable;
+}
 namespace FTL {
 class Thunks;
 }
@@ -490,6 +493,7 @@ public:
 
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
+    std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }
@@ -769,7 +773,7 @@ public:
     static JS_EXPORT_PRIVATE bool canUseAssembler();
     static bool isInMiniMode()
     {
-        return !Options::useJIT() || Options::forceMiniVMMode();
+        return (!Options::useJIT() && Options::useMiniVMModeWithoutJIT()) || Options::forceMiniVMMode();
     }
 
     static bool useUnlinkedCodeBlockJettisoning()

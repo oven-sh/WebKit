@@ -50,6 +50,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 #if ENABLE(DFG_JIT)
+namespace AOT {
+class JITCode;
+struct Data;
+}
 namespace DFG {
 class JITData;
 } // namespace DFG
@@ -106,6 +110,9 @@ class CodeBlock : public JSCell {
 public:
 
     enum CopyParsedBlockTag { CopyParsedBlock };
+    // ForCodeFromImage: the block is going to run code from the static compiler (installAOTCode), which has no use for what
+    // linking the bytecode makes: there is no metadata table, and there are no profiles.
+    enum class LinkMode : uint8_t { Full, ForCodeFromImage };
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
@@ -122,10 +129,10 @@ public:
 
 protected:
     CodeBlock(VM&, Structure*, CopyParsedBlockTag, CodeBlock& other);
-    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    CodeBlock(VM&, Structure*, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     void finishCreation(VM&, CopyParsedBlockTag, CodeBlock& other);
-    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
+    bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*, LinkMode = LinkMode::Full);
 
     WriteBarrier<JSGlobalObject> m_globalObject;
 
@@ -583,9 +590,20 @@ public:
     SimpleJumpTable& baselineSwitchJumpTable(int tableIndex);
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     void setBaselineJITData(std::unique_ptr<BaselineJITData>&&);
+#if ENABLE(FTL_JIT)
+    void installAOTCode(Ref<AOT::JITCode>&&);
+    // Of code that is not going to run again: what only running it has a use for goes now, and not when the collector gets to it.
+    void releaseAOTData();
+    AOT::Data* aotData()
+    {
+        if (jitType() == JITType::AOTJIT)
+            return std::bit_cast<AOT::Data*>(m_jitData);
+        return nullptr;
+    }
+#endif
     BaselineJITData* baselineJITData()
     {
-        if (!JSC::JITCode::isOptimizingJIT(jitType()))
+        if (!JSC::JITCode::isOptimizingJIT(jitType()) && jitType() != JITType::AOTJIT)
             return std::bit_cast<BaselineJITData*>(m_jitData);
         return nullptr;
     }

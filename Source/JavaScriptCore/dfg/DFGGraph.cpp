@@ -28,6 +28,7 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "AOTImage.h"
 #include "ArrayPrototype.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
@@ -307,6 +308,8 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
             }
         }
     }
+    if (node->hasSoundTypeMask())
+        out.print(comma, SoundTypeMaskDump(node->soundTypeMask()));
     if (node->hasQueriedType()) {
         JSTypeRange range = node->queriedType();
         if (range.first == range.last)
@@ -1462,6 +1465,12 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
             return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
     }
+
+#if ENABLE(FTL_JIT)
+    // Code from the static compiler writes to closure variables without telling anyone.
+    if (Options::useAOT() || AOT::Image::hasAny())
+        return JSValue();
+#endif
 
     JSValue value;
     InlineWatchpointSet* set;

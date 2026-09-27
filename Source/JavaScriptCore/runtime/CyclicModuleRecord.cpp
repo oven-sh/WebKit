@@ -444,7 +444,28 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 19. Let varDeclarations be the VarScopedDeclarations of code.
     // 20. Let declaredVarNames be a new empty List.
     // 21. For each element d of varDeclarations, do
+    // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
+    // without their names.
+    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending();
+    if (initializeVarsByOffset) {
+        for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
+            env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
+        if (Options::validatePrelinkedModuleInfo()) [[unlikely]] {
+            unsigned found = 0;
+            for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+                SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
+                if (entry.isNull() || entry.varOffset().isStack())
+                    continue;
+                unsigned offset = entry.scopeOffset().offset();
+                RELEASE_ASSERT(offset >= unlinkedCodeBlock->firstVarScopeOffset() && offset - unlinkedCodeBlock->firstVarScopeOffset() < unlinkedCodeBlock->numberOfVarScopeOffsets(), offset, unlinkedCodeBlock->firstVarScopeOffset(), unlinkedCodeBlock->numberOfVarScopeOffsets());
+                found++;
+            }
+            RELEASE_ASSERT(found == unlinkedCodeBlock->numberOfVarScopeOffsets(), found, unlinkedCodeBlock->numberOfVarScopeOffsets());
+        }
+    }
     for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
+        if (initializeVarsByOffset)
+            break;
         // 21.a. For each element dn of the BoundNames of d, do
         // 21.a.i. If declaredVarNames does not contain dn, then
         // 21.a.i.1. Perform ! env.CreateMutableBinding(dn, false).

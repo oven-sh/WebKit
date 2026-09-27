@@ -276,13 +276,9 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
     // FIXME: we should have a story for eliminating these checks. In many cases,
     // the DFG knows that the value is definitely a cell, or definitely a function.
 
-    if (mode == CallMode::Tail) {
-        // Tail calls could have clobbered the GPRInfo::notCellMaskRegister because they
-        // restore callee saved registers before getthing here. So, let's materialize
-        // the NotCellMask in a temp register and use the temp instead.
-        slowCase.append(jit.branchIfNotCell(GPRInfo::regT0, DoNotHaveTagRegisters));
-    } else
-        slowCase.append(jit.branchIfNotCell(GPRInfo::regT0));
+    // Tail calls could have clobbered the GPRInfo::notCellMaskRegister because they restore callee saved registers before
+    // getting here, and code from the static compiler does not keep the tags in registers at all.
+    slowCase.append(jit.branchIfNotCell(GPRInfo::regT0, DoNotHaveTagRegisters));
     auto notJSFunction = jit.branchIfNotFunction(GPRInfo::regT0);
 
     // Now we know we have a JSFunction.

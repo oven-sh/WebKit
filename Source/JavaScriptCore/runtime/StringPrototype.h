@@ -73,4 +73,6 @@ JSC_DECLARE_HOST_FUNCTION(stringProtoFuncIterator);
 JSC_DECLARE_HOST_FUNCTION(builtinStringIncludesInternal);
 JSC_DECLARE_HOST_FUNCTION(builtinStringIndexOfInternal);
 
+JSC_DECLARE_HOST_FUNCTION(stringProtoFuncCharCodeAt);
+
 } // namespace JSC

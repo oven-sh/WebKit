@@ -264,6 +264,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_to_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_tdz);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_type);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_not);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_eq);

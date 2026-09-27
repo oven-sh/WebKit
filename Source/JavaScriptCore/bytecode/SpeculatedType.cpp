@@ -673,6 +673,84 @@ SpeculatedType speculationFromValueForProfiling(JSValue value)
     return speculationFromValueImpl<true>(value);
 }
 
+unsigned soundTypeTag(JSValue value)
+{
+    if (value.isNumber())
+        return SoundTypeNumber;
+    if (value.isEmpty())
+        return 0;
+    if (value.isCell()) {
+        JSCell* cell = value.asCell();
+        switch (cell->type()) {
+        case StringType:
+            return SoundTypeString;
+        case SymbolType:
+            return SoundTypeSymbol;
+        case HeapBigIntType:
+            return SoundTypeBigInt;
+        case ArrayType:
+        case DerivedArrayType:
+            return SoundTypeArray;
+        default:
+            break;
+        }
+        if (!cell->isObject())
+            return 0;
+        return cell->isCallable() ? SoundTypeFunction : SoundTypeOtherObject;
+    }
+    if (value.isUndefined())
+        return SoundTypeUndefined;
+    if (value.isNull())
+        return SoundTypeNull;
+    if (value.isBoolean())
+        return SoundTypeBoolean;
+    ASSERT(value.isBigInt32());
+    return SoundTypeBigInt;
+}
+
+bool soundTypeMaskAdmits(unsigned mask, JSValue value)
+{
+    unsigned tag = soundTypeTag(value);
+    if (!(tag & mask))
+        return false;
+    return tag != SoundTypeOtherObject || !soundTypeMaskNamesTypedArray(mask) || value.asCell()->type() == typedArrayTypeOfSoundTypeMask(mask);
+}
+
+void dumpSoundTypeMask(PrintStream& out, unsigned mask)
+{
+    // undefined and null go last, the way TypeScript prints unions.
+    static constexpr std::pair<unsigned, ASCIILiteral> names[] = {
+        { SoundTypeBoolean, "boolean"_s },
+        { SoundTypeNumber, "number"_s },
+        { SoundTypeString, "string"_s },
+        { SoundTypeSymbol, "symbol"_s },
+        { SoundTypeBigInt, "bigint"_s },
+        { SoundTypeAnyObject, "object"_s },
+        { SoundTypeFunction, "function"_s },
+        { SoundTypeArray, "array"_s },
+        { SoundTypeOtherObject, "object"_s },
+        { SoundTypeNull, "null"_s },
+        { SoundTypeUndefined, "undefined"_s },
+    };
+    CommaPrinter separator(" | "_s);
+    if (soundTypeMaskNamesTypedArray(mask)) {
+        static constexpr ASCIILiteral typedArrays[] = {
+            "Int8Array"_s, "Uint8Array"_s, "Uint8ClampedArray"_s, "Int16Array"_s, "Uint16Array"_s, "Int32Array"_s, "Uint32Array"_s,
+            "Float16Array"_s, "Float32Array"_s, "Float64Array"_s, "BigInt64Array"_s, "BigUint64Array"_s,
+        };
+        static_assert(std::size(typedArrays) == NumberOfTypedArrayTypesExcludingDataView);
+        static_assert(Float64ArrayType - FirstTypedArrayType == 9 && BigUint64ArrayType - FirstTypedArrayType == 11);
+        out.print(separator, typedArrays[typedArrayTypeOfSoundTypeMask(mask) - FirstTypedArrayType]);
+        mask &= SoundTypeAll & ~SoundTypeOtherObject;
+    }
+    for (auto [bits, name] : names) {
+        if ((mask & bits) != bits)
+            continue;
+        mask &= ~bits;
+        out.print(separator, name);
+    }
+}
+
 SpeculatedType int52AwareSpeculationFromValue(JSValue value)
 {
     if (!value.isAnyInt())

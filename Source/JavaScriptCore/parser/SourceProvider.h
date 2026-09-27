@@ -128,6 +128,12 @@ public:
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // What an image of code from the static compiler (AOT::Image) knows this source by. Zero: nothing.
+    uint32_t aotModuleID() const { return m_aotModuleID; }
+    void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
+#endif
+
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
     bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
 
@@ -156,6 +162,9 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_aotModuleID { 0 };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

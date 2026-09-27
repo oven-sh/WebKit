@@ -622,7 +622,7 @@ float charactersToFloat(std::span<const char16_t> data, size_t& parsedLength)
 }
 
 const StaticString nullStringData { nullptr };
-const StaticString emptyStringData { &StringImpl::s_emptyAtomString };
+const StaticString emptyStringData { StringImpl::emptyAsStaticStringImpl() };
 
 } // namespace WTF
 

@@ -806,6 +806,13 @@ void Options::notifyOptionsChanged()
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
+    // Code in an image goes with the bytecode it was compiled from.
+    if (Options::useAOT() || Options::aotImagePath()) {
+        Options::resolveAllScopeSlotsStatically() = true;
+        Options::evaluateObjectLiteralValuesFirst() = true;
+        Options::definePlainInstanceFieldsInConstructor() = true;
+    }
+
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
         dataLogLn("useGdbJITInfo should be used with OFFLINE_ASM_ALT_ENTRY");

@@ -819,6 +819,8 @@ namespace JSC {
             return m_node->isInstanceClassField();
         }
         bool NODELETE hasInstanceFields() const;
+        // The names of the instance fields, if each of them is a name and nothing else. Otherwise none.
+        Vector<Identifier> plainInstanceFieldNames() const;
 
         bool isStaticClassField() const
         {
@@ -1217,6 +1219,20 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
         ExpressionNode* m_expr;
+    };
+
+    // $$t(expr, mask) under Options::useSoundTypes(). See SoundTypeMask in SpeculatedType.h.
+    class SoundTypeCheckNode final : public ExpressionNode, public ThrowableExpressionData {
+    public:
+        SoundTypeCheckNode(const JSTokenLocation&, ExpressionNode*, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+
+    private:
+        // The SyntaxChecker sees a call, and sloppy mode code may have a call where an assignment target goes.
+        bool isFunctionCall() const final { return true; }
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+
+        ExpressionNode* m_expr;
+        unsigned m_mask;
     };
 
     class PrefixNode : public ExpressionNode, public ThrowablePrefixedSubExpressionData {
@@ -2324,6 +2340,10 @@ namespace JSC {
             m_needsClassFieldInitializer = value;
         }
 
+        // A constructor: see Options::definePlainInstanceFieldsInConstructor(). Empty if that is not for this class.
+        const Vector<Identifier>& plainInstanceFieldNames() const LIFETIME_BOUND { return m_plainInstanceFieldNames; }
+        void setPlainInstanceFieldNames(Vector<Identifier>&& names) { m_plainInstanceFieldNames = WTF::move(names); }
+
         bool isSloppyModeHoistedFunction() const { return m_isSloppyModeHoistedFunction; }
         void setIsSloppyModeHoistedFunction() { m_isSloppyModeHoistedFunction = true; }
 
@@ -2362,6 +2382,7 @@ namespace JSC {
         int m_startStartOffset;
         unsigned m_parameterCount;
         int m_lastLine { 0 };
+        Vector<Identifier> m_plainInstanceFieldNames;
     };
 
     class FunctionNode final : public ScopeNode {
@@ -2383,9 +2404,14 @@ namespace JSC {
         unsigned startColumn() const { return m_startColumn; }
         unsigned endColumn() const { return m_endColumn; }
 
+        // What only whoever made the function knows about it (FunctionMetadataNode::plainInstanceFieldNames()).
+        const FixedVector<Identifier>* plainInstanceFieldNames() const { return m_plainInstanceFieldNames; }
+        void setPlainInstanceFieldNames(const FixedVector<Identifier>* names) { m_plainInstanceFieldNames = names; }
+
         static constexpr bool scopeIsFunction = true;
 
     private:
+        const FixedVector<Identifier>* m_plainInstanceFieldNames { nullptr };
         Identifier m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;

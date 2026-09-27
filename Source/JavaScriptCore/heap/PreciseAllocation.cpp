@@ -224,6 +224,17 @@ PreciseAllocation::PreciseAllocation(JSC::Heap& heap, size_t size, Subspace* sub
     ASSERT(m_adjustment == adjustment);
 }
 
+PreciseAllocation* PreciseAllocation::s_containerOfStaticCells = nullptr;
+
+PreciseAllocation* PreciseAllocation::createForStaticCells(JSC::Heap& heap, Subspace* subspace)
+{
+    void* space = fastAlignedMalloc(alignment, headerSize() + alignment);
+    auto* result = new (NotNull, static_cast<char*>(space) + halfAlignment) PreciseAllocation(heap, 0, subspace, std::numeric_limits<unsigned>::max(), halfAlignment);
+    result->m_hasValidCell = false;
+    result->m_isMarked.store(true);
+    return result;
+}
+
 PreciseAllocation::~PreciseAllocation()
 {
     if (isOnList())

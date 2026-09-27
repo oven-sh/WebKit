@@ -39,6 +39,7 @@
 #include "ParserTokens.h"
 #include "RegExp.h"
 #include "SourceCode.h"
+#include "StaticHeap.h"
 #include "VariableEnvironment.h"
 #include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
@@ -119,12 +120,16 @@ public:
     unsigned parameterCount() const { return m_parameterCount; }; // Excluding 'this'!
     SourceParseMode parseMode() const { return static_cast<SourceParseMode>(m_sourceParseMode); };
 
-    SourceCode classSource() const
+    // (`provider` is the one that the function's own source is of. An executable of StaticHeap does not know it.)
+    SourceCode classSource(SourceProvider& provider) const
     {
         materializeDeferredMembersIfNeeded();
-        if (m_members.live().rareData)
-            return m_members.live().rareData->m_classSource;
-        return SourceCode();
+        if (!m_members.live().rareData)
+            return SourceCode();
+        const SourceCode& source = m_members.live().rareData->m_classSource;
+        if (StaticHeap::contains(this) && m_isClass) [[unlikely]]
+            return SourceCode(provider, source.startOffset(), source.endOffset(), source.firstLine().oneBasedInt(), source.startColumn().oneBasedInt());
+        return source;
     }
     void setClassSource(const SourceCode& source)
     {
@@ -244,9 +249,16 @@ public:
     RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
     {
         materializeDeferredMembersIfNeeded();
+        if (StaticHeap::contains(this)) [[unlikely]]
+            return StaticHeap::parentScopeTDZVariablesOf(*this);
         return m_members.live().parentScopeTDZVariables;
     }
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
+    RefPtr<DeclaredNamesLink> parentDeclaredNames()
+    {
+        materializeDeferredMembersIfNeeded();
+        return m_members.live().rareData ? m_members.live().rareData->m_parentDeclaredNames : nullptr;
+    }
     // Taken by the first code block generated for this executable (call or construct); a second specialization of
     // the same function is generated without static scope information.
     RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
@@ -339,12 +351,14 @@ public:
         // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
         // enclosing scopes at the creation site. Never encoded into a bytecode cache.
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+        // FunctionMetadataNode::plainInstanceFieldNames(). Not encoded either: code generated without it does the same thing.
+        FixedVector<Identifier> m_plainInstanceFieldNames;
 
         bool isEmpty() const
         {
             return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
                 && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
-                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;
+                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames && m_plainInstanceFieldNames.isEmpty();
         }
     };
 
@@ -356,6 +370,21 @@ public:
         if (m_members.live().rareData)
             return &m_members.live().rareData->m_classElementDefinitions;
         return nullptr;
+    }
+
+    const FixedVector<Identifier>* plainInstanceFieldNames() const
+    {
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return &m_members.live().rareData->m_plainInstanceFieldNames;
+        return nullptr;
+    }
+
+    void setPlainInstanceFieldNames(const Vector<Identifier>& names)
+    {
+        if (names.isEmpty())
+            return;
+        ensureRareData().m_plainInstanceFieldNames = FixedVector<Identifier>(names);
     }
 
     void setClassElementDefinitions(Vector<ClassElementDefinition>&& classElementDefinitions)

@@ -51,6 +51,7 @@ bool CallFrame::callSiteBitsAreBytecodeOffset() const
     switch (codeBlock()->jitType()) {
     case JITType::InterpreterThunk:
     case JITType::BaselineJIT:
+    case JITType::AOTJIT:
         return true;
     case JITType::None:
     case JITType::HostCallThunk:

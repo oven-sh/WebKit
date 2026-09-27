@@ -1131,6 +1131,8 @@ private:
     Seconds m_totalGCTime;
     
     uintptr_t m_barriersExecuted { 0 };
+    Lock m_staticCellsStoredToLock;
+    UncheckedKeyHashSet<JSCell*> m_staticCellsStoredTo WTF_GUARDED_BY_LOCK(m_staticCellsStoredToLock); // See StaticHeap.
     
     CurrentThreadState* m_currentThreadState { nullptr };
     Thread* m_currentThread { nullptr }; // It's OK if this becomes a dangling pointer.

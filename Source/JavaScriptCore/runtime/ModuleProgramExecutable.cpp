@@ -31,6 +31,7 @@
 #include "Error.h"
 #include "FunctionExecutable.h"
 #include "JSModuleRecord.h"
+#include "ModuleProgramCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakInlines.h"
@@ -212,6 +213,10 @@ void ModuleProgramExecutable::didFinishEvaluation(VM& vm)
         return;
     if (!Options::useRunOnceCodeRelease() || !canReleaseLinkedCodeNow(vm))
         return;
+#if ENABLE(FTL_JIT)
+    if (CodeBlock* codeBlock = this->codeBlock())
+        codeBlock->releaseAOTData();
+#endif
     clearCode(Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()), ClearCode::KeepWhatNeedsParsing);
 }
 

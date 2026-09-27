@@ -291,6 +291,18 @@ template <> struct CacheTypes<UnlinkedModuleProgramCodeBlock> {
 
 UnlinkedEvalCodeBlock* generateUnlinkedCodeBlockForDirectEval(VM&, DirectEvalExecutable*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, const TDZEnvironment* variablesUnderTDZ, const PrivateNameEnvironment*);
 // `depth` bounds how many levels of nested functions get code blocks (0 = only the program's own).
+#if USE(BUN_JSC_ADDITIONS)
+// For a shell: generates the code of every function in the source, as for a bytecode cache, and has the static compiler compile
+// all of it, without running or keeping any. Nothing if the source does not parse.
+struct AOTCompileAllResult {
+    unsigned functions { 0 };
+    unsigned compiled { 0 };
+    size_t codeBytes { 0 };
+    size_t bytecodeBytes { 0 };
+};
+JS_EXPORT_PRIVATE std::optional<AOTCompileAllResult> aotCompileAllFunctions(VM&, const SourceCode&, bool isModule);
+#endif
+
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 UnlinkedModuleProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForModuleProgram(VM&, const SourceCode&, LexicallyScopedFeatures, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType, unsigned depth = std::numeric_limits<unsigned>::max(), OptimizeBytecode = OptimizeBytecode::No);
 // For a function executable that was created directly (e.g. a builtin): its body and every nested function, as an ahead-of-time cache wants.

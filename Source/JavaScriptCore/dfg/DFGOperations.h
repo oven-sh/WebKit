@@ -286,6 +286,8 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationFModOnInts, double, (int32_t, int32_
 JSC_DECLARE_JIT_OPERATION(operationTypeOfIsObject, size_t, (JSGlobalObject*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationTypeOfIsFunction, size_t, (JSGlobalObject*, JSCell*));
 JSC_DECLARE_JIT_OPERATION(operationObjectIsCallable, size_t, (JSGlobalObject*, JSCell*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationSoundTypeTag, size_t, (EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAdmits, size_t, (EncodedJSValue, uint32_t mask));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationIsConstructor, size_t, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationArrayIsArray, size_t, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationTypeOfObject, JSCell*, (JSGlobalObject*, JSCell*));

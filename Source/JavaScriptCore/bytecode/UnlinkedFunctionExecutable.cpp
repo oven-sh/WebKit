@@ -26,6 +26,7 @@
 #include "config.h"
 #include "UnlinkedFunctionExecutable.h"
 
+#include "AOTProgram.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
 #include "CachedBytecode.h"
@@ -69,6 +70,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     }
 
     function->finishParsing(executable->name(), executable->functionMode());
+    function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
     executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
@@ -76,7 +78,13 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), functionKind == UnlinkedBuiltinFunction, executable->constructorKind(), scriptMode, executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, isClassContext, executable->evalContextType(), executable->isBuiltinDefaultClassConstructor()), codeGenerationMode);
 
     auto parentScopeTDZVariables = executable->parentScopeTDZVariables();
-    RefPtr<DeclaredNamesLink> parentDeclaredNames = executable->takeParentDeclaredNames();
+    // What is going to be compiled ahead of time is worth keeping it for: both specializations get it, and so does the compiler.
+    // (Whoever has all the code generated takes it from the executable in the end: BytecodeLinkEncoder.)
+    RefPtr<DeclaredNamesLink> parentDeclaredNames = Options::resolveAllScopeSlotsStatically() ? executable->parentDeclaredNames() : executable->takeParentDeclaredNames();
+#if ENABLE(FTL_JIT)
+    if (Options::resolveAllScopeSlotsStatically())
+        AOT::noteDeclaredNames(result, RefPtr { parentDeclaredNames });
+#endif
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames = executable->generatorOrAsyncWrapperFunctionParameterNames();
     const PrivateNameEnvironment* parentPrivateNameEnvironment = executable->parentPrivateNameEnvironment();
     error = BytecodeGenerator::generate(vm, function.get(), source, result, codeGenerationMode, parentScopeTDZVariables, generatorOrAsyncWrapperFunctionParameterNames, parentPrivateNameEnvironment, optimize, WTF::move(parentDeclaredNames));

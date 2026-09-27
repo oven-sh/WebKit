@@ -29,6 +29,7 @@
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
+#include "StaticHeap.h"
 #include "StructureID.h"
 #include <bmalloc/bmalloc.h>
 #include <wtf/BitVector.h>
@@ -142,8 +143,9 @@ public:
         m_usedBlocks.set(0);
 #elif USE(MIMALLOC)
         if (!m_useSystemHeap) [[likely]] {
-            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + MarkedBlock::blockSize);
-            size_t size = g_jscConfig.sizeOfStructureHeap - MarkedBlock::blockSize;
+            // The block after the one that is not used is for whoever asks first (StaticHeap::offsetOfFirstStructureBlock).
+            void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + 2 * MarkedBlock::blockSize);
+            size_t size = g_jscConfig.sizeOfStructureHeap - 2 * MarkedBlock::blockSize;
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
             // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.
@@ -180,6 +182,11 @@ public:
 #endif
             return result;
 #elif USE(MIMALLOC)
+            if (!m_hasGivenFirstBlock.exchange(true)) [[unlikely]] {
+                void* block = reinterpret_cast<void*>(g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfFirstStructureBlock);
+                OSAllocator::commit(block, MarkedBlock::blockSize, true, false);
+                return block;
+            }
             return mi_heap_malloc_aligned(structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize);
 #endif
         }
@@ -210,6 +217,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             bmalloc_deallocate_inline(blockPtr);
             return;
 #elif USE(MIMALLOC)
+            // Nobody else gets that one: it goes when the first VM does, which is about when the process does.
+            if (reinterpret_cast<uintptr_t>(blockPtr) == g_jscConfig.startOfStructureHeap + StaticHeap::offsetOfFirstStructureBlock) [[unlikely]]
+                return;
             mi_free(blockPtr);
             return;
 #endif
@@ -255,6 +265,7 @@ private:
     // This value results in a 512MiB reservation on 3GiB devices, 1GiB on 4GiB
     static constexpr size_t maximumPercentageOfPhysicalMemoryToReserveWhenVAConstrained = 20;
     Lock m_lock;
+    std::atomic<bool> m_hasGivenFirstBlock { false };
     bool m_useSystemHeap { true };
     BitVector m_usedBlocks;
 };

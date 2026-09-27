@@ -5255,6 +5255,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case CheckSoundType: {
+        AbstractValue& value = forNode(node->child1());
+        if (value.provesSoundTypeMask(node->soundTypeMask()))
+            break;
+        filter(value, speculationFromSoundTypeMask(node->soundTypeMask()));
+        break;
+    }
+
     case CheckIdent: {
         AbstractValue& value = forNode(node->child1());
         UniquedStringImpl* uid = node->uidOperand();

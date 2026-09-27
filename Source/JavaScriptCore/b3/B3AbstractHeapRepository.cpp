@@ -26,6 +26,8 @@
 #include "config.h"
 #include "B3AbstractHeapRepository.h"
 
+#include "AOTRuntime.h"
+#include "CodeBlock.h"
 #if ENABLE(B3_JIT)
 
 #include "B3CCallValue.h"
@@ -47,6 +49,7 @@
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
 #include "JSGlobalObject.h"
+#include "NativeExecutable.h"
 #include "JSGlobalProxy.h"
 #include "JSMap.h"
 #include "JSPromise.h"

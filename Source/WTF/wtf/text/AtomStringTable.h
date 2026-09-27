@@ -44,8 +44,15 @@ public:
 
     StringTableImpl& table() LIFETIME_BOUND { return m_table; }
 
+    // Atoms that were there before the thread was, are there for good, and are not in table() until they are asked for: strings
+    // that are static (StringImpl::becomeStatic()) and say that they are atoms. It is only looked in, when table() does not have
+    // what is wanted. To be set before the thread has an atom that may be equal to one of them.
+    const StringTableImpl* staticTable() const { return m_staticTable; }
+    void setStaticTable(const StringTableImpl* table) { m_staticTable = table; }
+
 private:
     StringTableImpl m_table;
+    const StringTableImpl* m_staticTable { nullptr };
 };
 
 }

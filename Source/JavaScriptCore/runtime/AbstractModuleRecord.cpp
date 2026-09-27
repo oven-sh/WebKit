@@ -1345,10 +1345,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
     if (m_moduleEnvironment) {
-        bool putResult = false;
-        constexpr bool shouldThrowReadOnlyError = false;
-        constexpr bool ignoreReadOnlyErrors = true;
-        symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        putWellKnownVariable(globalObject, m_moduleEnvironment.get(), vm.propertyNames->starNamespacePrivateName, JSModuleEnvironment::starNamespaceScopeOffset(), moduleNamespaceObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
@@ -1471,20 +1468,32 @@ void AbstractModuleRecord::asyncCapability(VM& vm, JSPromise* promise)
     m_asyncCapability.set(vm, this, promise);
 }
 
+// One of the variables that are at the same place in every source text module's environment. While the symbol table's entries are
+// still in the bytecode cache nothing watches them, so all there is to do is to store.
+void AbstractModuleRecord::putWellKnownVariable(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment, const Identifier& name, ScopeOffset offsetInSourceTextModule, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    if (inherits<JSModuleRecord>() && moduleEnvironment->symbolTable()->hasCachedEntriesPending()) {
+        moduleEnvironment->variableAt(offsetInSourceTextModule).set(vm, moduleEnvironment, value);
+        return;
+    }
+    bool putResult = false;
+    constexpr bool shouldThrowReadOnlyError = false;
+    constexpr bool ignoreReadOnlyErrors = true;
+    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, name, value, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+}
+
 void AbstractModuleRecord::setModuleEnvironment(JSGlobalObject* globalObject, JSModuleEnvironment* moduleEnvironment)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!m_moduleEnvironment);
-    bool putResult = false;
-    constexpr bool shouldThrowReadOnlyError = false;
-    constexpr bool ignoreReadOnlyErrors = true;
-    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), moduleLoader(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    putWellKnownVariable(globalObject, moduleEnvironment, vm.propertyNames->builtinNames().moduleLoaderPrivateName(), JSModuleEnvironment::moduleLoaderScopeOffset(), moduleLoader());
     RETURN_IF_EXCEPTION(scope, void());
     // If module namespace object is materialized, we will materialize *namespace* slot too.
     if (m_moduleNamespaceObject) {
-        symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, vm.propertyNames->starNamespacePrivateName, m_moduleNamespaceObject.get(), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        putWellKnownVariable(globalObject, moduleEnvironment, vm.propertyNames->starNamespacePrivateName, JSModuleEnvironment::starNamespaceScopeOffset(), m_moduleNamespaceObject.get());
         RETURN_IF_EXCEPTION(scope, void());
     }
     m_moduleEnvironment.set(vm, this, moduleEnvironment);

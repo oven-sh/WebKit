@@ -69,16 +69,19 @@ public:
         }
     };
 
-    static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    // isOutermost: of the code of a module or a program, around which there are only the global scopes. (A function's may have no
+    // parent for no better reason than that nobody gave it one.)
+    static Ref<DeclaredNamesLink> create(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
     {
-        return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, WTF::move(parent)));
+        return adoptRef(*new DeclaredNamesLink(WTF::move(names), WTF::move(frames), isDynamicBarrier, isOutermost, WTF::move(parent)));
     }
 
     struct Resolution {
         enum Kind : uint8_t {
-            Dynamic, // may resolve differently at run time (globals, eval/with in the way): leave alone
-            Stable, // always the same binding for a given starting scope, but no static slot (e.g. an import)
+            Dynamic, // may resolve differently at run time (eval/with in the way): leave alone
+            Stable, // always the same binding for a given starting scope, but no static slot (an import of the module whose environment is |hops| records out)
             Slot, // lives |hops| environment records out from the function's own scope, at |offset|
+            Global, // in none of the environment records of the code around the function: which global scope has it, if any, may change
         };
         Kind kind { Dynamic };
         unsigned hops { 0 };
@@ -99,10 +102,13 @@ public:
                     return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag) };
                 ++hops;
             }
+            // The link that has names is a module's, and the last of its frames the module's environment.
             if (link->m_names && link->m_names->names.contains(name))
-                return { Resolution::Stable, 0, 0 };
+                return { Resolution::Stable, hops ? hops - 1 : 0, 0 };
             if (link->m_isDynamicBarrier)
                 return { };
+            if (link->m_isOutermost)
+                return { Resolution::Global, hops, 0 };
         }
         return { };
     }
@@ -111,11 +117,12 @@ public:
     Frame* frames() const { return m_frames.get(); }
 
 private:
-    DeclaredNamesLink(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, RefPtr<DeclaredNamesLink> parent)
+    DeclaredNamesLink(RefPtr<Names> names, RefPtr<Frame> frames, bool isDynamicBarrier, bool isOutermost, RefPtr<DeclaredNamesLink> parent)
         : m_names(WTF::move(names))
         , m_frames(WTF::move(frames))
         , m_parent(WTF::move(parent))
         , m_isDynamicBarrier(isDynamicBarrier)
+        , m_isOutermost(isOutermost)
     {
     }
 
@@ -123,6 +130,7 @@ private:
     RefPtr<Frame> m_frames;
     RefPtr<DeclaredNamesLink> m_parent;
     bool m_isDynamicBarrier;
+    bool m_isOutermost;
 };
 
 } // namespace JSC

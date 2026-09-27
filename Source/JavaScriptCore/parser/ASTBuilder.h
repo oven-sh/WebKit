@@ -133,6 +133,7 @@ public:
 
     ExpressionNode* makeBinaryNode(const JSTokenLocation&, int token, std::pair<ExpressionNode*, BinaryOpInfo>, std::pair<ExpressionNode*, BinaryOpInfo>);
     ExpressionNode* makeStaticBlockFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+    static std::optional<unsigned> soundTypeCheckMask(const Identifier& callee, ArgumentsNode*);
     ExpressionNode* makeFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall);
 
     JSC::SourceElements* createSourceElements() { return new (m_parserArena) JSC::SourceElements(); }
@@ -1465,6 +1466,27 @@ ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocatio
     return new (m_parserArena) StaticBlockFunctionCallNode(location, func, divot, divotStart, divotEnd);
 }
 
+// The one place that decides whether a call is the sound types intrinsic: $$t(<expr>, <integer in [1, 1022]>), whatever
+// $$t resolves to. The parser still records the use of the identifier $$t, so scope analysis is the same as for a call and
+// the SyntaxChecker (which cannot see this) agrees with the ASTBuilder. The mask is matched after constant folding.
+inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& callee, ArgumentsNode* args)
+{
+    if (!Options::useSoundTypes())
+        return std::nullopt;
+    if (callee.length() != 3 || callee.string() != "$$t"_s)
+        return std::nullopt;
+    ArgumentListNode* first = args->m_listNode;
+    if (!first || first->m_expr->isSpreadExpression())
+        return std::nullopt;
+    ArgumentListNode* second = first->m_next;
+    if (!second || second->m_next || !second->m_expr->isNumber() || !static_cast<NumberNode*>(second->m_expr)->isIntegerNode())
+        return std::nullopt;
+    double mask = static_cast<NumberNode*>(second->m_expr)->value();
+    if (!(mask >= 1 && mask < SoundTypeMaskEnd) || mask != static_cast<unsigned>(mask) || !isValidSoundTypeMask(static_cast<unsigned>(mask)))
+        return std::nullopt;
+    return static_cast<unsigned>(mask);
+}
+
 ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall)
 {
     ASSERT(divot.offset >= divot.lineStartOffset);
@@ -1498,6 +1520,10 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
         if (identifier == m_vm.propertyNames->eval && !isOptionalCall) {
             usesEval();
             return new (m_parserArena) EvalFunctionCallNode(location, args, divot, divotStart, divotEnd);
+        }
+        if (!isOptionalCall) {
+            if (auto mask = soundTypeCheckMask(identifier, args))
+                return new (m_parserArena) SoundTypeCheckNode(location, args->m_listNode->m_expr, *mask, divot, divotStart, divotEnd);
         }
         return new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
     }

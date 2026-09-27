@@ -29,6 +29,7 @@
 #include <JavaScriptCore/BytecodeIntrinsicRegistry.h>
 #include <JavaScriptCore/CommonIdentifiers.h>
 #include <JavaScriptCore/JSCBuiltins.h>
+#include <bmalloc/StaticRegion.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/TZoneMalloc.h>
@@ -231,19 +232,43 @@ namespace JSC {
     macro(enqueueJob) \
 
 
+// They are at the same addresses in every process, unlike what is in the executable: code that was decoded when a program was
+// built (StaticHeap) has them among its identifiers.
 namespace Symbols {
-#define DECLARE_BUILTIN_STATIC_SYMBOLS(name) extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl name##Symbol;
+enum class Index : unsigned {
+#define DECLARE_BUILTIN_STATIC_SYMBOLS(name) name##Symbol,
+    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(DECLARE_BUILTIN_STATIC_SYMBOLS)
+#undef DECLARE_BUILTIN_STATIC_SYMBOLS
+#define DECLARE_BUILTIN_PRIVATE_NAMES(name) name##PrivateName,
+    JSC_FOREACH_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_PRIVATE_NAMES)
+    JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_PRIVATE_NAMES)
+#undef DECLARE_BUILTIN_PRIVATE_NAMES
+    dollarVMPrivateName,
+    polyProtoPrivateName,
+    stackPrivateName,
+    Count,
+};
+static_assert(bmalloc::StaticRegion::offsetOfSymbolsInBss + static_cast<size_t>(Index::Count) * sizeof(SymbolImpl::StaticSymbolImpl) <= bmalloc::StaticRegion::offsetOfDecodersInBss);
+
+ALWAYS_INLINE SymbolImpl::StaticSymbolImpl& at(Index index)
+{
+    return reinterpret_cast<SymbolImpl::StaticSymbolImpl*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfSymbolsInBss)[static_cast<unsigned>(index)];
+}
+
+#define DECLARE_BUILTIN_STATIC_SYMBOLS(name) [[maybe_unused]] static SymbolImpl::StaticSymbolImpl& name##Symbol = at(Index::name##Symbol);
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_WELL_KNOWN_SYMBOL(DECLARE_BUILTIN_STATIC_SYMBOLS)
 #undef DECLARE_BUILTIN_STATIC_SYMBOLS
 
-#define DECLARE_BUILTIN_PRIVATE_NAMES(name) extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl name##PrivateName;
+#define DECLARE_BUILTIN_PRIVATE_NAMES(name) [[maybe_unused]] static SymbolImpl::StaticSymbolImpl& name##PrivateName = at(Index::name##PrivateName);
 JSC_FOREACH_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_PRIVATE_NAMES)
 JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_PRIVATE_NAMES)
 #undef DECLARE_BUILTIN_PRIVATE_NAMES
 
-extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl dollarVMPrivateName;
-extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl polyProtoPrivateName;
-extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl stackPrivateName;
+[[maybe_unused]] static SymbolImpl::StaticSymbolImpl& dollarVMPrivateName = at(Index::dollarVMPrivateName);
+[[maybe_unused]] static SymbolImpl::StaticSymbolImpl& polyProtoPrivateName = at(Index::polyProtoPrivateName);
+[[maybe_unused]] static SymbolImpl::StaticSymbolImpl& stackPrivateName = at(Index::stackPrivateName);
+
+void initialize(); // JSC::initialize().
 }
 
 class BuiltinNames {

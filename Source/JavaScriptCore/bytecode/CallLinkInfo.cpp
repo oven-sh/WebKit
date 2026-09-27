@@ -26,6 +26,8 @@
 #include "config.h"
 #include "CallLinkInfo.h"
 
+#include "AOTRuntime.h"
+
 #include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallFrameShuffleData.h"
@@ -342,6 +344,17 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
     auto* codeBlock = dynamicDowncast<CodeBlock>(owner);
     if (!codeBlock)
         return { };
+    if (codeBlock->jitType() == JITType::AOTJIT) {
+        // Every call site of code from the static compiler uses the same CallLinkInfo. The frame says which one this is.
+        VM& vm = codeBlock->vm();
+        for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame()) {
+            if (!frame->isNativeCalleeFrame() && frame->codeBlock() == codeBlock)
+                return std::tuple { codeBlock, frame->bytecodeIndex() };
+            if (frame->callerFrame() <= frame)
+                break;
+        }
+        return std::tuple { codeBlock, BytecodeIndex(0) };
+    }
     CodeOrigin codeOrigin = this->codeOrigin();
     if (auto* baselineCodeBlock = codeOrigin.codeOriginOwner())
         return std::tuple { baselineCodeBlock, codeOrigin.bytecodeIndex() };
@@ -638,6 +651,10 @@ void DirectCallLinkInfo::setCallTarget(CodeBlock* codeBlock, CodeLocationLabel<J
             CCallHelpers::replaceWithNops(fastPathStart(), CCallHelpers::patchableJumpSize());
         }
 
+#if ENABLE(FTL_JIT)
+        if (codeBlock && codeBlock->jitType() == JITType::AOTJIT)
+            target = CodeLocationLabel<JSEntryPtrTag>(tagCodePtr<JSEntryPtrTag>(AOT::nearCallTargetFor(target.untaggedPtr())));
+#endif
         MacroAssembler::repatchNearCall(m_callLocation, target);
         MacroAssembler::repatchPointer(m_codeBlockLocation, codeBlock);
     }

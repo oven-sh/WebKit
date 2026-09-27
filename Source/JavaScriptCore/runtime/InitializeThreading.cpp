@@ -31,6 +31,7 @@
 
 #include "AssemblyComments.h"
 #include "AssertInvariants.h"
+#include "BuiltinNames.h"
 #include "ExecutableAllocator.h"
 #include "IntlCache.h"
 #include "JITOperationList.h"
@@ -89,6 +90,8 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
 
     std::call_once(onceFlag, [&] {
         WTF::initialize();
+        bmalloc::StaticRegion::mapBss();
+        Symbols::initialize();
         Options::initialize(optionsCustomizationCallback);
 
         initializePtrTagLookup();

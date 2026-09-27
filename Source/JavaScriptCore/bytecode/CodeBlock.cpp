@@ -30,6 +30,7 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "AOTRuntime.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -362,7 +363,7 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
     }
 }
 
-CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
+CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope, LinkMode linkMode)
     : JSCell(vm, structure)
     , m_globalObject(scope->realm(), WriteBarrierEarlyInit)
     , m_shouldAlwaysBeInlined(true)
@@ -383,7 +384,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     , m_ownerExecutable(ownerExecutable, WriteBarrierEarlyInit)
     , m_vm(&vm)
     , m_instructionsRawPointer(unlinkedCodeBlock->instructions().rawPointer())
-    , m_metadata(unlinkedCodeBlock->metadata().link())
+    , m_metadata(linkMode == LinkMode::Full ? unlinkedCodeBlock->metadata().link() : nullptr)
     , m_creationTime(ApproximateTime::now())
 #if ASSERT_ENABLED
     , m_magic(CODEBLOCK_MAGIC)
@@ -393,7 +394,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
     ASSERT(m_scopeRegister.isLocal());
 
     ASSERT(source().provider());
-    constexpr bool allocateArgumentValueProfiles = true;
+    bool allocateArgumentValueProfiles = linkMode == LinkMode::Full;
     setNumParameters(unlinkedCodeBlock->numParameters(), allocateArgumentValueProfiles);
 
     m_couldBeTainted = source().provider()->couldBeTainted();
@@ -416,7 +417,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecut
 // inside UnlinkedCodeBlock. Also, Baseline JIT code is shared between all CodeBlocks of an UnlinkedCodeBlock,
 // so the bytecode must remain the same between CodeBlocks sharing an UnlinkedCodeBlock.
 bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock,
-    JSScope* scope)
+    JSScope* scope, LinkMode linkMode)
 {
     Base::finishCreation(vm);
 
@@ -485,6 +486,13 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #endif
             }
         }
+    }
+
+    if (linkMode == LinkMode::ForCodeFromImage) {
+        // The rest is about the instructions, which are not going to be run, or looked at.
+        initializeTemplateObjects(topLevelExecutable, templateObjectIndices);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        return true;
     }
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
@@ -1064,6 +1072,36 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 }
 #endif // ENABLE(JIT)
 
+#if ENABLE(FTL_JIT)
+void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
+{
+    ASSERT(!m_jitData);
+    for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
+        HandlerInfo& handler = exceptionHandler(i);
+        jitCode->forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
+            if (bytecodeOffset == handler.target)
+                handler.nativeCode = CodeLocationLabel<ExceptionHandlerPtrTag>(tagCodePtr<ExceptionHandlerPtrTag>(jitCode->executableAddressAtOffset(codeOffset)));
+        });
+    }
+    AOT::Data* data = AOT::Data::create(vm(), this, jitCode->numSlots(), jitCode->sites());
+    setJITCode(WTF::move(jitCode));
+    WTF::storeStoreFence();
+    m_jitData = data;
+    m_shouldAlwaysBeInlined = false;
+}
+
+void CodeBlock::releaseAOTData()
+{
+    // The collector looks at it, from its own threads. It does not start doing so behind the back of code that allocates nothing.
+    if (vm().heap.collectionScope())
+        return;
+    if (auto* data = aotData()) {
+        m_jitData = nullptr;
+        AOT::Data::destroy(data);
+    }
+}
+#endif
+
 CodeBlock::~CodeBlock()
 {
     auto& cc = checker();
@@ -1083,9 +1121,9 @@ CodeBlock::~CodeBlock()
         static_cast<BaselineJITCode*>(m_jitCode.get())->m_ownerWentAwayAt = vm.heap.lastGCBoundaryTime();
 #endif
 
-    if (JITCode::isBaselineCode(jitType())) {
+    if (JITCode::isBaselineCode(jitType()) || jitType() == JITType::AOTJIT) {
 #if ENABLE(JIT)
-        if (cc.isEnabled && m_jitData) {
+        if (cc.isEnabled && m_jitData && jitType() != JITType::AOTJIT) {
             RELEASE_ASSERT(cc.get(CrashChecker::BaselineJITData) == cc.hash(this, m_jitData),
                 CrashChecker::BaselineJITData, cc.value(), cc.hash(this, m_jitData), this, m_jitData);
             auto propertyCacheCount = std::bit_cast<BaselineJITData*>(m_jitData)->propertyInlineCaches().size();
@@ -1154,6 +1192,12 @@ CodeBlock::~CodeBlock()
     // m_incomingCalls linked lists through the execution of the ~CallLinkInfo
     // destructors.
 
+#if ENABLE(FTL_JIT)
+    if (auto* data = aotData()) {
+        m_jitData = nullptr;
+        AOT::Data::destroy(data);
+    }
+#endif
 #if ENABLE(JIT)
     if (cc.isEnabled && m_jitData) {
         if (JSC::JITCode::isOptimizingJIT(jitType())) {
@@ -1754,6 +1798,21 @@ void CodeBlock::propagateTransitions(const ConcurrentJSLocker&, Visitor& visitor
         }
     }
 
+#if ENABLE(FTL_JIT)
+    if (auto* data = aotData()) {
+        // Code that has cached a transition can put an object that has already been visited in the new structure.
+        for (unsigned i = 0; i < data->numSlots; ++i) {
+            AOT::Slot& slot = data->slots[i];
+            StructureID oldStructureID = slot.structureID;
+            StructureID newStructureID = slot.newStructureID;
+            if (!oldStructureID || !newStructureID || slot.unused || slot.hasPointer())
+                continue;
+            if (visitor.isMarked(oldStructureID.decode()))
+                visitor.appendUnbarriered(newStructureID.decode());
+        }
+    }
+#endif
+
 #if ENABLE(JIT)
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
         propertyCache.propagateTransitions(visitor);
@@ -2149,8 +2208,45 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
 
     // Called for all live CodeBlocks.
     // We do not need to call updateAllPredictions for DFG / FTL since the same thing happens in LLInt / Baseline CodeBlock for them.
+    // Nor for code from the static compiler, which profiles nothing.
     if (JITCode::isBaselineCode(jitType()))
         updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
+
+#if ENABLE(FTL_JIT)
+    if (auto* data = aotData())
+        data->finalizeUnconditionally(vm);
+    // TEMPORARY-SLOT-STATS
+    if (auto* data = aotData(); data && Options::aotReportStats()) {
+        static uint64_t version, blocks, total[numOpcodeIDs], filled[numOpcodeIDs], instructionBytes, constants, identifiers;
+        uint64_t now = vm.heap.objectSpace().markingVersion();
+        if (now != version) {
+            if (blocks) {
+                dataLogLn("SLOTSTATS blocks=", blocks, " instructionBytes=", instructionBytes, " constants=", constants, " identifiers=", identifiers);
+                for (unsigned i = 0; i < numOpcodeIDs; ++i) {
+                    if (total[i])
+                        dataLogLn("SLOTSTATS ", opcodeNames[i], " total=", total[i], " filled=", filled[i]);
+                }
+            }
+            version = now; blocks = 0; instructionBytes = 0; constants = 0; identifiers = 0;
+            for (unsigned i = 0; i < numOpcodeIDs; ++i)
+                total[i] = filled[i] = 0;
+        }
+        blocks++;
+        instructionBytes += instructions().size();
+        constants += constantRegisters().size();
+        identifiers += unlinkedCodeBlock()->identifiers().size();
+        OpcodeID last = op_nop;
+        for (unsigned i = 0; i < data->numSlots; ++i) {
+            uint32_t bits = data->sites[i].callSiteBits;
+            OpcodeID opcode = bits || !i ? instructions().at(CallSiteIndex(bits).bytecodeIndex().offset())->opcodeID() : last;
+            last = opcode;
+            total[opcode]++;
+            auto* words = reinterpret_cast<uint64_t*>(&data->slots[i]);
+            if (words[0] || words[1])
+                filled[opcode]++;
+        }
+    }
+#endif
 
     if (JITCode::couldBeInterpreted(jitType())) {
         reconcileLLIntInlineCachesAtGCEnd();
@@ -2406,7 +2502,7 @@ CodeBlock* CodeBlock::baselineAlternative()
     if (result->alternative())
         result = result->alternative();
     RELEASE_ASSERT(result);
-    RELEASE_ASSERT(JITCode::isBaselineCode(result->jitType()) || result->jitType() == JITType::None);
+    RELEASE_ASSERT(JITCode::isBaselineCode(result->jitType()) || result->jitType() == JITType::None || result->jitType() == JITType::AOTJIT);
     return result;
 #else
     return this;
@@ -2417,7 +2513,7 @@ CodeBlock* CodeBlock::baselineVersion()
 {
 #if ENABLE(JIT)
     JITType selfJITType = jitType();
-    if (JITCode::isBaselineCode(selfJITType))
+    if (JITCode::isBaselineCode(selfJITType) || selfJITType == JITType::AOTJIT)
         return this;
     CodeBlock* result = replacement();
     if (!result) {
@@ -3855,6 +3951,10 @@ unsigned CodeBlock::frameRegisterCount()
     case JITType::FTLJIT:
         return jitCode()->dfgCommon()->frameRegisterCount;
 #endif // ENABLE(DFG_JIT)
+#if ENABLE(FTL_JIT)
+    case JITType::AOTJIT:
+        return static_cast<AOT::JITCode*>(jitCode().get())->frameSizeInBytes() / sizeof(Register);
+#endif
         
     default:
         RELEASE_ASSERT_NOT_REACHED();

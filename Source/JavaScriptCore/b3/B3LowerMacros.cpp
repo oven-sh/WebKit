@@ -1157,7 +1157,7 @@ private:
         // better than a binary switch.
         const unsigned minCasesForTable = 7;
         const unsigned densityLimit = 4;
-        if (end - start >= minCasesForTable) {
+        if (end - start >= minCasesForTable && !m_proc.positionIndependent()) {
             CheckedInt64 firstValue = cases[start].caseValue();
             CheckedInt64 lastValue = cases[end - 1].caseValue();
             CheckedInt64 range = lastValue - firstValue + 1;

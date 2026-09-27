@@ -31,6 +31,7 @@
 #include "config.h"
 #include "BytecodeGenerator.h"
 
+#include "AOTProgram.h"
 #include "AbstractModuleRecord.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -44,6 +45,7 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSModuleEnvironment.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
@@ -1142,9 +1144,12 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
     createVariable(m_vm.propertyNames->starNamespacePrivateName, VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
     createVariable(m_vm.propertyNames->builtinNames().moduleLoaderPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
+    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->starNamespacePrivateName.impl()).scopeOffset() == JSModuleEnvironment::starNamespaceScopeOffset());
+    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl()).scopeOffset() == JSModuleEnvironment::moduleLoaderScopeOffset());
     if (moduleProgramNode->features() & ImportMetaFeature)
         createVariable(m_vm.propertyNames->builtinNames().metaPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
 
+    unsigned firstVarScopeOffset = moduleEnvironmentSymbolTable->scopeSize();
     for (auto& entry : moduleProgramNode->varDeclarations()) {
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
@@ -1156,6 +1161,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), lookUpVarKind(entry.key.get(), entry.value), moduleEnvironmentSymbolTable, IgnoreExisting);
     }
+    codeBlock->setVarScopeOffsets(firstVarScopeOffset, moduleEnvironmentSymbolTable->scopeSize() - firstVarScopeOffset);
 
     VariableEnvironment& lexicalVariables = moduleProgramNode->lexicalVariables();
     instantiateLexicalVariables(lexicalVariables, ScopeType::LetConstScope, moduleEnvironmentSymbolTable, ScopeRegisterType::Block, lookUpVarKind);
@@ -1257,6 +1263,10 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // cloned in the code block linking. After that, to create the module environment, we retrieve
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
+#if ENABLE(FTL_JIT)
+    if (Options::resolveAllScopeSlotsStatically())
+        AOT::noteDeclaredNames(codeBlock, currentDeclaredNames());
+#endif
 }
 
 BytecodeGenerator::~BytecodeGenerator() = default;
@@ -3271,6 +3281,16 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
     if (!(isConstructor() || isDerivedConstructorContext()) || needsClassFieldInitializer() == NeedsClassFieldInitializer::No)
         return dst;
 
+    if (isConstructor() && m_scopeNode->isFunctionNode()) {
+        if (auto* names = static_cast<FunctionNode*>(m_scopeNode)->plainInstanceFieldNames(); names && !names->isEmpty()) {
+            // All that the function does (DefineFieldNode::emitBytecode()).
+            RefPtr<RegisterID> value = emitLoad(newTemporary(), jsUndefined());
+            for (auto& name : *names)
+                emitDirectPutById(dst, name, value.get());
+            return dst;
+        }
+    }
+
     RefPtr<RegisterID> initializer = emitDirectGetById(newTemporary(), constructor, propertyNames().builtinNames().instanceFieldInitializerPrivateName());
     CallArguments args(*this, nullptr);
     emitMove(args.thisRegister(), dst);
@@ -3282,6 +3302,11 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
 void BytecodeGenerator::emitTDZCheck(RegisterID* target, const Variable& variable)
 {
     OpCheckTdz::emit(this, target, addConstantValue(addStringConstant(variable.ident())));
+}
+
+void BytecodeGenerator::emitCheckType(RegisterID* value, unsigned mask)
+{
+    OpCheckType::emit(this, value, mask);
 }
 
 void BytecodeGenerator::emitTDZCheck(RegisterID* target)
@@ -3466,7 +3491,7 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
 
     // Functions created back to back in the same scope (the common case) share one link.
     if (!m_cachedDeclaredNames || m_cachedDeclaredNames->names() != names.get() || m_cachedDeclaredNames->frames() != frames.get())
-        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
+        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_codeType == ModuleCode || m_codeType == GlobalCode, m_parentDeclaredNames);
     return m_cachedDeclaredNames;
 }
 
@@ -3728,6 +3753,8 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
+    if (Options::resolveAllScopeSlotsStatically())
+        initializer->setParentDeclaredNames(currentDeclaredNames());
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);
     OpNewFuncExp::emit(this, dst, scopeRegister(), index);

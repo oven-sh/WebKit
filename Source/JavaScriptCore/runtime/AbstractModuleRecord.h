@@ -336,6 +336,7 @@ public:
 #endif
 
     void setModuleEnvironment(JSGlobalObject*, JSModuleEnvironment*);
+    void putWellKnownVariable(JSGlobalObject*, JSModuleEnvironment*, const Identifier& name, ScopeOffset offsetInSourceTextModule, JSValue);
 
 protected:
     AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);

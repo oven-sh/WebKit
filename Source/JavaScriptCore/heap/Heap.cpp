@@ -65,6 +65,7 @@
 #include "JSFinalizationRegistry.h"
 #include "JSFunctionInlines.h"
 #include "JSFunctionWithFields.h"
+#include "JSModuleEnvironment.h" // TEMPORARY-FUNCTION-STATS
 #include "JSGenerator.h"
 #include "JSIterator.h"
 #include "JSMicrotaskDispatcher.h"
@@ -1147,6 +1148,50 @@ TypeCountSet Heap::objectTypeCounts()
                 recordType(result, static_cast<JSCell*>(cell));
             return IterationStatus::Continue;
         });
+    // TEMPORARY-FUNCTION-STATS
+    if (Options::aotReportStats()) {
+        uint64_t functions[32][3][2] = { }, executables[32][2] = { }, bytesBySize[64] = { }, structures[4] = { };
+        UncheckedKeyHashMap<const ClassInfo*, std::pair<uint64_t, uint64_t>> byClass;
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+            size_t size = heapCell->cellSize();
+            if (!isJSCellKind(kind)) {
+                bytesBySize[0] += size;
+                return IterationStatus::Continue;
+            }
+            auto* cell = static_cast<JSCell*>(heapCell);
+            auto& entry = byClass.add(cell->classInfo(), std::pair<uint64_t, uint64_t> { }).iterator->value;
+            entry.first++;
+            entry.second += size;
+            if (auto* executable = dynamicDowncast<FunctionExecutable>(cell))
+                executables[static_cast<unsigned>(executable->parseMode())][executable->codeBlockForCall() || executable->codeBlockForConstruct()]++;
+            else if (auto* function = dynamicDowncast<JSFunction>(cell); function && !function->isHostOrBuiltinFunction()) {
+                auto* executable = function->jsExecutable();
+                JSScope* scope = function->scope();
+                unsigned where = scope->inherits<JSModuleEnvironment>() ? 0 : scope->next() && scope->next()->inherits<JSModuleEnvironment>() ? 1 : 2;
+                functions[static_cast<unsigned>(executable->parseMode())][where][executable->codeBlockForCall() || executable->codeBlockForConstruct()]++;
+            } else if (auto* structure = dynamicDowncast<Structure>(cell)) {
+                structures[0]++;
+                if (structure->previousID())
+                    structures[1]++;
+                if (structure->isDictionary())
+                    structures[2]++;
+                if (structure->isPinnedPropertyTable())
+                    structures[3]++;
+            }
+            return IterationStatus::Continue;
+        });
+        for (unsigned mode = 0; mode < 32; ++mode) {
+            if (executables[mode][0] + executables[mode][1])
+                dataLogLn("FNSTATS executable mode=", mode, " neverRan=", executables[mode][0], " ran=", executables[mode][1]);
+            for (unsigned where = 0; where < 3; ++where) {
+                if (functions[mode][where][0] + functions[mode][where][1])
+                    dataLogLn("FNSTATS function mode=", mode, " scope=", where, " neverRan=", functions[mode][where][0], " ran=", functions[mode][where][1]);
+            }
+        }
+        dataLogLn("FNSTATS structures=", structures[0], " withPrevious=", structures[1], " dictionary=", structures[2], " withTable=", structures[3], " auxiliaryBytes=", bytesBySize[0]);
+        for (auto& [info, entry] : byClass)
+            dataLogLn("FNSTATS class ", info->className, " count=", entry.first, " bytes=", entry.second);
+    }
     return result;
 }
 
@@ -1334,6 +1379,11 @@ void Heap::addToRememberedSet(const JSCell* constCell)
     ASSERT(cell);
     ASSERT(!Options::useConcurrentJIT() || !isCompilationThread());
     m_barriersExecuted++;
+    if (StaticHeap::contains(cell)) [[unlikely]] {
+        // No collection finds it, since it is marked already. From now on every one starts from it.
+        Locker locker { m_staticCellsStoredToLock };
+        m_staticCellsStoredTo.add(cell);
+    }
     if (m_mutatorShouldBeFenced) {
         WTF::loadLoadFence();
         if (!isMarked(cell)) {
@@ -3762,6 +3812,19 @@ void Heap::addCoreConstraints()
         })),
         ConstraintVolatility::GreyedByExecution);
     
+    m_constraintSet->add(
+        "St", "Static Heap",
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            // (An eden collection has the ones stored to since the last collection in the remembered set.)
+            if (m_collectionScope && m_collectionScope.value() == CollectionScope::Eden)
+                return;
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::StrongReferences);
+            Locker locker { m_staticCellsStoredToLock };
+            for (JSCell* cell : m_staticCellsStoredTo)
+                visitor.visitAsConstraint(cell);
+        })),
+        ConstraintVolatility::GreyedByExecution);
+
     m_constraintSet->add(
         "D", "Debugger",
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {

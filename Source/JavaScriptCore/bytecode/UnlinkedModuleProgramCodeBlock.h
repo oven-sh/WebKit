@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ScopeOffset.h"
+#include "StaticHeap.h"
 #include "UnlinkedGlobalCodeBlock.h"
 #include <wtf/FixedVector.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -42,6 +43,18 @@ class UnlinkedFunctionExecutable;
 class ModuleFunctionDeclarationSlots final : public ThreadSafeRefCounted<ModuleFunctionDeclarationSlots> {
 public:
     static Ref<ModuleFunctionDeclarationSlots> create(FixedVector<uint32_t>&& offsets) { return adoptRef(*new ModuleFunctionDeclarationSlots(WTF::move(offsets))); }
+
+    // (One of StaticHeap is there for good, and is not written to.)
+    void ref() const
+    {
+        if (!StaticHeap::contains(this)) [[likely]]
+            ThreadSafeRefCounted::ref();
+    }
+    void deref() const
+    {
+        if (!StaticHeap::contains(this)) [[likely]]
+            ThreadSafeRefCounted::deref();
+    }
 
     unsigned size() const { return m_offsets.size(); }
     ScopeOffset at(unsigned index) const { return ScopeOffset(m_offsets[index]); }
@@ -135,6 +148,16 @@ public:
     ModuleFunctionDeclarationSlots* heapAllocatedFunctionDeclSlots() const { return m_heapAllocatedFunctionDeclSlots.get(); }
     void setHeapAllocatedFunctionDeclSlots(Ref<ModuleFunctionDeclarationSlots>&& slots) { m_heapAllocatedFunctionDeclSlots = WTF::move(slots); }
 
+    // Where the module environment has the variables of variableDeclarations() that are in it: BytecodeGenerator puts them next to
+    // each other. InitializeEnvironment makes them undefined, which this lets it do without knowing what they are called.
+    unsigned firstVarScopeOffset() const { return m_firstVarScopeOffset; }
+    unsigned numberOfVarScopeOffsets() const { return m_numberOfVarScopeOffsets; }
+    void setVarScopeOffsets(unsigned first, unsigned count)
+    {
+        m_firstVarScopeOffset = first;
+        m_numberOfVarScopeOffsets = count;
+    }
+
     bool isAsync() const { return codeFeatures() & AwaitFeature; }
 
     void setVariableDeclarations(const VariableEnvironment& environment) { m_varDeclarations = environment; }
@@ -153,6 +176,8 @@ private:
     VariableEnvironment m_varDeclarations;
     int m_moduleEnvironmentSymbolTableConstantRegisterOffset { 0 };
     unsigned m_numberOfHeapAllocatedFunctionDecls { 0 };
+    unsigned m_firstVarScopeOffset { 0 };
+    unsigned m_numberOfVarScopeOffsets { 0 };
     RefPtr<ModuleFunctionDeclarationSlots> m_heapAllocatedFunctionDeclSlots;
 
 public:

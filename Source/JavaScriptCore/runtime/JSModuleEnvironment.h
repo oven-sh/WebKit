@@ -56,6 +56,11 @@ public:
 
     inline static Structure* createStructure(VM&, JSGlobalObject*);
 
+    // Where the environment of a source text module has the two variables that every one of them has: BytecodeGenerator declares
+    // them first. Whoever knows that need not look them up by name, which takes a symbol table's entries out of the bytecode cache.
+    static constexpr ScopeOffset starNamespaceScopeOffset() { return ScopeOffset(0); }
+    static constexpr ScopeOffset moduleLoaderScopeOffset() { return ScopeOffset(1); }
+
     static size_t offsetOfModuleRecord(SymbolTable* symbolTable)
     {
         size_t offset = Base::allocationSize(symbolTable);

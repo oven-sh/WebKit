@@ -972,6 +972,9 @@ private:
         case CheckNotEmpty:
             compileCheckNotEmpty();
             break;
+        case CheckSoundType:
+            compileCheckSoundType();
+            break;
         case AssertNotEmpty:
             compileAssertNotEmpty();
             codeGenerationResult = CodeGenerationResult::NotGenerated;
@@ -4347,6 +4350,152 @@ private:
     void compileCheckNotEmpty()
     {
         speculate(TDZFailure, noValue(), nullptr, m_out.isZero64(lowJSValue(m_node->child1())));
+    }
+
+    void compileCheckSoundType()
+    {
+        Edge child = m_node->child1();
+        LValue value = lowJSValue(child);
+        SpeculatedType proven = provenType(child);
+
+        unsigned mask = m_node->soundTypeMask();
+        if (soundTypeMaskNamesTypedArray(mask)) {
+            LValue admits = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeMaskAdmits, value, m_out.constInt32(mask));
+            speculate(BadType, jsValueValue(value), child.node(), m_out.isZero64(admits));
+            return;
+        }
+
+        // There is no need to test for a tag that the value is known not to have.
+        for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
+            if (!(proven & speculationFromSoundTypeMask(tag)))
+                mask &= ~tag;
+        }
+
+        LBasicBlock failCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(failCase);
+
+        auto passIf = [&](LValue condition) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(condition, unsure(continuation), unsure(next));
+            m_out.appendTo(next);
+        };
+        auto failIf = [&](LValue condition) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(condition, rarely(failCase), usually(next));
+            m_out.appendTo(next);
+        };
+
+        if (mask & SoundTypeNumber)
+            passIf(isNumber(value, proven));
+
+        constexpr unsigned cellTags = SoundTypeString | SoundTypeSymbol | SoundTypeBigInt | SoundTypeAnyObject;
+        unsigned cellMask = mask & cellTags;
+        unsigned immediateMask = mask & (SoundTypeUndefined | SoundTypeNull | SoundTypeBoolean);
+#if USE(BIGINT32)
+        immediateMask |= mask & SoundTypeBigInt;
+#endif
+
+        bool immediatesAreLeft = true;
+        if (cellMask) {
+            LBasicBlock cellCase = m_out.newBlock();
+            LBasicBlock notCellCase = immediateMask ? m_out.newBlock() : failCase;
+            m_out.branch(isCell(value, proven), unsure(cellCase), unsure(notCellCase));
+            m_out.appendTo(cellCase);
+
+            if (cellMask == cellTags)
+                m_out.jump(continuation);
+            else {
+                LValue type = m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoType);
+                auto typeIs = [&](JSType jsType) { return m_out.equal(type, m_out.constInt32(jsType)); };
+                auto isNotObject = [&] { return m_out.below(type, m_out.constInt32(ObjectType)); };
+                auto isArray = [&] {
+                    static_assert(DerivedArrayType == ArrayType + 1);
+                    return m_out.belowOrEqual(m_out.sub(type, m_out.constInt32(ArrayType)), m_out.constInt32(DerivedArrayType - ArrayType));
+                };
+                auto overridesGetCallData = [&] {
+                    return m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(OverridesGetCallData));
+                };
+                // Only soundTypeTag() can tell whether such an object is callable.
+                auto askRuntimeIf = [&](LValue condition, LBasicBlock otherwise) {
+                    LBasicBlock undecidedCase = m_out.newBlock();
+                    m_out.branch(condition, rarely(undecidedCase), usually(otherwise));
+                    m_out.appendTo(undecidedCase);
+                    LValue tag = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeTag, value);
+                    m_out.branch(m_out.testNonZeroPtr(tag, m_out.constIntPtr(mask)), unsure(continuation), unsure(failCase));
+                };
+
+                if (cellMask & SoundTypeString)
+                    passIf(typeIs(StringType));
+                if (cellMask & SoundTypeSymbol)
+                    passIf(typeIs(SymbolType));
+                if (cellMask & SoundTypeBigInt)
+                    passIf(typeIs(HeapBigIntType));
+
+                bool acceptsArrays = cellMask & SoundTypeArray;
+                switch (cellMask & SoundTypeAnyObject) {
+                case 0:
+                    m_out.jump(failCase);
+                    break;
+                case SoundTypeAnyObject:
+                    m_out.branch(isNotObject(), rarely(failCase), usually(continuation));
+                    break;
+                case SoundTypeArray:
+                    m_out.branch(isArray(), usually(continuation), rarely(failCase));
+                    break;
+                case SoundTypeFunction | SoundTypeOtherObject:
+                    failIf(isNotObject());
+                    m_out.branch(isArray(), rarely(failCase), usually(continuation));
+                    break;
+                case SoundTypeFunction:
+                case SoundTypeFunction | SoundTypeArray:
+                    passIf(typeIs(JSFunctionType));
+                    passIf(typeIs(InternalFunctionType));
+                    if (acceptsArrays)
+                        passIf(isArray());
+                    failIf(isNotObject());
+                    askRuntimeIf(overridesGetCallData(), failCase);
+                    break;
+                case SoundTypeOtherObject:
+                case SoundTypeOtherObject | SoundTypeArray:
+                    failIf(isNotObject());
+                    failIf(typeIs(JSFunctionType));
+                    failIf(typeIs(InternalFunctionType));
+                    if (!acceptsArrays)
+                        failIf(isArray());
+                    askRuntimeIf(overridesGetCallData(), continuation);
+                    break;
+                }
+            }
+
+            if (immediateMask)
+                m_out.appendTo(notCellCase);
+            else
+                immediatesAreLeft = false;
+        }
+
+        if (immediatesAreLeft) {
+            constexpr unsigned otherTags = SoundTypeUndefined | SoundTypeNull;
+            if ((immediateMask & otherTags) == otherTags)
+                passIf(isOther(value, proven));
+            else if (immediateMask & SoundTypeUndefined)
+                passIf(m_out.equal(value, m_out.constInt64(JSValue::encode(jsUndefined()))));
+            else if (immediateMask & SoundTypeNull)
+                passIf(m_out.equal(value, m_out.constInt64(JSValue::encode(jsNull()))));
+            if (immediateMask & SoundTypeBoolean)
+                passIf(isBoolean(value, proven));
+#if USE(BIGINT32)
+            if (immediateMask & SoundTypeBigInt)
+                passIf(isBigInt32(value, proven));
+#endif
+            m_out.jump(failCase);
+        }
+
+        m_out.appendTo(failCase, continuation);
+        speculate(BadType, jsValueValue(value), child.node(), m_out.booleanTrue);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
     }
 
     void compileAssertNotEmpty()

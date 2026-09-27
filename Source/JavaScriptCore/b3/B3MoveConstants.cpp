@@ -263,6 +263,21 @@ private:
 
     void lowerMaterializationCostHeavyConstants()
     {
+        if (m_proc.positionIndependent()) {
+            // No table to load them from: made from an integer, at each use.
+            for (BasicBlock* block : m_proc) {
+                for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+                    Value* value = block->at(valueIndex);
+                    if (value->opcode() != ConstDouble || !goesInTable(value))
+                        continue;
+                    Value* bits = m_insertionSet.insertIntConstant(valueIndex, value->origin(), Int64, std::bit_cast<int64_t>(value->asDouble()));
+                    value->replaceWithIdentity(m_insertionSet.insert<Value>(valueIndex, BitwiseCast, value->origin(), bits));
+                }
+                m_insertionSet.execute(block);
+            }
+            return;
+        }
+
         unsigned doubleSize = 0;
         unsigned v128Size = 0;
         UncheckedKeyHashMap<ValueKey, unsigned> constTable;

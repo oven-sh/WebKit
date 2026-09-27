@@ -29,6 +29,7 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"

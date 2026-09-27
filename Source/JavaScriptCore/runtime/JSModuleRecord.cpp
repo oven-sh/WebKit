@@ -198,8 +198,8 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
         function = JSFunction::create(vm, globalObject, functionExecutable, environment);
 
     InlineWatchpointSet* watchpointSet = nullptr;
-    {
-        SymbolTable* symbolTable = environment->symbolTable();
+    // Entries that are still in the bytecode cache are not watched.
+    if (SymbolTable* symbolTable = environment->symbolTable(); !symbolTable->hasCachedEntriesPending()) {
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iter = symbolTable->find(locker, unlinkedExecutable->name().impl());
         if (iter != symbolTable->end(locker)) {
@@ -438,6 +438,20 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Which module has the binding takes no names to say.
+    if (isPrelinked()) {
+        const auto& import = prelinkedGraph()->imports(prelinkedModule())[index];
+        if (import.resolution() == PrelinkedModuleGraph::ResolutionKind::Binding && !import.isNamespace()) {
+            if (AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule)) {
+                JSModuleEnvironment* environment = exporter->moduleEnvironment();
+                moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
+                return environment;
+            }
+        }
+    }
+#endif
+
     Resolution resolution = resolveImport(globalObject, importSlotLocalName(index));
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_ASSERT(resolution.type == Resolution::Type::Resolved);
@@ -445,6 +459,28 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
     return environment;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
+{
+    if (m_isLinkedAsInImage != TriState::Indeterminate)
+        return m_isLinkedAsInImage == TriState::True;
+    bool result = isPrelinked();
+    if (result) {
+        for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
+            if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
+                continue;
+            AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
+            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull()) {
+                result = false;
+                break;
+            }
+        }
+    }
+    m_isLinkedAsInImage = triState(result);
+    return result;
+}
+#endif
 
 std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importedBindings(JSGlobalObject* globalObject)
 {

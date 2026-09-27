@@ -456,6 +456,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryLiveCount);
 static JSC_DECLARE_HOST_FUNCTION(functionFinalizationRegistryDeadCount);
 static JSC_DECLARE_HOST_FUNCTION(functionIs32BitPlatform);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckModuleSyntax);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTCompileAll);
 static JSC_DECLARE_HOST_FUNCTION(functionCheckScriptSyntax);
 static JSC_DECLARE_HOST_FUNCTION(functionPlatformSupportsSamplingProfiler);
 static JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshot);
@@ -855,6 +856,7 @@ private:
         addFunction(vm, "is32BitPlatform"_s, functionIs32BitPlatform, 0);
 
         addFunction(vm, "checkModuleSyntax"_s, functionCheckModuleSyntax, 1);
+        addFunction(vm, "aotCompileAll"_s, functionAOTCompileAll, 2);
         addFunction(vm, "checkScriptSyntax"_s, functionCheckScriptSyntax, 1);
 
         addFunction(vm, "platformSupportsSamplingProfiler"_s, functionPlatformSupportsSamplingProfiler, 0);
@@ -3635,6 +3637,29 @@ JSC_DEFINE_HOST_FUNCTION(functionCheckModuleSyntax, (JSGlobalObject* globalObjec
     if (!validSyntax)
         throwException(globalObject, scope, jsNontrivialString(vm, toString("SyntaxError: ", error.message(), ":", error.line())));
     return JSValue::encode(jsNumber(stopWatch.getElapsedMS()));
+}
+
+// aotCompileAll(source, isModule): [functions, compiled, bytes of code, bytes of bytecode], or undefined for a syntax error.
+JSC_DEFINE_HOST_FUNCTION(functionAOTCompileAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String source = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    bool isModule = callFrame->argument(1).toBoolean(globalObject);
+
+    auto result = aotCompileAllFunctions(vm, jscSource(source, { }, String(), TextPosition(), isModule ? SourceProviderSourceType::Module : SourceProviderSourceType::Program), isModule);
+    if (!result)
+        return JSValue::encode(jsUndefined());
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    array->putDirectIndex(globalObject, 0, jsNumber(result->functions));
+    array->putDirectIndex(globalObject, 1, jsNumber(result->compiled));
+    array->putDirectIndex(globalObject, 2, jsNumber(result->codeBytes));
+    array->putDirectIndex(globalObject, 3, jsNumber(result->bytecodeBytes));
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    return JSValue::encode(array);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCheckScriptSyntax, (JSGlobalObject* globalObject, CallFrame* callFrame))
