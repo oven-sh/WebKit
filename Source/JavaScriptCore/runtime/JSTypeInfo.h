@@ -62,6 +62,12 @@ static constexpr unsigned StructureIsImmortal = 1 << 17;
 static constexpr unsigned OverridesPut = 1 << 18;
 static constexpr unsigned GetOwnPropertySlotMayBeWrongAboutDontEnum = 1 << 20;
 static constexpr unsigned OverridesIsExtensible = 1 << 21;
+#if USE(BUN_JSC_ADDITIONS)
+// Only for an InternalFunction whose functionForConstruct does not return an object. It reports no construct data, so it is not
+// a constructor to isConstructor(), construct(), Reflect.construct, bind, Proxy, Array.of, Array.from or a species lookup.
+// `new f()` and `super()` read no construct data: they still run functionForConstruct, which has to check new.target.
+static constexpr unsigned ReportsNoConstructData = 1 << 23;
+#endif
 
 static constexpr unsigned numberOfInlineBits = 8;
 
@@ -106,6 +112,9 @@ public:
     bool overridesPut() const { return isSetOnFlags2<OverridesPut>(); }
     bool overridesGetPrototype() const { return isSetOnFlags1<OverridesGetPrototype>(); }
     bool overridesIsExtensible() const { return isSetOnFlags2<OverridesIsExtensible>(); }
+#if USE(BUN_JSC_ADDITIONS)
+    bool reportsNoConstructData() const { return isSetOnFlags2<ReportsNoConstructData>(); }
+#endif
     bool prohibitsPropertyCaching() const { return isSetOnFlags2<ProhibitsPropertyCaching>(); }
     bool getOwnPropertySlotIsImpure() const { return isSetOnFlags2<GetOwnPropertySlotIsImpure>(); }
     bool getOwnPropertySlotIsImpureForPropertyAbsence() const { return isSetOnFlags2<GetOwnPropertySlotIsImpureForPropertyAbsence>(); }

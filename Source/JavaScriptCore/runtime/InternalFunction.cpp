@@ -125,6 +125,10 @@ CallData InternalFunction::getConstructData(JSCell* cell)
     CallData constructData;
     auto* function = uncheckedDowncast<InternalFunction>(cell);
     if (function->m_functionForConstruct != callHostFunctionAsConstructor) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (function->structure()->typeInfo().reportsNoConstructData()) [[unlikely]]
+            return constructData;
+#endif
         constructData.type = CallData::Type::Native;
         constructData.native.function = function->m_functionForConstruct;
         constructData.native.isBoundFunction = false;
