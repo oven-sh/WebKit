@@ -34,7 +34,9 @@ function assert(b) {
         }
     }
     assert(z !== originalArguments);
-    assert(x() === z);
+    // Bun: upstream expects x() === z. The function goes to the body's var (Annex B.3.2.1 stores to the VariableEnvironment), as in V8. The closure in the parameters keeps the arguments object.
+    assert(x() === originalArguments);
+    assert(arguments === z);
     assert(typeof z === "function");
     assert(z() === 25);
 }());
