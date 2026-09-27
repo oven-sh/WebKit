@@ -60,6 +60,27 @@ inline int64_t JSBigInt::toBigInt64(JSValue bigInt)
     return static_cast<int64_t>(toBigUInt64Heap(bigInt.asHeapBigInt()));
 }
 
+// |bigInt| when it fits in 64 bits.
+ALWAYS_INLINE std::optional<uint64_t> JSBigInt::absoluteAsUInt64(JSBigInt* bigInt)
+{
+    unsigned length = bigInt->length();
+    if (!length)
+        return 0;
+    if constexpr (sizeof(Digit) == 8) {
+        if (length != 1)
+            return std::nullopt;
+        return bigInt->digit(0);
+    } else {
+        ASSERT(sizeof(Digit) == 4);
+        if (length > 2)
+            return std::nullopt;
+        uint64_t absolute = bigInt->digit(0);
+        if (length == 2)
+            absolute |= static_cast<uint64_t>(bigInt->digit(1)) << 32;
+        return absolute;
+    }
+}
+
 ALWAYS_INLINE std::optional<double> JSBigInt::tryExtractDouble(JSValue value)
 {
     if (value.isNumber())
@@ -75,27 +96,51 @@ ALWAYS_INLINE std::optional<double> JSBigInt::tryExtractDouble(JSValue value)
 
     ASSERT(value.isHeapBigInt());
     JSBigInt* bigInt = value.asHeapBigInt();
-    if (!bigInt->length())
-        return 0;
+    std::optional<uint64_t> absolute = absoluteAsUInt64(bigInt);
+    if (!absolute || absolute.value() > maxSafeIntegerAsUInt64())
+        return std::nullopt;
+    return (bigInt->sign()) ? -static_cast<double>(absolute.value()) : static_cast<double>(absolute.value());
+}
 
-    uint64_t integer = 0;
-    if constexpr (sizeof(Digit) == 8) {
-        if (bigInt->length() != 1)
+ALWAYS_INLINE std::optional<int64_t> JSBigInt::tryExtractInt64(JSValue value)
+{
+    ASSERT(value.isBigInt());
+#if USE(BIGINT32)
+    if (value.isBigInt32())
+        return value.bigInt32AsInt32();
+#endif
+
+    JSBigInt* bigInt = value.asHeapBigInt();
+    std::optional<uint64_t> absolute = absoluteAsUInt64(bigInt);
+    if (!absolute)
+        return std::nullopt;
+    constexpr uint64_t int64MinAbsolute = static_cast<uint64_t>(1) << 63;
+    if (bigInt->sign()) {
+        if (absolute.value() > int64MinAbsolute)
             return std::nullopt;
-        integer = bigInt->digit(0);
-    } else {
-        ASSERT(sizeof(Digit) == 4);
-        if (bigInt->length() > 2)
-            return std::nullopt;
-        integer = bigInt->digit(0);
-        if (bigInt->length() == 2)
-            integer |= (static_cast<uint64_t>(bigInt->digit(1)) << 32);
+        return static_cast<int64_t>(~(absolute.value() - 1)); // Two's complement by hand, as in toBigUInt64Heap.
     }
+    if (absolute.value() >= int64MinAbsolute)
+        return std::nullopt;
+    return static_cast<int64_t>(absolute.value());
+}
 
-    if (integer <= maxSafeIntegerAsUInt64())
-        return (bigInt->sign()) ? -static_cast<double>(integer) : static_cast<double>(integer);
+ALWAYS_INLINE std::optional<uint64_t> JSBigInt::tryExtractUInt64(JSValue value)
+{
+    ASSERT(value.isBigInt());
+#if USE(BIGINT32)
+    if (value.isBigInt32()) {
+        int32_t int32 = value.bigInt32AsInt32();
+        if (int32 < 0)
+            return std::nullopt;
+        return static_cast<uint64_t>(int32);
+    }
+#endif
 
-    return std::nullopt;
+    JSBigInt* bigInt = value.asHeapBigInt();
+    if (bigInt->sign())
+        return std::nullopt;
+    return absoluteAsUInt64(bigInt);
 }
 
 ALWAYS_INLINE JSValue JSBigInt::makeHeapBigIntOrBigInt32(JSGlobalObject* globalObject, double value)

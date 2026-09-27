@@ -168,7 +168,8 @@ struct FloatTypedArrayAdaptor {
 
     static std::optional<Type> toNativeFromInt32WithoutCoercion(int32_t value)
     {
-        return static_cast<Type>(value);
+        // A float cannot hold every int32 (16777217 becomes 16777216.0f), so take the checked path.
+        return toNativeFromDoubleWithoutCoercion(value);
     }
 
     static std::optional<Type> toNativeFromDoubleWithoutCoercion(double value)
@@ -176,12 +177,12 @@ struct FloatTypedArrayAdaptor {
         if (std::isnan(value) || std::isinf(value))
             return static_cast<Type>(value);
 
-        Type valueResult = static_cast<Type>(value);
-
-        if (static_cast<double>(valueResult) != value)
+        // Range first: converting a finite double beyond the range of Type is undefined behavior.
+        if (value < minValue || value > maxValue)
             return std::nullopt;
 
-        if (value < minValue || value > maxValue)
+        Type valueResult = static_cast<Type>(value);
+        if (static_cast<double>(valueResult) != value)
             return std::nullopt;
 
         return valueResult;
@@ -336,7 +337,9 @@ struct Uint8ClampedAdaptor {
 
     static std::optional<Type> toNativeFromDoubleWithoutCoercion(double value)
     {
-        uint8_t integer = static_cast<uint8_t>(value);
+        // As in IntegralTypedArrayAdaptor: static_cast<uint8_t>(double) is undefined outside (-1, 256),
+        // which licenses the optimizer to fold the round-trip check below into trunc(value) == value.
+        uint8_t integer = static_cast<uint8_t>(truncateDoubleToInt64(value));
         if (static_cast<double>(integer) != value)
             return std::nullopt;
 
@@ -400,7 +403,8 @@ struct Float16Adaptor {
 
     static std::optional<Type> toNativeFromInt32WithoutCoercion(int32_t value)
     {
-        return static_cast<double>(value);
+        // A Float16 cannot hold every int32 (2049 becomes 2048, 65536 becomes Infinity), so take the checked path.
+        return toNativeFromDoubleWithoutCoercion(value);
     }
 
     static std::optional<Type> toNativeFromDoubleWithoutCoercion(double value)
@@ -408,11 +412,12 @@ struct Float16Adaptor {
         if (std::isnan(value) || std::isinf(value))
             return value;
 
-        Type valueResult { value };
-        if (static_cast<double>(valueResult) != value)
+        // Range first: converting a finite double beyond the range of Float16 is undefined behavior.
+        if (value < static_cast<double>(minValue) || value > static_cast<double>(maxValue))
             return std::nullopt;
 
-        if (value < static_cast<double>(minValue) || value > static_cast<double>(maxValue))
+        Type valueResult { value };
+        if (static_cast<double>(valueResult) != value)
             return std::nullopt;
 
         return valueResult;
