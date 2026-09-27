@@ -120,6 +120,82 @@ TEST_F(WTF_URL, URLProtocolHostAndPort)
 
     url = createURL("asdf:///a/b/c"_s);
     EXPECT_EQ(String("asdf://"_s), url.protocolHostAndPort());
+
+    url = createURL("asdf:/a/b/c"_s);
+    EXPECT_EQ(String("asdf:"_s), url.protocolHostAndPort());
+
+    url = createURL("asdf:/.a/b/c"_s);
+    EXPECT_EQ(String("asdf:"_s), url.protocolHostAndPort());
+}
+
+// A URL without a host whose path starts with "//" is serialized with "/." in front of the path so that it does not
+// parse back as an authority. That prefix is not part of the path; a first segment that starts with "." is.
+TEST_F(WTF_URL, PathStartingWithDotWithoutHost)
+{
+    auto url = createURL("asdf:/.a/b"_s);
+    EXPECT_TRUE(url.isValid());
+    EXPECT_TRUE(url.hasPath());
+    EXPECT_EQ(String("asdf:/.a/b"_s), url.string());
+    EXPECT_EQ(String("/.a/b"_s), url.path().toString());
+    EXPECT_EQ(String("b"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+    EXPECT_EQ(String(".a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/..a"_s);
+    EXPECT_EQ(String("/..a"_s), url.path().toString());
+    EXPECT_EQ(String("..a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.well-known/x?q#f"_s);
+    EXPECT_EQ(String("/.well-known/x"_s), url.path().toString());
+    EXPECT_EQ(String("x"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    EXPECT_EQ(String("asdf:/.//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
+    EXPECT_EQ(String("b"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.//.a"_s);
+    EXPECT_EQ(String("//.a"_s), url.path().toString());
+    EXPECT_EQ(String(".a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf://host/.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:///.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:/x"_s);
+    url.setPath("/.a/b"_s);
+    EXPECT_EQ(String("asdf:/.a/b"_s), url.string());
+    EXPECT_EQ(String("/.a/b"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setPath("/b"_s);
+    EXPECT_EQ(String("asdf:/b"_s), url.string());
+    EXPECT_EQ(String("/b"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setPath("//b"_s);
+    EXPECT_EQ(String("asdf:/.//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    url.setPath("/.c"_s);
+    EXPECT_EQ(String("asdf:/.c"_s), url.string());
+    EXPECT_EQ(String("/.c"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setHostAndPort("host:1"_s);
+    EXPECT_TRUE(url.isValid());
+    EXPECT_EQ(String("asdf://host:1/.a"_s), url.string());
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    url.setHostAndPort("host:1"_s);
+    EXPECT_EQ(String("asdf://host:1//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
 }
 
 TEST_F(WTF_URL, URLDataURIStringSharing)
