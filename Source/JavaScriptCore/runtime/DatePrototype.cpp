@@ -24,6 +24,7 @@
 #include "config.h"
 #include "DatePrototype.h"
 
+#include "DateConstructor.h"
 #include "DateConversion.h"
 #include "DateInstance.h"
 #include "Error.h"
@@ -130,7 +131,9 @@ static void applyToNumberToOtherwiseIgnoredArguments(JSGlobalObject* globalObjec
 
 // The broken-down date a setter builds its new time value from. It is deliberately not a
 // PlainGregorianDateTime: that type is packed and range-checked, while these fields have to hold
-// whatever out-of-range year or month the caller passed before the result is clipped.
+// whatever out-of-range values the caller passed until makeDay() and makeTime() combine them.
+// MakeDay range-checks year + floor(month / 12), not year or month alone, so
+// setUTCFullYear(275761, -12) is January 275760, and a day count can pull a year back into range.
 struct BrokenDownDate {
     BrokenDownDate() = default;
     explicit BrokenDownDate(PlainGregorianDateTime t)
@@ -143,68 +146,71 @@ struct BrokenDownDate {
     {
     }
 
-    int year { 0 };
-    int month { 0 };
-    int monthDay { 0 };
-    int hour { 0 };
-    int minute { 0 };
-    int second { 0 };
+    // The same MakeDate(MakeDay(...), MakeTime(...)) -> UTC -> TimeClip steps as the Date constructor
+    // and Date.UTC, so a setter gives exactly the time value those give for the same fields.
+    double toTimeValue(DateCache& cache, double milliseconds, TimeType inputTimeType) const
+    {
+        double date = makeDate(makeDay(year, month, monthDay), makeTime(hour, minute, second, milliseconds));
+        return timeClip(cache.localTimeToMS(date, inputTimeType));
+    }
+
+    double year { 0 };
+    double month { 0 };
+    double monthDay { 0 };
+    double hour { 0 };
+    double minute { 0 };
+    double second { 0 };
 };
 
-// Converts a list of arguments sent to a Date member function into milliseconds, updating
-// ms (representing milliseconds) and t (representing the rest of the date structure) appropriately.
-//
-// Format of member function: f([hour,] [min,] [sec,] [ms])
+// Stores the arguments of a Date member function of the form f([hour,] [min,] [sec,] [ms]) into
+// t and ms. Returns false if one of them is not finite.
 static bool fillStructuresUsingTimeArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, double* ms, BrokenDownDate* t)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    double milliseconds = 0;
+    bool ok = true;
     unsigned idx = 0;
     unsigned numArgs = std::min<unsigned>(callFrame->argumentCount(), maxArgs);
 
     // hours
     if (maxArgs >= 4 && idx < numArgs) {
-        t->hour = 0;
         double hours = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += hours * msPerHour;
+        ok = ok && std::isfinite(hours);
+        t->hour = hours;
     }
 
     // minutes
     if (maxArgs >= 3 && idx < numArgs) {
-        t->minute = 0;
         double minutes = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += minutes * msPerMinute;
+        ok = ok && std::isfinite(minutes);
+        t->minute = minutes;
     }
 
     // seconds
     if (maxArgs >= 2 && idx < numArgs) {
-        t->second = 0;
         double seconds = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += seconds * msPerSecond;
+        ok = ok && std::isfinite(seconds);
+        t->second = seconds;
     }
 
     // milliseconds
     if (idx < numArgs) {
-        double millis = callFrame->uncheckedArgument(idx).toIntegerPreserveNaN(globalObject);
+        double milliseconds = callFrame->uncheckedArgument(idx).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        milliseconds += millis;
-    } else
-        milliseconds += *ms;
+        ok = ok && std::isfinite(milliseconds);
+        *ms = milliseconds;
+    }
 
-    *ms = milliseconds;
-    return std::isfinite(milliseconds);
+    return ok;
 }
 
-// Converts a list of arguments sent to a Date member function into years, months, and milliseconds, updating
-// ms (representing milliseconds) and t (representing the rest of the date structure) appropriately.
-//
-// Format of member function: f([years,] [months,] [days])
-static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, double *ms, BrokenDownDate* t)
+// Stores the arguments of a Date member function of the form f([years,] [months,] [days]) into t.
+// Returns false if one of them is not finite.
+static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned maxArgs, BrokenDownDate* t)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -217,28 +223,24 @@ static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame*
     if (maxArgs >= 3 && idx < numArgs) {
         double years = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-
-        // The broken-down date represents `years` as `int`.
-        // Therefore, if the `years` exceeds the maximum representable `int`, date calculations may produce incorrect results.
-        // The condidtion, `std::abs(years) <= msToYear(WTF::maxECMAScriptTime)`, is used as a safeguard before `timeClip(double)`.
-        ok = ok && std::isfinite(years) && std::abs(years) <= msToYear(WTF::maxECMAScriptTime);
-        t->year = toInt32(years);
+        ok = ok && std::isfinite(years);
+        t->year = years;
     }
+
     // months
     if (maxArgs >= 2 && idx < numArgs) {
         double months = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        double years = months / 12;
-        ok = ok && std::isfinite(months) && std::abs(years) <= msToYear(WTF::maxECMAScriptTime);
-        t->month = toInt32(months);
+        ok = ok && std::isfinite(months);
+        t->month = months;
     }
+
     // days
     if (idx < numArgs) {
-        double days = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
+        double days = callFrame->uncheckedArgument(idx).toIntegerPreserveNaN(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         ok = ok && std::isfinite(days);
-        t->monthDay = 0;
-        *ms += days * msPerDay;
+        t->monthDay = days;
     }
 
     return ok;
@@ -749,8 +751,7 @@ static EncodedJSValue setNewValueFromTimeArgs(JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNaN());
     }
 
-    double newUTCDate = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, inputTimeType);
-    double result = timeClip(newUTCDate);
+    double result = gregorianDateTime.toTimeValue(cache, ms, inputTimeType);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
@@ -790,15 +791,14 @@ static EncodedJSValue setNewValueFromDateArgs(JSGlobalObject* globalObject, Call
         gregorianDateTime = BrokenDownDate(other);
     }
 
-    bool success = fillStructuresUsingDateArgs(globalObject, callFrame, numArgsToUse, &ms, &gregorianDateTime);
+    bool success = fillStructuresUsingDateArgs(globalObject, callFrame, numArgsToUse, &gregorianDateTime);
     RETURN_IF_EXCEPTION(scope, { });
     if (!success) {
         thisDateObj->setInternalNumber(PNaN);
         return JSValue::encode(jsNaN());
     }
 
-    double newUTCDate = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, inputTimeType);
-    double result = timeClip(newUTCDate);
+    double result = gregorianDateTime.toTimeValue(cache, ms, inputTimeType);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
@@ -905,14 +905,13 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncSetYear, (JSGlobalObject* globalObject, Ca
 
     double year = callFrame->argument(0).toIntegerPreserveNaN(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!std::isfinite(year) || std::abs(year) > msToYear(WTF::maxECMAScriptTime)) {
+    if (!std::isfinite(year)) {
         thisDateObj->setInternalNumber(PNaN);
         return JSValue::encode(jsNaN());
     }
 
-    gregorianDateTime.year = toInt32((year >= 0 && year <= 99) ? (year + 1900) : year);
-    double timeInMilliseconds = cache.gregorianDateTimeToMS(gregorianDateTime.year, gregorianDateTime.month, gregorianDateTime.monthDay, gregorianDateTime.hour, gregorianDateTime.minute, gregorianDateTime.second, ms, TimeType::LocalTime);
-    double result = timeClip(timeInMilliseconds);
+    gregorianDateTime.year = (year >= 0 && year <= 99) ? (year + 1900) : year;
+    double result = gregorianDateTime.toTimeValue(cache, ms, TimeType::LocalTime);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
