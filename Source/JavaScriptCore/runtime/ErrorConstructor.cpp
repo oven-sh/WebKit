@@ -99,7 +99,16 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
 
     vm.interpreter.getStackTrace(object, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller);
 
-    object->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    JSValue stack = jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace));
+    if (isButterflylessObjectType(object->type())) [[unlikely]] {
+        // It has nowhere to put a property, so whether it takes one is up to it.
+        PropertyDescriptor descriptor(stack, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        constexpr bool shouldThrow = true;
+        scope.release();
+        object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->stack, descriptor, shouldThrow);
+        return encodedJSUndefined();
+    }
+    object->putDirect(vm, vm.propertyNames->stack, stack, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(object))
         errorInstance->setStackPropertyAlreadyMaterialized();

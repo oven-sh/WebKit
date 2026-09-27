@@ -924,7 +924,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseResolveWithThen, (JSGlobalObject* globalObject, 
     JSValue argument = callFrame->uncheckedArgument(1);
 
     JSObject* promise = JSPromise::promiseResolve(globalObject, constructor, argument);
-    if (promise) [[likely]] {
+    if (promise && !isButterflylessObjectType(promise->type())) [[likely]] {
         // Set @then property on the promise if it doesn't already have one
         auto thenPrivateName = vm.propertyNames->builtinNames().thenPrivateName();
         if (!promise->hasOwnProperty(globalObject, thenPrivateName))

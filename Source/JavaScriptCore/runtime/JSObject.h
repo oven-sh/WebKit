@@ -688,7 +688,8 @@ protected:
     // (JSObjectWithButterfly subclasses). Used by JSObject methods that manipulate butterfly storage.
     ALWAYS_INLINE AuxiliaryBarrier<Butterfly*>& butterflyRef()
     {
-        ASSERT(!isButterflylessObjectType(type()));
+        // Every store to the field comes through here, and follows an allocation.
+        RELEASE_ASSERT(!isButterflylessObjectType(type()));
         return *std::bit_cast<AuxiliaryBarrier<Butterfly*>*>(std::bit_cast<char*>(this) + butterflyOffset());
     }
 
