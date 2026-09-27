@@ -449,7 +449,7 @@ public:
         // This is safe as atom of GC heap allocation is 16 bytes, thus the butterfly field, offset from 8 byte, is always accessible.
         // We intentionally load it regardless to make this function branchless. This is critical to keep this fast while we have butterfly-less objects.
         auto* b = *std::bit_cast<Butterfly**>(std::bit_cast<char*>(this) + butterflyOffset());
-        if (type() == WebAssemblyGCObjectType) [[unlikely]]
+        if (isButterflylessObjectType(type())) [[unlikely]]
             b = nullptr;
         return b;
     }
@@ -688,7 +688,7 @@ protected:
     // (JSObjectWithButterfly subclasses). Used by JSObject methods that manipulate butterfly storage.
     ALWAYS_INLINE AuxiliaryBarrier<Butterfly*>& butterflyRef()
     {
-        ASSERT(type() != WebAssemblyGCObjectType);
+        ASSERT(!isButterflylessObjectType(type()));
         return *std::bit_cast<AuxiliaryBarrier<Butterfly*>*>(std::bit_cast<char*>(this) + butterflyOffset());
     }
 
