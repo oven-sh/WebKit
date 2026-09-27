@@ -3656,6 +3656,12 @@ void WeakGCHashTable::addToDirtyList(VM& vm)
     vm.heap.addDirtyWeakGCHashTable(this);
 }
 
+void Heap::didFreeSinceLastCollection(size_t bytes)
+{
+    size_t& allocated = bytes >= oversizedAllocationThreshold ? m_oversizedBytesAllocatedThisCycle : m_nonOversizedBytesAllocatedThisCycle;
+    allocated -= std::min(allocated, bytes);
+}
+
 void Heap::didAllocateBlock(size_t capacity)
 {
 #if ENABLE(RESOURCE_USAGE)

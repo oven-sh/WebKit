@@ -45,6 +45,13 @@ public:
 
     void* allocate(VM&, size_t, GCDeferralContext*, AllocationFailureMode);
     void* reallocatePreciseAllocationNonVirtual(VM&, HeapCell*, size_t, GCDeferralContext*, AllocationFailureMode);
+
+    // For a precise allocation whose CellLifetime is ExplicitlyFreed, so that memory of this size does not wait for a
+    // collection. They decline, by returning false and null, while a collection is under way or if anything refers to the
+    // cell weakly. Then its owner does what it does for a cell in a block.
+    JS_EXPORT_PRIVATE bool tryFreePreciseAllocation(VM&, HeapCell*);
+    // To a size that also takes a precise allocation, greater or less.
+    JS_EXPORT_PRIVATE void* tryReallocatePreciseAllocation(VM&, HeapCell*, size_t);
     
     static constexpr ptrdiff_t offsetOfAllocatorForSizeStep() { return OBJECT_OFFSETOF(CompleteSubspace, m_allocatorForSizeStep); }
     

@@ -324,6 +324,35 @@ void MarkedSpace::stopAllocating()
         });
 }
 
+void MarkedSpace::unregisterPreciseAllocation(PreciseAllocation* allocation)
+{
+    ASSERT(!heap().collectionScope());
+    unsigned hole = allocation->indexInSpace();
+    ASSERT(m_preciseAllocations[hole] == allocation);
+    auto fillHoleFrom = [&](unsigned index) {
+        if (index != hole) {
+            m_preciseAllocations[hole] = m_preciseAllocations[index];
+            m_preciseAllocations[hole]->setIndexInSpace(hole);
+        }
+        hole = index;
+    };
+
+    // Those that have been through a collection come first.
+    bool isNew = hole >= m_preciseAllocationsNurseryOffset;
+    if (!isNew)
+        fillHoleFrom(--m_preciseAllocationsNurseryOffset);
+    fillHoleFrom(m_preciseAllocations.size() - 1);
+    m_preciseAllocations.removeLast();
+
+    if (auto& set = preciseAllocationSet())
+        set->remove(allocation->cell());
+
+    size_t size = allocation->cellSize();
+    m_capacity -= size;
+    if (isNew)
+        heap().didFreeSinceLastCollection(size);
+}
+
 void MarkedSpace::prepareForConservativeScan()
 {
     if (m_conservativeScanIsPrepared)

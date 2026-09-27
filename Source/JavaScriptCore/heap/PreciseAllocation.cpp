@@ -146,7 +146,7 @@ PreciseAllocation* PreciseAllocation::tryReallocate(size_t size, Subspace* subsp
     if (oldAdjustment != newAdjustment) {
         void* basePointerAfterRealloc = std::bit_cast<void*>(std::bit_cast<uintptr_t>(newSpace) + oldAdjustment);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        memmove(newBasePointer, basePointerAfterRealloc, oldCellSize + PreciseAllocation::headerSize());
+        memmove(newBasePointer, basePointerAfterRealloc, std::min<size_t>(oldCellSize, size) + PreciseAllocation::headerSize());
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 

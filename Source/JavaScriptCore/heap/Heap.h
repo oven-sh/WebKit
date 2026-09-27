@@ -568,6 +568,8 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
+    // Takes back a didAllocate() of this cycle: the memory has gone, so it is no reason to collect.
+    void didFreeSinceLastCollection(size_t);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     

@@ -143,6 +143,70 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
     return allocation->cell();
 }
 
+static bool canReleasePreciseAllocation(VM& vm, PreciseAllocation& allocation)
+{
+    ASSERT(allocation.attributes().lifetime == CellLifetime::ExplicitlyFreed);
+    ASSERT(allocation.attributes().destruction == DoesNotNeedDestruction);
+    ASSERT(!allocation.isLowerTierPrecise());
+    // A collection has the allocations it is about sorted by address, and a marking thread may be on its way to a cell that
+    // the conservative scan found.
+    return !vm.heap.collectionScope() && !vm.heap.mutatorShouldBeFenced() && allocation.weakSet().isTriviallyDestructible();
+}
+
+bool CompleteSubspace::tryFreePreciseAllocation(VM& vm, HeapCell* cell)
+{
+    PreciseAllocation& allocation = cell->preciseAllocation();
+    ASSERT(allocation.subspace() == this);
+    if (!canReleasePreciseAllocation(vm, allocation))
+        return false;
+
+    if (allocation.isOnList())
+        allocation.remove();
+    m_space.unregisterPreciseAllocation(&allocation);
+    allocation.destroy();
+    return true;
+}
+
+void* CompleteSubspace::tryReallocatePreciseAllocation(VM& vm, HeapCell* oldCell, size_t size)
+{
+    ASSERT(size > MarkedSpace::largeCutoff);
+    vm.heap.collectIfNecessaryOrDefer();
+
+    PreciseAllocation* oldAllocation = &oldCell->preciseAllocation();
+    ASSERT(oldAllocation->subspace() == this);
+    if (!canReleasePreciseAllocation(vm, *oldAllocation))
+        return nullptr;
+
+    size = WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(size);
+    size_t oldSize = oldAllocation->cellSize();
+    unsigned indexInSpace = oldAllocation->indexInSpace();
+    if (oldAllocation->isOnList())
+        oldAllocation->remove();
+
+    PreciseAllocation* allocation = oldAllocation->tryReallocate(size, this);
+    if (!allocation) [[unlikely]] {
+        m_preciseAllocations.append(oldAllocation);
+        return nullptr;
+    }
+    ASSERT(indexInSpace == allocation->indexInSpace());
+
+    if (oldAllocation != allocation) {
+        if (auto& set = m_space.preciseAllocationSet()) {
+            set->remove(oldAllocation->cell());
+            set->add(allocation->cell());
+        }
+    }
+
+    m_space.m_preciseAllocations[indexInSpace] = allocation;
+    m_space.m_capacity += size - oldSize;
+    if (size > oldSize)
+        vm.heap.didAllocate(size - oldSize);
+
+    m_preciseAllocations.append(allocation);
+
+    return allocation->cell();
+}
+
 void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* oldCell, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     if constexpr (validateDFGDoesGC)

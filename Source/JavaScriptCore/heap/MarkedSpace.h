@@ -156,6 +156,8 @@ public:
     HeapVersion edenVersion() const { return m_edenVersion; }
 
     void registerPreciseAllocation(PreciseAllocation*, bool isNewAllocation);
+    // Between collections only.
+    void unregisterPreciseAllocation(PreciseAllocation*);
     const Vector<PreciseAllocation*>& preciseAllocations() const LIFETIME_BOUND { return m_preciseAllocations; }
     unsigned preciseAllocationsNurseryOffset() const { return m_preciseAllocationsNurseryOffset; }
     unsigned preciseAllocationsOffsetForThisCollection() const { return m_preciseAllocationsOffsetForThisCollection; }
