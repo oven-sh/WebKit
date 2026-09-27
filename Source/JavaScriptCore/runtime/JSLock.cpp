@@ -287,8 +287,10 @@ void JSLock::unlock(intptr_t unlockCount) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 
     // Maintain m_lockCount while calling willReleaseLock() so that its callees know that
     // they still have the lock.
-    if (unlockCount == m_lockCount)
+    if (unlockCount == m_lockCount) {
         willReleaseLock();
+        m_isRelinquishing = false;
+    }
 
     m_lockCount -= unlockCount;
 
@@ -311,7 +313,7 @@ void JSLock::willReleaseLock()
             });
 #endif
 
-            if (!m_lockDropDepth || useLegacyDrain)
+            if ((!m_lockDropDepth && !m_isRelinquishing) || useLegacyDrain)
                 protectedVM->drainMicrotasks();
 
             if (!protectedVM->topCallFrame)
@@ -378,6 +380,42 @@ void JSLock::grabAllLocks(DropAllLocks* dropper, unsigned droppedLockCount)
     }
 
     --m_lockDropDepth;
+
+    auto& thread = Thread::currentSingleton();
+    m_vm->setStackPointerAtVMEntry(thread.savedStackPointerAtVMEntry());
+    m_vm->setLastStackTop(thread);
+}
+
+JSLock::Relinquished JSLock::relinquish()
+{
+    RELEASE_ASSERT(currentThreadIsHoldingLock());
+    RELEASE_ASSERT(!m_vm->isCollectorBusyOnCurrentThread());
+    // Nothing would keep it alive.
+    RELEASE_ASSERT(!m_vm->exceptionForInspection());
+
+    Relinquished result { m_lockCount, m_vm->topCallFrame, m_vm->topEntryFrame, m_vm->entryScope };
+    m_vm->topCallFrame = nullptr;
+    m_vm->topEntryFrame = nullptr;
+    m_vm->entryScope = nullptr;
+
+    auto& thread = Thread::currentSingleton();
+    thread.setSavedStackPointerAtVMEntry(m_vm->stackPointerAtVMEntry());
+    thread.setSavedLastStackTop(m_vm->lastStackTop());
+
+    m_isRelinquishing = true;
+    unlock(m_lockCount);
+    return result;
+}
+
+void JSLock::resume(const Relinquished& relinquished)
+{
+    ASSERT(!currentThreadIsHoldingLock());
+    lock(relinquished.lockCount);
+
+    ASSERT(!m_vm->topCallFrame && !m_vm->topEntryFrame && !m_vm->entryScope);
+    m_vm->topCallFrame = relinquished.topCallFrame;
+    m_vm->topEntryFrame = relinquished.topEntryFrame;
+    m_vm->entryScope = relinquished.entryScope;
 
     auto& thread = Thread::currentSingleton();
     m_vm->setStackPointerAtVMEntry(thread.savedStackPointerAtVMEntry());
