@@ -32,8 +32,11 @@ namespace TestWebKitAPI {
 
 static constexpr double Infinity = std::numeric_limits<double>::infinity();
 static constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+static constexpr double MaxValue = std::numeric_limits<double>::max();
+static constexpr double MinNormal = std::numeric_limits<double>::min();
+static constexpr double MinSubnormal = std::numeric_limits<double>::denorm_min();
 
-static const std::array<std::pair<std::vector<double>, double>, 38> TEST_CASES = { {
+static const std::array<std::pair<std::vector<double>, double>, 68> TEST_CASES = { {
     { { 1, 2, 3 }, 6 },
     { { 1e308 }, 1e308 },
     { { 1e308, -1e308 }, 0 },
@@ -61,6 +64,39 @@ static const std::array<std::pair<std::vector<double>, double>, 38> TEST_CASES =
     { { 8.988465674311579e+307, 7.999999999999998, 7.029158107234023e-308, -2.2303483759420562e-172, -1.7976931348623157e+308, -8.98846567431158e+307 }, -1.7976931348623157e+308 },
     { { 8.98846567431158e+307, 8.98846567431158e+307 }, Infinity },
 
+    // Exactly representable negative sums. The rounding step used to round all of these one ulp away from zero.
+    { { -1 }, -1 },
+    { { -0.5 }, -0.5 },
+    { { -1, -1 }, -2 },
+    { { 1, -2 }, -1 },
+    { { -0.1 }, -0.1 },
+    { { -0x1p53 }, -0x1p53 },
+    { { -MaxValue }, -MaxValue },
+    { { -MaxValue, -MaxValue, MaxValue }, -MaxValue },
+    { { -MinNormal }, -MinNormal },
+    { { -MinNormal, -MinSubnormal }, -0x1.0000000000001p-1022 },
+    { { -MinSubnormal }, -MinSubnormal },
+    { { -1, 0x1p-52 }, -0x1.ffffffffffffep-1 },
+    { { -2, 0x1p-52 }, -0x1.fffffffffffffp0 },
+
+    // Rounding of negative sums: to nearest, ties to even, like the positive ones. The ulp of the doubles in [1, 2) is 2^-52.
+    { { -1, -0x1p-54 }, -1 }, // A quarter of an ulp beyond -1.
+    { { -1, -0x1.8p-53 }, -0x1.0000000000001p0 }, // Three quarters of an ulp beyond -1.
+    { { -1, -0x1p-53 }, -1 }, // A tie; -1 has the even mantissa.
+    { { -1, -0x1p-53, -MinSubnormal }, -0x1.0000000000001p0 }, // Just past that tie.
+    { { -0x1.0000000000001p0, -0x1p-53 }, -0x1.0000000000002p0 }, // A tie; the neighbour further from zero has the even mantissa.
+    { { -0x1.0000000000001p0, -0x1p-53, MinSubnormal }, -0x1.0000000000001p0 }, // Just short of that tie.
+    { { -2, 0x1p-53 }, -2 }, // A tie just inside a power of two; -2 has the even mantissa.
+    { { -2, 0x1.8p-53 }, -0x1.fffffffffffffp0 }, // Three quarters of an ulp inside a power of two.
+    { { -MaxValue, -0x1p969 }, -MaxValue }, // A quarter of an ulp beyond -MaxValue.
+    { { -MaxValue, -0x1p970, 0x1p900 }, -MaxValue }, // Just short of half an ulp beyond -MaxValue.
+    { { -MaxValue, -0x1p970 }, -Infinity }, // A tie; MaxValue has an odd mantissa.
+    { { MaxValue, 0x1p969 }, MaxValue },
+    { { MaxValue, 0x1p970 }, Infinity },
+    { { 1, 0x1p-53 }, 1 },
+    { { 0x1.0000000000001p0, 0x1p-53 }, 0x1.0000000000002p0 },
+    { { 0x1.0000000000001p0, 0x1p-53, -MinSubnormal }, 0x1.0000000000001p0 },
+
     { { NaN }, NaN },
     { { Infinity, -Infinity }, NaN },
     { { -Infinity, Infinity }, NaN },
@@ -70,20 +106,24 @@ static const std::array<std::pair<std::vector<double>, double>, 38> TEST_CASES =
     { { -Infinity }, -Infinity },
     { { -Infinity, -Infinity }, -Infinity },
 
-    { { }, -0 },
+    { { }, -0.0 },
     { { 0 }, 0 },
-    { { -0 }, -0 },
-    { { -0, -0 }, -0 },
-    { { -0, 0 }, 0 },
+    { { -0.0 }, -0.0 },
+    { { -0.0, -0.0 }, -0.0 },
+    { { -0.0, 0 }, 0 },
     { { 0, 0 }, 0 },
+    { { -1, 1 }, 0 },
 } };
 
+// The result has to be the correctly rounded sum, so compare exactly (EXPECT_DOUBLE_EQ allows 4 ulps), sign of zero included.
 static void shouldBeEqual(double actual, double expected)
 {
-    if (std::isnan(expected))
+    if (std::isnan(expected)) {
         EXPECT_TRUE(std::isnan(actual));
-    else
-        EXPECT_DOUBLE_EQ(actual, expected);
+        return;
+    }
+    EXPECT_EQ(actual, expected);
+    EXPECT_EQ(std::signbit(actual), std::signbit(expected));
 }
 
 TEST(WTF_PreciseSum, XsumSmall_add)
