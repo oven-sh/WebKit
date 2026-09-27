@@ -220,25 +220,45 @@ function testCloseDuringTheCall() {
         return outer;
     `)(callStored);
 
+    // A strict function that ends in a call makes a tail call, and optimized code inlines the callee in
+    // place of the caller's frame. A stack walk then does not visit the frame that entered the VM.
+    const makeCallback = (what, tailCall, answer) => new Function("answer", `
+        "use strict";
+        // ${what}
+        return ${tailCall ? "x => answer(x)" : "x => { const result = answer(x); return result; }"};
+    `)(answer);
+
     // The function under test takes an int32 and calls a callback that was stored before. A pointer
     // argument has a slow conversion, and the code that calls operationFFIWriteSlot refers to the
     // function weakly for that alone. Optimized code refers to the function of a bound function
     // strongly, and to the others weakly.
     const storeCb = $vm.ffiFunction({ args: ["function"], returns: "void" }, $vm.ffiFixture("ffi_store_cb_i32"), "storeCb");
-    for (const shape of ["caller", "inlined caller", "bound function"]) {
+    const cases = [
+        ["caller", "callback"],
+        ["inlined caller", "callback"],
+        ["bound function", "callback"],
+        ["caller", "callback that makes a tail call"],
+        ["inlined caller", "callback that makes a tail call"],
+    ];
+    for (const [shape, callbackKind] of cases) {
         for (const warmUp of [0, 1e5]) {
-            const what = shape + ", warm-up " + warmUp;
+            const what = shape + ", " + callbackKind + ", warm-up " + warmUp;
             const callStored = $vm.ffiFunction({ args: ["i32"], returns: "i32" }, $vm.ffiFixture("ffi_call_stored_cb_i32"), "runningCallStored");
             const notCalledHere = makeAdd("notCalledHere");
             let mode = "";
             let seen = null;
-            const cb = $vm.ffiCallback({ args: ["i32"], returns: "i32" }, x => {
+            const record = () => {
                 if (mode === "close")
                     $vm.ffiFunctionClose(callStored);
                 if (mode)
                     seen = [$vm.ffiFunctionIsRunning(callStored), $vm.ffiFunctionIsRunning(notCalledHere)];
+            };
+            noInline(record);
+            const answer = x => {
+                record();
                 return x + 1;
-            });
+            };
+            const cb = $vm.ffiCallback({ args: ["i32"], returns: "i32" }, makeCallback(what, callbackKind !== "callback", answer));
             storeCb(cb);
             const outer = makeCaller(what, shape, callStored);
 

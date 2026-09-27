@@ -100,7 +100,7 @@ bool JSFFIFunction::isRunning(VM& vm)
 {
     bool isRunning = false;
 #if ENABLE(DFG_JIT)
-    bool callerEnteredVM = false;
+    EntryFrame* entryFrameOfFrameAbove = vm.topEntryFrame;
 #endif
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
         // The host path and the IC stub: the call has a frame of its own.
@@ -111,10 +111,13 @@ bool JSFFIFunction::isRunning(VM& vm)
         }
 
 #if ENABLE(DFG_JIT)
-        // A CallFFI has no frame. The native call is made by the frame that was on top when the VM was entered again.
-        bool isInlined = visitor->isInlinedDFGFrame();
-        if (callerEnteredVM) {
-            CodeBlock* codeBlock = isInlined ? visitor->callFrame()->codeBlock() : visitor->codeBlock();
+        // A CallFFI has no frame. The native call is made by the frame that was on top when the VM was entered
+        // again, which is the first frame of another entry frame. The frame that the entry called cannot say so:
+        // the walk does not visit it when optimized code inlined a tail call in its place.
+        bool wasOnTopAtVMEntry = visitor->entryFrame() != entryFrameOfFrameAbove;
+        entryFrameOfFrameAbove = visitor->entryFrame();
+        if (wasOnTopAtVMEntry) {
+            CodeBlock* codeBlock = visitor->isInlinedDFGFrame() ? visitor->callFrame()->codeBlock() : visitor->codeBlock();
             if (codeBlock && JITCode::isOptimizingJIT(codeBlock->jitType())) {
                 // Optimized code refers to a cell weakly, or as a constant when something froze the cell strongly.
                 for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences)
@@ -125,7 +128,6 @@ bool JSFFIFunction::isRunning(VM& vm)
                     return IterationStatus::Done;
             }
         }
-        callerEnteredVM = !isInlined && visitor->callerIsEntryFrame(); // An inlined frame does not set it.
 #endif
         return IterationStatus::Continue;
     });
