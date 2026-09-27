@@ -39,6 +39,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSCellInlines.h"
 #include "JSStringInlines.h"
 #include "MathCommon.h"
+#include "Operations.h"
 #include "ThrowScope.h"
 #include <wtf/MediaTime.h>
 #include <wtf/text/MakeString.h>
@@ -316,10 +317,20 @@ inline JSValue JSValue::toThis(JSGlobalObject* globalObject, ECMAMode ecmaMode) 
     return toThisSloppySlowCase(globalObject);
 }
 
+ALWAYS_INLINE bool JSValue::overloadsOperators() const
+{
+    return isCell() && TypeInfo::overloadsOperators(asCell()->inlineTypeFlags());
+}
+
 ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Before anything is made of the two being the same object, and while it is known which is which.
+    if ((v1.overloadsOperators() || v2.overloadsOperators()) && !v1.isUndefinedOrNull() && !v2.isUndefinedOrNull()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, compareWithOverloadedOperator(globalObject, OverloadableOperator::Equal, v1, v2));
+
     do {
         if (v1.isNumber()) {
             if (v2.isNumber())

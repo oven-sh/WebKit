@@ -1062,7 +1062,10 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
-            if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject()) {
+            // Objects are compared by their addresses, with an exit for one that overloads ==. So that
+            // is not for where one is expected.
+            bool mayCallOverloadedOperator = m_graph.mayOverloadOperators(node->child1()->prediction() | node->child2()->prediction());
+            if (!mayCallOverloadedOperator && node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject()) {
                 fixEdge<ObjectUse>(node->child1());
                 fixEdge<ObjectUse>(node->child2());
                 node->clearFlags(NodeMustGenerate);
@@ -1093,6 +1096,9 @@ private:
                 node->clearFlags(NodeMustGenerate);
                 break;
             }
+
+            if (mayCallOverloadedOperator)
+                break;
 
             if (node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObjectOrOther()) {
                 fixEdge<ObjectUse>(node->child1());

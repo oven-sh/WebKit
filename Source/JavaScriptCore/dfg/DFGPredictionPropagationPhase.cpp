@@ -176,9 +176,46 @@ private:
         return speculatedDoubleTypeForPrediction(mergeSpeculations(left, right));
     }
 
+    // Whether an operand is expected to be of a class that overloads the operator.
+    bool mayCallOverloadedOperator(Node* node)
+    {
+        switch (node->op()) {
+        case ValueAdd:
+            // That concatenates.
+            if (isStringSpeculation(node->child1()->prediction()) || isStringSpeculation(node->child2()->prediction()))
+                return false;
+            [[fallthrough]];
+        case ValueSub:
+        case ValueMul:
+        case ValueDiv:
+        case ValueMod:
+        case ValuePow:
+        case ValueBitAnd:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ValueBitRShift:
+            return m_graph.mayOverloadOperators(node->child1()->prediction() | node->child2()->prediction());
+        case ValueNegate:
+        case ValueBitNot:
+        case Inc:
+        case Dec:
+        case ToNumeric:
+            return m_graph.mayOverloadOperators(node->child1()->prediction());
+        default:
+            return false;
+        }
+    }
+
     void propagate(Node* node)
     {
         NodeType op = node->op();
+
+        // What it gives is up to the class, and nothing profiles it.
+        if (mayCallOverloadedOperator(node)) {
+            m_changed |= mergePrediction(SpecHeapTop);
+            return;
+        }
 
         bool changed = false;
         

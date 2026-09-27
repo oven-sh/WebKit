@@ -309,6 +309,8 @@ public:
     bool isCell() const;
     JSCell* asCell() const;
 
+    inline bool overloadsOperators() const; // Defined in JSCJSValueInlines.h
+
     inline Structure* structureOrNull() const; // Defined in JSCJSValueStructure.h
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;

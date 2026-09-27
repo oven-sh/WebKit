@@ -1417,6 +1417,22 @@ void SpeculativeJIT::compilePeepHoleDoubleBranch(Node* node, Node* branchNode, D
     jump(notTaken);
 }
 
+void SpeculativeJIT::speculateEqualityIsIdentity(Edge edge, GPRReg cellGPR)
+{
+    unsigned flags = 0;
+    if (!masqueradesAsUndefinedWatchpointSetIsStillValid())
+        flags |= MasqueradesAsUndefined;
+    if (m_graph.mayOverloadOperators(m_state.forNode(edge).m_type))
+        flags |= OverloadsOperators;
+    if (!flags)
+        return;
+    speculationCheck(BadType, JSValueSource(cellGPR), edge,
+        branchTest8(
+            NonZero,
+            Address(cellGPR, JSCell::typeInfoFlagsOffset()),
+            TrustedImm32(flags)));
+}
+
 void SpeculativeJIT::compilePeepHoleObjectEquality(Node* node, Node* branchNode)
 {
     BasicBlock* taken = branchNode->branchData()->taken.block;
@@ -1437,38 +1453,17 @@ void SpeculativeJIT::compilePeepHoleObjectEquality(Node* node, Node* branchNode)
     GPRReg op1GPR = op1.gpr();
     GPRReg op2GPR = op2.gpr();
     
-    if (masqueradesAsUndefinedWatchpointSetIsStillValid()) {
-        if (m_state.forNode(node->child1()).m_type & ~SpecObject) {
-            speculationCheck(
-                BadType, JSValueSource(op1GPR), node->child1(), branchIfNotObject(op1GPR));
-        }
-        if (m_state.forNode(node->child2()).m_type & ~SpecObject) {
-            speculationCheck(
-                BadType, JSValueSource(op2GPR), node->child2(), branchIfNotObject(op2GPR));
-        }
-    } else {
-        if (m_state.forNode(node->child1()).m_type & ~SpecObject) {
-            speculationCheck(
-                BadType, JSValueSource(op1GPR), node->child1(),
-                branchIfNotObject(op1GPR));
-        }
-        speculationCheck(BadType, JSValueSource(op1GPR), node->child1(),
-            branchTest8(
-                NonZero,
-                Address(op1GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-
-        if (m_state.forNode(node->child2()).m_type & ~SpecObject) {
-            speculationCheck(
-                BadType, JSValueSource(op2GPR), node->child2(),
-                branchIfNotObject(op2GPR));
-        }
-        speculationCheck(BadType, JSValueSource(op2GPR), node->child2(),
-            branchTest8(
-                NonZero,
-                Address(op2GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
+    if (m_state.forNode(node->child1()).m_type & ~SpecObject) {
+        speculationCheck(
+            BadType, JSValueSource(op1GPR), node->child1(), branchIfNotObject(op1GPR));
     }
+    speculateEqualityIsIdentity(node->child1(), op1GPR);
+
+    if (m_state.forNode(node->child2()).m_type & ~SpecObject) {
+        speculationCheck(
+            BadType, JSValueSource(op2GPR), node->child2(), branchIfNotObject(op2GPR));
+    }
+    speculateEqualityIsIdentity(node->child2(), op2GPR);
 
     branchPtr(condition, op1GPR, op2GPR, taken);
     jump(notTaken);
@@ -7210,28 +7205,13 @@ void SpeculativeJIT::compileObjectEquality(Node* node)
     GPRReg op2GPR = op2.gpr();
     GPRReg resultGPR = result.gpr();
 
-    if (masqueradesAsUndefinedWatchpointSetIsStillValid()) {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), node->child1(), SpecObject, branchIfNotObject(op1GPR));
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), node->child2(), SpecObject, branchIfNotObject(op2GPR));
-    } else {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), node->child1(), SpecObject, branchIfNotObject(op1GPR));
-        speculationCheck(BadType, JSValueSource(op1GPR), node->child1(),
-            branchTest8(
-                NonZero,
-                Address(op1GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
+    DFG_TYPE_CHECK(
+        JSValueSource(op1GPR), node->child1(), SpecObject, branchIfNotObject(op1GPR));
+    speculateEqualityIsIdentity(node->child1(), op1GPR);
 
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), node->child2(), SpecObject, branchIfNotObject(op2GPR));
-        speculationCheck(BadType, JSValueSource(op2GPR), node->child2(),
-            branchTest8(
-                NonZero,
-                Address(op2GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-    }
+    DFG_TYPE_CHECK(
+        JSValueSource(op2GPR), node->child2(), SpecObject, branchIfNotObject(op2GPR));
+    speculateEqualityIsIdentity(node->child2(), op2GPR);
 
     comparePtr(Equal, op1GPR, op2GPR, resultGPR);
     unblessedBooleanResult(resultGPR, node);

@@ -1113,6 +1113,10 @@ public:
     
     InlineWatchpointSet& primitiveGigacageEnabled() LIFETIME_BOUND { return m_primitiveGigacageEnabled; }
 
+    // Valid until there is a Structure with OverloadsOperators. It is the VM's because an object can
+    // be an operand in the code of any realm.
+    InlineWatchpointSet& noObjectOverloadsOperators() LIFETIME_BOUND { return m_noObjectOverloadsOperators; }
+
     BuiltinExecutables* builtinExecutables() LIFETIME_BOUND { return m_builtinExecutables.get(); }
 
     bool enableTypeProfiler();
@@ -1425,6 +1429,7 @@ private:
     size_t m_sizeOfLastScratchBuffer { 0 };
     Vector<std::unique_ptr<CheckpointOSRExitSideState>, expectedMaxActiveSideStateCount> m_checkpointSideState;
     InlineWatchpointSet m_primitiveGigacageEnabled { IsWatched };
+    InlineWatchpointSet m_noObjectOverloadsOperators { IsWatched };
     FunctionHasExecutedCache m_functionHasExecutedCache;
     std::unique_ptr<ControlFlowProfiler> m_controlFlowProfiler;
     unsigned m_controlFlowProfilerEnabledCount { 0 };

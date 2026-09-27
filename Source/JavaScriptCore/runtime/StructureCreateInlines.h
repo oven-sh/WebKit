@@ -72,6 +72,8 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
         ASSERT(!object->anyObjectInChainMayInterceptIndexedAccesses() || hasSlowPutArrayStorage(indexingModeIncludingHistory) || !hasIndexedProperties(indexingModeIncludingHistory));
         object->didBecomePrototype(vm);
     }
+    if (typeInfo.overloadsOperators()) [[unlikely]]
+        vm.noObjectOverloadsOperators().fireAll(vm, "Created a structure for objects that overload operators");
 
     Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
     structure->finishCreation(vm);

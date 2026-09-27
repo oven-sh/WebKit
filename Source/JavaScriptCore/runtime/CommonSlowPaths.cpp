@@ -402,9 +402,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_string)
 static void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
 {
     profile.observeArg(operand);
-    ASSERT(result.isNumber() || result.isBigInt());
+    ASSERT(result.isNumber() || result.isBigInt() || operand.overloadsOperators());
 
-    if (result.isHeapBigInt())
+    if (!result.isNumber() && !result.isBigInt())
+        profile.setObservedNonNumeric();
+    else if (result.isHeapBigInt())
         profile.setObservedHeapBigInt();
 #if USE(BIGINT32)
     else if (result.isBigInt32())
@@ -442,31 +444,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_negate)
     BEGIN();
     auto bytecode = pc->as<OpNegate>();
     JSValue operand = GET_C(bytecode.m_operand).jsValue();
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
+    JSValue result = jsNegate(globalObject, operand);
     CHECK_EXCEPTION();
 
     auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
-
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        CHECK_EXCEPTION();
-        RETURN_WITH_PROFILING(result, {
-            updateArithProfileForUnaryArithOp(profile, result, operand);
-        });
-    }
-#endif
-
-    if (primValue.isHeapBigInt()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
-        CHECK_EXCEPTION();
-        RETURN_WITH_PROFILING(result, {
-            updateArithProfileForUnaryArithOp(profile, result, operand);
-        });
-    }
-    
-    JSValue result = jsNumber(-primValue.toNumber(globalObject));
-    CHECK_EXCEPTION();
     RETURN_WITH_PROFILING(result, {
         updateArithProfileForUnaryArithOp(profile, result, operand);
     });
@@ -530,7 +511,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_numeric)
     auto bytecode = pc->as<OpToNumeric>();
     auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
     JSValue argument = GET_C(bytecode.m_operand).jsValue();
-    JSValue result = argument.toNumeric(globalObject);
+    JSValue result = jsToNumericForPostfix(globalObject, argument);
     CHECK_EXCEPTION();
     RETURN_WITH_PROFILING(result, {
         profile.argSawNonNumber();

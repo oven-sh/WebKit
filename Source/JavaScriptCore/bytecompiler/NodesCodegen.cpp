@@ -3313,8 +3313,8 @@ static inline bool NODELETE canFoldToBranch(OpcodeID opcodeID, ExpressionNode* b
         return true;
     else if (expressionType.definitelyIsBoolean() && constant.isInt32() && (constant.asInt32() == 0 || constant.asInt32() == 1))
         return opcodeID == op_eq || opcodeID == op_neq; // Strict equality is false in the case of type mismatch.
-    else if (expressionType.isInt32() && constant.isInt32() && constant.asInt32() == 0)
-        return true;
+    else if (expressionType.isInt32() && expressionType.definitelyIsNumber() && constant.isInt32() && constant.asInt32() == 0)
+        return true; // Not of what could be a BigInt, since 0n === 0 is false, or come of an overloaded operator, since what that equals is up to its class.
 
     return false;
 }

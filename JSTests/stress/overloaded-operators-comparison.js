@@ -1,0 +1,25 @@
+load("./resources/overloaded-operators.js", "caller relative");
+
+run([
+    ["a == b", (a, b) => a == b, false],
+    ["a != b", (a, b) => a != b, true],
+    ["a < b", (a, b) => a < b, false],
+    ["a <= b", (a, b) => a <= b, false],
+    ["a > b", (a, b) => a > b, true],
+    ["a >= b", (a, b) => a >= b, true],
+    ["a == a", a => a == a, true],
+    ["a == 6", a => a == 6, true],
+    ["6 == a", a => 6 == a, true],
+    ["3 < a", a => 3 < a, true],
+    ["a < 3", a => a < 3, false],
+    ["a == '6'", a => a == "6", true],
+    ["if (a == b)", (a, b) => a == b ? "then" : "else", "else"],
+    ["if (a != b)", (a, b) => a != b ? "then" : "else", "then"],
+    ["if (!(a == b))", (a, b) => !(a == b) ? "then" : "else", "then"],
+    ["if (a < b)", (a, b) => a < b ? "then" : "else", "else"],
+    ["if (!(a < b))", (a, b) => !(a < b) ? "then" : "else", "then"],
+    ["if (a >= b)", (a, b) => a >= b ? "then" : "else", "then"],
+    ["(a < b) & (b < a)", (a, b) => (a < b) & (b < a), 0],
+    ["(a > b) & (b < a)", (a, b) => (a > b) & (b < a), 1],
+    ["if ((a < b) == false)", (a, b) => (a < b) == false ? "then" : "else", "then"],
+]);

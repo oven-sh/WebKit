@@ -5091,19 +5091,7 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegate, EncodedJSValue, (JSGlobalObject* 
 
     JSValue operand = JSValue::decode(encodedOperand);
 
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-#if USE(BIGINT32)
-    if (primValue.isBigInt32())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32())));
-#endif
-    if (primValue.isHeapBigInt())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt())));
-
-    double number = primValue.toNumber(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(jsNumber(-number)));
+    OPERATION_RETURN(scope, JSValue::encode(jsNegate(globalObject, operand)));
 
 }
 
@@ -5119,27 +5107,8 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiled, EncodedJSValue, (JSGlobal
     JSValue operand = JSValue::decode(encodedOperand);
     arithProfile->observeArg(operand);
 
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
+    JSValue result = jsNegate(globalObject, operand);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-#endif
-    if (primValue.isHeapBigInt()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-
-    double number = primValue.toNumber(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    JSValue result = jsNumber(-number);
     arithProfile->observeResult(result);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
@@ -5163,27 +5132,8 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateProfiledOptimize, EncodedJSValue, (
     callFrame->codeBlock()->dumpMathICStats();
 #endif
     
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
+    JSValue result = jsNegate(globalObject, operand);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-#endif
-    if (primValue.isHeapBigInt()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        arithProfile->observeResult(result);
-        OPERATION_RETURN(scope, JSValue::encode(result));
-    }
-
-    double number = primValue.toNumber(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    JSValue result = jsNumber(-number);
     arithProfile->observeResult(result);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
@@ -5206,20 +5156,8 @@ JSC_DEFINE_JIT_OPERATION(operationArithNegateOptimize, EncodedJSValue, (JSGlobal
     callFrame->codeBlock()->dumpMathICStats();
 #endif
 
-    JSValue primValue = operand.toPrimitive(globalObject, PreferNumber);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-#if USE(BIGINT32)
     // FIXME: why does this function profile the argument but not the result?
-    if (primValue.isBigInt32())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32())));
-#endif
-    if (primValue.isHeapBigInt())
-        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt())));
-
-    double number = primValue.toNumber(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(jsNumber(-number)));
+    OPERATION_RETURN(scope, JSValue::encode(jsNegate(globalObject, operand)));
 }
 
 ALWAYS_INLINE static EncodedJSValue unprofiledSub(JSGlobalObject* globalObject, EncodedJSValue encodedOp1, EncodedJSValue encodedOp2)

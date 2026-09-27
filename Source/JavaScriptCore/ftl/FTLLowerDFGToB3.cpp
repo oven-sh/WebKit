@@ -13323,10 +13323,18 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileCompareEq()
     {
+        if (m_node->isBinaryUseKind(ObjectUse)) {
+            LValue left = lowNonNullObject(m_node->child1());
+            LValue right = lowNonNullObject(m_node->child2());
+            speculateDoesNotOverloadOperators(m_node->child1(), left);
+            speculateDoesNotOverloadOperators(m_node->child2(), right);
+            setBoolean(m_out.equal(left, right));
+            return;
+        }
+
         if (m_node->isBinaryUseKind(Int32Use)
             || m_node->isBinaryUseKind(Int52RepUse)
             || m_node->isBinaryUseKind(DoubleRepUse)
-            || m_node->isBinaryUseKind(ObjectUse)
             || m_node->isBinaryUseKind(BooleanUse)
             || m_node->isBinaryUseKind(SymbolUse)
             || m_node->isBinaryUseKind(StringIdentUse)
@@ -23347,6 +23355,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue leftValue = lowJSValue(leftChild, ManualOperandSpeculation);
 
         speculateTruthyObject(rightChild, rightCell, SpecObject);
+        speculateDoesNotOverloadOperators(rightChild, rightCell);
 
         LBasicBlock leftCellCase = m_out.newBlock();
         LBasicBlock leftNotCellCase = m_out.newBlock();
@@ -23358,6 +23367,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock lastNext = m_out.appendTo(leftCellCase, leftNotCellCase);
         speculateTruthyObject(leftChild, leftValue, SpecObject | (~SpecCellCheck));
+        speculateDoesNotOverloadOperators(leftChild, leftValue);
         ValueFromBlock cellResult = m_out.anchor(m_out.equal(rightCell, leftValue));
         m_out.jump(continuation);
 
@@ -23369,6 +23379,18 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(continuation, lastNext);
         setBoolean(m_out.phi(Int32, cellResult, notCellResult));
+    }
+
+    void speculateDoesNotOverloadOperators(Edge edge, LValue cell)
+    {
+        if (!m_graph.mayOverloadOperators(provenType(edge)))
+            return;
+
+        speculate(
+            BadType, jsValueValue(cell), edge.node(),
+            m_out.testNonZero32(
+                m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoFlags),
+                m_out.constInt32(OverloadsOperators)));
     }
 
     void speculateTruthyObject(Edge edge, LValue cell, SpeculatedType filter)

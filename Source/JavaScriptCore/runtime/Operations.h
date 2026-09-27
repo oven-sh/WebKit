@@ -36,6 +36,7 @@ class Register;
 class VM;
 
 enum class Concurrency : uint8_t;
+enum class OverloadableOperator : uint8_t;
 enum class JSBigIntComparisonMode : uint8_t;
 enum class JSBigIntComparisonResult : uint8_t;
 
@@ -44,6 +45,10 @@ typedef int64_t EncodedJSValue;
 #define InvalidPrototypeChain (std::numeric_limits<size_t>::max())
 
 NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject*, JSValue, JSValue);
+
+// For when either operand overloadsOperators(). The right operand of an operator that has none is empty.
+JS_EXPORT_PRIVATE NEVER_INLINE JSValue callOverloadedOperator(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
+JS_EXPORT_PRIVATE NEVER_INLINE bool compareWithOverloadedOperator(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
 JSString* jsTypeStringForValueWithConcurrency(VM&, JSGlobalObject*, JSValue, Concurrency);
 size_t normalizePrototypeChain(JSGlobalObject*, JSCell*, bool& sawPolyProto);
 
@@ -79,7 +84,7 @@ bool jsLessEq(JSGlobalObject*, JSValue, JSValue);
 JSValue jsAddNonNumber(JSGlobalObject*, JSValue, JSValue);
 JSValue jsAdd(JSGlobalObject*, JSValue, JSValue);
 
-template<typename DoubleOperation, typename BigIntOp>
+template<OverloadableOperator, typename DoubleOperation, typename BigIntOp>
 JSValue arithmeticBinaryOp(JSGlobalObject*, JSValue, JSValue, DoubleOperation&&, BigIntOp&&, ASCIILiteral);
 
 JSValue jsSub(JSGlobalObject*, JSValue, JSValue);
@@ -87,6 +92,8 @@ JSValue jsMul(JSGlobalObject*, JSValue, JSValue);
 JSValue jsDiv(JSGlobalObject*, JSValue, JSValue);
 JSValue jsRemainder(JSGlobalObject*, JSValue, JSValue);
 JSValue jsPow(JSGlobalObject*, JSValue, JSValue);
+JSValue jsNegate(JSGlobalObject*, JSValue);
+JSValue jsToNumericForPostfix(JSGlobalObject*, JSValue);
 JSValue jsInc(JSGlobalObject*, JSValue);
 JSValue jsDec(JSGlobalObject*, JSValue);
 JSValue jsBitwiseNot(JSGlobalObject*, JSValue);
@@ -97,7 +104,7 @@ JSValue jsLShift(JSGlobalObject*, JSValue, JSValue);
 JSValue jsRShift(JSGlobalObject*, JSValue, JSValue);
 JSValue jsURShift(JSGlobalObject*, JSValue, JSValue);
 
-template<typename Int32Operation, typename BigIntOp>
+template<OverloadableOperator, typename Int32Operation, typename BigIntOp>
 JSValue bitwiseBinaryOp(JSGlobalObject*, JSValue, JSValue, Int32Operation&&, BigIntOp&&, ASCIILiteral);
 JSValue jsBitwiseAnd(JSGlobalObject*, JSValue, JSValue);
 JSValue jsBitwiseOr(JSGlobalObject*, JSValue, JSValue);

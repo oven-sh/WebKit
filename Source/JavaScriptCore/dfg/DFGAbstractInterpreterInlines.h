@@ -296,6 +296,15 @@ inline ToThisResult isToThisAnIdentity(ECMAMode ecmaMode, AbstractValue& valueFo
 }
 
 template<typename AbstractStateType>
+bool AbstractInterpreter<AbstractStateType>::mayCallOverloadedOperator(Node* node)
+{
+    SpeculatedType types = forNode(node->child1()).m_type;
+    if (node->child2())
+        types |= forNode(node->child2()).m_type;
+    return m_graph.mayOverloadOperators(types);
+}
+
+template<typename AbstractStateType>
 bool AbstractInterpreter<AbstractStateType>::handleConstantBinaryBitwiseOp(Node* node)
 {
     JSValue left = forNode(node->child1()).value();
@@ -595,7 +604,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setTypeForNode(node, SpecBigInt);
         else {
             clobberWorld();
-            setTypeForNode(node, SpecInt32Only | SpecBigInt);
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else
+                setTypeForNode(node, SpecInt32Only | SpecBigInt);
         }
 
         break;
@@ -679,7 +691,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             }
 
             clobberWorld();
-            if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
                 setTypeForNode(node, SpecInt32Only);
             else if (value1.isType(SpecBigInt) || value2.isType(SpecBigInt))
                 setTypeForNode(node, SpecBigInt);
@@ -927,7 +941,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         else {
             DFG_ASSERT(m_graph, node, node->binaryUseKind() == UntypedUse);
             clobberWorld();
-            if (node->op() == ValueAdd)
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else if (node->op() == ValueAdd)
                 setTypeForNode(node, SpecString | SpecBytecodeNumber | SpecBigInt);
             else {
                 auto& value1 = forNode(node->child1());
@@ -1088,7 +1104,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case ValueNegate: {
         // FIXME: we could do much smarter things for BigInts, see ValueAdd/ValueSub.
         clobberWorld();
-        setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
+        if (mayCallOverloadedOperator(node))
+            makeHeapTopForNode(node);
+        else
+            setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
         break;
     }
 
@@ -1170,7 +1189,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setTypeForNode(node, SpecBigInt);
             break;
         default:
-            setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else
+                setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
             clobberWorld(); // Because of the call to ToNumeric()
             break;
         }
@@ -1199,7 +1221,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setTypeForNode(node, SpecBigInt);
         else {
             clobberWorld();
-            setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else
+                setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
         }
         break;
     }
@@ -1219,7 +1244,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             clobberWorld();
             auto& value1 = forNode(node->child1());
             auto& value2 = forNode(node->child2());
-            if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
                 setTypeForNode(node, SpecBytecodeNumber);
             else if (value1.isType(SpecBigInt) || value2.isType(SpecBigInt))
                 setTypeForNode(node, SpecBigInt);
@@ -1296,7 +1323,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             clobberWorld();
             auto& value1 = forNode(node->child1());
             auto& value2 = forNode(node->child2());
-            if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
+            if (mayCallOverloadedOperator(node))
+                makeHeapTopForNode(node);
+            else if (value1.isType(SpecFullNumber) || value2.isType(SpecFullNumber))
                 setTypeForNode(node, SpecBytecodeNumber);
             else if (value1.isType(SpecBigInt) || value2.isType(SpecBigInt))
                 setTypeForNode(node, SpecBigInt);
@@ -2416,7 +2445,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         if (node->op() == CompareEq) {
             SpeculatedType leftType = forNode(node->child1()).m_type;
             SpeculatedType rightType = forNode(node->child2()).m_type;
-            if (!valuesCouldBeEqual(leftType, rightType)) {
+            if (!valuesCouldBeEqual(leftType, rightType) && !mayCallOverloadedOperator(node)) {
                 setConstant(node, jsBoolean(false));
                 break;
             }
@@ -2447,7 +2476,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             }
         }
         
-        if (node->child1() == node->child2()) {
+        if (node->child1() == node->child2() && !mayCallOverloadedOperator(node)) {
             auto& value = forNode(node->child1());
             if (node->isBinaryUseKind(Int32Use)
                 || node->isBinaryUseKind(Int52RepUse)
@@ -3641,7 +3670,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         }
 
         clobberWorld();
-        setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
+        if (mayCallOverloadedOperator(node))
+            setTypeForNode(node, SpecBytecodeNumber | SpecBigInt | SpecObjectOther);
+        else
+            setTypeForNode(node, SpecBytecodeNumber | SpecBigInt);
         break;
     }
 

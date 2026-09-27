@@ -234,6 +234,10 @@ private:
     
     bool handleConstantBinaryBitwiseOp(Node*);
 
+    // Whether an operand may be of a class that overloads operators. Then what an arithmetic
+    // operator gives is up to the class.
+    bool mayCallOverloadedOperator(Node*);
+
     template<typename Functor>
     void forAllValues(unsigned indexInBlock, Functor&);
     

@@ -44,6 +44,42 @@ class JSArrayBufferView;
 class Snippet;
 struct HashTable;
 
+// The operators that a class with OverloadsOperators gives a meaning of its own, when either operand
+// is an object of it.
+//
+// The rest keep theirs, because more than the operator's own code depends on it:
+//
+//     === !==          are identity
+//     == != with null or undefined for the other operand ask whether there is anything there
+//     + with a string for the other operand concatenates, and "a" + x + "b" is not compiled as additions
+//     unary +          gives a number, and what is compiled for +x - 1 does not check
+//     >>>              gives a number, likewise
+//
+// x != y is !(x == y), x++ is x = x + 1, and x += y is x = x + y, as they are for any operands.
+enum class OverloadableOperator : uint8_t {
+    // These give any value.
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Exponentiate,
+    LeftShift,
+    RightShift,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    // These have one operand, which is the left.
+    Negate,
+    BitwiseNot,
+    // These give a boolean.
+    Equal,
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+};
+
 #define METHOD_TABLE_ENTRY(method) \
     WTF_VTBL_FUNCPTR_PTRAUTH_STR("MethodTable." #method) method
 
@@ -81,6 +117,10 @@ struct MethodTable {
 
     using CustomHasInstanceFunctionPtr = bool (*)(JSObject*, JSGlobalObject*, JSValue);
     CustomHasInstanceFunctionPtr METHOD_TABLE_ENTRY(customHasInstance);
+
+    // The class is the left operand's if that has OverloadsOperators, and otherwise the right's.
+    using OperateFunctionPtr = JSValue (*)(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
+    OperateFunctionPtr METHOD_TABLE_ENTRY(operate);
 
     using DefineOwnPropertyFunctionPtr = bool (*)(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool);
     DefineOwnPropertyFunctionPtr METHOD_TABLE_ENTRY(defineOwnProperty);
@@ -146,6 +186,7 @@ struct MethodTable {
         &ClassName::getOwnPropertyNames, \
         &ClassName::getOwnSpecialPropertyNames, \
         &ClassName::customHasInstance, \
+        &ClassName::operate, \
         &ClassName::defineOwnProperty, \
         &ClassName::preventExtensions, \
         &ClassName::isExtensible, \

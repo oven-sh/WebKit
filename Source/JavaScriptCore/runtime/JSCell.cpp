@@ -234,6 +234,12 @@ bool JSCell::customHasInstance(JSObject*, JSGlobalObject*, JSValue)
     return false;
 }
 
+JSValue JSCell::operate(JSGlobalObject*, OverloadableOperator, JSValue, JSValue)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+    return { };
+}
+
 bool JSCell::defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool)
 {
     RELEASE_ASSERT_NOT_REACHED();

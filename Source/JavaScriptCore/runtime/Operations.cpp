@@ -32,10 +32,32 @@ bool JSValue::equalSlowCase(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     return equalSlowCaseInline(globalObject, v1, v2);
 }
 
+JSValue callOverloadedOperator(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+{
+    ASSERT(left.overloadsOperators() || right.overloadsOperators());
+    JSCell* cell = left.overloadsOperators() ? left.asCell() : right.asCell();
+    return cell->methodTable()->operate(globalObject, op, left, right);
+}
+
+bool compareWithOverloadedOperator(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(op >= OverloadableOperator::Equal);
+    JSValue result = callOverloadedOperator(globalObject, op, left, right);
+    RETURN_IF_EXCEPTION(scope, false);
+    ASSERT(result.isBoolean());
+    return result.asBoolean();
+}
+
 NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if ((v1.overloadsOperators() || v2.overloadsOperators()) && !v1.isString() && !v2.isString()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::Add, v1, v2));
+
     JSValue p1 = v1.toPrimitive(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue p2 = v2.toPrimitive(globalObject);
@@ -71,7 +93,7 @@ NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject* globalObject, JSValue v1, JSV
         return JSBigInt::add(globalObject, left, right);
     };
 
-    RELEASE_AND_RETURN(scope, arithmeticBinaryOp(globalObject, p1, p2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in addition."_s));
+    RELEASE_AND_RETURN(scope, arithmeticBinaryOp<OverloadableOperator::Add>(globalObject, p1, p2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in addition."_s));
 }
 
 JSString* jsTypeStringForValueWithConcurrency(VM& vm, JSGlobalObject* globalObject, JSValue v, Concurrency concurrency)

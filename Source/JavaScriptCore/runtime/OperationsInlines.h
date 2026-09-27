@@ -447,6 +447,12 @@ ALWAYS_INLINE bool jsLess(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
         return codePointCompareLessThan(s1, s2);
     }
 
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]] {
+        if (leftFirst)
+            RELEASE_AND_RETURN(scope, compareWithOverloadedOperator(globalObject, OverloadableOperator::Less, v1, v2));
+        RELEASE_AND_RETURN(scope, compareWithOverloadedOperator(globalObject, OverloadableOperator::Greater, v2, v1));
+    }
+
     double n1;
     double n2;
     JSValue p1;
@@ -495,6 +501,12 @@ ALWAYS_INLINE bool jsLessEq(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         auto s2 = asString(v2)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         return !codePointCompareLessThan(s2, s1);
+    }
+
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]] {
+        if (leftFirst)
+            RELEASE_AND_RETURN(scope, compareWithOverloadedOperator(globalObject, OverloadableOperator::LessOrEqual, v1, v2));
+        RELEASE_AND_RETURN(scope, compareWithOverloadedOperator(globalObject, OverloadableOperator::GreaterOrEqual, v2, v1));
     }
 
     double n1;
@@ -559,11 +571,14 @@ ALWAYS_INLINE JSValue jsAdd(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     return jsAddNonNumber(globalObject, v1, v2);
 }
 
-template<typename DoubleOperation, typename BigIntOp>
+template<OverloadableOperator op, typename DoubleOperation, typename BigIntOp>
 ALWAYS_INLINE JSValue arithmeticBinaryOp(JSGlobalObject* globalObject, JSValue v1, JSValue v2, DoubleOperation&& doubleOp, BigIntOp&& bigIntOp, ASCIILiteral errorMessage)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, op, v1, v2));
 
     JSValue leftNumeric = v1.toNumeric(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -603,7 +618,7 @@ ALWAYS_INLINE JSValue jsSub(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::sub(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in subtraction."_s);
+    return arithmeticBinaryOp<OverloadableOperator::Subtract>(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in subtraction."_s);
 }
 
 ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -616,7 +631,7 @@ ALWAYS_INLINE JSValue jsMul(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::multiply(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in multiplication."_s);
+    return arithmeticBinaryOp<OverloadableOperator::Multiply>(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in multiplication."_s);
 }
 
 ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -629,7 +644,7 @@ ALWAYS_INLINE JSValue jsDiv(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::divide(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in division."_s);
+    return arithmeticBinaryOp<OverloadableOperator::Divide>(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in division."_s);
 }
 
 ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -642,7 +657,7 @@ ALWAYS_INLINE JSValue jsRemainder(JSGlobalObject* globalObject, JSValue v1, JSVa
         return JSBigInt::remainder(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in remainder."_s);
+    return arithmeticBinaryOp<OverloadableOperator::Remainder>(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in remainder."_s);
 }
 
 ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -655,13 +670,47 @@ ALWAYS_INLINE JSValue jsPow(JSGlobalObject* globalObject, JSValue v1, JSValue v2
         return JSBigInt::exponentiate(globalObject, left, right);
     };
 
-    return arithmeticBinaryOp(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in exponentiation."_s);
+    return arithmeticBinaryOp<OverloadableOperator::Exponentiate>(globalObject, v1, v2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in exponentiation."_s);
+}
+
+ALWAYS_INLINE JSValue jsNegate(JSGlobalObject* globalObject, JSValue v)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::Negate, v, { }));
+
+    JSValue primValue = v.toPrimitive(globalObject, PreferNumber);
+    RETURN_IF_EXCEPTION(scope, { });
+
+#if USE(BIGINT32)
+    if (primValue.isBigInt32())
+        RELEASE_AND_RETURN(scope, JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32()));
+#endif
+    if (primValue.isHeapBigInt())
+        RELEASE_AND_RETURN(scope, JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt()));
+
+    double number = primValue.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsNumber(-number);
+}
+
+// What x++ and x-- give: x as it was, made a number if it can only be added to as one.
+ALWAYS_INLINE JSValue jsToNumericForPostfix(JSGlobalObject* globalObject, JSValue v)
+{
+    if (v.overloadsOperators()) [[unlikely]]
+        return v;
+    return v.toNumeric(globalObject);
 }
 
 ALWAYS_INLINE JSValue jsInc(JSGlobalObject* globalObject, JSValue v)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::Add, v, jsNumber(1)));
 
     auto operandNumeric = v.toNumeric(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -683,6 +732,9 @@ ALWAYS_INLINE JSValue jsDec(JSGlobalObject* globalObject, JSValue v)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (v.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::Subtract, v, jsNumber(1)));
+
     auto operandNumeric = v.toNumeric(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -702,6 +754,9 @@ ALWAYS_INLINE JSValue jsBitwiseNot(JSGlobalObject* globalObject, JSValue v)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::BitwiseNot, v, { }));
 
     auto operandNumeric = v.toBigIntOrInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -723,6 +778,9 @@ ALWAYS_INLINE JSValue shift(JSGlobalObject* globalObject, JSValue v1, JSValue v2
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, isLeft ? OverloadableOperator::LeftShift : OverloadableOperator::RightShift, v1, v2));
 
     auto leftNumeric = v1.toBigIntOrInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -801,11 +859,14 @@ ALWAYS_INLINE JSValue jsURShift(JSGlobalObject* globalObject, JSValue left, JSVa
     return jsNumber(static_cast<int32_t>(leftUint32.value() >> (rightUint32.value() & 31)));
 }
 
-template<typename Int32Operation, typename BigIntOp>
+template<OverloadableOperator op, typename Int32Operation, typename BigIntOp>
 ALWAYS_INLINE JSValue bitwiseBinaryOp(JSGlobalObject* globalObject, JSValue v1, JSValue v2, Int32Operation&& int32Op, BigIntOp&& bigIntOp, ASCIILiteral errorMessage)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, op, v1, v2));
 
     auto leftNumeric = v1.toBigIntOrInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -847,7 +908,7 @@ ALWAYS_INLINE JSValue jsBitwiseAnd(JSGlobalObject* globalObject, JSValue v1, JSV
 
     // FIXME: currently, for pairs of BigInt32, we unbox them, do the "and" and re-box them.
     // We could do it directly on the JSValue.
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'and' operation."_s);
+    return bitwiseBinaryOp<OverloadableOperator::BitwiseAnd>(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'and' operation."_s);
 }
 
 ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -863,7 +924,7 @@ ALWAYS_INLINE JSValue jsBitwiseOr(JSGlobalObject* globalObject, JSValue v1, JSVa
         return JSBigInt::bitwiseOr(globalObject, left, right);
     };
 
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'or' operation."_s);
+    return bitwiseBinaryOp<OverloadableOperator::BitwiseOr>(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'or' operation."_s);
 }
 
 ALWAYS_INLINE JSValue jsBitwiseXor(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
@@ -878,7 +939,7 @@ ALWAYS_INLINE JSValue jsBitwiseXor(JSGlobalObject* globalObject, JSValue v1, JSV
         return JSBigInt::bitwiseXor(globalObject, left, right);
     };
 
-    return bitwiseBinaryOp(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'xor' operation."_s);
+    return bitwiseBinaryOp<OverloadableOperator::BitwiseXor>(globalObject, v1, v2, int32Op, bigIntOp, "Invalid mix of BigInt and other type in bitwise 'xor' operation."_s);
 }
 
 ALWAYS_INLINE EncodedJSValue getByValWithIndexAndThis(JSGlobalObject* globalObject, JSCell* base, uint32_t index, JSValue thisValue)

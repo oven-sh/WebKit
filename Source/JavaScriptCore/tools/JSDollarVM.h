@@ -63,6 +63,8 @@ public:
 
     Structure* objectDoingSideEffectPutWithoutCorrectSlotStatusStructure() { return m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.get(); }
     Structure* testCustomGetterSetterStructure() { return m_testCustomGetterSetterStructureID.get(); }
+    // Made when it is first asked for. That there is one is what VM::noObjectOverloadsOperators() is about.
+    Structure* objectOverloadingOperatorsStructure(VM&, JSGlobalObject*);
 
 #if ENABLE(JIT)
     RefPtr<PolymorphicAccessJITStubRoutine> m_testStubRoutine;
@@ -82,6 +84,7 @@ private:
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
     WriteBarrierStructureID m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID;
+    WriteBarrierStructureID m_objectOverloadingOperatorsStructureID;
     WriteBarrierStructureID m_testCustomGetterSetterStructureID;
 };
 

@@ -1816,39 +1816,18 @@ void SpeculativeJIT::compileObjectToObjectOrOtherEquality(Edge leftChild, Edge r
     GPRReg op2GPR = op2.gpr();
     GPRReg resultGPR = result.gpr();
 
-    bool masqueradesAsUndefinedWatchpointSetValid =
-        masqueradesAsUndefinedWatchpointSetIsStillValid();
-
-    if (masqueradesAsUndefinedWatchpointSetValid) {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
-    } else {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
-        speculationCheck(BadType, JSValueSource(op1GPR), leftChild,
-            branchTest8(
-                NonZero,
-                Address(op1GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-    }
+    DFG_TYPE_CHECK(
+        JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
+    speculateEqualityIsIdentity(leftChild, op1GPR);
     
     // It seems that most of the time when programs do a == b where b may be either null/undefined
     // or an object, b is usually an object. Balance the branches to make that case fast.
     Jump rightNotCell = branchIfNotCell(op2GPR);
     
     // We know that within this branch, rightChild must be a cell. 
-    if (masqueradesAsUndefinedWatchpointSetValid) {
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
-    } else {
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
-        speculationCheck(BadType, JSValueSource(op2GPR), rightChild,
-            branchTest8(
-                NonZero,
-                Address(op2GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-    }
+    DFG_TYPE_CHECK(
+        JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
+    speculateEqualityIsIdentity(rightChild, op2GPR);
     
     // At this point we know that we can perform a straight-forward equality comparison on pointer
     // values because both left and right are pointers to objects that have no special equality
@@ -1889,39 +1868,18 @@ void SpeculativeJIT::compilePeepHoleObjectToObjectOrOtherEquality(Edge leftChild
     GPRReg op2GPR = op2.gpr();
     GPRReg resultGPR = result.gpr();
     
-    bool masqueradesAsUndefinedWatchpointSetValid = 
-        masqueradesAsUndefinedWatchpointSetIsStillValid();
-
-    if (masqueradesAsUndefinedWatchpointSetValid) {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
-    } else {
-        DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
-        speculationCheck(BadType, JSValueSource(op1GPR), leftChild,
-            branchTest8(
-                NonZero,
-                Address(op1GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-    }
+    DFG_TYPE_CHECK(
+        JSValueSource(op1GPR), leftChild, SpecObject, branchIfNotObject(op1GPR));
+    speculateEqualityIsIdentity(leftChild, op1GPR);
 
     // It seems that most of the time when programs do a == b where b may be either null/undefined
     // or an object, b is usually an object. Balance the branches to make that case fast.
     Jump rightNotCell = branchIfNotCell(op2GPR);
     
     // We know that within this branch, rightChild must be a cell. 
-    if (masqueradesAsUndefinedWatchpointSetValid) {
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
-    } else {
-        DFG_TYPE_CHECK(
-            JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
-        speculationCheck(BadType, JSValueSource(op2GPR), rightChild,
-            branchTest8(
-                NonZero,
-                Address(op2GPR, JSCell::typeInfoFlagsOffset()),
-                TrustedImm32(MasqueradesAsUndefined)));
-    }
+    DFG_TYPE_CHECK(
+        JSValueSource(op2GPR), rightChild, (~SpecCellCheck) | SpecObject, branchIfNotObject(op2GPR));
+    speculateEqualityIsIdentity(rightChild, op2GPR);
     
     // At this point we know that we can perform a straight-forward equality comparison on pointer
     // values because both left and right are pointers to objects that have no special equality

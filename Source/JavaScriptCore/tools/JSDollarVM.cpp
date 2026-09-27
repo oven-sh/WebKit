@@ -492,6 +492,85 @@ void SimpleObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(SimpleObject);
 
+// Leaves what an operator does with it to a function: handler(operator, left, right).
+class ObjectOverloadingOperators : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverloadsOperators;
+
+    ObjectOverloadingOperators(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+        DollarVMAssertScope assertScope;
+    }
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    {
+        return &vm.cellSpace();
+    }
+
+    static ObjectOverloadingOperators* create(VM& vm, Structure* structure, JSObject* handler)
+    {
+        DollarVMAssertScope assertScope;
+        auto* object = new (NotNull, allocateCell<ObjectOverloadingOperators>(vm)) ObjectOverloadingOperators(vm, structure);
+        object->finishCreation(vm);
+        object->m_handler.set(vm, object, handler);
+        return object;
+    }
+
+    DECLARE_VISIT_CHILDREN;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        DollarVMAssertScope assertScope;
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+    {
+        DollarVMAssertScope assertScope;
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        static constexpr ASCIILiteral names[] = { "+"_s, "-"_s, "*"_s, "/"_s, "%"_s, "**"_s, "<<"_s, ">>"_s, "&"_s, "|"_s, "^"_s, "negate"_s, "~"_s, "=="_s, "<"_s, "<="_s, ">"_s, ">="_s };
+
+        auto* object = dynamicDowncast<ObjectOverloadingOperators>(left);
+        if (!object)
+            object = uncheckedDowncast<ObjectOverloadingOperators>(right);
+        JSObject* handler = object->m_handler.get();
+
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(vm, String(names[static_cast<unsigned>(op)])));
+        arguments.append(left);
+        if (right)
+            arguments.append(right);
+        ASSERT(!arguments.hasOverflowed());
+        JSValue result = call(globalObject, handler, arguments, "The handler is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (op >= OverloadableOperator::Equal)
+            return jsBoolean(result.toBoolean(globalObject));
+        return result;
+    }
+
+    DECLARE_INFO;
+
+private:
+    WriteBarrier<JSObject> m_handler;
+};
+
+template<typename Visitor>
+void ObjectOverloadingOperators::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    DollarVMAssertScope assertScope;
+    auto* thisObject = uncheckedDowncast<ObjectOverloadingOperators>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_handler);
+}
+
+DEFINE_VISIT_CHILDREN(ObjectOverloadingOperators);
+
 class ImpureGetter : public JSNonFinalObject {
 public:
     ImpureGetter(VM& vm, Structure* structure)
@@ -1922,6 +2001,7 @@ void JSTestCustomGetterSetter::finishCreation(VM& vm)
 const ClassInfo Element::s_info = { "Element"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Element) };
 const ClassInfo Root::s_info = { "Root"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(Root) };
 const ClassInfo SimpleObject::s_info = { "SimpleObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SimpleObject) };
+const ClassInfo ObjectOverloadingOperators::s_info = { "ObjectOverloadingOperators"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectOverloadingOperators) };
 const ClassInfo ImpureGetter::s_info = { "ImpureGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImpureGetter) };
 const ClassInfo CustomGetter::s_info = { "CustomGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CustomGetter) };
 const ClassInfo RuntimeArray::s_info = { "RuntimeArray"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RuntimeArray) };
@@ -2248,6 +2328,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateRoot);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateElement);
 static JSC_DECLARE_HOST_FUNCTION(functionGetElement);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateSimpleObject);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateObjectOverloadingOperators);
 static JSC_DECLARE_HOST_FUNCTION(functionGetHiddenValue);
 static JSC_DECLARE_HOST_FUNCTION(functionSetHiddenValue);
 static JSC_DECLARE_HOST_FUNCTION(functionShadowChickenFunctionsOnStack);
@@ -3794,6 +3875,28 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateSimpleObject, (JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
     return JSValue::encode(SimpleObject::create(vm, globalObject));
+}
+
+// Usage: $vm.createObjectOverloadingOperators(function (operator, left, right) { ... })
+JSC_DEFINE_HOST_FUNCTION(functionCreateObjectOverloadingOperators, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    JSObject* handler = callFrame->argument(0).getObject();
+    if (!handler)
+        return throwVMTypeError(globalObject, scope, "Expected a function"_s);
+    return JSValue::encode(ObjectOverloadingOperators::create(vm, dollarVM->objectOverloadingOperatorsStructure(vm, globalObject), handler));
+}
+
+Structure* JSDollarVM::objectOverloadingOperatorsStructure(VM& vm, JSGlobalObject* globalObject)
+{
+    if (!m_objectOverloadingOperatorsStructureID)
+        m_objectOverloadingOperatorsStructureID.set(vm, this, ObjectOverloadingOperators::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    return m_objectOverloadingOperatorsStructureID.get();
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionGetHiddenValue, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -5972,6 +6075,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "getElement"_s, functionGetElement, 1);
 
     addConstructibleFunction(vm, allowIfNotFuzz, "SimpleObject"_s, functionCreateSimpleObject, 0);
+    addFunction(vm, allowIfNotFuzz, "createObjectOverloadingOperators"_s, functionCreateObjectOverloadingOperators, 1);
     addFunction(vm, allowIfNotFuzz, "getHiddenValue"_s, functionGetHiddenValue, 1);
     addFunction(vm, allowIfNotFuzz, "setHiddenValue"_s, functionSetHiddenValue, 2);
 
@@ -6144,6 +6248,7 @@ void JSDollarVM::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSDollarVM* thisObject = uncheckedDowncast<JSDollarVM>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID);
+    visitor.append(thisObject->m_objectOverloadingOperatorsStructureID);
     visitor.append(thisObject->m_testCustomGetterSetterStructureID);
 }
 

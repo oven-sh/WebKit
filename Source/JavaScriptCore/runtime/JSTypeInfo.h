@@ -45,6 +45,7 @@ static constexpr unsigned OverridesGetCallData = 1 << 2; // Need this flag if yo
 static constexpr unsigned OverridesGetOwnPropertySlot = 1 << 3;
 static constexpr unsigned OverridesGetPrototype = 1 << 4;
 static constexpr unsigned HasStaticPropertyTable = 1 << 5;
+static constexpr unsigned OverloadsOperators = 1 << 6; // What an operator does with such an object for an operand is up to its class: MethodTable::operate. See OverloadableOperator. Its JSType has to be one that the DFG takes for SpecObjectOther.
 static constexpr unsigned TypeInfoPerCellBit = 1 << 7; // Unlike other inline flags, this will only be set on the cell itself and will not be set on the Structure.
 
 // Out of line flags.
@@ -96,8 +97,10 @@ public:
     bool overridesGetCallData() const { return isSetOnFlags1<OverridesGetCallData>(); }
     bool overridesGetOwnPropertySlot() const { return overridesGetOwnPropertySlot(inlineTypeFlags()); }
     bool hasStaticPropertyTable() const { return isSetOnFlags1<HasStaticPropertyTable>(); }
+    bool overloadsOperators() const { return isSetOnFlags1<OverloadsOperators>(); }
     static bool overridesGetOwnPropertySlot(InlineTypeFlags flags) { return flags & OverridesGetOwnPropertySlot; }
     static bool hasStaticPropertyTable(InlineTypeFlags flags) { return flags & HasStaticPropertyTable; }
+    static bool overloadsOperators(InlineTypeFlags flags) { return flags & OverloadsOperators; }
     static bool perCellBit(InlineTypeFlags flags) { return flags & TypeInfoPerCellBit; }
     bool structureIsImmortal() const { return isSetOnFlags2<StructureIsImmortal>(); }
     bool overridesGetOwnPropertyNames() const { return isSetOnFlags2<OverridesGetOwnPropertyNames>(); }

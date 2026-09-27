@@ -940,6 +940,30 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set, LinkerIR::Type::MasqueradesAsUndefinedWatchpointSet);
     }
 
+    // Whether this code is thrown away when there comes to be an object that overloads operators.
+    bool isWatchingNoObjectOverloadsOperators()
+    {
+        if (m_plan.isUnlinked())
+            return false;
+
+        InlineWatchpointSet& set = m_vm.noObjectOverloadsOperators();
+        if (watchpoints().isWatched(set))
+            return true;
+
+        if (set.isStillValid()) {
+            watchpoints().addLazily(set);
+            return true;
+        }
+
+        return false;
+    }
+
+    // Whether a value of the type may be an object that overloads operators, which has no type to itself.
+    bool mayOverloadOperators(SpeculatedType type)
+    {
+        return (type & SpecObjectOther) && !isWatchingNoObjectOverloadsOperators();
+    }
+
     bool isWatchingArrayBufferDetachWatchpoint(Node* node)
     {
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);

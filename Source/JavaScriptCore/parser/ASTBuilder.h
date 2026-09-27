@@ -1282,31 +1282,32 @@ ExpressionNode* ASTBuilder::makeBitwiseNotNode(const JSTokenLocation& location, 
     return new (m_parserArena) BitwiseNotNode(location, expr);
 }
 
+// +x is x for a number alone. It throws for a BigInt, and makes a number of an object, which may overload the
+// operator that x would be an operand of.
+static inline ExpressionNode* stripUnaryPlusFromNumber(ExpressionNode* expr)
+{
+    auto* stripped = expr->stripUnaryPlus();
+    return stripped->isNumber() ? stripped : expr;
+}
+
 ExpressionNode* ASTBuilder::makePowNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    auto* strippedExpr1 = expr1->stripUnaryPlus();
-    auto* strippedExpr2 = expr2->stripUnaryPlus();
+    expr1 = stripUnaryPlusFromNumber(expr1);
+    expr2 = stripUnaryPlusFromNumber(expr2);
 
-    if (strippedExpr1->isNumber() && strippedExpr2->isNumber()) {
-        const NumberNode& numberExpr1 = static_cast<NumberNode&>(*strippedExpr1);
-        const NumberNode& numberExpr2 = static_cast<NumberNode&>(*strippedExpr2);
+    if (expr1->isNumber() && expr2->isNumber()) {
+        const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
+        const NumberNode& numberExpr2 = static_cast<NumberNode&>(*expr2);
         return createNumberFromBinaryOperation(location, operationMathPow(numberExpr1.value(), numberExpr2.value()), numberExpr1, numberExpr2);
     }
-
-    if (strippedExpr1->isNumber())
-        expr1 = strippedExpr1;
-    if (strippedExpr2->isNumber())
-        expr2 = strippedExpr2;
 
     return new (m_parserArena) PowNode(location, expr1, expr2, rightHasAssignments);
 }
 
 ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
+    expr1 = stripUnaryPlusFromNumber(expr1);
+    expr2 = stripUnaryPlusFromNumber(expr2);
 
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
@@ -1314,21 +1315,13 @@ ExpressionNode* ASTBuilder::makeMultNode(const JSTokenLocation& location, Expres
         return createNumberFromBinaryOperation(location, numberExpr1.value() * numberExpr2.value(), numberExpr1, numberExpr2);
     }
 
-    if (expr1->isNumber() && static_cast<NumberNode*>(expr1)->value() == 1)
-        return new (m_parserArena) UnaryPlusNode(location, expr2);
-
-    if (expr2->isNumber() && static_cast<NumberNode*>(expr2)->value() == 1)
-        return new (m_parserArena) UnaryPlusNode(location, expr1);
-
     return new (m_parserArena) MultNode(location, expr1, expr2, rightHasAssignments);
 }
 
 ExpressionNode* ASTBuilder::makeDivNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
+    expr1 = stripUnaryPlusFromNumber(expr1);
+    expr2 = stripUnaryPlusFromNumber(expr2);
 
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
@@ -1343,10 +1336,8 @@ ExpressionNode* ASTBuilder::makeDivNode(const JSTokenLocation& location, Express
 
 ExpressionNode* ASTBuilder::makeModNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
+    expr1 = stripUnaryPlusFromNumber(expr1);
+    expr2 = stripUnaryPlusFromNumber(expr2);
 
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);
@@ -1369,10 +1360,8 @@ ExpressionNode* ASTBuilder::makeAddNode(const JSTokenLocation& location, Express
 
 ExpressionNode* ASTBuilder::makeSubNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
 {
-    // FIXME: Unary + change the evaluation order.
-    // https://bugs.webkit.org/show_bug.cgi?id=159968
-    expr1 = expr1->stripUnaryPlus();
-    expr2 = expr2->stripUnaryPlus();
+    expr1 = stripUnaryPlusFromNumber(expr1);
+    expr2 = stripUnaryPlusFromNumber(expr2);
 
     if (expr1->isNumber() && expr2->isNumber()) {
         const NumberNode& numberExpr1 = static_cast<NumberNode&>(*expr1);

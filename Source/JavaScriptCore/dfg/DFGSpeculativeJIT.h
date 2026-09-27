@@ -289,6 +289,9 @@ public:
         return m_graph.isWatchingMasqueradesAsUndefinedWatchpointSet(m_currentNode);
     }
 
+    // Exits unless == on the object is a comparison of addresses.
+    void speculateEqualityIsIdentity(Edge, GPRReg cellGPR);
+
     void compileStoreBarrier(Node*);
 
     // Called by the speculative operand types, below, to fill operand to
