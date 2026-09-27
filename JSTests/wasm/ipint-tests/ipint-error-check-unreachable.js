@@ -13,7 +13,8 @@ let wat = `
 async function test() {
     const instance = await instantiate(wat, {});
     const { test } = instance.exports
-    assert.throws(() => {test()}, WebAssembly.RuntimeError, "Unreachable code should not be executed (evaluating 'test()')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'test()')".
+    assert.throws(() => {test()}, WebAssembly.RuntimeError, "Unreachable code should not be executed");
 }
 
 await assert.asyncTest(test())

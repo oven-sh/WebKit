@@ -33,7 +33,8 @@ async function test() {
     init(0, 0, 69);
     assert.eq(decodeString(memory.buffer), "the option is whether or not to let failure be the last thing you do.");
     yeet();
-    assert.throws(() => {init(0, 0, 5)}, WebAssembly.RuntimeError, "Out of bounds memory access (evaluating 'init(0, 0, 5)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'init(0, 0, 5)')".
+    assert.throws(() => {init(0, 0, 5)}, WebAssembly.RuntimeError, "Out of bounds memory access");
 }
 
 await assert.asyncTest(test())

@@ -17,15 +17,17 @@ async function test() {
     assert.eq(truncS(-2147483648.1), -2147483648);
     assert.eq(truncS(-2147483648.9), -2147483648);
     assert.eq(truncS(2147483647.9), 2147483647);
-    assert.throws(() => truncS(-2147483649), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
-    assert.throws(() => truncS(2147483648), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
-    assert.throws(() => truncS(NaN), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => truncS(-2147483649), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
+    assert.throws(() => truncS(2147483648), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
+    assert.throws(() => truncS(NaN), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
 
     assert.eq(truncU(-0.9), 0);
     assert.eq(truncU(4294967295.9), -1);
-    assert.throws(() => truncU(-1), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
-    assert.throws(() => truncU(4294967296), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
-    assert.throws(() => truncU(NaN), WebAssembly.RuntimeError, `Out of bounds Trunc operation (evaluating 'func(...args)')`);
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => truncU(-1), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
+    assert.throws(() => truncU(4294967296), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
+    assert.throws(() => truncU(NaN), WebAssembly.RuntimeError, `Out of bounds Trunc operation`);
 }
 
 await assert.asyncTest(test());

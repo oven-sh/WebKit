@@ -66,7 +66,8 @@ function wasmFrameCountFromError(e) {
     }
 
     for (let i = 0; i < 5000; i++) {
-        const e = assert.throws(() => foo(5, address), WebAssembly.RuntimeError, "Out of bounds memory access (evaluating 'foo(x - 1, address)')");
+        // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'foo(x - 1, address)')".
+        const e = assert.throws(() => foo(5, address), WebAssembly.RuntimeError, "Out of bounds memory access");
         // There are 5 total calls, and each call does:
         // JS entry, wasm entry, js call stub.
         // The last call that traps just has JS entry and wasm entry.

@@ -15,7 +15,8 @@ let wat = `
 async function test() {
     const instance = await instantiate(wat, {});
     const { test } = instance.exports
-    assert.throws(() => {test(1, 0)}, WebAssembly.RuntimeError, "Division by zero (evaluating 'test(1, 0)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'test(1, 0)')".
+    assert.throws(() => {test(1, 0)}, WebAssembly.RuntimeError, "Division by zero");
 }
 
 await assert.asyncTest(test())
