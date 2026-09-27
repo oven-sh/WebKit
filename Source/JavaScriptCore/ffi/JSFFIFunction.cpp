@@ -33,6 +33,7 @@
 #include "FFIConversions.h"
 #include "FFISignature.h"
 #include "JITCode.h"
+#include "JITThunks.h"
 #include "JSCInlines.h"
 #include "JSObjectInlines.h"
 #include "NativeExecutable.h"
@@ -118,17 +119,21 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 
     globalObject->ffiContext();
 
-    NativeExecutable* base = vm.getHostFunction(FFI::ffiHostCall, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
-
+    NativeExecutable* executable = nullptr;
     RefPtr<JITCode> stub;
 #if ENABLE(JIT)
     if (Options::useFFIICStub() && !hooks)
         stub = FFI::generateICStubCode(vm, globalObject, signature.get(), target);
+    if (stub) {
+        // Both JITCode objects belong to this executable alone, like those of an executable from getHostFunction().
+        // For a symbolic breakpoint the debugger swaps the code of each matching executable's JITCode objects in place
+        // (InspectorDebuggerAgent::didCreateNativeExecutable). Its RELEASE_ASSERTs fail on an object that two share.
+        Ref<JITCode> forConstruct = adoptRef(*new NativeJITCode(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(vm.jitStubs->ctiNativeConstruct(vm).retagged<JSEntryPtrTag>()), JITType::HostCallThunk, NoIntrinsic));
+        executable = NativeExecutable::create(vm, Ref<JITCode>(*stub), FFI::ffiHostCall, WTF::move(forConstruct), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
+    }
 #endif
-
-    NativeExecutable* executable = base;
-    if (stub)
-        executable = NativeExecutable::create(vm, Ref<JITCode>(*stub), FFI::ffiHostCall, base->generatedJITCodeForConstruct(), callHostFunctionAsConstructor, ImplementationVisibility::Public, length, name);
+    if (!executable)
+        executable = vm.getHostFunction(FFI::ffiHostCall, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
 
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTF::move(signature), target, WTF::move(stub), hooks);
     function->finishCreation(vm);

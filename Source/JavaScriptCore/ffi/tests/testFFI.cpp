@@ -58,6 +58,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutable.h"
 #include "GPRInfo.h"
+#include "InspectorFrontendChannel.h"
+#include "JITCode.h"
 #include "JSArrayBuffer.h"
 #include "JSArrayBufferView.h"
 #include "JSBigInt.h"
@@ -68,11 +70,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSFFIFunction.h"
 #include "JSFunction.h"
 #include "JSGlobalObject.h"
+#include "JSGlobalObjectDebugger.h"
 #include "JSGlobalObjectInlines.h"
+#include "JSGlobalObjectInspectorController.h"
 #include "JSLock.h"
 #include "JSString.h"
 #include "JSTypedArrays.h"
 #include "MacroAssemblerCodeRef.h"
+#include "NativeExecutable.h"
 #include "ObjectConstructor.h"
 #include "Protect.h"
 #include "PureNaN.h"
@@ -85,6 +90,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <wtf/JSONValues.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
@@ -2398,6 +2404,182 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
     }
 }
 
+#if ENABLE(REMOTE_INSPECTOR)
+
+// The part of an inspector frontend that a symbolic breakpoint needs. A command goes straight to the global object's
+// inspector controller, which answers before dispatchMessageFromFrontend() returns, and a pause is resumed at once.
+class TestInspectorFrontend final : public Inspector::FrontendChannel {
+public:
+    explicit TestInspectorFrontend(JSGlobalObject* globalObject)
+        : m_globalObject(globalObject)
+    {
+        s_connected = this;
+        m_globalObject->inspectorController().connectFrontend(*this, false, false);
+    }
+
+    ~TestInspectorFrontend()
+    {
+        if (auto* debugger = static_cast<Inspector::JSGlobalObjectDebugger*>(m_globalObject->debugger()))
+            debugger->runWhilePausedCallback = nullptr;
+        m_globalObject->inspectorController().disconnectFrontend(*this);
+        s_connected = nullptr;
+    }
+
+    // True if the backend answered with a result, false if it answered with an error.
+    bool send(ASCIILiteral method, ASCIILiteral params = "{}"_s)
+    {
+        int id = ++m_lastCommandID;
+        m_lastCommandSucceeded = false;
+        m_globalObject->inspectorController().dispatchMessageFromFrontend(makeString("{\"id\":"_s, id, ",\"method\":\""_s, method, "\",\"params\":"_s, params, '}'));
+        return m_lastCommandSucceeded;
+    }
+
+    // The debugger exists once Debugger.enable was sent. It calls this where Bun runs its inspector's message loop.
+    void resumeWhenPaused()
+    {
+        auto* debugger = static_cast<Inspector::JSGlobalObjectDebugger*>(m_globalObject->debugger());
+        FFI_CHECK(debugger);
+        if (!debugger)
+            return;
+        debugger->runWhilePausedCallback = [](JSGlobalObject&, bool&) {
+            FFI_CHECK(s_connected->send("Debugger.resume"_s));
+        };
+    }
+
+    unsigned pauseCount() const { return m_pauseCount; }
+    const String& lastPauseReason() const { return m_lastPauseReason; }
+    const String& lastPausedFunctionName() const { return m_lastPausedFunctionName; }
+
+private:
+    ConnectionType connectionType() const final { return ConnectionType::Remote; }
+
+    void sendMessageToFrontend(const String& message) final
+    {
+        RefPtr value = JSON::Value::parseJSON(message);
+        RefPtr object = value ? value->asObject() : nullptr;
+        if (!object)
+            return;
+        if (object->getInteger("id"_s) == m_lastCommandID) {
+            m_lastCommandSucceeded = !object->getValue("error"_s);
+            return;
+        }
+        if (object->getString("method"_s) != "Debugger.paused"_s)
+            return;
+        ++m_pauseCount;
+        RefPtr params = object->getObject("params"_s);
+        RefPtr data = params ? params->getObject("data"_s) : nullptr;
+        m_lastPauseReason = params ? params->getString("reason"_s) : String();
+        m_lastPausedFunctionName = data ? data->getString("name"_s) : String();
+    }
+
+    static TestInspectorFrontend* s_connected;
+
+    JSGlobalObject* m_globalObject;
+    int m_lastCommandID { 0 };
+    bool m_lastCommandSucceeded { false };
+    unsigned m_pauseCount { 0 };
+    String m_lastPauseReason;
+    String m_lastPausedFunctionName;
+};
+
+TestInspectorFrontend* TestInspectorFrontend::s_connected;
+
+// For a symbolic breakpoint ("pause when a function with this name is called") the debugger swaps the code of the
+// JITCode objects of every NativeExecutable with that name, in place, and RELEASE_ASSERTs that it does so once per
+// object (InspectorDebuggerAgent::didCreateNativeExecutable). A function with an IC stub has an executable of its own.
+// That executable used to share its construct JITCode with the executable VM::getHostFunction() caches for the same
+// name and arity, and so with every other function of that name and arity.
+static void testSymbolicBreakpointOnFFIFunction()
+{
+    VM& vm = *s_vm;
+    using T = FFI::Type;
+
+    // The debugger attaches to this global object, so s_globalObject stays without one. No other test makes a function
+    // of this name, so the breakpoint matches only the functions made here.
+    JSGlobalObject* globalObject = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
+    gcProtect(globalObject);
+    constexpr auto name = "symbolicBreakpointTarget"_s;
+    constexpr auto symbolicBreakpoint = "{\"symbol\":\"symbolicBreakpointTarget\"}"_s;
+
+    auto defineAdd = [&](ASCIILiteral property) -> JSFFIFunction* {
+        T argumentTypes[] = { T::Int32, T::Int32 };
+        RefPtr<FFI::Signature> signature = FFI::Signature::tryCreate(std::span<const T>(argumentTypes), T::Int32);
+        FFI_CHECK(!!signature);
+        if (!signature)
+            return nullptr;
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSFFIFunction* function = JSFFIFunction::create(vm, globalObject, globalObject->ffiFunctionStructure(), signature.releaseNonNull(), reinterpret_cast<void*>(ffi_add_i32), name);
+        FFI_CHECK(!scope.exception() && function);
+        if (scope.exception()) {
+            scope.clearException();
+            return nullptr;
+        }
+        if (function)
+            globalObject->putDirect(vm, Identifier::fromString(vm, property), function);
+        return function;
+    };
+    auto run = [&](ASCIILiteral source) -> JSValue {
+        NakedPtr<Exception> exception;
+        JSValue result = evaluate(globalObject, makeSource(source, SourceOrigin(), SourceTaintedOrigin::Untainted), JSValue(), exception);
+        FFI_CHECK(!exception);
+        return exception ? jsUndefined() : result;
+    };
+    auto entry = [](JSFFIFunction* function, CodeSpecializationKind kind) {
+        return function->executable()->generatedJITCodeFor(kind)->addressForCall(ArityCheckMode::ArityCheckNotRequired);
+    };
+
+    JSFFIFunction* first = defineAdd("first"_s);
+    JSFFIFunction* second = defineAdd("second"_s);
+    if (!first || !second)
+        return;
+    FFI_CHECK(run("first(40, 2) + second(1, 2)"_s) == jsNumber(45));
+    if (first->executable() != second->executable())
+        FFI_CHECK(first->executable()->generatedJITCodeFor(CodeSpecializationKind::CodeForConstruct).ptr() != second->executable()->generatedJITCodeFor(CodeSpecializationKind::CodeForConstruct).ptr());
+
+    auto callEntry = entry(first, CodeSpecializationKind::CodeForCall);
+    auto constructEntry = entry(first, CodeSpecializationKind::CodeForConstruct);
+    {
+        TestInspectorFrontend frontend(globalObject);
+        FFI_CHECK(frontend.send("Debugger.enable"_s));
+        FFI_CHECK(frontend.send("Debugger.setBreakpointsActive"_s, "{\"active\":true}"_s));
+        frontend.resumeWhenPaused();
+
+        FFI_CHECK(frontend.send("Debugger.addSymbolicBreakpoint"_s, symbolicBreakpoint));
+        FFI_CHECK(entry(first, CodeSpecializationKind::CodeForCall) != callEntry);
+        FFI_CHECK(entry(first, CodeSpecializationKind::CodeForConstruct) != constructEntry);
+
+        FFI_CHECK(run("first(40, 2)"_s) == jsNumber(42));
+        FFI_CHECK_EQ(frontend.pauseCount(), 1u);
+        FFI_CHECK(frontend.lastPauseReason() == "FunctionCall"_s);
+        FFI_CHECK(frontend.lastPausedFunctionName() == name);
+        FFI_CHECK(run("second(1, 2)"_s) == jsNumber(3));
+        FFI_CHECK_EQ(frontend.pauseCount(), 2u);
+
+        // A function made while the breakpoint is set gets the debugger's code when its executable is created.
+        defineAdd("third"_s);
+        FFI_CHECK(run("third(5, 6)"_s) == jsNumber(11));
+        FFI_CHECK_EQ(frontend.pauseCount(), 3u);
+
+        FFI_CHECK(run("try { new first(1, 2); false } catch (error) { error instanceof TypeError }"_s) == jsBoolean(true));
+        FFI_CHECK_EQ(frontend.pauseCount(), 4u);
+
+        FFI_CHECK(frontend.send("Debugger.removeSymbolicBreakpoint"_s, symbolicBreakpoint));
+        FFI_CHECK(entry(first, CodeSpecializationKind::CodeForCall) == callEntry);
+        FFI_CHECK(entry(first, CodeSpecializationKind::CodeForConstruct) == constructEntry);
+        FFI_CHECK(run("first(40, 2) + second(1, 2) + third(5, 6)"_s) == jsNumber(56));
+        FFI_CHECK_EQ(frontend.pauseCount(), 4u);
+
+        // A frontend that goes away with the breakpoint still set takes it along.
+        FFI_CHECK(frontend.send("Debugger.addSymbolicBreakpoint"_s, symbolicBreakpoint));
+        FFI_CHECK(entry(first, CodeSpecializationKind::CodeForCall) != callEntry);
+    }
+    FFI_CHECK(entry(first, CodeSpecializationKind::CodeForCall) == callEntry);
+    FFI_CHECK(entry(first, CodeSpecializationKind::CodeForConstruct) == constructEntry);
+    FFI_CHECK(run("first(40, 2) + second(1, 2) + third(5, 6)"_s) == jsNumber(56));
+}
+
+#endif // ENABLE(REMOTE_INSPECTOR)
+
 static void testFixtureTable()
 {
     auto fixtures = ffiTestFixtures();
@@ -2460,6 +2642,11 @@ static int runAll()
         RUN(testJSFFIFunctionEndToEnd());
         RUN(testCallbackThunkEndToEnd());
         RUN(testOptimizingTierPointerArgumentWithNonViewCells());
+#if ENABLE(REMOTE_INSPECTOR)
+        // Last: a debugger deletes all of the VM's code when it attaches and when it detaches, and a symbolic breakpoint
+        // changes the DFG's and FTL's native calls for the rest of the VM's life (VM::notifyDebuggerHookInjected).
+        RUN(testSymbolicBreakpointOnFFIFunction());
+#endif
     }
 
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
