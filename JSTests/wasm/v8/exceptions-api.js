@@ -200,8 +200,8 @@ function TestGetArgHelper(types_str, types, values) {
       /First argument must be a WebAssembly.Tag/);
   assertThrows(() => exception.getArg({}, 0), TypeError,
       /First argument must be a WebAssembly.Tag/);
-  //assertThrows(() => exception.getArg(tag, undefined), TypeError,
-      ///Index must be convertible to a valid number/);
+  assertThrows(() => exception.getArg(tag, undefined), TypeError,
+      /Expect an integer argument in the range: \[0, 2\^32 - 1\]/);
   assertThrows(() => exception.getArg(tag, 0xFFFFFFFF), RangeError,
       /Index out of range/);
   let wrong_tag = new WebAssembly.Tag({parameters: ['i32']});
