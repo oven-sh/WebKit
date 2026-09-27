@@ -102,10 +102,13 @@ public:
     WTF_EXPORT_PRIVATE bool NODELETE containsOnlyASCII() const;
 
 #if USE(BUN_JSC_ADDITIONS)
-    // These do not record an overflow and do not crash, whatever the overflow policy is.
-    // After a false or a null return the builder holds the characters it held before the call.
+    // For these, a length that no string can have and a buffer that the allocator refuses are not an overflow
+    // and not a crash, whatever the overflow policy is. After a false or a null return the builder holds the
+    // characters it held before the call.
     bool tryAppend(const String&);
     bool tryAppend(StringView);
+    bool tryAppend(ASCIILiteral);
+    bool tryAppend(const AtomString& string) { return tryAppend(string.string()); }
     WTF_EXPORT_PRIVATE bool tryAppend(std::span<const Latin1Character>);
     WTF_EXPORT_PRIVATE bool tryAppend(std::span<const char16_t>);
     WTF_EXPORT_PRIVATE bool tryReserveCapacity(unsigned newCapacity);
@@ -262,6 +265,11 @@ inline bool StringBuilder::tryAppend(StringView string)
     if (string.is8Bit())
         return tryAppend(string.span8());
     return tryAppend(string.span16());
+}
+
+inline bool StringBuilder::tryAppend(ASCIILiteral string)
+{
+    return tryAppend(string.span8());
 }
 #endif
 

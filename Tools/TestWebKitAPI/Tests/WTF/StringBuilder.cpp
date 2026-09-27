@@ -464,9 +464,11 @@ TEST(StringBuilderTest, TryAppend)
     EXPECT_EQ(first.impl(), builder.tryToString().impl());
     EXPECT_TRUE(builder.tryAppend("abcd"_s.span8()));
     EXPECT_EQ("0123456789abcd"_s, builderContent(builder));
-    EXPECT_TRUE(builder.tryAppend(StringView { "efg"_s }));
+    EXPECT_TRUE(builder.tryAppend(StringView { "e"_s }));
+    EXPECT_TRUE(builder.tryAppend("f"_s));
+    EXPECT_TRUE(builder.tryAppend(AtomString { "g"_s }));
     EXPECT_TRUE(builder.tryAppend(String { }));
-    EXPECT_TRUE(builder.tryAppend(""_s.span8()));
+    EXPECT_TRUE(builder.tryAppend(""_s));
     EXPECT_EQ("0123456789abcdefg"_s, builderContent(builder));
     EXPECT_TRUE(builder.is8Bit());
 
@@ -651,30 +653,27 @@ TEST(StringBuilderTest, TryAppendUpconvertsAboveHalfOfTheLongest16BitString)
     constexpr unsigned capacity = maxLength16Bit / 2 + 1;
     const char16_t nonLatin1 = 0x1234;
 
-    // The test reserves up to 5GB of address space and writes to almost none of it. On a machine that cannot
-    // reserve that much, the builder refuses and keeps what it holds.
+    // The test reserves up to 5GB of address space and writes to almost none of it.
     StringBuilder builder;
     if (!builder.tryReserveCapacity(capacity)) {
         dataLogLn("Cannot allocate the buffer for this test, so the test did not run.");
         return;
     }
-    EXPECT_TRUE(builder.tryAppend("ab"_s.span8()));
+    EXPECT_TRUE(builder.tryAppend("ab"_s));
     EXPECT_EQ(capacity, builder.capacity());
-    if (builder.tryAppend(std::span { &nonLatin1, 1 })) {
-        EXPECT_FALSE(builder.is8Bit());
-        EXPECT_EQ(3U, builder.length());
-        EXPECT_GE(builder.capacity(), capacity);
-        EXPECT_LE(builder.capacity(), maxLength16Bit);
-        EXPECT_EQ(nonLatin1, builder[2]);
-    } else {
-        dataLogLn("Cannot allocate the 16-bit buffer for this test.");
-        EXPECT_TRUE(builder.is8Bit());
-        EXPECT_EQ(2U, builder.length());
-        EXPECT_EQ(capacity, builder.capacity());
-    }
+
+    // A machine that cannot reserve the longest 16-bit string gives the builder a shorter buffer.
+    EXPECT_TRUE(builder.tryAppend(std::span { &nonLatin1, 1 }));
     EXPECT_FALSE(builder.hasOverflowed());
+    EXPECT_FALSE(builder.is8Bit());
+    EXPECT_EQ(3U, builder.length());
+    EXPECT_GE(builder.capacity(), 3U);
+    EXPECT_LE(builder.capacity(), maxLength16Bit);
+    if (builder.capacity() < maxLength16Bit)
+        dataLogLn("Cannot allocate the longest 16-bit string. The capacity of the builder is ", builder.capacity(), ".");
     EXPECT_EQ('a', static_cast<char>(builder[0]));
     EXPECT_EQ('b', static_cast<char>(builder[1]));
+    EXPECT_EQ(nonLatin1, builder[2]);
 }
 
 #if !defined(NDEBUG)
@@ -700,18 +699,19 @@ TEST(StringBuilderTest, TryAppendKeepsTheCharactersWhenTheBufferCannotGrow)
     EXPECT_TRUE(builder.tryAppend(megabyteOfA));
     EXPECT_TRUE(builder.tryAppend(megabyteOfB));
     EXPECT_EQ(2 * megabyte, builder.capacity());
-    // Twice the capacity plus the header is more than the limit. The required length fits.
+    // Twice the capacity plus the header is more than the limit. The builder gets half of that spare capacity.
     EXPECT_TRUE(builder.tryAppend(megabyteOfC));
     EXPECT_EQ(3 * megabyte, builder.length());
-    EXPECT_EQ(3 * megabyte, builder.capacity());
+    EXPECT_EQ(3 * megabyte + megabyte / 2, builder.capacity());
 
     // The builder is the only owner of its buffer, and no buffer for 4MB of characters fits.
     const Latin1Character* characters = builder.span8().data();
+    unsigned capacity = builder.capacity();
     EXPECT_FALSE(builder.tryAppend(megabyteOfA));
     EXPECT_FALSE(builder.tryReserveCapacity(4 * megabyte));
     EXPECT_FALSE(builder.hasOverflowed());
     EXPECT_EQ(3 * megabyte, builder.length());
-    EXPECT_EQ(3 * megabyte, builder.capacity());
+    EXPECT_EQ(capacity, builder.capacity());
     EXPECT_EQ(characters, builder.span8().data());
     EXPECT_TRUE(expected == builderContent(builder));
 
@@ -732,10 +732,38 @@ TEST(StringBuilderTest, TryAppendKeepsTheCharactersWhenTheBufferCannotGrow)
     sharesBuffer = { };
 
     // A shorter string still fits.
-    EXPECT_TRUE(builder.tryAppend("0123456789"_s.span8()));
+    EXPECT_TRUE(builder.tryAppend("0123456789"_s));
     EXPECT_EQ(3 * megabyte + 10, builder.length());
     String string = builder.tryToString();
     EXPECT_TRUE(makeString(expected, "0123456789"_s) == string);
+}
+
+TEST(StringBuilderTest, TryAppendGrowsByAPartOfItsSizeNearTheLimit)
+{
+    constexpr unsigned chunkLength = 1024;
+    String chunk = repeatedCharacter('a', chunkLength);
+
+    StringBuilder builder;
+    MaxSingleAllocationSize limit { megabyte };
+    // The builder cannot double its buffer for the last quarter of the megabyte. It still does not
+    // reallocate for every string.
+    unsigned reallocations = 0;
+    unsigned length = 0;
+    while (true) {
+        const Latin1Character* characters = builder.span8().data();
+        if (!builder.tryAppend(chunk))
+            break;
+        length += chunkLength;
+        if (characters && characters != builder.span8().data())
+            ++reallocations;
+        ASSERT_LE(length, megabyte);
+    }
+    EXPECT_FALSE(builder.hasOverflowed());
+    EXPECT_EQ(length, builder.length());
+    // The last string that fits ends less than one string and one header below the limit.
+    EXPECT_GT(length + chunkLength + 64, megabyte);
+    EXPECT_LT(reallocations, 32U);
+    EXPECT_TRUE(repeatedCharacter('a', length) == builderContent(builder));
 }
 
 TEST(StringBuilderTest, TryAppendKeepsTheStringItRetainsWhenItCannotAllocate)

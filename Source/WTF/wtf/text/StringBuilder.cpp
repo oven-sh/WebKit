@@ -248,9 +248,12 @@ template<typename CharacterType> std::span<CharacterType> StringBuilder::tryExte
     else {
         // expandedCapacity() can return more than the longest string of CharacterType.
         unsigned newCapacity = std::min(expandedCapacity(capacity(), requiredLength), maxLength);
-        // The buffer does not have to grow by its own size. When that much is refused, the required length can still fit.
-        if (!tryReallocateBuffer<CharacterType>(newCapacity) && (newCapacity == requiredLength || !tryReallocateBuffer<CharacterType>(requiredLength))) [[unlikely]]
-            return { };
+        // The buffer does not have to grow by its own size. Each capacity that is refused halves what the next one
+        // adds to the required length, so the buffer still grows by a part of its size when it can.
+        for (unsigned spareCapacity = newCapacity - requiredLength; !tryReallocateBuffer<CharacterType>(requiredLength + spareCapacity); spareCapacity /= 2) {
+            if (!spareCapacity) [[unlikely]]
+                return { };
+        }
     }
 
     return spanConstCast<CharacterType>(m_buffer->span<CharacterType>().subspan(std::exchange(m_length, requiredLength)));
