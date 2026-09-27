@@ -2660,8 +2660,10 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                     m_graph.m_plan.recordedStatuses().addCallLinkStatus(currentNodeOrigin().semantic, CallLinkStatus(callee));
                     auto* frozenFunction = m_graph.freeze(ffiFunction);
                     addToGraph(CheckIsConstant, OpInfo(frozenFunction), Edge(callTargetNode, CellUse));
+                    // The backend marshals the call in this area: one slot per argument, the return
+                    // slot, then the parked argument values (see FFI::argumentValueOffset).
                     m_parameterSlots = std::max(m_parameterSlots, Graph::parameterSlotsForArgCount(
-                        std::max<unsigned>(ffiFunction->signature().slotCount() + 1, argumentCountIncludingThis)));
+                        std::max<unsigned>(ffiFunction->signature().slotCount() + ffiFunction->signature().argumentCount() + 1, argumentCountIncludingThis)));
                     addCall(result, Call, OpInfo(), jsConstant(frozenFunction), argumentCountIncludingThis, registerOffset, prediction);
                     return CallOptimizationResult::Inlined;
                 }
