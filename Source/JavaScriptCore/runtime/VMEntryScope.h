@@ -26,7 +26,10 @@
 #pragma once
 
 #include "JSExportMacros.h"
+#include <cstddef>
 #include <functional>
+#include <wtf/ForbidHeapAllocation.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -50,5 +53,34 @@ private:
     VM& m_vm;
     JSGlobalObject* m_globalObject;
 };
+
+// A VMEntryScope that its owner enters once it knows that it has to: what VM::drainMicrotasks() and
+// MicrotaskQueue::performMicrotaskCheckpoint() keep in their frames, which stay on the stack for as long as the
+// jobs they drain run. It is not a std::optional<VMEntryScope>, because that keeps its flag in one byte and
+// nothing ever writes the seven bytes after it: the flag's word keeps the rest of whatever an earlier frame left
+// in that stack slot. Over a pointer to a cell that is a pointer into whichever cell lies at (the old address &
+// ~0xff) + the flag, and the conservative scan, which reads whole words and accepts a pointer into the middle of a
+// cell, marked that cell at every collection made under the drain. Here the flag is a whole word.
+// (MicrotaskCallCache has the same note about the type byte of a MicrotaskCall.)
+class OptionalVMEntryScope {
+    WTF_MAKE_NONCOPYABLE(OptionalVMEntryScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    OptionalVMEntryScope() = default;
+    ~OptionalVMEntryScope();
+
+    explicit operator bool() const { return m_isEntered; }
+    VMEntryScope* operator->();
+
+    void emplace(VM&, JSGlobalObject*);
+    void reset();
+
+private:
+    VMEntryScope* scope();
+
+    uintptr_t m_isEntered { 0 };
+    alignas(VMEntryScope) std::byte m_storage[sizeof(VMEntryScope)];
+};
+static_assert(sizeof(OptionalVMEntryScope) == sizeof(uintptr_t) + sizeof(VMEntryScope), "no padding: every word of it is written as a whole");
 
 } // namespace JSC
