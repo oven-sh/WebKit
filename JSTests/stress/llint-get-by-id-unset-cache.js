@@ -1,8 +1,8 @@
-//@ runDefault
-//@ runDefault("--useJIT=0")
+//@ runDefault("--useLLIntUnsetCaching=1")
+//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=1")
 //@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=0")
-//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=0")
-//@ runDefault("--useJIT=0", "--collectContinuously=1")
+//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=1", "--useLLIntPrototypeCacheRearming=1")
+//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=1", "--collectContinuously=1")
 
 // The LLInt caches a get_by_id that finds no property (GetByIdMode::Unset). Everything that makes the
 // property appear must make the next access see it.
@@ -250,11 +250,46 @@ for (const makeDictionary of [$vm.toCacheableDictionary, $vm.toUncacheableDictio
     shouldBe(get(proxy), 19, "proxy receiver");
 }
 
+// An object with its own getOwnPropertySlot() can get a property with no new structure, so it has no unset cache,
+// as receiver or on the chain. An ImpureGetter answers with what its delegate has.
+if (typeof $vm.createImpureGetter === "function") {
+    const delegate = { a: 1 };
+    const impure = $vm.createImpureGetter(delegate);
+    const get = makeGetter();
+    warm(get, impure);
+    expectCache(get, "empty", "receiver with a delegate");
+    delegate.missing = "from the delegate";
+    shouldBe(get(impure), "from the delegate", "receiver with a delegate");
+    delete delegate.missing;
+    shouldBe(get(impure), undefined);
+
+    const onChain = Object.create(impure);
+    onChain.b = 1;
+    const getThroughChain = makeGetter();
+    warm(getThroughChain, onChain);
+    expectCache(getThroughChain, "empty", "object with a delegate on the chain");
+    delegate.missing = "from the delegate of the chain";
+    shouldBe(getThroughChain(onChain), "from the delegate of the chain", "object with a delegate on the chain");
+    delete delegate.missing;
+}
+if (typeof $vm.createRuntimeArray === "function") {
+    // Its getOwnPropertySlot() has no flag that says what it can do.
+    const runtimeArray = $vm.createRuntimeArray(1, 2, 3);
+    const get = makeGetter();
+    warm(get, runtimeArray);
+    expectCache(get, "empty", "RuntimeArray receiver");
+    // A store to an object with a RuntimeArray on the chain goes to the put() of the RuntimeArray, which has none.
+    const o = Object.create(runtimeArray, { a: { value: 1, writable: true, enumerable: true, configurable: true } });
+    const getThroughChain = makeGetter();
+    warm(getThroughChain, o);
+    expectCache(getThroughChain, "empty", "RuntimeArray on the chain");
+}
+
 // Primitive receivers use the prototype of the global object of the code.
 {
     const get = makeGetter();
     warm(get, "string");
-    expectCache(get, "unset", "string receiver");
+    expectCache(get, "empty", "string receiver");
     String.prototype.missing = 20;
     shouldBe(get("string"), 20, "string receiver");
     shouldBe(get("other string"), 20);
@@ -303,6 +338,7 @@ for (const makeDictionary of [$vm.toCacheableDictionary, $vm.toUncacheableDictio
     const get = makeGetter();
     function f() { }
     warm(get, f);
+    expectCache(get, "empty", "function receiver");
     Function.prototype.missing = 25;
     shouldBe(get(f), 25, "function receiver");
     delete Function.prototype.missing;
@@ -316,6 +352,7 @@ for (const makeDictionary of [$vm.toCacheableDictionary, $vm.toUncacheableDictio
     const get = makeGetter();
     const array = [1, 2, 3];
     warm(get, array);
+    expectCache(get, "empty", "array receiver");
     Array.prototype.missing = 27;
     shouldBe(get(array), 27, "array receiver");
     delete Array.prototype.missing;
@@ -327,6 +364,7 @@ for (const makeDictionary of [$vm.toCacheableDictionary, $vm.toUncacheableDictio
     const get = makeGetter();
     const typed = new Uint8Array(4);
     warm(get, typed);
+    expectCache(get, "empty", "typed array receiver");
     Uint8Array.prototype.missing = 29;
     shouldBe(get(typed), 29, "typed array receiver");
     delete Uint8Array.prototype.missing;

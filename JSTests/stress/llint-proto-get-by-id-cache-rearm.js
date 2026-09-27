@@ -1,8 +1,8 @@
-//@ runDefault
-//@ runDefault("--useJIT=0")
-//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=0")
-//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=0")
-//@ runDefault("--useJIT=0", "--collectContinuously=1")
+//@ runDefault("--useLLIntPrototypeCacheRearming=1", "--useLLIntUnsetCaching=1")
+//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=1", "--useLLIntUnsetCaching=1")
+//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=0", "--useLLIntUnsetCaching=1")
+//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=1", "--useLLIntUnsetCaching=0")
+//@ runDefault("--useJIT=0", "--useLLIntPrototypeCacheRearming=1", "--useLLIntUnsetCaching=1", "--collectContinuously=1")
 
 // The LLInt caches a get_by_id that finds its value on the prototype chain (GetByIdMode::ProtoLoad) after
 // a countdown. With Options::useLLIntPrototypeCacheRearming() the countdown starts again after the site tried to

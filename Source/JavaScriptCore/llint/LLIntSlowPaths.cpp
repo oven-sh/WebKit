@@ -934,14 +934,23 @@ static NEVER_INLINE void dropGuardedGetByIdCache(CodeBlock* codeBlock, BytecodeI
     codeBlock->llintGetByIdWatchpointMap().remove(bytecodeIndex);
 }
 
-// True if the structure of the receiver can be the proof that the receiver still does not have a property.
-static bool canCacheAbsenceFor(Structure* structure)
+// True if the structure of an object can be the proof that the object still does not have a property.
+// An object that has its own getOwnPropertySlot() can get a property with no new structure: a global object gets
+// the variables of a later script so, and a proxy or an object of the embedder can answer with what another object
+// has. The flags that say so are for the class to set, so the rule here is that of DFG::Graph::tryEnsureAbsence():
+// no such object, with or without the flags.
+static bool structureCanProveAbsence(Structure* structure)
 {
     TypeInfo typeInfo = structure->typeInfo();
-    if (typeInfo.prohibitsPropertyCaching() || typeInfo.getOwnPropertySlotIsImpure() || typeInfo.getOwnPropertySlotIsImpureForPropertyAbsence())
+    if (typeInfo.overridesGetOwnPropertySlot() || typeInfo.prohibitsPropertyCaching())
         return false;
-    // A global object gets a variable of a later script with no new structure.
-    if (typeInfo.type() == GlobalObjectType || structure->isProxy())
+    return !typeInfo.getOwnPropertySlotIsImpure() && !typeInfo.getOwnPropertySlotIsImpureForPropertyAbsence();
+}
+
+// True if the receiver can have an unset cache.
+static bool canCacheAbsenceFor(Structure* structure)
+{
+    if (!structureCanProveAbsence(structure))
         return false;
     // A dictionary gets a property with no new structure. tryToSetUpGetByIdPrototypeCache() makes it flat first, once.
     return !structure->isDictionary() || !structure->hasBeenFlattenedBefore();
@@ -990,7 +999,7 @@ static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm
         auto& watchpoint = watchpoints[index++];
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
-        if (slot.isUnset() && condition.object()->type() == GlobalObjectType)
+        if (slot.isUnset() && !structureCanProveAbsence(condition.object()->structure()))
             return false;
         if (condition.condition().kind() == PropertyCondition::Presence)
             offset = condition.condition().offset();

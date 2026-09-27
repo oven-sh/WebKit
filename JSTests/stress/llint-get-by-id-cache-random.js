@@ -1,8 +1,10 @@
 //@ runDefault
+//@ runDefault("--useLLIntUnsetCaching=1", "--useLLIntPrototypeCacheRearming=1")
 //@ runDefault("--useJIT=0")
-//@ runDefault("--useJIT=0", "--collectContinuously=1")
+//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=1", "--useLLIntPrototypeCacheRearming=1")
+//@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=1", "--useLLIntPrototypeCacheRearming=1", "--collectContinuously=1")
 //@ runDefault("--useJIT=0", "--useLLIntUnsetCaching=0", "--useLLIntPrototypeCacheRearming=0", "--useLLIntStringLengthFastPath=0", "--missCountForLLIntTierUp=0")
-//@ runDefault("--useConcurrentJIT=0", "--missCountForLLIntTierUp=2", "--thresholdForJITSoon=10")
+//@ runDefault("--useConcurrentJIT=0", "--missCountForLLIntTierUp=2", "--thresholdForJITSoon=10", "--useLLIntUnsetCaching=1", "--useLLIntPrototypeCacheRearming=1")
 
 // Random reads of properties through get_by_id sites, between random changes to the objects and to their
 // prototype chains. Each read is compared with a walk of the chain that uses no get_by_id site for the name.

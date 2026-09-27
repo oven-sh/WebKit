@@ -4,7 +4,8 @@
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=3")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=0")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=0", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=1", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=1")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=1")
 //@ runDefault("--useJIT=0", "--missCountForLLIntTierUp=12")
 
 // A get_by_id or put_by_id site counts the calls of its slow path in the LLInt. The call that makes the count
@@ -266,7 +267,7 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
 }
 
 // The startup deferral scale is not for a function with such a site. It is for the others.
-if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function") {
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && !options.useStartupJITDeferralAfterLLIntMisses) {
     $vm.setStartupJITDeferralScale(50);
     function deferredPolymorphicGet(o) {
         const tag = o.tag;
@@ -282,4 +283,21 @@ if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function") {
     $vm.setStartupJITDeferralScale(1);
     expectEarly("deferredPolymorphicGet", polymorphicCall);
     shouldBe(monomorphicCall, 0, "deferredMonomorphicGet must stay in the LLInt");
+}
+
+// With Options::useStartupJITDeferralAfterLLIntMisses(), the scale is for the threshold that the misses lowered too.
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && options.useStartupJITDeferralAfterLLIntMisses) {
+    const scale = 4;
+    $vm.setStartupJITDeferralScale(scale);
+    function scaledPolymorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    const call = firstCallOutOfLLInt(scaledPolymorphicGet, i => objects[i % objects.length]);
+    $vm.setStartupJITDeferralScale(1);
+    // thresholdForJITSoon times the scale, at 15 for each call.
+    const expected = Math.ceil(options.thresholdForJITSoon * scale / 15);
+    if (call < Math.max(missCount, expected - 1) || call > Math.max(missCount, expected) + 2)
+        throw new Error("scaledPolymorphicGet left the LLInt in call " + call + ", expected call " + expected);
 }
