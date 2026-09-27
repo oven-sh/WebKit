@@ -133,6 +133,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     template<typename CharacterType> bool tryReallocateBuffer(unsigned capacity);
     template<typename CharacterType> std::span<CharacterType> tryExtendBufferForAppending(size_t additionalLength);
+    template<typename CharacterType> std::span<CharacterType> tryExtendBufferForAppendingSlowCase(size_t additionalLength);
 #endif
 
     void appendFromAdapters() { /* empty base case */ }

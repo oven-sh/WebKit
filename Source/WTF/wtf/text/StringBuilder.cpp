@@ -232,8 +232,22 @@ template<typename CharacterType> bool StringBuilder::tryReallocateBuffer(unsigne
     return true;
 }
 
-// As extendBufferForAppending, for a builder whose buffer is of CharacterType or is 8-bit.
-template<typename CharacterType> std::span<CharacterType> StringBuilder::tryExtendBufferForAppending(size_t additionalLength)
+// As extendBufferForAppending, for a builder that is not 8-bit when CharacterType is char16_t.
+template<typename CharacterType> ALWAYS_INLINE std::span<CharacterType> StringBuilder::tryExtendBufferForAppending(size_t additionalLength)
+{
+    ASSERT(!hasOverflowed());
+    ASSERT(is8Bit() == (sizeof(CharacterType) == sizeof(Latin1Character)));
+
+    // A length that fits in the buffer is a valid length.
+    if (m_buffer && additionalLength <= m_buffer->length() - m_length) {
+        m_string = { };
+        return spanConstCast<CharacterType>(m_buffer->span<CharacterType>().subspan(std::exchange(m_length, m_length + static_cast<unsigned>(additionalLength))));
+    }
+    return tryExtendBufferForAppendingSlowCase<CharacterType>(additionalLength);
+}
+
+// Also for an 8-bit builder when CharacterType is char16_t. The buffer is 16-bit after that.
+template<typename CharacterType> NEVER_INLINE std::span<CharacterType> StringBuilder::tryExtendBufferForAppendingSlowCase(size_t additionalLength)
 {
     ASSERT(!hasOverflowed());
     ASSERT(additionalLength);
@@ -243,17 +257,13 @@ template<typename CharacterType> std::span<CharacterType> StringBuilder::tryExte
         return { };
     unsigned requiredLength = m_length + static_cast<unsigned>(additionalLength);
 
-    if (m_buffer && requiredLength <= m_buffer->length() && m_buffer->is8Bit() == (sizeof(CharacterType) == sizeof(Latin1Character)))
-        m_string = { };
-    else {
-        // expandedCapacity() can return more than the longest string of CharacterType.
-        unsigned newCapacity = std::min(expandedCapacity(capacity(), requiredLength), maxLength);
-        // The buffer does not have to grow by its own size. Each capacity that is refused halves what the next one
-        // adds to the required length, so the buffer still grows by a part of its size when it can.
-        for (unsigned spareCapacity = newCapacity - requiredLength; !tryReallocateBuffer<CharacterType>(requiredLength + spareCapacity); spareCapacity /= 2) {
-            if (!spareCapacity) [[unlikely]]
-                return { };
-        }
+    // expandedCapacity() can return more than the longest string of CharacterType.
+    unsigned newCapacity = std::min(expandedCapacity(capacity(), requiredLength), maxLength);
+    // The buffer does not have to grow by its own size. Each capacity that is refused halves what the next one
+    // adds to the required length, so the buffer still grows by a part of its size when it can.
+    for (unsigned spareCapacity = newCapacity - requiredLength; !tryReallocateBuffer<CharacterType>(requiredLength + spareCapacity); spareCapacity /= 2) {
+        if (!spareCapacity) [[unlikely]]
+            return { };
     }
 
     return spanConstCast<CharacterType>(m_buffer->span<CharacterType>().subspan(std::exchange(m_length, requiredLength)));
@@ -261,21 +271,21 @@ template<typename CharacterType> std::span<CharacterType> StringBuilder::tryExte
 
 bool StringBuilder::tryAppend(std::span<const Latin1Character> characters)
 {
-    if (hasOverflowed())
+    if (hasOverflowed()) [[unlikely]]
         return false;
     if (characters.empty())
         return true;
 
     if (is8Bit()) {
         auto destination = tryExtendBufferForAppending<Latin1Character>(characters.size());
-        if (!destination.data())
+        if (!destination.data()) [[unlikely]]
             return false;
         StringImpl::copyCharacters(destination, characters);
         return true;
     }
 
     auto destination = tryExtendBufferForAppending<char16_t>(characters.size());
-    if (!destination.data())
+    if (!destination.data()) [[unlikely]]
         return false;
     StringImpl::copyCharacters(destination, characters);
     return true;
@@ -283,22 +293,26 @@ bool StringBuilder::tryAppend(std::span<const Latin1Character> characters)
 
 bool StringBuilder::tryAppend(std::span<const char16_t> characters)
 {
-    if (hasOverflowed())
+    if (hasOverflowed()) [[unlikely]]
         return false;
     if (characters.empty())
         return true;
 
-    // As in append(), one Latin-1 character keeps an 8-bit builder 8-bit.
-    if (characters.size() == 1 && isLatin1(characters[0]) && is8Bit()) {
-        auto destination = tryExtendBufferForAppending<Latin1Character>(1);
-        if (!destination.data())
-            return false;
-        destination[0] = static_cast<Latin1Character>(characters[0]);
-        return true;
-    }
+    std::span<char16_t> destination;
+    if (is8Bit()) {
+        // As in append(), one Latin-1 character keeps an 8-bit builder 8-bit.
+        if (characters.size() == 1 && isLatin1(characters[0])) {
+            auto destination8 = tryExtendBufferForAppending<Latin1Character>(1);
+            if (!destination8.data()) [[unlikely]]
+                return false;
+            destination8[0] = static_cast<Latin1Character>(characters[0]);
+            return true;
+        }
+        destination = tryExtendBufferForAppendingSlowCase<char16_t>(characters.size());
+    } else
+        destination = tryExtendBufferForAppending<char16_t>(characters.size());
 
-    auto destination = tryExtendBufferForAppending<char16_t>(characters.size());
-    if (!destination.data())
+    if (!destination.data()) [[unlikely]]
         return false;
     StringImpl::copyCharacters(destination, characters);
     return true;
