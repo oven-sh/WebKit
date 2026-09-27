@@ -71,15 +71,15 @@ JSValue IntlSegments::containing(JSGlobalObject* globalObject, JSValue indexValu
         return jsUndefined();
     int32_t index = toInt32(value);
 
-    // The result of ubrk_preceding is always *smaller* than offset, or UBRK_DONE. In this case, we should set scan position with `index + 1`.
-    // Even if index + 1 exceeds length of string by 1, this is desirable if we want to scan the last segment.
-    int32_t startIndex = ubrk_preceding(m_segmenter.get(), index + 1);
-    if (startIndex == UBRK_DONE)
-        startIndex = 0;
-    // The result of ubrk_following is always greater than offset, or UBRK_DONE. Scan position should be `index`.
+    // Find the end first: index + 1 may be a trail surrogate that ICU moves backward.
     int32_t endIndex = ubrk_following(m_segmenter.get(), index);
     if (endIndex == UBRK_DONE)
         endIndex = m_buffer->size();
+    int32_t startIndex = ubrk_previous(m_segmenter.get());
+    if (startIndex == UBRK_DONE)
+        startIndex = 0;
+    // Segment data uses the rule status at the end boundary for isWordLike.
+    ubrk_next(m_segmenter.get());
 
     scope.release();
     return createSegmentDataObject(globalObject, m_string.get(), startIndex, endIndex, *m_segmenter, m_granularity);

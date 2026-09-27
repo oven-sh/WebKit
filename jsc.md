@@ -1,5 +1,9 @@
 # JavaScriptCore Changelog
 
+## Unreleased
+
+- Fix `Intl.Segmenter` containing lookups around surrogate pairs so segment boundaries and word status agree with iteration.
+
 This changelog covers updates to JavaScriptCore in Bun's WebKit fork, from `9a2cc42ae1bf` to `7bc2f97e2835`.
 
 ## Performance
