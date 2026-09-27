@@ -36,6 +36,7 @@
 namespace JSC {
 
 class CompleteSubspace;
+class ExplicitlyFreedCellClient;
 class Heap;
 class HeapCell;
 class HeapIterationScope;
@@ -139,6 +140,7 @@ public:
     MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
     void beginMarking();
+    size_t finishMarkingExplicitlyFreedCells(ExplicitlyFreedCellClient*); // Returns the bytes kept that marking had not counted.
     void endMarking();
     void snapshotUnswept();
     void clearNewlyAllocated();
@@ -216,6 +218,7 @@ private:
     HeapVersion m_edenVersion { initialVersion };
     bool m_isIterating { false };
     bool m_isMarking { false };
+    bool m_hasExplicitlyFreedCells { false };
     bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;
     MarkedBlockSet m_blocks;

@@ -407,6 +407,53 @@ void MarkedBlock::clearHasAnyMarked()
     header().m_biasedMarkCount = header().m_markCountBias;
 }
 
+void MarkedBlock::Handle::markLiveCells()
+{
+    MarkedBlock& block = this->block();
+    MarkedBlock::Header& header = block.header();
+    Locker locker { header.m_lock };
+
+    ASSERT(space()->isMarking());
+    ASSERT(heap()->worldIsStopped());
+    ASSERT(!isFreeListed());
+
+    HeapVersion markingVersion = space()->markingVersion();
+    if (block.areMarksStale(markingVersion)) {
+        // Marking never got here, so the marks are still the ones aboutToMarkSlow() would have
+        // turned into newlyAllocated: what the last collection left alive, if it left anything.
+        if (!block.marksConveyLivenessDuringMarking(markingVersion))
+            header.m_marks.clearAll();
+        block.clearHasAnyMarked();
+        header.m_markingVersion = markingVersion;
+    }
+
+    bool isAllocated;
+    {
+        Locker bitLocker { m_directory->bitvectorLock() };
+        isAllocated = m_directory->isAllocated(this);
+    }
+    if (isAllocated)
+        header.m_marks.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    else if (header.m_newlyAllocatedVersion == space()->newlyAllocatedVersion())
+        header.m_marks.merge(header.m_newlyAllocated);
+}
+
+size_t MarkedBlock::Handle::didMarkLiveCells()
+{
+    MarkedBlock::Header& header = blockHeader();
+    Locker locker { header.m_lock };
+
+    size_t alreadyCounted = header.m_biasedMarkCount - header.m_markCountBias;
+    size_t count = header.m_marks.count();
+    header.m_biasedMarkCount = header.m_markCountBias + count;
+    {
+        Locker bitLocker { m_directory->bitvectorLock() };
+        m_directory->setIsMarkingNotEmpty(this, !!count);
+        m_directory->setIsMarkingRetired(this, header.m_biasedMarkCount >= 0);
+    }
+    return count > alreadyCounted ? (count - alreadyCounted) * cellSize() : 0;
+}
+
 void MarkedBlock::noteMarkedSlow()
 {
     BlockDirectory* directory = handle().directory();

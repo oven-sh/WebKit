@@ -77,6 +77,7 @@ class CollectingScope;
 class ConservativeRoots;
 class GCDeferralContext;
 class EdenGCActivityCallback;
+class ExplicitlyFreedCellClient;
 class FastMallocAlignedMemoryAllocator;
 class FullGCActivityCallback;
 class GCActivityCallback;
@@ -674,6 +675,9 @@ public:
     uint64_t phaseVersion() const { return m_phaseVersion; }
     
     JS_EXPORT_PRIVATE void addMarkingConstraint(std::unique_ptr<MarkingConstraint>);
+
+    // Must outlive the heap, or be cleared first.
+    void setExplicitlyFreedCellClient(ExplicitlyFreedCellClient* client) { m_explicitlyFreedCellClient = client; }
     
     HeapVerifier* verifier() const LIFETIME_BOUND { return m_verifier.get(); }
     
@@ -850,6 +854,7 @@ private:
 #endif
     void visitCompilerWorklistWeakReferences();
     void removeDeadCompilerWorklistEntries();
+    void finishMarkingExplicitlyFreedCells();
     void updateObjectCounts();
     void endMarking();
 
@@ -991,6 +996,8 @@ private:
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
+    ExplicitlyFreedCellClient* m_explicitlyFreedCellClient { nullptr };
+    size_t m_explicitlyFreedBytesKeptThisCycle { 0 };
     std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;
 
     // We pool the slot visitors used by parallel marking threads. It's useful to be able to

@@ -22,6 +22,7 @@
 #include "MarkedSpace.h"
 
 #include "BlockDirectoryInlines.h"
+#include "ExplicitlyFreedCellClient.h"
 #include "HeapInlines.h"
 #include "IncrementalSweeper.h"
 #include "MarkedBlockInlines.h"
@@ -437,6 +438,61 @@ void MarkedSpace::beginMarking()
     }
     
     m_isMarking = true;
+}
+
+size_t MarkedSpace::finishMarkingExplicitlyFreedCells(ExplicitlyFreedCellClient* client)
+{
+    ASSERT(m_isMarking);
+    ASSERT(heap().worldIsStopped());
+
+    if (!m_hasExplicitlyFreedCells)
+        return 0;
+
+    auto forEachBlock = [&](const auto& functor) {
+        forEachDirectory(
+            [&](BlockDirectory& directory) -> IterationStatus {
+                if (directory.attributes().lifetime == CellLifetime::ExplicitlyFreed)
+                    directory.forEachBlock(functor);
+                return IterationStatus::Continue;
+            });
+    };
+
+    size_t bytes = 0;
+
+    forEachBlock(
+        [&](MarkedBlock::Handle* handle) {
+            handle->markLiveCells();
+        });
+    // A precise allocation that the last collection found dead has been swept by now, so all that
+    // remain are live.
+    for (PreciseAllocation* allocation : m_preciseAllocations) {
+        if (allocation->attributes().lifetime != CellLifetime::ExplicitlyFreed)
+            continue;
+        if (!allocation->testAndSetMarked())
+            bytes += allocation->cellSize();
+    }
+
+    if (client) {
+        client->takeFreedCells(heap(),
+            [&](HeapCell* cell) {
+                ASSERT(cell->cellAttributes().lifetime == CellLifetime::ExplicitlyFreed);
+                if (cell->isPreciseAllocation()) {
+                    PreciseAllocation& allocation = cell->preciseAllocation();
+                    ASSERT(allocation.isMarked());
+                    allocation.clearMarked();
+                    bytes -= std::min(bytes, allocation.cellSize());
+                    return;
+                }
+                ASSERT(cell->markedBlock().isMarked(cell));
+                cell->markedBlock().clearMarked(cell);
+            });
+    }
+
+    forEachBlock(
+        [&](MarkedBlock::Handle* handle) {
+            bytes += handle->didMarkLiveCells();
+        });
+    return bytes;
 }
 
 void MarkedSpace::endMarking()

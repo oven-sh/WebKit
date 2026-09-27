@@ -35,6 +35,7 @@
 #include "ConservativeRoots.h"
 #include "DeferGCInlines.h"
 #include "EdenGCActivityCallback.h"
+#include "ExplicitlyFreedCellClient.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
 #include "FastMallocAlignedMemoryAllocator.h"
@@ -1021,6 +1022,13 @@ void Heap::removeDeadHeapSnapshotNodes(HeapProfiler& heapProfiler)
     }
 }
 
+void Heap::finishMarkingExplicitlyFreedCells()
+{
+    if (m_explicitlyFreedCellClient)
+        m_explicitlyFreedCellClient->didConvergeMarking(*this);
+    m_explicitlyFreedBytesKeptThisCycle = m_objectSpace.finishMarkingExplicitlyFreedCells(m_explicitlyFreedCellClient);
+}
+
 void Heap::updateObjectCounts()
 {
     if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full) {
@@ -1028,7 +1036,7 @@ void Heap::updateObjectCounts()
         m_totalBytesVisited = 0;
     }
 
-    m_totalBytesVisitedThisCycle = bytesVisited();
+    m_totalBytesVisitedThisCycle = bytesVisited() + m_explicitlyFreedBytesKeptThisCycle;
     
     m_totalBytesVisited += m_totalBytesVisitedThisCycle;
 }
@@ -2329,6 +2337,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
             writeBarrier(codeBlock);
         });
 
+    finishMarkingExplicitlyFreedCells();
     updateObjectCounts();
     endMarking();
 

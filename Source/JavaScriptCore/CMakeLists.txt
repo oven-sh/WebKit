@@ -855,6 +855,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/DeleteAllCodeEffort.h
     heap/DestructionMode.h
     heap/EdenGCActivityCallback.h
+    heap/ExplicitlyFreedCellClient.h
     heap/FastMallocAlignedMemoryAllocator.h
     heap/FreeList.h
     heap/FreeListInlines.h
