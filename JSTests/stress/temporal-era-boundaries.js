@@ -50,9 +50,16 @@ for (const [cal, era] of [["buddhist","be"], ["coptic","am"], ["ethioaa","aa"], 
     assertPD(d4, 1873, 1, 1, "meiji", 6, "ce 1873 -> meiji 6");
 }
 
-// Case-insensitive alias canonicalizes then remaps.
+// An alias canonicalizes then remaps. Era codes match the lowercase CLDR codes exactly.
 {
-    const d = Temporal.PlainDate.from({ calendar: "gregory", era: "AD", eraYear: 0, monthCode: "M01", day: 1 });
-    assertPD(d, 0, 1, 1, "bce", 1, "AD 0 -> bce 1");
+    const d = Temporal.PlainDate.from({ calendar: "gregory", era: "ad", eraYear: 0, monthCode: "M01", day: 1 });
+    assertPD(d, 0, 1, 1, "bce", 1, "ad 0 -> bce 1");
+    let threw = null;
+    try {
+        Temporal.PlainDate.from({ calendar: "gregory", era: "AD", eraYear: 0, monthCode: "M01", day: 1 });
+    } catch (e) {
+        threw = e;
+    }
+    shouldBe(threw instanceof RangeError, true, "AD (upper case) is not an era of gregory");
 }
 

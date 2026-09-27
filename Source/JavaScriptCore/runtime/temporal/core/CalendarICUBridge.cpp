@@ -903,13 +903,14 @@ static std::optional<uint8_t> computeFieldResolutionOrdinalMonth(UCalendar* cal,
 // https://tc39.es/proposal-intl-era-monthcode/#sec-temporal-canonicalizeeraincalendar
 std::optional<ASCIILiteral> canonicalizeEraInCalendar(CalendarID calendarId, StringView era)
 {
-    // Step 1: walk table-eras; return canonical name for input matching canonical or alias.
+    // Step 1: walk table-eras; return canonical name for input equal to canonical or alias.
+    // The comparison is exact: the table holds the lowercase CLDR codes and "CE" is not "ce".
     for (const auto& r : eraTable()) {
         if (r.calendar != calendarId)
             continue;
-        if (equalIgnoringASCIICase(era, StringView(r.era)))
+        if (era == StringView(r.era))
             return r.era;
-        if (!r.alias.isNull() && equalIgnoringASCIICase(era, StringView(r.alias)))
+        if (!r.alias.isNull() && era == StringView(r.alias))
             return r.era;
     }
     // Steps 2-3: unknown era in a known calendar → undefined; unknown calendar → implementation-defined (both nullopt).
