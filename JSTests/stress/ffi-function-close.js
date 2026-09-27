@@ -210,30 +210,37 @@ function testCloseDuringTheCall() {
 
     // Compiled code is specialized on the function it calls, and what it learned stays with the source
     // text. So each case has a source text of its own.
-    const makeCaller = (what, inlined, callCb, cb) => new Function("callCb", "cb", `
+    const makeCaller = (what, shape, callStored) => new Function("callStored", `
         // ${what}
-        function call(x) { return callCb(cb, x); }
+        const bound = callStored.bind(null);
+        function call(x) { return ${shape === "bound function" ? "bound(x)" : "callStored(x)"}; }
         function outer(x) { return call(x); }
-        ${inlined ? "" : "noInline(call);"}
+        ${shape === "inlined caller" ? "" : "noInline(call);"}
         noInline(outer);
         return outer;
-    `)(callCb, cb);
+    `)(callStored);
 
-    for (const inlined of [false, true]) {
+    // The function under test takes an int32 and calls a callback that was stored before. A pointer
+    // argument has a slow conversion, and the code that calls operationFFIWriteSlot refers to the
+    // function weakly for that alone. Optimized code refers to the function of a bound function
+    // strongly, and to the others weakly.
+    const storeCb = $vm.ffiFunction({ args: ["function"], returns: "void" }, $vm.ffiFixture("ffi_store_cb_i32"), "storeCb");
+    for (const shape of ["caller", "inlined caller", "bound function"]) {
         for (const warmUp of [0, 1e5]) {
-            const what = (inlined ? "inlined caller" : "caller") + ", warm-up " + warmUp;
-            const callCb = $vm.ffiFunction({ args: ["function", "i32"], returns: "i32" }, $vm.ffiFixture("ffi_call_cb_i32"), "runningCallCb");
+            const what = shape + ", warm-up " + warmUp;
+            const callStored = $vm.ffiFunction({ args: ["i32"], returns: "i32" }, $vm.ffiFixture("ffi_call_stored_cb_i32"), "runningCallStored");
             const notCalledHere = makeAdd("notCalledHere");
             let mode = "";
             let seen = null;
             const cb = $vm.ffiCallback({ args: ["i32"], returns: "i32" }, x => {
                 if (mode === "close")
-                    $vm.ffiFunctionClose(callCb);
+                    $vm.ffiFunctionClose(callStored);
                 if (mode)
-                    seen = [$vm.ffiFunctionIsRunning(callCb), $vm.ffiFunctionIsRunning(notCalledHere)];
+                    seen = [$vm.ffiFunctionIsRunning(callStored), $vm.ffiFunctionIsRunning(notCalledHere)];
                 return x + 1;
             });
-            const outer = makeCaller(what, inlined, callCb, cb);
+            storeCb(cb);
+            const outer = makeCaller(what, shape, callStored);
 
             for (let i = 0; i < warmUp; ++i)
                 shouldBe(outer(i), i + 1, "open call through a callback, " + what);
@@ -242,13 +249,13 @@ function testCloseDuringTheCall() {
             shouldBe(outer(41), 42, "the call that asks, " + what);
             shouldBe(seen[0], true, "isRunning from inside the call, " + what);
             shouldBe(seen[1], false, "isRunning of another function from inside the call, " + what);
-            shouldBe($vm.ffiFunctionIsRunning(callCb), false, "isRunning after the call returned, " + what);
+            shouldBe($vm.ffiFunctionIsRunning(callStored), false, "isRunning after the call returned, " + what);
 
             mode = "close";
             shouldBe(outer(41), 42, "the call that closes its own function, " + what);
             shouldBe(seen[0], true, "isRunning of a closed function from inside the call, " + what);
-            shouldThrowClosed("runningCallCb", () => outer(41), "call after a close from inside the call, " + what);
-            shouldBe($vm.ffiFunctionIsRunning(callCb), false, "isRunning of a closed function, " + what);
+            shouldThrowClosed("runningCallStored", () => outer(41), "call after a close from inside the call, " + what);
+            shouldBe($vm.ffiFunctionIsRunning(callStored), false, "isRunning of a closed function, " + what);
             cb.close();
         }
     }

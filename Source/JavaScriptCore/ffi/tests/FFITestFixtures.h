@@ -142,6 +142,8 @@ JS_EXPORT_PRIVATE double ffi_call_cb_ret_f64(double (*cb)(void));
 JS_EXPORT_PRIVATE const char* ffi_call_cb_ret_cstring(const char* (*cb)(void));
 JS_EXPORT_PRIVATE void* ffi_call_cb_ret_ptr(void* (*cb)(void));
 JS_EXPORT_PRIVATE uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p); // calls cb() (which may GC), then returns *p
+JS_EXPORT_PRIVATE void ffi_store_cb_i32(int32_t (*cb)(int32_t)); // keeps cb for ffi_call_stored_cb_i32
+JS_EXPORT_PRIVATE int32_t ffi_call_stored_cb_i32(int32_t x); // calls the stored callback: a call into JS from a function with no pointer argument
 
 JS_EXPORT_PRIVATE int32_t ffi_canary_call(void (*cb)(void));
 

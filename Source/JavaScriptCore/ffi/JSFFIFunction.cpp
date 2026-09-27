@@ -116,12 +116,13 @@ bool JSFFIFunction::isRunning(VM& vm)
         if (callerEnteredVM) {
             CodeBlock* codeBlock = isInlined ? visitor->callFrame()->codeBlock() : visitor->codeBlock();
             if (codeBlock && JITCode::isOptimizingJIT(codeBlock->jitType())) {
-                for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences) {
-                    if (reference.get() == this) {
-                        isRunning = true;
-                        return IterationStatus::Done;
-                    }
-                }
+                // Optimized code refers to a cell weakly, or as a constant when something froze the cell strongly.
+                for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences)
+                    isRunning |= reference.get() == this;
+                for (auto& constant : codeBlock->constants())
+                    isRunning |= constant.get() == JSValue(this);
+                if (isRunning)
+                    return IterationStatus::Done;
             }
         }
         callerEnteredVM = !isInlined && visitor->callerIsEntryFrame(); // An inlined frame does not set it.
