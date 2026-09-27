@@ -36,6 +36,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleNamespaceObject.h"
 #include "ModuleNamespaceAccessCase.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "PropertyInlineCache.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include "SharedJITStubSet.h"
@@ -175,6 +176,11 @@ Ref<InlineCacheHandler> InlineCacheHandler::createPreCompiled(Ref<InlineCacheHan
     }
     case AccessCase::ModuleNamespaceLoad: {
         auto& derived = accessCase.as<ModuleNamespaceAccessCase>();
+        if (derived.exportLayout()) {
+            result->u.s4.m_moduleNamespaceExportLayout = derived.exportLayout();
+            result->u.s4.m_moduleNamespaceExportIndex = derived.exportIndex();
+            break;
+        }
         result->u.s3.m_moduleNamespaceObject = derived.moduleNamespaceObject();
         result->u.s3.m_moduleVariableSlot = &derived.moduleEnvironment()->variableAt(derived.scopeOffset());
         break;

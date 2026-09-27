@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
+#include "ModuleNamespaceExportLayout.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"
 #endif
@@ -102,6 +103,12 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleRecord);
+    visitor.append(thisObject->m_exportLayout);
+    {
+        Locker locker { thisObject->cellLock() };
+        for (auto& environment : thisObject->m_exportSlotEnvironments)
+            visitor.append(environment);
+    }
     for (auto& entry : thisObject->m_exports.values())
         visitor.appendHidden(entry.moduleRecord);
 }
@@ -224,6 +231,11 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
         }
 #endif
 
+        // Once the VM has made an export layout, an inline cache that goes by layout may be what missed for this
+        // object: its slow path gets here, and the next read then hits.
+        if ((m_exportLayout || vm.m_moduleNamespaceExportLayouts) && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) [[unlikely]]
+            fillExportSlot(vm, static_cast<unsigned>(&*iterator - &*m_exports.begin()), environment, scopeOffset);
+
         slot.setValueModuleNamespace(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value, environment, scopeOffset);
         return true;
     }
@@ -243,6 +255,40 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
 
     RELEASE_ASSERT_NOT_REACHED();
     return false;
+}
+
+void JSModuleNamespaceObject::fillExportSlot(VM& vm, unsigned exportIndex, JSModuleEnvironment* environment, ScopeOffset scopeOffset)
+{
+    // Nothing is ever removed from m_exports, so its entries are at the positions they were added at: the layout's.
+    ASSERT(exportIndex < m_exports.size());
+    if (!m_exportLayout) {
+        ModuleNamespaceExportLayout::Names names;
+        names.reserveInitialCapacity(m_exports.size());
+        for (auto& name : m_exports.keys())
+            names.append(name);
+        m_exportSlots = makeUniqueArray<WriteBarrierBase<Unknown>*>(m_exports.size());
+        m_exportLayout.set(vm, this, ModuleNamespaceExportLayout::ensure(vm, WTF::move(names)));
+    }
+    WriteBarrierBase<Unknown>* variable = &environment->variableAt(scopeOffset);
+    if (m_exportSlots[exportIndex] == variable)
+        return;
+    bool isKnownEnvironment = m_exportSlotEnvironments.containsIf([&](auto& known) {
+        return known.get() == environment;
+    });
+    if (!isKnownEnvironment) {
+        Locker locker { cellLock() };
+        m_exportSlotEnvironments.append(WriteBarrier<JSModuleEnvironment>(vm, this, environment));
+    }
+    m_exportSlots[exportIndex] = variable;
+}
+
+unsigned JSModuleNamespaceObject::noteExportSlot(VM& vm, UniquedStringImpl* uid, JSModuleEnvironment* environment, ScopeOffset scopeOffset)
+{
+    auto iterator = m_exports.find(uid);
+    RELEASE_ASSERT(iterator != m_exports.end());
+    unsigned exportIndex = static_cast<unsigned>(&*iterator - &*m_exports.begin());
+    fillExportSlot(vm, exportIndex, environment, scopeOffset);
+    return exportIndex;
 }
 
 bool JSModuleNamespaceObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)

@@ -71,6 +71,7 @@ class NativeExecutable;
     macro(GetByIdGetterHandler, getByIdGetterHandler) \
     macro(GetByIdProxyObjectLoadHandler, getByIdProxyObjectLoadHandler) \
     macro(GetByIdModuleNamespaceLoadHandler, getByIdModuleNamespaceLoadHandler) \
+    macro(GetByIdModuleNamespaceLoadByExportLayoutHandler, getByIdModuleNamespaceLoadByExportLayoutHandler) \
     macro(PutByIdReplaceHandler, putByIdReplaceHandler) \
     macro(PutByIdStrictSetterHandler, putByIdStrictSetterHandler) \
     macro(PutByIdSloppySetterHandler, putByIdSloppySetterHandler) \

@@ -118,6 +118,8 @@ public:
     static constexpr ptrdiff_t offsetOfCustomAccessor() { return OBJECT_OFFSETOF(InlineCacheHandler, u.s1.m_customAccessor); }
     static constexpr ptrdiff_t offsetOfModuleNamespaceObject() { return OBJECT_OFFSETOF(InlineCacheHandler, u.s3.m_moduleNamespaceObject); }
     static constexpr ptrdiff_t offsetOfModuleVariableSlot() { return OBJECT_OFFSETOF(InlineCacheHandler, u.s3.m_moduleVariableSlot); }
+    static constexpr ptrdiff_t offsetOfModuleNamespaceExportLayout() { return OBJECT_OFFSETOF(InlineCacheHandler, u.s4.m_moduleNamespaceExportLayout); }
+    static constexpr ptrdiff_t offsetOfModuleNamespaceExportIndex() { return OBJECT_OFFSETOF(InlineCacheHandler, u.s4.m_moduleNamespaceExportIndex); }
 
     StructureID structureID() const { return m_structureID; }
     PropertyOffset offset() const { return m_offset; }
@@ -166,6 +168,10 @@ protected:
             JSObject* m_moduleNamespaceObject;
             WriteBarrierBase<Unknown>* m_moduleVariableSlot;
         } s3;
+        struct {
+            JSCell* m_moduleNamespaceExportLayout;
+            unsigned m_moduleNamespaceExportIndex;
+        } s4;
     } u;
     RefPtr<PolymorphicAccessJITStubRoutine> m_stubRoutine;
     RefPtr<AccessCase> m_accessCase;
