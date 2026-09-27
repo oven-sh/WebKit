@@ -2347,6 +2347,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunctionClose);
+static JSC_DECLARE_HOST_FUNCTION(functionFFIFunctionIsRunning);
 static JSC_DECLARE_HOST_FUNCTION(functionFFICallback);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixture);
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFixtures);
@@ -5336,6 +5337,19 @@ JSC_DEFINE_HOST_FUNCTION(functionFFIFunctionClose, (JSGlobalObject* globalObject
     return JSValue::encode(jsUndefined());
 }
 
+// $vm.ffiFunctionIsRunning(ffiFunction): what an embedder asks before it unloads the function's library.
+JSC_DEFINE_HOST_FUNCTION(functionFFIFunctionIsRunning, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* function = dynamicDowncast<JSFFIFunction>(callFrame->argument(0));
+    if (!function)
+        return throwVMTypeError(globalObject, scope, "$vm.ffiFunctionIsRunning: expected an FFI function"_s);
+    return JSValue::encode(jsBoolean(function->isRunning(vm)));
+}
+
 static void dollarVMThreadsafeDispatch(FFI::ThreadsafeInvocation&); // defined below with the queue/drain model
 JSC_DEFINE_HOST_FUNCTION(functionFFICallback, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -6115,6 +6129,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
     addFunction(vm, allowIfNotFuzz, "ffiFunctionClose"_s, functionFFIFunctionClose, 1);
+    addFunction(vm, allowIfNotFuzz, "ffiFunctionIsRunning"_s, functionFFIFunctionIsRunning, 1);
     addFunction(vm, allowIfNotFuzz, "ffiCallback"_s, functionFFICallback, 3);
     addFunction(vm, allowIfNotFuzz, "drainThreadsafeCallbacks"_s, functionDrainThreadsafeCallbacks, 0);
     addFunction(vm, allowIfNotFuzz, "ffiFixture"_s, functionFFIFixture, 1);

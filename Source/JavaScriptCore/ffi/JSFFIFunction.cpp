@@ -28,6 +28,8 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "CodeBlock.h"
+#include "DFGCommonData.h"
 #include "Error.h"
 #include "FFICallHost.h"
 #include "FFIConversions.h"
@@ -37,6 +39,7 @@
 #include "JSObjectInlines.h"
 #include "NativeExecutable.h"
 #include "SlotVisitorInlines.h"
+#include "StackVisitor.h"
 #include "StructureInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/RawPointer.h>
@@ -91,6 +94,41 @@ void JSFFIFunction::close(VM& vm)
 #endif
     m_closedWatchpointSet.fireAll(vm, "bun:ffi function was closed");
     ASSERT(isClosed());
+}
+
+bool JSFFIFunction::isRunning(VM& vm)
+{
+    bool isRunning = false;
+#if ENABLE(DFG_JIT)
+    bool callerEnteredVM = false;
+#endif
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) -> IterationStatus {
+        // The host path and the IC stub: the call has a frame of its own.
+        CalleeBits callee = visitor->callee();
+        if (callee.isCell() && callee.asCell() == this) {
+            isRunning = true;
+            return IterationStatus::Done;
+        }
+
+#if ENABLE(DFG_JIT)
+        // A CallFFI has no frame. The native call is made by the frame that was on top when the VM was entered again.
+        bool isInlined = visitor->isInlinedDFGFrame();
+        if (callerEnteredVM) {
+            CodeBlock* codeBlock = isInlined ? visitor->callFrame()->codeBlock() : visitor->codeBlock();
+            if (codeBlock && JITCode::isOptimizingJIT(codeBlock->jitType())) {
+                for (auto& reference : codeBlock->jitCode()->dfgCommon()->m_weakReferences) {
+                    if (reference.get() == this) {
+                        isRunning = true;
+                        return IterationStatus::Done;
+                    }
+                }
+            }
+        }
+        callerEnteredVM = !isInlined && visitor->callerIsEntryFrame(); // An inlined frame does not set it.
+#endif
+        return IterationStatus::Continue;
+    });
+    return isRunning;
 }
 
 static constexpr unsigned ffiIntrinsicAttributes = static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);

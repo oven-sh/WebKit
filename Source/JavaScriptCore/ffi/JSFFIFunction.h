@@ -84,6 +84,12 @@ public:
     // the call, and only ffiCall() tests isClosed().
     JS_EXPORT_PRIVATE void close(VM&);
     bool isClosed() const { return m_closedWatchpointSet.hasBeenInvalidated(); } // Safe on a compiler thread.
+
+    // True while a call to this function is on the stack of the current thread, which is when JS that the
+    // target called back into asks. That call returns into the code at target(), so an embedder that
+    // closes the function then must keep that code. Can also be true for DFG or FTL code that has a
+    // CallFFI of this function and is inside another native call.
+    JS_EXPORT_PRIVATE bool isRunning(VM&);
     InlineWatchpointSet& closedWatchpointSet() { return m_closedWatchpointSet; }
 
 private:

@@ -81,7 +81,7 @@ function testCloseAfterTierUp() {
 
     // The close must be tested against compiled CallFFI code, not only against the stub.
     const after = $vm.ffiCompileCounts();
-    if ($vm.useDFGJIT() && numberOfDFGCompiles(hot) > 0 && after.dfgCallFFI + after.ftlCallFFI === before.dfgCallFFI + before.ftlCallFFI)
+    if ($vm.useDFGJIT() && jscOptions().useFFICallInDFG && numberOfDFGCompiles(hot) > 0 && after.dfgCallFFI + after.ftlCallFFI === before.dfgCallFFI + before.ftlCallFFI)
         throw new Error("the hot caller was compiled without a CallFFI node");
 
     $vm.ffiFunctionClose(add);
@@ -193,30 +193,64 @@ function testHookedFunction() {
 }
 
 // The target calls back into JS, and that JS closes the function whose call is still on the stack. The
-// stub is patched, or the CallFFI code jettisoned, under a live frame. The fixture stays mapped, so the
-// call in flight finishes. (A real embedder unloads the library here, which no check can make safe.)
+// stub is patched, or the CallFFI code jettisoned, under a live frame, and the call returns into the
+// target. $vm.ffiFunctionIsRunning(fn) is JSFFIFunction::isRunning(): an embedder asks it before it
+// unloads the library. The fixtures stay mapped, so the call in flight finishes here either way.
 function testCloseDuringTheCall() {
-    for (const warmUp of [0, 1e5]) {
-        const callCb = $vm.ffiFunction({ args: ["function", "i32"], returns: "i32" }, $vm.ffiFixture("ffi_call_cb_i32"), "callCb" + warmUp);
-        let armed = false;
-        const cb = $vm.ffiCallback({ args: ["i32"], returns: "i32" }, x => {
-            if (armed)
-                $vm.ffiFunctionClose(callCb);
-            return x + 1;
-        });
+    const add = makeAdd("runningAdd");
+    shouldBe($vm.ffiFunctionIsRunning(add), false, "isRunning of a function that was never called");
 
-        function hot(x) {
-            return callCb(cb, x);
+    // This caller has a CallFFI of the function and is on the stack, but it is not inside the call.
+    function callsThenAsks(a, b) {
+        return add(a, b) + ($vm.ffiFunctionIsRunning(add) ? 1000 : 0);
+    }
+    noInline(callsThenAsks);
+    for (let i = 0; i < 1e5; ++i)
+        shouldBe(callsThenAsks(i, 1), i + 1, "isRunning in a caller that is not inside the call");
+
+    // Compiled code is specialized on the function it calls, and what it learned stays with the source
+    // text. So each case has a source text of its own.
+    const makeCaller = (what, inlined, callCb, cb) => new Function("callCb", "cb", `
+        // ${what}
+        function call(x) { return callCb(cb, x); }
+        function outer(x) { return call(x); }
+        ${inlined ? "" : "noInline(call);"}
+        noInline(outer);
+        return outer;
+    `)(callCb, cb);
+
+    for (const inlined of [false, true]) {
+        for (const warmUp of [0, 1e5]) {
+            const what = (inlined ? "inlined caller" : "caller") + ", warm-up " + warmUp;
+            const callCb = $vm.ffiFunction({ args: ["function", "i32"], returns: "i32" }, $vm.ffiFixture("ffi_call_cb_i32"), "runningCallCb");
+            const notCalledHere = makeAdd("notCalledHere");
+            let mode = "";
+            let seen = null;
+            const cb = $vm.ffiCallback({ args: ["i32"], returns: "i32" }, x => {
+                if (mode === "close")
+                    $vm.ffiFunctionClose(callCb);
+                if (mode)
+                    seen = [$vm.ffiFunctionIsRunning(callCb), $vm.ffiFunctionIsRunning(notCalledHere)];
+                return x + 1;
+            });
+            const outer = makeCaller(what, inlined, callCb, cb);
+
+            for (let i = 0; i < warmUp; ++i)
+                shouldBe(outer(i), i + 1, "open call through a callback, " + what);
+
+            mode = "ask";
+            shouldBe(outer(41), 42, "the call that asks, " + what);
+            shouldBe(seen[0], true, "isRunning from inside the call, " + what);
+            shouldBe(seen[1], false, "isRunning of another function from inside the call, " + what);
+            shouldBe($vm.ffiFunctionIsRunning(callCb), false, "isRunning after the call returned, " + what);
+
+            mode = "close";
+            shouldBe(outer(41), 42, "the call that closes its own function, " + what);
+            shouldBe(seen[0], true, "isRunning of a closed function from inside the call, " + what);
+            shouldThrowClosed("runningCallCb", () => outer(41), "call after a close from inside the call, " + what);
+            shouldBe($vm.ffiFunctionIsRunning(callCb), false, "isRunning of a closed function, " + what);
+            cb.close();
         }
-        noInline(hot);
-
-        for (let i = 0; i < warmUp; ++i)
-            shouldBe(hot(i), i + 1, "open call through a callback");
-
-        armed = true;
-        shouldBe(hot(41), 42, "the call that closes its own function, warm-up " + warmUp);
-        shouldThrowClosed("callCb" + warmUp, () => hot(41), "call after a close from inside the call, warm-up " + warmUp);
-        cb.close();
     }
 }
 
