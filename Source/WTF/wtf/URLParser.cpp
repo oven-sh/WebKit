@@ -3897,7 +3897,10 @@ std::optional<String> URLParser::formURLDecode(StringView input)
     if (utf8.isNull())
         return std::nullopt;
     auto percentDecoded = percentDecode(byteCast<Latin1Character>(utf8.span()));
-    return String::fromUTF8ReplacingInvalidSequences(percentDecoded.span());
+    auto decoded = String::fromUTF8ReplacingInvalidSequences(percentDecoded.span());
+    if (decoded.isNull()) [[unlikely]]
+        return std::nullopt;
+    return decoded;
 }
 
 // https://url.spec.whatwg.org/#concept-urlencoded-parser
