@@ -603,6 +603,19 @@ JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSStrin
     if (callData.type == CallData::Type::None) {
         replacementString = replaceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
+
+        // ToString(replaceValue) is step 6 of RegExp.prototype[@@replace]; the flags read (step 7)
+        // and the exec calls (step 12) come after it. An object's toString can give the RegExp an
+        // own exec or flags, or a non-number lastIndex, so the caller's check is stale. Only an
+        // object runs user code here. The generic path gets the string, so toString runs once.
+        if (replaceValue.isObject()) {
+            RegExpObject* regExpObject = uncheckedDowncast<RegExpObject>(searchValue);
+            if (!regExpObject->isSymbolReplaceFastAndNonObservable()) [[unlikely]] {
+                JSValue result = regExpReplaceGeneric(globalObject, regExpObject, string, jsString(vm, replacementString));
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                RELEASE_AND_RETURN(scope, result.toString(globalObject));
+            }
+        }
     }
 
     RELEASE_AND_RETURN(scope, replaceUsingRegExpSearch(
