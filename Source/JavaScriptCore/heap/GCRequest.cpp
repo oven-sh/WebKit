@@ -33,6 +33,9 @@ bool GCRequest::subsumedBy(const GCRequest& other) const
     // If we have callbacks, then there is no chance that we're subsumed by an existing request.
     if (didFinishEndPhase)
         return false;
+
+    if (keepsWorldStopped && !other.keepsWorldStopped)
+        return false;
 #if USE(BUN_JSC_ADDITIONS)
     // An idle request must run as one; a pending ordinary collection does not stand in for it.
     if (isIdle && !other.isIdle)

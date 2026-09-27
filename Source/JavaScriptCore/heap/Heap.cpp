@@ -2231,7 +2231,10 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
         // https://bugs.webkit.org/show_bug.cgi?id=180310
         if (converged && visitor.isEmpty()) {
             assertMarkStacksEmpty();
-            return changePhase(conn, CollectorPhase::End);
+            if (m_explicitlyFreedCellClient)
+                m_explicitlyFreedCellClient->didReachFixpoint(*this, visitor);
+            if (visitor.isEmpty())
+                return changePhase(conn, CollectorPhase::End);
         }
             
         m_scheduler->didExecuteConstraints();
@@ -2258,7 +2261,7 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
     if (visitor.didReachTermination())
         return true; // This is like relooping to the top of runFixpointPhase().
         
-    if (!m_scheduler->shouldResume())
+    if (m_currentRequest.keepsWorldStopped || !m_scheduler->shouldResume())
         return true;
 
     m_scheduler->willResume();
