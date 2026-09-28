@@ -63,21 +63,6 @@ JSValue boxIfDerived(JSGlobalObject* globalObject, PyType* type, PyType* builtin
     return PyBoxedValue::create(globalObject->vm(), type->instanceStructure(), value);
 }
 
-PyDict* attributesAsDict(JSGlobalObject* globalObject, JSObject* object)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PyDict* dict = PyDict::create(globalObject);
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    for (auto& name : properties) {
-        if (JSValue value = object->getDirect(vm, name))
-            dict->setString(globalObject, name.string(), value);
-    }
-    return dict;
-}
-
 // ---- What is the same for every built-in type
 
 JSC_DEFINE_HOST_FUNCTION(nativeRepr, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -436,11 +421,34 @@ static JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
     if (auto* module = tryModule(self))
-        RELEASE_AND_RETURN(scope, attributesAsDict(globalObject, module->namespaceObject()));
+        return PyDict::backedBy(globalObject, module->namespaceObject());
     bool hasDict = self.isObject() && !type->hasFlag(PyType::HasNoInstanceDict) && (type->hasFlag(PyType::IsHeapType) || type->isExceptionType() || (self.asCell()->type() == JSFunctionType && !self.asCell()->inherits<PyNativeFunction>()));
     if (!hasDict)
         return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '__dict__'"_s));
-    RELEASE_AND_RETURN(scope, attributesAsDict(globalObject, asObject(self)));
+    return PyDict::backedBy(globalObject, asObject(self));
+}
+
+// obj.__dict__ = mapping: that dict is the attributes from now on, and the dict that was is a dict like any other.
+static void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value || !isDict(value)) {
+        raiseTypeError(globalObject, scope, makeString("__dict__ must be set to a dictionary, not a '"_s, value ? typeName(globalObject, value) : "NULL"_str, '\''));
+        return;
+    }
+    JSValue current = getInstanceDict(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (current == value)
+        return;
+    JSObject* object = asDict(current)->backing();
+    asDict(current)->detach(globalObject);
+    if (!asDict(value)->backing()) {
+        asDict(value)->becomeBackedBy(globalObject, object);
+        return;
+    }
+    // FIXME: Two objects cannot have the same dict, since it is one of them that holds what is in it. This one gets a copy.
+    PyDict::backedBy(globalObject, object)->copyFrom(globalObject, *asDict(value));
 }
 
 // ---- type
@@ -880,7 +888,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__subclasshook__"_s, returnNotImplemented, Kind::ClassMethod },
     });
     addGetSet(globalObject, object, "__class__"_s, getClass, setClass);
-    addGetSet(globalObject, object, "__dict__"_s, getInstanceDict);
+    addGetSet(globalObject, object, "__dict__"_s, getInstanceDict, setInstanceDict);
     remember(object, names.dunder_new, Function::ObjectNew);
     remember(object, names.dunder_init, Function::ObjectInit);
     remember(object, names.dunder_getattribute, Function::ObjectGetAttribute);
@@ -928,7 +936,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); });
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()) : jsUndefined(); });
     addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->mro(); });
-    addGetSet(globalObject, type, "__dict__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return attributesAsDict(globalObject, asType(self)); });
+    addGetSet(globalObject, type, "__dict__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return PyNativeObject::create(globalObject, BuiltinType::MappingProxy, PyDict::backedBy(globalObject, asType(self))); });
     addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined()); });
 
     addMethods(globalObject, realm->typeNoneType(), {

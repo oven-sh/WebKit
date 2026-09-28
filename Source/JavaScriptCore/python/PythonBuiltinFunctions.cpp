@@ -542,7 +542,7 @@ PYTHON_NATIVE(builtinGlobals)
     JSObject* globals = globalsOfCaller(globalObject, callFrame);
     if (!globals)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "globals(): no current frame"_s));
-    RELEASE_AND_RETURN(scope, JSValue::encode(attributesAsDict(globalObject, globals)));
+    return JSValue::encode(PyDict::backedBy(globalObject, globals));
 }
 
 // ---- Iteration

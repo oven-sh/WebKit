@@ -201,14 +201,11 @@ static bool forEachItem(JSGlobalObject* globalObject, JSValue mapping, const Fun
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isDict(mapping) && !typeOf(globalObject, mapping)->hasFlag(PyType::IsHeapType)) {
-        auto* dict = uncheckedDowncast<PyDict>(mapping.asCell());
-        for (unsigned entry = 0; entry < dict->entryCount(); ++entry) {
-            if (JSValue key = dict->keyAt(entry)) {
-                function(key, dict->valueAt(entry));
-                RETURN_IF_EXCEPTION(scope, false);
-            }
-        }
-        return true;
+        asDict(mapping)->forEach(globalObject, [&] (JSValue key, JSValue value) {
+            function(key, value);
+            return !scope.exception();
+        });
+        return !scope.exception();
     }
     JSValue keysMethod = getAttributeIfPresent(globalObject, mapping, Identifier::fromString(vm, "keys"_s));
     RETURN_IF_EXCEPTION(scope, false);
@@ -312,12 +309,11 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
     auto* keywords = uncheckedDowncast<PyDict>(argument(2).asCell());
     KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
     unsigned i = 0;
-    for (unsigned entry = 0; entry < keywords->entryCount(); ++entry) {
-        if (JSValue key = keywords->keyAt(entry)) {
-            names->setIndex(vm, i++, key);
-            arguments.append(keywords->valueAt(entry));
-        }
-    }
+    keywords->forEach(globalObject, [&] (JSValue key, JSValue value) {
+        names->setIndex(vm, i++, key);
+        arguments.append(value);
+        return true;
+    });
     RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, names)));
 }
 

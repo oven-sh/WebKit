@@ -27,6 +27,7 @@
 #include "PyDict.h"
 
 #include "JSCInlines.h"
+#include "PyTuple.h"
 #include "PythonOperations.h"
 
 namespace JSC {
@@ -312,10 +313,180 @@ Structure* PyDict::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue
     return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags), info());
 }
 
+template<typename Visitor>
+void PyDict::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<PyDict>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_backing);
+}
+
+DEFINE_VISIT_CHILDREN(PyDict);
+
+PyDict* PyDict::backedBy(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    auto& name = vm.pythonNames().private_dict;
+    if (JSValue existing = object->getDirect(vm, name))
+        return asDict(existing);
+    PyDict* dict = create(globalObject);
+    dict->m_backing.set(vm, dict, object);
+    object->putDirect(vm, name, dict);
+    return dict;
+}
+
+void PyDict::becomeBackedBy(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    ASSERT(!m_backing);
+    // Comparing strings with strings runs nothing, so the table stays as it is meanwhile.
+    for (unsigned entry = 0; entry < Base::entryCount(); ++entry) {
+        JSValue key = Base::keyAt(entry);
+        if (!key || !key.isString())
+            continue;
+        object->putDirect(vm, asString(key)->toIdentifier(globalObject), Base::valueAt(entry));
+        Base::removeEntry(vm, entry);
+    }
+    m_backing.set(vm, this, object);
+    object->putDirect(vm, vm.pythonNames().private_dict, this);
+}
+
+void PyDict::detach(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    JSObject* object = m_backing.get();
+    ASSERT(object);
+    PyDict* items = create(globalObject);
+    items->copyFrom(globalObject, *this);
+    clear(globalObject);
+    JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_dict);
+    m_backing.clear();
+    copyFrom(globalObject, *items);
+}
+
+unsigned PyDict::backingSize() const
+{
+    unsigned size = 0;
+    m_backing->structure()->forEachProperty(m_backing->vm(), [&] (const PropertyTableEntry& entry) {
+        if (!(entry.attributes() & PropertyAttribute::DontEnum) && !entry.key()->isSymbol())
+            ++size;
+        return true;
+    });
+    return size;
+}
+
+PyTuple* PyDict::backingKeys(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    m_backing->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Exclude);
+    PyTuple* keys = PyTuple::create(globalObject, names.size());
+    for (unsigned i = 0; i < names.size(); ++i)
+        keys->initializeAt(vm, i, jsString(vm, names[i].string()));
+    return keys;
+}
+
+bool PyDict::isInBacking(JSGlobalObject* globalObject, JSValue key, Identifier& name)
+{
+    if (!m_backing) [[likely]]
+        return false;
+    // An instance of a class derived from str is the same key as the string in it, unless the class says otherwise.
+    if (!key.isString())
+        return false;
+    name = asString(key)->toIdentifier(globalObject);
+    return true;
+}
+
 JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key)
 {
-    int entry = find(globalObject, key);
-    return entry < 0 ? JSValue() : valueAt(entry);
+    Identifier name;
+    if (isInBacking(globalObject, key, name)) [[unlikely]]
+        return m_backing->getDirect(globalObject->vm(), name);
+    int entry = Base::find(globalObject, key);
+    return entry < 0 ? JSValue() : Base::valueAt(entry);
+}
+
+bool PyDict::contains(JSGlobalObject* globalObject, JSValue key)
+{
+    Identifier name;
+    if (isInBacking(globalObject, key, name)) [[unlikely]]
+        return !!m_backing->getDirect(globalObject->vm(), name);
+    return Base::find(globalObject, key) >= 0;
+}
+
+bool PyDict::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool* wasAdded, bool replace)
+{
+    Identifier name;
+    if (!isInBacking(globalObject, key, name)) [[likely]]
+        return Base::add(globalObject, key, value, wasAdded, replace);
+    VM& vm = globalObject->vm();
+    bool isPresent = !!m_backing->getDirect(vm, name);
+    if (wasAdded)
+        *wasAdded = !isPresent;
+    if (!isPresent || replace)
+        m_backing->putDirect(vm, name, value);
+    return true;
+}
+
+JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
+{
+    Identifier name;
+    if (!isInBacking(globalObject, key, name)) [[likely]]
+        return Base::remove(globalObject, key);
+    JSValue value = m_backing->getDirect(globalObject->vm(), name);
+    if (value)
+        JSCell::deleteProperty(m_backing.get(), globalObject, name);
+    return value;
+}
+
+bool PyDict::removeLast(JSGlobalObject* globalObject, JSValue& key, JSValue& value)
+{
+    VM& vm = globalObject->vm();
+    for (unsigned entry = Base::entryCount(); entry--;) {
+        key = Base::keyAt(entry);
+        if (!key)
+            continue;
+        value = Base::valueAt(entry);
+        Base::removeEntry(vm, entry);
+        return true;
+    }
+    if (!m_backing)
+        return false;
+    PyTuple* keys = backingKeys(globalObject);
+    if (!keys->length())
+        return false;
+    key = keys->at(keys->length() - 1);
+    value = remove(globalObject, key);
+    return true;
+}
+
+void PyDict::clear(JSGlobalObject* globalObject)
+{
+    Base::clear(globalObject->vm());
+    if (!m_backing)
+        return;
+    PyTuple* keys = backingKeys(globalObject);
+    for (auto& key : keys->span())
+        remove(globalObject, key.get());
+}
+
+void PyDict::copyFrom(JSGlobalObject* globalObject, PyDict& other)
+{
+    if (!m_backing && !other.m_backing) [[likely]] {
+        Base::copyFrom(globalObject->vm(), globalObject, other);
+        return;
+    }
+    other.forEach(globalObject, [&] (JSValue key, JSValue value) {
+        return add(globalObject, key, value);
+    });
+}
+
+JSValue PyDict::getString(JSGlobalObject* globalObject, const String& key)
+{
+    if (m_backing) [[unlikely]]
+        return m_backing->getDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), key));
+    return Base::getString(globalObject, key);
 }
 
 bool PyDict::setString(JSGlobalObject* globalObject, const String& key, JSValue value)

@@ -30,6 +30,8 @@
 
 namespace JSC {
 
+class PyDict;
+
 // The small built-in kinds of object. Each is a cell with a few fields, and its class is its prototype, as for any other.
 
 #define PYTHON_CELL_BOILERPLATE(ClassName) \
@@ -143,6 +145,8 @@ public:
     };
 
     static PyIterator* create(JSGlobalObject*, Kind, JSValue a = JSValue(), JSValue b = JSValue(), int64_t index = 0, int64_t stop = 0, int64_t step = 0);
+    // One of the kinds that go through a dict.
+    static PyIterator* create(JSGlobalObject*, Kind, PyDict*);
     static BuiltinType typeFor(Kind);
 
     Kind kind() const { return m_kind; }

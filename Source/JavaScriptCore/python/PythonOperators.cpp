@@ -191,15 +191,12 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
             auto* result = uncheckedDowncast<PyDict>(left.asCell());
             if (!inPlace) {
                 result = PyDict::create(globalObject);
-                result->copyFrom(vm, globalObject, *uncheckedDowncast<PyDict>(left.asCell()));
+                result->copyFrom(globalObject, *asDict(left));
             }
-            auto* other = uncheckedDowncast<PyDict>(right.asCell());
-            for (unsigned entry = 0; entry < other->entryCount(); ++entry) {
-                if (JSValue key = other->keyAt(entry)) {
-                    result->set(globalObject, key, other->valueAt(entry));
-                    RETURN_IF_EXCEPTION(scope, { });
-                }
-            }
+            asDict(right)->forEach(globalObject, [&] (JSValue key, JSValue value) {
+                return result->set(globalObject, key, value);
+            });
+            RETURN_IF_EXCEPTION(scope, { });
             return result;
         }
         return { };
@@ -564,18 +561,13 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
         auto* a = uncheckedDowncast<PyDict>(left.asCell());
         auto* b = uncheckedDowncast<PyDict>(right.asCell());
         bool same = a->size() == b->size();
-        for (unsigned entry = 0; same && entry < a->entryCount(); ++entry) {
-            JSValue key = a->keyAt(entry);
-            if (!key)
-                continue;
-            JSValue value = a->valueAt(entry);
-            JSValue other = b->get(globalObject, key);
+        if (same) {
+            a->forEach(globalObject, [&] (JSValue key, JSValue value) {
+                JSValue other = b->get(globalObject, key);
+                same = other && isEqual(globalObject, value, other);
+                return same;
+            });
             RETURN_IF_EXCEPTION(scope, { });
-            same = !!other;
-            if (same) {
-                same = isEqual(globalObject, value, other);
-                RETURN_IF_EXCEPTION(scope, { });
-            }
         }
         return jsBoolean(same == (op == ComparisonOperator::Eq));
     }
@@ -750,8 +742,9 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             return haystack->find(needle) != notFound;
         }
         case PyDictType:
+            RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(cell)->contains(globalObject, value));
         case PySetType: {
-            int entry = uncheckedDowncast<PyHashTable>(cell)->find(globalObject, value);
+            int entry = uncheckedDowncast<PySet>(cell)->find(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
             return entry >= 0;
         }
@@ -1057,8 +1050,9 @@ int64_t builtinLength(JSGlobalObject* globalObject, JSValue value)
     case PyTupleType:
         return uncheckedDowncast<PyTuple>(cell)->length();
     case PyDictType:
+        return uncheckedDowncast<PyDict>(cell)->size();
     case PySetType:
-        return uncheckedDowncast<PyHashTable>(cell)->size();
+        return uncheckedDowncast<PySet>(cell)->size();
     case PyRangeType:
         return uncheckedDowncast<PyRange>(cell)->length();
     default:
@@ -1376,7 +1370,7 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
     case PyTupleType:
         return PyIterator::create(globalObject, Kind::Tuple, value);
     case PyDictType:
-        return PyIterator::create(globalObject, Kind::DictKeys, value, JSValue(), 0, uncheckedDowncast<PyDict>(cell)->size());
+        return PyIterator::create(globalObject, Kind::DictKeys, uncheckedDowncast<PyDict>(cell));
     case PySetType:
         return PyIterator::create(globalObject, Kind::Set, value, JSValue(), 0, uncheckedDowncast<PySet>(cell)->size());
     case PyRangeType: {

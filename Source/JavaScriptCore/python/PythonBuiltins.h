@@ -117,7 +117,5 @@ void addBinaryOperators(JSGlobalObject*, PyType*, std::initializer_list<BinaryOp
 
 // An instance of `type`, which is `builtin` or derived from it, holding a value that is not a cell.
 JSValue boxIfDerived(JSGlobalObject*, PyType* type, PyType* builtin, JSValue);
-// A dict with the attributes that an object has of its own. FIXME: It should be a view of them.
-PyDict* attributesAsDict(JSGlobalObject*, JSObject*);
 
 } } // namespace JSC::Python

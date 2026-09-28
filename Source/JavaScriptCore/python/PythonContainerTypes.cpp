@@ -376,13 +376,10 @@ static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeA
     if (args.size() == 2) {
         JSValue source = args[1];
         if (isDict(source) && !typeOf(globalObject, source)->hasFlag(PyType::IsHeapType)) {
-            auto* other = uncheckedDowncast<PyDict>(source.asCell());
-            for (unsigned entry = 0; entry < other->entryCount(); ++entry) {
-                if (JSValue key = other->keyAt(entry)) {
-                    dict->set(globalObject, key, other->valueAt(entry));
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
+            asDict(source)->forEach(globalObject, [&] (JSValue key, JSValue value) {
+                return dict->set(globalObject, key, value);
+            });
+            RETURN_IF_EXCEPTION(scope, void());
         } else {
             JSValue keysMethod = getAttributeIfPresent(globalObject, source, Identifier::fromString(vm, "keys"_s));
             RETURN_IF_EXCEPTION(scope, void());
@@ -487,21 +484,17 @@ PYTHON_NATIVE(dictPop)
 PYTHON_NATIVE(dictPopItem)
 {
     DICT_PROLOGUE("popitem");
-    for (unsigned entry = self->entryCount(); entry--;) {
-        JSValue key = self->keyAt(entry);
-        if (!key)
-            continue;
-        PyTuple* pair = PyTuple::create(globalObject, { key, self->valueAt(entry) });
-        self->removeEntry(vm, entry);
-        return JSValue::encode(pair);
-    }
+    JSValue key;
+    JSValue value;
+    if (self->removeLast(globalObject, key, value))
+        return JSValue::encode(PyTuple::create(globalObject, { key, value }));
     return JSValue::encode(raise(globalObject, scope, BuiltinType::KeyError, jsNontrivialString(vm, "popitem(): dictionary is empty"_s)));
 }
 
 PYTHON_NATIVE(dictClear)
 {
     DICT_PROLOGUE("clear");
-    self->clear(vm);
+    self->clear(globalObject);
     RETURN_NONE();
 }
 
@@ -509,7 +502,7 @@ PYTHON_NATIVE(dictCopy)
 {
     DICT_PROLOGUE("copy");
     PyDict* copy = PyDict::create(globalObject);
-    copy->copyFrom(vm, globalObject, *self);
+    copy->copyFrom(globalObject, *self);
     return JSValue::encode(copy);
 }
 
@@ -540,7 +533,7 @@ PYTHON_NATIVE(dictView)
 PYTHON_NATIVE(dictReversed)
 {
     DICT_PROLOGUE("__reversed__");
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::DictReverseKeys, self, JSValue(), self->entryCount(), self->size()));
+    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::DictReverseKeys, self));
 }
 
 // ---- The views of a dict
@@ -550,8 +543,7 @@ static PyDict* dictOfView(JSValue view) { return uncheckedDowncast<PyDict>(unche
 PYTHON_NATIVE(viewIter)
 {
     auto kind = unpack<PyIterator::Kind>(callFrame, 0);
-    PyDict* dict = dictOfView(callFrame->argument(0));
-    return JSValue::encode(PyIterator::create(globalObject, kind, dict, JSValue(), 0, dict->size()));
+    return JSValue::encode(PyIterator::create(globalObject, kind, dictOfView(callFrame->argument(0))));
 }
 
 PYTHON_NATIVE(viewLen)
@@ -573,9 +565,7 @@ PYTHON_NATIVE(viewRepr)
 PYTHON_NATIVE(keysContains)
 {
     NATIVE_PROLOGUE();
-    int entry = dictOfView(args.at(0))->find(globalObject, args.at(1));
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsBoolean(entry >= 0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(dictOfView(args.at(0))->contains(globalObject, args.at(1)))));
 }
 
 PYTHON_NATIVE(itemsContains)
@@ -617,6 +607,77 @@ PYTHON_NATIVE(viewEq)
     PySet* right = setFromIterable(globalObject, structure, other);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(setCompare(globalObject, ComparisonOperator::Eq, left, right)));
+}
+
+// ---- mappingproxy
+
+static JSValue mappingOfProxy(JSValue proxy) { return uncheckedDowncast<PyNativeObject>(proxy.asCell())->field(0); }
+
+PYTHON_NATIVE(proxyNew)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "mappingproxy"_s, 2, 2))
+        return { };
+    if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_getitem) || isList(args[1]) || isTuple(args[1]))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args[1]));
+}
+
+PYTHON_NATIVE(proxyGetItem)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(getItem(globalObject, mappingOfProxy(args.at(0)), args.at(1))));
+}
+
+PYTHON_NATIVE(proxyContains)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(contains(globalObject, mappingOfProxy(args.at(0)), args.at(1)))));
+}
+
+PYTHON_NATIVE(proxyLen)
+{
+    NATIVE_PROLOGUE();
+    int64_t size = length(globalObject, mappingOfProxy(args.at(0)));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
+}
+
+PYTHON_NATIVE(proxyIter)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(getIterator(globalObject, mappingOfProxy(args.at(0)))));
+}
+
+PYTHON_NATIVE(proxyRepr)
+{
+    NATIVE_PROLOGUE();
+    String text = repr(globalObject, mappingOfProxy(args.at(0)));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, makeString("mappingproxy("_s, text, ')')));
+}
+
+PYTHON_NATIVE(proxyEq)
+{
+    NATIVE_PROLOGUE();
+    JSValue other = args.at(1);
+    if (tryNativeObject(other) && typeOf(globalObject, other) == realm->typeMappingProxy())
+        other = mappingOfProxy(other);
+    RELEASE_AND_RETURN(scope, JSValue::encode(compare(globalObject, ComparisonOperator::Eq, mappingOfProxy(args.at(0)), other)));
+}
+
+// get, keys, values, items and copy: whatever the mapping does.
+PYTHON_NATIVE(proxyForward)
+{
+    static constexpr ASCIILiteral methods[] = { "get"_s, "keys"_s, "values"_s, "items"_s, "copy"_s };
+    ASCIILiteral method = methods[unpack<unsigned>(callFrame, 0)];
+    NATIVE_PROLOGUE();
+    JSValue function = getAttribute(globalObject, mappingOfProxy(args.at(0)), Identifier::fromString(vm, method));
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 1; i < args.size(); ++i)
+        arguments.append(args[i]);
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function, arguments)));
 }
 
 // ---- set and frozenset
@@ -1056,6 +1117,22 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         });
         makeUnhashable(view);
     }
+
+    addMethods(globalObject, realm->typeMappingProxy(), {
+        { "__new__"_s, proxyNew, Kind::Function },
+        { "__getitem__"_s, proxyGetItem },
+        { "__contains__"_s, proxyContains },
+        { "__len__"_s, proxyLen },
+        { "__iter__"_s, proxyIter },
+        { "__repr__"_s, proxyRepr },
+        { "__eq__"_s, proxyEq },
+        { "get"_s, proxyForward, Kind::Method, 0 },
+        { "keys"_s, proxyForward, Kind::Method, 1 },
+        { "values"_s, proxyForward, Kind::Method, 2 },
+        { "items"_s, proxyForward, Kind::Method, 3 },
+        { "copy"_s, proxyForward, Kind::Method, 4 },
+    });
+    makeUnhashable(realm->typeMappingProxy());
 
     for (PyType* set : { realm->typeSet(), realm->typeFrozenSet() }) {
         addMethods(globalObject, set, {

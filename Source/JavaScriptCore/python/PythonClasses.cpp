@@ -141,22 +141,18 @@ static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* nam
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    for (unsigned entry = 0; entry < namespaceDict->entryCount(); ++entry) {
-        JSValue key = namespaceDict->keyAt(entry);
-        if (!key)
-            continue;
-        JSValue value = namespaceDict->valueAt(entry);
+    namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue value) {
         if (!value.isObject())
-            continue;
+            return true;
         JSValue self;
         JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_set_name, self);
         RETURN_IF_EXCEPTION(scope, false);
         if (!method)
-            continue;
+            return true;
         callMethod(globalObject, method, self, type, key);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    return true;
+        return !scope.exception();
+    });
+    return !scope.exception();
 }
 
 static JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords)
@@ -166,13 +162,11 @@ static JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callabl
         return call(globalObject, callable, arguments);
     KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
     unsigned i = 0;
-    for (unsigned entry = 0; entry < keywords->entryCount(); ++entry) {
-        JSValue key = keywords->keyAt(entry);
-        if (!key)
-            continue;
+    keywords->forEach(globalObject, [&] (JSValue key, JSValue value) {
         names->setIndex(vm, i++, key);
-        arguments.append(keywords->valueAt(entry));
-    }
+        arguments.append(value);
+        return true;
+    });
     return callWithKeywords(globalObject, callable, arguments, names);
 }
 
@@ -194,15 +188,11 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
 
     bool hasSlots = false;
     bool slotsIncludeDict = false;
-    for (unsigned entry = 0; entry < namespaceDict->entryCount(); ++entry) {
-        JSValue key = namespaceDict->keyAt(entry);
-        if (!key)
-            continue;
+    namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue value) {
         if (!key.isString())
-            continue; // FIXME: It should still be in __dict__.
-        JSValue value = namespaceDict->valueAt(entry);
+            return true; // FIXME: It should still be in __dict__.
         auto property = asString(key)->toIdentifier(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, false);
 
         // These are what they are whether or not they are decorated as such.
         bool isPlainFunction = value.isCell() && value.asCell()->type() == JSFunctionType && !value.asCell()->inherits<PyNativeFunction>();
@@ -218,13 +208,15 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
                 slotNames.append(value);
             else {
                 collect(globalObject, value, slotNames);
-                RETURN_IF_EXCEPTION(scope, { });
+                RETURN_IF_EXCEPTION(scope, false);
             }
             for (unsigned i = 0; i < slotNames.size(); ++i) {
-                if (!slotNames.at(i).isString())
-                    return raiseTypeError(globalObject, scope, makeString("__slots__ items must be strings, not '"_s, typeName(globalObject, slotNames.at(i)), '\''));
+                if (!slotNames.at(i).isString()) {
+                    raiseTypeError(globalObject, scope, makeString("__slots__ items must be strings, not '"_s, typeName(globalObject, slotNames.at(i)), '\''));
+                    return false;
+                }
                 auto slot = asString(slotNames.at(i))->toIdentifier(globalObject);
-                RETURN_IF_EXCEPTION(scope, { });
+                RETURN_IF_EXCEPTION(scope, false);
                 if (slot == names.dunder_dict) {
                     slotsIncludeDict = true;
                     continue;
@@ -235,7 +227,9 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
             }
         }
         type->putDirect(vm, property, value);
-    }
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, { });
 
     // No attributes but the slots, if none of the bases' instances have any either.
     if (hasSlots && !slotsIncludeDict) {

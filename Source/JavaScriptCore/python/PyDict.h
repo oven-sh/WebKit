@@ -29,6 +29,8 @@
 
 namespace JSC {
 
+class PyTuple;
+
 // What a dict or a set keeps its entries in. It is of a fixed size: to grow, a table gets another. So the collector can look at one
 // at any time, without a lock.
 //
@@ -145,26 +147,73 @@ private:
     unsigned m_stride;
 };
 
+// A dict can be backed by an object. Then its items with strings for keys are the properties of that object, and only the others are
+// in its own table. That is what the __dict__ of an instance or of a module is, and globals(): the attributes are where property
+// access finds them, and the dict is another way of getting at them, so neither can be out of date. A dict that is given to exec()
+// to be its globals becomes one.
+//
+// The items in the object come before the others. That is not the order in which they were added if strings and other keys are
+// mixed, which is the one way in which such a dict differs.
 class PyDict final : public PyHashTable {
 public:
     using Base = PyHashTable;
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static PyDict* create(VM&, Structure*);
     static PyDict* create(JSGlobalObject*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
+    // The dict that is backed by the object. There is one, which the object remembers.
+    static PyDict* backedBy(JSGlobalObject*, JSObject*);
+    // Moves what has strings for keys to the object, which is to have no properties yet.
+    void becomeBackedBy(JSGlobalObject*, JSObject*);
+    // Takes what is in the object for its own, and has no more to do with it. The object is left with no such properties.
+    void detach(JSGlobalObject*);
+    JSObject* backing() const { return m_backing.get(); }
+
+    unsigned size() const { return Base::size() + (m_backing ? backingSize() : 0); }
     // Empty if there is none, or if it raised.
     JSValue get(JSGlobalObject*, JSValue key);
+    // False if there is none, or if it raised.
+    bool contains(JSGlobalObject*, JSValue key);
     bool set(JSGlobalObject* globalObject, JSValue key, JSValue value) { return add(globalObject, key, value); }
+    bool add(JSGlobalObject*, JSValue key, JSValue value, bool* wasAdded = nullptr, bool replace = true);
+    JSValue remove(JSGlobalObject*, JSValue key);
+    // The last item. False if there are none.
+    bool removeLast(JSGlobalObject*, JSValue& key, JSValue& value);
+    void clear(JSGlobalObject*);
+    void copyFrom(JSGlobalObject*, PyDict&);
+    JSValue getString(JSGlobalObject*, const String&);
     bool setString(JSGlobalObject*, const String& key, JSValue value);
+
+    // Calls the function with each key and value in order, until it returns false. What is added meanwhile may or may not be seen, and
+    // what is removed is not.
+    template<typename Function> void forEach(JSGlobalObject*, const Function&);
+
+    // For iterators: the keys that are in the object now, and the rest of the dict.
+    PyTuple* backingKeys(JSGlobalObject*);
+    PyHashTable& ownTable() { return *this; }
+
+    // Where an item is depends on the key, so there is no going through them by number.
+    unsigned entryCount() const = delete;
+    JSValue keyAt(unsigned) const = delete;
+    JSValue valueAt(unsigned) const = delete;
+    void removeEntry(VM&, unsigned) = delete;
+    int find(JSGlobalObject*, JSValue) = delete;
 
 private:
     PyDict(VM& vm, Structure* structure)
         : Base(vm, structure, 2)
     {
     }
+
+    JS_EXPORT_PRIVATE unsigned backingSize() const;
+    // The property that a key stands for, if this dict is backed and the key is a string.
+    bool isInBacking(JSGlobalObject*, JSValue key, Identifier&);
+
+    WriteBarrier<JSObject> m_backing;
 };
 
 // set and frozenset.
@@ -187,7 +236,28 @@ private:
     }
 };
 
+template<typename Function>
+void PyDict::forEach(JSGlobalObject* globalObject, const Function& function)
+{
+    VM& vm = globalObject->vm();
+    if (JSObject* object = m_backing.get()) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Exclude);
+        for (auto& name : names) {
+            JSValue value = object->getDirect(vm, name);
+            if (value && !function(jsString(vm, name.string()), value))
+                return;
+        }
+    }
+    for (unsigned entry = 0; entry < Base::entryCount(); ++entry) {
+        JSValue key = Base::keyAt(entry);
+        if (key && !function(key, Base::valueAt(entry)))
+            return;
+    }
+}
+
 inline bool isDict(JSValue value) { return value.isCell() && value.asCell()->type() == PyDictType; }
+inline PyDict* asDict(JSValue value) { return uncheckedDowncast<PyDict>(value.asCell()); }
 inline bool isSet(JSValue value) { return value.isCell() && value.asCell()->type() == PySetType; }
 
 } // namespace JSC

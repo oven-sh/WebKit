@@ -451,7 +451,8 @@ private:
         case Constant::Type::Integer:
             if (node.integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
                 return g.emitLoad(dst, jsNumber(static_cast<int32_t>(node.integer)));
-            return g.emitLoad(dst, g.addBigIntConstant(Identifier::fromString(m_vm, String::number(node.integer)), 10, false));
+            // The generator knows a constant that it has seen before by the address of its digits, so they have to outlive it.
+            return g.emitLoad(dst, g.addBigIntConstant(m_arena.identifiers().makeIdentifier(m_vm, String::number(node.integer).span8()), 10, false));
         case Constant::Type::BigInteger:
             return g.emitLoad(dst, g.addBigIntConstant(*node.text, node.radix, false));
         case Constant::Type::Float:

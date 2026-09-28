@@ -522,6 +522,13 @@ void PyIterator::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_PYTHON_CELL(PyIterator, "iterator", PyIteratorType)
 
+PyIterator* PyIterator::create(JSGlobalObject* globalObject, Kind kind, PyDict* dict)
+{
+    PyTuple* backingKeys = dict->backing() ? dict->backingKeys(globalObject) : nullptr;
+    int64_t start = kind == Kind::DictReverseKeys ? (backingKeys ? backingKeys->length() : 0) + dict->ownTable().entryCount() : 0;
+    return create(globalObject, kind, dict, backingKeys ? JSValue(backingKeys) : JSValue(), start, dict->size());
+}
+
 BuiltinType PyIterator::typeFor(Kind kind)
 {
     switch (kind) {
@@ -632,39 +639,51 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             return jsSingleCharacterString(vm, view[index]);
         return jsSubstring(globalObject, string, index, size);
     }
-    case Kind::DictKeys:
-    case Kind::DictValues:
-    case Kind::DictItems:
     case Kind::Set: {
-        auto* table = uncheckedDowncast<PyHashTable>(m_a.get().asCell());
-        if (table->size() != static_cast<uint64_t>(m_stop)) {
+        auto* set = uncheckedDowncast<PySet>(m_a.get().asCell());
+        if (set->size() != static_cast<uint64_t>(m_stop)) {
             m_stop = -1; // It goes on saying so.
-            return Python::raise(globalObject, scope, BuiltinType::RuntimeError, m_kind == Kind::Set ? "Set changed size during iteration"_s : "dictionary changed size during iteration"_s);
+            return Python::raise(globalObject, scope, BuiltinType::RuntimeError, "Set changed size during iteration"_s);
         }
-        while (m_index < table->entryCount()) {
-            unsigned entry = m_index++;
-            JSValue key = table->keyAt(entry);
-            if (!key)
-                continue;
-            if (m_kind == Kind::DictKeys || m_kind == Kind::Set)
+        while (m_index < set->entryCount()) {
+            if (JSValue key = set->keyAt(m_index++))
                 return key;
-            if (m_kind == Kind::DictValues)
-                return table->valueAt(entry);
-            return PyTuple::create(globalObject, { key, table->valueAt(entry) });
         }
         finish();
         return { };
     }
+    case Kind::DictKeys:
+    case Kind::DictValues:
+    case Kind::DictItems:
     case Kind::DictReverseKeys: {
-        auto* table = uncheckedDowncast<PyHashTable>(m_a.get().asCell());
-        if (table->size() != static_cast<uint64_t>(m_stop)) {
+        PyDict* dict = asDict(m_a.get());
+        if (dict->size() != static_cast<uint64_t>(m_stop)) {
             m_stop = -1;
             return Python::raise(globalObject, scope, BuiltinType::RuntimeError, "dictionary changed size during iteration"_s);
         }
-        while (m_index > 0) {
-            JSValue key = table->keyAt(--m_index);
-            if (key)
-                return key;
+        // First the keys that were in the object that backs it, if one does, and then its own table.
+        auto* backingKeys = m_b ? uncheckedDowncast<PyTuple>(m_b.get().asCell()) : nullptr;
+        int64_t backingCount = backingKeys ? backingKeys->length() : 0;
+        PyHashTable& table = dict->ownTable();
+        bool isReverse = m_kind == Kind::DictReverseKeys;
+        while (isReverse ? m_index > 0 : m_index < backingCount + table.entryCount()) {
+            int64_t position = isReverse ? --m_index : m_index++;
+            JSValue key;
+            JSValue value;
+            if (position < backingCount) {
+                key = backingKeys->at(position);
+                value = dict->get(globalObject, key);
+            } else {
+                key = table.keyAt(position - backingCount);
+                value = key ? table.valueAt(position - backingCount) : JSValue();
+            }
+            if (!value)
+                continue;
+            if (m_kind == Kind::DictValues)
+                return value;
+            if (m_kind == Kind::DictItems)
+                return PyTuple::create(globalObject, { key, value });
+            return key;
         }
         finish();
         return { };

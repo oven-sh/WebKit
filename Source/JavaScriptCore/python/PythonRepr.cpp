@@ -175,20 +175,18 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
             return "{...}"_s;
         builder.append('{');
         bool isFirst = true;
-        for (unsigned entry = 0; entry < dict->entryCount(); ++entry) {
-            JSValue key = dict->keyAt(entry);
-            if (!key)
-                continue;
-            JSValue item = dict->valueAt(entry);
+        dict->forEach(globalObject, [&] (JSValue key, JSValue item) {
             if (!isFirst)
                 builder.append(", "_s);
             isFirst = false;
             String keyText = repr(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, { });
+            RETURN_IF_EXCEPTION(scope, false);
             String itemText = repr(globalObject, item);
-            RETURN_IF_EXCEPTION(scope, { });
+            RETURN_IF_EXCEPTION(scope, false);
             builder.append(keyText, ": "_s, itemText);
-        }
+            return true;
+        });
+        RETURN_IF_EXCEPTION(scope, { });
         builder.append('}');
         return builder.toString();
     }
