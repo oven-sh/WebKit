@@ -229,6 +229,10 @@ Graph::CallOperands Graph::operandsOfCall(const JSInstruction* instruction)
         auto bytecode = instruction->as<OpCall>();
         return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
     }
+    if (instruction->opcodeID() == op_tail_call) {
+        auto bytecode = instruction->as<OpTailCall>();
+        return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
+    }
     auto bytecode = instruction->as<OpCallIgnoreResult>();
     return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
 }
@@ -284,6 +288,101 @@ std::pair<Node*, Node*> Graph::arrayAndElementStored(const Node* node) const
         return { node->use(operands.argument(0)), node->use(operands.argument(1)) };
     }
     return { nullptr, nullptr };
+}
+
+std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
+{
+    if (!m_linkage)
+        return std::nullopt;
+    unsigned identifier;
+    unsigned offset;
+    unsigned depth;
+    VirtualRegister scopeRegister;
+    ResolveType type;
+    if (node->isBytecode(op_get_from_scope)) {
+        auto bytecode = node->as<OpGetFromScope>();
+        identifier = bytecode.m_var;
+        offset = bytecode.m_offset;
+        depth = bytecode.m_localScopeDepth;
+        scopeRegister = bytecode.m_scope;
+        type = bytecode.m_getPutInfo.resolveType();
+    } else {
+        auto bytecode = node->as<OpPutToScope>();
+        identifier = bytecode.m_var;
+        offset = bytecode.m_offset;
+        depth = bytecode.m_symbolTableOrScopeDepth.scopeDepth();
+        scopeRegister = bytecode.m_scope;
+        type = bytecode.m_getPutInfo.resolveType();
+    }
+    auto found = [&](uint32_t distance) -> std::optional<uint32_t> {
+        if (!distance)
+            return std::nullopt;
+        usesStaticImports = true;
+        return distance;
+    };
+    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+        if (!m_declaredNames)
+            return std::nullopt;
+        // As for Graph::knownCallee(): not a variable of the function's own, and not one of a scope in between.
+        auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
+        if (resolution.kind != DeclaredNamesLink::Resolution::Slot || !resolution.isInOutermostEnvironment || resolution.offset != offset)
+            return std::nullopt;
+        if (isThatManyScopesOut(node->use(scopeRegister), resolution.hops))
+            return found(m_linkage->distanceOfEnvironment);
+        return std::nullopt;
+    }
+    if (type == Dynamic || !node->isBytecode(op_get_from_scope))
+        return std::nullopt;
+    if (auto variable = resolveStatically(identifier, depth, type); variable.kind == StaticVariable::Import)
+        return found(variable.import.distanceOfEnvironment);
+    return std::nullopt;
+}
+
+bool Graph::isScopeThatStandsForNoThis(const Node* node)
+{
+    if (node->isBytecode(op_get_scope))
+        return true;
+    if (!node->isBytecode(op_resolve_scope))
+        return false;
+    auto bytecode = node->as<OpResolveScope>();
+    if (isStaticClosureVarResolveType(bytecode.m_resolveType))
+        return true;
+    if (bytecode.m_resolveType == Dynamic)
+        return false;
+    return resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType).kind == StaticVariable::Import;
+}
+
+// Counting from the scope that the function was made in.
+bool Graph::isThatManyScopesOut(const Node* scope, unsigned hops)
+{
+    if (scope->isBytecode(op_get_scope))
+        return !hops;
+    if (!scope->isBytecode(op_resolve_scope))
+        return false;
+    ResolveType type = scope->as<OpResolveScope>().m_resolveType;
+    return isStaticClosureVarResolveType(type) && staticClosureVarHops(type) == hops;
+}
+
+std::optional<uint32_t> Graph::distanceOfEnvironmentResolvedTo(const Node* node)
+{
+    if (!m_linkage)
+        return std::nullopt;
+    auto bytecode = node->as<OpResolveScope>();
+    uint32_t distance = 0;
+    if (isStaticClosureVarResolveType(bytecode.m_resolveType)) {
+        if (!m_declaredNames)
+            return std::nullopt;
+        auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
+        if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.hops == staticClosureVarHops(bytecode.m_resolveType))
+            distance = m_linkage->distanceOfEnvironment;
+    } else if (bytecode.m_resolveType != Dynamic) {
+        if (auto variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType); variable.kind == StaticVariable::Import)
+            distance = variable.import.distanceOfEnvironment;
+    }
+    if (!distance)
+        return std::nullopt;
+    usesStaticImports = true;
+    return distance;
 }
 
 bool Graph::calleeIsProven(const Node* node) const
@@ -343,13 +442,9 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
         if (known && known->isProven && isProven && isReadDirectly && m_declaredNames) {
             // The hint goes by the name and the offset. Is it the module's variable? Not one of the function's own, which is read from
             // a scope that the function has at hand, without looking for it; and not one of a scope in between.
-            Node* scope = callee->use(bytecode.m_scope);
             auto resolution = m_declaredNames->resolve(name);
-            bool isVariableOfModule = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset;
-            if (scope->isBytecode(op_resolve_scope))
-                *isProven = isVariableOfModule && scope->as<OpResolveScope>().m_var == bytecode.m_var;
-            else if (scope->isBytecode(op_get_scope)) // The scope the function was made in, which is then the module's.
-                *isProven = isVariableOfModule && !resolution.hops;
+            *isProven = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset
+                && isThatManyScopesOut(callee->use(bytecode.m_scope), resolution.hops);
         }
         return known;
     }
@@ -1550,6 +1645,13 @@ private:
             forEachUse(instruction, [&](VirtualRegister reg) {
                 node->uses.append({ reg, get(block, reg) });
             });
+            if (opcode == op_call || opcode == op_call_ignore_result || opcode == op_tail_call) {
+                VirtualRegister thisRegister = Graph::operandsOfCall(instruction).argument(0);
+                for (auto& use : node->uses) {
+                    if (use.reg == thisRegister && m_graph.isScopeThatStandsForNoThis(use.node))
+                        use.node = m_graph.constant(jsUndefined());
+                }
+            }
             if (opcode == op_new_object) {
                 node->numberOfLiteralProperties = numberOfLiteralPropertiesAt(offset);
                 Graph::forEachLiteralProperty(instruction, node->numberOfLiteralProperties, [&](unsigned, VirtualRegister reg) {

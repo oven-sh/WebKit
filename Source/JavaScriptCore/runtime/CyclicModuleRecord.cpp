@@ -26,6 +26,10 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
+#include "AOTImage.h"
+#include "AOTRuntime.h"
+#include "StaticHeap.h"
+
 #include "BuiltinNames.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
@@ -227,7 +231,32 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         moduleProgramExecutable = jsModule->getOrMakeExecutable(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         symbolTable = moduleProgramExecutable->moduleEnvironmentSymbolTable();
+#if ENABLE(FTL_JIT)
+        // Code that was compiled with the whole program in front of it finds the variables of a module without looking for the
+        // module: see AOT::Instance::placeForEnvironment().
+        void* place = nullptr;
+        if (isPrelinked() && AOT::Image::environmentsSize()) {
+            AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
+            if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
+                place = AOT::Instance::ensure(globalObject).placeForEnvironment(environment);
+                // (Linked a second time, after the first came to nothing.)
+                if (place && *static_cast<uint64_t*>(place))
+                    place = nullptr;
+            }
+        }
+        // (Nothing else is to be allocated in between.)
+        globalObject->moduleEnvironmentStructure();
+        JSScope* scopeOfModules = moduleLoader()->moduleScope();
+        if (place)
+            StaticHeap::placeNextCell(vm, place);
+        env = JSModuleEnvironment::create(vm, globalObject, scopeOfModules, symbolTable, jsTDZValue(), this);
+#else
         env = JSModuleEnvironment::create(vm, globalObject, moduleLoader()->moduleScope(), symbolTable, jsTDZValue(), this);
+#endif
+#if ENABLE(FTL_JIT)
+        if (place)
+            StaticHeap::didPlaceCell(vm, env);
+#endif
         RETURN_IF_EXCEPTION(scope, void());
         // 6. Set module.[[Environment]] to env.
         setModuleEnvironment(globalObject, env);

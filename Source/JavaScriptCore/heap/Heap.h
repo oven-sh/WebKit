@@ -1131,6 +1131,9 @@ private:
     Seconds m_totalGCTime;
     
     uintptr_t m_barriersExecuted { 0 };
+public:
+    void* m_placeOfNextCell { nullptr }; // See StaticHeap::placeNextCell().
+private:
     Lock m_staticCellsStoredToLock;
     UncheckedKeyHashSet<JSCell*> m_staticCellsStoredTo WTF_GUARDED_BY_LOCK(m_staticCellsStoredToLock); // See StaticHeap.
     

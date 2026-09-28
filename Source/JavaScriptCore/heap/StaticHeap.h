@@ -85,32 +85,30 @@ public:
 
     // While the region is being built, on a thread that has a bmalloc::StaticRegion::AllocationScope; or the place that
     // placeNextCell() said. Null otherwise.
-    static ALWAYS_INLINE void* tryAllocateCell(size_t size)
-    {
-        if (s_interceptsAllocation) [[unlikely]]
-            return tryAllocateCellSlow(size);
-        return nullptr;
-    }
+    JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(VM&, size_t); // If Heap::m_placeOfNextCell.
 
     // ---- What is made when the program runs, at an address that what is made when it is built can refer to it by.
 
     static VM* addressOfVM() { return reinterpret_cast<VM*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVMInBss); }
     static void* addressOfGlobalObject() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfGlobalObjectInBss + sizeOfCellHeader); }
     static bool isMapped() { return !!s_header; }
-    // The next cell that the thread allocates is there. It is not collected, nor destroyed; didPlaceCell(), once it is made, has
+    // The next cell that is allocated in the VM is there. It is not collected, nor destroyed; didPlaceCell(), once it is made, has
     // every collection look at it.
-    JS_EXPORT_PRIVATE static void placeNextCell(void* address);
+    JS_EXPORT_PRIVATE static void placeNextCell(VM&, void* address);
     JS_EXPORT_PRIVATE static void didPlaceCell(VM&, JSCell*);
+    // Cells that are not in the collector's own memory all say that they are of one VM. Whether it is this one: the first to ask,
+    // if there is no static heap to have settled it.
+    JS_EXPORT_PRIVATE static bool canPlaceCellsOf(VM&);
+    // Zeroed memory to place cells in, a multiple of the size of a page. Any thread.
+    JS_EXPORT_PRIVATE static void* allocateBlock(size_t);
+    JS_EXPORT_PRIVATE static void freeBlock(void*, size_t);
 
 private:
-    JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(size_t);
-
     struct Header;
     static void makeContainer(VM&);
+    static inline void* const placeOfEveryCellWhileBuilding = reinterpret_cast<void*>(1); // Heap::m_placeOfNextCell: wherever there is room.
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
-    JS_EXPORT_PRIVATE static bool s_interceptsAllocation;
-    static void* s_placeOfNextCell;
     JS_EXPORT_PRIVATE static VM* s_vm;
     JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;
     static const Header* s_header; // Of what is mapped.

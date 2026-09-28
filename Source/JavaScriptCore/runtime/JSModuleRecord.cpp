@@ -26,6 +26,9 @@
 #include "config.h"
 #include "JSModuleRecord.h"
 
+#include "AOTImage.h"
+#include "AOTRuntime.h"
+
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "Interpreter.h"
@@ -466,12 +469,22 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
     if (m_isLinkedAsInImage != TriState::Indeterminate)
         return m_isLinkedAsInImage == TriState::True;
     bool result = isPrelinked();
+    // Where the code takes it to be, if it takes it to be anywhere.
+    auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
+        AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
+        if (!environment.distance)
+            return true;
+        AOT::Instance* instance = globalObject->aotInstance();
+        return instance && instance->placeForEnvironment(environment) == record->moduleEnvironmentMayBeNull();
+    };
+    if (result)
+        result = environmentIsInItsPlace(this);
     if (result) {
         for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
             if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
                 continue;
             AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
-            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull()) {
+            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInItsPlace(exporter)) {
                 result = false;
                 break;
             }

@@ -326,6 +326,10 @@ void Lowering::lowerPutByVal(Node* node)
 void Lowering::lowerResolveScope(Node* node)
 {
     auto bytecode = node->as<OpResolveScope>();
+    if (auto distance = m_graph.distanceOfEnvironmentResolvedTo(node)) {
+        setJSValue(node, environmentAt(*distance));
+        return;
+    }
     LValue scope = lowCell(node->use(bytecode.m_scope));
 
     auto walk = [&](unsigned depth) {
@@ -427,7 +431,8 @@ void Lowering::lowerGetFromScope(Node* node)
         setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
-    LValue scope = lowCell(node->use(bytecode.m_scope));
+    auto distance = m_graph.distanceOfEnvironmentAccessed(node);
+    LValue scope = distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope));
     ResolveType type = bytecode.m_getPutInfo.resolveType();
 
     auto loadClosureVariable = [&](unsigned offset, bool mayBeLazy) {
@@ -512,7 +517,8 @@ void Lowering::lowerGetFromScope(Node* node)
 void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
-    LValue scope = lowCell(node->use(bytecode.m_scope));
+    auto distance = m_graph.distanceOfEnvironmentAccessed(node);
+    LValue scope = distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope));
     Node* valueNode = node->use(bytecode.m_value);
     LValue value = lowJSValue(valueNode);
     ResolveType type = bytecode.m_getPutInfo.resolveType();

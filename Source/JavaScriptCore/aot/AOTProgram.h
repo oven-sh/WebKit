@@ -116,6 +116,7 @@ struct StaticImport {
     unsigned scopeOffsetOfSlot { 0 }; // JSModuleEnvironment::importSlotScopeOffset() of that.
     unsigned scopeOffset { 0 }; // Of the variable, in the environment of the module that has it.
     const KnownFunction* function { nullptr }; // What that module's code puts in the variable, if it is a function (ModuleHints).
+    uint32_t distanceOfEnvironment { 0 }; // Of the module that has it: ImageEnvironment::distance.
 };
 
 // What is known of a module because the whole program is there when it is compiled. Unlike a hint, code rests on it with no check
@@ -125,6 +126,8 @@ class ModuleLinkage {
     WTF_MAKE_NONCOPYABLE(ModuleLinkage);
 public:
     ModuleLinkage() = default;
+
+    uint32_t distanceOfEnvironment { 0 }; // Of the module itself: ImageEnvironment::distance.
 
     void addImport(UniquedStringImpl* localName, StaticImport import) { m_imports.add(localName, import); }
     const StaticImport* findImport(UniquedStringImpl* localName) const

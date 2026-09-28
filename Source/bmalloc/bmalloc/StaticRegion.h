@@ -86,6 +86,7 @@ public:
     static constexpr size_t offsetOfVMInBss = 1 << 20;
     static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
     static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One for each module, as of the next few.
+    static constexpr size_t offsetOfBlocksInBss = 256 << 20; // JSC::StaticHeap::allocateBlock()
 
     // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
     BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);

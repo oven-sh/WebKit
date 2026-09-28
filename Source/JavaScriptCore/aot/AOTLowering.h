@@ -73,6 +73,7 @@ private:
     LValue lowDouble(Node*);
     LValue lowBoolean(Node*);
     LValue lowCell(Node* node) { return lowJSValue(node); }
+    LValue environmentAt(uint32_t distance) { return m_out.sub(m_instance, m_out.constIntPtr(distance)); } // ImageEnvironment::distance
     LValue callee() { return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot)); } // The object the function was called as.
     LValue lowConstantRegister(VirtualRegister); // For an operand that BytecodeUseDef does not count among the uses.
     LValue convert(LValue, Rep from, Type fromType, Rep to);

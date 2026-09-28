@@ -110,7 +110,10 @@ Vector<uint8_t> ImageBuilder::finish()
     header.tableCapacity = capacity;
     header.recordsOffset = header.tableOffset + capacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
-    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(static_cast<size_t>(header.recordsOffset) + recordsSize);
+    header.environmentsSize = m_environmentsSize;
+    header.environmentsOffset = WTF::roundUpToMultipleOf<8>(static_cast<size_t>(header.recordsOffset) + recordsSize);
+    header.numberOfEnvironments = m_environments.size();
+    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(static_cast<size_t>(header.environmentsOffset) + m_environments.size() * sizeof(ImageEnvironment));
     header.codeSize = codeSize;
     header.size = WTF::roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
     header.numberOfFunctions = m_functions.size();
@@ -125,6 +128,7 @@ Vector<uint8_t> ImageBuilder::finish()
     uint8_t* records = base + header.recordsOffset;
     uint8_t* code = base + header.codeOffset;
 
+    memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     for (size_t at : stubsAt)
         memcpy(code + at, stubs.bytes.span().data(), stubs.bytes.size());
 
@@ -253,7 +257,8 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         return nullptr;
     if (!hasOneBitSet(header.tableCapacity)
         || static_cast<uint64_t>(header.tableOffset) + static_cast<uint64_t>(header.tableCapacity) * sizeof(ImageKey) > header.recordsOffset
-        || static_cast<uint64_t>(header.recordsOffset) + header.recordsSize > header.codeOffset
+        || static_cast<uint64_t>(header.recordsOffset) + header.recordsSize > header.environmentsOffset
+        || static_cast<uint64_t>(header.environmentsOffset) + static_cast<uint64_t>(header.numberOfEnvironments) * sizeof(ImageEnvironment) > header.codeOffset
         || header.codeOffset + header.codeSize > header.size)
         return nullptr;
     // Its functions know what their numbers are.
@@ -266,6 +271,38 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     all.images.append(image);
     all.hasAny.store(true, std::memory_order_release);
     return image;
+}
+
+static Image* imageWithEnvironments()
+{
+    auto& all = registry();
+    if (!all.hasAny.load(std::memory_order_acquire))
+        return nullptr;
+    for (unsigned i = 0; i < all.images.size(); ++i) {
+        if (all.images[i]->header().environmentsSize)
+            return all.images[i];
+    }
+    return nullptr;
+}
+
+uint32_t Image::environmentsSize()
+{
+    Image* image = imageWithEnvironments();
+    return image ? image->header().environmentsSize : 0;
+}
+
+uint32_t Image::numberOfFunctionsOfImageWithEnvironments()
+{
+    Image* image = imageWithEnvironments();
+    return image ? image->header().numberOfFunctions : 0;
+}
+
+ImageEnvironment Image::environmentOf(uint32_t moduleOfGraph)
+{
+    Image* image = imageWithEnvironments();
+    if (!image || moduleOfGraph >= image->header().numberOfEnvironments)
+        return { };
+    return reinterpret_cast<const ImageEnvironment*>(image->m_data.data() + image->header().environmentsOffset)[moduleOfGraph];
 }
 
 bool Image::containsCode(const void* pointer)

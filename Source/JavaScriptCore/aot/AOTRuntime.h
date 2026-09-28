@@ -231,6 +231,7 @@ struct alignas(16) CodeHeader {
 static_assert(sizeof(CodeHeader) == sizeof(NativeCallee) && alignof(CodeHeader) == alignof(NativeCallee));
 
 struct Data;
+struct ImageEnvironment;
 
 // One for each realm that runs code from the static compiler.
 struct Instance {
@@ -248,6 +249,11 @@ struct Instance {
 
     // As many as there could ever be. It is addresses that are set aside, not memory.
     static constexpr size_t maxFunctions = 4 << 20;
+
+    // Below it, if the program's image says so, is where the environments of the program's modules are: each at the same distance
+    // in every realm, so that code gets at a variable of a module from here, without looking for the module. Null: this realm's
+    // are wherever the collector put them, and code that does that is not for this realm.
+    JS_EXPORT_PRIVATE void* placeForEnvironment(ImageEnvironment) const;
 
     void** runtimeTable;
     JSGlobalObject* globalObject;

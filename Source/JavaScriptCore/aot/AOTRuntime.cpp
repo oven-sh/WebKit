@@ -15,6 +15,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTImage.h"
+#include "StaticHeap.h"
 #include "AOTOperations.h"
 #include "AOTThunks.h"
 #include "CCallHelpers.h"
@@ -154,6 +155,8 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
+    size_t environmentsSize { 0 }; // Rounded up to whole pages.
+    size_t sizeFromInstance { 0 };
 };
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
@@ -165,13 +168,25 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
 #if ENABLE(WEBASSEMBLY)
     RELEASE_ASSERT(Instance::offsetOfVM() == JSWebAssemblyInstance::offsetOfVM());
 #endif
-    size_t size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*));
-    auto* instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
     VM& vm = globalObject->vm();
+    Instance* instance;
+    size_t environmentsSize = 0;
+    size_t size;
+    if (Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
+        // Where cells can be that the collector did not allocate.
+        environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
+        size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + Image::numberOfFunctionsOfImageWithEnvironments() * sizeof(Data*));
+        instance = reinterpret_cast<Instance*>(static_cast<char*>(StaticHeap::allocateBlock(environmentsSize + size)) + environmentsSize);
+    } else {
+        size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*));
+        instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
+    }
     instance->runtimeTable = AOT::runtimeTable(vm).entries();
     instance->globalObject = globalObject;
     instance->vm = &vm;
     instance->collections = new Collections;
+    instance->collections->environmentsSize = environmentsSize;
+    instance->collections->sizeFromInstance = size;
     globalObject->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
     return *instance;
@@ -182,8 +197,20 @@ void Instance::destroy(Instance* instance)
     instance->vm->m_aotInstances.removeFirst(instance);
     while (!instance->collections->all.isEmpty())
         Data::destroy(instance->collections->all.last());
+    size_t environmentsSize = instance->collections->environmentsSize;
+    size_t size = instance->collections->sizeFromInstance;
     delete instance->collections;
-    OSAllocator::decommitAndRelease(instance, roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*)));
+    if (environmentsSize)
+        StaticHeap::freeBlock(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
+    else
+        OSAllocator::decommitAndRelease(instance, size);
+}
+
+void* Instance::placeForEnvironment(ImageEnvironment environment) const
+{
+    if (!environment.distance || environment.distance > collections->environmentsSize)
+        return nullptr;
+    return const_cast<char*>(reinterpret_cast<const char*>(this)) - environment.distance;
 }
 
 static std::atomic<uint32_t> s_nextFunctionIndex { 0 };
@@ -292,6 +319,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
+    RELEASE_ASSERT(sizeof(Instance) + (code.header().index + 1) * sizeof(Data*) <= instance.collections->sizeFromInstance);
     Data*& place = instance.data[code.header().index];
     RELEASE_ASSERT(!place);
     place = data;

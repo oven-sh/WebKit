@@ -30,8 +30,6 @@ namespace JSC {
 using Region = bmalloc::StaticRegion;
 
 bool StaticHeap::s_isBuilding = false;
-bool StaticHeap::s_interceptsAllocation = false;
-void* StaticHeap::s_placeOfNextCell = nullptr;
 VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
@@ -102,31 +100,78 @@ static void* addressOfDecoder(size_t moduleIndex)
     return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfDecodersInBss + moduleIndex * stride);
 }
 
+static VM* s_vmOfContainer = nullptr;
+
 void StaticHeap::makeContainer(VM& vm)
 {
-    s_vm = &vm;
+    if (s_vmOfContainer == &vm)
+        return;
+    s_vmOfContainer = &vm;
     PreciseAllocation::setContainerOfStaticCells(PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace));
 }
 
-void StaticHeap::placeNextCell(void* address)
+void StaticHeap::placeNextCell(VM& vm, void* address)
 {
-    RELEASE_ASSERT(!s_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
-    s_placeOfNextCell = address;
-    s_interceptsAllocation = true;
+    RELEASE_ASSERT(!vm.heap.m_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
+    vm.heap.m_placeOfNextCell = address;
+}
+
+bool StaticHeap::canPlaceCellsOf(VM& vm)
+{
+    static Lock lock;
+    Locker locker { lock };
+    if (!s_vmOfContainer && !s_isBuilding)
+        makeContainer(vm);
+    return s_vmOfContainer == &vm;
+}
+
+static Lock s_blocksLock;
+static size_t s_blocksUsed WTF_GUARDED_BY_LOCK(s_blocksLock) = 0;
+static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocksLock)
+{
+    static NeverDestroyed<Vector<std::pair<void*, size_t>>> blocks;
+    return blocks;
+}
+
+void* StaticHeap::allocateBlock(size_t size)
+{
+    RELEASE_ASSERT(!(size % WTF::pageSize()));
+    Locker locker { s_blocksLock };
+    auto& free = freeBlocks();
+    for (unsigned i = 0; i < free.size(); ++i) {
+        if (free[i].second == size) {
+            void* result = free[i].first;
+            free.removeAt(i);
+            return result;
+        }
+    }
+    size_t offset = Region::offsetOfBlocksInBss + s_blocksUsed;
+    RELEASE_ASSERT(size <= Region::arenaReservation - offset);
+    s_blocksUsed += size;
+    return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + offset);
+}
+
+void StaticHeap::freeBlock(void* block, size_t size)
+{
+    // Zeroed again, and nobody's memory until it is written to.
+    void* result = mmap(block, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE | MAP_FIXED, -1, 0);
+    RELEASE_ASSERT(result == block);
+    Locker locker { s_blocksLock };
+    freeBlocks().append({ block, size });
 }
 
 void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
 {
-    RELEASE_ASSERT(contains(cell) && !s_placeOfNextCell);
+    RELEASE_ASSERT(contains(cell) && !vm.heap.m_placeOfNextCell);
     // As after a collection that found it. What has been stored in it since it was allocated is found by the next one.
     cell->setCellState(CellState::PossiblyBlack);
     vm.writeBarrier(cell);
 }
 
-void* StaticHeap::tryAllocateCellSlow(size_t size)
+void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
 {
-    if (void* place = std::exchange(s_placeOfNextCell, nullptr)) {
-        s_interceptsAllocation = s_isBuilding;
+    if (vm.heap.m_placeOfNextCell != placeOfEveryCellWhileBuilding) {
+        void* place = std::exchange(vm.heap.m_placeOfNextCell, nullptr);
         *reinterpret_cast<size_t*>(static_cast<char*>(place) - sizeOfCellHeader) = size;
         return place;
     }
@@ -282,8 +327,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     if (!Region::beginBuilding())
         return { };
     PreciseAllocation* containerBefore = PreciseAllocation::containerOfStaticCells();
+    VM* vmOfContainerBefore = s_vmOfContainer;
     VM* vmBefore = s_vm;
     makeContainer(vm);
+    s_vm = &vm;
 
     Header header { };
     header.magic = Header::expectedMagic;
@@ -319,7 +366,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         {
             Region::AllocationScope allocationScope;
             s_isBuilding = true;
-            s_interceptsAllocation = true;
+            vm.heap.m_placeOfNextCell = placeOfEveryCellWhileBuilding;
             atoms->table().reserveInitialCapacity(count);
             for (uint32_t ordinal = 0; ordinal < count; ++ordinal) {
                 table.atomFor(vm, ordinal);
@@ -377,7 +424,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             if (Options::aotReportStats()) [[unlikely]]
                 dataLogLn("StaticHeap: ", atoms->table().size() - numberOfAtomsOfStrings, " atoms that are not in the table of strings");
             s_isBuilding = false;
-            s_interceptsAllocation = false;
+            vm.heap.m_placeOfNextCell = nullptr;
         }
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
         for (auto& atom : atoms->table())
@@ -465,6 +512,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     }
 
     PreciseAllocation::setContainerOfStaticCells(containerBefore);
+    s_vmOfContainer = vmOfContainerBefore;
     s_vm = vmBefore;
     Region::endBuilding();
     return image;
@@ -510,6 +558,7 @@ void StaticHeap::install(VM& vm)
     vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
     vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
     makeContainer(vm);
+    s_vm = &vm;
 }
 
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM& vm, std::span<const uint8_t> strings)

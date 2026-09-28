@@ -5812,6 +5812,16 @@ struct BytecodeLinkEncoder::Impl {
             linked[graphModule] = { codeBlock, uncheckedDowncast<SymbolTable>(symbolTable.asCell()), index };
         }
 
+        // Where the environment of each is going to be: see AOT::Instance::placeForEnvironment().
+        environmentsOfLink.fill(AOT::ImageEnvironment { }, graphModules.size());
+        for (unsigned graphModule = 0; graphModule < linked.size(); ++graphModule) {
+            if (!linked[graphModule].codeBlock)
+                continue;
+            size_t size = JSModuleEnvironment::allocationSize(linked[graphModule].symbolTable, graphModules[graphModule].importCount);
+            environmentsSizeOfLink += roundUpToMultipleOf<16>(StaticHeap::sizeOfCellHeader + size);
+            environmentsOfLink[graphModule] = { static_cast<uint32_t>(environmentsSizeOfLink - StaticHeap::sizeOfCellHeader), static_cast<uint32_t>(size) };
+        }
+
         auto nameOf = [&](uint32_t sid) -> Identifier {
             if (sid == Graph::starDefaultSid)
                 return vm.propertyNames->starDefaultPrivateName;
@@ -5827,6 +5837,7 @@ struct BytecodeLinkEncoder::Impl {
             auto& module = graphModules[graphModule];
             RELEASE_ASSERT(module.firstImport <= graphImports.size() && module.importCount <= graphImports.size() - module.firstImport);
             auto linkage = makeUnique<AOT::ModuleLinkage>();
+            linkage->distanceOfEnvironment = environmentsOfLink[graphModule].distance;
             for (unsigned slot = 0; slot < module.importCount; ++slot) {
                 auto& import = graphImports[module.firstImport + slot];
                 if (import.resolution() != Graph::ResolutionKind::Binding || import.isNamespace() || import.resolvedModule >= linked.size())
@@ -5840,7 +5851,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (entry.isNull() || !entry.varOffset().isScope())
                     continue;
                 const AOT::KnownFunction* function = hints[exporter.index] ? hints[exporter.index]->find(nameInExporter.impl(), entry.scopeOffset().offset()) : nullptr;
-                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function });
+                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function, environmentsOfLink[import.resolvedModule].distance });
                 namesOfLinkage.append(WTF::move(localName));
             }
             result[importer.index] = WTF::move(linkage);
@@ -5850,6 +5861,8 @@ struct BytecodeLinkEncoder::Impl {
         return result;
     }
     Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
+    Vector<AOT::ImageEnvironment> environmentsOfLink;
+    size_t environmentsSizeOfLink { 0 };
 
     // Every function of the link, compiled: there is nothing to wait for, all the code there is going to be is here.
     Vector<uint8_t> compileImage()
@@ -6030,6 +6043,7 @@ struct BytecodeLinkEncoder::Impl {
         }
 
         AOT::ImageBuilder builder;
+        builder.setEnvironments(WTF::move(environmentsOfLink), safeCast<uint32_t>(environmentsSizeOfLink));
         std::atomic<size_t> next { 0 };
         // TEMPORARY-PROVABILITY-STATS: whose code each function is, by the comment the bundler puts in front of each file's.
         Vector<Vector<std::pair<unsigned, ASCIILiteral>>> origins(modules.size());

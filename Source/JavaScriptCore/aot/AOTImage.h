@@ -44,8 +44,16 @@ struct ImageHeader {
     uint32_t recordsOffset;
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
-    uint32_t reserved;
+    uint32_t environmentsSize; // See Instance: how much there is below it.
+    uint32_t environmentsOffset; // ImageEnvironment, by which module of the graph of modules that the program was linked as.
+    uint32_t numberOfEnvironments;
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
+};
+
+// Where a module's JSModuleEnvironment is, in every realm that runs the module's code from the image.
+struct ImageEnvironment {
+    uint32_t distance; // Below the Instance. Zero: nowhere in particular.
+    uint32_t size;
 };
 
 // What a compilation makes.
@@ -65,6 +73,7 @@ public:
     // Any thread. The code is laid out in the order of `rank`, not of the calls.
     void add(ImageKey, uint64_t rank, CompiledCode&&);
     size_t numberOfFunctions() const { return m_functions.size(); }
+    void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
     Vector<uint8_t> finish();
 
 private:
@@ -75,6 +84,8 @@ private:
     };
     Lock m_lock;
     Vector<Function> m_functions;
+    Vector<ImageEnvironment> m_environments;
+    uint32_t m_environmentsSize { 0 };
 };
 
 // An image that is ready to be run. There is one list of them for the process, and they stay.
@@ -90,6 +101,10 @@ public:
 
     static bool hasAny();
     static bool containsCode(const void*); // Any image's.
+    // Of the image that has any.
+    JS_EXPORT_PRIVATE static uint32_t environmentsSize();
+    JS_EXPORT_PRIVATE static uint32_t numberOfFunctionsOfImageWithEnvironments();
+    JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
     static const void* addressOfStub(Stub); // In any image. Null if there is none.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
 

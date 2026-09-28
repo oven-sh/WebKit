@@ -320,6 +320,14 @@ public:
     // The function that the call or construction is probably of, if there is any telling.
     const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
     bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
+    // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
+    // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
+    std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
+    std::optional<uint32_t> distanceOfEnvironmentResolvedTo(const Node*); // Likewise, an op_resolve_scope.
+    static bool isThatManyScopesOut(const Node* scope, unsigned hops);
+    // A scope that stands for `this` in a call of what was found in it, which is how a call of a variable is made in case the scope
+    // is that of a `with`: and this one is not, so that whoever is called makes undefined of it, or the global `this`.
+    bool isScopeThatStandsForNoThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned indexOfKnownCallee(const ImageKey&);
