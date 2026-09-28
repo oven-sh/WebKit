@@ -501,9 +501,10 @@ PYTHON_NATIVE(objectDelAttr)
 PYTHON_NATIVE(objectFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
-    if (asString(args[1])->length())
+    JSString* specification = stringIn(args[1]);
+    if (!specification)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+    if (specification->length())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("unsupported format string passed to "_s, typeName(globalObject, args[0]), ".__format__"_s)));
     String text = str(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });

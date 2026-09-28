@@ -403,6 +403,7 @@ bool isEqual(JSGlobalObject*, JSValue, JSValue); // x is y or x == y, which is w
 bool isIdentical(JSValue, JSValue);
 bool contains(JSGlobalObject*, JSValue container, JSValue);
 JSValue power(JSGlobalObject*, JSValue, JSValue, JSValue modulus);
+JSValue powerOfInts(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus); // All three are ints, and there is a modulus.
 JSValue divmod(JSGlobalObject*, JSValue, JSValue);
 
 // ---- Subscripts

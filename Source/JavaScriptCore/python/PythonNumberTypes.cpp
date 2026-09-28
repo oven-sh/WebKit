@@ -55,10 +55,18 @@ PYTHON_NATIVE(numberBinary)
     NATIVE_PROLOGUE();
     if (args.size() < 2)
         return JSValue::encode(raiseTypeError(globalObject, scope, "expected 1 argument, got 0"_s));
+    bool hasModulus = op == BinaryOperator::Pow && args.size() > 2 && !isNone(args[2]);
+    // float_pow() says so before it looks at anything else.
+    if (hasModulus && type == NumberType::Float)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "pow() 3rd argument not allowed unless all arguments are integers"_s));
     if (!accepts(type, classify(args[0]), classify(args[1])))
         RETURN_NOT_IMPLEMENTED();
-    if (op == BinaryOperator::Pow && args.size() > 2 && !isNone(args[2]))
-        RELEASE_AND_RETURN(scope, JSValue::encode(power(globalObject, args[0], args[1], args[2])));
+    if (hasModulus) {
+        // long_pow(). This is what int has to say for itself, and not all that pow() does to find who has something to say.
+        if (!classify(args[2]).isInt())
+            RETURN_NOT_IMPLEMENTED();
+        RELEASE_AND_RETURN(scope, JSValue::encode(reflected ? powerOfInts(globalObject, args[1], args[0], args[2]) : powerOfInts(globalObject, args[0], args[1], args[2])));
+    }
     JSValue result = reflected ? numberBinaryOperation(globalObject, op, args[1], args[0]) : numberBinaryOperation(globalObject, op, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (!result)
@@ -87,11 +95,22 @@ PYTHON_NATIVE(numberUnary)
 
 PYTHON_NATIVE(numberDivmod)
 {
-    auto reflected = unpack<bool>(callFrame, 0);
+    auto type = unpack<NumberType>(callFrame, 0);
+    auto reflected = unpack<bool>(callFrame, 1);
     NATIVE_PROLOGUE();
-    if (!classify(args.at(0)) || !classify(args.at(1)))
+    if (!accepts(type, classify(args.at(0)), classify(args.at(1))))
         RETURN_NOT_IMPLEMENTED();
     RELEASE_AND_RETURN(scope, JSValue::encode(reflected ? divmod(globalObject, args[1], args[0]) : divmod(globalObject, args[0], args[1])));
+}
+
+// long_richcompare(): with another int and nothing else. It is float.__eq__() that knows about 1 == 1.0.
+PYTHON_NATIVE(intCompare)
+{
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
+    NATIVE_PROLOGUE();
+    if (!classify(args[1]).isInt())
+        RETURN_NOT_IMPLEMENTED();
+    RELEASE_AND_RETURN(scope, JSValue::encode(builtinCompare(globalObject, op, args[0], args[1])));
 }
 
 static JSValue unbox(JSValue value)
@@ -220,7 +239,7 @@ PYTHON_NATIVE(numberFormat)
     NATIVE_PROLOGUE();
     JSString* specification = stringIn(args[1]);
     if (!specification)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 
@@ -703,9 +722,10 @@ PYTHON_NATIVE(floatFromNumber)
 PYTHON_NATIVE(floatGetFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__getformat__() argument must be str, not "_s, typeName(globalObject, args[1]))));
-    String kind = asString(args[1])->value(globalObject);
+    JSString* given = stringIn(args[1]);
+    if (!given)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__getformat__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+    String kind = given->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (kind != "double"_s && kind != "float"_s)
         return JSValue::encode(raiseValueError(globalObject, scope, "__getformat__() argument 1 must be 'double' or 'float'"_s));
@@ -774,8 +794,8 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
     addOperator(globalObject, target, type, BinaryOperator::Mod);
     addOperator(globalObject, target, type, BinaryOperator::Pow);
     addMethods(globalObject, target, {
-        { "__divmod__"_s, numberDivmod, PyNativeFunction::Kind::Method, pack(false) },
-        { "__rdivmod__"_s, numberDivmod, PyNativeFunction::Kind::Method, pack(true) },
+        { "__divmod__"_s, numberDivmod, PyNativeFunction::Kind::Method, pack(type, false) },
+        { "__rdivmod__"_s, numberDivmod, PyNativeFunction::Kind::Method, pack(type, true) },
         { "__neg__"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::USub) },
         { "__pos__"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::UAdd) },
         { "__abs__"_s, numberAbs },
@@ -791,7 +811,10 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
         { "__hash__"_s, nativeHash },
         { "conjugate"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::UAdd) },
     });
-    addComparisons(globalObject, target);
+    if (type == NumberType::Int)
+        addComparisons(globalObject, target, intCompare);
+    else
+        addComparisons(globalObject, target);
     addGetSet(globalObject, target, "real"_s, [] (JSGlobalObject* globalObject, JSValue self) { return numberUnaryOperation(globalObject, UnaryOperator::UAdd, self); });
     addGetSet(globalObject, target, "imag"_s, [] (JSGlobalObject*, JSValue self) { return classify(self).kind == Number::Kind::Float ? floatFromDouble(0) : jsNumber(0); });
 }

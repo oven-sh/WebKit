@@ -165,7 +165,7 @@ PYTHON_NATIVE(strNew)
     if (encodingValue || errorsValue) {
         for (JSValue option : { encodingValue, errorsValue }) {
             if (option && !stringIn(option))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, typeName(globalObject, option))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, type == realm->typeStr() && !args.keywordCount() ? typeName(globalObject, option) : typeNameOfArgument(globalObject, option))));
         }
         if (value) {
             if (stringIn(value))
@@ -198,7 +198,7 @@ PYTHON_NATIVE(strFormatMethod)
     NATIVE_PROLOGUE();
     JSString* specification = stringIn(args[1]);
     if (!specification)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 

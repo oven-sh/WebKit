@@ -434,7 +434,8 @@ static size_t reverseFindIn(std::span<const uint8_t> haystack, std::span<const u
 // ---- Making them
 
 // What bytes(source, encoding, errors) and bytearray(...) hold. False if it raised.
-static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& args, bool isByteArray, ByteVector& content)
+// `toEmpty` is the bytearray that __init__() was called on, which is emptied as soon as the arguments have been taken, whatever comes of them.
+static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& args, bool isByteArray, ByteVector& content, JSUint8Array* toEmpty = nullptr)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -460,6 +461,10 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
     RETURN_IF_EXCEPTION(scope, false);
     String errors = textOf(errorsValue, "errors"_s);
     RETURN_IF_EXCEPTION(scope, false);
+    if (toEmpty) {
+        replaceRange(globalObject, toEmpty, 0, toEmpty->length(), { });
+        RETURN_IF_EXCEPTION(scope, false);
+    }
 
     if (!source) {
         if (encodingValue || errorsValue) {
@@ -507,7 +512,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
     RETURN_IF_EXCEPTION(scope, false);
     // So many zeros.
     if (classify(source).isInt() || typeOf(globalObject, source)->lookup(vm, vm.pythonNames().dunder_index)) {
-        auto count = toIndex(globalObject, source);
+        auto count = toIndexOrOverflow(globalObject, source);
         RETURN_IF_EXCEPTION(scope, false);
         if (*count < 0) {
             raiseValueError(globalObject, scope, "negative count"_s);
@@ -554,8 +559,22 @@ PYTHON_NATIVE(byteArrayInit)
 {
     BYTES_PROLOGUE("__init__");
     ByteVector newContent;
-    contentFrom(globalObject, args, true, newContent);
-    RETURN_IF_EXCEPTION(scope, { });
+    contentFrom(globalObject, args, true, newContent, self);
+    // What had been gone through before something was wrong is in it all the same.
+    if (scope.exception()) {
+        if (!newContent.isEmpty()) {
+            Exception* raised;
+            {
+                auto whileItIsSetAside = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                raised = whileItIsSetAside.exception();
+                whileItIsSetAside.clearException();
+                replaceRange(globalObject, self, 0, self->length(), newContent.span());
+                whileItIsSetAside.clearException();
+            }
+            throwException(globalObject, scope, raised);
+        }
+        return { };
+    }
     scope.release();
     replaceRange(globalObject, self, 0, self->length(), newContent.span());
     RETURN_NONE();
@@ -1055,8 +1074,11 @@ PYTHON_NATIVE(bytesPartition)
     size_t found = fromRight ? reverseFindIn(content, *separator) : findIn(content, *separator);
     auto make = [&] (std::span<const uint8_t> part) { return newLike(globalObject, selfValue, part); };
     std::span<const uint8_t> nothing;
-    if (found == notFound)
-        return JSValue::encode(fromRight ? PyTuple::create(globalObject, { make(nothing), make(nothing), make(content) }) : PyTuple::create(globalObject, { make(content), make(nothing), make(nothing) }));
+    if (found == notFound) {
+        // A bytes is given back as it is, whatever class it is of. A bytearray can be changed, so it is another.
+        JSValue whole = isBytes(selfValue) ? selfValue : JSValue(make(content));
+        return JSValue::encode(fromRight ? PyTuple::create(globalObject, { make(nothing), make(nothing), whole }) : PyTuple::create(globalObject, { whole, make(nothing), make(nothing) }));
+    }
     return JSValue::encode(PyTuple::create(globalObject, { make(content.first(found)), isBytes(selfValue) ? separator.object() : make(*separator), make(content.subspan(found + separator->size())) }));
 }
 
@@ -1486,7 +1508,12 @@ PYTHON_NATIVE(byteArraySetItem)
     if (auto* slice = trySlice(args.at(1))) {
         ByteVector replacement;
         if (value) {
-            if (classify(value).isInt() || value.isString())
+            // PyNumber_Check()
+            auto isNumber = [&] {
+                PyType* type = typeOf(globalObject, value);
+                return type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(realm->typeComplex());
+            };
+            if (stringIn(value) || isNumber())
                 return JSValue::encode(raiseTypeError(globalObject, scope, "can assign only bytes, buffers, or iterables of ints in range(0, 256)"_s));
             if (!hasBuffer(globalObject, value) && !typeOf(globalObject, value)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, value)->lookup(vm, names.dunder_getitem))
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, value), "' object to bytearray"_s)));
@@ -1526,19 +1553,22 @@ PYTHON_NATIVE(byteArraySetItem)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("bytearray indices must be integers or slices, not "_s, typeName(globalObject, args.at(1)))));
     auto index = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
+    // What the value is is asked before how long the bytearray is, since asking can change that.
+    std::optional<uint8_t> byte;
+    if (value) {
+        byte = byteFrom(globalObject, value, "byte must be in range(0, 256)"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     int64_t length = self->length();
     int64_t at = *index < 0 ? *index + length : *index;
     if (at < 0 || at >= length)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "bytearray index out of range"_s));
-    if (!value) {
+    if (!byte) {
         scope.release();
         replaceRange(globalObject, self, at, 1, { });
         RETURN_NONE();
     }
-    auto byte = byteFrom(globalObject, value, "byte must be in range(0, 256)"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (at < static_cast<int64_t>(self->length()))
-        mutableSpanOf(self)[at] = *byte;
+    mutableSpanOf(self)[at] = *byte;
     RETURN_NONE();
 }
 
@@ -2323,9 +2353,9 @@ PYTHON_NATIVE(builtinReleaseBuffer)
 PYTHON_NATIVE(memoryFromFlags)
 {
     NATIVE_PROLOGUE();
-    auto flags = toIndex(globalObject, args[2]);
+    auto flags = toCInt(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args[1], static_cast<int>(*flags))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args[1], *flags)));
 }
 
 PYTHON_NATIVE(memoryRepr)

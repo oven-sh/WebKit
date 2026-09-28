@@ -248,6 +248,9 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     unsigned minimum = signature.requiredPositionalCount();
     unsigned maximum = signature.positionalCount();
     String name = !signature.functionName().isNull() ? signature.functionName() : function->takesArgumentsOfTheClass() ? asType(function->owner())->nameWithoutModule(globalObject) : function->name(vm);
+    // set and frozenset give the name of the class that is being made, which can be one derived from them.
+    if (PyRealm* realm = globalObject->pyRealm(); function->takesArgumentsOfTheClass() && implicit && (function->owner() == realm->typeSet() || function->owner() == realm->typeFrozenSet()))
+        name = (isClass(args[0]) ? asType(args[0]) : typeOf(globalObject, args[0]))->nameWithoutModule(globalObject);
 
     if (function->kind() == PyNativeFunction::Kind::Wrapper && !function->takesArgumentsOfTheClass()) {
         if (signature.family() == NativeSignature::Family::Unchecked)

@@ -533,3 +533,212 @@ utf-32-be surrogateescape => UnicodeEncodeError: 'utf-32-be' codec can't encode 
 utf-32-be surrogateescape, what surrogateescape is for => UnicodeEncodeError: 'utf-32-be' codec can't encode character '\udc80' in position 0: surrogates not allowed
 utf-32-be surrogatepass => b'\x00\x00\x00a\x00\x00\xdc\x80\x00\x00\xdc\xff\x00\x00\x00b\x00\x00\xd8\x01\x00\x00\xd8\x00\x00\x00\x00\xe9\x00\x00\x06a'
 utf-32-be surrogatepass, what surrogateescape is for => b'\x00\x00\xdc\x80\x00\x00\xdc\xff'
+int.__eq__ => [False, False, False, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__eq__ => [False, False, False, False, False, NotImplemented, NotImplemented, NotImplemented]
+int.__ne__ => [True, True, True, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__ne__ => [True, True, True, True, True, NotImplemented, NotImplemented, NotImplemented]
+int.__lt__ => [False, False, False, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__lt__ => [False, False, False, False, False, NotImplemented, NotImplemented, NotImplemented]
+int.__le__ => [False, False, False, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__le__ => [False, False, False, False, False, NotImplemented, NotImplemented, NotImplemented]
+int.__gt__ => [True, True, True, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__gt__ => [True, True, True, True, True, NotImplemented, NotImplemented, NotImplemented]
+int.__ge__ => [True, True, True, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__ge__ => [True, True, True, True, True, NotImplemented, NotImplemented, NotImplemented]
+int.__divmod__ => [(2, 1), (5, 0), (2, 1), NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__divmod__ => [(2.0, 1.0), (5.0, 0.0), (2.0, 1.0), (2.0, 1.0), (3.0, 0.5), NotImplemented, NotImplemented, NotImplemented]
+int.__rdivmod__ => [(0, 2), (0, 1), (0, 2), NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__rdivmod__ => [(0.0, 2.0), (0.0, 1.0), (0.0, 2.0), (0.0, 2.0), (0.0, 1.5), NotImplemented, NotImplemented, NotImplemented]
+int.__add__ => [7, 6, 7, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__add__ => [7.0, 6.0, 7.0, 7.0, 6.5, NotImplemented, NotImplemented, NotImplemented]
+int.__radd__ => [7, 6, 7, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__radd__ => [7.0, 6.0, 7.0, 7.0, 6.5, NotImplemented, NotImplemented, NotImplemented]
+int.__pow__ => [25, 5, 25, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__pow__ => [25.0, 5.0, 25.0, 25.0, 11.180339887498949, NotImplemented, NotImplemented, NotImplemented]
+int.__rpow__ => [32, 1, 32, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__rpow__ => [32.0, 1.0, 32.0, 32.0, 7.59375, NotImplemented, NotImplemented, NotImplemented]
+int.__floordiv__ => [2, 5, 2, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+float.__floordiv__ => [2.0, 5.0, 2.0, 2.0, 3.0, NotImplemented, NotImplemented, NotImplemented]
+int.__and__ => [0, 1, 0, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented, NotImplemented]
+    Loud.__eq__ says NotImplemented
+    Loud.__eq__ says True
+    Loud.__eq__ says NotImplemented
+so that the other is asked => (True, True, False, True)
+int.__pow__(2, 5) => 4
+int.__rpow__(2, 5) => 3
+float.__pow__(2, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(2, None) => 9
+int.__rpow__(2, None) => 8
+float.__pow__(2, None) => 9.0
+float.__rpow__(2, None) => 8.0
+int.__pow__(2, 'a') => NotImplemented
+int.__rpow__(2, 'a') => NotImplemented
+float.__pow__(2, 'a') => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2, 'a') => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(2, 1.5) => NotImplemented
+int.__rpow__(2, 1.5) => NotImplemented
+float.__pow__(2, 1.5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2, 1.5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(2.0, 5) => NotImplemented
+int.__rpow__(2.0, 5) => NotImplemented
+float.__pow__(2.0, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2.0, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__('a', 5) => NotImplemented
+int.__rpow__('a', 5) => NotImplemented
+float.__pow__('a', 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__('a', 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(-1, 7) => 5
+int.__rpow__(-1, 7) => 6
+float.__pow__(-1, 7) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(-1, 7) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(-1, 1) => 0
+int.__rpow__(-1, 1) => 0
+float.__pow__(-1, 1) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(-1, 1) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(-1, 7) => 5
+int.__rpow__(-1, 7) => 6
+float.__pow__(-1, 7) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(-1, 7) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(3, 5) => 2
+int.__rpow__(3, 5) => 2
+float.__pow__(3, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(3, 5) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(2, 0) => ValueError: pow() 3rd argument cannot be 0
+int.__rpow__(2, 0) => ValueError: pow() 3rd argument cannot be 0
+float.__pow__(2, 0) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2, 0) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+int.__pow__(2, True) => 0
+int.__rpow__(2, True) => 0
+float.__pow__(2, True) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+float.__rpow__(2, True) => TypeError: pow() 3rd argument not allowed unless all arguments are integers
+pow with a modulus that is of a class derived from int => (0, 5, 1, 'int')
+bytearray.__init__('',) => TypeError: string argument without an encoding
+    bytearray(b'')
+bytearray.__init__(None,) => TypeError: cannot convert 'NoneType' object to bytearray
+    bytearray(b'')
+bytearray.__init__(None, 'a') => TypeError: encoding without a string argument
+    bytearray(b'')
+bytearray.__init__(('a', 'b'),) => TypeError: 'str' object cannot be interpreted as an integer
+    bytearray(b'')
+bytearray.__init__('a', 'nope') => LookupError: unknown encoding: nope
+    bytearray(b'')
+bytearray.__init__(-1,) => ValueError: negative count
+    bytearray(b'')
+bytearray.__init__(1180591620717411303424,) => OverflowError: cannot fit 'int' into an index-sized integer
+    bytearray(b'')
+bytearray.__init__([1, 2, 'a'],) => TypeError: 'str' object cannot be interpreted as an integer
+    bytearray(b'\x01\x02')
+bytearray.__init__'an iterator' => ValueError: byte must be in range(0, 256)
+    bytearray(b'\x01\x02')
+bytearray.__init__('a', 1) => TypeError: bytearray() argument 'encoding' must be str, not int
+    bytearray(b'old')
+bytearray.__init__('a', 'ascii', 1) => TypeError: bytearray() argument 'errors' must be str, not int
+    bytearray(b'old')
+bytearray.__init__(b'xy',) => None
+    bytearray(b'xy')
+bytearray.__init__(3,) => None
+    bytearray(b'\x00\x00\x00')
+bytearray.__init__() => None
+    bytearray(b'')
+bytearray.__init__('xy', 'ascii') => None
+    bytearray(b'xy')
+bytearray(b'')[0] = None => TypeError: 'NoneType' object cannot be interpreted as an integer
+    bytearray(b'')
+bytearray(b'ab')[0] = None => TypeError: 'NoneType' object cannot be interpreted as an integer
+    bytearray(b'ab')
+bytearray(b'')[0] = -1 => ValueError: byte must be in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[0] = -1 => ValueError: byte must be in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[0] = 256 => ValueError: byte must be in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[0] = 256 => ValueError: byte must be in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[5] = None => TypeError: 'NoneType' object cannot be interpreted as an integer
+    bytearray(b'')
+bytearray(b'ab')[5] = None => TypeError: 'NoneType' object cannot be interpreted as an integer
+    bytearray(b'ab')
+bytearray(b'')[5] = 1 => IndexError: bytearray index out of range
+    bytearray(b'')
+bytearray(b'ab')[5] = 1 => IndexError: bytearray index out of range
+    bytearray(b'ab')
+bytearray(b'')[0] = 1 => IndexError: bytearray index out of range
+    bytearray(b'')
+bytearray(b'ab')[0] = 1 => None
+    bytearray(b'\x01b')
+bytearray(b'')[-1] = 1 => IndexError: bytearray index out of range
+    bytearray(b'')
+bytearray(b'ab')[-1] = 1 => None
+    bytearray(b'a\x01')
+bytearray(b'')[1180591620717411303424] = None => IndexError: cannot fit 'int' into an index-sized integer
+    bytearray(b'')
+bytearray(b'ab')[1180591620717411303424] = None => IndexError: cannot fit 'int' into an index-sized integer
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = 1.5 => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = 1.5 => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = 1 => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = 1 => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = 'a' => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = 'a' => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = 'a' => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = 'a' => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = 1j => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = 1j => TypeError: can assign only bytes, buffers, or iterables of ints in range(0, 256)
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = None => TypeError: cannot convert 'NoneType' object to bytearray
+    bytearray(b'')
+bytearray(b'ab')[slice(None, 1, None)] = None => TypeError: cannot convert 'NoneType' object to bytearray
+    bytearray(b'ab')
+bytearray(b'')[slice(None, 1, None)] = [1, 2] => None
+    bytearray(b'\x01\x02')
+bytearray(b'ab')[slice(None, 1, None)] = [1, 2] => None
+    bytearray(b'\x01\x02b')
+bytearray(b'')[slice(None, 1, None)] = b'xy' => None
+    bytearray(b'xy')
+bytearray(b'ab')[slice(None, 1, None)] = b'xy' => None
+    bytearray(b'xyb')
+a value that empties it when it is asked what it is => IndexError: bytearray index out of range
+too many zeros => OverflowError: cannot fit 'int' into an index-sized integer
+or too few => ValueError: negative count
+what a bytes gives back => [['MyBytes', 'bytes', 'bytes'], ['bytes', 'bytes', 'MyBytes'], ['bytes', 'bytes', 'bytes'], ['bytearray', 'bytearray', 'bytearray'], True]
+format => TypeError: object.__format__() takes exactly one argument (0 given)
+b'a'.__format__ => TypeError: __format__() argument must be str, not None
+b'a'.__format__ of a class derived from str => TypeError: unsupported format string passed to bytes.__format__
+[].__format__ => TypeError: __format__() argument must be str, not None
+[].__format__ of a class derived from str => TypeError: unsupported format string passed to list.__format__
+None.__format__ => TypeError: __format__() argument must be str, not None
+None.__format__ of a class derived from str => TypeError: unsupported format string passed to NoneType.__format__
+5.__format__ => TypeError: __format__() argument must be str, not None
+5.__format__ of a class derived from str => ValueError: Unknown format code '!' for object of type 'int'
+1.5.__format__ => TypeError: __format__() argument must be str, not None
+1.5.__format__ of a class derived from str => ValueError: Unknown format code '!' for object of type 'float'
+1j.__format__ => TypeError: __format__() argument must be str, not None
+1j.__format__ of a class derived from str => ValueError: Unknown format code '!' for object of type 'complex'
+'a'.__format__ => TypeError: __format__() argument must be str, not None
+'a'.__format__ of a class derived from str => ValueError: Unknown format code '!' for object of type 'str'
+__getformat__ => True
+__getformat__ of None => TypeError: __getformat__() argument must be str, not None
+what goes through a str => ['str_ascii_iterator', 'str_iterator', 'str_iterator', 'str_iterator', 'str_ascii_iterator']
+str with None for an encoding => TypeError: str() argument 'encoding' must be str, not NoneType
+str by keyword => TypeError: str() argument 'encoding' must be str, not None
+MyStr with None for an encoding => TypeError: str() argument 'encoding' must be str, not None
+MyStr by keyword => TypeError: str() argument 'encoding' must be str, not None
+set of too many => TypeError: set expected at most 1 argument, got 2
+set by keyword => TypeError: set() takes no keyword arguments
+frozenset of too many => TypeError: frozenset expected at most 1 argument, got 2
+frozenset by keyword => TypeError: frozenset() takes no keyword arguments
+St of too many => TypeError: St expected at most 1 argument, got 2
+St by keyword => TypeError: set() takes no keyword arguments
+Fs of too many => TypeError: Fs expected at most 1 argument, got 2
+Fs by keyword => TypeError: frozenset() takes no keyword arguments
+set.__init__ of too many => TypeError: St expected at most 1 argument, got 2

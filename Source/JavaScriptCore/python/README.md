@@ -618,8 +618,8 @@ There is nothing that is per process, nothing that is set after something is mad
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
 
 Two of the audits are of what the built-in classes do, and not of what they have. `operations.py` tries every operator, in place and not, between every two of some hundred values, and the built-in functions
-of one and of two of them. `methods.py` calls every method of several instances of each class with no argument, with each of some eighty, with each two of some forty, with each three of a few, and by keyword.
-That is eight million things tried. What is compared with CPython is what comes back and its class, or the exception and what it says, and what has become of what it was done to. Among the values are instances
+of one and of two of them. `methods.py` calls every method of several instances of each class with no argument, with each of some ninety, with each two of some forty, with each three of a few, and by keyword, and the methods that the operators are made of as well.
+That is ten million things tried. What is compared with CPython is what comes back and its class, or the exception and what it says, and what has become of what it was done to. Among the values are instances
 of classes derived from `int`, `str`, `float`, `list` and `tuple`, and it is those that found the most. Each prints a line for each operator or method of each value, with a number that stands for all that came
 of it, so that what is kept to compare with is small, and given `everything` prints it all, which is how to find what is behind a line that differs.
 

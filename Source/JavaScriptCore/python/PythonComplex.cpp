@@ -446,7 +446,7 @@ PYTHON_NATIVE(complexFormat)
     NATIVE_PROLOGUE();
     JSString* given = stringIn(args[1]);
     if (!given)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     Complex self = valueOf(tryComplex(args[0]));
     String text = given->value(globalObject);
     if (text.isEmpty())

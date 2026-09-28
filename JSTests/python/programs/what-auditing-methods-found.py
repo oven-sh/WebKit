@@ -110,3 +110,75 @@ for encoding in ("ascii", "latin-1", "utf-8", "utf-16", "utf-16-le", "utf-16-be"
     for errors in ("strict", "ignore", "replace", "backslashreplace", "xmlcharrefreplace", "namereplace", "surrogateescape", "surrogatepass"):
         t(encoding + " " + errors, lambda: text.encode(encoding, errors))
         t(encoding + " " + errors + ", what surrogateescape is for", lambda: "\udc80\udcff".encode(encoding, errors))
+
+# ---- What a class has to say for itself, and what it leaves to another
+for name in ("__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__divmod__", "__rdivmod__", "__add__", "__radd__", "__pow__", "__rpow__", "__floordiv__", "__and__"):
+    t("int." + name, lambda: [getattr(5, name)(other) for other in (2, True, MyInt(2), 2.0, 1.5, float("nan"), 2j, "2", None)])
+    if hasattr(1.5, name):
+        t("float." + name, lambda: [getattr(5.0, name)(other) for other in (2, True, MyInt(2), 2.0, 1.5, 2j, "2", None)])
+
+
+class Loud(int):
+    def __eq__(self, other):
+        r = super().__eq__(other)
+        print("    Loud.__eq__ says", r)
+        return r
+
+    __hash__ = int.__hash__
+
+
+t("so that the other is asked", lambda: (Loud(1) == 1.0, Loud(1) == 1, Loud(1) == "a", 1.0 == Loud(1)))
+for arguments in ((2, 5), (2, None), (2, "a"), (2, 1.5), (2.0, 5), ("a", 5), (-1, 7), (-1, MyInt(1)), (-1, MyInt(7)), (MyInt(3), MyInt(5)), (2, 0), (2, True)):
+    t("int.__pow__%r" % (arguments,), lambda: (3).__pow__(*arguments))
+    t("int.__rpow__%r" % (arguments,), lambda: (3).__rpow__(*arguments))
+    t("float.__pow__%r" % (arguments,), lambda: (3.0).__pow__(*arguments))
+    t("float.__rpow__%r" % (arguments,), lambda: (3.0).__rpow__(*arguments))
+t("pow with a modulus that is of a class derived from int", lambda: (pow(0, -1, MyInt(1)), pow(3, -1, MyInt(7)), pow(MyInt(3), MyInt(4), MyInt(5)), type(pow(MyInt(3), MyInt(4), MyInt(5))).__name__))
+
+# ---- A bytearray is emptied before anything else is done about filling it
+for arguments in (("",), (None,), (None, "a"), (("a", "b"),), ("a", "nope"), (-1,), (huge,), ([1, 2, "a"],), (iter([1, 2, 300]),), ("a", 1), ("a", "ascii", 1), (b"xy",), (3,), (), ("xy", "ascii")):
+    b = bytearray(b"old")
+    t("bytearray.__init__%r" % (arguments if not hasattr(arguments[0] if arguments else 0, "__next__") else "an iterator",), lambda: b.__init__(*arguments))
+    print("   ", b)
+for key, value in ((0, None), (0, -1), (0, 256), (5, None), (5, 1), (0, 1), (-1, 1), (huge, None), (slice(1), 1.5), (slice(1), 1), (slice(1), MyStr("a")), (slice(1), "a"), (slice(1), 1j), (slice(1), None), (slice(1), [1, 2]), (slice(1), b"xy")):
+    for start in (b"", b"ab"):
+        b = bytearray(start)
+        t("bytearray(%r)[%r] = %r" % (start, key, value), lambda: b.__setitem__(key, value))
+        print("   ", b)
+
+
+class Shrinks:
+    def __init__(self, b):
+        self.b = b
+
+    def __index__(self):
+        self.b.clear()
+        return 1
+
+
+b = bytearray(b"abc")
+t("a value that empties it when it is asked what it is", lambda: b.__setitem__(2, Shrinks(b)))
+t("too many zeros", lambda: bytes(huge))
+t("or too few", lambda: bytes(-1))
+
+
+class MyBytes(bytes):
+    pass
+
+
+m = MyBytes(b"sub")
+t("what a bytes gives back", lambda: [[type(x).__name__ for x in r] for r in (m.partition(b"x"), m.rpartition(b"x"), m.partition(b"u"), bytearray(m).partition(b"x"))] + [m.partition(b"x")[0] is m])
+t("format", lambda: [f(MyStr("")) for f in (b"a".__format__, [].__format__, object().__format__.__self__.__class__.__format__.__get__(None, type(None)))])
+for value in (b"a", [], None, 5, 1.5, 1j, "a"):
+    t("%r.__format__" % (value,), lambda: value.__format__(None))
+    t("%r.__format__ of a class derived from str" % (value,), lambda: value.__format__(MyStr("!")))
+t("__getformat__", lambda: (float.__getformat__(MyStr("double")) == float.__getformat__("double")))
+t("__getformat__ of None", lambda: float.__getformat__(None))
+t("what goes through a str", lambda: [type(iter(x)).__name__ for x in ("a", "\xe9", MyStr("a"), MyStr("\xe9"), "")])
+for kind in (str, MyStr):
+    t(kind.__name__ + " with None for an encoding", lambda: kind(b"", None))
+    t(kind.__name__ + " by keyword", lambda: kind(b"", encoding=None))
+for kind in (set, frozenset, St, Fs):
+    t(kind.__name__ + " of too many", lambda: kind(1, 2))
+    t(kind.__name__ + " by keyword", lambda: kind(iterable=[1]))
+t("set.__init__ of too many", lambda: St().__init__(1, 2))

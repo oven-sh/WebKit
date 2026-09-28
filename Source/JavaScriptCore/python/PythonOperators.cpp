@@ -406,8 +406,6 @@ static PowerSlot powerSlotOf(JSGlobalObject* globalObject, PyType* type)
     return PowerSlot::Methods;
 }
 
-static JSValue powerOfInts(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
-
 // slot_nb_power(), with a modulus
 static JSValue powerByMethods(JSGlobalObject* globalObject, JSValue self, JSValue other, JSValue modulus)
 {
@@ -515,10 +513,15 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
     return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for ** or pow(): '"_s, typeName(globalObject, base), "', '"_s, typeName(globalObject, exponent), "', '"_s, typeName(globalObject, modulus), '\''));
 }
 
-static JSValue powerOfInts(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
+JSValue powerOfInts(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Whatever classes derived from int they may be of, and whatever those have to say about the operators, it is as ints that they are taken.
+    for (JSValue* value : { &base, &exponent, &modulus }) {
+        if (auto* boxed = tryBoxedValue(*value))
+            *value = boxed->value();
+    }
     Number e = classify(exponent);
     Number m = classify(modulus);
     if (m.kind == Number::Kind::Small && !m.small)
@@ -1742,8 +1745,9 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
         if (isListCell(cell))
             return PyIterator::create(globalObject, Kind::List, value);
         // An instance of a class derived from str, which has the string in it.
+        // CPython has a quicker iterator for a str that is all ASCII, but not for an instance of a class derived from str.
         if (JSString* string = stringIn(value))
-            return builtinGetIterator(globalObject, string);
+            return PyIterator::create(globalObject, Kind::Str, string);
         return { };
     }
 }
