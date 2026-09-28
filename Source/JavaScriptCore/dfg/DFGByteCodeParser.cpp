@@ -4436,6 +4436,38 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case TaggedAddIntrinsic:
+        case TaggedSubIntrinsic:
+        case TaggedMulIntrinsic:
+        case TaggedDivIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return CallOptimizationResult::DidNothing;
+            insertChecks();
+            NodeType op = intrinsic == TaggedAddIntrinsic ? TaggedAdd : intrinsic == TaggedSubIntrinsic ? TaggedSub : intrinsic == TaggedMulIntrinsic ? TaggedMul : TaggedDiv;
+            Node* left = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+            Node* right = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+            setResult(addToGraph(op, OpInfo(), OpInfo(prediction), left, right));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case IsInt32Intrinsic: {
+            if (argumentCountIncludingThis < 2)
+                return CallOptimizationResult::DidNothing;
+            insertChecks();
+            setResult(addToGraph(IsInt32, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            return CallOptimizationResult::Inlined;
+        }
+
+        case NewContiguousArrayIntrinsic: {
+            if (m_graph.globalObjectFor(currentNodeOrigin().semantic)->isHavingABadTime())
+                return CallOptimizationResult::DidNothing;
+            insertChecks();
+            for (int i = 1; i < argumentCountIncludingThis; ++i)
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
+            setResult(addToGraph(Node::VarArg, NewArray, OpInfo(ArrayWithContiguous), OpInfo(static_cast<unsigned>(argumentCountIncludingThis - 1))));
+            return CallOptimizationResult::Inlined;
+        }
+
         case ToIntegerOrInfinityIntrinsic: {
             if (argumentCountIncludingThis == 1) {
                 insertChecks();

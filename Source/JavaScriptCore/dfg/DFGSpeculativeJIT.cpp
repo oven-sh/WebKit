@@ -16513,6 +16513,111 @@ void SpeculativeJIT::compileGetWebAssemblyInstanceExports(Node* node)
 #endif
 }
 
+// What is left of these after fixup does not know what its operands are.
+void SpeculativeJIT::compileTaggedArith(Node* node)
+{
+    JSValueOperand left(this, node->child1());
+    JSValueOperand right(this, node->child2());
+    GPRTemporary result(this);
+    FPRTemporary leftDouble(this);
+    FPRTemporary rightDouble(this);
+    GPRReg leftGPR = left.gpr();
+    GPRReg rightGPR = right.gpr();
+    GPRReg resultGPR = result.gpr();
+    FPRReg leftFPR = leftDouble.fpr();
+    FPRReg rightFPR = rightDouble.fpr();
+
+    JumpList slowCases;
+    JumpList haveDoubles;
+    JumpList done;
+
+    Jump leftIsNotInt32 = branchIfNotInt32(leftGPR);
+    Jump rightIsNotInt32 = branchIfNotInt32(rightGPR);
+    switch (node->op()) {
+    case TaggedAdd:
+        slowCases.append(branchAdd32(Overflow, leftGPR, rightGPR, resultGPR));
+        break;
+    case TaggedSub:
+        slowCases.append(branchSub32(Overflow, leftGPR, rightGPR, resultGPR));
+        break;
+    case TaggedMul:
+        slowCases.append(branchMul32(Overflow, leftGPR, rightGPR, resultGPR));
+        break;
+    case TaggedDiv:
+        convertInt32ToDouble(leftGPR, leftFPR);
+        convertInt32ToDouble(rightGPR, rightFPR);
+        haveDoubles.append(jump());
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    if (node->op() != TaggedDiv) {
+        boxInt32(resultGPR, resultGPR);
+        done.append(jump());
+    }
+
+    leftIsNotInt32.link(this);
+    slowCases.append(branchIfNotNumber(leftGPR));
+    unboxDoubleWithoutAssertions(leftGPR, resultGPR, leftFPR);
+    Jump rightIsInt32 = branchIfInt32(rightGPR);
+    slowCases.append(branchIfNotNumber(rightGPR));
+    unboxDoubleWithoutAssertions(rightGPR, resultGPR, rightFPR);
+    haveDoubles.append(jump());
+    rightIsInt32.link(this);
+    convertInt32ToDouble(rightGPR, rightFPR);
+    haveDoubles.append(jump());
+
+    rightIsNotInt32.link(this);
+    slowCases.append(branchIfNotNumber(rightGPR));
+    convertInt32ToDouble(leftGPR, leftFPR);
+    unboxDoubleWithoutAssertions(rightGPR, resultGPR, rightFPR);
+
+    haveDoubles.link(this);
+    switch (node->op()) {
+    case TaggedAdd:
+        addDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    case TaggedSub:
+        subDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    case TaggedMul:
+        mulDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    case TaggedDiv:
+        divDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    boxDouble(leftFPR, resultGPR);
+    done.link(this);
+
+    auto operation = node->op() == TaggedAdd ? operationTaggedAdd : node->op() == TaggedSub ? operationTaggedSub : node->op() == TaggedMul ? operationTaggedMul : operationTaggedDiv;
+    addSlowPathGenerator(slowPathCall(slowCases, this, operation, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, leftGPR, rightGPR));
+    jsValueResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileIsInt32(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    GPRTemporary result(this);
+    GPRReg resultGPR = result.gpr();
+    Jump isInt32 = branchIfInt32(value.gpr());
+    move(TrustedImm32(0), resultGPR);
+    Jump done = jump();
+    isInt32.link(this);
+    move(TrustedImm32(1), resultGPR);
+    done.link(this);
+    unblessedBooleanResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileCheckNotInt32(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    speculationCheck(BadType, JSValueSource(value.gpr()), node->child1(), branchIfInt32(value.gpr()));
+    noResult(node);
+}
+
 void SpeculativeJIT::compileIdentity(Node* node)
 {
     speculate(node, node->child1());

@@ -1390,6 +1390,9 @@ public:
     void compileGetPrototypeOf(Node*);
     void compileGetWebAssemblyInstanceExports(Node*);
     void compileIdentity(Node*);
+    void compileTaggedArith(Node*);
+    void compileIsInt32(Node*);
+    void compileCheckNotInt32(Node*);
     
     void compileContiguousPutByVal(Node*);
     void compileDoublePutByVal(Node*);

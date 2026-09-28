@@ -3575,6 +3575,61 @@ private:
             fixEdge<StringUse>(node->child1());
             break;
 
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv: {
+            NodeType arithOp = node->op() == TaggedAdd ? ArithAdd : node->op() == TaggedSub ? ArithSub : node->op() == TaggedMul ? ArithMul : ArithDiv;
+            switch (m_graph.taggedArithMode(node)) {
+            case Graph::TaggedArithMode::Int32:
+                fixEdge<Int32Use>(node->child1());
+                fixEdge<Int32Use>(node->child2());
+                node->setOpAndDefaultFlags(arithOp);
+                // Not for negative zero, which JavaScript's multiplication has to look out for: 0 * -1 is 0.
+                node->setArithMode(Arith::CheckOverflow);
+                node->setResult(NodeResultInt32);
+                break;
+            case Graph::TaggedArithMode::Double: {
+                if (node->op() != TaggedDiv) {
+                    // A float comes of it if either operand is one, so it is enough to be sure of one of them.
+                    auto isKnownDouble = [] (Edge edge) {
+                        return edge->hasDoubleResult() || (edge->isNumberConstant() && edge->asJSValue().isDouble());
+                    };
+                    if (!isKnownDouble(node->child1()) && !isKnownDouble(node->child2()) && !(Options::numberEncodingChecksToSkip() & (1u << 20))) {
+                        // Neither is a constant that is a double, so both are what they are predicted to be.
+                        bool leftMayBeInt32 = node->child1()->isNumberConstant() || (node->child1()->prediction() & SpecInt32Only);
+                        Edge checked = leftMayBeInt32 ? node->child2() : node->child1();
+                        m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckNotInt32, node->origin, Edge(checked.node(), UntypedUse));
+                    }
+                }
+                fixEdge<DoubleRepUse>(node->child1());
+                fixEdge<DoubleRepUse>(node->child2());
+                node->setOpAndDefaultFlags(arithOp);
+                node->setResult(NodeResultDouble);
+                break;
+            }
+            case Graph::TaggedArithMode::Generic:
+                break;
+            }
+            break;
+        }
+
+        case IsInt32:
+            if (node->child1()->shouldSpeculateInt32()) {
+                insertCheck<Int32Use>(node->child1().node());
+                m_graph.convertToConstant(node, jsBoolean(true));
+                break;
+            }
+            if (node->child1()->prediction() && !(node->child1()->prediction() & SpecInt32Only)) {
+                m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckNotInt32, node->origin, Edge(node->child1().node(), UntypedUse));
+                m_graph.convertToConstant(node, jsBoolean(false));
+                break;
+            }
+            break;
+
+        case CheckNotInt32:
+            break;
+
         case NumberIsInteger:
             if (node->child1()->shouldSpeculateInt32()) {
                 m_insertionSet.insertNode(
@@ -4233,6 +4288,12 @@ private:
                 return;
             }
 
+            if (node->child1()->shouldSpeculateNumber() && Options::keepNumberEncodings(8)) {
+                insertCheck<NumberUse>(node->child1().node());
+                node->convertToIdentity();
+                return;
+            }
+
             if (node->child1()->shouldSpeculateNumber()) {
                 fixEdge<DoubleRepUse>(node->child1());
                 node->convertToIdentity();
@@ -4401,6 +4462,12 @@ private:
         }
 
         // If the prediction of the child is Number, we attempt to convert ToNumber to Identity.
+        if (node->child1()->shouldSpeculateNumber() && Options::keepNumberEncodings(9)) {
+            insertCheck<NumberUse>(node->child1().node());
+            node->convertToIdentity();
+            return;
+        }
+
         if (node->child1()->shouldSpeculateNumber()) {
             if ((node->op() == CallNumberConstructor && isInt32Speculation(node->getHeapPrediction())) || (!node->mayHaveDoubleResult() && !node->mayHaveBigIntResult())) {
                 // If the both predictions of this node and the child is Int32, we just convert ToNumber to Identity, that's simple.
@@ -4970,7 +5037,7 @@ private:
 
         NodeFlags flags = NodeResultJS;
         if (!node->arrayMode().isOutOfBounds()) {
-            if (!(arrayModes & ~preferDoubleResult))
+            if (!(arrayModes & ~preferDoubleResult) && !Options::keepNumberEncodings(10))
                 flags = NodeResultDouble;
         }
 
@@ -5514,6 +5581,9 @@ private:
         // FTL has object allocation sinking, and keeping this node non-double-result makes that phase much simpler.
         // So FTL will do conversion of this in ValueRepReduction phase instead.
         UNUSED_PARAM(node);
+        // An int32 would be taken for a double, so none is expected, and to find one is to be wrong (unboxRealNumberDouble).
+        if (Options::keepNumberEncodings(3) && (node->prediction() & SpecInt32Only))
+            return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
                 if (!node->shouldSpeculateInt32() && node->shouldSpeculateNumber()) {
@@ -5533,6 +5603,9 @@ private:
         // So FTL will do conversion of this in ValueRepReduction phase instead.
         UNUSED_PARAM(node);
         UNUSED_PARAM(edge);
+        // An int32 would be stored as a double, so none is expected, and there is a check where the conversion is put in.
+        if (Options::keepNumberEncodings(4) && (edge->prediction() & SpecInt32Only))
+            return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
                 if (!edge->shouldSpeculateInt32() && edge->shouldSpeculateNumber()) {
@@ -6026,6 +6099,11 @@ private:
                                 useKind = NumberUse;
                             else
                                 useKind = NotCellNorBigIntUse;
+
+                            // DoubleRep makes a double of an int32. That does for arithmetic, but this is only being put
+                            // away, to be taken out again as what it was.
+                            if (Options::keepNumberEncodings(2) && (node->op() == SetLocal || node->op() == PutByOffset || node->op() == PutClosureVar || node->op() == PutGlobalVariable))
+                                m_insertionSet.insertNode(indexForChecks, SpecNone, CheckNotInt32, originForChecks, Edge(edge.node(), UntypedUse));
 
                             result = m_insertionSet.insertNode(
                                 indexForChecks, SpecBytecodeDouble, DoubleRep, originForChecks,

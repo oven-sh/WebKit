@@ -124,7 +124,7 @@ class HasOwnPropertyCache;
 class HeapAnalyzer;
 class HeapProfiler;
 class IntlCache;
-enum Intrinsic : uint8_t;
+enum Intrinsic : uint16_t;
 class JSDestructibleObjectHeapCellType;
 class JSGlobalObject;
 class JSSentinel;

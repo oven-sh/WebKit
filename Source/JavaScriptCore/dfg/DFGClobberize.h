@@ -265,6 +265,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case IsNumber:
     case IsBigInt:
     case NumberIsInteger:
+    case IsInt32:
+    case TaggedAdd:
+    case TaggedSub:
+    case TaggedMul:
+    case TaggedDiv:
+    case CheckNotInt32:
     case IsObject:
     case CheckInBounds:
     case CheckInBoundsInt52:

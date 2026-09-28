@@ -329,6 +329,26 @@ private:
             break;
         }
 
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv: {
+            if (!node->child1()->prediction() || !node->child2()->prediction())
+                break;
+            switch (m_graph.taggedArithMode(node)) {
+            case Graph::TaggedArithMode::Int32:
+                changed |= mergePrediction(SpecInt32Only);
+                break;
+            case Graph::TaggedArithMode::Double:
+                changed |= mergePrediction(SpecBytecodeDouble);
+                break;
+            case Graph::TaggedArithMode::Generic:
+                changed |= mergePrediction(node->getHeapPrediction());
+                break;
+            }
+            break;
+        }
+
         case ArithAdd: {
             SpeculatedType left = node->child1()->prediction();
             SpeculatedType right = node->child2()->prediction();
@@ -1044,7 +1064,7 @@ private:
         switch (m_currentNode->op()) {
         case JSConstant: {
             SpeculatedType type = speculationFromValue(m_currentNode->asJSValue());
-            if (type == SpecAnyIntAsDouble)
+            if (type == SpecAnyIntAsDouble && !Options::keepNumberEncodings(1))
                 type = int52AwareSpeculationFromValue(m_currentNode->asJSValue());
             setPrediction(type);
             break;
@@ -1380,6 +1400,7 @@ private:
         case IsNumber:
         case IsBigInt:
         case NumberIsInteger:
+        case IsInt32:
         case GlobalIsNaN:
         case NumberIsNaN:
         case GlobalIsFinite:
@@ -1416,6 +1437,7 @@ private:
 
         case CheckJSCast:
         case CheckNotJSCast:
+        case CheckNotInt32:
             break;
 
         case SkipScope:
@@ -1714,6 +1736,10 @@ private:
         case Dec:
         case ToNumber:
         case ToNumeric:
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv:
         case ArithAdd:
         case ArithSub:
         case ArithNegate:

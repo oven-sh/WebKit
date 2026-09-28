@@ -106,6 +106,12 @@ bool doesGC(Graph& graph, Node* node)
     case GetButterfly:
     case CheckJSCast:
     case CheckNotJSCast:
+    case CheckNotInt32:
+    case IsInt32:
+    case TaggedAdd:
+    case TaggedSub:
+    case TaggedMul:
+    case TaggedDiv:
     case CheckArray:
     case CheckArrayOrEmpty:
     case CheckDetached:

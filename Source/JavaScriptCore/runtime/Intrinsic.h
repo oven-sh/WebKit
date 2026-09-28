@@ -165,6 +165,12 @@ namespace JSC {
     macro(NumberIsIntegerIntrinsic) \
     macro(NumberConstructorIntrinsic) \
     macro(IMulIntrinsic) \
+    macro(TaggedAddIntrinsic) \
+    macro(TaggedSubIntrinsic) \
+    macro(TaggedMulIntrinsic) \
+    macro(TaggedDivIntrinsic) \
+    macro(IsInt32Intrinsic) \
+    macro(NewContiguousArrayIntrinsic) \
     macro(RandomIntrinsic) \
     macro(FRoundIntrinsic) \
     macro(F16RoundIntrinsic) \
@@ -304,7 +310,7 @@ namespace JSC {
     \
     macro(WasmFunctionIntrinsic) \
 
-enum Intrinsic : uint8_t {
+enum Intrinsic : uint16_t {
 #define JSC_DEFINE_INTRINSIC(name) name,
     JSC_FOR_EACH_INTRINSIC(JSC_DEFINE_INTRINSIC)
 #undef JSC_DEFINE_INTRINSIC

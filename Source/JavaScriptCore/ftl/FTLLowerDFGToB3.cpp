@@ -1969,6 +1969,20 @@ private:
         case CheckNotJSCast:
             compileCheckJSCast();
             break;
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv:
+            compileTaggedArith();
+            break;
+        case IsInt32:
+            setBoolean(isInt32(lowJSValue(m_node->child1()), provenType(m_node->child1())));
+            break;
+        case CheckNotInt32: {
+            LValue value = lowJSValue(m_node->child1());
+            speculate(BadType, jsValueValue(value), m_node->child1().node(), isInt32(value, provenType(m_node->child1())));
+            break;
+        }
         case CallDOM:
             compileCallDOM();
             break;
@@ -2437,6 +2451,12 @@ private:
 
     LValue unboxRealNumberDouble(LValue boxed, Node* node = nullptr)
     {
+        if (Options::keepNumberEncodings(6)) {
+            LValue doubleValue = unboxDoubleAsDouble(boxed);
+            speculate(BadType, noValue(), node, m_out.doubleNotEqualOrUnordered(doubleValue, doubleValue));
+            return doubleValue;
+        }
+
         LBasicBlock intCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
@@ -16398,6 +16418,72 @@ IGNORE_CLANG_WARNINGS_END
     void compileIsNumber()
     {
         setBoolean(isNumber(lowJSValue(m_node->child1()), provenType(m_node->child1())));
+    }
+
+    // What is left of these after fixup does not know what its operands are.
+    void compileTaggedArith()
+    {
+        LValue left = lowJSValue(m_node->child1());
+        LValue right = lowJSValue(m_node->child2());
+        SpeculatedType leftType = provenType(m_node->child1());
+        SpeculatedType rightType = provenType(m_node->child2());
+        NodeType op = m_node->op();
+        auto operation = op == TaggedAdd ? operationTaggedAdd : op == TaggedSub ? operationTaggedSub : op == TaggedMul ? operationTaggedMul : operationTaggedDiv;
+
+        LBasicBlock leftIsInt32 = m_out.newBlock();
+        LBasicBlock bothAreInt32 = m_out.newBlock();
+        LBasicBlock fits = m_out.newBlock();
+        LBasicBlock notBothInt32 = m_out.newBlock();
+        LBasicBlock leftIsNumber = m_out.newBlock();
+        LBasicBlock bothAreNumbers = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        Vector<ValueFromBlock, 3> results;
+
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(leftIsInt32);
+        if (op == TaggedDiv)
+            m_out.jump(notBothInt32);
+        else
+            m_out.branch(isInt32(left, leftType), unsure(leftIsInt32), unsure(notBothInt32));
+
+        m_out.appendTo(leftIsInt32, bothAreInt32);
+        m_out.branch(isInt32(right, rightType), unsure(bothAreInt32), unsure(notBothInt32));
+
+        // In 64 bits, where none of these can overflow.
+        m_out.appendTo(bothAreInt32, fits);
+        LValue wideLeft = m_out.signExt32To64(unboxInt32(left));
+        LValue wideRight = m_out.signExt32To64(unboxInt32(right));
+        LValue wide = op == TaggedSub ? m_out.sub(wideLeft, wideRight) : op == TaggedMul ? m_out.mul(wideLeft, wideRight) : m_out.add(wideLeft, wideRight);
+        LValue narrow = m_out.castToInt32(wide);
+        m_out.branch(m_out.equal(m_out.signExt32To64(narrow), wide), usually(fits), rarely(slowCase));
+
+        m_out.appendTo(fits, notBothInt32);
+        results.append(m_out.anchor(boxInt32(narrow)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(notBothInt32, leftIsNumber);
+        m_out.branch(isNumber(left, leftType), usually(leftIsNumber), rarely(slowCase));
+
+        m_out.appendTo(leftIsNumber, bothAreNumbers);
+        m_out.branch(isNumber(right, rightType), usually(bothAreNumbers), rarely(slowCase));
+
+        m_out.appendTo(bothAreNumbers, slowCase);
+        auto asDouble = [&] (LValue value, SpeculatedType type) {
+            return m_out.select(isInt32(value, type), m_out.intToDouble(unboxInt32(value)), unboxDouble(value));
+        };
+        LValue leftDouble = asDouble(left, leftType);
+        LValue rightDouble = asDouble(right, rightType);
+        LValue doubleResult = op == TaggedAdd ? m_out.doubleAdd(leftDouble, rightDouble) : op == TaggedSub ? m_out.doubleSub(leftDouble, rightDouble) : op == TaggedMul ? m_out.doubleMul(leftDouble, rightDouble) : m_out.doubleDiv(leftDouble, rightDouble);
+        results.append(m_out.anchor(boxDouble(doubleResult)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        results.append(m_out.anchor(m_out.callWithoutSideEffects(Int64, operation, left, right)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, results));
     }
 
     void compileNumberIsInteger()

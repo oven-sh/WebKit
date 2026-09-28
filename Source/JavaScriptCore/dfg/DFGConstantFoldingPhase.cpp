@@ -333,6 +333,15 @@ private:
                 break;
             }
 
+            case CheckNotInt32: {
+                if (!(m_state.forNode(node->child1()).m_type & SpecInt32Only)) {
+                    m_interpreter.execute(indexInBlock);
+                    node->remove(m_graph);
+                    eliminated = true;
+                }
+                break;
+            }
+
             case CheckNotJSCast: {
                 JSValue constant = m_state.forNode(node->child1()).value();
                 if (constant) {

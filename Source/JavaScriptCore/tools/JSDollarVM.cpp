@@ -80,6 +80,7 @@
 #include "SnippetParams.h"
 #include "Strong.h"
 #include "StructureCreateInlines.h"
+#include "TaggedArithmetic.h"
 #include "TopExceptionScope.h"
 #include "TerminationDeadline.h"
 #include "TypeProfiler.h"
@@ -5981,6 +5982,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "exit"_s, functionExit, 0);
 
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "dfgTrue"_s), 0, functionDFGTrue, ImplementationVisibility::Public, DFGTrueIntrinsic, jsDollarVMPropertyAttributes);
+    // Arithmetic in which how a number is encoded says whether it is an integer or a float. See TaggedArithmetic.h.
+    // Usage: three = $vm.tagged.add(1, 2)
+    putDirect(vm, Identifier::fromString(vm, "tagged"_s), createTaggedArithmeticObject(vm, globalObject), jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "ftlTrue"_s), 0, functionFTLTrue, ImplementationVisibility::Public, FTLTrueIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "omgTrue"_s), 0, functionOMGTrue, ImplementationVisibility::Public, NoIntrinsic, jsDollarVMPropertyAttributes);
 

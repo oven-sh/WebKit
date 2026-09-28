@@ -106,6 +106,7 @@
 #include "StringPrototypeInlines.h"
 #include "StringRecursionChecker.h"
 #include "SuperSampler.h"
+#include "TaggedArithmetic.h"
 #include "Symbol.h"
 #include "TypeProfilerLog.h"
 #include "VMEntryScopeInlines.h"
@@ -838,6 +839,26 @@ JSC_DEFINE_JIT_OPERATION(operationArithTrunc, EncodedJSValue, (JSGlobalObject* g
     double truncatedValueOfArgument = argument.toIntegerPreserveNaN(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(truncatedValueOfArgument)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTaggedAdd, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right))
+{
+    return JSValue::encode(taggedAdd(JSValue::decode(left), JSValue::decode(right)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTaggedSub, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right))
+{
+    return JSValue::encode(taggedSub(JSValue::decode(left), JSValue::decode(right)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTaggedMul, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right))
+{
+    return JSValue::encode(taggedMul(JSValue::decode(left), JSValue::decode(right)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTaggedDiv, EncodedJSValue, (EncodedJSValue left, EncodedJSValue right))
+{
+    return JSValue::encode(taggedDiv(JSValue::decode(left), JSValue::decode(right)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationArithMinMultipleDouble, double, (const double* buffer, unsigned elementCount))

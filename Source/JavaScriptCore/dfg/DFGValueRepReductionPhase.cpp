@@ -77,6 +77,11 @@ private:
                     if constexpr (useKind != DoubleRepUse)
                         break;
 
+                    // If what is loaded were an int32, nothing that uses it here would know, but an exit would hand it on as
+                    // a double. So none is expected, and to find one is to be wrong (unboxRealNumberDouble).
+                    if (Options::keepNumberEncodings(13) && (node->child1()->prediction() & SpecInt32Only))
+                        break;
+
                     switch (node->child1()->op()) {
                     case GetClosureVar:
                     case GetGlobalVar:
@@ -92,7 +97,7 @@ private:
                             MultiGetByOffsetData& data = node->child1()->multiGetByOffsetData();
                             for (unsigned i = 0; i < data.cases.size(); ++i) {
                                 GetByOffsetMethod& method = data.cases[i].method();
-                                if (method.kind() == GetByOffsetMethod::Constant && !method.constant()->value().toNumberFromPrimitive()) {
+                                if (method.kind() == GetByOffsetMethod::Constant && (!method.constant()->value().toNumberFromPrimitive() || (method.constant()->value().isInt32() && Options::keepNumberEncodings(14)))) {
                                     isCandidate = false;
                                     break;
                                 }
@@ -111,6 +116,10 @@ private:
 
                 case Int52Rep: {
                     if constexpr (useKind != Int52RepUse)
+                        break;
+
+                    // What has been an Int52 is encoded as an int32 if it fits one, whatever it was in the array.
+                    if (Options::keepNumberEncodings(15))
                         break;
 
                     Edge& child1 = node->child1();
@@ -155,6 +164,9 @@ private:
 
                 case ValueToInt32: {
                     if constexpr (useKind != Int32Use)
+                        break;
+
+                    if (Options::keepNumberEncodings(16))
                         break;
 
                     Edge& child1 = node->child1();
@@ -339,19 +351,19 @@ private:
                         switch (node->op()) {
                         case JSConstant: {
                             if constexpr (useKind == DoubleRepUse) {
-                                if (!node->asJSValue().isNumber()) {
+                                if (!node->asJSValue().isNumber() || (node->asJSValue().isInt32() && Options::keepNumberEncodings(17))) {
                                     ok = false;
                                     dumpEscape("Phi Incoming JSConstant not a number: ", node);
                                 }
                             }
                             if constexpr (useKind == Int52RepUse) {
-                                if (!node->asJSValue().isAnyInt()) {
+                                if (!node->asJSValue().isAnyInt() || (node->asJSValue().isDouble() && node->asJSValue().isInt32AsAnyInt() && Options::keepNumberEncodings(18))) {
                                     ok = false;
                                     dumpEscape("Phi Incoming JSConstant not a anyint: ", node);
                                 }
                             }
                             if constexpr (useKind == Int32Use) {
-                                if (!node->asJSValue().isInt32AsAnyInt()) {
+                                if (!node->asJSValue().isInt32AsAnyInt() || (!node->asJSValue().isInt32() && Options::keepNumberEncodings(19))) {
                                     ok = false;
                                     dumpEscape("Phi Incoming JSConstant not a int32: ", node);
                                 }

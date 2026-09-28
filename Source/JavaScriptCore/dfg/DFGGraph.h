@@ -378,6 +378,35 @@ public:
         return addSpeculationMode(add, pass) != DontSpeculateInt32;
     }
     
+    // How TaggedAdd and its like are to be compiled. Prediction and fixup both go by this.
+    enum class TaggedArithMode : uint8_t {
+        Generic, // Finds out when it runs.
+        Int32, // Both operands are integers, and it has not been seen to overflow.
+        Double, // Both are numbers, and the result is a float.
+    };
+    TaggedArithMode taggedArithMode(Node* node)
+    {
+        constexpr SpeculatedType taggedNumber = SpecInt32Only | SpecFullDouble;
+        // A constant is predicted to be what it could be made into: 2.0 is an Int52. Here it is what it is.
+        auto encodingOf = [] (Node* operand) -> SpeculatedType {
+            if (operand->isNumberConstant())
+                return operand->asJSValue().isInt32() ? SpecInt32Only : SpecBytecodeDouble;
+            return operand->prediction();
+        };
+        SpeculatedType left = encodingOf(node->child1().node());
+        SpeculatedType right = encodingOf(node->child2().node());
+        if (!left || !right || (left & ~taggedNumber) || (right & ~taggedNumber))
+            return TaggedArithMode::Generic;
+        if (node->op() == TaggedDiv)
+            return TaggedArithMode::Double;
+        // A float comes of it if either operand is one.
+        if (!(left & SpecInt32Only) || !(right & SpecInt32Only))
+            return TaggedArithMode::Double;
+        if (isInt32Speculation(left) && isInt32Speculation(right) && !hasExitSite(node, Overflow))
+            return TaggedArithMode::Int32;
+        return TaggedArithMode::Generic;
+    }
+
     bool addShouldSpeculateInt52(Node* add)
     {
         Node* left = add->child1().node();
@@ -425,6 +454,9 @@ public:
         // The reason is double mod is so costly, so it is worth trying with much more aggressively compared to addShouldSpeculateInt52.
         Node* left = node->child1().node();
         Node* right = node->child2().node();
+
+        if (Options::useEncodingDirectedArithmetic())
+            return false;
 
         if (hasExitSite(node, Int52Overflow))
             return false;

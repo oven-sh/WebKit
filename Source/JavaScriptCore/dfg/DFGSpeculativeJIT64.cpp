@@ -6295,6 +6295,21 @@ void SpeculativeJIT::compile(Node* node)
         compileCheckJSCast(node);
         break;
 
+    case TaggedAdd:
+    case TaggedSub:
+    case TaggedMul:
+    case TaggedDiv:
+        compileTaggedArith(node);
+        break;
+
+    case IsInt32:
+        compileIsInt32(node);
+        break;
+
+    case CheckNotInt32:
+        compileCheckNotInt32(node);
+        break;
+
     case ExtractCatchLocal: {
         compileExtractCatchLocal(node);
         break;
@@ -8967,6 +8982,12 @@ void SpeculativeJIT::unboxRealNumberDouble(Node* node, FPRReg boxedFPR, FPRReg r
     move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(JSValue::DoubleEncodeOffset)), resultFPR);
     sub64(boxedFPR, resultFPR, resultFPR);
     auto doneCase = branchIfNotNaN(resultFPR);
+
+    if (Options::keepNumberEncodings(5)) {
+        speculationCheck(BadType, JSValueSource { }, node, jump());
+        doneCase.link(this);
+        return;
+    }
 
     moveDoubleTo64(boxedFPR, scratchGPR);
     speculationCheck(BadType, JSValueSource { }, node, branchIfNotInt32(scratchGPR));

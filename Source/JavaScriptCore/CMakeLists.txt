@@ -1771,6 +1771,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/SymbolTableInlines.h
     runtime/SymbolTableOrScopeDepth.h
     runtime/SyntheticModuleRecord.h
+    runtime/TaggedArithmetic.h
     runtime/TemplateObjectDescriptor.h
     runtime/TemporalCalendar.h
     runtime/TemporalDuration.h

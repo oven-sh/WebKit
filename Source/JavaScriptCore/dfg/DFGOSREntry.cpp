@@ -309,7 +309,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
             value = jsDoubleNumber(value.asAnyInt());
             format = FlushedInt52;
         } else if (entry->m_localsForcedDouble.get(local)) {
-            if (!value.isNumber()) {
+            if (!value.isNumber() || (value.isInt32() && Options::keepNumberEncodings(11))) {
                 dataLogLnIf(Options::verboseOSR(), "    OSR failed because variable ", localOffset, " is ", value, ", expected number.");
                 return nullptr;
             }
@@ -317,7 +317,7 @@ void* prepareOSREntry(VM& vm, CallFrame* callFrame, CodeBlock* codeBlock, Byteco
             format = FlushedDouble;
         } else {
             if (value.isDouble() && abstractValue.isType(SpecInt32Only)) {
-                if (!value.isInt32AsAnyInt()) {
+                if (!value.isInt32AsAnyInt() || Options::keepNumberEncodings(12)) {
                     dataLogLnIf(Options::verboseOSR(), "    OSR failed because variable ", localOffset, " is ", value, ", expected int32.");
                     return nullptr;
                 }

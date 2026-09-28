@@ -63,6 +63,7 @@
 #include "StringPrototypeInlines.h"
 #include "StructureCache.h"
 #include "StructureRareDataInlines.h"
+#include "TaggedArithmetic.h"
 #include "WasmTypeDefinitionInlines.h"
 #include "WebAssemblyModuleRecord.h"
 #include <wtf/BooleanLattice.h>
@@ -1788,6 +1789,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case IsNumber:
     case IsBigInt:
     case NumberIsInteger:
+    case IsInt32:
     case IsObject:
     case IsCallable:
     case IsConstructor:
@@ -1835,6 +1837,9 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 break;
             case NumberIsInteger:
                 setConstant(node, jsBoolean(NumberConstructor::isIntegerImpl(child.value())));
+                break;
+            case IsInt32:
+                setConstant(node, jsBoolean(child.value().isInt32()));
                 break;
             case IsObject:
                 setConstant(node, jsBoolean(child.value().isObject()));
@@ -2017,6 +2022,18 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
             // FIXME: if the SpeculatedType informs us that we won't have a BigInt32 (or that we won't have a HeapBigInt), then we can transform this node into a IsCellWithType(HeapBigIntType) (or a hypothetical IsBigInt32 node).
 
+            break;
+        case IsInt32:
+            if (!(child.m_type & ~SpecInt32Only)) {
+                setConstant(node, jsBoolean(true));
+                constantWasSet = true;
+                break;
+            }
+            if (!(child.m_type & SpecInt32Only)) {
+                setConstant(node, jsBoolean(false));
+                constantWasSet = true;
+                break;
+            }
             break;
         case NumberIsInteger:
             if (!(child.m_type & ~SpecInt32Only)) {
@@ -4819,6 +4836,26 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case CheckNotJSCast: {
         break;
     }
+
+    case CheckNotInt32: {
+        filter(node->child1(), ~SpecInt32Only);
+        break;
+    }
+
+    case TaggedAdd:
+    case TaggedSub:
+    case TaggedMul:
+    case TaggedDiv: {
+        JSValue left = forNode(node->child1()).value();
+        JSValue right = forNode(node->child2()).value();
+        if (left && right) {
+            setConstant(node, node->op() == TaggedAdd ? taggedAdd(left, right) : node->op() == TaggedSub ? taggedSub(left, right) : node->op() == TaggedMul ? taggedMul(left, right) : taggedDiv(left, right));
+            break;
+        }
+        setNonCellTypeForNode(node, SpecInt32Only | SpecBytecodeDouble | SpecOther);
+        break;
+    }
+
 
     case CallDOMGetter: {
         CallDOMGetterData* callDOMGetterData = node->callDOMGetterData();

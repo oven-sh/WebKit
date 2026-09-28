@@ -2131,6 +2131,10 @@ public:
         case ArithFloor:
         case ArithCeil:
         case ArithTrunc:
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv:
         case GetById:
         case GetByIdFlush:
         case GetByIdMegamorphic:
@@ -3260,11 +3264,17 @@ public:
         // However, we only emit such an add if both inputs can be Int52, and Int32
         // can trivially become Int52.
         //
+        // What comes of arithmetic on Int52s is encoded as an int32 if it fits one. The other tiers, which had doubles to
+        // work with, give a double.
+        if (Options::useEncodingDirectedArithmetic())
+            return false;
         return isInt32OrInt52Speculation(prediction());
     }
 
     bool shouldSpeculateInt52OrOther()
     {
+        if (Options::useEncodingDirectedArithmetic())
+            return false;
         return isInt32OrInt52OrOtherSpeculation(prediction());
     }
 

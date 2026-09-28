@@ -108,6 +108,10 @@ bool VariableAccessData::shouldUseDoubleFormatAccordingToVote()
     if (flags() & NodeBytecodeUsesAsInt)
         return false;
         
+    // It holds int32s too, which would come out of it as doubles.
+    if (Options::keepNumberEncodings(0))
+        return false;
+
     // If the variable has been voted to become a double, then make it a
     // double.
     if (voteRatio() >= Options::doubleVoteRatioForDoubleFormat())

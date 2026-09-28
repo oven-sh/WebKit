@@ -458,6 +458,12 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NumberToStringWithValidRadixConstant:
     case CheckJSCast:
     case CheckNotJSCast:
+    case CheckNotInt32:
+    case IsInt32:
+    case TaggedAdd:
+    case TaggedSub:
+    case TaggedMul:
+    case TaggedDiv:
     case CallDOM:
     case CallDOMGetter:
     case ArraySlice:

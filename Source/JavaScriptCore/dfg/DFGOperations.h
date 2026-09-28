@@ -226,6 +226,10 @@ JSC_DECLARE_JIT_OPERATION(operationArrayPop, EncodedJSValue, (JSGlobalObject*, J
 JSC_DECLARE_JIT_OPERATION(operationArrayPopAndRecoverLength, EncodedJSValue, (JSGlobalObject*, JSArray*));
 JSC_DECLARE_JIT_OPERATION(operationArrayShift, EncodedJSValue, (JSGlobalObject*, JSArray*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsInt32, EncodedJSValue, (VM*, JSArray*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTaggedAdd, EncodedJSValue, (EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTaggedSub, EncodedJSValue, (EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTaggedMul, EncodedJSValue, (EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationTaggedDiv, EncodedJSValue, (EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsContiguous, EncodedJSValue, (VM*, JSArray*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationArrayShiftElementsDouble, EncodedJSValue, (VM*, JSArray*));
 JSC_DECLARE_JIT_OPERATION(operationArrayUnshift, EncodedJSValue, (JSGlobalObject*, JSArray*, EncodedJSValue));

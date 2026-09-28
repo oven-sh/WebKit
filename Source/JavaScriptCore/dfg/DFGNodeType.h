@@ -166,6 +166,13 @@ namespace JSC { namespace DFG {
     macro(ArithNegate, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMul, NodeResultNumber | NodeMustGenerate) \
     macro(ArithIMul, NodeResultInt32) \
+    /* Arithmetic in which the encoding of a number is its type: see TaggedArithmetic.h. Fixup makes these the nodes above */\
+    /* where it can say which the operands are. */\
+    macro(TaggedAdd, NodeResultJS) \
+    macro(TaggedSub, NodeResultJS) \
+    macro(TaggedMul, NodeResultJS) \
+    macro(TaggedDiv, NodeResultJS) \
+    macro(CheckNotInt32, NodeMustGenerate) \
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \
@@ -502,6 +509,7 @@ namespace JSC { namespace DFG {
     macro(GlobalIsFinite, NodeMustGenerate | NodeResultBoolean) \
     macro(NumberIsFinite, NodeResultBoolean) \
     macro(NumberIsInteger, NodeResultBoolean) \
+    macro(IsInt32, NodeResultBoolean) \
     macro(NumberIsSafeInteger, NodeResultBoolean) \
     macro(IsObject, NodeResultBoolean) \
     macro(IsCallable, NodeResultBoolean) \
