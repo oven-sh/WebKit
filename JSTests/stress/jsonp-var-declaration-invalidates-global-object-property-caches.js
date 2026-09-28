@@ -51,10 +51,33 @@ for (const [form, suffix] of forms) {
         function access(v) { let before = calls; name1 = v; return calls - before; }`, `var name1 = 33;`, "0");
     test("identifier delete", `function access() { return delete name1; }`, `var name1 = 33;`, "false");
 
-    // The cache is created between two statements of the program that declares the variable.
-    test("cache created by an earlier statement", `function read() { return globalThis.name2; } noInline(read);
-        var holder = { set warm(v) { for (let i = 0; i < ${testLoopCount}; ++i) read(); } };
-        function access() { return read(); }`, `var name1 = 1; holder.warm = 1; var name2 = 2;`, "2");
+    // The cache is created between two statements of the program that declares the variable. Nothing calls
+    // read() before the program runs, so the first declaration finds the dictionary that init() left.
+    {
+        const realm = $262.createRealm();
+        const read = realm.evalScript(`
+            function read() { return globalThis.name2; }
+            noInline(read);
+            var holder = { set warm(v) { for (let i = 0; i < ${testLoopCount}; ++i) read(); } };
+            read;
+        `);
+        realm.evalScript(`var name1 = 1; holder.warm = 1; var name2 = 2;` + suffix);
+        shouldBe(read(), 2, form + ", cache created by an earlier statement");
+    }
+
+    // A global object with no JSGlobalProxy in front of it. The LLInt caches a load from the prototype chain
+    // of such an object, so the first case does not need the JIT.
+    function testWithoutProxy(name, count, body, declaration, expected) {
+        const global = $vm.createGlobalObject();
+        const access = new Function("object", body + " // " + form);
+        noInline(access);
+        for (let i = 0; i < count; ++i)
+            access(global);
+        global.$vm.evaluateWithScopeExtension(declaration + suffix);
+        shouldBe(String(access(global)), expected, form + ", " + name);
+    }
+    testWithoutProxy("no proxy, prototype data property in the LLInt", 20, `return typeof object.toString;`, `var toString = 33;`, "number");
+    testWithoutProxy("no proxy, get_by_id miss", testLoopCount, `return object.name1;`, `var name1 = 33;`, "33");
 
     // The reader is on the stack, in optimized code, when the program runs.
     {
@@ -97,19 +120,63 @@ for (const [form, suffix] of forms) {
     }
 }
 
-// On the JSONP fast path only a new name gives the global object another Structure. A `var` of a name
-// that exists creates no binding, and the caches that are valid stay.
+// A function declaration never runs on the JSONP fast path. Its binding goes through the same function.
+{
+    const realm = $262.createRealm();
+    const access = realm.evalScript(`
+        function access() { return typeof globalThis.name1; }
+        noInline(access);
+        for (let i = 0; i < ${testLoopCount}; ++i)
+            access();
+        access;
+    `);
+    realm.evalScript(`function name1() { }`);
+    shouldBe(access(), "function", "function declaration");
+}
+
+// Only a new name on a global object that is not a dictionary gives the global object another Structure.
+// A `var` of a name that exists creates no binding. A dictionary has no cache that the new name makes wrong.
+// In both cases the caches that are valid stay.
 {
     const global = $vm.createGlobalObject();
     // The list has five entries for each Structure. The first of the last five is the ID of the current one.
     const structureID = () => $vm.getStructureTransitionList(global).at(-5);
-    global.$vm.evaluateWithScopeExtension(`var name1 = 1;`);
+    const evaluate = code => global.$vm.evaluateWithScopeExtension(code);
+    function warmReader(name) {
+        const read = new Function("object", `return object.${name};`);
+        noInline(read);
+        for (let i = 0; i < testLoopCount; ++i)
+            read(global);
+        return read;
+    }
+
+    const initial = structureID();
+    evaluate(`var name1 = 1;`);
+    shouldBe(structureID(), initial, "new name, the dictionary of init(): same Structure");
+    shouldBe(global.name1, 1, "new name, the dictionary of init(): value");
+
     $vm.flattenDictionaryObject(global);
     const flattened = structureID();
-    global.$vm.evaluateWithScopeExtension(`var name1 = 2;`);
+    evaluate(`var name1 = 2;`);
     shouldBe(structureID(), flattened, "same name: same Structure");
     shouldBe(global.name1, 2, "same name: value");
-    global.$vm.evaluateWithScopeExtension(`var name2 = 3;`);
+    evaluate(`var name2 = 3;`);
     shouldBe(structureID() !== flattened, true, "new name: another Structure");
     shouldBe(global.name2, 3, "new name: value");
+
+    const dictionary = structureID();
+    evaluate(`var name3 = 4;`);
+    shouldBe(structureID(), dictionary, "new name, dictionary: same Structure");
+    shouldBe(global.name3, 4, "new name, dictionary: value");
+    evaluate(`var name4 = 5; void 0;`);
+    shouldBe(structureID(), dictionary, "new name as bytecode, dictionary: same Structure");
+    shouldBe(global.name4, 5, "new name as bytecode, dictionary: value");
+
+    // The global object leaves the dictionary state again, and a site caches a miss for it again.
+    $vm.flattenDictionaryObject(global);
+    const readName5 = warmReader("name5");
+    const flattenedAgain = structureID();
+    evaluate(`var name5 = 6;`);
+    shouldBe(structureID() !== flattenedAgain, true, "new name, flattened again: another Structure");
+    shouldBe(readName5(global), 6, "new name, flattened again: value at the warm site");
 }
