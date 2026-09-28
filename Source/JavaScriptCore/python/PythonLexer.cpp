@@ -42,6 +42,8 @@ ASCIILiteral tokenKindName(TokenKind kind)
     switch (kind) {
     case TokenKind::EndMarker:
         return "ENDMARKER"_s;
+    case TokenKind::Error:
+        return "ERRORTOKEN"_s;
     case TokenKind::Newline:
         return "NEWLINE"_s;
     case TokenKind::Indent:
@@ -135,8 +137,11 @@ public:
     {
         while (!m_isDone) {
             bool ok = !m_strings.isEmpty() && m_strings.last().isScanningText ? scanStringText() : scanToken();
-            if (!ok)
+            if (!ok) {
+                m_position = std::min(m_position, m_end);
+                add(TokenKind::Error, m_position);
                 return false;
+            }
         }
         return true;
     }
@@ -180,6 +185,9 @@ private:
     unsigned current() const { return at(m_position); }
     bool isAtEnd() const { return m_position >= m_end; }
     static bool isNewline(unsigned c) { return c == '\n' || c == '\r'; }
+
+    // The line that this is on, or the last one there is if this is the end, after its newline.
+    unsigned lastLine() const { return isAtEnd() && m_position == m_lineStart && m_line > 1 ? m_line - 1 : m_line; }
 
     // Takes a newline, however it is spelled.
     void consumeNewline()
@@ -235,7 +243,7 @@ private:
 
     bool fail(String&& message, unsigned line, unsigned column, unsigned endLine, unsigned endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
-        m_error = { kind, WTF::move(message), line, column, endLine, endColumn };
+        m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
         return false;
     }
 
@@ -328,7 +336,7 @@ private:
     bool scanIndentation()
     {
         Indentation indentation;
-        std::optional<Indentation> beforeContinuation;
+        unsigned columnBeforeContinuation = 0;
         while (true) {
             unsigned c = current();
             if (measureIndentation(c, indentation)) {
@@ -337,9 +345,9 @@ private:
             }
             if (c != '\\')
                 break;
-            // Indentation cannot be spread over lines: what counts is what was there before the first backslash.
-            if (!beforeContinuation)
-                beforeContinuation = indentation;
+            // Indentation cannot be spread over lines: what counts is what was there before the first backslash, if anything was.
+            if (!columnBeforeContinuation)
+                columnBeforeContinuation = indentation.column;
             ++m_position;
             if (!consumeLineContinuation())
                 return false;
@@ -357,8 +365,8 @@ private:
         if (!m_brackets.isEmpty())
             return true;
 
-        if (beforeContinuation)
-            indentation = *beforeContinuation;
+        if (columnBeforeContinuation)
+            indentation = { columnBeforeContinuation, columnBeforeContinuation };
 
         Indentation last = m_indentation.last();
         if (indentation.column == last.column) {
@@ -394,7 +402,9 @@ private:
     {
         if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0)) {
             Bracket bracket = m_brackets.last();
-            return fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, bracket.column + 1);
+            fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, bracket.column + 1);
+            m_error.isUnclosedBracket = true;
+            return false;
         }
         if (m_lineHasTokens && !m_hasEnclosingBracket)
             add(TokenKind::Newline, m_position);
@@ -1055,7 +1065,7 @@ private:
         unsigned endQuoteSize = 0;
         while (endQuoteSize != quoteSize) {
             if (isAtEnd() || (quoteSize == 1 && isNewline(current()))) {
-                unsigned detectedAt = m_line;
+                unsigned detectedAt = lastLine();
                 if (quoteSize == 3)
                     return fail(makeString("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, quoteColumn, line, quoteColumn);
                 if (hasEscapedQuote)
@@ -1154,7 +1164,7 @@ private:
             if (isAtEnd() || (state.quoteSize == 1 && isNewline(current()))) {
                 if (isInFormatSpecification && !isAtEnd())
                     return fail(makeString(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s));
-                unsigned detectedAt = m_line;
+                unsigned detectedAt = lastLine();
                 if (state.quoteSize == 3)
                     return fail(makeString("unterminated triple-quoted "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
                 return fail(makeString("unterminated "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);

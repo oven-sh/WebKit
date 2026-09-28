@@ -45,7 +45,7 @@ struct ScanRange {
 };
 
 // The scanner. It alone reads the source: what the parser needs to know is all in the tokens.
-// True if it got to the end. Otherwise the error says why not, and the tokens are those before it.
+// True if it got to the end. Otherwise the error says why not, and the tokens are those before it and then TokenKind::Error.
 bool tokenize(VM&, Arena&, StringView source, const ScanRange&, Vector<Token>&, Vector<SyntaxWarning>&, SyntaxError&);
 
 } } // namespace JSC::Python

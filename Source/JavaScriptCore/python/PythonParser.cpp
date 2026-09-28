@@ -40,11 +40,13 @@ namespace {
 // looking a token or two ahead: `with (`, and the words that are keywords only sometimes.
 class Parser {
 public:
+    // `error` is the scanner's, if it has one.
     Parser(VM& vm, Arena& arena, const Vector<Token>& tokens, SyntaxError& error)
         : m_vm(vm)
         , m_arena(arena)
         , m_tokens(tokens)
         , m_error(error)
+        , m_scannerError(std::exchange(error, { }))
     {
     }
 
@@ -76,8 +78,15 @@ public:
         }
         if (ok && !m_error)
             return module;
-        if (!m_error)
+        // What the scanner stumbled on comes first if the parser got that far.
+        if (m_tokens[m_furthest].kind == TokenKind::Error)
+            m_error = m_scannerError;
+        else if (!m_error) {
             failGenerically();
+            // With nothing better to say, what is wrong further on may be the reason. A bracket that was never closed is, if it was opened before this.
+            if (m_scannerError && m_error.kind == SyntaxError::Kind::SyntaxError && (!m_scannerError.isUnclosedBracket || m_error.line > m_scannerError.line))
+                m_error = m_scannerError;
+        }
         return nullptr;
     }
 
@@ -122,6 +131,7 @@ private:
             case TokenKind::Indent:
             case TokenKind::Dedent:
             case TokenKind::EndMarker:
+            case TokenKind::Error:
                 continue;
             default:
                 return token;
@@ -138,7 +148,7 @@ private:
     std::nullptr_t fail(String&& message, unsigned line, unsigned column, unsigned endLine, unsigned endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
         if (!m_error && !isSpeculating())
-            m_error = { kind, WTF::move(message), line, column, endLine, endColumn };
+            m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
         return nullptr;
     }
 
@@ -182,11 +192,14 @@ private:
         return consume(kind);
     }
 
-    bool expectColon()
+    // Where the grammar insists on a colon, its absence is what is wrong. Elsewhere that is only said if the line ends there.
+    enum class ColonIs : uint8_t { Insisted, Expected };
+    bool expectColon(ColonIs colonIs = ColonIs::Expected)
     {
         if (consume(TokenKind::Colon))
             return true;
-        fail("expected ':'"_s);
+        if (colonIs == ColonIs::Insisted || at(TokenKind::Newline))
+            fail("expected ':'"_s);
         return false;
     }
 
@@ -647,7 +660,7 @@ private:
         Mark start = mark();
         next();
         Arguments* arguments = parseParameters(TokenKind::Colon, false);
-        if (!arguments || !expectColon())
+        if (!arguments || !expectColon(ColonIs::Insisted))
             return nullptr;
         Expression* body = parseExpression();
         if (!body)
@@ -2491,15 +2504,15 @@ private:
             return nullptr;
 
         if (at(TokenKind::Colon)) {
+            next();
+            Expression* annotation = parseExpression();
+            if (!annotation)
+                return nullptr;
             if (first->is<List>() || first->is<Tuple>())
                 return fail(makeString("only single target (not "_s, describe(*first), ") can be annotated"_s), *first);
             if (!first->is<Name>() && !first->is<Attribute>() && !first->is<Subscript>())
                 return fail("illegal target for annotation"_s, *first);
             setContext(*first, ExpressionContext::Store);
-            next();
-            Expression* annotation = parseExpression();
-            if (!annotation)
-                return nullptr;
             Expression* value = nullptr;
             if (consume(TokenKind::Equal)) {
                 value = parseYieldOrStarExpressions();
@@ -2710,8 +2723,16 @@ private:
 
         if (!level && module && *module == "__future__"_s) {
             for (Alias* alias : names) {
+                static constexpr ASCIILiteral features[] = { "nested_scopes"_s, "generators"_s, "division"_s, "absolute_import"_s, "with_statement"_s, "print_function"_s, "unicode_literals"_s, "barry_as_FLUFL"_s, "generator_stop"_s, "annotations"_s };
+                bool isFeature = false;
+                for (ASCIILiteral feature : features)
+                    isFeature |= *alias->name == feature;
                 if (*alias->name == "barry_as_FLUFL"_s)
                     m_usesLessGreater = true;
+                else if (*alias->name == "braces"_s)
+                    return fail("not a chance"_s, *alias);
+                else if (!isFeature)
+                    return fail(makeString("future feature "_s, alias->name->string(), " is not defined"_s), *alias);
             }
         }
 
@@ -2728,7 +2749,7 @@ private:
         if (!at(TokenKind::KeywordElse))
             return true;
         unsigned line = next().line;
-        return expectColon() && parseBlock(result, "'else' statement"_s, line);
+        return expectColon(ColonIs::Insisted) && parseBlock(result, "'else' statement"_s, line);
     }
 
     // if_stmt, and elif_stmt
@@ -2878,7 +2899,7 @@ private:
     {
         Mark start = mark();
         next();
-        if (!expectColon())
+        if (!expectColon(ColonIs::Insisted))
             return nullptr;
         Sequence<Statement*> body;
         if (!parseBlock(body, "'try' statement"_s, start.line))
@@ -2933,7 +2954,7 @@ private:
         Sequence<Statement*> finalBody;
         if (at(TokenKind::KeywordFinally)) {
             unsigned line = next().line;
-            if (!expectColon() || !parseBlock(finalBody, "'finally' statement"_s, line))
+            if (!expectColon(ColonIs::Insisted) || !parseBlock(finalBody, "'finally' statement"_s, line))
                 return nullptr;
         } else if (handlers.isEmpty())
             return fail("expected 'except' or 'finally' block"_s);
@@ -3066,7 +3087,7 @@ private:
             if (!returns)
                 return nullptr;
         }
-        if (!expectColon())
+        if (!expect(TokenKind::Colon))
             return nullptr;
         Sequence<Statement*> body;
         if (!parseBlock(body, "function definition"_s, start.line))
@@ -3086,6 +3107,7 @@ private:
     Arena& m_arena;
     const Vector<Token>& m_tokens;
     SyntaxError& m_error;
+    SyntaxError m_scannerError;
     unsigned m_index { 0 };
     unsigned m_furthest { 0 };
     unsigned m_speculationDepth { 0 };
@@ -3097,8 +3119,7 @@ private:
 Module* parse(VM& vm, Arena& arena, StringView source, Module::Kind kind, Vector<SyntaxWarning>& warnings, SyntaxError& error)
 {
     Vector<Token> tokens;
-    if (!tokenize(vm, arena, source, { }, tokens, warnings, error))
-        return nullptr;
+    tokenize(vm, arena, source, { }, tokens, warnings, error);
     return Parser(vm, arena, tokens, error).parseModule(kind);
 }
 

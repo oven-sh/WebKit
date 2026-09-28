@@ -119,6 +119,7 @@ namespace JSC { namespace Python {
 
 enum class TokenKind : uint8_t {
     EndMarker,
+    Error, // Where the scanner could go no further.
     Newline,
     Indent,
     Dedent,
@@ -192,6 +193,7 @@ struct SyntaxError {
     explicit operator bool() const { return !message.isNull(); }
 
     Kind kind { Kind::SyntaxError };
+    bool isUnclosedBracket { false }; // The source ended before a bracket was closed. `line` is where it was opened.
     String message;
     unsigned line { 0 };
     unsigned column { 0 };
