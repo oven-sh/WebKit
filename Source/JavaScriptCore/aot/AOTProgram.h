@@ -30,9 +30,14 @@ struct KnownFunction {
     UnlinkedFunctionCodeBlock* forConstruct { nullptr };
     ImageKey key; // Of the code for a call. That for construction is the same but for the bit that says so.
     // The variable it was found in holds a closure of it from when it is initialized, and never anything else: see
-    // ModuleHints::prove(). Then a call of what is read from that variable needs no check that this is the callee.
+    // ModuleHints::prove(). Then a call of what is read from that variable needs no check that this is the callee, once it is seen
+    // to have been initialized.
     bool isProven { false };
-    // If so: everything that a call of it can return. It is worked out for all of them together, from nothing up
+    bool isDeclaration { false }; // The variable is initialized before any code of the module runs.
+    // If proven: the code for a call makes no use of the object it is called as (needsFunctionObject()), and a call passes none.
+    // (Whoever compiles the program takes it back if it turns out that there is no code to call: BytecodeLinkEncoder.)
+    mutable std::atomic<bool> needsNoFunctionObject { false };
+    // If proven: everything that a call of it can return. It is worked out for all of them together, from nothing up
     // (inferReturnTypeForImage()), and means what it says once that has come to an end.
     mutable std::atomic<uint32_t> returnType { 0 };
 
@@ -45,6 +50,8 @@ struct KnownFunction {
         forConstruct = other.forConstruct;
         key = other.key;
         isProven = other.isProven;
+        isDeclaration = other.isDeclaration;
+        needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
         returnType = other.returnType.load(std::memory_order_relaxed);
         return *this;
     }
@@ -56,6 +63,11 @@ struct KnownFunction {
         return result;
     }
 };
+
+// Whether code can tell which object it was called as, other than by way of the scope that has, if that is the environment of the
+// module: which is where it is (ModuleLinkage::distanceOfEnvironment). From the bytecode alone, so that the function and whoever
+// calls it come to the same answer.
+bool needsFunctionObject(UnlinkedCodeBlock*);
 
 // What a variable that is called probably holds. A program's functions are nearly all declared once, at the top of a module, and
 // never assigned to; but that takes the whole program to prove, and a debugger or an eval to undo. So nothing rests on it. It is a
@@ -105,6 +117,7 @@ private:
     };
     void noteStore(UniquedStringImpl*);
     bool m_hasEval { false };
+    bool m_isModule { false };
     void add(UniquedStringImpl*, unsigned scopeOffset, UnlinkedFunctionExecutable*, const Describe&);
 
     UncheckedKeyHashMap<UniquedStringImpl*, Variable> m_variables;

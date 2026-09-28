@@ -114,6 +114,9 @@ public:
         return { };
     }
 
+    // Whether the [[Scope]] of a function created at this point is the environment of the module (or the program) itself.
+    bool scopeIsOutermostEnvironment() const { return m_isOutermost && m_frames && !m_frames->isBarrier && !m_frames->next; }
+
     Names* names() const { return m_names.get(); }
     Frame* frames() const { return m_frames.get(); }
 

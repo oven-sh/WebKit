@@ -146,6 +146,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
     v(Bool, aotDumpDisassembly, false, Normal, "Dump the machine code the static compiler produces."_s) \
     v(Bool, aotReportStats, false, Normal, "At exit, report how many functions the static compiler compiled and the reasons it declined the others."_s) \
+    v(Bool, aotForceVeneers, false, Normal, "In an image, make every direct call from one function to another the way one that is out of reach is made. For testing."_s) \
     v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
     v(Unsigned, aotB3OptLevel, 2, Normal, "B3 optimization level for the static compiler."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code. With aotWriteImage, where to write one."_s) \

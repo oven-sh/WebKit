@@ -44,6 +44,7 @@
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
+#include "StaticHeap.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
@@ -468,6 +469,35 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
 {
     if (m_isLinkedAsInImage != TriState::Indeterminate)
         return m_isLinkedAsInImage == TriState::True;
+    // (The code finds the functions it calls in what was made along with it.)
+    if (!StaticHeap::hasExecutablesOfFunctions(globalObject->vm())) {
+        m_isLinkedAsInImage = TriState::False;
+        return false;
+    }
+    // And the modules it imports from, and so on: its code calls theirs without anybody asking again.
+    Vector<JSModuleRecord*, 16> records { this };
+    UncheckedKeyHashSet<JSModuleRecord*> seen { this };
+    bool result = true;
+    for (size_t index = 0; result && index < records.size(); ++index) {
+        result = records[index]->isItselfLinkedAsInImage(globalObject, [&](JSModuleRecord* exporter) {
+            if (exporter->m_isLinkedAsInImage != TriState::Indeterminate)
+                return exporter->m_isLinkedAsInImage == TriState::True;
+            if (seen.add(exporter).isNewEntry)
+                records.append(exporter);
+            return true;
+        });
+    }
+    if (!result) {
+        m_isLinkedAsInImage = TriState::False;
+        return false;
+    }
+    for (JSModuleRecord* record : records)
+        record->m_isLinkedAsInImage = TriState::True;
+    return true;
+}
+
+bool JSModuleRecord::isItselfLinkedAsInImage(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
+{
     bool result = isPrelinked();
     // Where the code takes it to be, if it takes it to be anywhere.
     auto environmentIsInItsPlace = [&](AbstractModuleRecord* record) {
@@ -484,13 +514,12 @@ bool JSModuleRecord::isLinkedAsInImage(JSGlobalObject* globalObject)
             if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
                 continue;
             AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
-            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInItsPlace(exporter)) {
+            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInItsPlace(exporter) || !mayImportFrom(uncheckedDowncast<JSModuleRecord>(exporter))) {
                 result = false;
                 break;
             }
         }
     }
-    m_isLinkedAsInImage = triState(result);
     return result;
 }
 #endif

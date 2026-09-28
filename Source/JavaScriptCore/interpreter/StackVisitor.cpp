@@ -450,8 +450,11 @@ String StackVisitor::Frame::functionName() const
             traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(callee)).impl();
         break;
     }
-    case CodeType::Function: 
-        traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(this->callee().asCell())).impl();
+    case CodeType::Function:
+        if (JSCell* callee = this->callee().asCell())
+            traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(callee)).impl();
+        else if (auto* executable = dynamicDowncast<FunctionExecutable>(ownerExecutable()))
+            traceLine = executable->ecmaNameWithoutGC();
         break;
     case CodeType::Global:
         traceLine = "global code"_s;
@@ -579,6 +582,17 @@ void StackVisitor::Frame::setToEnd()
     m_inlineDFGCallFrame = nullptr;
 #endif
     m_isWasmFrame = false;
+}
+
+bool StackVisitor::Frame::isFrameOf(JSCell* function) const
+{
+    if (callee().isNativeCallee())
+        return false;
+    if (JSCell* callee = this->callee().asCell())
+        return callee == function;
+    // It was called as no object. That is only done to a function of which the realm has one closure (AOT::KnownFunction::isProven).
+    auto* jsFunction = dynamicDowncast<JSFunction>(function);
+    return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();
 }
 
 bool StackVisitor::Frame::isImplementationVisibilityPrivate() const

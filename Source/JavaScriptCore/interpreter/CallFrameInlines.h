@@ -43,6 +43,8 @@ inline Register& CallFrame::uncheckedR(VirtualRegister reg)
 
 ALWAYS_INLINE VM& CallFrame::deprecatedVM() const
 {
+    if (isAOTFrame()) [[unlikely]]
+        return AOT::vmOf(this);
     JSCell* callee = this->callee().asCell();
     ASSERT(callee);
     return callee->vm();
@@ -94,6 +96,8 @@ inline SUPPRESS_ASAN CodeBlock* CallFrame::unsafeCodeBlock() const
 
 inline JSGlobalObject* CallFrame::lexicalGlobalObject(VM& vm) const
 {
+    if (isAOTFrame()) [[unlikely]]
+        return AOT::globalObjectOf(this);
     if (callee().isNativeCallee())
         return lexicalGlobalObjectFromNativeCallee(vm);
     return jsCallee()->realm();
@@ -101,7 +105,7 @@ inline JSGlobalObject* CallFrame::lexicalGlobalObject(VM& vm) const
 
 inline bool CallFrame::isZombieFrame() const
 {
-    if (callee().isNativeCallee())
+    if (rawCallee().isNativeCallee())
         return false;
     return jsCallee() == jsCallee()->realm()->zombieFrameCallee();
 }

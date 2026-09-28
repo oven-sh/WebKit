@@ -257,7 +257,18 @@ CodeBlock* codeBlockOf(const CallFrame* callFrame)
 
 JSObject* calleeOf(const CallFrame* callFrame)
 {
-    return callFrame->registers()[CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot].object();
+    int calleeSlot = CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot;
+    return calleeSlot ? callFrame->registers()[calleeSlot].object() : nullptr;
+}
+
+VM& vmOf(const CallFrame* callFrame)
+{
+    return *std::bit_cast<Instance*>(callFrame->unsafeCodeBlock())->vm;
+}
+
+JSGlobalObject* globalObjectOf(const CallFrame* callFrame)
+{
+    return std::bit_cast<Instance*>(callFrame->unsafeCodeBlock())->globalObject;
 }
 
 // The constants of unlinked code are good as they are, but for the ones that are of a realm.

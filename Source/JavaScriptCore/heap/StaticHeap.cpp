@@ -59,7 +59,7 @@ static size_t s_moduleBeingBuilt;
 
 // The file: this, then each arena, on a page boundary.
 struct StaticHeap::Header {
-    static constexpr uint64_t expectedMagic = 0x3330504145485442ULL; // "BTHEAP03"
+    static constexpr uint64_t expectedMagic = 0x3430504145485442ULL; // "BTHEAP04"
     static constexpr unsigned maxStructures = 32;
 
     uint64_t magic;
@@ -80,6 +80,8 @@ struct StaticHeap::Header {
     uint64_t numberOfModules;
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
+    uint64_t executablesOfFunctions; // By AOT::CodeHeader::index: a FunctionExecutable*, with the low bit set if the code is for construction.
+    uint64_t numberOfFunctions;
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
     uint32_t numberOfStructures;
@@ -330,7 +332,7 @@ static void* addressOfSourceProvider(size_t moduleIndex)
 }
 
 // The functions of `codeBlock`, whose source is `source`, and theirs.
-static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, uint64_t& made)
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<uintptr_t> byIndex, uint64_t& made)
 {
     auto make = [&](UnlinkedFunctionExecutable* unlinked) {
         // (The source of a constructor that nobody wrote is one of the engine's own.)
@@ -354,20 +356,35 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         FunctionExecutable* executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
         executable->becomeStatic(vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-            if (auto& function = code[static_cast<unsigned>(kind)])
-                executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
+            if (auto& function = code[static_cast<unsigned>(kind)]) {
+                    executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
+                byIndex[function->index] = std::bit_cast<uintptr_t>(executable) | !isCall(kind);
+            }
         }
         unlinked->setStaticExecutable(executable);
         made++;
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto* nested = unlinked->codeBlockIfThereIsOne(kind))
-                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, made);
+                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
         }
     };
     for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
         make(codeBlock->functionDecl(i));
     for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
         make(codeBlock->functionExpr(i));
+}
+
+std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfFunction(uint32_t index)
+{
+    RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
+    uintptr_t entry = std::bit_cast<const uintptr_t*>(s_header->executablesOfFunctions)[index];
+    RELEASE_ASSERT(entry);
+    return { std::bit_cast<FunctionExecutable*>(entry & ~static_cast<uintptr_t>(1)), entry & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall };
+}
+
+bool StaticHeap::hasExecutablesOfFunctions(VM& vm)
+{
+    return s_header && s_vm == &vm && s_header->numberOfFunctions;
 }
 
 void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider)
@@ -447,6 +464,14 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 header.modules = std::bit_cast<uint64_t>(modules);
                 header.numberOfModules = sortedOffsets.size();
                 auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
+                std::span<uintptr_t> executablesOfFunctions;
+                if (imageView) {
+                    size_t size = imageView->numberOfFunctions() * sizeof(uintptr_t);
+                    executablesOfFunctions = { static_cast<uintptr_t*>(Region::allocate(Region::Arena::Data, size, pageSizeOfImage)), imageView->numberOfFunctions() };
+                    memset(executablesOfFunctions.data(), 0, size);
+                    header.executablesOfFunctions = std::bit_cast<uint64_t>(executablesOfFunctions.data());
+                    header.numberOfFunctions = executablesOfFunctions.size();
+                }
                 uint64_t numberOfExecutables = 0;
                 auto reportExecutables = makeScopeExit([&] {
                     if (Options::aotReportStats()) [[unlikely]]
@@ -479,7 +504,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             // not kept: once more than it is, or it would be destroyed if the module turns out to have no functions.
                             static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                             SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
-                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, numberOfExecutables);
+                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, executablesOfFunctions, numberOfExecutables);
                         }
                         modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
                     }

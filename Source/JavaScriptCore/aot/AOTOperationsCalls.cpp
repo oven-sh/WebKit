@@ -309,6 +309,22 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     return encodeResult(executable->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 
+// Stub::LinkFunction. Whoever made the call is code of a module that is linked as compiled, and so then are the modules it imports
+// from, and theirs (JSModuleRecord::isLinkedAsInImage()): there is nothing that could be in the way.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* calleeFrame, uint32_t index, uint32_t distanceOfEnvironment))
+{
+    auto* instance = std::bit_cast<Instance*>(calleeFrame->unsafeCodeBlock());
+    VM& vm = *instance->vm;
+    NativeCallFrameTracer tracer(vm, calleeFrame->callerFrame());
+    DeferGCForAWhile deferGC(vm);
+    DeferTraps deferTraps(vm);
+    auto [executable, kind] = StaticHeap::executableOfFunction(index);
+    auto* scope = std::bit_cast<JSScope*>(std::bit_cast<uint8_t*>(instance) - distanceOfEnvironment);
+    RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
+    RELEASE_ASSERT(linkStaticFunction(vm, executable, kind, scope));
+    return instance->data[index]->code->directEntry();
+}
+
 // The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Data* data))
 {

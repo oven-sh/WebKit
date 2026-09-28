@@ -491,6 +491,12 @@ private:
         }
         case op_resolve_scope_for_hoisting_func_decl_in_eval:
             return TObject | TUndefined;
+        case op_get_from_scope: {
+            bool isProven = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isProven); known && isProven)
+                return known->isDeclaration ? TFunction : TFunction | TUndefined | TEmpty;
+            return TAll;
+        }
         default:
             // Including the empty value: get_from_scope, get_internal_field and others hand out holes.
             return TAll;

@@ -138,6 +138,7 @@ public:
         CallFrame* callFrame() const { return m_callFrame; }
 
         JS_EXPORT_PRIVATE bool isImplementationVisibilityPrivate() const;
+        JS_EXPORT_PRIVATE bool isFrameOf(JSCell* function) const; // callee() == function, but for a frame that has none.
 
         void dump(PrintStream&, Indenter = Indenter()) const;
         void dump(PrintStream&, Indenter, WTF::Function<void(PrintStream&)> prefix) const;

@@ -333,6 +333,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                 if (graph.knownCallee(node)) {
                     count("CALL known callee"_s);
                     count(graph.calleeIsProven(node) ? "PROOF proven"_s : "PROOF only a hint"_s);
+                    if (graph.calleeIsProven(node))
+                        count(!graph.passesNoFunctionObject(node) ? "PROOF proven, passes the function"_s : node->use(*calleeRegister)->isElided ? "PROOF proven, passes nothing, reads nothing"_s : "PROOF proven, passes nothing"_s);
                     count(makeString("KNOWNCALLRESULT "_s, typeName(node->type)));
                 }
                 else if (callee->isBytecode(op_get_by_id)) {
@@ -420,6 +422,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     inferTypes(graph);
     inferRanges(graph);
     optimizeLoops(graph);
+    graph.elideReadsOfCalleesNotPassed();
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());
@@ -459,6 +462,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         // and if there is no room, whoever says so wants to know which function (generateThrowStackOverflowAtPrologue()).
         graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
         auto becomeFrameOfThisFunction = makeScopeExit([&] {
+            if (!graph.calleeSlot) {
+                jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
+                return;
+            }
             jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT9);
             jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
             jit.store64(GPRInfo::regT9, CCallHelpers::Address(GPRInfo::callFrameRegister, graph.calleeSlot->offsetFromFP()));
@@ -520,8 +527,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     if (usesStubs && hasDirectEntry) {
         // The frame is made, with the Instance in it, and the callee is where every call has it. If the function has nothing of the
         // realm yet, it is called the way a function nobody knows anything about is, which sees to that.
+        // (One that may have been called as no object at all is found by its number, which is at hand.)
         CCallHelpers::Label noData = jit.label();
-        stubCalls.tailCall(jit, unlinkedCodeBlock->isConstructor() ? Stub::ConstructFarFunction : Stub::CallFarFunction);
+        if (graph.needsFunctionObject())
+            stubCalls.tailCall(jit, unlinkedCodeBlock->isConstructor() ? Stub::ConstructFarFunction : Stub::CallFarFunction);
+        else {
+            jit.move(CCallHelpers::TrustedImm32(graph.distanceOfEnvironmentOfModule()), GPRInfo::regT10);
+            stubCalls.tailCall(jit, Stub::LinkFunction);
+        }
         directEntry = jit.label();
         graph.headerReferences.loadIndex(jit, GPRInfo::regT9);
         jit.loadPtr(CCallHelpers::calleeFrameSlot(CallFrameSlot::codeBlock).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::regT10);
@@ -600,7 +613,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     {
         CodeHeader contents;
         contents.visibility = unlinkedCodeBlock->codeType() == FunctionCode && unlinkedCodeBlock->isBuiltinFunction() ? ImplementationVisibility::Private : ImplementationVisibility::Public;
-        contents.calleeSlot = safeCast<int16_t>(graph.calleeSlot->offsetFromFP() / static_cast<int>(sizeof(Register)));
+        contents.calleeSlot = graph.calleeSlot ? safeCast<int16_t>(graph.calleeSlot->offsetFromFP() / static_cast<int>(sizeof(Register))) : 0;
         // (Whoever puts it in an image gives it another.)
         contents.index = ownerForLinkBuffer ? allocateFunctionIndex() : 0;
         performJITMemcpy<jitMemcpyRepatch>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr(), &contents, sizeof(contents));

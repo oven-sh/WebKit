@@ -6045,6 +6045,8 @@ struct BytecodeLinkEncoder::Impl {
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(environmentsOfLink), safeCast<uint32_t>(environmentsSizeOfLink));
         std::atomic<size_t> next { 0 };
+        Lock declinedLock;
+        UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
         // TEMPORARY-PROVABILITY-STATS: whose code each function is, by the comment the bundler puts in front of each file's.
         Vector<Vector<std::pair<unsigned, ASCIILiteral>>> origins(modules.size());
         if (Options::aotReportStats()) [[unlikely]] {
@@ -6080,14 +6082,38 @@ struct BytecodeLinkEncoder::Impl {
                 AOT::CompiledCode code;
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock)))
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
+                else {
+                    Locker locker { declinedLock };
+                    declined.add(jobs[index].codeBlock);
+                }
             }
         };
-        Vector<Ref<Thread>> threads;
-        for (unsigned i = 1; i < numberOfThreads; ++i)
-            threads.append(Thread::create("AOT compiler"_s, [&work] { work(); }));
-        work();
-        for (auto& thread : threads)
-            thread->waitForCompletion();
+        // A call that passes no function object has nowhere to go but the function's code. If there turns out to be none, it is all
+        // done again with that known.
+        for (bool again = true; again;) {
+            Vector<Ref<Thread>> threads;
+            for (unsigned i = 1; i < numberOfThreads; ++i)
+                threads.append(Thread::create("AOT compiler"_s, [&work] { work(); }));
+            work();
+            for (auto& thread : threads)
+                thread->waitForCompletion();
+            again = false;
+            for (auto& hintsOfModule : hints) {
+                if (!hintsOfModule)
+                    continue;
+                hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                    if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
+                        function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
+                        again = true;
+                    }
+                });
+            }
+            if (again) {
+                builder.clear();
+                declined.clear();
+                next = 0;
+            }
+        }
         AOT::forgetDeclaredNames();
         return builder.finish();
     }

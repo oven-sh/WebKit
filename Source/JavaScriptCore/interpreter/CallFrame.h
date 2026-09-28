@@ -45,6 +45,8 @@ class JSWebAssemblyInstance;
 namespace AOT {
 JS_EXPORT_PRIVATE CodeBlock* codeBlockOf(const CallFrame*);
 JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*);
+JS_EXPORT_PRIVATE VM& vmOf(const CallFrame*);
+JS_EXPORT_PRIVATE JSGlobalObject* globalObjectOf(const CallFrame*);
 }
 
 template<typename> struct BaseInstruction;

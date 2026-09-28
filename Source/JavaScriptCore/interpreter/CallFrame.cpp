@@ -386,7 +386,7 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
 
     JSGlobalObject* globalObject = nullptr;
     if (throwOriginFrame)
-        globalObject = throwOriginFrame->jsCallee()->realm();
+        globalObject = throwOriginFrame->lexicalGlobalObject(vm);
     else
         globalObject = vm.entryScope->globalObject();
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();

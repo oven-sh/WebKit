@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "CodeSpecializationKind.h"
 #include <bmalloc/StaticRegion.h>
 #include <span>
 #include <wtf/Forward.h>
@@ -21,6 +22,7 @@ class DecoderStringTable;
 class JSCell;
 class JSString;
 class PreciseAllocation;
+class FunctionExecutable;
 class ScriptExecutable;
 class SourceCodeKey;
 class TDZEnvironmentLink;
@@ -104,6 +106,9 @@ public:
     // For the provider of the module whose bytecode is there in the payload. Null if there is none, or it has been taken, or the
     // VM is not the one that the static heap is for. What is made there stays.
     JS_EXPORT_PRIVATE static void* takePlaceForSourceProvider(VM&, size_t entryOffsetOfModule, size_t sizeOfProvider);
+    // The function that has this number in the image of code (AOT::CodeHeader::index), and which of its two kinds of code has it.
+    static std::pair<FunctionExecutable*, CodeSpecializationKind> executableOfFunction(uint32_t index);
+    static bool hasExecutablesOfFunctions(VM&);
     static bool isPlaceOfSourceProvider(const void* pointer)
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);

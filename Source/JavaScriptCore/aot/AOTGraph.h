@@ -138,6 +138,7 @@ struct Node {
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
+    bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
@@ -323,6 +324,15 @@ public:
     // The function that the call or construction is probably of, if there is any telling.
     const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
     bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
+    const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isProven = nullptr) const;
+    // A call of a function that wants nothing of the object it is called as (KnownFunction::needsNoFunctionObject). None is passed.
+    bool passesNoFunctionObject(const Node* call);
+    // Whether this function is one of those, and whether its scope is where the module's environment is.
+    bool needsFunctionObject() const { return m_needsFunctionObject; }
+    bool scopeIsEnvironmentOfModule() const { return m_scopeIsEnvironmentOfModule; }
+    uint32_t distanceOfEnvironmentOfModule();
+    // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
+    void elideReadsOfCalleesNotPassed();
     // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
     // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
@@ -396,6 +406,8 @@ public:
     unsigned extraOfGetFromScope(const OpGetFromScope&);
     void setLinkage(const ModuleLinkage*, const DeclaredNamesLink*);
     bool usesStaticImports { false }; // The code is only good for a module that is linked as its ModuleLinkage says.
+    bool m_needsFunctionObject { true };
+    bool m_scopeIsEnvironmentOfModule { false };
     BitVector m_homed;
     Vector<Type> homedTypes; // Indexed by registerIndex(): everything that is ever stored to a homed register.
     unsigned numICSlots { 0 };

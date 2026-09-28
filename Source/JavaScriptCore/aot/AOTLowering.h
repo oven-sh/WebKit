@@ -81,7 +81,12 @@ private:
         uint32_t start = roundUpToMultipleOf<window>(distance);
         return m_out.add(m_out.opaque(m_out.sub(m_instance, m_out.constIntPtr(start))), m_out.constIntPtr(start - distance));
     }
-    LValue callee() { return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot)); } // The object the function was called as.
+    // The object the function was called as.
+    LValue callee()
+    {
+        RELEASE_ASSERT(m_calleeSlot);
+        return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot));
+    }
     LValue lowConstantRegister(VirtualRegister); // For an operand that BytecodeUseDef does not count among the uses.
     LValue convert(LValue, Rep from, Type fromType, Rep to);
     void setJSValue(Node*, LValue);
@@ -260,7 +265,7 @@ private:
     // AOTLowerCalls.cpp
     bool tryLowerCall(Node*);
     void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult);
-    bool lowerCallToKnownFunction(Node*, LValue callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult);
+    bool lowerCallToKnownFunction(Node*, VirtualRegister callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult);
 
     Graph& m_graph;
     B3::Procedure& m_proc;

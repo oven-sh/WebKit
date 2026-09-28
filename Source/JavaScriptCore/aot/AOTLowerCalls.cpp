@@ -26,7 +26,7 @@ using namespace B3;
 // callee, which the runtime has found to be a closure of that function (operationAOTLinkCall()), and its CodeBlock. For that callee
 // the call is an instruction, to an address that is known when the image is put together, past the check of the number of
 // arguments if there are enough. Any other callee is called the way any callee is.
-bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult)
+bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isConstruct, bool hasResult)
 {
     if (!usesStubs)
         return false;
@@ -42,6 +42,9 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
         return false;
     bool skipsArityCheck = argc >= target->numParameters();
     unsigned slot = isProven ? 0 : siteOfKnownCall(node, index, isConstruct);
+    bool passesCallee = !m_graph.passesNoFunctionObject(node);
+    // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
+    bool checksIsInitialized = isProven && !known->isDeclaration;
 
     Vector<ConstrainedValue> inFrame;
     int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
@@ -51,7 +54,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
     }
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     static_assert(BaselineJITRegisters::Call::calleeGPR == GPRInfo::argumentGPR0);
-    patchpoint->append(ConstrainedValue(callee, ValueRep::reg(GPRInfo::argumentGPR0)));
+    if (passesCallee || checksIsInitialized)
+        patchpoint->append(ConstrainedValue(lowJSValue(node->use(calleeRegister)), ValueRep::reg(GPRInfo::argumentGPR0)));
     if (!isProven)
         patchpoint->append(ConstrainedValue(m_data, ValueRep::reg(GPRInfo::argumentGPR1)));
     patchpoint->append(ConstrainedValue(m_instance, ValueRep::reg(GPRInfo::argumentGPR2)));
@@ -60,7 +64,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck, isProven](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck, isProven, passesCallee, checksIsInitialized](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         constexpr GPRReg callee = GPRInfo::argumentGPR0;
         constexpr GPRReg data = GPRInfo::argumentGPR1;
@@ -68,13 +72,27 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
             return CCallHelpers::Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
         };
         if (isProven) {
-            // There is nothing to check, and so nothing else that this could come to. It is a function of this realm: the variable
-            // it was read from is one of a module of this realm.
-            jit.storePair64(GPRInfo::argumentGPR2, callee, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
+            // It is a function of this realm: the variable it was read from is one of a module of this realm.
+            CCallHelpers::Jump isNotInitialized;
+            if (checksIsInitialized)
+                isNotInitialized = jit.branch64(CCallHelpers::Equal, callee, CCallHelpers::TrustedImm64(JSValue::ValueUndefined));
+            jit.storePair64(GPRInfo::argumentGPR2, passesCallee ? callee : ARM64Registers::zr, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
             jit.store32(CCallHelpers::TrustedImm32(argc), slotOfNewFrame(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
             jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-            stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, false, true);
+            stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, false, true, !passesCallee);
+            CCallHelpers::Label done = jit.label();
             jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+            if (checksIsInitialized) {
+                // Called like anything else, it is an error like any other.
+                params.addLatePath([=](CCallHelpers& jit) {
+                    AllowMacroScratchRegisterUsage allowScratch(jit);
+                    isNotInitialized.link(&jit);
+                    jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
+                    jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
+                    stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call);
+                    jit.jump().linkTo(done, &jit);
+                });
+            }
             return;
         }
         ptrdiff_t offsetOfSlot = Data::offsetOfSlots() + slot * sizeof(Slot);
@@ -109,13 +127,12 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
 {
     // A call to whatever the callee turns out to be. There is nothing at the call site to link: the thunk finds the callee's
     // code from the callee, every time.
-    LValue callee = lowJSValue(node->use(calleeRegister));
-
     unsigned frameSize = (CallFrame::headerSizeInRegisters + argc) * sizeof(EncodedJSValue);
     m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize));
 
-    if (lowerCallToKnownFunction(node, callee, argc, argv, isConstruct, hasResult))
+    if (lowerCallToKnownFunction(node, calleeRegister, argc, argv, isConstruct, hasResult))
         return;
+    LValue callee = lowJSValue(node->use(calleeRegister));
 
     if constexpr (usesStubs) {
         // The arguments go in the frame being made; the stub does the rest of what every call does.

@@ -112,6 +112,7 @@ public:
     // the graph are those variables for this record: code that was compiled with the graph to go by (AOT::ModuleLinkage) reads them
     // from where they are without asking. To be asked once the module is linked; the answer is kept.
     JS_EXPORT_PRIVATE bool isLinkedAsInImage(JSGlobalObject*);
+    bool isItselfLinkedAsInImage(JSGlobalObject*, const Function<bool(JSModuleRecord*)>& mayImportFrom);
 #endif
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
     // Whether every import binding of this record is at the same place for `executable`'s code as for the record it

@@ -84,22 +84,84 @@ Vector<uint8_t> ImageBuilder::finish()
     while (capacity < m_functions.size() * 2)
         capacity *= 2;
 
+    // Which function a call is to: the first that has the key.
+    Vector<uint32_t> functionWithKey;
+    functionWithKey.fill(std::numeric_limits<uint32_t>::max(), capacity);
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        unsigned bucket = m_functions[index].key.hash() & (capacity - 1);
+        while (functionWithKey[bucket] != std::numeric_limits<uint32_t>::max() && !m_functions[functionWithKey[bucket]].key.sameFunction(m_functions[index].key))
+            bucket = (bucket + 1) & (capacity - 1);
+        if (functionWithKey[bucket] == std::numeric_limits<uint32_t>::max())
+            functionWithKey[bucket] = index;
+    }
+    auto directTargetOf = [&](const CompiledFunctionInfo& info, const StubCall& call) -> std::optional<size_t> {
+        if (call.function == StubCall::noFunction || !call.isDirect)
+            return std::nullopt;
+        const ImageKey& key = info.knownCallees[call.function];
+        for (unsigned bucket = key.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
+            size_t target = functionWithKey[bucket];
+            if (m_functions[target].key.sameFunction(key))
+                return m_functions[target].code.info.directEntryOffset ? std::optional<size_t> { target } : std::nullopt;
+        }
+        return std::nullopt;
+    };
+
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
     const StubBlob& stubs = stubBlob();
     Vector<size_t> stubsAt;
     Vector<std::pair<size_t, size_t>> placement; // Of each function: where it is, and where the stubs it calls are.
+    // After each function's code, a veneer for each function that it calls directly and that is out of reach. Which those are
+    // depends on where everything goes: so that is worked out without any first, and they are few enough not to change the answer.
+    Vector<Vector<uint32_t, 0>> farCallees(m_functions.size());
+    auto sizeWithVeneers = [&](size_t index) {
+        size_t size = m_functions[index].code.bytes.size();
+        return farCallees[index].isEmpty() ? size : WTF::roundUpToMultipleOf<sizeof(uint32_t)>(size) + farCallees[index].size() * sizeOfVeneer;
+    };
+    if (usesStubs) {
+        Vector<size_t> at;
+        size_t end = 0;
+        size_t lastStubs = std::numeric_limits<size_t>::max();
+        for (auto& function : m_functions) {
+            end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end);
+            if (lastStubs == std::numeric_limits<size_t>::max() || end + function.code.bytes.size() - lastStubs > reachOfStubCall) {
+                lastStubs = end;
+                end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + stubs.bytes.size());
+            }
+            at.append(end);
+            end += function.code.bytes.size();
+        }
+        size_t sizeOfVeneers = 0;
+        for (size_t index = 0; index < m_functions.size(); ++index) {
+            auto& info = m_functions[index].code.info;
+            for (auto& call : info.stubCalls) {
+                auto target = directTargetOf(info, call);
+                if (!target)
+                    continue;
+                size_t from = at[index] + call.offset;
+                size_t to = at[*target] + m_functions[*target].code.info.directEntryOffset;
+                if (((from > to ? from - to : to - from) <= reachOfStubCall && !Options::aotForceVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
+                    continue;
+                farCallees[index].append(static_cast<uint32_t>(*target));
+                sizeOfVeneers += sizeOfVeneer + sizeof(uint32_t) + imageFunctionAlignment;
+            }
+        }
+        RELEASE_ASSERT(sizeOfVeneers + stubs.bytes.size() + imageFunctionAlignment < roomToSpareInReachOfStubCall);
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: at most ", sizeOfVeneers, " bytes of veneers for calls out of reach");
+    }
     size_t recordsSize = 0;
     size_t codeSize = 0;
-    for (auto& function : m_functions) {
+    for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
+        auto& function = m_functions[indexOfFunction];
         recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * sizeof(Site) + function.code.info.knownCallees.size() * sizeof(ImageKey);
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
-        if (usesStubs && (stubsAt.isEmpty() || codeSize + function.code.bytes.size() - stubsAt.last() > reachOfStubCall)) {
+        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
             stubsAt.append(codeSize);
             codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + stubs.bytes.size());
         }
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
-        codeSize += function.code.bytes.size();
+        codeSize += sizeWithVeneers(indexOfFunction);
     }
     RELEASE_ASSERT(recordsSize < std::numeric_limits<uint32_t>::max());
 
@@ -209,6 +271,20 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& call : info.stubCalls) {
             if (call.function == StubCall::noFunction)
                 continue;
+            if (auto target = directTargetOf(info, call)) {
+                size_t targetAt = placement[*target].first + m_functions[*target].code.info.directEntryOffset;
+                size_t from = codeAt + call.offset;
+                if (size_t veneer = farCallees[index].find(static_cast<uint32_t>(*target)); veneer != notFound) {
+                    size_t veneerAt = codeAt + WTF::roundUpToMultipleOf<sizeof(uint32_t)>(m_functions[index].code.bytes.size()) + veneer * sizeOfVeneer;
+                    writeVeneer(code, veneerAt, targetAt);
+                    targetAt = veneerAt;
+                }
+                RELEASE_ASSERT((from > targetAt ? from - targetAt : targetAt - from) <= reachOfStubCall + roomToSpareInReachOfStubCall);
+                retargetStubCall(code, from, targetAt, false);
+                continue;
+            }
+            // (Whoever compiled the program has seen to it that there is code for what is called like that.)
+            RELEASE_ASSERT(!call.hasNoOtherWay);
             const ImageKey& key = info.knownCallees[call.function];
             unsigned mask = capacity - 1;
             for (unsigned bucket = key.hash() & mask; table[bucket].record; bucket = (bucket + 1) & mask) {

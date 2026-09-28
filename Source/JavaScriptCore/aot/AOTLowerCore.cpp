@@ -92,7 +92,7 @@ bool Lowering::run()
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
     m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
-    {
+    if (m_graph.needsFunctionObject()) {
         B3::SlotBaseValue* slot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
         m_graph.calleeSlot = slot->slot();
         m_calleeSlot = slot;
@@ -698,6 +698,8 @@ void Lowering::lowerBlock(BasicBlock* block)
         Node* node = block->nodes[m_nodeIndex];
         if (node == terminal)
             break;
+        if (node->isElided)
+            continue;
         setOrigin(node);
         lowerNode(node);
         if (m_graph.failed())

@@ -365,6 +365,12 @@ bool Lowering::tryLowerMisc(Node* node)
         lowerCatch(node);
         return true;
     case op_get_scope:
+        if (m_graph.scopeIsEnvironmentOfModule()) {
+            // (Most have no use for it: what they read of the module's they find the same way.)
+            if (node->useCount)
+                setJSValue(node, environmentAt(m_graph.distanceOfEnvironmentOfModule()));
+            return true;
+        }
         setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));
         return true;
     case op_get_parent_scope:

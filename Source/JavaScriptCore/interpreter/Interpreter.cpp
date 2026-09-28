@@ -653,7 +653,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
 
         if (!foundCaller) {
-            if (!visitor->callee().isNativeCallee() && visitor->callee().asCell() == caller)
+            if (visitor->isFrameOf(caller))
                 foundCaller = true;
             skippedFrames++;
             return IterationStatus::Continue;
@@ -682,7 +682,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 #else
             } else if (visitor->hasCode() && !visitor->unlinkedCodeBlock()->isBuiltinFunction())
 #endif
-                results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
+                results.append(visitor->callee().asCell() ? StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()) : StackFrame(vm, owner, visitor->codeBlock(), visitor->bytecodeIndex()));
             else
                 results.append(StackFrame(vm, owner, visitor->callee().asCell()));
 
@@ -925,7 +925,7 @@ public:
             }
         }
 
-        if (!m_callFrame->isNativeCalleeFrame() && JSC::isRemoteFunction(m_callFrame->jsCallee()) && !m_isTermination) {
+        if (!m_callFrame->isNativeCalleeFrame() && m_callFrame->jsCallee() && JSC::isRemoteFunction(m_callFrame->jsCallee()) && !m_isTermination) {
             // Continue searching for a handler, but mark that a marshalling function was on the stack so that we can
             // translate the exception before jumping to the handler.
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());

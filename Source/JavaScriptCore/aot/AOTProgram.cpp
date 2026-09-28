@@ -77,11 +77,14 @@ void ModuleHints::add(UniquedStringImpl* name, unsigned scopeOffset, UnlinkedFun
 ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, const Describe& describe)
 {
     if (auto* module = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock)) {
+        m_isModule = true;
         if (auto* slots = module->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
             for (unsigned i = 0; i < slots->size() && i < module->numberOfFunctionDecls(); ++i) {
                 UnlinkedFunctionExecutable* executable = module->functionDecl(i);
                 add(executable->name().impl(), slots->at(i).offset(), executable, describe);
-                m_variables.find(executable->name().impl())->value.isInitializedInPlainSight = true;
+                Variable& variable = m_variables.find(executable->name().impl())->value;
+                variable.isInitializedInPlainSight = true;
+                variable.function.isDeclaration = true;
             }
         }
     }
@@ -206,7 +209,38 @@ void ModuleHints::prove()
     for (auto& entry : m_variables) {
         Variable& variable = entry.value;
         variable.function.isProven = !variable.isAmbiguous && variable.isInitializedInPlainSight && !variable.isStoredToOtherwise;
+        // (Of a module: then it is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
+        variable.function.needsNoFunctionObject = m_isModule && variable.function.isProven && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
+}
+
+bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
+{
+    if (codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
+        return true;
+    const DeclaredNamesLink* declaredNames = declaredNamesFor(codeBlock);
+    if (!declaredNames || !declaredNames->scopeIsOutermostEnvironment())
+        return true;
+    bool result = false;
+    for (const auto& instruction : codeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_create_direct_arguments:
+        case op_create_scoped_arguments:
+        case op_create_cloned_arguments:
+        case op_call_direct_eval:
+            return true;
+        default:
+            break;
+        }
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+            computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                result |= reg == VirtualRegister(CallFrameSlot::callee);
+            });
+        }
+        if (result)
+            return true;
+    }
+    return false;
 }
 
 unsigned ModuleHints::numberProven() const

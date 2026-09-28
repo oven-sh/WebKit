@@ -469,14 +469,20 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
     }
     if (!callee->isBytecode(op_get_from_scope))
         return nullptr;
+    // (Through a phi it is a hint like any other.)
+    return knownFunctionReadBy(callee, callee == node->use(calleeRegister) ? isProven : nullptr);
+}
+
+const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProven) const
+{
+    if (!m_hints)
+        return nullptr;
     auto bytecode = callee->as<OpGetFromScope>();
     UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
     ResolveType type = bytecode.m_getPutInfo.resolveType();
-    // (Through a phi it is a hint like any other.)
-    bool isReadDirectly = callee == node->use(calleeRegister);
     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
         const KnownFunction* known = m_hints->find(name, bytecode.m_offset);
-        if (known && known->isProven && isProven && isReadDirectly && m_declaredNames) {
+        if (known && known->isProven && isProven && m_declaredNames) {
             // The hint goes by the name and the offset. Is it the module's variable? Not one of the function's own, which is read from
             // a scope that the function has at hand, without looking for it; and not one of a scope in between.
             auto resolution = m_declaredNames->resolve(name);
@@ -489,10 +495,75 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
         return nullptr;
     if (auto variable = const_cast<Graph*>(this)->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == StaticVariable::Import) {
         if (isProven && variable.import.function)
-            *isProven = variable.import.function->isProven && isReadDirectly;
+            *isProven = variable.import.function->isProven;
         return variable.import.function;
     }
     return m_hints->find(name, std::nullopt);
+}
+
+bool Graph::passesNoFunctionObject(const Node* node)
+{
+    VirtualRegister calleeRegister;
+    if (node->isBytecode(op_call))
+        calleeRegister = node->as<OpCall>().m_callee;
+    else if (node->isBytecode(op_call_ignore_result))
+        calleeRegister = node->as<OpCallIgnoreResult>().m_callee;
+    else
+        return false;
+    bool isProven = false;
+    const KnownFunction* known = knownCallee(node, &isProven);
+    if (!known || !isProven || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
+        return false;
+    // The function goes by where the environment of its module is, so that had better be known here too. (This says that the code
+    // rests on it: what is called does not look.)
+    return !!distanceOfEnvironmentAccessed(node->use(calleeRegister));
+}
+
+uint32_t Graph::distanceOfEnvironmentOfModule()
+{
+    RELEASE_ASSERT(m_scopeIsEnvironmentOfModule);
+    usesStaticImports = true;
+    return m_linkage->distanceOfEnvironment;
+}
+
+void Graph::elideReadsOfCalleesNotPassed()
+{
+    // How many of a read's uses want the value.
+    UncheckedKeyHashMap<Node*, unsigned> wanted;
+    Vector<Node*, 16> reads;
+    auto note = [&](Node* user, const Use& use) {
+        if (!use.node->isBytecode(op_get_from_scope))
+            return;
+        bool wantsValue = true;
+        if (user->isBytecode(op_check_tdz))
+            wantsValue = mayBe(use.node->type, TEmpty);
+        else if (user->isBytecode(op_call))
+            wantsValue = use.reg != user->as<OpCall>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+        else if (user->isBytecode(op_call_ignore_result))
+            wantsValue = use.reg != user->as<OpCallIgnoreResult>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+        auto result = wanted.add(use.node, 0);
+        if (result.isNewEntry)
+            reads.append(use.node);
+        result.iterator->value += wantsValue;
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                note(node, use);
+        }
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                note(phi, use);
+        }
+    }
+    for (Node* read : reads) {
+        if (wanted.get(read))
+            continue;
+        // Reading it does nothing that anybody can see: it holds the function, or is about to be given it (a declaration's is made
+        // when it is first read).
+        bool isProven = false;
+        read->isElided = knownFunctionReadBy(read, &isProven) && isProven;
+    }
 }
 
 unsigned Graph::indexOfKnownCallee(const ImageKey& key)
@@ -593,6 +664,8 @@ void Graph::setLinkage(const ModuleLinkage* linkage, const DeclaredNamesLink* de
     m_declaredNames = declaredNames;
     if (!linkage)
         return;
+    m_scopeIsEnvironmentOfModule = linkage->distanceOfEnvironment && m_codeBlock->codeType() == FunctionCode && declaredNames && declaredNames->scopeIsOutermostEnvironment();
+    m_needsFunctionObject = !m_scopeIsEnvironmentOfModule || AOT::needsFunctionObject(m_codeBlock);
     for (const auto& instruction : m_codeBlock->instructions()) {
         if (instruction->opcodeID() != op_put_to_scope)
             continue;

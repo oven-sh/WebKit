@@ -1348,6 +1348,20 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
 static void generateEnterStaticFunctionForCall(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForCall, Entry::CallLinkInfoForCall); }
 static void generateEnterStaticFunctionForConstruct(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForConstruct, Entry::CallLinkInfoForConstruct); }
 
+static void generateLinkFunction(CCallHelpers& jit)
+{
+    jit.emitFunctionPrologue();
+    jit.move(GPRInfo::callFrameRegister, A0);
+    jit.move(T9, A1);
+    jit.move(T10, A2);
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTLinkFunction) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    jit.emitFunctionEpilogue();
+    jit.farJump(GPRInfo::returnValueGPR, JSEntryPtrTag);
+}
+
 static void generateVirtualCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForConstruct, [] { }); }
 static void generateVirtualTailCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
@@ -1600,9 +1614,9 @@ void StubCalls::call(CCallHelpers& jit, Stub stub)
     m_pending.append({ jit.nearCall(), stub, false });
 }
 
-void StubCalls::callFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect)
+void StubCalls::callFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect, bool hasNoOtherWay)
 {
-    m_pending.append({ jit.nearCall(), otherwise, false, skipsArityCheck, isDirect, knownCallee });
+    m_pending.append({ jit.nearCall(), otherwise, false, skipsArityCheck, isDirect, hasNoOtherWay, knownCallee });
 }
 
 void StubCalls::tailCall(CCallHelpers& jit, Stub stub)
@@ -1659,9 +1673,30 @@ Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
         linkBuffer.link<JITThunkPtrTag>(pending.call, CodeLocationLabel<JITThunkPtrTag>(tagCodePtr<JITThunkPtrTag>(target)));
         // The location of a near call is the end of the instruction; that of a near tail call is the instruction.
         auto* location = static_cast<uint8_t*>(linkBuffer.locationOfNearCall<JITThunkPtrTag>(pending.call).dataLocation());
-        result.append({ static_cast<uint32_t>(location - start - (pending.isTailCall ? 0 : sizeof(uint32_t))), pending.stub, pending.isTailCall, pending.skipsArityCheck, pending.isDirect, pending.function });
+        result.append({ static_cast<uint32_t>(location - start - (pending.isTailCall ? 0 : sizeof(uint32_t))), pending.stub, pending.isTailCall, pending.skipsArityCheck, pending.isDirect, pending.hasNoOtherWay, pending.function });
     }
     return result;
+}
+
+void writeVeneer(uint8_t* base, size_t veneer, size_t target)
+{
+#if CPU(ARM64)
+    constexpr uint32_t scratch = ARM64Registers::ip0;
+    int64_t pages = static_cast<int64_t>(target >> 12) - static_cast<int64_t>(veneer >> 12);
+    RELEASE_ASSERT(pages >= -(1 << 20) && pages < (1 << 20));
+    uint32_t instructions[3] = {
+        0x90000000u | (static_cast<uint32_t>(pages) & 3) << 29 | (static_cast<uint32_t>(pages >> 2) & 0x7ffff) << 5 | scratch, // adrp
+        0x91000000u | static_cast<uint32_t>(target & 0xfff) << 10 | scratch << 5 | scratch, // add
+        0xd61f0000u | scratch << 5, // br
+    };
+    static_assert(sizeof(instructions) == sizeOfVeneer);
+    memcpy(base + veneer, instructions, sizeof(instructions));
+#else
+    UNUSED_PARAM(base);
+    UNUSED_PARAM(veneer);
+    UNUSED_PARAM(target);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isTailCall)

@@ -223,7 +223,9 @@ struct alignas(16) CodeHeader {
     uint64_t refCount { 3 }; // ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr: one strong reference, nothing else. Stays that way.
     NativeCallee::Category category { NativeCallee::Category::AOT };
     ImplementationVisibility visibility { ImplementationVisibility::Public };
-    int16_t calleeSlot { 0 }; // Where in its frames the function keeps the object it was called as: which Register, from the frame pointer.
+    // Where in its frames the function keeps the object it was called as: which Register, from the frame pointer. 0: it does not
+    // (Graph::needsFunctionObject()), and there may have been none.
+    int16_t calleeSlot { 0 };
     uint32_t index { 0 }; // Which function: see Instance::data.
 
     static const CodeHeader* fromCallee(CalleeBits bits) { return std::bit_cast<const CodeHeader*>(bits.asNativeCallee()); }
@@ -276,7 +278,9 @@ JS_EXPORT_PRIVATE bool isCodeHeader(const void*);
 // About a frame whose callee is a CodeHeader.
 JS_EXPORT_PRIVATE Data* dataOf(const CallFrame*);
 JS_EXPORT_PRIVATE CodeBlock* codeBlockOf(const CallFrame*);
-JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*);
+JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*); // Null if the function has no use for it (CodeHeader::calleeSlot).
+JS_EXPORT_PRIVATE VM& vmOf(const CallFrame*);
+JS_EXPORT_PRIVATE JSGlobalObject* globalObjectOf(const CallFrame*);
 
 struct Data {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Data);
@@ -400,6 +404,7 @@ public:
     unsigned codeSize() const { return m_function ? m_function->codeSize : m_owned->info.codeSize; }
     unsigned entryOffset() const { return m_function ? m_function->entryOffset : m_owned->info.entryOffset; }
     unsigned arityCheckOffset() const { return m_function ? m_function->arityCheckOffset : m_owned->info.arityCheckOffset; }
+    void* directEntry() const { return tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(m_code) + (m_function ? m_function->directEntryOffset : m_owned->info.directEntryOffset)); }
     unsigned frameSizeInBytes() const { return m_function ? m_function->frameSizeInBytes : m_owned->info.frameSizeInBytes; }
     unsigned numSlots() const { return m_function ? m_function->numSlots : m_owned->info.numSlots; }
     const Site* sites() const { return m_function ? m_function->sites() : m_owned->info.sites.span().data(); }

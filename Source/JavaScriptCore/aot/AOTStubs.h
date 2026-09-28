@@ -51,6 +51,9 @@ namespace AOT {
     /* See generateEnterStaticFunction(). */ \
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
+    /* From the direct entry of a function that has nothing of the realm yet, and that may have been called as no object. The */ \
+    /* frame is made, with the Instance in it. T9 = CodeHeader::index, T10 = ImageEnvironment::distance of its module. Goes back there. */ \
+    v(LinkFunction) \
     /* On entry to a function that may have been passed too few arguments, before anything else. T9 = numParameters, */ \
     /* T10 = the link register as it was on entry. Comes back, with the link register as it was, once the frame has them all. */ \
     /* Clobbers only T0-T7, T11. */ \
@@ -224,6 +227,7 @@ struct StubCall {
     // callees (CompiledFunctionInfo::knownCallees). The stub does the same thing the long way.
     bool skipsArityCheck { false };
     bool isDirect { false }; // To CompiledFunctionInfo::directEntryOffset: nobody has seen to it that the function has been called before.
+    bool hasNoOtherWay { false }; // Nothing was passed that the stub could find the function by. If it is out of reach, it is got to in two steps.
     uint32_t function { noFunction };
 };
 
@@ -260,7 +264,7 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub);
-    void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false);
+    void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false, bool hasNoOtherWay = false);
     // Links them to the copy in the JIT's memory, and says where they are.
     Vector<StubCall> link(LinkBuffer&);
 
@@ -271,6 +275,7 @@ private:
         bool isTailCall;
         bool skipsArityCheck { false };
         bool isDirect { false };
+        bool hasNoOtherWay { false };
         uint32_t function { StubCall::noFunction };
     };
     Vector<Pending, 8> m_pending;
@@ -279,6 +284,10 @@ private:
 // Points the call instruction at `instruction` to `target`, both offsets from the same base.
 void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isTailCall);
 static constexpr size_t reachOfStubCall = 96 * MB; // With room to spare.
+// A jump to anywhere in the image, for a call to go by way of.
+static constexpr size_t sizeOfVeneer = 3 * sizeof(uint32_t);
+static constexpr size_t roomToSpareInReachOfStubCall = 24 * MB; // What is within reach is still within reach if it ends up this much further.
+void writeVeneer(uint8_t* base, size_t veneer, size_t target); // Offsets from the same base, which is the start of a page.
 
 } } // namespace JSC::AOT
 

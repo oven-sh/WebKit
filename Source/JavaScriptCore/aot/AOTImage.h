@@ -73,6 +73,7 @@ public:
     // Any thread. The code is laid out in the order of `rank`, not of the calls.
     void add(ImageKey, uint64_t rank, CompiledCode&&);
     size_t numberOfFunctions() const { return m_functions.size(); }
+    void clear() { m_functions.clear(); } // Of functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
     Vector<uint8_t> finish();
 
@@ -133,6 +134,7 @@ public:
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
     JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
+    size_t numberOfFunctions() const { return header().numberOfFunctions; }
 
 private:
     ImageView(std::span<const uint8_t> data, const void* address)
