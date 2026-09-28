@@ -237,14 +237,12 @@ class HeaderReferences {
 public:
     // What a frame of the function has for a callee: CalleeBits::boxNativeCallee() of the header.
     void moveBoxedHeader(CCallHelpers&, GPRReg);
-    void loadIndex(CCallHelpers&, GPRReg); // CodeHeader::index
     void link(LinkBuffer&, CCallHelpers::Label header);
 
 private:
     struct Reference {
         CCallHelpers::Label instruction;
         GPRReg reg;
-        bool isLoadOfIndex;
     };
     Vector<Reference, 4> m_references;
 };

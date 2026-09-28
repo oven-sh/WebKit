@@ -82,20 +82,12 @@ bool Lowering::run()
     m_proc.addFastConstant(m_notCellMask->key());
     m_instance = m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::codeBlock)));
     {
-        // instance->data[the index in the header]
-        PatchpointValue* patchpoint = m_out.patchpoint(pointerType());
-        patchpoint->append(ConstrainedValue(m_instance, ValueRep::SomeRegister));
-        patchpoint->effects = B3::Effects::none();
-        patchpoint->setGenerator([references = &m_graph.headerReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            GPRReg result = params[0].gpr();
-            references->loadIndex(jit, result);
-            jit.addPtr(CCallHelpers::TrustedImm32(Instance::offsetOfData()), params[1].gpr(), CCallHelpers::dataTempRegister);
-            jit.loadPtr(CCallHelpers::BaseIndex(CCallHelpers::dataTempRegister, result, CCallHelpers::TimesEight), result);
-        });
-        patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        m_data = patchpoint;
+        // instance->data[the index in the header, which is what the frame has for a callee: CalleeBits::asNativeCallee()]
+        int64_t fromBoxedToIndex = static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index);
+        m_graph.wideIntegerConstants.add(fromBoxedToIndex);
+        LValue boxed = m_out.load64(addressFor(VirtualRegister(CallFrameSlot::callee)));
+        LValue index = m_out.load32(m_out.address(m_heaps.AOTCodeHeader_index, m_out.add(boxed, m_out.constInt64(fromBoxedToIndex)), 0));
+        m_data = m_out.loadPtr(m_out.baseIndex(m_heaps.AOTInstance_data, m_instance, m_out.zeroExtPtr(index)));
     }
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);

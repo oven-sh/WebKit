@@ -45,6 +45,7 @@ namespace JSC::B3 {
     macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
     macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
     macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
+    macro(AOTCodeHeader_index, 0, Mutability::Immutable) \
     macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
@@ -216,6 +217,7 @@ namespace JSC::B3 {
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
+    macro(AOTInstance_data, AOT::Instance::offsetOfData(), sizeof(void*)) \
     macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \

@@ -1549,16 +1549,10 @@ void StubCalls::tailCall(CCallHelpers& jit, Stub stub)
 
 void HeaderReferences::moveBoxedHeader(CCallHelpers& jit, GPRReg reg)
 {
-    m_references.append({ jit.label(), reg, false });
+    m_references.append({ jit.label(), reg });
     jit.nop(); // adr reg, header + NativeCalleeTag
     jit.move(CCallHelpers::TrustedImm64(lowestAccessibleAddress()), CCallHelpers::dataTempRegister);
     jit.subPtr(CCallHelpers::dataTempRegister, reg);
-}
-
-void HeaderReferences::loadIndex(CCallHelpers& jit, GPRReg reg)
-{
-    m_references.append({ jit.label(), reg, true });
-    jit.nop(); // ldr reg, header.index
 }
 
 void HeaderReferences::link(LinkBuffer& linkBuffer, CCallHelpers::Label header)
@@ -1567,16 +1561,9 @@ void HeaderReferences::link(LinkBuffer& linkBuffer, CCallHelpers::Label header)
     auto* target = static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr());
     for (auto& reference : m_references) {
         auto* instruction = static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(reference.instruction).untaggedPtr());
-        uint32_t encoded;
-        if (reference.isLoadOfIndex) {
-            int64_t delta = (target + OBJECT_OFFSETOF(CodeHeader, index) - instruction) / 4;
-            RELEASE_ASSERT(delta >= -(1 << 18) && delta < (1 << 18));
-            encoded = 0x18000000u | (static_cast<uint32_t>(delta) & 0x7ffffu) << 5 | static_cast<uint32_t>(reference.reg);
-        } else {
-            int64_t delta = target + JSValue::NativeCalleeTag - instruction;
-            RELEASE_ASSERT(delta >= -(1 << 20) && delta < (1 << 20));
-            encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3u) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffffu) << 5 | static_cast<uint32_t>(reference.reg);
-        }
+        int64_t delta = target + JSValue::NativeCalleeTag - instruction;
+        RELEASE_ASSERT(delta >= -(1 << 20) && delta < (1 << 20));
+        uint32_t encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3u) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffffu) << 5 | static_cast<uint32_t>(reference.reg);
         performJITMemcpy<jitMemcpyRepatch>(instruction, &encoded, sizeof(encoded));
     }
 #else

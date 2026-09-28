@@ -230,12 +230,20 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     bool checksArity = unlinkedCodeBlock->codeType() == FunctionCode && numParameters != 1;
     CCallHelpers::Label arityCheckWithStub;
     CCallHelpers::Jump arityChecked;
-    CCallHelpers::Jump tooFewArguments;
+    CCallHelpers::Jump arityFixed;
     if (usesStubs && checksArity) {
+        // What is done about too few comes first: it refers to the header, which has to be within reach.
+        CCallHelpers::Label tooFewArguments = jit.label();
+        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
+        jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
+        jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
+        stubCalls.call(jit, Stub::ArityCheck);
+        arityFixed = jit.jump();
+
         // Nothing has been pushed: the frame's slots are found from the stack pointer.
         arityCheckWithStub = jit.label();
         jit.load32(CCallHelpers::calleeFrameSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta() + LowWordOffset), GPRInfo::regT9);
-        tooFewArguments = jit.branch32(CCallHelpers::Below, GPRInfo::regT9, CCallHelpers::TrustedImm32(numParameters));
+        jit.branch32(CCallHelpers::Below, GPRInfo::regT9, CCallHelpers::TrustedImm32(numParameters)).linkTo(tooFewArguments, &jit);
         // The only way in is what comes first.
         if (!graph.catchEntrypoints.isEmpty())
             arityChecked = jit.jump();
@@ -250,12 +258,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
             arityChecked.linkTo(entryLabel, &jit);
         else
             RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, entryLabel));
-        tooFewArguments.link(&jit);
-        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
-        jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
-        jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
-        stubCalls.call(jit, Stub::ArityCheck);
-        jit.jump().linkTo(entryLabel, &jit);
+        arityFixed.linkTo(entryLabel, &jit);
         arityCheckLabel = arityCheckWithStub;
     } else if (checksArity) {
         // What FTL::compile() emits, with the VM and the thunk found from the callee frame's CodeBlock.
