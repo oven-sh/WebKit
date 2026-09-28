@@ -105,6 +105,25 @@ for (let expression of operations) {
     }
 }
 
+// Equality at a place that has seen int32s among things that are not numbers, all of which can be compared by their bits.
+for (let [lefts, rights] of [
+    [[1, 2, "s", 3], [1, undefined, {}, true]],
+    [[1, undefined, {}, true], [1, 2, "s", 3]],
+    [[1, 2, "s", "t"], [1, "s", null, 2]],
+    [[1, null, true, 2], [1, null, false, 2]],
+]) {
+    let same = make("x === p"), different = make("x !== p"), branch = make("x === p ? 'same' : 'different'");
+    for (let i = 0; i < testLoopCount * 2; ++i) {
+        let left = lefts[i % lefts.length], right = rights[(i >> 2) % rights.length];
+        same(left, right); different(left, right); branch(left, right);
+    }
+    for (let i = 0; i < 100; ++i) {
+        let shown = [same(toFloat(2), 2), same(2, toFloat(2)), same(toFloat(2), toFloat(2)), same(toFloat(2), 3), different(toFloat(2), 2), different(2, toFloat(2)), branch(toFloat(2), 2), branch(2, toFloat(2)), same(toFloat(0), false), same(toFloat(2), "2")].join();
+        if (shown !== "true,true,true,false,false,false,same,same,false,false")
+            throw new Error("2.0 === 2 where the operands have been " + lefts.map(String) + " and " + rights.map(String) + ": " + shown);
+    }
+}
+
 // Whether it is true, at a place that has seen values of many types.
 function ifTrue(v) { if (v) return "true"; return "false"; }
 function not(v) { return !v; }

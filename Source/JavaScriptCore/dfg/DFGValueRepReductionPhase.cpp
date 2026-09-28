@@ -145,7 +145,7 @@ private:
                         return;
                     if (boxed != edge.node()) {
                         boxed = edge.node();
-                        box = m_insertionSet.insertNode(index, SpecTaggedFloat, BoxTaggedFloat, node->origin, Edge(boxed, DoubleRepUse));
+                        box = m_insertionSet.insertNode(index, SpecTaggedFloat, Options::guardsWholeFloats(26) ? BoxTaggedFloat : ValueRep, node->origin, Edge(boxed, DoubleRepUse));
                     }
                     edge.setNode(box);
                 });

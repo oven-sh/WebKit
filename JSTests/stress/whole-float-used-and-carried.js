@@ -82,6 +82,28 @@ for (let i = 0; i < testLoopCount * 2; ++i) {
     expect("a float constant in a local that also holds ints", floatConstantAmongInts(i), (i & 3) === 3 ? "float 2" : "int 4");
 }
 
+// A float constant in a local that JavaScript's arithmetic also puts doubles in.
+function floatConstantAmongDoubles(i) { let y = F2; for (let k = 0; k < 4; ++k) { sink = y * 1.5; if (k === (i & 7)) y = k * 0.25 + 0.5; } return y; }
+noInline(floatConstantAmongDoubles);
+for (let i = 0; i < testLoopCount * 2; ++i)
+    expect("a float constant in a local that also holds doubles", floatConstantAmongDoubles(i), (i & 7) > 3 ? "float 2" : (i & 7) === 2 ? "int 1" : "float " + ((i & 7) * 0.25 + 0.5));
+
+// The same, and it is only stored: to return it would be reason enough to keep it boxed.
+function floatConstantAmongDoublesStored(i) { let y = F2; for (let k = 0; k < 4; ++k) { results.last = y; sink = y * 1.5; if (k === (i & 7)) y = (i & 7) * 0.25 + 0.5; } }
+noInline(floatConstantAmongDoublesStored);
+for (let i = 0; i < testLoopCount * 2; ++i) {
+    floatConstantAmongDoublesStored(i);
+    expect("a float constant in a local that also holds doubles, stored", results.last, (i & 7) > 2 ? "float 2" : (i & 7) === 2 ? "int 1" : "float " + ((i & 7) * 0.25 + 0.5));
+}
+
+// The same, of a constant that the compiler works out for itself.
+function foldedFloatConstantAmongDoublesStored(i) { let y = add(2, -0); for (let k = 0; k < 4; ++k) { results.last = y; sink = y * 1.5; if (k === (i & 7)) y = (i & 7) * 0.25 + 0.5; } }
+noInline(foldedFloatConstantAmongDoublesStored);
+for (let i = 0; i < testLoopCount * 2; ++i) {
+    foldedFloatConstantAmongDoublesStored(i);
+    expect("a folded float constant in a local that also holds doubles, stored", results.last, (i & 7) > 2 ? "float 2" : (i & 7) === 2 ? "int 1" : "float " + ((i & 7) * 0.25 + 0.5));
+}
+
 // Optimized code that is left because of a surprise, and entered again at the head of the loop that was being run.
 for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5)), list(float(0.5), float(2)), list(float(2), float(0.5)), list(intAsDouble(1), float(2))]) {
     let f = eval(freshSource("x, n", "{ let y = x; for (let k = 0; k < n; ++k) { if (y < k * 0.25) sink = k; } return y; }"));
@@ -162,3 +184,10 @@ noInline(constantOfThePrototype);
 const instances = [new A, new B, new C];
 for (let i = 0; i < testLoopCount * 2; ++i)
     expect("a constant of the prototype", constantOfThePrototype(instances[i % 3]), ["int 1", "float 0.5", "float 2"][i % 3]);
+
+function constantOfThePrototypeStored(o) { let y = o.constant; results.last = y; sink = y * 1.5; }
+noInline(constantOfThePrototypeStored);
+for (let i = 0; i < testLoopCount * 2; ++i) {
+    constantOfThePrototypeStored(instances[i % 3]);
+    expect("a constant of the prototype, stored", results.last, ["int 1", "float 0.5", "float 2"][i % 3]);
+}

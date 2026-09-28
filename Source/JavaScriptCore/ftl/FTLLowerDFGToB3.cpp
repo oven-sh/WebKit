@@ -28540,7 +28540,7 @@ IGNORE_CLANG_WARNINGS_END
                     return ExitValue::constant(jsTaggedFloat(child->asNumber()));
                 LoweredNodeValue value = m_doubleValues.get(child);
                 if (isValid(value))
-                    return exitArgument(arguments, DataFormatTaggedFloat, value.value());
+                    return exitArgument(arguments, Options::guardsWholeFloats(23) ? DataFormatTaggedFloat : DataFormatDouble, value.value());
                 break;
             }
 
