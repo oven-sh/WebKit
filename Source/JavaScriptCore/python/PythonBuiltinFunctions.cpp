@@ -416,6 +416,12 @@ PYTHON_NATIVE(syntaxErrorInit)
 PYTHON_NATIVE(syntaxErrorStr)
 {
     NATIVE_PROLOGUE();
+    if (args[0].asCell()->type() == ErrorInstanceType) {
+        // One of JavaScript's has only a message.
+        String text = strOfException(globalObject, args[0]);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsString(vm, text));
+    }
     auto get = [&] (ASCIILiteral name) -> JSValue {
         JSValue value = getAttributeIfPresent(globalObject, args.at(0), Identifier::fromString(vm, name));
         return value ? value : jsUndefined();

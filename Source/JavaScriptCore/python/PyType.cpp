@@ -249,6 +249,30 @@ JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* cal
     RELEASE_AND_RETURN(scope, JSValue::encode(Python::instantiate(globalObject, type, arguments, given.keywordNames())));
 }
 
+bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* type = uncheckedDowncast<PyType>(object);
+    JSValue receiver = slot.thisValue();
+    // The engine asking for its own purposes is not to run anything, and C.prototype is JavaScript's business.
+    if (slot.isVMInquiry() || name.isPrivateName() || name == vm.propertyNames->prototype || !receiver.isObject())
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(object, globalObject, name, slot));
+
+    // In Python, what an attribute is is settled when it is got: a function of the class becomes a method bound to the instance, a property is
+    // computed, __getattr__ is asked. So the class of the receiver answers with what getattr() would give. The classes beyond it have
+    // nothing to add, since that has been through all of them, in Python's order and not in that of the prototypes.
+    bool isForClass = receiver == JSValue(type);
+    if (!isForClass && asObject(receiver)->getPrototypeDirect() != JSValue(type))
+        return false;
+    JSValue value = Python::getPropertyForJavaScript(globalObject, receiver, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!value)
+        return false;
+    slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), value);
+    return true;
+}
+
 CallData PyType::getCallData(JSCell*)
 {
     CallData callData;

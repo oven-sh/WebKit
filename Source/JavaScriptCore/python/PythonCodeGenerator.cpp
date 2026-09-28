@@ -904,7 +904,6 @@ private:
         mark(*attribute);
         addOnce(m_details->names, mangle(*attribute->attribute));
         OpPyLoadMethod::emit(&g, function.get(), self, base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
-        base = nullptr;
         g.emitLoad(call.thisRegister(), jsUndefined());
         for (unsigned i = 0; i < count; ++i)
             emitInto(call.argumentRegister(i + 1), node.arguments[i]);
@@ -918,6 +917,8 @@ private:
         emitRawCall(result.get(), function.get(), call, count + 1, node);
         g.emitJump(done.get());
         g.emitLabel(isNotMethod.get());
+        // If it is a function of JavaScript's, it expects what it was got from as `this`. Python's own make nothing of it.
+        g.move(call.thisRegister(), base.get());
         for (unsigned i = 0; i < count; ++i)
             g.move(call.argumentRegister(i), call.argumentRegister(i + 1));
         emitRawCall(result.get(), function.get(), call, count, node);
@@ -943,7 +944,19 @@ private:
             }
         }
 
-        Reg function = emitToTemporary(node.function);
+        // base.function(...): the helpers are given base as their own `this`, to pass on.
+        Reg base = g.newTemporary();
+        Reg function;
+        if (node.function->kind == Expression::Kind::Attribute) {
+            auto& attribute = node.function->as<Attribute>();
+            emitInto(base.get(), attribute.value);
+            function = g.newTemporary();
+            mark(attribute);
+            emitGetAttribute(function.get(), base.get(), mangle(*attribute.attribute));
+        } else {
+            g.emitLoad(base.get(), jsUndefined());
+            function = emitToTemporary(node.function);
+        }
         bool hasMappings = false;
         for (Keyword* keyword : node.keywords)
             hasMappings |= !keyword->name;
@@ -954,7 +967,7 @@ private:
             g.emitGetById(helper.get(), runtime(), Identifier::fromString(m_vm, "callKeywords"_s));
             unsigned count = node.arguments.size() + node.keywords.size();
             CallArguments call(g, nullptr, count + 2);
-            g.emitLoad(call.thisRegister(), jsUndefined());
+            g.move(call.thisRegister(), base.get());
             g.move(call.argumentRegister(0), function.get());
             g.move(call.argumentRegister(1), keywordNamesConstant(node.keywords));
             unsigned i = 2;
@@ -981,7 +994,14 @@ private:
                     emitRuntimeCall(nullptr, "addKeywords"_s, { keywords.get(), value.get(), function.get() }, *keyword);
             }
         }
-        return emitRuntimeCall(dst, "callSpread"_s, { function.get(), positional.get(), keywords.get() }, node);
+        Reg helper = g.newTemporary();
+        g.emitGetById(helper.get(), runtime(), Identifier::fromString(m_vm, "callSpread"_s));
+        CallArguments call(g, nullptr, 3);
+        g.move(call.thisRegister(), base.get());
+        g.move(call.argumentRegister(0), function.get());
+        g.move(call.argumentRegister(1), positional.get());
+        g.move(call.argumentRegister(2), keywords.get());
+        return emitRawCall(destination(dst).get(), helper.get(), call, 3, node);
     }
 
     // ---- Making functions

@@ -99,6 +99,7 @@ namespace JSC {
     v(Filter, "filter", Object, Native, PyType::IsBaseType) \
     v(Reversed, "reversed", Object, Native, PyType::IsBaseType) \
     v(JSObject, "JSObject", Object, Native, 0) \
+    v(JSFunction, "JSFunction", JSObject, Native, 0) \
     v(JSSymbol, "JSSymbol", Object, Native, 0) \
     FOR_EACH_PYTHON_EXCEPTION_TYPE(v)
 
@@ -243,6 +244,8 @@ public:
     JSObject* boundArgumentsMarker() const { return m_boundArgumentsMarker.get(); }
     // What compiled code calls for what there is no opcode for. See PythonRuntimeFunctions.h.
     JSObject* runtimeFunctions() const { return m_runtimeFunctions.get(); }
+    // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
+    JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
     JSObject* builtinsNamespace() const { return m_builtinsNamespace.get(); }
     // sys.modules
@@ -278,6 +281,7 @@ private:
     WriteBarrier<JSObject> m_ellipsis;
     WriteBarrier<JSObject> m_boundArgumentsMarker;
     WriteBarrier<JSObject> m_runtimeFunctions;
+    WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<JSObject> m_builtinsNamespace;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Unknown> m_handledException;

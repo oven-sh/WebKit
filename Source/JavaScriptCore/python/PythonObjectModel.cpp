@@ -66,6 +66,11 @@ static PyType* typeOfError(PyRealm* realm, ErrorInstance* error)
     }
 }
 
+static bool isPythonFunction(JSFunction* function)
+{
+    return !function->isHostOrBuiltinFunction() && function->jsExecutable()->unlinkedExecutable()->pythonInfo();
+}
+
 PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
 {
     PyRealm* realm = globalObject->pyRealm();
@@ -92,7 +97,7 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
                     return realm->typeClassMethodDescriptor();
                 }
             }
-            return realm->typeFunction();
+            return isPythonFunction(uncheckedDowncast<JSFunction>(cell)) ? realm->typeFunction() : realm->typeJSFunction();
         default:
             break;
         }
@@ -285,6 +290,9 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
                 return { DescriptorKind::NativeClassMethod, false, { } };
             }
         }
+        // One of JavaScript's is not bound to the instance, like one that is built in. It gets the instance as `this`.
+        if (!isPythonFunction(uncheckedDowncast<JSFunction>(cell)))
+            return { };
         return { DescriptorKind::Function, false, { } };
     case StringType:
     case HeapBigIntType:
@@ -313,7 +321,7 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
         return { DescriptorKind::ClassMethod, false, { } };
     if (type == realm->typeMemberDescriptor())
         return { DescriptorKind::Member, true, { } };
-    if (type == realm->typeJSObject() || type == realm->typeList())
+    if (type == realm->typeJSObject() || type == realm->typeJSFunction() || type == realm->typeList())
         return { };
 
     auto& names = vm.pythonNames();
@@ -403,7 +411,7 @@ JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* 
 bool isJavaScriptObject(JSGlobalObject* globalObject, PyType* type)
 {
     PyRealm* realm = globalObject->pyRealm();
-    return type == realm->typeJSObject() || type == realm->typeJSError();
+    return type == realm->typeJSObject() || type == realm->typeJSFunction() || type == realm->typeJSError();
 }
 
 JSValue nameAsString(VM& vm, PropertyName name)
@@ -713,7 +721,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
             }
         }
     }
-    if (isType(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute))
+    if (isType(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute) || isJavaScriptObject(globalObject, type))
         return getAttribute(globalObject, base, name);
     JSValue attribute = type->lookup(vm, name);
     if (!attribute || classifyDescriptor(globalObject, attribute).kind != DescriptorKind::Function)
@@ -984,16 +992,15 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
     return true;
 }
 
-JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const ArgList& arguments, KeywordNames* keywordNames)
+JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const ArgList& arguments, KeywordNames* keywordNames, JSValue thisValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!keywordNames || !keywordNames->length())
-        RELEASE_AND_RETURN(scope, call(globalObject, callable, arguments));
-
     auto callData = JSC::getCallData(callable);
     if (callData.type == CallData::Type::None) [[unlikely]]
         return raiseNotCallable(globalObject, scope, callable);
+    if (!keywordNames || !keywordNames->length())
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
 
     if (const FunctionInfo* info = pythonInfoOf(callable)) {
         MarkedArgumentBuffer bound;
@@ -1020,7 +1027,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
         options->putDirect(vm, name, arguments.at(positional + i));
     }
     converted.append(options);
-    RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, jsUndefined(), converted));
+    RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, converted));
 }
 
 JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& arguments, KeywordNames* keywordNames)

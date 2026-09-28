@@ -1226,17 +1226,6 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
             RELEASE_AND_RETURN(scope, call(globalObject, classGetItem, key));
         return raiseTypeError(globalObject, scope, makeString("type '"_s, uncheckedDowncast<PyType>(base.asCell())->nameString(globalObject), "' is not subscriptable"_s));
     }
-    if (base.isObject() && typeOf(globalObject, base) == globalObject->pyRealm()->typeJSObject()) {
-        // A JavaScript object: object[key]
-        auto property = key.toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
-        bool found = asObject(base)->getPropertySlot(globalObject, property, slot);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!found)
-            return raise(globalObject, scope, BuiltinType::KeyError, key);
-        RELEASE_AND_RETURN(scope, slot.getValue(globalObject, property));
-    }
     return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object is not subscriptable"_s));
 }
 
@@ -1339,17 +1328,6 @@ static void setOrDeleteItem(JSGlobalObject* globalObject, JSValue base, JSValue 
             callMethod(globalObject, method, self, key);
         return;
     }
-    if (base.isObject() && typeOf(globalObject, base) == globalObject->pyRealm()->typeJSObject()) {
-        auto property = key.toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        scope.release();
-        if (value) {
-            PutPropertySlot slot(base, true);
-            asObject(base)->methodTable()->put(asObject(base), globalObject, property, value, slot);
-        } else
-            JSCell::deleteProperty(asObject(base), globalObject, property);
-        return;
-    }
     raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object "_s, value ? "does not support item assignment"_s : "doesn't support item deletion"_s));
 }
 
@@ -1422,20 +1400,6 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
     if (!method && type->lookup(vm, names.dunder_getitem))
         return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
 
-    if (value.isObject() && type == globalObject->pyRealm()->typeJSObject()) {
-        // What JavaScript can iterate, Python can.
-        JSValue function = asObject(value)->get(globalObject, vm.propertyNames->iteratorSymbol);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (function.isCallable()) {
-            JSValue iterator = JSC::call(globalObject, function, value, ArgList(), "Symbol.iterator is not a function"_s);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (iterator.isObject()) {
-                JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
-                RETURN_IF_EXCEPTION(scope, { });
-                return PyIterator::create(globalObject, PyIterator::Kind::JavaScript, iterator, next);
-            }
-        }
-    }
     return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not iterable"_s));
 }
 

@@ -331,12 +331,20 @@ private:
     }
 };
 
+// To JavaScript, the properties of a module are its global variables: those of its namespace, and not what the namespace inherits, which is
+// there for Python's sake.
 class PyModule final : public JSNonFinalObject {
 public:
+    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | GetOwnPropertySlotIsImpureForPropertyAbsence;
     PYTHON_CELL_BOILERPLATE(PyModule)
 
     static PyModule* create(JSGlobalObject*, const String& name);
     JSObject* namespaceObject() const { return m_namespace.get(); }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 
 private:
     PyModule(VM& vm, Structure* structure, JSObject* namespaceObject)

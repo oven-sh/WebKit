@@ -454,6 +454,12 @@ static PyModule* createNativeModule(JSGlobalObject* globalObject, const String& 
     return nullptr;
 }
 
+// import js: JavaScript's global object, as it is.
+static JSValue createJavaScriptModule(JSGlobalObject* globalObject, const String& name)
+{
+    return name == "js"_s ? JSValue(globalObject->globalThis()) : JSValue();
+}
+
 // ---- The modules that are written in Python and come with the engine
 
 struct LibrarySource {
@@ -529,6 +535,10 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
 
     if (!parent) {
         if (PyModule* module = createNativeModule(globalObject, fullName)) {
+            registerModule(globalObject, fullName, module);
+            return module;
+        }
+        if (JSValue module = createJavaScriptModule(globalObject, fullName)) {
             registerModule(globalObject, fullName, module);
             return module;
         }

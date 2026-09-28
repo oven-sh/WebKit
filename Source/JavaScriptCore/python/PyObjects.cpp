@@ -85,14 +85,19 @@ JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame*
     RELEASE_AND_RETURN(scope, JSValue::encode(Python::callWithKeywords(globalObject, function, arguments, given.keywordNames())));
 }
 
-CallData PyInstance::getCallData(JSCell*)
+CallData PyInstance::getCallData(JSCell* cell)
 {
-    // Whether its class has __call__ is found out when it is called. FIXME: typeof says "function" of every instance.
+    // It can be called if its class has __call__.
     CallData callData;
-    callData.type = CallData::Type::Native;
-    callData.native.function = callInstance;
-    callData.native.isBoundFunction = false;
-    callData.native.isWasm = false;
+    JSObject* object = asObject(cell);
+    JSValue prototype = object->getPrototypeDirect();
+    VM& vm = cell->vm();
+    if (isType(prototype) && asType(prototype)->lookup(vm, vm.pythonNames().dunder_call)) {
+        callData.type = CallData::Type::Native;
+        callData.native.function = callInstance;
+        callData.native.isBoundFunction = false;
+        callData.native.isWasm = false;
+    }
     return callData;
 }
 
@@ -479,6 +484,32 @@ void PyModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_PYTHON_CELL(PyModule, "module", PyModuleType)
+
+bool PyModule::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
+{
+    JSValue value = uncheckedDowncast<PyModule>(object)->namespaceObject()->getDirect(globalObject->vm(), name);
+    if (!value)
+        return false;
+    slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
+    return true;
+}
+
+bool PyModule::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot&)
+{
+    uncheckedDowncast<PyModule>(cell)->namespaceObject()->putDirect(globalObject->vm(), name, value);
+    return true;
+}
+
+bool PyModule::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+{
+    JSObject* namespaceObject = uncheckedDowncast<PyModule>(cell)->namespaceObject();
+    return JSObject::deleteProperty(namespaceObject, globalObject, name, slot);
+}
+
+void PyModule::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
+{
+    uncheckedDowncast<PyModule>(object)->namespaceObject()->structure()->getPropertyNamesFromStructure(globalObject->vm(), names, mode);
+}
 
 PyModule* PyModule::create(JSGlobalObject* globalObject, const String& name)
 {

@@ -34,7 +34,7 @@ namespace JSC {
 class PyType final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | ImplementsHasInstance | ImplementsDefaultHasInstance;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | GetOwnPropertySlotMayBeWrongAboutDontEnum;
 
     // What kind of cell an instance is. A class has the layout of its bases, of which only one may be other than Object.
     enum class Layout : uint8_t {
@@ -122,6 +122,9 @@ public:
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, PyType* prototype);
 
     static CallData getCallData(JSCell*);
+    // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
+    // "What JavaScript sees" in README.md.
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     static CallData getConstructData(JSCell*);
 
 private:

@@ -108,6 +108,10 @@ JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, Py
 JSValue getMember(JSGlobalObject*, JSObject*, const String& name);
 void setMember(JSGlobalObject*, JSObject*, const String& name, JSValue);
 
+// The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
+// JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
+JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+
 // ---- Calls
 
 JSValue call(JSGlobalObject*, JSValue callable, const ArgList&);
@@ -116,7 +120,8 @@ JSValue call(JSGlobalObject*, JSValue callable, JSValue);
 JSValue call(JSGlobalObject*, JSValue callable, JSValue, JSValue);
 JSValue call(JSGlobalObject*, JSValue callable, JSValue, JSValue, JSValue);
 // The values of the keywords are the last of the arguments. `keywordNames` may be null.
-JSValue callWithKeywords(JSGlobalObject*, JSValue callable, const ArgList&, KeywordNames* keywordNames);
+// `thisValue` is for a function of JavaScript's: what it was got from, in base.function(...). Python's own make nothing of it.
+JSValue callWithKeywords(JSGlobalObject*, JSValue callable, const ArgList&, KeywordNames* keywordNames, JSValue thisValue = jsUndefined());
 // The value of each parameter of a function written in Python. False if it raised.
 bool bindArguments(JSGlobalObject*, JSFunction*, const FunctionInfo&, const ArgList&, KeywordNames*, MarkedArgumentBuffer& bound);
 // What loadMethod or lookupSpecial gave.

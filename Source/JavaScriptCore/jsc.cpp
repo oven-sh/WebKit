@@ -516,6 +516,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionRun);
 static JSC_DECLARE_HOST_FUNCTION(functionRunString);
 static JSC_DECLARE_HOST_FUNCTION(functionLoad);
+static JSC_DECLARE_HOST_FUNCTION(functionImportPython);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadString);
 static JSC_DECLARE_HOST_FUNCTION(functionReadFile);
 static JSC_DECLARE_HOST_FUNCTION(functionWriteFile);
@@ -886,6 +887,7 @@ private:
         addFunction(vm, "run"_s, functionRun, 1);
         addFunction(vm, "runString"_s, functionRunString, 1);
         addFunction(vm, "load"_s, functionLoad, 1);
+        addFunction(vm, "importPython"_s, functionImportPython, 1);
         addFunction(vm, "loadString"_s, functionLoadString, 1);
         addFunction(vm, "readFile"_s, functionReadFile, 2);
         addFunction(vm, "read"_s, functionReadFile, 2);
@@ -4463,6 +4465,23 @@ static bool readPythonSource(const String& path, String& source)
         return false;
     source = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(buffer.span()));
     return true;
+}
+
+// importPython(name[, directory to look in]): the module.
+JSC_DEFINE_HOST_FUNCTION(functionImportPython, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    Python::setSourceReader(readPythonSource);
+    if (callFrame->argumentCount() > 1) {
+        JSValue sys = Python::importModule(globalObject, nullptr, "sys"_s, jsUndefined(), 0, false);
+        RETURN_IF_EXCEPTION(scope, { });
+        uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "path"_s)).asCell())->push(globalObject, callFrame->uncheckedArgument(1));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(Python::importModule(globalObject, nullptr, name, jsUndefined(), 0, true)));
 }
 
 // jsc file.py, as `python file.py` would run it.

@@ -113,6 +113,8 @@ void initializeExceptionTypes(JSGlobalObject*);
 void initializeBuiltinFunctions(JSGlobalObject*, JSObject* namespaceObject);
 // Last of all, since it runs Python: what is written in it.
 void initializeLibrary(JSGlobalObject*);
+JSObject* createJavaScriptFunctions(VM&, JSGlobalObject*);
+void initializeJavaScriptTypes(JSGlobalObject*);
 
 // What is in other files, and shared among these.
 String builtinRepr(JSGlobalObject*, JSValue);

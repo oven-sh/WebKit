@@ -302,7 +302,7 @@ PYTHON_RUNTIME_FUNCTION(callKeywords)
     MarkedArgumentBuffer arguments;
     for (unsigned i = 2; i < callFrame->argumentCount(); ++i)
         arguments.append(argument(i));
-    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, uncheckedDowncast<KeywordNames>(argument(1).asCell()))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, uncheckedDowncast<KeywordNames>(argument(1).asCell()), callFrame->thisValue())));
 }
 
 // callSpread(function, a list of the positional arguments, a dict of the keywords or None)
@@ -314,7 +314,7 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
     for (unsigned i = 0; i < positional->length(); ++i)
         arguments.append(listGet(positional, i));
     if (isNone(argument(2)))
-        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), arguments)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, nullptr, callFrame->thisValue())));
 
     auto* keywords = uncheckedDowncast<PyDict>(argument(2).asCell());
     KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
@@ -324,7 +324,7 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
         arguments.append(value);
         return true;
     });
-    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, names)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, names, callFrame->thisValue())));
 }
 
 static bool addKeywordArgument(JSGlobalObject* globalObject, PyDict* keywords, JSValue name, JSValue value, JSValue callable)

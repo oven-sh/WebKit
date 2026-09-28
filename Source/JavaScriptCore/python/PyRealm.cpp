@@ -55,6 +55,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_boundArgumentsMarker);
     visitor.append(thisObject->m_runtimeFunctions);
+    visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_builtinsNamespace);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_handledException);
@@ -118,6 +119,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeTracebackTypes(globalObject);
+    Python::initializeJavaScriptTypes(globalObject);
     static constexpr BuiltinType publicTypes[] = {
         BuiltinType::Object, BuiltinType::Type, BuiltinType::Int, BuiltinType::Bool, BuiltinType::Float, BuiltinType::Complex, BuiltinType::Str, BuiltinType::Bytes, BuiltinType::ByteArray, BuiltinType::MemoryView, BuiltinType::List, BuiltinType::Tuple, BuiltinType::Dict,
         BuiltinType::Set, BuiltinType::FrozenSet, BuiltinType::Range, BuiltinType::Slice, BuiltinType::Property, BuiltinType::StaticMethod, BuiltinType::ClassMethod, BuiltinType::Super,
@@ -140,6 +142,9 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
 
     m_modules.set(vm, this, PyDict::create(globalObject));
     m_runtimeFunctions.set(vm, this, Python::createRuntimeFunctions(vm, globalObject));
+    m_javaScriptFunctions.set(vm, this, Python::createJavaScriptFunctions(vm, globalObject));
+    // To JavaScript an exception is an Error.
+    typeBaseException()->setPrototypeDirect(vm, globalObject->errorPrototype());
     Python::initializeLibrary(globalObject);
 }
 
