@@ -76,6 +76,7 @@
 #include "PropertyInlineCacheClearingWatchpoint.h"
 #include "PythonASTDumper.h"
 #include "PythonParser.h"
+#include "PythonSymbolTable.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
@@ -2402,6 +2403,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsDefinitelyAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
 static JSC_DECLARE_HOST_FUNCTION(functionPythonAST);
+static JSC_DECLARE_HOST_FUNCTION(functionPythonSymbolTable);
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
@@ -4947,6 +4949,12 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
     return JSValue::encode(jsBoolean(impl && impl->isAtom()));
 }
 
+static JSObject* createPythonSyntaxError(JSGlobalObject* globalObject, const Python::SyntaxError& error)
+{
+    ASCIILiteral name = error.kind == Python::SyntaxError::Kind::SyntaxError ? "SyntaxError"_s : error.kind == Python::SyntaxError::Kind::IndentationError ? "IndentationError"_s : "TabError"_s;
+    return createSyntaxError(globalObject, makeString(name, ": "_s, error.message, " ("_s, error.line, ':', error.column, ')'));
+}
+
 // Usage: $vm.pythonAST(source[, "exec" | "single" | "eval"])
 // The syntax tree of Python source, as JSON. Throws a SyntaxError that says what CPython would say.
 JSC_DEFINE_HOST_FUNCTION(functionPythonAST, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -4971,11 +4979,32 @@ JSC_DEFINE_HOST_FUNCTION(functionPythonAST, (JSGlobalObject* globalObject, CallF
     Vector<Python::SyntaxWarning> warnings;
     Python::SyntaxError error;
     Python::Module* module = Python::parse(vm, arena, source, kind, warnings, error);
-    if (!module) {
-        ASCIILiteral name = error.kind == Python::SyntaxError::Kind::SyntaxError ? "SyntaxError"_s : error.kind == Python::SyntaxError::Kind::IndentationError ? "IndentationError"_s : "TabError"_s;
-        return throwVMError(globalObject, scope, createSyntaxError(globalObject, makeString(name, ": "_s, error.message, " ("_s, error.line, ':', error.column, ')')));
-    }
+    if (!module)
+        return throwVMError(globalObject, scope, createPythonSyntaxError(globalObject, error));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Python::dumpAST(globalObject, *module))));
+}
+
+// Usage: $vm.pythonSymbolTable(source)
+// What every name in Python source refers to, block by block, as JSON.
+JSC_DEFINE_HOST_FUNCTION(functionPythonSymbolTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String source = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Python::Arena arena;
+    Vector<Python::SyntaxWarning> warnings;
+    Python::SyntaxError error;
+    Python::Module* module = Python::parse(vm, arena, source, Python::Module::Kind::Module, warnings, error);
+    if (!module)
+        return throwVMError(globalObject, scope, createPythonSyntaxError(globalObject, error));
+    auto table = Python::SymbolTable::build(vm, arena, *module, 0, error);
+    if (!table)
+        return throwVMError(globalObject, scope, createPythonSyntaxError(globalObject, error));
+    return JSValue::encode(jsString(vm, Python::dumpSymbolTable(*table)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum, (JSGlobalObject*, CallFrame*))
@@ -6202,6 +6231,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "isAtomString"_s, functionIsAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
     addFunction(vm, allowIfNotFuzz, "pythonAST"_s, functionPythonAST, 2);
+    addFunction(vm, allowIfNotFuzz, "pythonSymbolTable"_s, functionPythonSymbolTable, 1);
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);
     addFunction(vm, alwaysAllow, "wallTimeNow"_s, functionWallTimeNow, 0);

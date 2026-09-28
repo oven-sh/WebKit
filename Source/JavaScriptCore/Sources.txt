@@ -740,6 +740,7 @@ profiler/ProfilerTZoneImpls.cpp
 python/PythonASTDumper.cpp
 python/PythonLexer.cpp
 python/PythonParser.cpp
+python/PythonSymbolTable.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp
