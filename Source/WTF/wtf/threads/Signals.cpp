@@ -55,6 +55,7 @@ extern "C" {
 #include <wtf/DataLog.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PlatformRegisters.h>
+#include <wtf/Scope.h>
 #include <wtf/ThreadGroup.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFConfig.h>
@@ -481,6 +482,15 @@ void addSignalHandler(Signal signal, SignalHandler&& handler)
     g_wtfConfig.signalHandlers.add(signal, WTF::move(handler));
 }
 
+#if USE(BUN_JSC_ADDITIONS) && !OS(DARWIN)
+static thread_local PlatformRegisters* interruptedRegisters;
+
+PlatformRegisters* registersInterruptedBySignalHandler()
+{
+    return interruptedRegisters;
+}
+#endif
+
 static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
 {
     Signal signal = fromSystemSignal(sig);
@@ -510,6 +520,19 @@ static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
     PlatformRegisters& registers = registersFromUContext(reinterpret_cast<ucontext_t*>(ucontext));
 #else
     PlatformRegisters registers { };
+#endif
+
+#if USE(BUN_JSC_ADDITIONS) && !OS(DARWIN) && HAVE(MACHINE_CONTEXT)
+    // With SA_ONSTACK this handler runs on the alternate signal stack, where a suspension of this
+    // thread cannot read the state of the thread's own stack (Thread::signalHandlerSuspendResume()).
+    // These registers are that state, unless the interrupted code ran on the alternate stack too.
+    bool interruptedOwnStack = !(reinterpret_cast<ucontext_t*>(ucontext)->uc_stack.ss_flags & SS_ONSTACK);
+    if (interruptedOwnStack)
+        interruptedRegisters = &registers;
+    auto forgetInterruptedRegisters = makeScopeExit([&] {
+        if (interruptedOwnStack)
+            interruptedRegisters = nullptr;
+    });
 #endif
 
     bool didHandle = false;

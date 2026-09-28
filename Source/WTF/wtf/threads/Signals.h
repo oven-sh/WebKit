@@ -148,6 +148,12 @@ class Thread;
 void registerThreadForMachExceptionHandling(Thread&);
 #endif // HAVE(MACH_EXCEPTIONS)
 
+#if USE(BUN_JSC_ADDITIONS) && OS(UNIX) && !OS(DARWIN)
+// While the signal handler of WTF runs on the alternate signal stack of the current thread: the
+// registers of the code that it interrupted on the thread's own stack. Null at any other time.
+WTF_EXPORT_PRIVATE PlatformRegisters* registersInterruptedBySignalHandler();
+#endif
+
 } // namespace WTF
 
 #if HAVE(MACH_EXCEPTIONS)
