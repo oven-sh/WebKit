@@ -256,9 +256,9 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
             ++i;
             continue;
         }
-        // All that cannot be encoded, up to something that can.
+        // All that cannot be encoded, up to something that can. UTF-16 and UTF-32 take them one at a time.
         size_t end = i + 1;
-        while (end < characters.size() && !canEncode(characters[end]))
+        while (unitSize == 1 && end < characters.size() && !canEncode(characters[end]))
             end++;
         if (!handler) {
             handler = findErrorHandler(errors);
@@ -296,8 +296,9 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
         case ErrorHandler::SurrogateEscape:
             // What a byte that could not be decoded was made into goes back to being that byte.
             for (size_t k = i; k < end; ++k) {
-                if (characters[k] < 0xDC80 || characters[k] > 0xDCFF)
-                    return fail(k, k + 1);
+                // In UTF-16 and UTF-32 a byte is not the whole of anything.
+                if (characters[k] < 0xDC80 || characters[k] > 0xDCFF || unitSize > 1)
+                    return fail(k, end);
                 output.append(static_cast<uint8_t>(characters[k] - 0xDC00));
             }
             break;
@@ -305,7 +306,7 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
             for (size_t k = i; k < end; ++k) {
                 char32_t surrogate = characters[k];
                 if (!isUTF || !U_IS_SURROGATE(surrogate))
-                    return fail(k, k + 1);
+                    return fail(k, end);
                 if (unitSize > 1)
                     appendUnit(output, surrogate, unitSize, isBigEndian);
                 else {

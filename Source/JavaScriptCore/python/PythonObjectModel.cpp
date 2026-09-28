@@ -165,6 +165,11 @@ bool isExactly(JSGlobalObject* globalObject, JSValue value, BuiltinType type)
     return typeOf(globalObject, value) == globalObject->pyRealm()->type(type);
 }
 
+String typeNameOfArgument(JSGlobalObject* globalObject, JSValue value)
+{
+    return isNone(value) ? "None"_str : typeName(globalObject, value);
+}
+
 String typeName(JSGlobalObject* globalObject, JSValue value)
 {
     return typeOf(globalObject, value)->nameString(globalObject);

@@ -62,16 +62,6 @@ void initializeWarnings(JSGlobalObject* globalObject)
     state.context.set(vm, realm, newContextVariable(globalObject, jsString(vm, String("_warnings_context"_s))));
 }
 
-// What Argument Clinic does for a Py_ssize_t
-static std::optional<int64_t> toSsize(JSGlobalObject* globalObject, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto result = toIndex(globalObject, value);
-    if (scope.exception() && catchException(globalObject, BuiltinType::IndexError))
-        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
-    return result;
-}
-
 // check_matched()
 static bool checkMatched(JSGlobalObject* globalObject, JSValue pattern, JSValue argument)
 {

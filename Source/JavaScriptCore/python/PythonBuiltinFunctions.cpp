@@ -182,7 +182,7 @@ PYTHON_NATIVE(builtinFormat_)
     if (args.size() > 1) {
         JSString* given = stringIn(args[1]);
         if (!given)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
         specification = given->value(globalObject);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, args[0], specification)));

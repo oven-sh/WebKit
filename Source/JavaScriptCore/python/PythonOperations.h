@@ -72,6 +72,7 @@ bool isInstance(JSGlobalObject*, JSValue, PyType*); // By its type alone: not wh
 bool isExactly(JSGlobalObject*, JSValue, PyType*); // And not of a class derived from it.
 bool isExactly(JSGlobalObject*, JSValue, BuiltinType);
 String typeName(JSGlobalObject*, JSValue);
+String typeNameOfArgument(JSGlobalObject*, JSValue); // As _PyArg_BadArgument() puts it: None is "None".
 
 // ---- Exceptions
 
@@ -470,9 +471,13 @@ std::optional<int64_t> tryInt64(JSValue);
 int compareInts(JSValue, JSValue); // Negative, zero or positive. Both are ints, of any size.
 // What __index__ gives, as something to index with: clamped to the range of an int64 if `clamp`, or else it raises IndexError.
 std::optional<int64_t> toIndex(JSGlobalObject*, JSValue, bool clamp = false);
-// The same, for what in CPython is an int of C's, and raises OverflowError if it does not fit in one.
-std::optional<int> toCInt(JSGlobalObject*, JSValue);
 std::optional<int64_t> toIndexOrOverflow(JSGlobalObject*, JSValue); // PyNumber_AsSsize_t(value, PyExc_OverflowError)
+// The same, for an argument that in CPython is a Py_ssize_t, a long or an int of C's. It raises OverflowError if it does not fit in one, and says which.
+std::optional<int64_t> toSsize(JSGlobalObject*, JSValue);
+std::optional<int64_t> toCLong(JSGlobalObject*, JSValue);
+std::optional<int> toCInt(JSGlobalObject*, JSValue);
+// _PyEval_SliceIndex(), and _PyEval_SliceIndexNotNone(): where something begins or ends, clamped. Whether it is None is for the caller to have seen to: `mayBeNone` is only for what is said.
+std::optional<int64_t> toSliceIndex(JSGlobalObject*, JSValue, bool mayBeNone);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.
 std::optional<double> toDouble(JSGlobalObject*, JSValue);
 String reprOfDouble(double);

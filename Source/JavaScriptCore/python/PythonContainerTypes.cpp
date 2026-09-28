@@ -88,7 +88,7 @@ PYTHON_NATIVE(listExtendMethod)
 PYTHON_NATIVE(listInsertMethod)
 {
     LIST_PROLOGUE("insert");
-    auto index = toIndex(globalObject, args[1], true);
+    auto index = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t length = self->length();
     int64_t at = *index < 0 ? std::max<int64_t>(*index + length, 0) : std::min(*index, length);
@@ -100,17 +100,19 @@ PYTHON_NATIVE(listInsertMethod)
 PYTHON_NATIVE(listPop)
 {
     LIST_PROLOGUE("pop");
+    int64_t given = -1;
+    if (args.size() > 1) {
+        auto index = toSsize(globalObject, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        given = *index;
+    }
+    // How long it is is asked after what was given has been asked what it is, which can change it.
     int64_t length = self->length();
     if (!length)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop from empty list"_s));
-    int64_t at = length - 1;
-    if (args.size() > 1) {
-        auto index = toIndex(globalObject, args[1]);
-        RETURN_IF_EXCEPTION(scope, { });
-        at = *index < 0 ? *index + length : *index;
-        if (at < 0 || at >= length)
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop index out of range"_s));
-    }
+    int64_t at = given < 0 ? given + length : given;
+    if (at < 0 || at >= length)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop index out of range"_s));
     JSValue value = listGet(globalObject, self, at);
     RETURN_IF_EXCEPTION(scope, { });
     listRemoveRange(globalObject, self, at, 1);
@@ -175,7 +177,7 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
     auto resolve = [&] (JSValue value, int64_t whenAbsent) -> int64_t {
         if (!value)
             return whenAbsent;
-        auto index = toIndex(globalObject, value, true);
+        auto index = toSliceIndex(globalObject, value, false);
         RETURN_IF_EXCEPTION(scope, 0);
         return *index < 0 ? std::max<int64_t>(*index + length, 0) : *index;
     };
@@ -481,6 +483,12 @@ PYTHON_NATIVE(dictSetDefault)
 PYTHON_NATIVE(dictPop)
 {
     DICT_PROLOGUE("pop");
+    // Nothing is in a dict that has nothing in it, and the key is not so much as asked for its hash.
+    if (!self->size()) {
+        if (args.size() > 2)
+            return JSValue::encode(args[2]);
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::KeyError, args[1]));
+    }
     JSValue value = self->remove(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
@@ -645,19 +653,31 @@ PYTHON_NATIVE(setMethod)
     auto op = unpack<BinaryOperator>(callFrame, 0);
     auto inPlace = unpack<bool>(callFrame, 1);
     SET_PROLOGUE("union");
-    PySet* result = self;
-    if (!inPlace) {
-        result = PySet::create(vm, self->structure());
-        result->copyFrom(vm, globalObject, *self);
+    // intersection_update() does nothing if it cannot do it all. The others have done what they had done.
+    bool worksOnCopy = !inPlace || op == BinaryOperator::BitAnd;
+    PySet* working = self;
+    if (worksOnCopy) {
+        working = PySet::create(vm, realm->structureFor(BuiltinType::Set));
+        working->copyFrom(vm, globalObject, *self);
     }
     for (unsigned i = 1; i < args.size(); ++i) {
         PySet* other = setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), args[i]);
         RETURN_IF_EXCEPTION(scope, { });
-        setOperation(globalObject, op, true, result, other);
+        setOperation(globalObject, op, true, working, other);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (inPlace)
+    if (inPlace) {
+        if (worksOnCopy) {
+            self->clear(vm);
+            self->copyFrom(vm, globalObject, *working);
+        }
         RETURN_NONE();
+    }
+    // A set or a frozenset, as it is or is derived from.
+    if (!typeOf(globalObject, self)->isSubtypeOf(realm->typeFrozenSet()))
+        return JSValue::encode(working);
+    PySet* result = PySet::create(vm, realm->structureFor(BuiltinType::FrozenSet));
+    result->copyFrom(vm, globalObject, *working);
     return JSValue::encode(result);
 }
 

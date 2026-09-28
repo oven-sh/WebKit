@@ -420,12 +420,8 @@ PYTHON_NATIVE(sysGetSizeOf)
         RETURN_IF_EXCEPTION(scope, { });
         if (!isInstance(globalObject, result, realm->typeInt()))
             return raiseTypeError(globalObject, scope, "an integer is required"_s);
-        auto size = toIndex(globalObject, result);
-        if (scope.exception()) {
-            if (catchException(globalObject, BuiltinType::IndexError))
-                raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
-            return { };
-        }
+        auto size = toSsize(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, { });
         if (*size < 0)
             return raiseValueError(globalObject, scope, "__sizeof__() should return >= 0"_s);
         constexpr unsigned long isCollected = 1ul << 14;
@@ -475,23 +471,6 @@ PYTHON_NATIVE(returnZero)
 }
 
 // ---- Limits and settings
-
-std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto index = toIndex(globalObject, value);
-    if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::IndexError))
-            raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
-        return std::nullopt;
-    }
-    if (*index > std::numeric_limits<int>::max() || *index < std::numeric_limits<int>::min()) {
-        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
-        return std::nullopt;
-    }
-    return static_cast<int>(*index);
-}
 
 PYTHON_NATIVE(sysGetRecursionLimit)
 {

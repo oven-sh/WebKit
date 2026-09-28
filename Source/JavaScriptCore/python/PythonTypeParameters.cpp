@@ -321,7 +321,7 @@ static bool checkNameIsString(JSGlobalObject* globalObject, ThrowScope& scope, A
 {
     if (name.isString())
         return true;
-    raiseTypeError(globalObject, scope, makeString(function, "() argument 'name' must be str, not "_s, isNone(name) ? "None"_str : typeName(globalObject, name)));
+    raiseTypeError(globalObject, scope, makeString(function, "() argument 'name' must be str, not "_s, typeNameOfArgument(globalObject, name)));
     return false;
 }
 

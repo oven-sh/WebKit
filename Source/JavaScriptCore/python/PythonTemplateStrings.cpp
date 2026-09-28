@@ -62,7 +62,7 @@ PYTHON_NATIVE(interpolationNew)
     auto checkIsString = [&] (JSValue argument, ASCIILiteral name) {
         if (!argument || stringIn(argument))
             return true;
-        raiseTypeError(globalObject, scope, makeString("Interpolation() argument '"_s, name, "' must be str, not "_s, isNone(argument) ? "None"_str : typeName(globalObject, argument)));
+        raiseTypeError(globalObject, scope, makeString("Interpolation() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, argument)));
         return false;
     };
     if (!checkIsString(expression, "expression"_s))

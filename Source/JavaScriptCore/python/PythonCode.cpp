@@ -817,7 +817,7 @@ static void auditNewCode(JSGlobalObject* globalObject, JSValue code, const CodeP
 static bool checkPart(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, const String& which, PartType type, JSValue& value)
 {
     auto complain = [&] (ASCIILiteral wanted) {
-        raiseTypeError(globalObject, scope, makeString(function, "() argument "_s, which, " must be "_s, wanted, ", not "_s, isNone(value) ? "None"_str : typeName(globalObject, value)));
+        raiseTypeError(globalObject, scope, makeString(function, "() argument "_s, which, " must be "_s, wanted, ", not "_s, typeNameOfArgument(globalObject, value)));
         return false;
     };
     switch (type) {

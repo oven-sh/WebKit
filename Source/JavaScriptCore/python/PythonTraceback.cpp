@@ -123,15 +123,9 @@ PYTHON_NATIVE(tracebackNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("traceback() argument 'tb_frame' must be frame, not "_s, isNone(frame) ? "None"_s : typeName(globalObject, frame))));
     int numbers[2];
     for (unsigned i = 0; i < 2; ++i) {
-        auto number = toIndex(globalObject, args.at(3 + i));
-        if (scope.exception()) {
-            if (catchException(globalObject, BuiltinType::IndexError))
-                raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
-            return { };
-        }
-        if (*number > std::numeric_limits<int>::max() || *number < std::numeric_limits<int>::min())
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s));
-        numbers[i] = static_cast<int>(*number);
+        auto number = toCInt(globalObject, args.at(3 + i));
+        RETURN_IF_EXCEPTION(scope, { });
+        numbers[i] = *number;
     }
     if (!isNone(next) && !isTraceback(globalObject, next))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expected traceback object or None, got '"_s, typeName(globalObject, next), '\'')));

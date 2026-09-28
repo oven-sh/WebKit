@@ -231,10 +231,7 @@ static std::optional<int64_t> toSize(JSGlobalObject* globalObject, JSValue value
         raiseTypeError(globalObject, scope, "an integer is required"_s);
         return std::nullopt;
     }
-    auto result = toIndex(globalObject, value);
-    if (scope.exception() && catchException(globalObject, BuiltinType::IndexError))
-        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
-    return result;
+    RELEASE_AND_RETURN(scope, toSsize(globalObject, value));
 }
 
 PYTHON_NATIVE(iteratorSetState)
@@ -251,12 +248,8 @@ PYTHON_NATIVE(iteratorSetState)
         RETURN_NONE();
     }
     case IteratorKind::Range: {
-        auto index = toIndex(globalObject, state);
-        if (scope.exception()) {
-            if (catchException(globalObject, BuiltinType::IndexError))
-                raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C long"_s);
-            return { };
-        }
+        auto index = toCLong(globalObject, state);
+        RETURN_IF_EXCEPTION(scope, { });
         int64_t skipped = std::clamp<int64_t>(*index, 0, iterator->stop());
         iterator->setIndex(static_cast<int64_t>(static_cast<uint64_t>(iterator->index()) + static_cast<uint64_t>(skipped) * static_cast<uint64_t>(iterator->step())));
         iterator->setStop(iterator->stop() - skipped);

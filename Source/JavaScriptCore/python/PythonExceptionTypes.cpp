@@ -137,7 +137,7 @@ PYTHON_NATIVE(exceptionAddNote)
     if (args.size() != 2 || args.keywordCount())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseException.add_note() takes exactly one argument ("_s, args.size() - 1, " given)"_s)));
     if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("add_note() argument must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("add_note() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     addNote(globalObject, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
@@ -616,12 +616,8 @@ static void setUnicodeErrorBound(JSGlobalObject* globalObject, JSValue self, JSV
         raiseTypeError(globalObject, scope, "an integer is required"_s);
         return;
     }
-    auto index = toIndex(globalObject, value);
-    if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::IndexError))
-            raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
-        return;
-    }
+    auto index = toSsize(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, void());
     asObject(self)->putDirect(vm, isEnd ? vm.pythonNames().field_end : vm.pythonNames().field_start, intFromInt64(globalObject, *index));
 }
 
@@ -654,12 +650,8 @@ PYTHON_NATIVE(unicodeErrorInit)
     ++position;
     int64_t range[2];
     for (auto& bound : range) {
-        auto index = toIndex(globalObject, args[position++]);
-        if (scope.exception()) {
-            if (catchException(globalObject, BuiltinType::IndexError))
-                raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
-            return { };
-        }
+        auto index = toSsize(globalObject, args[position++]);
+        RETURN_IF_EXCEPTION(scope, { });
         bound = *index;
     }
     if (!checkString(position))

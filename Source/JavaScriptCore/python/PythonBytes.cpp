@@ -451,7 +451,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             return { };
         JSString* string = stringIn(value);
         if (!string) {
-            raiseTypeError(globalObject, scope, makeString(typeText, "() argument '"_s, name, "' must be str, not "_s, isNone(value) ? "None"_str : typeName(globalObject, value)));
+            raiseTypeError(globalObject, scope, makeString(typeText, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
             return { };
         }
         return string->value(globalObject);
@@ -571,8 +571,8 @@ PYTHON_NATIVE(bytesFromHex)
 {
     NATIVE_PROLOGUE();
     String text;
-    if (args[1].isString())
-        text = asString(args[1])->value(globalObject);
+    if (JSString* string = stringIn(args[1]))
+        text = string->value(globalObject);
     else if (auto buffer = tryBufferOf(globalObject, args[1]))
         text = String(byteCast<Latin1Character>(*buffer));
     else {
@@ -858,7 +858,7 @@ PYTHON_NATIVE(bytesReplace)
     JSValue countValue = args.at(3);
     int64_t limit = -1;
     if (countValue) {
-        auto index = toIndex(globalObject, countValue, true);
+        auto index = toSsize(globalObject, countValue);
         RETURN_IF_EXCEPTION(scope, { });
         limit = *index;
     }
@@ -931,7 +931,7 @@ PYTHON_NATIVE(bytesSplit)
     JSValue limitValue = args.at(2);
     int64_t limit = -1;
     if (limitValue) {
-        auto index = toIndex(globalObject, limitValue, true);
+        auto index = toSsize(globalObject, limitValue);
         RETURN_IF_EXCEPTION(scope, { });
         limit = *index;
     }
@@ -1093,7 +1093,7 @@ PYTHON_NATIVE(bytesJustify)
     char align = unpack<char>(callFrame, 0);
     BYTES_PROLOGUE("center");
     ASCIILiteral method = align == '<' ? "ljust"_s : align == '>' ? "rjust"_s : "center"_s;
-    auto width = toIndex(globalObject, args[1]);
+    auto width = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     uint8_t fill = ' ';
     if (args.size() > 2) {
@@ -1101,7 +1101,7 @@ PYTHON_NATIVE(bytesJustify)
         if (!given || given->size() != 1) {
             if (given)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "(): argument 2 must be a byte string of length 1, not a "_s, typeName(globalObject, args[2]), " object of length "_s, given->size())));
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "() argument 2 must be a byte string of length 1, not "_s, typeName(globalObject, args[2]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "() argument 2 must be a byte string of length 1, not "_s, typeNameOfArgument(globalObject, args[2]))));
         }
         fill = (*given)[0];
     }
@@ -1118,7 +1118,7 @@ PYTHON_NATIVE(bytesJustify)
 PYTHON_NATIVE(bytesZfill)
 {
     BYTES_PROLOGUE("zfill");
-    auto width = toIndex(globalObject, args[1]);
+    auto width = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     ByteVector result;
     size_t start = 0;
@@ -1136,7 +1136,7 @@ PYTHON_NATIVE(bytesExpandTabs)
     JSValue sizeValue = args.at(1);
     int64_t tabSize = 8;
     if (sizeValue) {
-        auto index = toIndex(globalObject, sizeValue);
+        auto index = toCInt(globalObject, sizeValue);
         RETURN_IF_EXCEPTION(scope, { });
         tabSize = *index;
     }
@@ -1287,34 +1287,36 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
 {
     JSValue separatorValue = args.at(1);
     JSValue groupValue = args.at(2);
+    // How many to a group is looked at first.
+    int group = 1;
+    if (groupValue) {
+        auto index = toCInt(globalObject, groupValue);
+        RETURN_IF_EXCEPTION(scope, { });
+        group = *index;
+    }
     std::optional<char> separator;
     if (separatorValue) {
-        String text;
-        if (separatorValue.isString())
-            text = asString(separatorValue)->value(globalObject);
-        else if (auto buffer = bytesKindOf(separatorValue) == BytesKind::None ? std::nullopt : builtinBufferOf(separatorValue))
-            text = String(byteCast<Latin1Character>(*buffer));
-        else {
-            length(globalObject, separatorValue);
-            RETURN_IF_EXCEPTION(scope, { });
-            raiseTypeError(globalObject, scope, "sep must be str or bytes."_s);
-            return { };
-        }
-        if (text.length() != 1) {
+        // How long it is is asked before what it is.
+        int64_t separatorLength = length(globalObject, separatorValue);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (separatorLength != 1) {
             raiseValueError(globalObject, scope, "sep must be length 1."_s);
             return { };
         }
-        if (text[0] >= 0x80) {
+        char32_t character;
+        if (JSString* string = stringIn(separatorValue))
+            character = *string->view(globalObject)->codePoints().begin();
+        else if (bytesKindOf(separatorValue) == BytesKind::Bytes)
+            character = (*builtinBufferOf(separatorValue))[0];
+        else {
+            raiseTypeError(globalObject, scope, "sep must be str or bytes."_s);
+            return { };
+        }
+        if (character >= 0x80) {
             raiseValueError(globalObject, scope, "sep must be ASCII."_s);
             return { };
         }
-        separator = static_cast<char>(text[0]);
-    }
-    int64_t group = 1;
-    if (groupValue) {
-        auto index = toIndex(globalObject, groupValue);
-        RETURN_IF_EXCEPTION(scope, { });
-        group = *index;
+        separator = static_cast<char>(character);
     }
     return hexOf(content.span(), separator, group);
 }
@@ -1334,11 +1336,12 @@ static String optionalText(JSGlobalObject* globalObject, ThrowScope& scope, cons
         value = args.keyword(globalObject, name);
     if (!value)
         return { };
-    if (!value.isString()) {
-        raiseTypeError(globalObject, scope, makeString(function, "() argument '"_s, name, "' must be str, not "_s, typeName(globalObject, value)));
+    JSString* string = stringIn(value);
+    if (!string) {
+        raiseTypeError(globalObject, scope, makeString(function, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
         return { };
     }
-    return asString(value)->value(globalObject);
+    return string->value(globalObject);
 }
 
 // decode(encoding='utf-8', errors='strict')
@@ -1457,14 +1460,18 @@ static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVecto
         return true;
     }
     RETURN_IF_EXCEPTION(scope, false);
-    if (value.isString() || (!typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_getitem))) {
+    if (!typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_getitem)) {
         raiseTypeError(globalObject, scope, makeString(complaint, typeName(globalObject, value)));
         return false;
     }
     forEach(globalObject, value, [&] (JSValue item) {
         auto byte = byteFrom(globalObject, item, "byte must be in range(0, 256)"_s);
-        if (!byte)
+        if (!byte) {
+            // bytearray_extend_impl(): a str is what is most likely to have been given by mistake.
+            if (stringIn(value) && catchException(globalObject, BuiltinType::TypeError))
+                raiseTypeError(globalObject, scope, "expected iterable of integers; got: 'str'"_s);
             return false;
+        }
         result.append(*byte);
         return true;
     });
@@ -1586,7 +1593,7 @@ PYTHON_NATIVE(byteArrayInPlaceMultiply)
 PYTHON_NATIVE(byteArrayInsert)
 {
     BYTES_PROLOGUE("insert");
-    auto index = toIndex(globalObject, args[1], true);
+    auto index = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     auto byte = byteFrom(globalObject, args[2], "byte must be in range(0, 256)"_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1602,7 +1609,7 @@ PYTHON_NATIVE(byteArrayPop)
     BYTES_PROLOGUE("pop");
     int64_t at = -1;
     if (args.size() > 1) {
-        auto index = toIndex(globalObject, args[1]);
+        auto index = toSsize(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         at = *index;
     }
@@ -1657,7 +1664,7 @@ PYTHON_NATIVE(byteArrayCopy)
 PYTHON_NATIVE(byteArrayResize)
 {
     BYTES_PROLOGUE("resize");
-    auto size = toIndex(globalObject, args[1]);
+    auto size = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*size < 0)
         return JSValue::encode(raiseValueError(globalObject, scope, makeString("Can only resize to positive sizes, got "_s, *size)));
@@ -1668,19 +1675,25 @@ PYTHON_NATIVE(byteArrayResize)
 
 // ---- int.to_bytes() and int.from_bytes()
 
-// Whether the byte order is big endian. Nothing if it raised.
-static std::optional<bool> byteOrderFrom(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+// What was given for the byte order. That it is a str is seen to as the arguments are taken, and what it says when they all have been. Null if it raised.
+static String byteOrderArgument(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral function)
 {
     if (!value)
-        return true;
-    if (!value.isString()) {
-        raiseTypeError(globalObject, scope, makeString("to_bytes() argument 'byteorder' must be str, not "_s, typeName(globalObject, value)));
-        return std::nullopt;
+        return "big"_s;
+    JSString* string = stringIn(value);
+    if (!string) {
+        raiseTypeError(globalObject, scope, makeString(function, "() argument 'byteorder' must be str, not "_s, typeNameOfArgument(globalObject, value)));
+        return { };
     }
-    String text = asString(value)->value(globalObject);
-    if (text == "big"_s)
+    return string->value(globalObject);
+}
+
+// Whether it is big endian. Nothing if it raised.
+static std::optional<bool> isBigEndianOrder(JSGlobalObject* globalObject, ThrowScope& scope, const String& order)
+{
+    if (order == "big"_s)
         return true;
-    if (text == "little"_s)
+    if (order == "little"_s)
         return false;
     raiseValueError(globalObject, scope, "byteorder must be either 'little' or 'big'"_s);
     return std::nullopt;
@@ -1696,16 +1709,18 @@ PYTHON_NATIVE(intToBytes)
     JSValue signedValue = args.keyword(globalObject, "signed"_s);
     int64_t length = 1;
     if (lengthValue) {
-        auto index = toIndex(globalObject, lengthValue);
+        auto index = toSsize(globalObject, lengthValue);
         RETURN_IF_EXCEPTION(scope, { });
         length = *index;
-        if (length < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, "length argument must be non-negative"_s));
     }
-    auto isBigEndian = byteOrderFrom(globalObject, scope, orderValue);
+    String order = byteOrderArgument(globalObject, scope, orderValue, "to_bytes"_s);
     RETURN_IF_EXCEPTION(scope, { });
     bool isSigned = signedValue && isTrue(globalObject, signedValue);
     RETURN_IF_EXCEPTION(scope, { });
+    auto isBigEndian = isBigEndianOrder(globalObject, scope, order);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (length < 0)
+        return JSValue::encode(raiseValueError(globalObject, scope, "length argument must be non-negative"_s));
 
     // How big it is, least byte first.
     ByteVector magnitude;
@@ -1761,13 +1776,15 @@ PYTHON_NATIVE(intFromBytes)
         return JSValue::encode(raiseTypeError(globalObject, scope, "from_bytes() missing required argument 'bytes' (pos 1)"_s));
     JSValue orderValue = args.at(2);
     JSValue signedValue = args.keyword(globalObject, "signed"_s);
-    auto isBigEndian = byteOrderFrom(globalObject, scope, orderValue);
+    String order = byteOrderArgument(globalObject, scope, orderValue, "from_bytes"_s);
     RETURN_IF_EXCEPTION(scope, { });
     bool isSigned = signedValue && isTrue(globalObject, signedValue);
     RETURN_IF_EXCEPTION(scope, { });
+    auto isBigEndian = isBigEndianOrder(globalObject, scope, order);
+    RETURN_IF_EXCEPTION(scope, { });
 
     ByteVector content;
-    if (source.isString() || (!hasBuffer(globalObject, source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
+    if (stringIn(source) || (!hasBuffer(globalObject, source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to bytes"_s)));
     bytesToInsert(globalObject, source, content, ""_s);
     RETURN_IF_EXCEPTION(scope, { });

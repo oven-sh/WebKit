@@ -246,10 +246,8 @@ PYTHON_NATIVE(objectReduce)
 PYTHON_NATIVE(objectReduceEx)
 {
     NATIVE_PROLOGUE();
-    auto protocol = toIndex(globalObject, args[1]);
+    auto protocol = toCInt(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (*protocol > std::numeric_limits<int>::max() || *protocol < std::numeric_limits<int>::min())
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s));
     // A class that has a __reduce__() of its own has that called.
     JSValue own = getAttributeIfPresent(globalObject, args[0], names.dunder_reduce);
     RETURN_IF_EXCEPTION(scope, { });

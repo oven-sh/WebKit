@@ -195,8 +195,12 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
     case BinaryOperator::BitAnd:
     case BinaryOperator::BitXor:
     case BinaryOperator::Sub:
-        if (isSet(left) && isSet(right))
+        if (isSet(left) && isSet(right)) {
+            // A frozenset is not changed, whatever the operator: `a -= b` is `a = a - b`.
+            if (typeOf(globalObject, left)->isSubtypeOf(globalObject->pyRealm()->typeFrozenSet()))
+                inPlace = false;
             RELEASE_AND_RETURN(scope, setOperation(globalObject, op, inPlace, uncheckedDowncast<PySet>(left.asCell()), uncheckedDowncast<PySet>(right.asCell())));
+        }
         // d |= x takes whatever d.update(x) does.
         if (op == BinaryOperator::BitOr && isDict(left) && (inPlace || isDict(right))) {
             auto* result = uncheckedDowncast<PyDict>(left.asCell());
@@ -249,16 +253,6 @@ static JSValue sequenceRepeat(JSGlobalObject* globalObject, JSValue slot, JSValu
     if (!classify(count).isInt() && !typeOf(globalObject, count)->lookup(vm, vm.pythonNames().dunder_index))
         return raiseTypeError(globalObject, scope, makeString("can't multiply sequence by non-int of type '"_s, typeName(globalObject, count), '\''));
     RELEASE_AND_RETURN(scope, call(globalObject, slot, sequence, count));
-}
-
-// PyNumber_AsSsize_t(value, PyExc_OverflowError)
-std::optional<int64_t> toIndexOrOverflow(JSGlobalObject* globalObject, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto result = toIndex(globalObject, value);
-    if (scope.exception() && catchException(globalObject, BuiltinType::IndexError))
-        raise(globalObject, scope, BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
-    return result;
 }
 
 static JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ThrowScope& scope, BinaryOperator op, bool inPlace, JSValue left, JSValue right)
@@ -1283,7 +1277,10 @@ std::optional<int64_t> tryInt64(JSValue value)
     return std::nullopt;
 }
 
-std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool clamp)
+// What is done about an int that is too large.
+enum class IfTooLarge : uint8_t { Clamp, IndexError, OverflowError, TooLargeForSsize, TooLargeForLong, TooLargeForInt };
+
+static std::optional<int64_t> toInt64(JSGlobalObject* globalObject, JSValue value, IfTooLarge ifTooLarge)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1299,10 +1296,67 @@ std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool
         if (number.big->sign() && magnitude == static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1)
             return std::numeric_limits<int64_t>::min();
     }
-    if (clamp)
+    switch (ifTooLarge) {
+    case IfTooLarge::Clamp:
         return number.big->sign() ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
-    raise(globalObject, scope, BuiltinType::IndexError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+    case IfTooLarge::IndexError:
+    case IfTooLarge::OverflowError:
+        raise(globalObject, scope, ifTooLarge == IfTooLarge::IndexError ? BuiltinType::IndexError : BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+        break;
+    case IfTooLarge::TooLargeForSsize:
+        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
+        break;
+    case IfTooLarge::TooLargeForLong:
+        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C long"_s);
+        break;
+    case IfTooLarge::TooLargeForInt:
+        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
+        break;
+    }
     return std::nullopt;
+}
+
+std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool clamp)
+{
+    return toInt64(globalObject, value, clamp ? IfTooLarge::Clamp : IfTooLarge::IndexError);
+}
+
+std::optional<int64_t> toIndexOrOverflow(JSGlobalObject* globalObject, JSValue value)
+{
+    return toInt64(globalObject, value, IfTooLarge::OverflowError);
+}
+
+std::optional<int64_t> toSsize(JSGlobalObject* globalObject, JSValue value)
+{
+    return toInt64(globalObject, value, IfTooLarge::TooLargeForSsize);
+}
+
+std::optional<int64_t> toCLong(JSGlobalObject* globalObject, JSValue value)
+{
+    return toInt64(globalObject, value, IfTooLarge::TooLargeForLong);
+}
+
+std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto result = toInt64(globalObject, value, IfTooLarge::TooLargeForInt);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (*result > std::numeric_limits<int>::max() || *result < std::numeric_limits<int>::min()) {
+        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
+        return std::nullopt;
+    }
+    return static_cast<int>(*result);
+}
+
+std::optional<int64_t> toSliceIndex(JSGlobalObject* globalObject, JSValue value, bool mayBeNone)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!classify(value).isInt() && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index)) {
+        raiseTypeError(globalObject, scope, mayBeNone ? "slice indices must be integers or None or have an __index__ method"_s : "slice indices must be integers or have an __index__ method"_s);
+        return std::nullopt;
+    }
+    RELEASE_AND_RETURN(scope, toInt64(globalObject, value, IfTooLarge::Clamp));
 }
 
 std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)

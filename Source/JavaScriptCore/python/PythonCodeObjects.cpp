@@ -228,7 +228,7 @@ PYTHON_NATIVE(functionNew)
     JSValue defaults = orNone(args.at(4));
     JSValue closure = orNone(args.at(5));
     JSValue keywordDefaults = orNone(args.at(6));
-    auto describe = [&] (JSValue value) { return isNone(value) ? "None"_str : typeName(globalObject, value); };
+    auto describe = [&] (JSValue value) { return typeNameOfArgument(globalObject, value); };
     if (!isCode(globalObject, code))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function() argument 'code' must be code, not "_s, describe(code))));
     if (!isDict(globals))
@@ -496,7 +496,7 @@ PYTHON_NATIVE(builtinCompile)
     String filename = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(path->span()));
     JSValue modeValue = args.at(2);
     if (!stringIn(modeValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, isNone(modeValue) ? "None"_str : typeName(globalObject, modeValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, typeNameOfArgument(globalObject, modeValue))));
     String mode = asString(modeValue)->value(globalObject);
     auto number = [&] (unsigned index, int otherwise) -> int {
         JSValue value = args.at(index);

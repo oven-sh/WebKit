@@ -230,11 +230,9 @@ JSValue setOperation(JSGlobalObject* globalObject, BinaryOperator op, bool inPla
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // What comes of it is a set or a frozenset, as the left operand is or is derived from. A frozenset is not changed, whatever the operator: `a -= b` is `a = a - b`.
+    // What comes of it is a set or a frozenset, as the left operand is or is derived from.
     PyRealm* realm = globalObject->pyRealm();
     bool isFrozen = typeOf(globalObject, left)->isSubtypeOf(realm->typeFrozenSet());
-    if (isFrozen)
-        inPlace = false;
     PySet* result = PySet::create(vm, realm->structureFor(isFrozen ? BuiltinType::FrozenSet : BuiltinType::Set));
     auto addAll = [&] (PySet* from, PySet* unlessIn, PySet* onlyIfIn) -> bool {
         for (unsigned entry = 0; entry < from->entryCount(); ++entry) {
