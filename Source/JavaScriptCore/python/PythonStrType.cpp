@@ -33,6 +33,7 @@
 #include <unicode/ustring.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/unicode/CharacterNames.h>
 #include <wtf/unicode/icu/ICUHelpers.h>
 
 // str.
@@ -58,7 +59,7 @@ static String selfString(JSGlobalObject* globalObject, ThrowScope& scope, const 
 {
     JSValue self = unboxString(args.at(0));
     if (!self || !self.isString()) {
-        raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method, "' for 'str' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
+        raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, method, "' for 'str' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
         return { };
     }
     return asString(self)->value(globalObject);
@@ -68,7 +69,7 @@ static String stringArgument(JSGlobalObject* globalObject, ThrowScope& scope, JS
 {
     JSString* string = stringIn(value);
     if (!string) {
-        raiseTypeError(globalObject, scope, makeString(method, "() argument "_s, position, " must be str, not "_s, typeNameOfArgument(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate(method, "() argument "_s, position, " must be str, not "_s, typeNameOfArgument(globalObject, value)));
         return { };
     }
     return string->value(globalObject);
@@ -155,7 +156,7 @@ PYTHON_NATIVE(strNew)
     auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
     if (args.size() > 4 && !args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str expected at most 3 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("str expected at most 3 arguments, got "_s, args.size() - 1)));
     if (!checkArgumentsSlow(globalObject, callFrame))
         return { };
     JSValue value = args.at(1);
@@ -165,14 +166,14 @@ PYTHON_NATIVE(strNew)
     if (encodingValue || errorsValue) {
         for (JSValue option : { encodingValue, errorsValue }) {
             if (option && !stringIn(option))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, type == realm->typeStr() && !args.keywordCount() ? typeName(globalObject, option) : typeNameOfArgument(globalObject, option))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, type == realm->typeStr() && !args.keywordCount() ? typeName(globalObject, option) : typeNameOfArgument(globalObject, option))));
         }
         if (value) {
             if (stringIn(value))
                 return JSValue::encode(raiseTypeError(globalObject, scope, "decoding str is not supported"_s));
             auto buffer = bufferOrNothing(globalObject, value);
             if (!buffer)
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
             String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(stringIn(encodingValue)->value(globalObject)) : String(), errorsValue ? String(stringIn(errorsValue)->value(globalObject)) : String());
             RETURN_IF_EXCEPTION(scope, { });
             result = jsString(vm, text);
@@ -199,7 +200,7 @@ PYTHON_NATIVE(strFormatMethod)
     NATIVE_PROLOGUE();
     JSString* specification = stringIn(args[1]);
     if (!specification)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 
@@ -211,18 +212,18 @@ PYTHON_NATIVE(strJoin)
     MarkedArgumentBuffer items;
     collectFast(globalObject, args[1], items, "can only join an iterable"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    StringBuilder builder;
+    TextBuilder builder;
     for (unsigned i = 0; i < items.size(); ++i) {
         JSValue item = unboxString(items.at(i));
         if (!item.isString())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, item), " found"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, item), " found"_s)));
         if (i)
             builder.append(self);
         auto view = asString(item)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(view.data);
     }
-    return JSValue::encode(toJS(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 // split(sep=None, maxsplit=-1)
@@ -243,7 +244,10 @@ PYTHON_NATIVE(strSplit)
 
     StringView view = self;
     unsigned length = view.length();
-    Vector<std::pair<unsigned, unsigned>, 16> pieces; // Where each begins and ends.
+    // No more than a list has room for, and one more, which is how it is seen that there are too many.
+    limit = std::min<int64_t>(limit, maxListLength);
+    MarkedArgumentBuffer pieces;
+    auto add = [&] (unsigned start, unsigned end) { pieces.append(toJS(vm, view.substring(start, end - start))); };
 
     if (!separatorValue || isNone(separatorValue)) {
         // Runs of white space, and none at the ends.
@@ -255,13 +259,13 @@ PYTHON_NATIVE(strSplit)
                 if (i >= length)
                     break;
                 if (static_cast<int64_t>(pieces.size()) == limit) {
-                    pieces.append({ i, length });
+                    add(i, length);
                     break;
                 }
                 unsigned start = i;
                 while (i < length && !isSpace(view[i]))
                     ++i;
-                pieces.append({ start, i });
+                add(start, i);
             }
         } else {
             unsigned i = length;
@@ -271,20 +275,19 @@ PYTHON_NATIVE(strSplit)
                 if (!i)
                     break;
                 if (static_cast<int64_t>(pieces.size()) == limit) {
-                    pieces.append({ 0, i });
+                    add(0, i);
                     break;
                 }
                 unsigned end = i;
                 while (i && !isSpace(view[i - 1]))
                     --i;
-                pieces.append({ i, end });
+                add(i, end);
             }
-            pieces.reverse();
         }
     } else {
         JSString* separatorString = stringIn(separatorValue);
         if (!separatorString)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("must be str or None, not "_s, typeName(globalObject, separatorValue))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("must be str or None, not "_s, typeName(globalObject, separatorValue))));
         String separator = separatorString->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         // Where it plainly cannot be found there is nothing to do, and what was to be split is all that there is, whatever class it is of.
@@ -301,28 +304,30 @@ PYTHON_NATIVE(strSplit)
                 size_t found = view.find(separator, start);
                 if (found == notFound)
                     break;
-                pieces.append({ start, static_cast<unsigned>(found) });
+                add(start, static_cast<unsigned>(found));
                 start = found + separator.length();
             }
-            pieces.append({ start, length });
+            add(start, length);
         } else {
             unsigned end = length;
             while (static_cast<int64_t>(pieces.size()) < limit && end >= separator.length()) {
                 size_t found = view.left(end).reverseFind(separator);
                 if (found == notFound)
                     break;
-                pieces.append({ static_cast<unsigned>(found + separator.length()), end });
+                add(static_cast<unsigned>(found + separator.length()), end);
                 end = found;
             }
-            pieces.append({ 0, end });
-            pieces.reverse();
+            add(0, end);
         }
     }
 
-    MarkedArgumentBuffer result;
-    for (auto [start, end] : pieces)
-        result.append(toJS(vm, view.substring(start, end - start)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, result)));
+    JSArray* result = newList(globalObject, pieces);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (fromRight) {
+        reverseList(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
 }
 
 PYTHON_NATIVE(strSplitLines)
@@ -358,7 +363,7 @@ PYTHON_NATIVE(strPartition)
     STR_PROLOGUE("partition");
     JSString* separatorString = stringIn(args[1]);
     if (!separatorString)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("must be str, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("must be str, not "_s, typeName(globalObject, args[1]))));
     String separator = separatorString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (separator.isEmpty())
@@ -385,7 +390,7 @@ PYTHON_NATIVE(strStrip)
     if (hasCharacters) {
         JSString* given = stringIn(args[1]);
         if (!given)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(left && right ? "strip"_s : left ? "lstrip"_s : "rstrip"_s, " arg must be None or str"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(left && right ? "strip"_s : left ? "lstrip"_s : "rstrip"_s, " arg must be None or str"_s)));
         characters = given->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
@@ -416,7 +421,7 @@ PYTHON_NATIVE(strJustify)
     if (args.size() > 2) {
         JSString* given = stringIn(args[2]);
         if (!given)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("The fill character must be a unicode character, not "_s, typeName(globalObject, args[2]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("The fill character must be a unicode character, not "_s, typeName(globalObject, args[2]))));
         fill = given->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (characterCount(fill) != 1)
@@ -430,7 +435,7 @@ PYTHON_NATIVE(strJustify)
     int64_t padding = *width - length;
     // As CPython has it, so that an odd one out goes where it does there.
     int64_t before = align == '<' ? 0 : align == '>' ? padding : padding / 2 + (padding & *width & 1);
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    TextBuilder builder;
     for (int64_t i = 0; i < before; ++i)
         builder.append(fill);
     builder.append(self);
@@ -438,7 +443,7 @@ PYTHON_NATIVE(strJustify)
         builder.append(fill);
     if (builder.hasOverflowed())
         return JSValue::encode(raiseMemoryError(globalObject, scope));
-    return JSValue::encode(toJS(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 PYTHON_NATIVE(strZfill)
@@ -451,7 +456,7 @@ PYTHON_NATIVE(strZfill)
         return JSValue::encode(unboxString(args[0]));
     if (*width > static_cast<int64_t>(String::MaxLength))
         return JSValue::encode(raiseMemoryError(globalObject, scope));
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    TextBuilder builder;
     unsigned start = 0;
     if (length && (self[0] == '+' || self[0] == '-'))
         builder.append(self[start++]);
@@ -460,7 +465,7 @@ PYTHON_NATIVE(strZfill)
     builder.append(StringView(self).substring(start));
     if (builder.hasOverflowed())
         return JSValue::encode(raiseMemoryError(globalObject, scope));
-    return JSValue::encode(toJS(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 PYTHON_NATIVE(strExpandTabs)
@@ -473,7 +478,7 @@ PYTHON_NATIVE(strExpandTabs)
         RETURN_IF_EXCEPTION(scope, { });
         tabSize = *index;
     }
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    TextBuilder builder;
     int64_t column = 0;
     for (char32_t c : StringView(self).codePoints()) {
         if (c == '\t') {
@@ -490,7 +495,7 @@ PYTHON_NATIVE(strExpandTabs)
     }
     if (builder.hasOverflowed())
         return JSValue::encode(raiseMemoryError(globalObject, scope));
-    return JSValue::encode(toJS(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 PYTHON_NATIVE(strRemoveAffix)
@@ -499,7 +504,7 @@ PYTHON_NATIVE(strRemoveAffix)
     STR_PROLOGUE("removeprefix");
     JSString* given = stringIn(args[1]);
     if (!given)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(prefix ? "removeprefix"_s : "removesuffix"_s, "() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(prefix ? "removeprefix"_s : "removesuffix"_s, "() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     String affix = given->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (!affix.isEmpty() && (prefix ? self.startsWith(affix) : self.endsWith(affix)))
@@ -509,21 +514,59 @@ PYTHON_NATIVE(strRemoveAffix)
 
 // ---- Case
 
+// Whether there is room for a string in another case, where it can be longer: the sharp s in upper case is SS. False, with MemoryError raised, if not. What puts it in the other case gives the string back as it
+// was if there is no room, or brings everything down, so this is asked first. `convert` is ICU's, which says how long it would be when it is given nowhere to put it.
+template<typename Convert>
+static bool hasRoomInAnotherCase(JSGlobalObject* globalObject, const String& string, bool isToLower, const Convert& convert)
+{
+    // One character makes three at the most, which is how much room CPython sets aside.
+    if (string.length() <= String::MaxLength / 3) [[likely]]
+        return true;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (string.is8Bit()) {
+        // Of these the sharp s is the only one that makes more than one, and not in lower case, which it is in already.
+        size_t length = string.length();
+        if (!isToLower) {
+            for (Latin1Character character : string.span8())
+                length += character == WTF::Unicode::smallLetterSharpS;
+        }
+        if (length > String::MaxLength) {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
+        return true;
+    }
+    UErrorCode status = U_ZERO_ERROR;
+    int32_t length = convert(nullptr, 0, string.span16().data(), string.length(), &status);
+    // That there was nowhere to put it is what it is bound to say. Anything else is that the length cannot be counted.
+    if ((status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) || !StringImpl::isValidLength<char16_t>(length)) {
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
+    return true;
+}
+
 PYTHON_NATIVE(strUpper)
 {
     STR_PROLOGUE("upper");
+    if (!hasRoomInAnotherCase(globalObject, self, false, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strToUpper(to, capacity, from, length, "", status); }))
+        return { };
     return JSValue::encode(toJS(vm, self.convertToUppercaseWithoutLocale()));
 }
 
 PYTHON_NATIVE(strLower)
 {
     STR_PROLOGUE("lower");
+    if (!hasRoomInAnotherCase(globalObject, self, true, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strToLower(to, capacity, from, length, "", status); }))
+        return { };
     return JSValue::encode(toJS(vm, self.convertToLowercaseWithoutLocale()));
 }
 
 PYTHON_NATIVE(strCasefold)
 {
     STR_PROLOGUE("casefold");
+    if (!hasRoomInAnotherCase(globalObject, self, false, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strFoldCase(to, capacity, from, length, U_FOLD_CASE_DEFAULT, status); }))
+        return { };
     return JSValue::encode(toJS(vm, self.foldCase()));
 }
 
@@ -533,15 +576,12 @@ static bool isCased(char32_t c) { return u_isUUppercase(c) || u_isULowercase(c) 
 // characters go to which case. What puts a whole string in one case can leave it all to ICU.
 class CaseMapper {
 public:
-    explicit CaseMapper(StringView string)
-    {
-        for (char32_t c : string.codePoints())
-            m_characters.append(c);
-    }
+    // False if it raised.
+    bool read(JSGlobalObject* globalObject, StringView string) { return charactersOf(globalObject, string, m_characters); }
 
     size_t size() const { return m_characters.size(); }
     char32_t operator[](size_t i) const { return m_characters[i]; }
-    String result() { return m_result.toString(); }
+    String result() { return m_result.tryFinish(); }
 
     void keep(size_t i) { m_result.append(m_characters[i]); }
     void upper(size_t i) { map(m_characters[i], toASCIIUpper<char32_t>, [] (auto... arguments) { return u_strToUpper(arguments...); }); }
@@ -606,14 +646,16 @@ private:
     }
 
     Vector<char32_t, 64> m_characters;
-    StringBuilder m_result;
+    TextBuilder m_result;
     std::unique_ptr<UCaseMap, ICUDeleter<ucasemap_close>> m_titleMap;
 };
 
 PYTHON_NATIVE(strSwapCase)
 {
     STR_PROLOGUE("swapcase");
-    CaseMapper mapper { self };
+    CaseMapper mapper;
+    if (!mapper.read(globalObject, self))
+        return { };
     for (size_t i = 0; i < mapper.size(); ++i) {
         if (u_isUUppercase(mapper[i]))
             mapper.lower(i);
@@ -622,26 +664,30 @@ PYTHON_NATIVE(strSwapCase)
         else
             mapper.keep(i);
     }
-    return JSValue::encode(toJS(vm, mapper.result()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, mapper.result())));
 }
 
 PYTHON_NATIVE(strCapitalize)
 {
     STR_PROLOGUE("capitalize");
-    CaseMapper mapper { self };
+    CaseMapper mapper;
+    if (!mapper.read(globalObject, self))
+        return { };
     for (size_t i = 0; i < mapper.size(); ++i) {
         if (!i)
             mapper.title(i);
         else
             mapper.lower(i);
     }
-    return JSValue::encode(toJS(vm, mapper.result()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, mapper.result())));
 }
 
 PYTHON_NATIVE(strTitle)
 {
     STR_PROLOGUE("title");
-    CaseMapper mapper { self };
+    CaseMapper mapper;
+    if (!mapper.read(globalObject, self))
+        return { };
     bool previousIsCased = false;
     for (size_t i = 0; i < mapper.size(); ++i) {
         if (previousIsCased)
@@ -650,7 +696,7 @@ PYTHON_NATIVE(strTitle)
             mapper.title(i);
         previousIsCased = isCased(mapper[i]);
     }
-    return JSValue::encode(toJS(vm, mapper.result()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, mapper.result())));
 }
 
 // ---- Questions
@@ -741,9 +787,9 @@ PYTHON_NATIVE(strIsPrintable)
     STR_PROLOGUE("isprintable");
     // What repr() leaves as it is.
     for (char32_t c : StringView(self).codePoints()) {
-        StringBuilder one;
+        TextBuilder one;
         one.append(c);
-        String quoted = reprOfString(one.toString());
+        String quoted = reprOfString(one.tryFinish());
         if (c != '\\' && c != '\'' && quoted.length() != one.length() + 2)
             return JSValue::encode(jsBoolean(false));
     }
@@ -768,11 +814,11 @@ PYTHON_NATIVE(strStartsOrEndsWith)
     if (JSString* string = stringIn(candidate))
         return JSValue::encode(jsBoolean(matches(string)));
     if (!isTuple(candidate))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, " first arg must be str or a tuple of str, not "_s, typeName(globalObject, candidate))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(method, " first arg must be str or a tuple of str, not "_s, typeName(globalObject, candidate))));
     for (auto& entry : uncheckedDowncast<PyTuple>(candidate.asCell())->span()) {
         JSString* item = stringIn(entry.get());
         if (!item)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("tuple for "_s, method, " must only contain str, not "_s, typeName(globalObject, entry.get()))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("tuple for "_s, method, " must only contain str, not "_s, typeName(globalObject, entry.get()))));
         if (matches(item))
             return JSValue::encode(jsBoolean(true));
     }
@@ -824,7 +870,7 @@ PYTHON_NATIVE(strReplace)
 {
     STR_PROLOGUE("replace");
     if (args.size() < 3 || args.size() > 4)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("replace expected at least 2 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("replace expected at least 2 arguments, got "_s, args.size() - 1)));
     String from = stringArgument(globalObject, scope, args[1], "replace"_s, 1);
     RETURN_IF_EXCEPTION(scope, { });
     String to = stringArgument(globalObject, scope, args[2], "replace"_s, 2);
@@ -840,7 +886,7 @@ PYTHON_NATIVE(strReplace)
         limit = std::numeric_limits<int64_t>::max();
 
     StringView view = self;
-    StringBuilder builder;
+    TextBuilder builder;
     if (from.isEmpty()) {
         // Between every two characters, and at both ends.
         int64_t done = 0;
@@ -851,7 +897,7 @@ PYTHON_NATIVE(strReplace)
         }
         if (done < limit)
             builder.append(to);
-        return JSValue::encode(toJS(vm, builder.toString()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
     }
     unsigned start = 0;
     for (int64_t done = 0; done < limit; ++done) {
@@ -864,7 +910,7 @@ PYTHON_NATIVE(strReplace)
     if (!start)
         return JSValue::encode(unboxString(args[0]));
     builder.append(view.substring(start));
-    return JSValue::encode(toJS(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 // ---- format()
@@ -886,8 +932,8 @@ public:
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         Characters characters;
-        for (char32_t c : StringView(text).codePoints())
-            characters.append(c);
+        charactersOf(m_globalObject, text, characters);
+        RETURN_IF_EXCEPTION(scope, { });
         String result = buildString(characters, 0, characters.size(), outermost);
         RETURN_IF_EXCEPTION(scope, { });
         // As with `format % values`: if the first piece that has anything in it is the last, and is a str already, it is what is given. So it is with the format itself, if there is nothing to fill in.
@@ -909,11 +955,10 @@ private:
 
     static String toString(const Characters& characters, Range range)
     {
-        StringBuilder builder;
+        TextBuilder builder;
         for (size_t i = range.start; i < range.end; ++i)
             builder.append(characters[i]);
-        String result = builder.toString();
-        return result.isNull() ? emptyString() : result;
+        return builder.tryFinish();
     }
 
     String buildString(const Characters& s, size_t start, size_t end, int recursionDepth)
@@ -923,7 +968,7 @@ private:
             raiseValueError(m_globalObject, scope, "Max string recursion exceeded"_s);
             return { };
         }
-        StringBuilder result;
+        TextBuilder result;
         size_t position = start;
         while (position < end) {
             // Literal text, up to a brace.
@@ -973,8 +1018,7 @@ private:
                 m_only = field;
             result.append(piece);
         }
-        String text = result.toString();
-        return text.isNull() ? emptyString() : text;
+        RELEASE_AND_RETURN(scope, result.finish(m_globalObject));
     }
 
     bool parseField(const Characters& s, size_t& position, size_t end, Range& fieldName, Range& specification, bool& specificationNeedsExpanding, char32_t& conversion)
@@ -1095,7 +1139,7 @@ private:
                 return raiseValueError(m_globalObject, scope, "Format string contains positional fields"_s);
             // The first argument is the format string itself.
             if (index >= static_cast<int64_t>(m_args.size()) - 1)
-                return raise(m_globalObject, scope, BuiltinType::IndexError, makeString("Replacement index "_s, index, " out of range for positional args tuple"_s));
+                return raise(m_globalObject, scope, BuiltinType::IndexError, concatenate("Replacement index "_s, index, " out of range for positional args tuple"_s));
             object = m_args[index + 1];
         }
 
@@ -1148,12 +1192,13 @@ private:
                 object = reprObject(m_globalObject, object);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (String text = stringIn(object)->value(m_globalObject); !text.containsOnlyASCII())
-                    object = jsString(m_vm, escapeNonASCII(text));
+                    object = strOrMemoryError(m_globalObject, escapeNonASCII(text));
+                RETURN_IF_EXCEPTION(scope, { });
             } else {
                 if (conversion > 32 && conversion < 127)
-                    raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier "_s, static_cast<char>(conversion)));
+                    raiseValueError(m_globalObject, scope, concatenate("Unknown conversion specifier "_s, static_cast<char>(conversion)));
                 else
-                    raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier \\x"_s, hex(static_cast<unsigned>(conversion), Lowercase)));
+                    raiseValueError(m_globalObject, scope, concatenate("Unknown conversion specifier \\x"_s, hex(static_cast<unsigned>(conversion), Lowercase)));
                 return { };
             }
             RETURN_IF_EXCEPTION(scope, { });
@@ -1231,7 +1276,7 @@ PYTHON_NATIVE(strTranslate)
 {
     STR_PROLOGUE("translate");
     JSValue table = args[1];
-    StringBuilder result;
+    TextBuilder result;
     StringView view { self };
     unsigned start = 0;
 
@@ -1280,7 +1325,7 @@ PYTHON_NATIVE(strTranslate)
             break;
         }
     }
-    return JSValue::encode(toJS(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, result.tryFinish())));
 }
 
 // str.maketrans(x[, y[, z]])
@@ -1292,7 +1337,7 @@ PYTHON_NATIVE(strMakeTrans)
     JSValue z = args.at(2);
     for (unsigned i = 1; i < args.size(); ++i) {
         if (!stringIn(args[i]))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("maketrans() argument "_s, i + 1, " must be str, not "_s, isNone(args[i]) ? "None"_s : typeName(globalObject, args[i]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("maketrans() argument "_s, i + 1, " must be str, not "_s, isNone(args[i]) ? "None"_s : typeName(globalObject, args[i]))));
     }
     PyDict* table = PyDict::create(globalObject);
     auto number = [] (char32_t character) { return jsNumber(static_cast<int32_t>(character)); };
@@ -1300,11 +1345,11 @@ PYTHON_NATIVE(strMakeTrans)
         if (!stringIn(x))
             return JSValue::encode(raiseTypeError(globalObject, scope, "first maketrans argument must be a string if there is a second argument"_s));
         Vector<char32_t> from;
-        for (char32_t character : stringIn(x)->view(globalObject)->codePoints())
-            from.append(character);
+        charactersOf(globalObject, stringIn(x)->view(globalObject), from);
+        RETURN_IF_EXCEPTION(scope, { });
         Vector<char32_t> to;
-        for (char32_t character : stringIn(y)->view(globalObject)->codePoints())
-            to.append(character);
+        charactersOf(globalObject, stringIn(y)->view(globalObject), to);
+        RETURN_IF_EXCEPTION(scope, { });
         if (from.size() != to.size())
             return JSValue::encode(raiseValueError(globalObject, scope, "the first two maketrans arguments must have equal length"_s));
         for (size_t i = 0; i < from.size(); ++i)

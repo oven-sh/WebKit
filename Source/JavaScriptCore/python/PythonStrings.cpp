@@ -32,6 +32,7 @@
 #include "PythonBytes.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
+#include "PythonText.h"
 #include <unicode/uchar.h>
 #include <wtf/dtoa.h>
 #include <wtf/dtoa/double-conversion.h>
@@ -103,7 +104,7 @@ JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue ke
             unsigned end = hasPairs ? stringOffsetOfCharacter(view, indices->stop) : indices->stop;
             RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, start, end - start));
         }
-        StringBuilder builder;
+        TextBuilder builder;
         int64_t at = indices->start;
         for (int64_t i = 0; i < indices->length; ++i, at += indices->step) {
             if (!hasPairs) {
@@ -115,11 +116,11 @@ JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue ke
             if (U16_IS_LEAD(view[offset]) && offset + 1 < view->length() && U16_IS_TRAIL(view[offset + 1]))
                 builder.append(view[offset + 1]);
         }
-        return jsString(vm, builder.toString());
+        RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, builder.tryFinish()));
     }
 
     if (!classify(key).isInt() && !(key.isObject() && typeOf(globalObject, key)->lookup(vm, vm.pythonNames().dunder_index)))
-        return raiseTypeError(globalObject, scope, makeString("string indices must be integers, not '"_s, typeName(globalObject, key), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("string indices must be integers, not '"_s, typeName(globalObject, key), '\''));
     auto index = toIndex(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t i = *index < 0 ? *index + length : *index;
@@ -148,11 +149,21 @@ JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t cou
         return raiseMemoryError(globalObject, scope);
     auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    StringBuilder builder;
-    builder.reserveCapacity(view->length() * count);
-    for (int64_t i = 0; i < count; ++i)
-        builder.append(view.data);
-    return jsString(vm, builder.toString());
+    // How long it will be and how wide its characters are is known, so it is made at that size.
+    auto repeat = [&] <typename CharacterType> (std::span<const CharacterType> characters) -> JSValue {
+        std::span<CharacterType> all;
+        RefPtr result = StringImpl::tryCreateUninitialized(characters.size() * count, all);
+        if (!result)
+            return raiseMemoryError(globalObject, scope);
+        if (characters.size() == 1)
+            std::ranges::fill(all, characters[0]);
+        else {
+            for (auto rest = all; !rest.empty(); rest = rest.subspan(characters.size()))
+                memcpySpan(rest, characters);
+        }
+        return jsString(vm, String(result.releaseNonNull()));
+    };
+    return view->is8Bit() ? repeat(view->span8()) : repeat(view->span16());
 }
 
 // ---- repr
@@ -197,7 +208,7 @@ String reprOfString(StringView view)
     bool hasSingle = view.contains('\'');
     bool hasDouble = view.contains('"');
     char quote = hasSingle && !hasDouble ? '"' : '\'';
-    StringBuilder builder;
+    TextBuilder builder;
     builder.append(quote);
     for (char32_t c : view.codePoints()) {
         switch (c) {
@@ -236,7 +247,7 @@ String reprOfString(StringView view)
             builder.append("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
     }
     builder.append(quote);
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 // ---- Digits of floats
@@ -279,11 +290,14 @@ static void roundTieToEven(Digits& result, int last)
 
 static Digits toDigits(double value, Converter::DtoaMode mode, int requested)
 {
+    // Written out in full a double comes to an end: it has so many digits before the point at the most, and so many after. Past that there are only zeros, which are not kept here, so there is no use asking for them.
+    constexpr int mostBeforePoint = std::numeric_limits<double>::max_exponent10 + 1;
+    constexpr int mostAfterPoint = std::numeric_limits<double>::digits - std::numeric_limits<double>::min_exponent;
     Digits result;
-    Vector<char, 512> buffer(std::max(requested, 0) + 400);
+    std::array<char, mostBeforePoint + mostAfterPoint + 1> buffer;
     int length;
-    Converter::DoubleToAscii(value, mode, requested, buffer.mutableSpan(), result.isNegative, length, result.point);
-    result.digits.append(buffer.span().first(length));
+    Converter::DoubleToAscii(value, mode, std::min(requested, mode == Converter::FIXED ? mostAfterPoint : mostBeforePoint + mostAfterPoint), std::span<char> { buffer }, result.isNegative, length, result.point);
+    result.digits.append(std::span<const char> { buffer }.first(length));
     while (!result.digits.isEmpty() && result.digits.last() == '0')
         result.digits.removeLast();
     return result;
@@ -293,7 +307,7 @@ static Digits toDigits(double value, Converter::DtoaMode mode, int requested)
 static Digits fixedPointDigits(double value, int precision)
 {
     Digits result = toDigits(value, Converter::FIXED, precision);
-    if (exactFractionDigits(value) == precision + 1)
+    if (exactFractionDigits(value) - 1 == precision)
         roundTieToEven(result, result.point + precision - 1);
     return result;
 }
@@ -310,7 +324,7 @@ static Digits significantDigits(double value, int count)
     int exactCount = fraction ? shortest.point + fraction : static_cast<int>(shortest.digits.size());
     // If rounding up carried all the way, as from 9.5 to 10, the digit that was rounded to is a zero, and even.
     bool didCarry = result.point != shortest.point;
-    if (!didCarry && exactCount == count + 1 && (fraction || (shortest.digits.last() == '5' && std::abs(value) < 9007199254740992.0)))
+    if (!didCarry && exactCount - 1 == count && (fraction || (shortest.digits.last() == '5' && std::abs(value) < 9007199254740992.0)))
         roundTieToEven(result, count - 1);
     return result;
 }
@@ -324,8 +338,8 @@ static void appendFixed(StringBuilder& builder, const Digits& digits, int precis
         builder.append(i < size ? digits.digits[i] : '0');
     if (precision > 0 || alwaysPoint)
         builder.append('.');
-    for (int i = 0; i < precision; ++i) {
-        int index = digits.point + i;
+    for (int64_t i = 0; i < precision && !builder.hasOverflowed(); ++i) {
+        int64_t index = digits.point + i;
         builder.append(index >= 0 && index < size ? digits.digits[index] : '0');
     }
 }
@@ -336,7 +350,7 @@ static void appendExponential(StringBuilder& builder, const Digits& digits, int 
     builder.append(size ? digits.digits[0] : '0');
     if (precision > 0 || alwaysPoint)
         builder.append('.');
-    for (int i = 1; i <= precision; ++i)
+    for (int64_t i = 1; i <= precision && !builder.hasOverflowed(); ++i)
         builder.append(i < size ? digits.digits[i] : '0');
     int exponent = isZero ? 0 : digits.point - 1;
     builder.append(exponentCharacter, exponent < 0 ? '-' : '+');
@@ -348,12 +362,12 @@ static void appendExponential(StringBuilder& builder, const Digits& digits, int 
 
 String fixedDigits(double value, int precision)
 {
-    StringBuilder builder;
+    TextBuilder builder;
     Digits digits = fixedPointDigits(value, precision);
     if (digits.isNegative)
         builder.append('-');
     appendFixed(builder, digits, precision, false);
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 double roundToDigits(double value, int digits)
@@ -375,7 +389,7 @@ double roundToDigits(double value, int digits)
     int keep = shortest.point + digits;
     if (keep < 0)
         return std::copysign(0.0, value);
-    StringBuilder builder;
+    TextBuilder builder;
     if (value < 0)
         builder.append('-');
     if (!keep) {
@@ -387,7 +401,7 @@ double roundToDigits(double value, int digits)
     for (int i = 0; i < rounded.point; ++i)
         builder.append(i < static_cast<int>(rounded.digits.size()) ? rounded.digits[i] : '0');
     size_t parsed;
-    return parseDouble(builder.toString(), parsed);
+    return parseDouble(builder.tryFinish(), parsed);
 }
 
 // ---- The format specification
@@ -409,13 +423,13 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     FormatSpecification result;
     result.typeName = typeName;
     Vector<char32_t, 32> characters;
-    for (char32_t c : text.codePoints())
-        characters.append(c);
+    charactersOf(globalObject, text, characters);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     size_t i = 0;
     size_t end = characters.size();
     auto isAlign = [] (char32_t c) { return c == '<' || c == '>' || c == '=' || c == '^'; };
     auto invalid = [&] () -> std::optional<FormatSpecification> {
-        raiseValueError(globalObject, scope, makeString("Invalid format specifier '"_s, text, "' for object of type '"_s, typeName, '\''));
+        raiseValueError(globalObject, scope, concatenate("Invalid format specifier '"_s, text, "' for object of type '"_s, typeName, '\''));
         return std::nullopt;
     };
 
@@ -494,14 +508,14 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
 
     // What can be told to be wrong without knowing what is being formatted.
     auto cannotSpecify = [&] (char separator) -> std::optional<FormatSpecification> {
-        StringBuilder message;
+        TextBuilder message;
         message.append("Cannot specify '"_s, separator, "' with '"_s);
         if (result.type > 32 && result.type < 128)
             message.append(static_cast<char>(result.type));
         else
             message.append("\\x"_s, hex(static_cast<unsigned>(result.type), Lowercase));
         message.append("'."_s);
-        raiseValueError(globalObject, scope, message.toString());
+        raiseValueError(globalObject, scope, message.tryFinish());
         return std::nullopt;
     };
     if (result.grouping) {
@@ -534,14 +548,14 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
 
 String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& scope, char32_t code, const String& typeName)
 {
-    StringBuilder builder;
+    TextBuilder builder;
     builder.append("Unknown format code '"_s);
     if (code > 32 && code < 128)
         builder.append(static_cast<char>(code));
     else
         builder.append("\\x"_s, hex(static_cast<unsigned>(code), Lowercase));
     builder.append("' for object of type '"_s, typeName, '\'');
-    raiseValueError(globalObject, scope, builder.toString());
+    raiseValueError(globalObject, scope, builder.tryFinish());
     return { };
 }
 
@@ -555,6 +569,10 @@ static unsigned lengthInCharacters(const String& string)
 static String pad(JSGlobalObject* globalObject, const String& text, unsigned prefixLength, const FormatSpecification& specification, char defaultAlign)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (text.isNull()) {
+        raiseMemoryError(globalObject, scope);
+        return { };
+    }
     unsigned length = lengthInCharacters(text);
     if (length >= specification.width)
         return text;
@@ -564,7 +582,7 @@ static String pad(JSGlobalObject* globalObject, const String& text, unsigned pre
     }
     unsigned padding = specification.width - length;
     char align = specification.align ? specification.align : defaultAlign;
-    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    TextBuilder builder;
     auto fill = [&] (unsigned count) {
         for (unsigned i = 0; i < count; ++i)
             builder.append(specification.fill);
@@ -589,20 +607,22 @@ static String pad(JSGlobalObject* globalObject, const String& text, unsigned pre
         builder.append(StringView(text).substring(prefixLength));
         break;
     }
-    if (builder.hasOverflowed()) {
-        raiseMemoryError(globalObject, scope);
-        return { };
-    }
-    return builder.toString();
+    RELEASE_AND_RETURN(scope, builder.finish(globalObject));
 }
 
 // 1234567 to 1,234,567. With zeros for padding, they are grouped too, so that is done here: `minimumWidth` is what the digits and
-// separators should come to.
-static String groupDigits(StringView digits, char separator, unsigned groupSize, unsigned minimumWidth)
+// separators should come to. Null, with MemoryError raised, if there is no room for it.
+static String groupDigits(JSGlobalObject* globalObject, StringView digits, char separator, unsigned groupSize, unsigned minimumWidth)
 {
-    Vector<char16_t, 64> reversed;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // From the last to the first. It comes to the digits and what goes between them, or to the width, and one more if that would have begun with a separator.
+    Vector<Latin1Character, 64> reversed;
+    if (!reversed.tryReserveCapacity(std::max<size_t>(static_cast<size_t>(digits.length()) + digits.length() / groupSize, static_cast<size_t>(minimumWidth) + 1))) {
+        raiseMemoryError(globalObject, scope);
+        return { };
+    }
     unsigned count = 0;
-    auto push = [&] (char16_t digit) {
+    auto push = [&] (Latin1Character digit) {
         if (count && !(count % groupSize))
             reversed.append(separator);
         reversed.append(digit);
@@ -619,7 +639,7 @@ static String groupDigits(StringView digits, char separator, unsigned groupSize,
         push('0');
     }
     reversed.reverse();
-    return String(reversed.span());
+    RELEASE_AND_RETURN(scope, textOfBytes(globalObject, reversed.span()));
 }
 
 String formatString(JSGlobalObject* globalObject, const String& value, const FormatSpecification& specification)
@@ -645,7 +665,7 @@ String formatString(JSGlobalObject* globalObject, const String& value, const For
         return { };
     }
     if (specification.grouping) {
-        raiseValueError(globalObject, scope, makeString("Cannot specify '"_s, specification.grouping, "' with 's'."_s));
+        raiseValueError(globalObject, scope, concatenate("Cannot specify '"_s, specification.grouping, "' with 's'."_s));
         return { };
     }
     String text = value;
@@ -716,9 +736,9 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
             raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
             return { };
         }
-        StringBuilder builder;
+        TextBuilder builder;
         builder.append(static_cast<char32_t>(number.small));
-        RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), 0, specification, '>'));
+        RELEASE_AND_RETURN(scope, pad(globalObject, builder.tryFinish(), 0, specification, '>'));
     }
     case 'e':
     case 'E':
@@ -743,11 +763,11 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         return { };
     }
     if (specification.grouping == ',' && radix != 10) {
-        StringBuilder message;
+        TextBuilder message;
         message.append("Cannot specify ',' with '"_s);
         message.append(specification.type);
         message.append("'."_s);
-        raiseValueError(globalObject, scope, message.toString());
+        raiseValueError(globalObject, scope, message.tryFinish());
         return { };
     }
 
@@ -759,7 +779,7 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
     if (specification.type == 'X')
         digits = digits.convertToASCIIUppercase();
 
-    StringBuilder builder;
+    TextBuilder builder;
     appendSign(builder, isNegative, specification.sign);
     if (specification.alternate)
         builder.append(prefix);
@@ -771,10 +791,11 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
             return { };
         }
         unsigned minimum = padsWithZeros && specification.width > prefixLength ? specification.width - prefixLength : 0;
-        digits = groupDigits(digits, specification.grouping, radix == 10 ? 3 : 4, minimum);
+        digits = groupDigits(globalObject, digits, specification.grouping, radix == 10 ? 3 : 4, minimum);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     builder.append(digits);
-    RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), prefixLength, specification, '>'));
+    RELEASE_AND_RETURN(scope, pad(globalObject, builder.tryFinish(), prefixLength, specification, '>'));
 }
 
 String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpecification& specification)
@@ -782,11 +803,6 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t type = specification.type;
-    if (specification.precision > std::numeric_limits<int>::max()) {
-        raiseValueError(globalObject, scope, "precision too big"_s);
-        return { };
-    }
-    int precision = specification.precision;
 
     switch (type) {
     case 0:
@@ -803,6 +819,11 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
         return raiseUnknownFormatCode(globalObject, scope, type, specification.typeName);
     }
 
+    if (specification.precision > std::numeric_limits<int>::max()) {
+        raiseValueError(globalObject, scope, "precision too big"_s);
+        return { };
+    }
+    int precision = specification.precision;
     bool isUpper = type == 'E' || type == 'F' || type == 'G';
     bool isPercent = type == '%';
     if (isPercent) {
@@ -811,7 +832,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     }
     bool isNegative = std::signbit(value);
 
-    StringBuilder body;
+    TextBuilder body;
     if (!std::isfinite(value)) {
         if (std::isnan(value)) {
             body.append(isUpper ? "NAN"_s : "nan"_s);
@@ -823,7 +844,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
         String text = reprOfDouble(std::abs(value));
         // '#' is for there to be a point, come what may.
         if (size_t exponentAt = text.find('e'); specification.alternate && exponentAt != notFound && !text.contains('.'))
-            text = makeString(StringView(text).left(exponentAt), '.', StringView(text).substring(exponentAt));
+            text = concatenate(StringView(text).left(exponentAt), '.', StringView(text).substring(exponentAt));
         body.append(text);
     } else {
         bool addPointZero = false;
@@ -843,7 +864,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
             break;
         case 'e':
         case 'E':
-            appendExponential(body, significantDigits(magnitude, precision + 1), precision, specification.alternate, exponentCharacter, !magnitude);
+            appendExponential(body, significantDigits(magnitude, precision < std::numeric_limits<int>::max() ? precision + 1 : precision), precision, specification.alternate, exponentCharacter, !magnitude);
             break;
         default: {
             int significant = precision ? precision : 1;
@@ -865,7 +886,8 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
         }
     }
 
-    String text = body.toString();
+    String text = body.finish(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     if (specification.noNegativeZero && isNegative) {
         bool isAllZeros = true;
         for (unsigned i = 0; i < text.length() && text[i] != 'e' && text[i] != 'E'; ++i)
@@ -877,7 +899,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     if (specification.fractionGrouping && std::isfinite(value)) {
         // In threes from the point.
         if (size_t point = text.find('.'); point != notFound) {
-            StringBuilder grouped;
+            TextBuilder grouped;
             grouped.append(StringView(text).left(point + 1));
             unsigned i = point + 1;
             for (unsigned count = 0; i < text.length() && isASCIIDigit(text[i]); ++i, ++count) {
@@ -886,11 +908,12 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
                 grouped.append(text[i]);
             }
             grouped.append(StringView(text).substring(i));
-            text = grouped.toString();
+            text = grouped.finish(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
         }
     }
 
-    StringBuilder builder;
+    TextBuilder builder;
     appendSign(builder, isNegative, specification.sign);
     unsigned prefixLength = builder.length();
     if (specification.grouping && std::isfinite(value)) {
@@ -905,12 +928,14 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
             return { };
         }
         unsigned minimum = padsWithZeros && specification.width > prefixLength + restLength ? specification.width - prefixLength - restLength : 0;
-        builder.append(groupDigits(StringView(text).left(whole), specification.grouping, 3, minimum), StringView(text).substring(whole));
+        String grouped = groupDigits(globalObject, StringView(text).left(whole), specification.grouping, 3, minimum);
+        RETURN_IF_EXCEPTION(scope, { });
+        builder.append(grouped, StringView(text).substring(whole));
     } else
         builder.append(text);
     if (isPercent)
         builder.append('%');
-    RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), prefixLength, specification, '>'));
+    RELEASE_AND_RETURN(scope, pad(globalObject, builder.tryFinish(), prefixLength, specification, '>'));
 }
 
 // ---- format % values
@@ -919,7 +944,7 @@ String escapeNonASCII(const String& text)
 {
     if (text.containsOnlyASCII())
         return text;
-    StringBuilder builder;
+    TextBuilder builder;
     for (char32_t c : StringView(text).codePoints()) {
         if (c < 0x80)
             builder.append(static_cast<Latin1Character>(c));
@@ -930,7 +955,7 @@ String escapeNonASCII(const String& text)
         else
             builder.append("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
     }
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 // For bytes, the format and the result have a character for each byte.
@@ -960,7 +985,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         return result;
     };
 
-    StringBuilder result;
+    TextBuilder result;
     unsigned length = format.length();
     for (unsigned i = 0; i < length;) {
         char16_t c = format[i++];
@@ -1047,8 +1072,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         RETURN_IF_EXCEPTION(scope, { });
         if (width < -1) {
             leftAlign = true;
-            // The least of all has nothing to be the opposite of. There is no room for either.
-            width = width == std::numeric_limits<int64_t>::min() ? std::numeric_limits<int64_t>::max() : -width;
+            // The least of all has nothing to be the opposite of. In CPython it is left as it is, which is as good as no width.
+            width = width == std::numeric_limits<int64_t>::min() ? 0 : -width;
         }
         if (i < length && format[i] == '.') {
             ++i;
@@ -1079,7 +1104,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         switch (conversion) {
         case 'b':
             if (!isForBytes)
-                return raiseValueError(globalObject, scope, makeString("unsupported format character 'b' (0x62) at index "_s, i - 1));
+                return raiseValueError(globalObject, scope, concatenate("unsupported format character 'b' (0x62) at index "_s, i - 1));
             [[fallthrough]];
         case 's':
         case 'r':
@@ -1092,7 +1117,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                 text = stringIn(object)->value(globalObject);
                 // PyObject_ASCII(): what is ASCII already is left as it is.
                 if ((conversion == 'a' || isForBytes) && !text.containsOnlyASCII()) {
-                    text = escapeNonASCII(text);
+                    text = textOrMemoryError(globalObject, escapeNonASCII(text));
+                    RETURN_IF_EXCEPTION(scope, { });
                     object = { };
                 }
             } else if (!isForBytes) {
@@ -1112,17 +1138,21 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                         JSValue converted = callMethod(globalObject, method, self);
                         RETURN_IF_EXCEPTION(scope, { });
                         if (bytesKindOf(converted) != BytesKind::Bytes)
-                            return raiseTypeError(globalObject, scope, makeString("__bytes__ returned non-bytes (type "_s, typeName(globalObject, converted), ')'));
+                            return raiseTypeError(globalObject, scope, concatenate("__bytes__ returned non-bytes (type "_s, typeName(globalObject, converted), ')'));
                         buffer = tryBufferOf(globalObject, converted);
                     } else
                         buffer = tryBufferOf(globalObject, argument, FullReadOnlyBuffer);
                 }
                 RETURN_IF_EXCEPTION(scope, { });
                 if (!buffer)
-                    return raiseTypeError(globalObject, scope, makeString("%b requires a bytes-like object, or an object that implements __bytes__, not '"_s, typeName(globalObject, argument), '\''));
+                    return raiseTypeError(globalObject, scope, concatenate("%b requires a bytes-like object, or an object that implements __bytes__, not '"_s, typeName(globalObject, argument), '\''));
                 ByteVector all;
                 buffer.appendTo(all);
-                text = String(byteCast<Latin1Character>(all.span()));
+                if (all.hasOverflowed()) {
+                    raiseMemoryError(globalObject, scope);
+                    return { };
+                }
+                text = textOfBytes(globalObject, all.span());
             }
             RETURN_IF_EXCEPTION(scope, { });
             // With a '+' or a ' ', which mean nothing here, CPython does not go the quick way.
@@ -1139,7 +1169,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             if (isForBytes) {
                 if (auto buffer = bytesKindOf(argument) == BytesKind::None ? std::nullopt : builtinBufferOf(argument)) {
                     if (buffer->size() != 1)
-                        return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not a "_s, typeName(globalObject, argument), " object of length "_s, buffer->size()));
+                        return raiseTypeError(globalObject, scope, concatenate("%c requires an integer in range(256) or a single byte, not a "_s, typeName(globalObject, argument), " object of length "_s, buffer->size()));
                     text = String(byteCast<Latin1Character>(*buffer));
                 } else {
                     Number number = classify(argument);
@@ -1150,7 +1180,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                         number = classify(argument);
                     }
                     if (!number.isInt())
-                        return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not "_s, typeName(globalObject, argument)));
+                        return raiseTypeError(globalObject, scope, concatenate("%c requires an integer in range(256) or a single byte, not "_s, typeName(globalObject, argument)));
                     if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 255) {
                         raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(256)"_s);
                         return { };
@@ -1161,7 +1191,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             } else if (argument.isString()) {
                 text = asString(argument)->value(globalObject);
                 if (lengthInCharacters(text) != 1)
-                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
+                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
             } else {
                 Number number = classify(argument);
                 JSValue given = argument;
@@ -1177,14 +1207,14 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     }
                 }
                 if (!number.isInt())
-                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, given)));
+                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not "_s, typeName(globalObject, given)));
                 if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
                     raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
                     return { };
                 }
-                StringBuilder builder;
+                TextBuilder builder;
                 builder.append(static_cast<char32_t>(number.small));
-                text = builder.toString();
+                text = builder.tryFinish();
             }
             specification.sign = '-';
             specification.precision = -1;
@@ -1227,12 +1257,17 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             }
             if (!number.isInt()) {
                 if (conversion == 'd' || conversion == 'i' || conversion == 'u')
-                    return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: a real number is required, not "_s, typeName(globalObject, given)));
-                return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: an integer is required, not "_s, typeName(globalObject, given)));
+                    return raiseTypeError(globalObject, scope, concatenate('%', conversion, " format: a real number is required, not "_s, typeName(globalObject, given)));
+                return raiseTypeError(globalObject, scope, concatenate('%', conversion, " format: an integer is required, not "_s, typeName(globalObject, given)));
             }
             specification.type = conversion == 'i' || conversion == 'u' ? 'd' : conversion;
             // The precision is the least number of digits.
             int64_t minimumDigits = std::exchange(specification.precision, -1);
+            // _PyUnicode_FormatLong(), which is to have room for a sign and for what says which base it is in.
+            if (minimumDigits > std::numeric_limits<int>::max() - 3) {
+                raise(globalObject, scope, BuiltinType::OverflowError, "precision too large"_s);
+                return { };
+            }
             FormatSpecification bare = specification;
             bare.width = 0;
             bare.hasWidth = false;
@@ -1244,16 +1279,13 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             if (specification.alternate && conversion != 'd' && conversion != 'i' && conversion != 'u')
                 prefixLength += 2;
             if (minimumDigits > 0 && text.length() - prefixLength < static_cast<unsigned>(minimumDigits)) {
-                StringBuilder builder(OverflowPolicy::RecordOverflow);
+                TextBuilder builder;
                 builder.append(StringView(text).left(prefixLength));
                 for (unsigned k = text.length() - prefixLength; k < static_cast<unsigned>(minimumDigits); ++k)
                     builder.append('0');
                 builder.append(StringView(text).substring(prefixLength));
-                if (builder.hasOverflowed()) {
-                    raiseMemoryError(globalObject, scope);
-                    return { };
-                }
-                text = builder.toString();
+                text = builder.finish(globalObject);
+                RETURN_IF_EXCEPTION(scope, { });
             }
             if (zeroPad && !leftAlign) {
                 specification.fill = '0';
@@ -1269,7 +1301,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         case 'g':
         case 'G': {
             if (!classify(argument) && !typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_float) && !typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_index))
-                return raiseTypeError(globalObject, scope, isForBytes ? makeString("float argument required, not "_s, typeName(globalObject, argument)) : makeString("must be real number, not "_s, typeName(globalObject, argument)));
+                return raiseTypeError(globalObject, scope, isForBytes ? concatenate("float argument required, not "_s, typeName(globalObject, argument)) : concatenate("must be real number, not "_s, typeName(globalObject, argument)));
             auto real = toDouble(globalObject, argument);
             RETURN_IF_EXCEPTION(scope, { });
             specification.type = conversion;
@@ -1281,7 +1313,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             break;
         }
         default:
-            return raiseValueError(globalObject, scope, makeString("unsupported format character '"_s, conversion, "' (0x"_s, hex(static_cast<unsigned>(conversion), Lowercase), ") at index "_s, i - 1));
+            return raiseValueError(globalObject, scope, concatenate("unsupported format character '"_s, conversion, "' (0x"_s, hex(static_cast<unsigned>(conversion), Lowercase), ") at index "_s, i - 1));
         }
         RETURN_IF_EXCEPTION(scope, { });
         result.append(piece);
@@ -1289,8 +1321,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
 
     if (nextArgument < argumentCount && !isMapping)
         return raiseTypeError(globalObject, scope, isForBytes ? "not all arguments converted during bytes formatting"_s : "not all arguments converted during string formatting"_s);
-    String text = result.toString();
-    return text.isNull() ? emptyString() : text;
+    RELEASE_AND_RETURN(scope, result.finish(globalObject));
 }
 
 JSValue stringPercentFormat(JSGlobalObject* globalObject, JSValue format, JSValue values)
@@ -1312,7 +1343,10 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSValue format, JSValu
 
 String bytesPercentFormat(JSGlobalObject* globalObject, std::span<const uint8_t> format, JSValue values)
 {
-    return percentFormat(globalObject, String(byteCast<Latin1Character>(format)), values, true);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String text = textOfBytes(globalObject, format);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, percentFormat(globalObject, text, values, true));
 }
 
 } } // namespace JSC::Python

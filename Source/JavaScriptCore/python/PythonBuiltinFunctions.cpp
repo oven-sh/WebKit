@@ -71,7 +71,7 @@ PYTHON_NATIVE(builtinPrint)
             if (isNone(value))
                 continue;
             if (!stringIn(value))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, " must be None or a string, not "_s, typeName(globalObject, value))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, " must be None or a string, not "_s, typeName(globalObject, value))));
             (name == "sep"_s ? separator : end) = value;
         } else if (name == "file"_s)
             file = isNone(value) ? JSValue() : value;
@@ -79,7 +79,7 @@ PYTHON_NATIVE(builtinPrint)
             flush = isTrue(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });
         } else
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("print() got an unexpected keyword argument '"_s, name, '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("print() got an unexpected keyword argument '"_s, name, '\'')));
     }
 
     if (!file) {
@@ -129,18 +129,7 @@ PYTHON_NATIVE(builtinAscii)
     // PyObject_ASCII(): what is ASCII already is what is given.
     if (text.containsOnlyASCII())
         return JSValue::encode(object);
-    StringBuilder builder;
-    for (char32_t c : StringView(text).codePoints()) {
-        if (c < 0x80)
-            builder.append(static_cast<Latin1Character>(c));
-        else if (c <= 0xFF)
-            builder.append("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
-        else if (c <= 0xFFFF)
-            builder.append("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
-        else
-            builder.append("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
-    }
-    return JSValue::encode(jsString(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, escapeNonASCII(text))));
 }
 
 PYTHON_NATIVE(builtinLen)
@@ -184,7 +173,7 @@ PYTHON_NATIVE(builtinFormat_)
     if (args.size() > 1) {
         JSString* given = stringIn(args[1]);
         if (!given)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("format() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
         specification = given->value(globalObject);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, args[0], specification)));
@@ -196,7 +185,7 @@ static std::optional<Identifier> attributeNameArgument(JSGlobalObject* globalObj
 {
     JSString* string = stringIn(name);
     if (!string) {
-        raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
+        raiseTypeError(globalObject, scope, concatenate("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
         return std::nullopt;
     }
     return string->toIdentifier(globalObject);
@@ -343,7 +332,7 @@ PYTHON_NATIVE(builtinSum)
 {
     NATIVE_PROLOGUE();
     if (!args.size() || args.size() > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sum() takes at most 2 arguments ("_s, args.size(), " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("sum() takes at most 2 arguments ("_s, args.size(), " given)"_s)));
     JSValue iterator = getIterator(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue total = args.at(1);
@@ -466,7 +455,7 @@ PYTHON_NATIVE(builtinMinOrMax)
     NATIVE_PROLOGUE();
     ASCIILiteral name = isMax ? "max"_s : "min"_s;
     if (!args.size())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, " expected at least 1 argument, got 0"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, " expected at least 1 argument, got 0"_s)));
     if (!checkArgumentsSlow(globalObject, callFrame))
         return { };
     JSValue keyFunction = args.keyword(globalObject, "key"_s);
@@ -474,7 +463,7 @@ PYTHON_NATIVE(builtinMinOrMax)
         keyFunction = { };
     JSValue defaultValue = args.keyword(globalObject, "default"_s);
     if (defaultValue && args.size() > 1)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Cannot specify a default for "_s, name, "() with multiple positional arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Cannot specify a default for "_s, name, "() with multiple positional arguments"_s)));
 
     JSValue best;
     JSValue bestKey;
@@ -506,7 +495,7 @@ PYTHON_NATIVE(builtinMinOrMax)
         return JSValue::encode(best);
     if (defaultValue)
         return JSValue::encode(defaultValue);
-    return JSValue::encode(raiseValueError(globalObject, scope, makeString(name, "() iterable argument is empty"_s)));
+    return JSValue::encode(raiseValueError(globalObject, scope, concatenate(name, "() iterable argument is empty"_s)));
 }
 
 // sorted(iterable, /, *, key=None, reverse=False)
@@ -515,7 +504,7 @@ PYTHON_NATIVE(builtinSorted)
 {
     NATIVE_PROLOGUE();
     if (args.size() != 1)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sorted expected 1 argument, got "_s, args.size())));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("sorted expected 1 argument, got "_s, args.size())));
     JSArray* list = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer arguments;
@@ -536,7 +525,7 @@ PYTHON_NATIVE(builtinAbs)
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_abs, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("bad operand type for abs(): '"_s, typeName(globalObject, args[0]), '\'')));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("bad operand type for abs(): '"_s, typeName(globalObject, args[0]), '\'')));
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
 }
 
@@ -550,7 +539,7 @@ PYTHON_NATIVE(builtinRound)
     JSValue method = lookupSpecial(globalObject, number, names.dunder_round, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("type "_s, typeName(globalObject, number), " doesn't define __round__ method"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type "_s, typeName(globalObject, number), " doesn't define __round__ method"_s)));
     if (!digits || isNone(digits))
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self, digits)));
@@ -577,9 +566,9 @@ PYTHON_NATIVE(builtinChr)
     RETURN_IF_EXCEPTION(scope, { });
     if (*code < 0 || *code > 0x10FFFF)
         return JSValue::encode(raiseValueError(globalObject, scope, "chr() arg not in range(0x110000)"_s));
-    StringBuilder builder;
+    TextBuilder builder;
     builder.append(static_cast<char32_t>(*code));
-    return JSValue::encode(jsString(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 PYTHON_NATIVE(builtinOrd)
@@ -589,15 +578,15 @@ PYTHON_NATIVE(builtinOrd)
     if (!string) {
         // One byte will do as well.
         if (!isInstance(globalObject, args[0], realm->typeBytes()) && !isInstance(globalObject, args[0], realm->typeByteArray()))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected string of length 1, but "_s, typeName(globalObject, args[0]), " found"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ord() expected string of length 1, but "_s, typeName(globalObject, args[0]), " found"_s)));
         Buffer buffer { args[0] };
         if (buffer.size() != 1)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected a character, but string of length "_s, buffer.size(), " found"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ord() expected a character, but string of length "_s, buffer.size(), " found"_s)));
         return JSValue::encode(jsNumber(buffer[0]));
     }
     unsigned count = stringLength(globalObject, string);
     if (count != 1)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected a character, but string of length "_s, count, " found"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ord() expected a character, but string of length "_s, count, " found"_s)));
     auto view = string->view(globalObject);
     return JSValue::encode(jsNumber(static_cast<int32_t>(*view->codePoints().begin())));
 }
@@ -613,8 +602,8 @@ PYTHON_NATIVE(builtinInRadix)
     RETURN_IF_EXCEPTION(scope, { });
     ASCIILiteral prefix = radix == 2 ? "0b"_s : radix == 8 ? "0o"_s : "0x"_s;
     if (digits.startsWith('-'))
-        return JSValue::encode(jsString(vm, makeString('-', prefix, StringView(digits).substring(1))));
-    return JSValue::encode(jsString(vm, makeString(prefix, digits)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate('-', prefix, StringView(digits).substring(1)))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(prefix, digits))));
 }
 
 // ---- Classes and modules

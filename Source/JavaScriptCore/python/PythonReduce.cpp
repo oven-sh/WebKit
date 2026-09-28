@@ -56,7 +56,7 @@ static JSValue slotNamesOf(JSGlobalObject* globalObject, PyType* type)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue kept = type->lookupOwn(vm, Identifier::fromString(vm, "__slotnames__"_s))) {
         if (!isNone(kept) && !isList(kept))
-            return raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), ".__slotnames__ should be a list or None, not "_s, typeName(globalObject, kept)));
+            return raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__slotnames__ should be a list or None, not "_s, typeName(globalObject, kept)));
         return kept;
     }
     JSValue function = fromCopyreg(globalObject, "_slotnames"_s);
@@ -76,7 +76,7 @@ static JSValue defaultState(JSGlobalObject* globalObject, JSValue object, bool r
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, object);
     if (required && type->itemSize())
-        return raiseTypeError(globalObject, scope, makeString("cannot pickle "_s, type->nameString(globalObject), " objects"_s));
+        return raiseTypeError(globalObject, scope, concatenate("cannot pickle "_s, type->nameString(globalObject), " objects"_s));
 
     JSValue state = jsUndefined();
     if (type->hasFlag(PyType::HasInstanceDict)) {
@@ -99,7 +99,7 @@ static JSValue defaultState(JSGlobalObject* globalObject, JSValue object, bool r
             basicSize += sizeof(void*);
         basicSize += sizeof(void*) * slotCount;
         if (type->basicSize() > basicSize)
-            return raiseTypeError(globalObject, scope, makeString("cannot pickle '"_s, type->nameString(globalObject), "' object"_s));
+            return raiseTypeError(globalObject, scope, concatenate("cannot pickle '"_s, type->nameString(globalObject), "' object"_s));
     }
     if (!slotCount)
         return state;
@@ -109,7 +109,7 @@ static JSValue defaultState(JSGlobalObject* globalObject, JSValue object, bool r
         JSValue name = listGet(globalObject, asList(slotNames), i);
         RETURN_IF_EXCEPTION(scope, { });
         if (!name.isString())
-            return raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
+            return raiseTypeError(globalObject, scope, concatenate("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
         auto identifier = asString(name)->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         // One that has nothing in it is left out.
@@ -151,19 +151,19 @@ static void getNewArguments(JSGlobalObject* globalObject, JSValue object, JSValu
         JSValue both = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, void());
         if (!isTuple(both)) {
-            raiseTypeError(globalObject, scope, makeString("__getnewargs_ex__ should return a tuple, not '"_s, typeName(globalObject, both), '\''));
+            raiseTypeError(globalObject, scope, concatenate("__getnewargs_ex__ should return a tuple, not '"_s, typeName(globalObject, both), '\''));
             return;
         }
         if (asTuple(both)->length() != 2) {
-            raise(globalObject, scope, BuiltinType::ValueError, makeString("__getnewargs_ex__ should return a tuple of length 2, not "_s, asTuple(both)->length()));
+            raise(globalObject, scope, BuiltinType::ValueError, concatenate("__getnewargs_ex__ should return a tuple of length 2, not "_s, asTuple(both)->length()));
             return;
         }
         arguments = asTuple(both)->at(0);
         keywords = asTuple(both)->at(1);
         if (!isTuple(arguments))
-            raiseTypeError(globalObject, scope, makeString("first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '"_s, typeName(globalObject, arguments), '\''));
+            raiseTypeError(globalObject, scope, concatenate("first item of the tuple returned by __getnewargs_ex__ must be a tuple, not '"_s, typeName(globalObject, arguments), '\''));
         else if (!isDict(keywords))
-            raiseTypeError(globalObject, scope, makeString("second item of the tuple returned by __getnewargs_ex__ must be a dict, not '"_s, typeName(globalObject, keywords), '\''));
+            raiseTypeError(globalObject, scope, concatenate("second item of the tuple returned by __getnewargs_ex__ must be a dict, not '"_s, typeName(globalObject, keywords), '\''));
         return;
     }
     method = lookupSpecial(globalObject, object, Identifier::fromString(vm, "__getnewargs__"_s), self);
@@ -173,7 +173,7 @@ static void getNewArguments(JSGlobalObject* globalObject, JSValue object, JSValu
     arguments = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, void());
     if (!isTuple(arguments))
-        raiseTypeError(globalObject, scope, makeString("__getnewargs__ should return a tuple, not '"_s, typeName(globalObject, arguments), '\''));
+        raiseTypeError(globalObject, scope, concatenate("__getnewargs__ should return a tuple, not '"_s, typeName(globalObject, arguments), '\''));
 }
 
 // (copyreg.__newobj__, (cls, *args), state, what is in it if it is a list, what is in it if it is a dict)
@@ -183,7 +183,7 @@ static JSValue reduceToNewObject(JSGlobalObject* globalObject, JSValue object)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, object);
     if (type->cannotBeInstantiated(vm))
-        return raiseTypeError(globalObject, scope, makeString("cannot pickle '"_s, type->nameString(globalObject), "' object"_s));
+        return raiseTypeError(globalObject, scope, concatenate("cannot pickle '"_s, type->nameString(globalObject), "' object"_s));
     JSValue arguments;
     JSValue keywords;
     getNewArguments(globalObject, object, arguments, keywords);
@@ -432,7 +432,7 @@ PYTHON_NATIVE(exceptionSetState)
     });
     for (size_t i = 0; i < pairs.size(); i += 2) {
         if (!pairs.at(i).isString())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, pairs.at(i)), '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("attribute name must be string, not '"_s, typeName(globalObject, pairs.at(i)), '\'')));
         auto name = asString(pairs.at(i))->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         setAttribute(globalObject, args[0], name, pairs.at(i + 1));
@@ -561,8 +561,11 @@ PYTHON_NATIVE(byteArrayReduce)
     if (content.empty())
         return JSValue::encode(PyTuple::create(globalObject, { type, PyTuple::create(globalObject, { }), state }));
     // Before there were bytes to pickle it went as a str.
-    if (protocol < 3)
-        return JSValue::encode(PyTuple::create(globalObject, { type, PyTuple::create(globalObject, { jsString(vm, String(byteCast<Latin1Character>(content))), jsNontrivialString(vm, "latin-1"_s) }), state }));
+    if (protocol < 3) {
+        String text = textOfBytes(globalObject, content);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(PyTuple::create(globalObject, { type, PyTuple::create(globalObject, { jsString(vm, text), jsNontrivialString(vm, "latin-1"_s) }), state }));
+    }
     return JSValue::encode(PyTuple::create(globalObject, { type, PyTuple::create(globalObject, { newBytes(globalObject, content) }), state }));
 }
 

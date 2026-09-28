@@ -248,7 +248,7 @@ JSValue rangeGetItem(JSGlobalObject* globalObject, PyRange* range, JSValue key)
         RELEASE_AND_RETURN(scope, PyRange::create(globalObject, newStart, newStop, newStep));
     }
     if (!isInt(key) && !key.isBoolean() && !typeOf(globalObject, key)->lookup(vm, vm.pythonNames().dunder_index))
-        return raiseTypeError(globalObject, scope, makeString("range indices must be integers or slices, not "_s, typeName(globalObject, key)));
+        return raiseTypeError(globalObject, scope, concatenate("range indices must be integers or slices, not "_s, typeName(globalObject, key)));
     JSValue index = toInt(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -292,7 +292,7 @@ PYTHON_NATIVE(rangeNew)
     if (args.size() < 2)
         return JSValue::encode(raiseTypeError(globalObject, scope, "range expected at least 1 argument, got 0"_s));
     if (args.size() > 4)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("range expected at most 3 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("range expected at most 3 arguments, got "_s, args.size() - 1)));
     JSValue values[3] = { jsNumber(0), jsNumber(0), jsNumber(1) };
     for (unsigned i = 1; i < args.size(); ++i) {
         values[args.size() == 2 ? 1 : i - 1] = toInt(globalObject, args[i]);

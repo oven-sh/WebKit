@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "PythonCommonNames.h"
+#include "PythonText.h"
 
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -55,7 +56,7 @@ CommonNames::CommonNames(VM& vm)
 
 const Identifier& CommonNames::slotStorage(unsigned offset)
 {
-    return m_slotStorage.ensure(offset, [&] { return Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, makeString("slot at "_s, offset))); }).iterator->value;
+    return m_slotStorage.ensure(offset, [&] { return Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, concatenate("slot at "_s, offset))); }).iterator->value;
 }
 
 const NativeSignature* CommonNames::signatureFor(ASCIILiteral text)

@@ -261,13 +261,13 @@ static JSValue sequenceRepeat(JSGlobalObject* globalObject, JSValue slot, JSValu
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!classify(count).isInt() && !typeOf(globalObject, count)->lookup(vm, vm.pythonNames().dunder_index))
-        return raiseTypeError(globalObject, scope, makeString("can't multiply sequence by non-int of type '"_s, typeName(globalObject, count), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("can't multiply sequence by non-int of type '"_s, typeName(globalObject, count), '\''));
     RELEASE_AND_RETURN(scope, call(globalObject, slot, sequence, count));
 }
 
 static JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ThrowScope& scope, BinaryOperator op, bool inPlace, JSValue left, JSValue right)
 {
-    return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for "_s, inPlace ? inPlaceSymbolOf(op) : symbolOf(op), ": '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
+    return raiseTypeError(globalObject, scope, concatenate("unsupported operand type(s) for "_s, inPlace ? inPlaceSymbolOf(op) : symbolOf(op), ": '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
 }
 
 // What the two operands' classes have to say, by a method and by the same reflected: binary_op1() of CPython's Objects/abstract.c, with SLOT1BINFULL of its Objects/typeobject.c. Empty if neither has
@@ -537,7 +537,7 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
         if (result != notImplemented)
             return result;
     }
-    return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for ** or pow(): '"_s, typeName(globalObject, base), "', '"_s, typeName(globalObject, exponent), "', '"_s, typeName(globalObject, modulus), '\''));
+    return raiseTypeError(globalObject, scope, concatenate("unsupported operand type(s) for ** or pow(): '"_s, typeName(globalObject, base), "', '"_s, typeName(globalObject, exponent), "', '"_s, typeName(globalObject, modulus), '\''));
 }
 
 JSValue powerOfInts(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
@@ -611,7 +611,7 @@ JSValue divmod(JSGlobalObject* globalObject, JSValue left, JSValue right)
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return result;
-    return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for divmod(): '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
+    return raiseTypeError(globalObject, scope, concatenate("unsupported operand type(s) for divmod(): '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
 }
 
 // ---- Unary operators
@@ -639,7 +639,7 @@ JSValue unaryOperation(JSGlobalObject* globalObject, UnaryOperator op, JSValue v
     if (method)
         RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self));
     ASCIILiteral symbol = op == UnaryOperator::USub ? "-"_s : op == UnaryOperator::UAdd ? "+"_s : "~"_s;
-    return raiseTypeError(globalObject, scope, makeString("bad operand type for unary "_s, symbol, ": '"_s, typeName(globalObject, value), '\''));
+    return raiseTypeError(globalObject, scope, concatenate("bad operand type for unary "_s, symbol, ": '"_s, typeName(globalObject, value), '\''));
 }
 
 // ---- Truth
@@ -692,14 +692,14 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
     JSValue method = lookupSpecial(globalObject, value, names.dunder_bool, self);
     RETURN_IF_EXCEPTION(scope, false);
     if (method && isNone(method)) {
-        raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, value), "' cannot be interpreted as a boolean"_s));
+        raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, value), "' cannot be interpreted as a boolean"_s));
         return false;
     }
     if (method) {
         JSValue result = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, false);
         if (!result.isBoolean()) {
-            raiseTypeError(globalObject, scope, makeString("__bool__ should return bool, returned "_s, typeName(globalObject, result)));
+            raiseTypeError(globalObject, scope, concatenate("__bool__ should return bool, returned "_s, typeName(globalObject, result)));
             return false;
         }
         return result.asBoolean();
@@ -992,7 +992,7 @@ JSValue compare(JSGlobalObject* globalObject, ComparisonOperator op, JSValue lef
         return jsBoolean(isIdentical(left, right));
     if (op == ComparisonOperator::NotEq)
         return jsBoolean(!isIdentical(left, right));
-    return raiseTypeError(globalObject, scope, makeString('\'', symbolOf(op), "' not supported between instances of '"_s, leftType->nameString(globalObject), "' and '"_s, rightType->nameString(globalObject), '\''));
+    return raiseTypeError(globalObject, scope, concatenate('\'', symbolOf(op), "' not supported between instances of '"_s, leftType->nameString(globalObject), "' and '"_s, rightType->nameString(globalObject), '\''));
 }
 
 bool isEqual(JSGlobalObject* globalObject, JSValue left, JSValue right)
@@ -1021,7 +1021,7 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
         case StringType: {
             value = stringIfHasOne(value);
             if (!value.isString()) {
-                raiseTypeError(globalObject, scope, makeString("'in <string>' requires string as left operand, not "_s, typeName(globalObject, value)));
+                raiseTypeError(globalObject, scope, concatenate("'in <string>' requires string as left operand, not "_s, typeName(globalObject, value)));
                 return false;
             }
             auto haystack = asString(container)->view(globalObject);
@@ -1087,7 +1087,7 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue value)
     JSValue method = lookupSpecial(globalObject, container, vm.pythonNames().dunder_contains, self);
     RETURN_IF_EXCEPTION(scope, false);
     if (method && isNone(method)) {
-        raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, container), "' object is not a container"_s));
+        raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, container), "' object is not a container"_s));
         return false;
     }
     if (method) {
@@ -1100,7 +1100,7 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue value)
     JSValue iterator = getIterator(globalObject, container);
     if (scope.exception()) {
         if (catchException(globalObject, BuiltinType::TypeError))
-            raiseTypeError(globalObject, scope, makeString("argument of type '"_s, typeName(globalObject, container), "' is not a container or iterable"_s));
+            raiseTypeError(globalObject, scope, concatenate("argument of type '"_s, typeName(globalObject, container), "' is not a container or iterable"_s));
         return false;
     }
     while (true) {
@@ -1226,7 +1226,7 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
 
     JSValue method = type->lookup(vm, vm.pythonNames().dunder_hash);
     if (!method || isNone(method)) {
-        raiseTypeError(globalObject, scope, makeString("unhashable type: '"_s, type->nameString(globalObject), '\''));
+        raiseTypeError(globalObject, scope, concatenate("unhashable type: '"_s, type->nameString(globalObject), '\''));
         return -1;
     }
     if (method.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectHash))
@@ -1279,12 +1279,12 @@ JSValue toInt(JSGlobalObject* globalObject, JSValue value)
         JSValue method = number ? JSValue() : lookupSpecial(globalObject, value, vm.pythonNames().dunder_index, self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!method)
-            return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, value), "' object cannot be interpreted as an integer"_s));
+            return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, value), "' object cannot be interpreted as an integer"_s));
         JSValue result = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, { });
         number = classify(result);
         if (!number.isInt())
-            return raiseTypeError(globalObject, scope, makeString("__index__ returned non-int (type "_s, typeName(globalObject, result), ')'));
+            return raiseTypeError(globalObject, scope, concatenate("__index__ returned non-int (type "_s, typeName(globalObject, result), ')'));
         if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__index__ returned non-int"_s, "int"_s))
             return { };
     }
@@ -1331,7 +1331,7 @@ static std::optional<int64_t> toInt64(JSGlobalObject* globalObject, JSValue valu
         return number.big->sign() ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
     case IfTooLarge::IndexError:
     case IfTooLarge::OverflowError:
-        raise(globalObject, scope, ifTooLarge == IfTooLarge::IndexError ? BuiltinType::IndexError : BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+        raise(globalObject, scope, ifTooLarge == IfTooLarge::IndexError ? BuiltinType::IndexError : BuiltinType::OverflowError, concatenate("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
         break;
     case IfTooLarge::TooLargeForSsize:
         raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C ssize_t"_s);
@@ -1407,10 +1407,10 @@ std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         Number number = classify(result);
         if (number.kind != Number::Kind::Float) {
-            raiseTypeError(globalObject, scope, makeString(typeName(globalObject, value), ".__float__ returned non-float (type "_s, typeName(globalObject, result), ')'));
+            raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, value), ".__float__ returned non-float (type "_s, typeName(globalObject, result), ')'));
             return std::nullopt;
         }
-        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Float, makeString(typeName(globalObject, value), ".__float__ returned non-float"_s), "float"_s))
+        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Float, concatenate(typeName(globalObject, value), ".__float__ returned non-float"_s), "float"_s))
             return std::nullopt;
         return number.real;
     }
@@ -1419,7 +1419,7 @@ std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         RELEASE_AND_RETURN(scope, toDouble(globalObject, scope, classify(result)));
     }
-    raiseTypeError(globalObject, scope, makeString("must be real number, not "_s, typeName(globalObject, value)));
+    raiseTypeError(globalObject, scope, concatenate("must be real number, not "_s, typeName(globalObject, value)));
     return std::nullopt;
 }
 
@@ -1462,7 +1462,7 @@ int64_t length(JSGlobalObject* globalObject, JSValue value)
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_len, self);
     RETURN_IF_EXCEPTION(scope, -1);
     if (!method) {
-        raiseTypeError(globalObject, scope, makeString("object of type '"_s, typeName(globalObject, value), "' has no len()"_s));
+        raiseTypeError(globalObject, scope, concatenate("object of type '"_s, typeName(globalObject, value), "' has no len()"_s));
         return -1;
     }
     JSValue result = callMethod(globalObject, method, self);
@@ -1491,7 +1491,7 @@ static std::optional<unsigned> normalizeIndex(JSGlobalObject* globalObject, Thro
     if (i < 0)
         i += length;
     if (i < 0 || i >= length) {
-        raise(globalObject, scope, BuiltinType::IndexError, makeString(what, " out of range"_s));
+        raise(globalObject, scope, BuiltinType::IndexError, concatenate(what, " out of range"_s));
         return std::nullopt;
     }
     return static_cast<unsigned>(i);
@@ -1529,7 +1529,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
             return result;
         }
         if (!isIndexLike(globalObject, key))
-            return raiseTypeError(globalObject, scope, makeString("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
+            return raiseTypeError(globalObject, scope, concatenate("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
         auto index = normalizeIndex(globalObject, scope, key, list->length(), "list index"_s);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, listGet(globalObject, list, *index));
@@ -1548,7 +1548,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
             return result;
         }
         if (!isIndexLike(globalObject, key))
-            return raiseTypeError(globalObject, scope, makeString("tuple indices must be integers or slices, not "_s, typeName(globalObject, key)));
+            return raiseTypeError(globalObject, scope, concatenate("tuple indices must be integers or slices, not "_s, typeName(globalObject, key)));
         auto index = normalizeIndex(globalObject, scope, key, tuple->length(), "tuple index"_s);
         RETURN_IF_EXCEPTION(scope, { });
         return tuple->at(*index);
@@ -1608,9 +1608,9 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         RETURN_IF_EXCEPTION(scope, { });
         if (classGetItem && !isNone(classGetItem))
             RELEASE_AND_RETURN(scope, call(globalObject, classGetItem, key));
-        return raiseTypeError(globalObject, scope, makeString("type '"_s, asType(base)->nameString(globalObject), "' is not subscriptable"_s));
+        return raiseTypeError(globalObject, scope, concatenate("type '"_s, asType(base)->nameString(globalObject), "' is not subscriptable"_s));
     }
-    return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object is not subscriptable"_s));
+    return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, base), "' object is not subscriptable"_s));
 }
 
 // True if `base` is a list or a dict, and then it has been done or something has been raised. `value` is empty to delete.
@@ -1656,7 +1656,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
         }
         if (value) {
             if (static_cast<int64_t>(values.size()) != indices->length) {
-                raiseValueError(globalObject, scope, makeString("attempt to assign sequence of size "_s, values.size(), " to extended slice of size "_s, indices->length));
+                raiseValueError(globalObject, scope, concatenate("attempt to assign sequence of size "_s, values.size(), " to extended slice of size "_s, indices->length));
                 return true;
             }
             int64_t at = indices->start;
@@ -1676,7 +1676,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
         return true;
     }
     if (!isIndexLike(globalObject, key)) {
-        raiseTypeError(globalObject, scope, makeString("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
+        raiseTypeError(globalObject, scope, concatenate("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
         return true;
     }
     auto index = normalizeIndex(globalObject, scope, key, list->length(), value ? "list assignment index"_s : "list assignment index"_s);
@@ -1720,7 +1720,7 @@ static void setOrDeleteItem(JSGlobalObject* globalObject, JSValue base, JSValue 
         toIndex(globalObject, key);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object "_s, value ? "does not support item assignment"_s : isTriedAsSequence ? "doesn't support item deletion"_s : "does not support item deletion"_s));
+    raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, base), "' object "_s, value ? "does not support item assignment"_s : isTriedAsSequence ? "doesn't support item deletion"_s : "does not support item deletion"_s));
 }
 
 void setItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue value)
@@ -1791,13 +1791,13 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
         JSValue iterator = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!tryIterator(iterator) && !typeOf(globalObject, iterator)->lookup(vm, names.dunder_next))
-            return raiseTypeError(globalObject, scope, makeString("iter() returned non-iterator of type '"_s, typeName(globalObject, iterator), '\''));
+            return raiseTypeError(globalObject, scope, concatenate("iter() returned non-iterator of type '"_s, typeName(globalObject, iterator), '\''));
         return iterator;
     }
     if (!method && type->lookup(vm, names.dunder_getitem))
         return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
 
-    return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not iterable"_s));
+    return raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object is not iterable"_s));
 }
 
 bool hasWhatItTakesToBeIterated(JSGlobalObject* globalObject, JSValue value)
@@ -1848,7 +1848,7 @@ JSValue iteratorNextKeepingStopIteration(JSGlobalObject* globalObject, JSValue i
     JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_next, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
+        return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
     JSValue value = callMethod(globalObject, method, self);
     // What a call that threw returns is not to be relied on to be empty.
     RETURN_IF_EXCEPTION(scope, { });
@@ -1938,7 +1938,7 @@ std::optional<int64_t> lengthHint(JSGlobalObject* globalObject, JSValue value, i
     if (isNotImplemented(globalObject, result))
         return defaultValue;
     if (!classify(result).isInt()) {
-        raiseTypeError(globalObject, scope, makeString("__length_hint__ must be an integer, not "_s, typeName(globalObject, result)));
+        raiseTypeError(globalObject, scope, concatenate("__length_hint__ must be an integer, not "_s, typeName(globalObject, result)));
         return std::nullopt;
     }
     auto hint = toSsize(globalObject, result);
@@ -2019,7 +2019,7 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
     JSValue iterator = getIterator(globalObject, iterable);
     if (scope.exception()) {
         if (!hasWhatItTakesToBeIterated(globalObject, iterable) && catchException(globalObject, BuiltinType::TypeError))
-            raiseTypeError(globalObject, scope, makeString("cannot unpack non-iterable "_s, typeName(globalObject, iterable), " object"_s));
+            raiseTypeError(globalObject, scope, concatenate("cannot unpack non-iterable "_s, typeName(globalObject, iterable), " object"_s));
         return;
     }
 
@@ -2030,9 +2030,9 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
         RETURN_IF_EXCEPTION(scope, void());
         if (!value) {
             if (starIndex < 0)
-                raiseValueError(globalObject, scope, makeString("not enough values to unpack (expected "_s, count, ", got "_s, i, ')'));
+                raiseValueError(globalObject, scope, concatenate("not enough values to unpack (expected "_s, count, ", got "_s, i, ')'));
             else
-                raiseValueError(globalObject, scope, makeString("not enough values to unpack (expected at least "_s, count - 1, ", got "_s, i, ')'));
+                raiseValueError(globalObject, scope, concatenate("not enough values to unpack (expected at least "_s, count - 1, ", got "_s, i, ')'));
             return;
         }
         values.append(value);
@@ -2046,10 +2046,10 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
             if (isExact(globalObject, iterable) && (isList(iterable) || isTuple(iterable) || isDict(iterable))) {
                 int64_t size = length(globalObject, iterable);
                 RETURN_IF_EXCEPTION(scope, void());
-                raiseValueError(globalObject, scope, makeString("too many values to unpack (expected "_s, count, ", got "_s, size, ')'));
+                raiseValueError(globalObject, scope, concatenate("too many values to unpack (expected "_s, count, ", got "_s, size, ')'));
                 return;
             }
-            raiseValueError(globalObject, scope, makeString("too many values to unpack (expected "_s, count, ')'));
+            raiseValueError(globalObject, scope, concatenate("too many values to unpack (expected "_s, count, ')'));
             return;
         }
         for (unsigned i = 0; i < count; ++i)
@@ -2062,7 +2062,7 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
     RETURN_IF_EXCEPTION(scope, void());
     unsigned after = count - before - 1;
     if (rest.size() < after) {
-        raiseValueError(globalObject, scope, makeString("not enough values to unpack (expected at least "_s, count - 1, ", got "_s, before + rest.size(), ')'));
+        raiseValueError(globalObject, scope, concatenate("not enough values to unpack (expected at least "_s, count - 1, ", got "_s, before + rest.size(), ')'));
         return;
     }
     unsigned starred = rest.size() - after;

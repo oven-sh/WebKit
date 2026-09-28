@@ -1229,7 +1229,7 @@ private:
     void checkConversion(int conversion)
     {
         if (conversion != -1 && conversion != 's' && conversion != 'r' && conversion != 'a')
-            fail(SyntaxError::Kind::SystemError, makeString("Unrecognized conversion character "_s, conversion));
+            fail(SyntaxError::Kind::SystemError, concatenate("Unrecognized conversion character "_s, conversion));
     }
 
     RegisterID* emitFormattedValue(RegisterID* dst, FormattedValue& node)
@@ -1425,7 +1425,7 @@ private:
         for (size_t i = 0; i < keywords.size(); ++i) {
             for (size_t j = 0; keywords[i]->name && j < i; ++j) {
                 if (keywords[j]->name && *keywords[j]->name == *keywords[i]->name)
-                    fail(makeString("keyword argument repeated: "_s, keywords[i]->name->string()), *keywords[i]);
+                    fail(concatenate("keyword argument repeated: "_s, keywords[i]->name->string()), *keywords[i]);
             }
         }
     }
@@ -1548,14 +1548,14 @@ private:
             return emptyString();
         case CodeKind::Function:
         case CodeKind::Lambda:
-            return makeString(qualifiedNameInSource(), ".<locals>."_s);
+            return concatenate(qualifiedNameInSource(), ".<locals>."_s);
         default:
-            return makeString(qualifiedNameInSource(), '.');
+            return concatenate(qualifiedNameInSource(), '.');
         }
     }
 
     // What is defined in what belongs to something else is named as if it were where that is.
-    String qualifiedNameFor(const Identifier& name) { return makeString(belongsToSomethingElse() ? m_info.qualifiedNamePrefix : ownQualifiedNamePrefix(), name.string()); }
+    String qualifiedNameFor(const Identifier& name) { return concatenate(belongsToSomethingElse() ? m_info.qualifiedNamePrefix : ownQualifiedNamePrefix(), name.string()); }
 
     Ref<FunctionInfo> makeInfo(CodeKind kind, const Identifier& name, Arguments* arguments, Block& block, const Node& node)
     {
@@ -1752,7 +1752,7 @@ private:
             annotate = g.newTemporary();
             emitNewAnnotateFunction(annotate.get(), *annotations, OwnerKind::Function, node);
             // Its code is beside the function's and is called so. It is itself said to be in the function, once it is the function's.
-            g.emitDirectPutById(annotate.get(), m_names.private_qualname, constant(jsString(m_vm, makeString(qualifiedNameFor(name), ".__annotate__"_s))));
+            g.emitDirectPutById(annotate.get(), m_names.private_qualname, constant(jsString(m_vm, concatenate(qualifiedNameFor(name), ".__annotate__"_s))));
         }
         Reg function = temporaryDestination(dst);
         auto info = makeInfo(kind, name, arguments, *block, node);
@@ -2104,7 +2104,7 @@ private:
         else if (what == "asynchronous comprehension"_s)
             fail("asynchronous comprehension outside of an asynchronous function"_s, node);
         else
-            fail(makeString(what, " outside async function"_s), node);
+            fail(concatenate(what, " outside async function"_s), node);
         return false;
     }
 
@@ -2555,7 +2555,7 @@ private:
         }
         default:
             // [x] += y, which there is no writing. CPython numbers the kinds from 1.
-            fail(SyntaxError::Kind::SystemError, makeString("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for augmented assignment"_s));
+            fail(SyntaxError::Kind::SystemError, concatenate("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for augmented assignment"_s));
             return;
         }
     }
@@ -2825,7 +2825,7 @@ private:
     {
         for (auto& capture : context.captures) {
             if (*capture.name == name)
-                return fail(makeString("multiple assignments to name '"_s, name.string(), "' in pattern"_s), node);
+                return fail(concatenate("multiple assignments to name '"_s, name.string(), "' in pattern"_s), node);
         }
         Reg copy = g.newTemporary();
         g.move(copy.get(), value);
@@ -2915,9 +2915,9 @@ private:
             if (isBool)
                 return magnitude ? "True"_s : "False"_s;
             if (isInt && !largeMagnitude.isNull())
-                return makeString(isNegative ? "-"_s : ""_s, largeMagnitude);
+                return concatenate(isNegative ? "-"_s : ""_s, largeMagnitude);
             if (isInt)
-                return makeString(isNegative && magnitude ? "-"_s : ""_s, magnitude);
+                return concatenate(isNegative && magnitude ? "-"_s : ""_s, magnitude);
             if (!isComplex)
                 return reprOfDouble(real);
             return reprOfComplex(real, imaginary);
@@ -3020,7 +3020,7 @@ private:
         case Constant::Type::String:
             return reprOfString(constant.text->string());
         case Constant::Type::Bytes:
-            return makeString('b', reprOfString(constant.text->string()));
+            return concatenate('b', reprOfString(constant.text->string()));
         default:
             return constant.text ? constant.text->string() : String();
         }
@@ -3081,7 +3081,7 @@ private:
             if (!node.pattern) {
                 if (!context.allowIrrefutable) {
                     if (node.name)
-                        return fail(makeString("name capture '"_s, node.name->string(), "' makes remaining patterns unreachable"_s), node);
+                        return fail(concatenate("name capture '"_s, node.name->string(), "' makes remaining patterns unreachable"_s), node);
                     return fail("wildcard makes remaining patterns unreachable"_s, node);
                 }
             } else
@@ -3216,7 +3216,7 @@ private:
             if (auto number = patternNumberOf(key)) {
                 for (unsigned j = 0; j < i; ++j) {
                     if (auto other = patternNumberOf(*node.keys[j]); other && *number == *other)
-                        return fail(makeString("mapping pattern checks duplicate key ("_s, number->repr(), ')'), node);
+                        return fail(concatenate("mapping pattern checks duplicate key ("_s, number->repr(), ')'), node);
                 }
                 continue;
             }
@@ -3229,7 +3229,7 @@ private:
             for (unsigned j = 0; j < i; ++j) {
                 auto* other = node.keys[j]->tryAs<Constant>();
                 if (other && isSameConstant(*constant, *other))
-                    return fail(makeString("mapping pattern checks duplicate key ("_s, reprOfConstant(*constant), ')'), node);
+                    return fail(concatenate("mapping pattern checks duplicate key ("_s, reprOfConstant(*constant), ')'), node);
             }
         }
 
@@ -3257,7 +3257,7 @@ private:
         for (unsigned i = 0; i < keywords; ++i) {
             for (unsigned j = i + 1; j < keywords; ++j) {
                 if (*node.keywordAttributes[i] == *node.keywordAttributes[j])
-                    return fail(makeString("attribute name repeated in class pattern: "_s, node.keywordAttributes[i]->string()), *node.keywordPatterns[j]);
+                    return fail(concatenate("attribute name repeated in class pattern: "_s, node.keywordAttributes[i]->string()), *node.keywordPatterns[j]);
             }
         }
         auto* names = JSCellButterfly::create(m_vm, CopyOnWriteArrayWithContiguous, keywords);
@@ -4020,7 +4020,7 @@ private:
             }
             break;
         default:
-            fail(SyntaxError::Kind::SystemError, makeString("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for annotated assignment"_s));
+            fail(SyntaxError::Kind::SystemError, concatenate("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for annotated assignment"_s));
             return;
         }
     }
@@ -4099,7 +4099,7 @@ private:
     {
         Block* block = m_table.blockFor(typeParameters.data());
         RELEASE_ASSERT(block);
-        auto info = makeInfo(CodeKind::TypeParameters, Identifier::fromString(m_vm, makeString("<generic parameters of "_s, name.string(), '>')), nullptr, *block, node);
+        auto info = makeInfo(CodeKind::TypeParameters, Identifier::fromString(m_vm, concatenate("<generic parameters of "_s, name.string(), '>')), nullptr, *block, node);
         info->owner = owner;
         if (owner == OwnerKind::Class)
             info->privateName = name;
@@ -4178,7 +4178,7 @@ private:
                 emitEvaluator(evaluator.get(), defaultKey, *parameter.name, m_info.owner, Evaluates::Default, i, ownerNode);
                 emitRuntimeCall(nullptr, "setTypeParameterDefault"_s, { value.get(), evaluator.get() }, parameter);
             } else if (hasSeenDefault)
-                fail(makeString("non-default type parameter '"_s, parameter.name->string(), "' follows default type parameter"_s), parameter);
+                fail(concatenate("non-default type parameter '"_s, parameter.name->string(), "' follows default type parameter"_s), parameter);
             emitStoreName(*parameter.name, value.get(), parameter);
             values.append(value);
         }

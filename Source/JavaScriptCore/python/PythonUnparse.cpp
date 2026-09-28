@@ -259,7 +259,7 @@ private:
         switch (element.kind) {
         case Expression::Kind::Constant:
             if (element.as<Constant>().type != Constant::Type::String)
-                return fail(SyntaxError::Kind::TypeError, makeString("must be str, not "_s, typeNameOf(element.as<Constant>())));
+                return fail(SyntaxError::Kind::TypeError, concatenate("must be str, not "_s, typeNameOf(element.as<Constant>())));
             return write(makeStringByReplacingAll(makeStringByReplacingAll(element.as<Constant>().text->string(), '{', "{{"_s), '}', "}}"_s));
         case Expression::Kind::JoinedStr:
             return appendJoined(element.as<JoinedStr>(), isFormatSpecification);

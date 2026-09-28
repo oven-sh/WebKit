@@ -120,7 +120,7 @@ PYTHON_NATIVE(tracebackNew)
     JSValue next = args.at(1);
     JSValue frame = args.at(2);
     if (!dynamicDowncast<PyFrame>(frame))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("traceback() argument 'tb_frame' must be frame, not "_s, isNone(frame) ? "None"_s : typeName(globalObject, frame))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("traceback() argument 'tb_frame' must be frame, not "_s, isNone(frame) ? "None"_s : typeName(globalObject, frame))));
     int numbers[2];
     for (unsigned i = 0; i < 2; ++i) {
         auto number = toCInt(globalObject, args.at(3 + i));
@@ -128,7 +128,7 @@ PYTHON_NATIVE(tracebackNew)
         numbers[i] = *number;
     }
     if (!isNone(next) && !isTraceback(globalObject, next))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expected traceback object or None, got '"_s, typeName(globalObject, next), '\'')));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("expected traceback object or None, got '"_s, typeName(globalObject, next), '\'')));
     auto* entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, next, frame, jsNumber(numbers[0]));
     // -1 is for it to be worked out, which here is where the frame is.
     entry->putDirect(vm, names.private_line, jsNumber(numbers[1] == -1 ? static_cast<int>(asFrame(frame)->line(vm)) : numbers[1]));
@@ -154,7 +154,7 @@ static void setTracebackNext(JSGlobalObject* globalObject, JSValue self, JSValue
         return;
     }
     if (!isNone(value) && !isTraceback(globalObject, value)) {
-        raiseTypeError(globalObject, scope, makeString("expected traceback object, got '"_s, typeName(globalObject, value), '\''));
+        raiseTypeError(globalObject, scope, concatenate("expected traceback object, got '"_s, typeName(globalObject, value), '\''));
         return;
     }
     for (JSValue cursor = value; !isNone(cursor); cursor = asNative(cursor)->field(TracebackField::Next)) {
@@ -294,7 +294,7 @@ PYTHON_NATIVE(frameRepr)
     PyFrame* frame = asFrame(args[0]);
     String filename = repr(globalObject, jsString(vm, frame->executable()->source().provider()->sourceURL()));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("<frame at 0x"_s, hex(std::bit_cast<uintptr_t>(frame), Lowercase), ", file "_s, filename, ", line "_s, frame->line(vm), ", code "_s, frame->functionInfo().name.string(), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<frame at 0x"_s, hex(std::bit_cast<uintptr_t>(frame), Lowercase), ", file "_s, filename, ", line "_s, frame->line(vm), ", code "_s, frame->functionInfo().name.string(), '>'))));
 }
 
 PYTHON_NATIVE(sysGetFrame)
@@ -323,7 +323,7 @@ static PyFrame* frameArgument(JSGlobalObject* globalObject, ThrowScope& scope, J
 {
     if (auto* frame = dynamicDowncast<PyFrame>(value))
         return frame;
-    raiseTypeError(globalObject, scope, makeString("expect frame, not "_s, typeName(globalObject, value ? value : jsUndefined())));
+    raiseTypeError(globalObject, scope, concatenate("expect frame, not "_s, typeName(globalObject, value ? value : jsUndefined())));
     return nullptr;
 }
 
@@ -448,7 +448,7 @@ String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& bu
     if (!isNone(line))
         builder.append("  File \""_s, isTruthy(filename) ? text(filename) : String("<string>"_s), "\", line "_s, text(line), '\n');
     else if (!isNone(filename))
-        suffix = makeString(" ("_s, text(filename), ')');
+        suffix = concatenate(" ("_s, text(filename), ')');
 
     JSValue textValue = attribute("text"_s);
     if (textValue.isString()) {
@@ -509,7 +509,7 @@ String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& bu
         }
     }
     JSValue message = attribute("msg"_s);
-    return makeString(isTruthy(message) ? text(message) : String("<no detail available>"_s), suffix);
+    return concatenate(isTruthy(message) ? text(message) : String("<no detail available>"_s), suffix);
 }
 
 // ---- Setting them up

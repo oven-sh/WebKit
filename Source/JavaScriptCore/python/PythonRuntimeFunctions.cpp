@@ -240,17 +240,17 @@ PYTHON_RUNTIME_FUNCTION(joinStrings)
 {
     PROLOGUE();
     PyTuple* pieces = asTuple(argument(0));
-    StringBuilder result;
+    TextBuilder result;
     for (unsigned i = 0; i < pieces->length(); ++i) {
         JSValue piece = pieces->at(i);
         JSString* string = stringIn(piece);
         if (!string)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, piece), " found"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, piece), " found"_s)));
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         result.append(view.data);
     }
-    return JSValue::encode(jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, result.tryFinish())));
 }
 
 // A constant that is a frozenset, of a tuple. There is no writing one.
@@ -284,10 +284,10 @@ PYTHON_RUNTIME_FUNCTION(runtimeListExtend)
     }
     if (scope.exception() && !hasWhatItTakesToBeIterated(globalObject, argument(1)) && catchException(globalObject, BuiltinType::TypeError)) {
         if (argument(2) == realm->boundArgumentsMarker())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
         String callee = describeCallable(globalObject, argument(2));
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(callee, " argument after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(callee, " argument after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
     }
     return JSValue::encode(jsUndefined());
 }
@@ -394,7 +394,7 @@ PYTHON_RUNTIME_FUNCTION(dictUpdate)
     });
     RETURN_IF_EXCEPTION(scope, { });
     if (!isMapping)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, argument(1)), "' object is not a mapping"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, argument(1)), "' object is not a mapping"_s)));
     return JSValue::encode(jsUndefined());
 }
 
@@ -415,7 +415,8 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
         RETURN_IF_EXCEPTION(scope, { });
         if (argument(1).asInt32() == 'a') {
             if (String text = stringIn(value)->value(globalObject); !text.containsOnlyASCII())
-                value = jsString(vm, escapeNonASCII(text));
+                value = strOrMemoryError(globalObject, escapeNonASCII(text));
+            RETURN_IF_EXCEPTION(scope, { });
         }
         break;
     default:
@@ -427,7 +428,7 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
     // It is one that was put together from what was written. In a tree that a program made it can be anything.
     JSString* given = hasSpecification ? stringIn(argument(2)) : nullptr;
     if (hasSpecification && !given)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, makeString("Format specifier must be a string, not "_s, typeName(globalObject, argument(2)))));
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, concatenate("Format specifier must be a string, not "_s, typeName(globalObject, argument(2)))));
     String specification = given ? String(given->value(globalObject).data) : emptyString();
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, value, specification)));
@@ -450,12 +451,12 @@ static String describeCallable(JSGlobalObject* globalObject, JSValue callable)
     JSValue module = getAttributeIfPresent(globalObject, callable, names.dunder_module);
     RETURN_IF_EXCEPTION(scope, { });
     if (!module || isNone(module))
-        return makeString(name, "()"_s);
+        return concatenate(name, "()"_s);
     String moduleName = str(globalObject, module);
     RETURN_IF_EXCEPTION(scope, { });
     if (module.isString() && moduleName == "builtins"_s)
-        return makeString(name, "()"_s);
-    return makeString(moduleName, '.', name, "()"_s);
+        return concatenate(name, "()"_s);
+    return concatenate(moduleName, '.', name, "()"_s);
 }
 
 // callKeywords(function, names, positional arguments..., values of the keywords...)
@@ -502,7 +503,7 @@ static bool addKeywordArgument(JSGlobalObject* globalObject, PyDict* keywords, J
     keywords->add(globalObject, name, value, &wasAdded, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (!wasAdded) {
-        raiseTypeError(globalObject, scope, makeString(describeCallable(globalObject, callable), " got multiple values for keyword argument '"_s, asString(name)->value(globalObject).data, '\''));
+        raiseTypeError(globalObject, scope, concatenate(describeCallable(globalObject, callable), " got multiple values for keyword argument '"_s, asString(name)->value(globalObject).data, '\''));
         return false;
     }
     return true;
@@ -526,7 +527,7 @@ PYTHON_RUNTIME_FUNCTION(addKeywords)
     });
     RETURN_IF_EXCEPTION(scope, { });
     if (!isMapping)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(describeCallable(globalObject, argument(2)), " argument after ** must be a mapping, not "_s, typeName(globalObject, argument(1)))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(describeCallable(globalObject, argument(2)), " argument after ** must be a mapping, not "_s, typeName(globalObject, argument(1)))));
     return JSValue::encode(jsUndefined());
 }
 
@@ -754,7 +755,7 @@ static JSValue normalizeException(JSGlobalObject* globalObject, JSValue value, A
             RETURN_IF_EXCEPTION(scope, { });
             String typeText = repr(globalObject, typeOf(globalObject, instance));
             RETURN_IF_EXCEPTION(scope, { });
-            return raiseTypeError(globalObject, scope, makeString("calling "_s, classText, " should have returned an instance of BaseException, not "_s, typeText));
+            return raiseTypeError(globalObject, scope, concatenate("calling "_s, classText, " should have returned an instance of BaseException, not "_s, typeText));
         }
         return instance;
     }
@@ -848,11 +849,11 @@ static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, 
         };
         bool hasOther = isAsync ? has(names.dunder_enter) && has(names.dunder_exit) : has(names.dunder_aenter) && has(names.dunder_aexit);
         if (hasOther)
-            return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled,
+            return raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled,
                 isAsync ? " method) but it supports the context manager protocol. Did you mean to use 'with'?"_s : " method) but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?"_s));
     }
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled, " method)"_s));
+        return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, manager), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled, " method)"_s));
     return self ? JSValue(PyBoundMethod::create(globalObject, method, self)) : method;
 }
 
@@ -969,7 +970,7 @@ PYTHON_RUNTIME_FUNCTION(matchKeys)
         if (!wasAdded) {
             String text = repr(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("mapping pattern checks duplicate key ("_s, text, ')')));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("mapping pattern checks duplicate key ("_s, text, ')')));
         }
         JSValue value = self ? call(globalObject, get, self, key, missing) : call(globalObject, get, key, missing);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1021,7 +1022,7 @@ PYTHON_RUNTIME_FUNCTION(matchClass)
     auto take = [&] (unsigned index, JSValue name) -> bool {
         String text = asString(name)->value(globalObject);
         if (seen.contains(text)) {
-            raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() got multiple sub-patterns for attribute "_s, reprOfString(text)));
+            raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() got multiple sub-patterns for attribute "_s, reprOfString(text)));
             return false;
         }
         seen.append(text);
@@ -1040,21 +1041,21 @@ PYTHON_RUNTIME_FUNCTION(matchClass)
         unsigned allowed;
         if (matchArguments) {
             if (!isTuple(matchArguments))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), ".__match_args__ must be a tuple (got "_s, typeName(globalObject, matchArguments), ')')));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__match_args__ must be a tuple (got "_s, typeName(globalObject, matchArguments), ')')));
             allowed = uncheckedDowncast<PyTuple>(matchArguments.asCell())->length();
         } else {
             matchesSelf = type->hasFlag(PyType::MatchesSelf);
             allowed = matchesSelf;
         }
         if (allowed < positional)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() accepts "_s, allowed, " positional sub-pattern"_s, allowed == 1 ? ""_s : "s"_s, " ("_s, positional, " given)"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() accepts "_s, allowed, " positional sub-pattern"_s, allowed == 1 ? ""_s : "s"_s, " ("_s, positional, " given)"_s)));
         if (matchesSelf)
             attributes->initializeAt(vm, 0, subject);
         else {
             for (unsigned i = 0; i < positional; ++i) {
                 JSValue name = uncheckedDowncast<PyTuple>(matchArguments.asCell())->at(i);
                 if (!name.isString())
-                    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__match_args__ elements must be strings (got "_s, typeName(globalObject, name), ')')));
+                    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__match_args__ elements must be strings (got "_s, typeName(globalObject, name), ')')));
                 bool found = take(i, name);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (!found)
@@ -1149,7 +1150,7 @@ PYTHON_RUNTIME_FUNCTION(importFrom)
         packageName = { };
     if (packageName) {
         String package = asString(packageName)->value(globalObject);
-        if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, makeString(package, '.', name.string())))
+        if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, concatenate(package, '.', name.string())))
             return JSValue::encode(module);
     }
 
@@ -1189,10 +1190,10 @@ PYTHON_RUNTIME_FUNCTION(importFrom)
         isInitializing = initializing && isTrue(globalObject, initializing);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    String location = origin ? makeString(" ("_s, asString(origin)->value(globalObject).data, ')') : String();
+    String location = origin ? concatenate(" ("_s, asString(origin)->value(globalObject).data, ')') : emptyString();
     String message = isInitializing
-        ? makeString("cannot import name "_s, shownName, " from partially initialized module "_s, shownPackage, " (most likely due to a circular import)"_s, location)
-        : makeString("cannot import name "_s, shownName, " from "_s, shownPackage, origin ? location : String(" (unknown location)"_s));
+        ? concatenate("cannot import name "_s, shownName, " from partially initialized module "_s, shownPackage, " (most likely due to a circular import)"_s, location)
+        : concatenate("cannot import name "_s, shownName, " from "_s, shownPackage, origin ? location : String(" (unknown location)"_s));
 
     // _PyErr_SetImportErrorWithNameFrom()
     JSValue error = call(globalObject, realm->typeImportError(), jsString(vm, message));
@@ -1218,7 +1219,7 @@ PYTHON_RUNTIME_FUNCTION(importStar)
         RETURN_IF_EXCEPTION(scope, { });
         for (unsigned i = 0; i < names.size(); ++i) {
             if (!names.at(i).isString())
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Item in __all__ must be str, not "_s, typeName(globalObject, names.at(i)))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Item in __all__ must be str, not "_s, typeName(globalObject, names.at(i)))));
             auto name = asString(names.at(i))->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             JSValue value = getAttribute(globalObject, argument(0), name);

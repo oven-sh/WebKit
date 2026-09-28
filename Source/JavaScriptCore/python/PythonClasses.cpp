@@ -49,7 +49,7 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
     for (unsigned i = 0; i < bases->length(); ++i) {
         for (unsigned j = i + 1; j < bases->length(); ++j) {
             if (asType(bases->at(i)) == asType(bases->at(j))) {
-                raiseTypeError(globalObject, scope, makeString("duplicate base class "_s, asType(bases->at(i))->nameWithoutModule(globalObject)));
+                raiseTypeError(globalObject, scope, concatenate("duplicate base class "_s, asType(bases->at(i))->nameWithoutModule(globalObject)));
                 return nullptr;
             }
         }
@@ -89,7 +89,7 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
         if (isDone)
             break;
         if (!next) {
-            StringBuilder names;
+            TextBuilder names;
             bool isFirst = true;
             Vector<PyType*, 8> named;
             for (size_t i = 0; i < sequences.size(); ++i) {
@@ -102,7 +102,7 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
                 isFirst = false;
                 names.append(name);
             }
-            raiseTypeError(globalObject, scope, makeString("Cannot create a consistent method resolution order (MRO) for bases "_s, names.toString()));
+            raiseTypeError(globalObject, scope, concatenate("Cannot create a consistent method resolution order (MRO) for bases "_s, names.tryFinish()));
             return nullptr;
         }
         result.append(next);
@@ -163,11 +163,11 @@ static PyTuple* computeOrder(JSGlobalObject* globalObject, PyType* type)
     PyType* solid = solidBase(type);
     for (auto& entry : order->span()) {
         if (!isClass(entry.get())) {
-            raiseTypeError(globalObject, scope, makeString("mro() returned a non-class ('"_s, typeName(globalObject, entry.get()), "')"_s));
+            raiseTypeError(globalObject, scope, concatenate("mro() returned a non-class ('"_s, typeName(globalObject, entry.get()), "')"_s));
             return nullptr;
         }
         if (!solid->isSubtypeOf(solidBase(asType(entry.get())))) {
-            raiseTypeError(globalObject, scope, makeString("mro() returned base with unsuitable layout ('"_s, asType(entry.get())->nameString(globalObject), "')"_s));
+            raiseTypeError(globalObject, scope, concatenate("mro() returned base with unsuitable layout ('"_s, asType(entry.get())->nameString(globalObject), "')"_s));
             return nullptr;
         }
     }
@@ -195,7 +195,7 @@ static PyType* bestBase(JSGlobalObject* globalObject, PyTuple* bases)
         }
         auto* base = asType(entry.get());
         if (!base->hasFlag(PyType::IsBaseType)) {
-            raiseTypeError(globalObject, scope, makeString("type '"_s, base->nameString(globalObject), "' is not an acceptable base type"_s));
+            raiseTypeError(globalObject, scope, concatenate("type '"_s, base->nameString(globalObject), "' is not an acceptable base type"_s));
             return nullptr;
         }
         PyType* candidate = solidBase(base);
@@ -227,7 +227,7 @@ static String mangle(const String& className, const String& name)
         ++underscores;
     if (underscores == className.length())
         return name;
-    return makeString('_', StringView(className).substring(underscores), name);
+    return concatenate('_', StringView(className).substring(underscores), name);
 }
 
 void addInstanceDescriptors(JSGlobalObject* globalObject, PyType* type, bool addsDict, bool addsWeakReferences)
@@ -256,7 +256,7 @@ static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* nam
         callMethod(globalObject, method, self, type, key);
         if (scope.exception()) [[unlikely]] {
             addNoteToRaised(globalObject, [&] {
-                return makeString("Error calling __set_name__ on '"_s, typeName(globalObject, value), "' instance "_s, repr(globalObject, key), " in '"_s, type->nameString(globalObject), '\'');
+                return concatenate("Error calling __set_name__ on '"_s, typeName(globalObject, value), "' instance "_s, repr(globalObject, key), " in '"_s, type->nameString(globalObject), '\'');
             });
             return false;
         }
@@ -315,10 +315,10 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
             RETURN_IF_EXCEPTION(scope, { });
         }
         if (given.size() && base->itemSize())
-            return raiseTypeError(globalObject, scope, makeString("nonempty __slots__ not supported for subtype of '"_s, base->nameString(globalObject), '\''));
+            return raiseTypeError(globalObject, scope, concatenate("nonempty __slots__ not supported for subtype of '"_s, base->nameString(globalObject), '\''));
         for (unsigned i = 0; i < given.size(); ++i) {
             if (!given.at(i).isString())
-                return raiseTypeError(globalObject, scope, makeString("__slots__ items must be strings, not '"_s, typeName(globalObject, given.at(i)), '\''));
+                return raiseTypeError(globalObject, scope, concatenate("__slots__ items must be strings, not '"_s, typeName(globalObject, given.at(i)), '\''));
             String slot = asString(given.at(i))->value(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!isIdentifier(slot))
@@ -343,7 +343,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
             slot = mangle(className, slot);
             // These three are put in the namespace for the sake of making the class, and taken out again below.
             if (namespaceDict->getString(globalObject, slot) && slot != "__qualname__"_s && slot != "__classcell__"_s && slot != "__classdictcell__"_s)
-                return raiseValueError(globalObject, scope, makeString(reprOfString(slot), " in __slots__ conflicts with class variable"_s));
+                return raiseValueError(globalObject, scope, concatenate(reprOfString(slot), " in __slots__ conflicts with class variable"_s));
             slots.append(slot);
         }
         std::ranges::sort(slots, [] (const String& a, const String& b) { return codePointCompareLessThan(a, b); });
@@ -372,7 +372,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         RETURN_IF_EXCEPTION(scope, false);
         if (property == names.dunder_qualname) {
             if (!value.isString()) {
-                raiseTypeError(globalObject, scope, makeString("type __qualname__ must be a str, not "_s, typeName(globalObject, value)));
+                raiseTypeError(globalObject, scope, concatenate("type __qualname__ must be a str, not "_s, typeName(globalObject, value)));
                 return false;
             }
             type->putDirect(vm, names.private_qualname, value);
@@ -429,7 +429,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         return hasOnlyStringKeys;
     });
     RETURN_IF_EXCEPTION(scope, { });
-    if (!hasOnlyStringKeys && !warn(globalObject, BuiltinType::RuntimeWarning, makeString("non-string key in the __dict__ of class "_s, type->nameString(globalObject))))
+    if (!hasOnlyStringKeys && !warn(globalObject, BuiltinType::RuntimeWarning, concatenate("non-string key in the __dict__ of class "_s, type->nameString(globalObject))))
         return { };
     callSetNames(globalObject, type, namespaceDict);
     RETURN_IF_EXCEPTION(scope, { });
@@ -438,7 +438,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     if (std::ranges::none_of(type->mro()->span(), [&] (auto& entry) { return entry.get() == type; })) {
         // Only an mro() that leaves the class out of its own order can bring this about.
         String typeName = type->nameString(globalObject);
-        return raiseTypeError(globalObject, scope, makeString("super(type, obj): obj (type "_s, typeName, ") is not an instance or subtype of type ("_s, typeName, ")."_s));
+        return raiseTypeError(globalObject, scope, concatenate("super(type, obj): obj (type "_s, typeName, ") is not an instance or subtype of type ("_s, typeName, ")."_s));
     }
     JSValue hook = type->lookupAfter(vm, type, names.dunder_init_subclass);
     if (hook) {
@@ -628,26 +628,26 @@ void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     String name = type->nameString(globalObject);
     if (!value) {
-        raiseTypeError(globalObject, scope, makeString("cannot delete '__bases__' attribute of immutable type '"_s, name, '\''));
+        raiseTypeError(globalObject, scope, concatenate("cannot delete '__bases__' attribute of immutable type '"_s, name, '\''));
         return;
     }
     // FIXME: A class that JavaScript made is derived from what its prototype is derived from, and it is that that would have to be changed.
     if (type->javaScriptConstructor()) {
-        raiseTypeError(globalObject, scope, makeString("cannot set '__bases__' attribute of immutable type '"_s, name, '\''));
+        raiseTypeError(globalObject, scope, concatenate("cannot set '__bases__' attribute of immutable type '"_s, name, '\''));
         return;
     }
     if (!isTuple(value)) {
-        raiseTypeError(globalObject, scope, makeString("can only assign tuple to "_s, name, ".__bases__, not "_s, typeName(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate("can only assign tuple to "_s, name, ".__bases__, not "_s, typeName(globalObject, value)));
         return;
     }
     PyTuple* bases = asTuple(value);
     if (!bases->length()) {
-        raiseTypeError(globalObject, scope, makeString("can only assign non-empty tuple to "_s, name, ".__bases__, not ()"_s));
+        raiseTypeError(globalObject, scope, concatenate("can only assign non-empty tuple to "_s, name, ".__bases__, not ()"_s));
         return;
     }
     for (auto& entry : bases->span()) {
         if (!isClass(entry.get())) {
-            raiseTypeError(globalObject, scope, makeString(name, ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, entry.get()), '\''));
+            raiseTypeError(globalObject, scope, concatenate(name, ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, entry.get()), '\''));
             return;
         }
         if (asType(entry.get())->isSubtypeOf(type)) {
@@ -661,11 +661,11 @@ void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
     // In CPython what is collected is freed in one way and what is not in another, and it is by that that they are told apart first.
     constexpr unsigned long isCollected = 1ul << 14;
     if ((base->flagsForPython() & isCollected) != (oldBase->flagsForPython() & isCollected)) {
-        raiseTypeError(globalObject, scope, makeString("__bases__ assignment: '"_s, base->nameString(globalObject), "' deallocator differs from '"_s, oldBase->nameString(globalObject), '\''));
+        raiseTypeError(globalObject, scope, concatenate("__bases__ assignment: '"_s, base->nameString(globalObject), "' deallocator differs from '"_s, oldBase->nameString(globalObject), '\''));
         return;
     }
     if (!areLaidOutAlike(globalObject, oldBase, base)) {
-        raiseTypeError(globalObject, scope, makeString("__bases__ assignment: '"_s, base->nameString(globalObject), "' object layout differs from '"_s, oldBase->nameString(globalObject), '\''));
+        raiseTypeError(globalObject, scope, concatenate("__bases__ assignment: '"_s, base->nameString(globalObject), "' object layout differs from '"_s, oldBase->nameString(globalObject), '\''));
         return;
     }
 
@@ -699,7 +699,7 @@ PyType* superCheck(JSGlobalObject* globalObject, PyType* type, JSValue object)
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (claimed && isClass(claimed) && asType(claimed) != typeOfObject && asType(claimed)->isSubtypeOf(type))
         return asType(claimed);
-    raiseTypeError(globalObject, scope, makeString("super(type, obj): obj ("_s, isClass(object) ? "type "_s : "instance of "_s, (isClass(object) ? asType(object) : typeOfObject)->nameString(globalObject), ") is not an instance or subtype of type ("_s, type->nameString(globalObject), ")."_s));
+    raiseTypeError(globalObject, scope, concatenate("super(type, obj): obj ("_s, isClass(object) ? "type "_s : "instance of "_s, (isClass(object) ? asType(object) : typeOfObject)->nameString(globalObject), ") is not an instance or subtype of type ("_s, type->nameString(globalObject), ")."_s));
     return nullptr;
 }
 

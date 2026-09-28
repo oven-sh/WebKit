@@ -95,14 +95,14 @@ PYTHON_NATIVE(structSequenceNew)
     }
     JSValue dict = args.at(2);
     if (dict && !isDict(dict))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() takes a dict as second arg, if any"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, "() takes a dict as second arg, if any"_s)));
     unsigned given = values.size();
     if (minimum != maximum && given < minimum)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() takes an at least "_s, minimum, "-sequence ("_s, given, "-sequence given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, "() takes an at least "_s, minimum, "-sequence ("_s, given, "-sequence given)"_s)));
     if (minimum != maximum && given > maximum)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() takes an at most "_s, maximum, "-sequence ("_s, given, "-sequence given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, "() takes an at most "_s, maximum, "-sequence ("_s, given, "-sequence given)"_s)));
     if (minimum == maximum && given != minimum)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() takes a "_s, minimum, "-sequence ("_s, given, "-sequence given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, "() takes a "_s, minimum, "-sequence ("_s, given, "-sequence given)"_s)));
 
     // What the sequence does not reach is looked for in the dict by name.
     uint64_t found = 0;
@@ -113,7 +113,7 @@ PYTHON_NATIVE(structSequenceNew)
         values.append(value ? value : jsUndefined());
     }
     if (dict && asDict(dict)->size() > found)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() got duplicate or unexpected field name(s)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(name, "() got duplicate or unexpected field name(s)"_s)));
     return JSValue::encode(newStructSequence(globalObject, type, values));
 }
 
@@ -124,7 +124,7 @@ PYTHON_NATIVE(structSequenceRepr)
     PyTuple* self = asTuple(args[0]);
     PyType* type = typeOf(globalObject, self);
     PyTuple* fields = fieldNamesOf(vm, type);
-    StringBuilder result;
+    TextBuilder result;
     result.append(type->nameString(globalObject), '(');
     // The names go with the items in turn, and take no notice of an item that has none.
     unsigned named = 0;
@@ -136,7 +136,7 @@ PYTHON_NATIVE(structSequenceRepr)
         result.append(i ? ", "_s : ""_s, asString(fields->at(named++))->value(globalObject).data, '=', text);
     }
     result.append(')');
-    return JSValue::encode(jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, result.tryFinish())));
 }
 
 // (cls, (the items, {the rest by name}))
@@ -168,7 +168,7 @@ PYTHON_NATIVE(structSequenceReplace)
     PyTuple* fields = fieldNamesOf(vm, type);
     for (auto& field : fields->span()) {
         if (isNone(field.get()))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__replace__() is not supported for "_s, type->nameString(globalObject), " because it has unnamed field(s)"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__replace__() is not supported for "_s, type->nameString(globalObject), " because it has unnamed field(s)"_s)));
     }
     auto isNamed = [&] (unsigned field, unsigned keyword) { return asString(fields->at(field))->equal(globalObject, args.keywordName(keyword)); };
     MarkedArgumentBuffer values;
@@ -191,7 +191,7 @@ PYTHON_NATIVE(structSequenceReplace)
     if (unexpected.size()) {
         String names = repr(globalObject, newList(globalObject, unexpected));
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Got unexpected field name(s): "_s, names)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Got unexpected field name(s): "_s, names)));
     }
     return JSValue::encode(newStructSequence(globalObject, type, values));
 }
@@ -296,7 +296,7 @@ PYTHON_NATIVE(namespaceInit)
 {
     NATIVE_PROLOGUE();
     if (args.size() > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeOf(globalObject, args[0])->nameWithoutModule(globalObject), " expected at most 1 argument, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeOf(globalObject, args[0])->nameWithoutModule(globalObject), " expected at most 1 argument, got "_s, args.size() - 1)));
     PyDict* dict = dictOfNamespace(globalObject, args[0]);
     if (args.size() == 2) {
         JSValue given = args[1];
@@ -322,14 +322,14 @@ PYTHON_NATIVE(namespaceRepr)
     String name = type == realm->typeSimpleNamespace() ? "namespace"_str : type->nameString(globalObject);
     ReprGuard guard(globalObject, args[0].asCell());
     if (guard.isRecursive())
-        return JSValue::encode(jsString(vm, makeString(name, "(...)"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(name, "(...)"_s))));
     MarkedArgumentBuffer pairs;
     dictOfNamespace(globalObject, args[0])->forEach(globalObject, [&] (JSValue key, JSValue value) {
         pairs.append(key);
         pairs.append(value);
         return true;
     });
-    StringBuilder result;
+    TextBuilder result;
     result.append(name, '(');
     bool isFirst = true;
     for (size_t i = 0; i < pairs.size(); i += 2) {
@@ -342,7 +342,7 @@ PYTHON_NATIVE(namespaceRepr)
         isFirst = false;
     }
     result.append(')');
-    return JSValue::encode(jsString(vm, result.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, result.tryFinish())));
 }
 
 // As their __dict__s compare.
@@ -372,7 +372,7 @@ PYTHON_NATIVE(namespaceReplace)
     JSValue result = call(globalObject, type->object());
     RETURN_IF_EXCEPTION(scope, { });
     if (!isInstance(globalObject, result, realm->typeSimpleNamespace()))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expect types.SimpleNamespace type, but "_s, fullyQualifiedTypeName(globalObject, args[0]), "() returned '"_s, fullyQualifiedTypeName(globalObject, result), "' object"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("expect types.SimpleNamespace type, but "_s, fullyQualifiedTypeName(globalObject, args[0]), "() returned '"_s, fullyQualifiedTypeName(globalObject, result), "' object"_s)));
     PyDict* dict = dictOfNamespace(globalObject, result);
     MarkedArgumentBuffer pairs;
     dictOfNamespace(globalObject, args[0])->forEach(globalObject, [&] (JSValue key, JSValue value) {

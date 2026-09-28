@@ -668,9 +668,10 @@ static JSValue getBytes(JSGlobalObject* globalObject, JSValue self)
 PYTHON_NATIVE(codeRepr)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     FunctionExecutable* executable = executableOf(callFrame->argument(0));
     const FunctionInfo& info = infoOf(executable);
-    return JSValue::encode(jsString(vm, makeString("<code object "_s, info.name.string(), " at 0x"_s, hex(std::bit_cast<uintptr_t>(callFrame->argument(0).asCell()), Lowercase), ", file \""_s, executable->source().provider()->sourceURL(), "\", line "_s, firstLineOf(info), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<code object "_s, info.name.string(), " at 0x"_s, hex(std::bit_cast<uintptr_t>(callFrame->argument(0).asCell()), Lowercase), ", file \""_s, executable->source().provider()->sourceURL(), "\", line "_s, firstLineOf(info), '>'))));
 }
 
 // By what they are called, where they begin and what they do. Not by what file they say they are from.
@@ -765,7 +766,7 @@ static JSValue codeWithParts(JSGlobalObject* globalObject, ThrowScope& scope, JS
         bool isSame = isEqual(globalObject, value, current);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isSame)
-            return raiseValueError(globalObject, scope, makeString("code: "_s, part.attribute, " is what follows from co_code, which is compiled from source, and cannot be given as anything else"_s));
+            return raiseValueError(globalObject, scope, concatenate("code: "_s, part.attribute, " is what follows from co_code, which is compiled from source, and cannot be given as anything else"_s));
     }
     if (given.flags) {
         unsigned flags = given.flags.asInt32();
@@ -817,7 +818,7 @@ static void auditNewCode(JSGlobalObject* globalObject, JSValue code, const CodeP
 static bool checkPart(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, const String& which, PartType type, JSValue& value)
 {
     auto complain = [&] (ASCIILiteral wanted) {
-        raiseTypeError(globalObject, scope, makeString(function, "() argument "_s, which, " must be "_s, wanted, ", not "_s, typeNameOfArgument(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate(function, "() argument "_s, which, " must be "_s, wanted, ", not "_s, typeNameOfArgument(globalObject, value)));
         return false;
     };
     switch (type) {
@@ -857,10 +858,10 @@ PYTHON_NATIVE(codeReplace)
             for (auto& part : parts)
                 candidates.append(part.attribute);
             String suggestion = calculateSuggestion(candidates, name.data);
-            return JSValue::encode(raiseTypeError(globalObject, scope, suggestion.isNull() ? makeString("replace() got an unexpected keyword argument '"_s, name.data, '\'') : makeString("replace() got an unexpected keyword argument '"_s, name.data, "'. Did you mean '"_s, suggestion, "'?"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, suggestion.isNull() ? concatenate("replace() got an unexpected keyword argument '"_s, name.data, '\'') : concatenate("replace() got an unexpected keyword argument '"_s, name.data, "'. Did you mean '"_s, suggestion, "'?"_s)));
         }
         JSValue value = args.keywordValue(i);
-        if (!checkPart(globalObject, scope, "replace"_s, makeString('\'', found->attribute, '\''), found->type, value))
+        if (!checkPart(globalObject, scope, "replace"_s, concatenate('\'', found->attribute, '\''), found->type, value))
             return { };
         given.*found->member = value;
     }
@@ -869,7 +870,7 @@ PYTHON_NATIVE(codeReplace)
         if (JSValue value = given.*member; value && value.asInt32() < 0) {
             for (auto& part : parts) {
                 if (part.member == member)
-                    return JSValue::encode(raiseValueError(globalObject, scope, makeString(part.attribute, " must be a positive integer"_s)));
+                    return JSValue::encode(raiseValueError(globalObject, scope, concatenate(part.attribute, " must be a positive integer"_s)));
             }
         }
     }
@@ -887,7 +888,7 @@ PYTHON_NATIVE(codeNew)
         return { };
     unsigned count = args.size() - 1;
     if (count < 16 || count > std::size(parts))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code expected at "_s, count < 16 ? "least 16"_s : "most 18"_s, " arguments, got "_s, count)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("code expected at "_s, count < 16 ? "least 16"_s : "most 18"_s, " arguments, got "_s, count)));
     CodeParts given;
     for (unsigned i = 0; i < count; ++i) {
         JSValue value = args[i + 1];
@@ -900,7 +901,7 @@ PYTHON_NATIVE(codeNew)
     static constexpr std::pair<JSValue CodeParts::*, ASCIILiteral> counts[] = { { &CodeParts::argumentCount, "argcount"_s }, { &CodeParts::positionalOnlyCount, "posonlyargcount"_s }, { &CodeParts::keywordOnlyCount, "kwonlyargcount"_s }, { &CodeParts::localCount, "nlocals"_s } };
     for (auto [member, name] : counts) {
         if ((given.*member).asInt32() < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("code: "_s, name, " must not be negative"_s)));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("code: "_s, name, " must not be negative"_s)));
     }
     for (auto member : { &CodeParts::names, &CodeParts::variableNames, &CodeParts::freeVariables, &CodeParts::cellVariables }) {
         JSValue tuple = given.*member;
@@ -908,7 +909,7 @@ PYTHON_NATIVE(codeNew)
             continue;
         for (auto& item : asTuple(tuple)->span()) {
             if (!stringIn(item.get()))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("name tuples must contain only strings, not '"_s, typeName(globalObject, item.get()), '\'')));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("name tuples must contain only strings, not '"_s, typeName(globalObject, item.get()), '\'')));
         }
     }
     if (given.stackSize.asInt32() < 0 || given.flags.asInt32() < 0 || given.argumentCount.asInt32() < given.positionalOnlyCount.asInt32())

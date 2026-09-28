@@ -47,7 +47,7 @@ namespace JSC { namespace Python {
 
 String addressOf(const void* cell)
 {
-    return makeString("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
+    return concatenate("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
 }
 
 // What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
@@ -57,12 +57,12 @@ String fullyQualifiedTypeName(JSGlobalObject* globalObject, JSValue value)
     PyType* type = typeOf(globalObject, value);
     String name = qualifiedNameWithoutModule(globalObject, type);
     if (String module = type->moduleOfBuiltin(); !module.isNull())
-        return makeString(module, '.', name);
+        return concatenate(module, '.', name);
     JSValue module = type->lookupOwn(vm, vm.pythonNames().dunder_module);
     if (!module || !module.isString())
         return name;
     String moduleName = asString(module)->value(globalObject);
-    return moduleName == "builtins"_s || moduleName == "__main__"_s ? name : makeString(moduleName, '.', name);
+    return moduleName == "builtins"_s || moduleName == "__main__"_s ? name : concatenate(moduleName, '.', name);
 }
 
 String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
@@ -77,12 +77,12 @@ String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
     auto& names = vm.pythonNames();
     String name = qualifiedNameWithoutModule(globalObject, type);
     if (String module = type->moduleOfBuiltin(); !module.isNull())
-        return makeString(module, '.', name);
+        return concatenate(module, '.', name);
     JSValue module = type->lookupOwn(vm, names.dunder_module);
     if (module && module.isString()) {
         String moduleName = asString(module)->value(globalObject);
         if (moduleName != "builtins"_s)
-            return makeString(moduleName, '.', name);
+            return concatenate(moduleName, '.', name);
     }
     return name;
 }
@@ -155,7 +155,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
 
     JSCell* cell = value.asCell();
     PyType* type = typeOf(globalObject, value);
-    StringBuilder builder;
+    TextBuilder builder;
 
     switch (cell->type()) {
     case StringType: {
@@ -174,7 +174,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         appendItems(globalObject, builder, tuple->length(), [&] (unsigned i) { return tuple->at(i); });
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(tuple->length() == 1 ? ",)"_s : ")"_s);
-        return builder.toString();
+        return builder.tryFinish();
     }
     case PyDictType: {
         auto* dict = uncheckedDowncast<PyDict>(cell);
@@ -196,7 +196,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         });
         RETURN_IF_EXCEPTION(scope, { });
         builder.append('}');
-        return builder.toString();
+        return builder.tryFinish();
     }
     case PySetType: {
         auto* set = uncheckedDowncast<PySet>(cell);
@@ -204,9 +204,9 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         bool isPlainSet = type == realm->typeSet();
         ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
-            return makeString(name, "(...)"_s);
+            return concatenate(name, "(...)"_s);
         if (!set->size())
-            return makeString(name, "()"_s);
+            return concatenate(name, "()"_s);
         if (!isPlainSet)
             builder.append(name, '(');
         builder.append('{');
@@ -225,7 +225,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         builder.append('}');
         if (!isPlainSet)
             builder.append(')');
-        return builder.toString();
+        return builder.tryFinish();
     }
     case PyRangeType: {
         auto* range = uncheckedDowncast<PyRange>(cell);
@@ -240,7 +240,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
             builder.append(", "_s, step);
         }
         builder.append(')');
-        return builder.toString();
+        return builder.tryFinish();
     }
     case PySliceType: {
         auto* slice = uncheckedDowncast<PySlice>(cell);
@@ -249,39 +249,39 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         appendItems(globalObject, builder, 3, [&] (unsigned i) { return parts[i]; });
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(')');
-        return builder.toString();
+        return builder.tryFinish();
     }
     case PyTypeType:
-        return makeString("<class '"_s, qualifiedNameOfType(globalObject, uncheckedDowncast<PyType>(cell)), "'>"_s);
+        return concatenate("<class '"_s, qualifiedNameOfType(globalObject, uncheckedDowncast<PyType>(cell)), "'>"_s);
     case InternalFunctionType:
         if (isJavaScriptClass(cell))
-            return makeString("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
+            return concatenate("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
         break;
     case JSFunctionType: {
         if (isJavaScriptClass(cell))
-            return makeString("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
+            return concatenate("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
         auto* function = uncheckedDowncast<JSFunction>(cell);
         if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
             if (native->kind() == PyNativeFunction::Kind::Function)
-                return makeString("<built-in function "_s, function->name(vm), '>');
+                return concatenate("<built-in function "_s, function->name(vm), '>');
             if (native->kind() == PyNativeFunction::Kind::New || native->kind() == PyNativeFunction::Kind::StaticMethod)
-                return makeString("<built-in method "_s, function->name(vm), " of type object at "_s, addressOf(native->owner()), '>');
-            return makeString(native->kind() == PyNativeFunction::Kind::Wrapper ? "<slot wrapper '"_s : "<method '"_s, function->name(vm), "' of '"_s, asType(native->owner())->nameString(globalObject), "' objects>"_s);
+                return concatenate("<built-in method "_s, function->name(vm), " of type object at "_s, addressOf(native->owner()), '>');
+            return concatenate(native->kind() == PyNativeFunction::Kind::Wrapper ? "<slot wrapper '"_s : "<method '"_s, function->name(vm), "' of '"_s, asType(native->owner())->nameString(globalObject), "' objects>"_s);
         }
-        return makeString("<function "_s, nameOfFunction(globalObject, function, true), " at "_s, addressOf(cell), '>');
+        return concatenate("<function "_s, nameOfFunction(globalObject, function, true), " at "_s, addressOf(cell), '>');
     }
     case PyBoundMethodType: {
         auto* method = uncheckedDowncast<PyBoundMethod>(cell);
         if (auto* native = dynamicDowncast<PyNativeFunction>(method->function())) {
             bool isWrapper = native->kind() == PyNativeFunction::Kind::Wrapper;
-            return makeString(isWrapper ? "<method-wrapper '"_s : "<built-in method "_s, native->name(vm), isWrapper ? "' of "_s : " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
+            return concatenate(isWrapper ? "<method-wrapper '"_s : "<built-in method "_s, native->name(vm), isWrapper ? "' of "_s : " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
         }
         String self = repr(globalObject, method->self());
         RETURN_IF_EXCEPTION(scope, { });
         String name = "?"_s;
         if (auto* function = dynamicDowncast<JSFunction>(method->function()))
             name = nameOfFunction(globalObject, function, true);
-        return makeString("<bound method "_s, name, " of "_s, self, '>');
+        return concatenate("<bound method "_s, name, " of "_s, self, '>');
     }
     default:
         break;
@@ -303,7 +303,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
             builder.append(item);
         }
         builder.append(']');
-        return builder.toString();
+        return builder.tryFinish();
     }
     if (cell == realm->notImplemented())
         return "NotImplemented"_s;
@@ -317,10 +317,10 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         appendItems(globalObject, builder, arguments->length(), [&] (unsigned i) { return arguments->at(i); });
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(')');
-        return builder.toString();
+        return builder.tryFinish();
     }
 
-    return makeString('<', qualifiedNameOfType(globalObject, type), " object at "_s, addressOf(cell), '>');
+    return concatenate('<', qualifiedNameOfType(globalObject, type), " object at "_s, addressOf(cell), '>');
 }
 
 // What the class has for __repr__(), called, and whatever comes of it: tp_repr.
@@ -331,7 +331,7 @@ static JSValue callRepr(JSGlobalObject* globalObject, JSValue value)
     if (!value.isObject()) {
         String text = builtinRepr(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        return jsString(vm, text);
+        RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, text));
     }
     JSValue self;
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_repr, self);
@@ -339,7 +339,7 @@ static JSValue callRepr(JSGlobalObject* globalObject, JSValue value)
     if (auto* native = dynamicDowncast<PyNativeFunction>(method); native && native->nativeFunction() == nativeRepr) {
         String text = builtinRepr(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        return jsString(vm, text);
+        RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, text));
     }
     RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self));
 }
@@ -353,7 +353,7 @@ JSValue reprObject(JSGlobalObject* globalObject, JSValue value)
     JSValue result = callRepr(globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!stringIn(result))
-        return raiseTypeError(globalObject, scope, makeString("__repr__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+        return raiseTypeError(globalObject, scope, concatenate("__repr__ returned non-string (type "_s, typeName(globalObject, result), ')'));
     return result;
 }
 
@@ -394,7 +394,7 @@ JSValue strObject(JSGlobalObject* globalObject, JSValue value)
     JSValue result = isThatOfObject ? callRepr(globalObject, value) : callSpecial(globalObject, type, method, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!stringIn(result))
-        return raiseTypeError(globalObject, scope, makeString("__str__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+        return raiseTypeError(globalObject, scope, concatenate("__str__ returned non-string (type "_s, typeName(globalObject, result), ')'));
     return result;
 }
 
@@ -458,7 +458,7 @@ JSValue format(JSGlobalObject* globalObject, JSValue value, const String& specif
     JSValue result = callMethod(globalObject, method, self, jsString(vm, specification));
     RETURN_IF_EXCEPTION(scope, { });
     if (!stringIn(result))
-        return raiseTypeError(globalObject, scope, makeString("__format__ must return a str, not "_s, typeName(globalObject, result)));
+        return raiseTypeError(globalObject, scope, concatenate("__format__ must return a str, not "_s, typeName(globalObject, result)));
     return result;
 }
 

@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "PythonLexer.h"
+#include "PythonText.h"
 
 #include "VM.h"
 #include <unicode/uchar.h>
@@ -386,7 +387,7 @@ private:
     bool failForUnclosedBracket()
     {
         Bracket bracket = m_brackets.last();
-        fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+        fail(concatenate('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
         m_error.isAtEndOfSource = true;
         return false;
     }
@@ -710,7 +711,7 @@ private:
 
             auto incompatible = [&] (char first, char second) {
                 unsigned column = columnOf(start);
-                return fail(makeString('\'', first, "' and '"_s, second, "' prefixes are incompatible"_s), m_line, column, m_line, columnOf(m_position));
+                return fail(concatenate('\'', first, "' and '"_s, second, "' prefixes are incompatible"_s), m_line, column, m_line, columnOf(m_position));
             };
             if (sawU && sawB)
                 return incompatible('u', 'b');
@@ -826,8 +827,8 @@ private:
             m_position = start + before;
             unsigned column = columnOf(m_position);
             if (isPrintable(c))
-                return fail(makeString("invalid character '"_s, StringView(buffer.span().subspan(before, i - before)), "' (U+"_s, hex(static_cast<unsigned>(c), 4), ')'), m_line, column, m_line, column);
-            return fail(makeString("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, column);
+                return fail(concatenate("invalid character '"_s, StringView(buffer.span().subspan(before, i - before)), "' (U+"_s, hex(static_cast<unsigned>(c), 4), ')'), m_line, column, m_line, column);
+            return fail(concatenate("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, column);
         }
 
         UErrorCode status = U_ZERO_ERROR;
@@ -859,7 +860,7 @@ private:
 
     bool failInNumber(ASCIILiteral kind)
     {
-        return fail(makeString("invalid "_s, kind, " literal"_s));
+        return fail(concatenate("invalid "_s, kind, " literal"_s));
     }
 
     // Digits, with single underscores between them.
@@ -915,7 +916,7 @@ private:
             break;
         }
         if (isKeyword) {
-            warn(makeString("invalid "_s, kind, " literal"_s), { }, m_line, m_position - 1, m_position - 1, true);
+            warn(concatenate("invalid "_s, kind, " literal"_s), { }, m_line, m_position - 1, m_position - 1, true);
             return true;
         }
         if (c < 0x80 && isIdentifierPart(c))
@@ -933,7 +934,7 @@ private:
                 if (isASCIIDigit(current())) {
                     char digit = current();
                     ++m_position;
-                    return fail(makeString("invalid digit '"_s, digit, "' in "_s, kind, " literal"_s));
+                    return fail(concatenate("invalid digit '"_s, digit, "' in "_s, kind, " literal"_s));
                 }
                 return failInNumber(kind);
             }
@@ -943,7 +944,7 @@ private:
         if (isASCIIDigit(current())) {
             char digit = current();
             ++m_position;
-            return fail(makeString("invalid digit '"_s, digit, "' in "_s, kind, " literal"_s));
+            return fail(concatenate("invalid digit '"_s, digit, "' in "_s, kind, " literal"_s));
         }
         return verifyEndOfNumber(kind);
     }
@@ -971,7 +972,7 @@ private:
         }
         if (unsigned limit = m_arena.maximumDigitsOfIntLiteral; limit && radix == 10 && digits.size() > limit) {
             // Which line is enough. Nobody overlooks such a thing once they are told that.
-            return fail(makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."_s), m_line, noColumn, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+            return fail(concatenate("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."_s), m_line, noColumn, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
         }
         token.numberKind = NumberKind::BigInteger;
         token.radix = radix;
@@ -1193,8 +1194,8 @@ private:
                 if (value > 0377) {
                     StringView digits { m_source.subspan(digitsStart, i - digitsStart) };
                     if (!std::exchange(hasWarned, true)) {
-                        warn(makeString("\"\\"_s, digits, "\" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s),
-                            makeString("\"\\"_s, digits, "\" is an invalid octal escape sequence. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s), currentLine, digitsStart - 1, digitsStart + 1);
+                        warn(concatenate("\"\\"_s, digits, "\" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s),
+                            concatenate("\"\\"_s, digits, "\" is an invalid octal escape sequence. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s), currentLine, digitsStart - 1, digitsStart + 1);
                     }
                 }
                 append(isBytes ? value & 0xFF : value);
@@ -1217,12 +1218,12 @@ private:
                     value = value * 16 + toASCIIHexValue(m_source[i++]);
                 if (digits < count) {
                     if (isBytes)
-                        return failHere(makeString("(value error) invalid \\x escape at position "_s, escapeStart));
+                        return failHere(concatenate("(value error) invalid \\x escape at position "_s, escapeStart));
                     ASCIILiteral form = c == 'x' ? "\\xXX"_s : c == 'u' ? "\\uXXXX"_s : "\\UXXXXXXXX"_s;
-                    return failHere(makeString("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 1 + digits, ": truncated "_s, form, " escape"_s));
+                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 1 + digits, ": truncated "_s, form, " escape"_s));
                 }
                 if (value > UCHAR_MAX_VALUE)
-                    return failHere(makeString("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 9, ": illegal Unicode character"_s));
+                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 9, ": illegal Unicode character"_s));
                 appendCodePoint(buffer, allCharacters, value);
                 break;
             }
@@ -1241,7 +1242,7 @@ private:
                         ++nameEnd;
                 }
                 if (nameEnd <= i + 1 || nameEnd >= end)
-                    return failHere(makeString("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd > i ? nameEnd - i + 1 : 1), ": malformed \\N character escape"_s));
+                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd > i ? nameEnd - i + 1 : 1), ": malformed \\N character escape"_s));
                 Vector<char, 64> name;
                 bool isASCII = true;
                 for (unsigned k = i + 1; k < nameEnd; ++k) {
@@ -1257,7 +1258,7 @@ private:
                     value = u_charFromName(U_CHAR_NAME_ALIAS, name.span().data(), &status);
                 }
                 if (!isASCII || U_FAILURE(status))
-                    return failHere(makeString("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd - i) + 2, ": unknown Unicode character name"_s));
+                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd - i) + 2, ": unknown Unicode character name"_s));
                 appendCodePoint(buffer, allCharacters, value);
                 i = nameEnd + 1;
                 break;
@@ -1279,8 +1280,8 @@ private:
     {
         char16_t character = c;
         StringView view { std::span<const char16_t> { &character, 1 } };
-        warn(makeString("\"\\"_s, view, "\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s),
-            makeString("\"\\"_s, view, "\" is an invalid escape sequence. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s), line, position, position + 2);
+        warn(concatenate("\"\\"_s, view, "\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s),
+            concatenate("\"\\"_s, view, "\" is an invalid escape sequence. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s), line, position, position + 2);
     }
 
     // At the opening quote. `start` is where the prefix began.
@@ -1300,15 +1301,15 @@ private:
                 unsigned detectedAt = lastLine();
                 // In f"{x" the second quote was meant to end the whole, and what is missing is the brace.
                 if (!m_strings.isEmpty() && m_strings.last().quote == quote && m_strings.last().quoteSize == quoteSize)
-                    return fail(makeString(m_strings.last().prefix(), "-string: expecting '}'"_s), line, column, line, column);
+                    return fail(concatenate(m_strings.last().prefix(), "-string: expecting '}'"_s), line, column, line, column);
                 // A line that nothing ends may be taken to be ended, and then it is the end of the line that has been come to.
                 bool isAtEndOfSource = isAtEnd() && (quoteSize == 3 || m_lastLine != ScanRange::LastLine::IsEnded);
                 if (quoteSize == 3)
-                    fail(makeString("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
+                    fail(concatenate("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
                 else if (hasEscapedQuote)
-                    fail(makeString("unterminated string literal (detected at line "_s, detectedAt, "); perhaps you escaped the end quote?"_s), line, column, line, column);
+                    fail(concatenate("unterminated string literal (detected at line "_s, detectedAt, "); perhaps you escaped the end quote?"_s), line, column, line, column);
                 else
-                    fail(makeString("unterminated string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
+                    fail(concatenate("unterminated string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
                 m_error.isAtEndOfSource = isAtEndOfSource;
                 return false;
             }
@@ -1372,7 +1373,7 @@ private:
     bool enterExpression(StringState& state)
     {
         if (++state.expressionStartDepth >= maximumExpressionNesting)
-            return fail(makeString(state.prefix(), "-string: expressions nested too deeply"_s));
+            return fail(concatenate(state.prefix(), "-string: expressions nested too deeply"_s));
         state.isScanningText = false;
         return true;
     }
@@ -1406,14 +1407,14 @@ private:
             bool isInFormatSpecification = state.isInFormatSpecification && state.isInExpression();
             if (isAtEnd() || (state.quoteSize == 1 && isNewline(current()))) {
                 if (isInFormatSpecification && !isAtEnd())
-                    return fail(makeString(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s), m_line, columnOf(m_position), m_line, columnOf(m_position));
+                    return fail(concatenate(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s), m_line, columnOf(m_position), m_line, columnOf(m_position));
                 unsigned detectedAt = lastLine();
                 if (state.quoteSize == 3) {
-                    fail(makeString("unterminated triple-quoted "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
+                    fail(concatenate("unterminated triple-quoted "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
                     m_error.isAtEndOfSource = true;
                     return false;
                 }
-                return fail(makeString("unterminated "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
+                return fail(concatenate("unterminated "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
             }
 
             unsigned c = consumeInString();
@@ -1701,7 +1702,7 @@ private:
         case '}': {
             char character = c;
             if (state && !state->braceDepth && c == '}')
-                return fail(makeString(state->prefix(), "-string: single '}' is not allowed"_s));
+                return fail(concatenate(state->prefix(), "-string: single '}' is not allowed"_s));
             if (m_brackets.size() <= (m_hasEnclosingBracket ? 1u : 0u)) {
                 // What closes the bracket that a lambda is in is where the lambda ends.
                 if (m_hasEnclosingBracket) {
@@ -1709,19 +1710,19 @@ private:
                     m_end = start;
                     return finish(m_position);
                 }
-                return fail(makeString("unmatched '"_s, character, '\''));
+                return fail(concatenate("unmatched '"_s, character, '\''));
             }
             Bracket opening = m_brackets.takeLast();
             if (!((opening.character == '(' && c == ')') || (opening.character == '[' && c == ']') || (opening.character == '{' && c == '}'))) {
                 if (state && opening.character == '{' && state->braceDepth - 1 == state->expressionStartDepth)
-                    return fail(makeString(state->prefix(), "-string: unmatched '"_s, character, '\''));
+                    return fail(concatenate(state->prefix(), "-string: unmatched '"_s, character, '\''));
                 if (opening.line != m_line)
-                    return fail(makeString("closing parenthesis '"_s, character, "' does not match opening parenthesis '"_s, opening.character, "' on line "_s, opening.line));
-                return fail(makeString("closing parenthesis '"_s, character, "' does not match opening parenthesis '"_s, opening.character, '\''));
+                    return fail(concatenate("closing parenthesis '"_s, character, "' does not match opening parenthesis '"_s, opening.character, "' on line "_s, opening.line));
+                return fail(concatenate("closing parenthesis '"_s, character, "' does not match opening parenthesis '"_s, opening.character, '\''));
             }
             if (state) {
                 if (--state->braceDepth < 0)
-                    return fail(makeString(state->prefix(), "-string: unmatched '"_s, character, '\''));
+                    return fail(concatenate(state->prefix(), "-string: unmatched '"_s, character, '\''));
                 if (c == '}' && state->braceDepth == state->expressionStartDepth) {
                     --state->expressionStartDepth;
                     state->isScanningText = true;
@@ -1740,7 +1741,7 @@ private:
             m_position = start;
             unsigned column = columnOf(start);
             if (c < 0x20 || c == 0x7F)
-                return fail(makeString("invalid non-printable character U+"_s, hex(c, 4)), m_line, column, m_line, column);
+                return fail(concatenate("invalid non-printable character U+"_s, hex(c, 4)), m_line, column, m_line, column);
             ++m_position;
             add(TokenKind::Invalid, start);
             return true;

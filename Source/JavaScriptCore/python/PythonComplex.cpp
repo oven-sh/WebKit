@@ -420,15 +420,15 @@ static String reprOfPart(double value, bool alwaysSigned)
     if (text.endsWith(".0"_s))
         text = text.left(text.length() - 2);
     if (alwaysSigned && !text.startsWith('-'))
-        return makeString('+', text);
+        return concatenate('+', text);
     return text;
 }
 
 static String reprOfComplex(Complex value)
 {
     if (!value.real && !std::signbit(value.real))
-        return makeString(reprOfPart(value.imag, false), 'j');
-    return makeString('(', reprOfPart(value.real, false), reprOfPart(value.imag, true), "j)"_s);
+        return concatenate(reprOfPart(value.imag, false), 'j');
+    return concatenate('(', reprOfPart(value.real, false), reprOfPart(value.imag, true), "j)"_s);
 }
 
 String reprOfComplex(double real, double imaginary)
@@ -446,7 +446,7 @@ PYTHON_NATIVE(complexFormat)
     NATIVE_PROLOGUE();
     JSString* given = stringIn(args[1]);
     if (!given)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     Complex self = valueOf(tryComplex(args[0]));
     String text = given->value(globalObject);
     if (text.isEmpty())
@@ -493,14 +493,14 @@ PYTHON_NATIVE(complexFormat)
         if (asRepr) {
             String digits = reprOfPart(value, sign == '+');
             if (sign == ' ' && !digits.startsWith('-'))
-                return makeString(' ', digits);
+                return concatenate(' ', digits);
             return digits;
         }
         FormatSpecification one = part;
         one.sign = sign;
         return formatFloat(globalObject, value, one);
     };
-    StringBuilder body;
+    TextBuilder body;
     if (addParentheses)
         body.append('(');
     if (!skipReal) {
@@ -519,7 +519,9 @@ PYTHON_NATIVE(complexFormat)
     padding.align = specification.align ? specification.align : '>';
     padding.hasWidth = specification.hasWidth;
     padding.width = specification.width;
-    String result = formatString(globalObject, body.toString(), padding);
+    String unpadded = body.finish(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String result = formatString(globalObject, unpadded, padding);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsString(vm, result));
 }
@@ -589,6 +591,8 @@ static double parseFloatPrefix(std::span<const Latin1Character> text, size_t& co
 static std::optional<Complex> parseComplex(StringView view)
 {
     Vector<Latin1Character, 32> characters;
+    if (!characters.tryReserveCapacity(view.length()))
+        return std::nullopt;
     for (unsigned i = 0; i < view.length(); ++i) {
         char16_t c = view[i];
         if (c == '_') {
@@ -675,7 +679,7 @@ static PyComplex* callComplexMethod(JSGlobalObject* globalObject, JSValue value)
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* complex = tryComplex(result);
     if (!complex) {
-        raiseTypeError(globalObject, scope, makeString("__complex__ returned non-complex (type "_s, typeName(globalObject, result), ')'));
+        raiseTypeError(globalObject, scope, concatenate("__complex__ returned non-complex (type "_s, typeName(globalObject, result), ')'));
         return nullptr;
     }
     if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Complex, "__complex__ returned non-complex"_s, "complex"_s))
@@ -701,7 +705,7 @@ PYTHON_NATIVE(complexNew)
         return JSValue::encode(PyComplex::create(vm, type->instanceStructure(), value.real, value.imag));
     };
     if (args.size() > 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("complex() takes at most 2 arguments ("_s, args.size() - 1, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("complex() takes at most 2 arguments ("_s, args.size() - 1, " given)"_s)));
 
     if (args.size() <= 2 && !args.keywordCount()) {
         if (args.size() == 1)
@@ -725,7 +729,7 @@ PYTHON_NATIVE(complexNew)
         if (converted)
             return make(valueOf(converted));
         if (!isRealNumber(globalObject, argument))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("complex() argument must be a string or a number, not "_s, typeName(globalObject, argument))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("complex() argument must be a string or a number, not "_s, typeName(globalObject, argument))));
         auto real = toDouble(globalObject, argument);
         RETURN_IF_EXCEPTION(scope, { });
         return make({ *real, 0 });
@@ -742,13 +746,13 @@ PYTHON_NATIVE(complexNew)
         realValue = converted;
     RETURN_IF_EXCEPTION(scope, { });
     if (tryComplex(realValue) && !isRealNumber(globalObject, givenRealValue)) {
-        if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, givenRealValue))))
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, givenRealValue))))
             return { };
     }
     if (!tryComplex(realValue) && !isRealNumber(globalObject, realValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, realValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, realValue))));
     if (imaginaryValue && !tryComplex(imaginaryValue) && !isRealNumber(globalObject, imaginaryValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, imaginaryValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, imaginaryValue))));
 
     Complex real;
     Complex imaginary;
@@ -765,7 +769,7 @@ PYTHON_NATIVE(complexNew)
     if (!imaginaryValue)
         imaginary.real = real.imag;
     else if (auto* complex = tryComplex(imaginaryValue)) {
-        if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString("complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, imaginaryValue))))
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate("complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, imaginaryValue))))
             return { };
         imaginary = valueOf(complex);
         imaginaryIsComplex = true;

@@ -83,7 +83,7 @@ PYTHON_NATIVE(viewRepr)
     RETURN_IF_EXCEPTION(scope, { });
     String text = repr(globalObject, items);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString(typeName(globalObject, args[0]), '(', text, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(typeName(globalObject, args[0]), '(', text, ')'))));
 }
 
 PYTHON_NATIVE(viewContainsMethod)
@@ -273,7 +273,7 @@ PYTHON_NATIVE(proxyNew)
 {
     NATIVE_PROLOGUE();
     if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_getitem) || isList(args[1]) || isTuple(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args[1]));
 }
 
@@ -308,7 +308,7 @@ PYTHON_NATIVE(proxyRepr)
     NATIVE_PROLOGUE();
     String text = repr(globalObject, mappingOfProxy(args[0]));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("mappingproxy("_s, text, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("mappingproxy("_s, text, ')'))));
 }
 
 PYTHON_NATIVE(proxyStr)
@@ -349,7 +349,7 @@ PYTHON_NATIVE(proxyOr)
 PYTHON_NATIVE(proxyInPlaceOr)
 {
     NATIVE_PROLOGUE();
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("'|=' is not supported by "_s, typeName(globalObject, args[0]), "; use '|' instead"_s)));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("'|=' is not supported by "_s, typeName(globalObject, args[0]), "; use '|' instead"_s)));
 }
 
 // get, keys, values, items, copy and __reversed__: whatever the mapping does.

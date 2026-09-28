@@ -423,7 +423,7 @@ bool enterContext(JSGlobalObject* globalObject, PyNativeObject* context)
     if (context->field(ContextIsEntered).isTrue()) {
         String shown = repr(globalObject, context);
         RETURN_IF_EXCEPTION(scope, false);
-        raise(globalObject, scope, BuiltinType::RuntimeError, makeString("cannot enter context: "_s, shown, " is already entered"_s));
+        raise(globalObject, scope, BuiltinType::RuntimeError, concatenate("cannot enter context: "_s, shown, " is already entered"_s));
         return false;
     }
     context->setField(vm, ContextPrevious, realm->currentContext() ? JSValue(realm->currentContext()) : jsUndefined());
@@ -470,7 +470,7 @@ static bool checkKey(JSGlobalObject* globalObject, JSValue key)
         return true;
     String shown = repr(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
-    raiseTypeError(globalObject, scope, makeString("a ContextVar key was expected, got "_s, shown));
+    raiseTypeError(globalObject, scope, concatenate("a ContextVar key was expected, got "_s, shown));
     return false;
 }
 
@@ -603,15 +603,15 @@ PYTHON_NATIVE(variableNew)
     unsigned positional = args.size() - 1;
     unsigned given = positional + args.keywordCount();
     if (given > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ContextVar() takes at most 2 "_s, positional ? ""_s : "keyword "_s, "arguments ("_s, given, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ContextVar() takes at most 2 "_s, positional ? ""_s : "keyword "_s, "arguments ("_s, given, " given)"_s)));
     if (positional != 1)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ContextVar() takes "_s, positional ? "at most"_s : "exactly"_s, " 1 positional argument ("_s, positional, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ContextVar() takes "_s, positional ? "at most"_s : "exactly"_s, " 1 positional argument ("_s, positional, " given)"_s)));
     JSValue defaultValue;
     if (args.keywordCount()) {
         String keyword = args.keywordName(0)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (keyword != "default"_s)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ContextVar() got an unexpected keyword argument '"_s, keyword, '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("ContextVar() got an unexpected keyword argument '"_s, keyword, '\'')));
         defaultValue = args.keywordValue(0);
     }
     JSValue name = args[1];
@@ -649,12 +649,12 @@ PYTHON_NATIVE(variableRepr)
     PyNativeObject* self = asNativeObject(args[0]);
     String name = repr(globalObject, self->field(VariableName));
     RETURN_IF_EXCEPTION(scope, { });
-    String defaultValue;
+    String defaultValue = emptyString();
     if (JSValue value = self->field(VariableDefault)) {
-        defaultValue = makeString(" default="_s, repr(globalObject, value));
+        defaultValue = concatenate(" default="_s, repr(globalObject, value));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(jsString(vm, makeString("<ContextVar name="_s, name, defaultValue, " at "_s, addressOf(self), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<ContextVar name="_s, name, defaultValue, " at "_s, addressOf(self), '>'))));
 }
 
 // PyContextVar_Get()
@@ -692,7 +692,7 @@ static bool resetVariable(JSGlobalObject* globalObject, JSValue variable, PyNati
     auto complain = [&] (BuiltinType type, ASCIILiteral what) {
         String shown = repr(globalObject, token);
         RETURN_IF_EXCEPTION(scope, false);
-        raise(globalObject, scope, type, makeString(shown, what));
+        raise(globalObject, scope, type, concatenate(shown, what));
         return false;
     };
     if (token->field(TokenIsUsed).isTrue())
@@ -714,7 +714,7 @@ PYTHON_NATIVE(variableReset)
     if (typeOf(globalObject, args[1]) != realm->typeToken()) {
         String shown = repr(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expected an instance of Token, got "_s, shown)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("expected an instance of Token, got "_s, shown)));
     }
     scope.release();
     resetVariable(globalObject, args[0], asNativeObject(args[1]));
@@ -735,7 +735,7 @@ PYTHON_NATIVE(tokenRepr)
     PyNativeObject* self = asNativeObject(args[0]);
     String variable = repr(globalObject, self->field(TokenVariable));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("<Token"_s, self->field(TokenIsUsed).isTrue() ? " used"_s : ""_s, " var="_s, variable, " at "_s, addressOf(self), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<Token"_s, self->field(TokenIsUsed).isTrue() ? " used"_s : ""_s, " var="_s, variable, " at "_s, addressOf(self), '>'))));
 }
 
 PYTHON_NATIVE(tokenExit)

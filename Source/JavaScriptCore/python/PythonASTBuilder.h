@@ -29,6 +29,7 @@
 #include "PythonAST.h"
 #include "PythonASTValidator.h"
 #include "PythonArena.h"
+#include "PythonText.h"
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace Python {
@@ -143,7 +144,7 @@ private:
             bool isThere = field.type == ASTClass::identifier ? !!fields[i].identifier : field.type == ASTClass::constant ? !!fields[i].constant : field.type == ASTClass::string ? !!fields[i].text
                 : isSimpleSum(field.type) ? fields[i].singleton != ASTClass::AST : !!fields[i].node;
             if (!isThere) {
-                m_source.fail(ASTError::Kind::ValueError, makeString("field '"_s, field.name, "' is required for "_s, description.name));
+                m_source.fail(ASTError::Kind::ValueError, concatenate("field '"_s, field.name, "' is required for "_s, description.name));
                 return nullptr;
             }
         }

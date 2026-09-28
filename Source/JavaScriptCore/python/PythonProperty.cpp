@@ -64,10 +64,10 @@ static JSValue raiseHasNo(JSGlobalObject* globalObject, PyNativeObject* property
     RETURN_IF_EXCEPTION(scope, { });
     String className = reprOfString(qualifiedNameWithoutModule(globalObject, typeOf(globalObject, instance)));
     if (!name)
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString("property of "_s, className, " object has no "_s, what));
+        return raise(globalObject, scope, BuiltinType::AttributeError, concatenate("property of "_s, className, " object has no "_s, what));
     String nameText = repr(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    return raise(globalObject, scope, BuiltinType::AttributeError, makeString("property "_s, nameText, " of "_s, className, " object has no "_s, what));
+    return raise(globalObject, scope, BuiltinType::AttributeError, concatenate("property "_s, nameText, " of "_s, className, " object has no "_s, what));
 }
 
 JSValue getProperty(JSGlobalObject* globalObject, PyNativeObject* property, JSValue instance)
@@ -184,7 +184,7 @@ PYTHON_NATIVE(propertySetName)
 {
     NATIVE_PROLOGUE();
     if (args.size() != 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__set_name__() takes 2 positional arguments but "_s, args.size() - 1, " were given"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__set_name__() takes 2 positional arguments but "_s, args.size() - 1, " were given"_s)));
     asNativeObject(args[0])->putDirect(vm, names.private_propertyName, args[2]);
     RETURN_NONE();
 }

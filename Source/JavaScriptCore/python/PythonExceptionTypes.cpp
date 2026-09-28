@@ -65,7 +65,7 @@ PYTHON_NATIVE(exceptionInit)
 {
     NATIVE_PROLOGUE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     asObject(args[0])->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     RETURN_NONE();
 }
@@ -135,9 +135,9 @@ PYTHON_NATIVE(exceptionAddNote)
 {
     NATIVE_PROLOGUE();
     if (args.size() != 2 || args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseException.add_note() takes exactly one argument ("_s, args.size() - 1, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("BaseException.add_note() takes exactly one argument ("_s, args.size() - 1, " given)"_s)));
     if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("add_note() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("add_note() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     addNote(globalObject, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
@@ -242,7 +242,7 @@ PYTHON_NATIVE(stopIterationInit)
 {
     NATIVE_PROLOGUE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     self->putDirect(vm, names.field_value, args.size() > 1 ? args[1] : jsUndefined());
@@ -254,7 +254,7 @@ PYTHON_NATIVE(systemExitInit)
 {
     NATIVE_PROLOGUE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     JSObject* self = asObject(args[0]);
     PyTuple* arguments = argumentsAfterFirst(globalObject, args);
     self->putDirect(vm, names.private_args, arguments);
@@ -294,7 +294,7 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
         else if (which == KeywordException::Attribute && name == "obj"_s)
             field = &names.field_object;
         if (!field)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() got an unexpected keyword argument '"_s, name, '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() got an unexpected keyword argument '"_s, name, '\'')));
         self->putDirect(vm, *field, args.keywordValue(i));
     }
     if (which == KeywordException::Import && args.size() == 2)
@@ -385,7 +385,7 @@ static void fillOSError(JSGlobalObject* globalObject, JSObject* self, const Nati
             auto written = toIndex(globalObject, filename);
             if (scope.exception()) {
                 if (catchException(globalObject, BuiltinType::IndexError))
-                    raiseValueError(globalObject, scope, makeString("cannot fit '"_s, type->nameString(globalObject), "' into an index-sized integer"_s));
+                    raiseValueError(globalObject, scope, concatenate("cannot fit '"_s, type->nameString(globalObject), "' into an index-sized integer"_s));
                 return;
             }
             if (*written != -1)
@@ -412,7 +412,7 @@ PYTHON_NATIVE(osErrorNew)
     bool isLeftToInit = leavesItToInit(globalObject, type);
     if (!isLeftToInit) {
         if (args.keywordCount())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() takes no keyword arguments"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() takes no keyword arguments"_s)));
         if (type == realm->typeOSError() && args.size() >= 3 && args.size() <= 6 && isInstance(globalObject, args[1], realm->typeInt())) {
             auto number = toIndex(globalObject, args[1], true);
             if (auto specific = osErrorTypeFor(static_cast<int>(std::clamp<int64_t>(*number, -1, std::numeric_limits<int>::max()))))
@@ -436,7 +436,7 @@ PYTHON_NATIVE(osErrorInit)
     if (!leavesItToInit(globalObject, typeOf(globalObject, args[0])))
         RETURN_NONE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     fillOSError(globalObject, asObject(args[0]), args);
     RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
@@ -461,16 +461,16 @@ PYTHON_NATIVE(osErrorStr)
         if (filename2) {
             String second = text(filename2, true);
             RETURN_IF_EXCEPTION(scope, { });
-            return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason, ": "_s, first, " -> "_s, second)));
+            RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("[Errno "_s, number, "] "_s, reason, ": "_s, first, " -> "_s, second))));
         }
-        return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason, ": "_s, first)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("[Errno "_s, number, "] "_s, reason, ": "_s, first))));
     }
     if (errorNumber && message) {
         String number = text(errorNumber, false);
         RETURN_IF_EXCEPTION(scope, { });
         String reason = text(message, false);
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("[Errno "_s, number, "] "_s, reason))));
     }
     String plain = strOfException(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -502,13 +502,13 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
         JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (!method || isNone(method)) {
-            raiseTypeError(globalObject, scope, makeString("expected str, bytes or os.PathLike object, not "_s, typeName(globalObject, path)));
+            raiseTypeError(globalObject, scope, concatenate("expected str, bytes or os.PathLike object, not "_s, typeName(globalObject, path)));
             return std::nullopt;
         }
         path = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (!stringIn(path) && bytesKindOf(path) != BytesKind::Bytes) {
-            raiseTypeError(globalObject, scope, makeString("expected "_s, typeName(globalObject, given), ".__fspath__() to return str or bytes, not "_s, typeName(globalObject, path)));
+            raiseTypeError(globalObject, scope, concatenate("expected "_s, typeName(globalObject, given), ".__fspath__() to return str or bytes, not "_s, typeName(globalObject, path)));
             return std::nullopt;
         }
     }
@@ -535,7 +535,7 @@ PYTHON_NATIVE(syntaxErrorInit)
 {
     NATIVE_PROLOGUE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     if (args.size() >= 2)
@@ -545,7 +545,7 @@ PYTHON_NATIVE(syntaxErrorInit)
         collect(globalObject, args[2], details);
         RETURN_IF_EXCEPTION(scope, { });
         if (details.size() < 4 || details.size() > 7)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes "_s, details.size() < 4 ? "at least 4"_s : "at most 7"_s, " arguments ("_s, details.size(), " given)"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("function takes "_s, details.size() < 4 ? "at least 4"_s : "at most 7"_s, " arguments ("_s, details.size(), " given)"_s)));
         if (details.size() == 5)
             return JSValue::encode(raiseTypeError(globalObject, scope, "end_offset must be provided when end_lineno is provided"_s));
         const Identifier* fields[] = { &names.field_filename, &names.field_line, &names.field_offset, &names.field_text, &names.field_endLine, &names.field_endOffset, &names.field_metadata };
@@ -584,11 +584,11 @@ PYTHON_NATIVE(syntaxErrorStr)
         if (slash != notFound)
             path = path.substring(slash + 1);
         if (hasLine)
-            return JSValue::encode(jsString(vm, makeString(text, " ("_s, path, ", line "_s, lineText, ')')));
-        return JSValue::encode(jsString(vm, makeString(text, " ("_s, path, ')')));
+            RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(text, " ("_s, path, ", line "_s, lineText, ')'))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(text, " ("_s, path, ')'))));
     }
     if (hasLine)
-        return JSValue::encode(jsString(vm, makeString(text, " (line "_s, lineText, ')')));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(text, " (line "_s, lineText, ')'))));
     return JSValue::encode(jsString(vm, text));
 }
 
@@ -629,18 +629,18 @@ PYTHON_NATIVE(unicodeErrorInit)
     auto kind = unpack<UnicodeError>(callFrame, 0);
     NATIVE_PROLOGUE();
     if (args.keywordCount())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
 
     bool hasEncoding = kind != UnicodeError::Translate;
     unsigned count = hasEncoding ? 5 : 4;
     if (args.size() - 1 != count)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes exactly "_s, count, " arguments ("_s, args.size() - 1, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("function takes exactly "_s, count, " arguments ("_s, args.size() - 1, " given)"_s)));
     auto checkString = [&] (unsigned position) {
         if (stringIn(args[position]))
             return true;
-        raiseTypeError(globalObject, scope, makeString("argument "_s, position, " must be str, not "_s, isNone(args[position]) ? "None"_s : typeName(globalObject, args[position])));
+        raiseTypeError(globalObject, scope, concatenate("argument "_s, position, " must be str, not "_s, isNone(args[position]) ? "None"_s : typeName(globalObject, args[position])));
         return false;
     };
     unsigned position = 1;
@@ -691,15 +691,15 @@ PYTHON_NATIVE(unicodeErrorStr)
     // Any of them may have been set to anything since.
     String reason = text(names.field_reason);
     RETURN_IF_EXCEPTION(scope, { });
-    String prefix;
+    String prefix = emptyString();
     if (kind != UnicodeError::Translate) {
         String encoding = text(names.field_encoding);
         RETURN_IF_EXCEPTION(scope, { });
-        prefix = makeString('\'', encoding, "' codec "_s);
+        prefix = concatenate('\'', encoding, "' codec "_s);
     }
     bool isDecode = kind == UnicodeError::Decode;
     if (isDecode ? !typeOf(globalObject, object)->hasFlag(PyType::IsBytes) : !stringIn(object))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("UnicodeError 'object' attribute must be a "_s, isDecode ? "bytes"_s : "string"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("UnicodeError 'object' attribute must be a "_s, isDecode ? "bytes"_s : "string"_s)));
     int64_t size = length(globalObject, object);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t start = *tryInt64(getUnicodeErrorBound<false>(globalObject, self));
@@ -707,14 +707,14 @@ PYTHON_NATIVE(unicodeErrorStr)
     ASCIILiteral verb = kind == UnicodeError::Encode ? "encode"_s : isDecode ? "decode"_s : "translate"_s;
 
     if (start < 0 || start >= size || end < 0 || end > size || end != start + 1)
-        return JSValue::encode(jsString(vm, makeString(prefix, "can't "_s, verb, isDecode ? " bytes"_s : " characters"_s, " in position "_s, start, '-', end - 1, ": "_s, reason)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(prefix, "can't "_s, verb, isDecode ? " bytes"_s : " characters"_s, " in position "_s, start, '-', end - 1, ": "_s, reason))));
     if (isDecode)
-        return JSValue::encode(jsString(vm, makeString(prefix, "can't decode byte 0x"_s, hex((*builtinBufferOf(object))[start], 2, Lowercase), " in position "_s, start, ": "_s, reason)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(prefix, "can't decode byte 0x"_s, hex((*builtinBufferOf(object))[start], 2, Lowercase), " in position "_s, start, ": "_s, reason))));
     JSValue character = stringGetItem(globalObject, stringIn(object), intFromInt64(globalObject, start));
     RETURN_IF_EXCEPTION(scope, { });
     auto c = static_cast<unsigned>(*asString(character)->view(globalObject)->codePoints().begin());
-    String escaped = c <= 0xFF ? makeString("\\x"_s, hex(c, 2, Lowercase)) : c <= 0xFFFF ? makeString("\\u"_s, hex(c, 4, Lowercase)) : makeString("\\U"_s, hex(c, 8, Lowercase));
-    return JSValue::encode(jsString(vm, makeString(prefix, "can't "_s, verb, " character '"_s, escaped, "' in position "_s, start, ": "_s, reason)));
+    String escaped = c <= 0xFF ? concatenate("\\x"_s, hex(c, 2, Lowercase)) : c <= 0xFFFF ? concatenate("\\u"_s, hex(c, 4, Lowercase)) : concatenate("\\U"_s, hex(c, 8, Lowercase));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(prefix, "can't "_s, verb, " character '"_s, escaped, "' in position "_s, start, ": "_s, reason))));
 }
 
 void initializeExceptionTypes(JSGlobalObject* globalObject)
@@ -806,7 +806,7 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         auto written = toIndex(globalObject, value);
         if (scope.exception()) {
             if (catchException(globalObject, BuiltinType::IndexError))
-                raiseValueError(globalObject, scope, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+                raiseValueError(globalObject, scope, concatenate("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
             return;
         }
         // In CPython -1 is how it is said that there is none.

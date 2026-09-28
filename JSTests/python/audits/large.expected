@@ -1,0 +1,208 @@
+s = '\x00' * 2**29 ;; repr(s) => MemoryError
+s = '\x00' * 2**29 ;; ascii(s) => MemoryError
+s = '\x00' * 2**29 ;; str([s]) => MemoryError
+s = '\x00' * 2**29 ;; '%r' % s => MemoryError
+s = '\x00' * 2**29 ;; f'{s!r}' => MemoryError
+s = '\x00' * 2**29 ;; '{!r}'.format(s) => MemoryError
+s = '\xe9' * 2**29 ;; ascii(s) => MemoryError
+s = 'a' * 2**30 ;; s + s => MemoryError Out of memory
+s = 'a' * 2**30 ;; ''.join([s, s]) => MemoryError
+s = 'a' * 2**30 ;; s.join(['', '', '']) => MemoryError
+s = 'a' * 2**30 ;; '%s%s' % (s, s) => MemoryError Out of memory
+s = 'a' * 2**30 ;; '%s%*s' % (s, 0, s) => MemoryError
+s = 'a' * 2**30 ;; f'{s}{s}' => MemoryError Out of memory
+s = 'a' * 2**30 ;; '{}{}'.format(s, s) => MemoryError
+s = 'a' * 2**30 ;; s.replace('a', 'bb') => MemoryError
+s = 'a' * 2**30 ;; s.replace('', 'b') => MemoryError
+s = '\xdf' * 2**30 ;; s.upper() => MemoryError
+s = '\xdf' * 2**30 ;; s.title() => MemoryError
+s = '\xdf' * 2**30 ;; s.swapcase() => MemoryError
+s = '\xdf' * 2**30 ;; s.casefold() => MemoryError
+s = 'a' + 'İ' * 2**30 ;; s.capitalize() => MemoryError
+s = 'a' * 2**30 ;; s.translate({97: 'bb'}) => MemoryError
+s = '\t' * 2**28 ;; s.expandtabs(8) => MemoryError
+s = 'a' * 2**30 ;; s.encode('utf-32') => MemoryError
+s = '١' * 2**29 ;; s.encode('ascii', 'backslashreplace') => MemoryError
+s = '١' * 2**29 ;; s.encode('ascii', 'xmlcharrefreplace') => MemoryError
+s = '\xdf' * 2**30 ;; s.lower() => made str 1073741824
+s = '\xdf' * (2**30 - 1) ;; s.upper() => made str 2147483646
+s = 'ΐ' * (2**30 - 2**28) ;; s.upper() => MemoryError
+s = 'ΐ' * (2**30 - 2**28) ;; s.lower() => made str 805306368
+s = 'İ' * (2**30 + 1) ;; s.lower() => MemoryError
+s = 'ﬃ' * (2**30 - 2**28) ;; s.casefold() => MemoryError
+s = 'a' * (2**30 - 1) ;; s.encode('utf-32-le') => MemoryError
+s = '١' * 2**30 ;; s.encode('ascii', 'backslashreplace') => MemoryError
+s = '١' * 2**30 ;; s.encode('ascii', 'xmlcharrefreplace') => MemoryError
+b = bytes(2**31) ;; b.decode('latin-1') => MemoryError
+b = bytes(2**31) ;; b.decode('ascii') => MemoryError
+b = bytes(2**31) ;; b.decode() => MemoryError
+b = bytes(2**31) ;; str(b, 'utf-8') => MemoryError
+b = b'\xc3\xa9' * 2**30 ;; len(b.decode()) => made int
+b = bytes(2**31) ;; b.decode('utf-16') => made str 1073741824
+b = bytes(2**31) ;; hash(b) => made int
+b = bytes(2**29) ;; repr(b) => MemoryError
+b = bytes(2**29) ;; str(b) => MemoryError
+b = bytes(2**29) ;; repr(bytearray(b)) => MemoryError
+b = bytes(2**30) ;; b.hex() => MemoryError
+b = bytes(2**30) ;; b.hex(':') => MemoryError
+b = bytes(2**31) ;; b + b => made bytes 4294967296
+b = bytes(2**31) ;; b''.join([b, b]) => made bytes 4294967296
+b = bytes(2**31) ;; b.join([b'', b'', b'']) => made bytes 4294967296
+b = bytes(2**31) ;; b.replace(b'\0', b'ab') => made bytes 4294967296
+b = bytes(2**31) ;; b'%b%b' % (b, b) => MemoryError
+b = bytes(2**31) ;; b'%s' % b => MemoryError
+b = bytes(2**30) ;; b'%r' % b => MemoryError
+b = bytearray(2**31) ;; b.__iadd__(b) => made bytearray 4294967296
+b = bytearray(2**31) ;; b.extend(b) => made NoneType
+b = bytes(2**31) ;; b.translate(None) => made bytes 2147483648
+b = b'\t' * 2**29 ;; b.expandtabs(8) => made bytes 4294967296
+b = bytes(2**28) ;; int.from_bytes(b + b'\1') => made int
+b = bytes(2**31) ;; int(b) => MemoryError
+b = bytes(2**31) ;; float(b) => MemoryError
+pass ;; '١' * (2**30 - 1) => made str 1073741823
+pass ;; '١' * 2**30 => made str 1073741824
+pass ;; '١٢' * 2**29 => made str 1073741824
+pass ;; '١' * (2**31 - 64) => made str 2147483584
+pass ;; '١' * (2**31 - 1) => MemoryError
+pass ;; 'a' * (2**31 - 1) => made str 2147483647
+pass ;; 'ab' * (2**30 - 1) => made str 2147483646
+s = 'ŉ' * (2**30 + 2**28) ;; s.upper() => MemoryError
+s = 'ŉ' * (2**29 + 2**28) ;; s.upper() => made str 1610612736
+b = bytes(2**30) ;; b + b => made bytes 2147483648
+b = bytes(2**30) ;; b''.join([b, b]) => made bytes 2147483648
+b = bytes(2**30) ;; b.join([b'', b'', b'']) => made bytes 2147483648
+b = bytes(2**30) ;; b.replace(b'\0', b'ab') => made bytes 2147483648
+b = bytes(2**30) ;; b'%b%b' % (b, b) => MemoryError
+b = bytes(2**30) ;; b'%s%s' % (b, b) => MemoryError
+b = bytearray(2**30) ;; b.__iadd__(b) => made bytearray 2147483648
+b = bytearray(2**30) ;; b.extend(b) => made NoneType
+b = bytearray(2**30) ;; b.__imul__(2) => made bytearray 2147483648
+b = bytearray(2**30) ;; b.__setitem__(slice(0, 0), b) => made NoneType
+b = bytearray(2**31 - 1) ;; b.append(1) => made NoneType
+b = bytearray(2**31 - 1) ;; b.insert(0, 1) => made NoneType
+b = bytes(2**31 - 1) ;; b.decode('latin-1') => made str 2147483647
+b = bytes(2**31 - 1) ;; hash(b) == hash(b[:]) => made bool
+b = bytes(2**31 - 1) ;; b.translate(None) => made bytes 2147483647
+b = bytes(2**31 - 1) ;; b.upper() => made bytes 2147483647
+b = bytes(2**31 - 1) ;; b.center(2**31) => made bytes 2147483648
+b = bytes(2**31 - 1) ;; int(b) => ValueError invalid literal for int() with base 10:
+b = bytes(2**31 - 1) ;; float(b) => MemoryError
+b = bytes(2**31 - 1) ;; compile(b, 'f', 'exec') => SyntaxError source code string cannot contain null b
+b = bytes(2**31 - 1) ;; memoryview(b).tobytes() => made bytes 2147483647
+b = bytes(2**31 - 1) ;; memoryview(b).hex() => MemoryError
+b = bytes(2**29) ;; memoryview(b).tolist() => MemoryError
+b = bytes(2**29) ;; list(b) => MemoryError
+b = bytes(2**29) ;; tuple(b) => made tuple 536870912
+b = bytes(2**29) ;; b.split(b'\0') => MemoryError
+s = 'a' * 2**29 ;; list(s) => MemoryError
+s = 'a' * 2**29 ;; s.split('a') => MemoryError
+s = '\n' * 2**29 ;; s.splitlines() => MemoryError
+s = 'a ' * 2**28 ;; s.split() => made list 268435456
+s = '1' * (2**31 - 1) ;; float(s) => made float
+s = '1' * (2**31 - 1) ;; complex(s) => made complex
+s = '1' * (2**31 - 1) ;; int(s) => ValueError Exceeds the limit (4300 digits) for inte
+s = 'a' * 2**29 ;; s.rsplit('a') => MemoryError
+s = 'a ' * 2**28 ;; s.rsplit() => made list 268435456
+b = b'a ' * 2**28 ;; b.rsplit() => made list 268435456
+s = 'a' * 2**29 ;; s.split('a', 5) => made list 6
+pass ;; format(1, '02147483647,') => MemoryError
+pass ;; format(1, '02147483646,') => made str 2147483646
+pass ;; format(1.5, '02147483647,') => made str 2147483647
+pass ;; format(1, '2147483647') => made str 2147483647
+pass ;; format(1.5, '.2147483647f') => MemoryError
+pass ;; format(1.5, '.2147483647e') => MemoryError
+pass ;; format(1.5, '.2147483647g') => made str 3
+pass ;; format(1.5, '.2147483647%') => MemoryError
+pass ;; '%.2147483647f' % 1.5 => MemoryError
+pass ;; '%.2147483647d' % 1 => OverflowError precision too large
+pass ;; '%2147483647d' % 1 => made str 2147483647
+pass ;; round(1.5, 2**31 - 1) => made float
+b = bytes(2**31) ;; b + b + b'a' => MemoryError
+pass ;; bytes(2**32) => made bytes 4294967296
+pass ;; bytes(2**32 + 1) => MemoryError
+s = '1' * (2**31 - 1) ;; int(s, 16) => MemoryError
+b = bytes(2**31) ;; complex(b) => TypeError complex() argument must be a string or a
+pass ;; format(1.5, '.2147483646e') => MemoryError
+pass ;; format(1.5j, '.2147483647e') => MemoryError
+pass ;; format(1.5, '#.2147483647g') => MemoryError
+pass ;; '%.2147483647e' % 1.5 => MemoryError
+pass ;; '%#.2147483647g' % 1.5 => MemoryError
+n = 'a' * (2**31 - 5) ;; getattr(1, n) => MemoryError
+n = 'a' * (2**31 - 5) ;; setattr(1, n, 1) => MemoryError
+n = 'a' * (2**31 - 5) ;; delattr(1, n) => MemoryError
+n = 'a' * (2**31 - 5) ;; getattr(int, n) => MemoryError
+n = 'a' * (2**31 - 5) ;; getattr(type('C', (), {})(), n) => MemoryError
+n = 'a' * (2**31 - 5) ;; {}[n] => KeyError 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+n = 'a' * (2**31 - 5) ;; str(KeyError(n)) => made str 2147483645
+n = 'a' * (2**31 - 5) ;; repr(KeyError(n)) => MemoryError
+n = 'a' * (2**31 - 5) ;; repr(ValueError(n, n)) => MemoryError
+n = 'a' * (2**31 - 5) ;; eval(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; exec('del ' + n[:-8]) => MemoryError
+n = 'a' * (2**31 - 5) ;; exec('import ' + n[:-8]) => MemoryError
+n = 'a' * (2**31 - 5) ;; __import__(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; int(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; float(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; 'a'.encode(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; b'a'.decode(n) => MemoryError
+n = 'a' * (2**31 - 5) ;; 'a'.encode('ascii', n) => made bytes 1
+n = 'a' * (2**31 - 5) ;; '\xe9'.encode('ascii', n) => MemoryError
+n = 'a' * (2**31 - 5) ;; format(1, n) => MemoryError
+n = 'a' * (2**31 - 5) ;; format('a', n) => MemoryError
+n = 'a' * (2**31 - 5) ;; format(1.5, n) => MemoryError
+n = 'a' * (2**31 - 5) ;; ('{' + n[:-8] + '}').format() => MemoryError
+n = 'a' * (2**31 - 5) ;; ('{0.' + n[:-8] + '}').format(1) => MemoryError
+n = 'a' * (2**31 - 5) ;; ('%(' + n[:-8] + ')s') % {} => KeyError 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+n = 'a' * (2**31 - 5) ;; (lambda: 0)(**{n: 1}) => MemoryError
+n = 'a' * (2**31 - 5) ;; dict(**{n: 1}).popitem()[1] => made int
+n = 'a' * (2**31 - 5) ;; int(**{n: 1}) => MemoryError
+n = 'a' * 2**30 ;; type(n, (), {})() + type(n, (), {})() => MemoryError
+n = 'a' * (2**31 - 5) ;; repr(type(n, (), {})) => MemoryError
+n = 'a' * (2**31 - 5) ;; repr(type(n, (), {})()) => MemoryError
+n = 'a' * (2**31 - 5) ;; type(n, (), {})()() => MemoryError
+n = 'a' * (2**31 - 5) ;; type('C', (), {'__slots__': (n,)}) => made type
+n = 'a' * (2**31 - 5) ;; type('C', (), {'__slots__': (n,), n: 1}) => MemoryError
+n = 'a' * (2**31 - 5) ;; compile('1', n, 'eval').co_filename[:1] => made str 1
+n = 'a' * (2**31 - 5) ;; compile('1 +', n, 'eval') => MemoryError
+n = 'a' * (2**31 - 5) ;; compile('1', 'f', n) => ValueError compile() mode must be 'exec', 'eval' or
+n = 'a' * (2**31 - 5) ;; [].index(n) => ValueError list.index(x): x not in list
+n = 'a' * (2**31 - 5) ;; [].remove(n) => ValueError list.remove(x): x not in list
+n = 'a' * (2**31 - 5) ;; ().index(n) => ValueError tuple.index(x): x not in tuple
+n = 'a' * (2**31 - 5) ;; 'b'.index(n) => ValueError substring not found
+n = 'a' * (2**31 - 5) ;; set().remove(n) => KeyError 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+n = 'a' * (2**31 - 5) ;; bytes.fromhex(n) => ValueError fromhex() arg must contain an even numbe
+n = 'a' * (2**31 - 5) ;; memoryview(b'a').cast(n) => ValueError memoryview: destination format must be a
+n = 'a' * (2**31 - 5) ;; ord(n) => TypeError ord() expected a character, but string o
+n = 'a' * (2**31 - 5) ;; float.fromhex(n) => OverflowError hexadecimal value too large to represent
+n = 'a' * (2**31 - 5) ;; complex(n) => ValueError complex() arg is a malformed string
+n = 'a' * (2**31 - 5) ;; (1).to_bytes(1, n) => ValueError byteorder must be either 'little' or 'bi
+n = 'a' * (2**31 - 5) ;; print(**{n: 1}) => MemoryError
+n = 'a' * (2**31 - 5) ;; (lambda *, b: 0)(**{n: 1}) => MemoryError
+n = '١' * (2**30) ;; int(**{n: 1}) => TypeError int() got an unexpected keyword argument
+n = '١' * (2**30) ;; getattr(type('C', (), {n[:-1]: 1})(), n) => AttributeError 'C' object has no attribute '١١١١١١١١١١١
+n = 'a' * (2**31 - 5) ;; print(n, file=type('F', (), {'write': lambda s, t: None})()) => made NoneType
+n = 'a' * (2**31 - 5) ;; print(n, n, file=type('F', (), {'write': lambda s, t: None})()) => made NoneType
+n = 'a' * (2**31 - 5) ;; hash(n) == hash(n[:]) => made bool
+n = 'a' * (2**31 - 5) ;; n == n[:-1] + 'b' => made bool
+n = 'a' * (2**31 - 5) ;; n < n[:-1] + 'b' => made bool
+n = 'a' * (2**31 - 5) ;; n.count('a') => made int
+n = 'a' * (2**31 - 5) ;; n.find('b') => made int
+n = 'a' * (2**31 - 5) ;; n.isalpha() => made bool
+n = 'a' * (2**31 - 5) ;; n.isidentifier() => made bool
+n = 'a' * (2**31 - 5) ;; n.strip('a') => made str 0
+n = 'a' * (2**31 - 5) ;; n[::-1] => made str 2147483643
+n = 'a' * (2**31 - 5) ;; n[::2] => made str 1073741822
+n = 'a' * (2**31 - 5) ;; n.partition('b') => made tuple 3
+n = 'a' * (2**31 - 5) ;; n.encode() => made bytes 2147483643
+n = 'a' * (2**31 - 5) ;; n.encode('utf-16') => MemoryError
+n = '١' * (2**30) ;; n.encode() => MemoryError
+n = '١' * (2**31 - 64) ;; n.encode() => MemoryError
+n = '١' * (2**30) ;; n[::-1] => made str 1073741824
+n = '\U0001f600' * (2**29) ;; len(n) => made int
+n = '\U0001f600' * (2**29) ;; n[2**28] => made str 1
+n = '\U0001f600' * (2**29) ;; n.encode() => MemoryError
+n = '\U0001f600' * (2**29) ;; n.center(2**30) => MemoryError
+n = 'a' * (2**31 - 5) ;; sum(1 for c in n[:10]) => made int
+n = 'a' * (2**31 - 5) ;; min(n[:2**20]) => made str 1
+n = 'a' * (2**31 - 5) ;; str(n) is n => made bool
+n = 'a' * (2**31 - 5) ;; type('S', (str,), {})(n) => made S 2147483643
+n = 'a' * (2**31 - 5) ;; repr(type('S', (str,), {})(n)) => made str 2147483645

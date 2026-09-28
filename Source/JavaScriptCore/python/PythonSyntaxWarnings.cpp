@@ -27,6 +27,7 @@
 #include "PythonSyntaxWarnings.h"
 
 #include "PythonSymbolTable.h"
+#include "PythonText.h"
 
 // What is warned of when a piece of source is compiled, besides what the lexer finds. CPython comes on these as it generates code. Here the code of a function is not generated until it is called, so
 // they are looked for by themselves, in the whole of what was parsed, in the order that CPython's Python/codegen.c comes to things in.
@@ -67,7 +68,7 @@ private:
 
     void warn(const Statement& statement, ASCIILiteral keyword)
     {
-        m_warnings.append(warningAt(statement, makeString('\'', keyword, "' in a 'finally' block"_s)));
+        m_warnings.append(warningAt(statement, concatenate('\'', keyword, "' in a 'finally' block"_s)));
     }
 
     void visit(Statement& statement)
@@ -152,7 +153,7 @@ private:
     template<typename... Arguments>
     void warn(const Node& node, Arguments&&... message)
     {
-        m_warnings.append(warningAt(node, makeString(std::forward<Arguments>(message)...)));
+        m_warnings.append(warningAt(node, concatenate(std::forward<Arguments>(message)...)));
     }
 
     // __debug__ has been made a constant by now.

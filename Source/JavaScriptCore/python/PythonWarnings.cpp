@@ -72,7 +72,7 @@ static bool checkMatched(JSGlobalObject* globalObject, JSValue pattern, JSValue 
     // What the filters that there are to begin with have has to be the whole of it.
     if (pattern.isString()) {
         if (!argument.isString()) {
-            raiseTypeError(globalObject, scope, makeString("Can't compare "_s, typeName(globalObject, pattern), " and "_s, typeName(globalObject, argument)));
+            raiseTypeError(globalObject, scope, concatenate("Can't compare "_s, typeName(globalObject, pattern), " and "_s, typeName(globalObject, argument)));
             return false;
         }
         bool isSame = asString(pattern)->equal(globalObject, asString(argument));
@@ -150,7 +150,7 @@ static PyDict* onceRegistry(JSGlobalObject* globalObject)
     if (!registry)
         return stateOf(globalObject).onceRegistry.get();
     if (!isDict(registry)) {
-        raiseTypeError(globalObject, scope, makeString("_warnings.onceregistry must be a dict, not '"_s, typeName(globalObject, registry), '\''));
+        raiseTypeError(globalObject, scope, concatenate("_warnings.onceregistry must be a dict, not '"_s, typeName(globalObject, registry), '\''));
         return nullptr;
     }
     stateOf(globalObject).onceRegistry.set(vm, globalObject->pyRealm(), asDict(registry));
@@ -167,7 +167,7 @@ static JSString* defaultAction(JSGlobalObject* globalObject)
     if (!action)
         return stateOf(globalObject).defaultAction.get();
     if (!action.isString()) {
-        raiseTypeError(globalObject, scope, makeString("_warnings.defaultaction must be a string, not '"_s, typeName(globalObject, action), '\''));
+        raiseTypeError(globalObject, scope, concatenate("_warnings.defaultaction must be a string, not '"_s, typeName(globalObject, action), '\''));
         return nullptr;
     }
     stateOf(globalObject).defaultAction.set(vm, globalObject->pyRealm(), asString(action));
@@ -192,13 +192,13 @@ static Filter searchFilters(JSGlobalObject* globalObject, JSValue category, JSVa
         JSValue item = listGet(globalObject, filters, i);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isTuple(item) || asTuple(item)->length() != 5) {
-            raiseValueError(globalObject, scope, makeString("warnings."_s, listName, " item "_s, i, " isn't a 5-tuple"_s));
+            raiseValueError(globalObject, scope, concatenate("warnings."_s, listName, " item "_s, i, " isn't a 5-tuple"_s));
             return { };
         }
         PyTuple* tuple = asTuple(item);
         JSValue action = tuple->at(0);
         if (!isInstance(globalObject, action, globalObject->pyRealm()->typeStr())) {
-            raiseTypeError(globalObject, scope, makeString("action must be a string, not '"_s, typeName(globalObject, action), '\''));
+            raiseTypeError(globalObject, scope, concatenate("action must be a string, not '"_s, typeName(globalObject, action), '\''));
             return { };
         }
         bool isGoodMessage = checkMatched(globalObject, tuple->at(1), text);
@@ -302,7 +302,7 @@ static String sourceLine(JSGlobalObject* globalObject, const String& filename, i
             if (!directory.isString())
                 continue;
             String prefix = asString(directory)->value(globalObject);
-            source = readSourceIfPresent(globalObject, makeString(prefix, prefix.isEmpty() || prefix.endsWith('/') ? ""_s : "/"_s, tail));
+            source = readSourceIfPresent(globalObject, concatenate(prefix, prefix.isEmpty() || prefix.endsWith('/') ? ""_s : "/"_s, tail));
         }
         if (source.isNull())
             return { };
@@ -354,7 +354,7 @@ static void showWarning(JSGlobalObject* globalObject, JSValue filename, int64_t 
         String string = str(globalObject, value);
         return !scope.exception() && writeString(string);
     };
-    if (!writeObject(filename) || !writeString(makeString(':', line, ": "_s)) || !writeObject(name) || !writeString(": "_s) || !writeObject(text) || !writeString("\n"_s))
+    if (!writeObject(filename) || !writeString(concatenate(':', line, ": "_s)) || !writeObject(name) || !writeString(": "_s) || !writeObject(text) || !writeString("\n"_s))
         return;
     // It works out what the line is without what it is indented by, and writes it as it was.
     if (givenSourceLine) {
@@ -366,7 +366,7 @@ static void showWarning(JSGlobalObject* globalObject, JSValue filename, int64_t 
         return;
     String found = sourceLine(globalObject, asString(filename)->value(globalObject), line);
     if (!found.isNull())
-        writeString(makeString("  "_s, found, '\n'));
+        writeString(concatenate("  "_s, found, '\n'));
 }
 
 // call_show_warning()
@@ -475,7 +475,7 @@ static bool warnExplicit(JSGlobalObject* globalObject, JSValue category, JSValue
             RETURN_IF_EXCEPTION(scope, false);
             String shownItem = repr(globalObject, filter.item);
             RETURN_IF_EXCEPTION(scope, false);
-            raise(globalObject, scope, BuiltinType::RuntimeError, makeString("Unrecognized action ("_s, shownAction, ") in warnings.filters:\n "_s, shownItem));
+            raise(globalObject, scope, BuiltinType::RuntimeError, concatenate("Unrecognized action ("_s, shownAction, ") in warnings.filters:\n "_s, shownItem));
             return false;
         }
         RETURN_IF_EXCEPTION(scope, false);
@@ -522,7 +522,7 @@ static bool doWarn(JSGlobalObject* globalObject, CallFrame* frame, JSValue messa
     if (prefixes) {
         for (auto& prefix : prefixes->span()) {
             if (!isInstance(globalObject, prefix.get(), globalObject->pyRealm()->typeStr())) {
-                raiseTypeError(globalObject, scope, makeString("Found non-str '"_s, typeName(globalObject, prefix.get()), "' in skip_file_prefixes."_s));
+                raiseTypeError(globalObject, scope, concatenate("Found non-str '"_s, typeName(globalObject, prefix.get()), "' in skip_file_prefixes."_s));
                 return false;
             }
         }
@@ -582,7 +582,7 @@ static JSValue getCategory(JSGlobalObject* globalObject, JSValue message, JSValu
         return false;
     }();
     if (!isWarning)
-        return raiseTypeError(globalObject, scope, makeString("category must be a Warning subclass, not '"_s, typeName(globalObject, category), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("category must be a Warning subclass, not '"_s, typeName(globalObject, category), '\''));
     return category;
 }
 
@@ -607,7 +607,7 @@ bool warnIfOfStrictSubclass(JSGlobalObject* globalObject, JSValue result, Builti
 {
     if (typeOf(globalObject, result) == globalObject->pyRealm()->type(type)) [[likely]]
         return true;
-    return warn(globalObject, BuiltinType::DeprecationWarning, makeString(before, " (type "_s, typeName(globalObject, result), ").  The ability to return an instance of a strict subclass of "_s, className,
+    return warn(globalObject, BuiltinType::DeprecationWarning, concatenate(before, " (type "_s, typeName(globalObject, result), ").  The ability to return an instance of a strict subclass of "_s, className,
         " is deprecated, and may be removed in a future version of Python."_s));
 }
 
@@ -632,7 +632,7 @@ PYTHON_NATIVE(warningsWarn)
     }
     JSValue prefixesValue = args.at(4);
     if (prefixesValue && !isTuple(prefixesValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("warn() argument 'skip_file_prefixes' must be tuple, not "_s, isNone(prefixesValue) ? String("None"_s) : typeName(globalObject, prefixesValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("warn() argument 'skip_file_prefixes' must be tuple, not "_s, isNone(prefixesValue) ? String("None"_s) : typeName(globalObject, prefixesValue))));
     JSValue category = getCategory(globalObject, message, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     PyTuple* prefixes = prefixesValue && asTuple(prefixesValue)->length() ? asTuple(prefixesValue) : nullptr;
@@ -705,13 +705,13 @@ PYTHON_NATIVE(warningsWarnExplicit)
     NATIVE_PROLOGUE();
     JSValue filename = args.at(2);
     if (!isInstance(globalObject, filename, realm->typeStr()))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("warn_explicit() argument 'filename' must be str, not "_s, isNone(filename) ? String("None"_s) : typeName(globalObject, filename))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("warn_explicit() argument 'filename' must be str, not "_s, isNone(filename) ? String("None"_s) : typeName(globalObject, filename))));
     auto line = toCInt(globalObject, args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
     JSValue givenSourceLine;
     if (JSValue globals = args.at(6); globals && !isNone(globals)) {
         if (!isDict(globals))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module_globals must be a dict, not '"_s, typeName(globalObject, globals), '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("module_globals must be a dict, not '"_s, typeName(globalObject, globals), '\'')));
         givenSourceLine = sourceLineFromLoader(globalObject, asDict(globals), *line);
         RETURN_IF_EXCEPTION(scope, { });
     }

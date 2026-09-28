@@ -204,11 +204,11 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
     String name = function->name(vm);
     JSObject* owner = function->owner();
     if (!owner)
-        return makeString(name, "()"_s);
+        return concatenate(name, "()"_s);
     if (function->signature() && !function->signature()->functionName().isNull())
-        return makeString(function->signature()->functionName(), "()"_s);
+        return concatenate(function->signature()->functionName(), "()"_s);
     if (function->takesArgumentsOfTheClass())
-        return makeString(asType(owner)->nameWithoutModule(globalObject), "()"_s);
+        return concatenate(asType(owner)->nameWithoutModule(globalObject), "()"_s);
     if (isType(owner)) {
         // What was called is the function itself, which goes by the class that it is in, unless it is `instance.method` that was got first and called
         // afterwards. That goes by the class that it was got by way of. It calls the function from C++, which comes back into the engine to do it.
@@ -219,13 +219,13 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
             if (auto* method = tryBoundMethod(caller->jsCallee()); method && method->function() == JSValue(function))
                 type = isClass(method->self()) ? asType(method->self()) : typeOf(globalObject, method->self());
         }
-        return makeString(qualifiedNameWithoutModule(globalObject, type), '.', name, "()"_s);
+        return concatenate(qualifiedNameWithoutModule(globalObject, type), '.', name, "()"_s);
     }
     JSValue moduleName = owner->getDirect(vm, vm.pythonNames().dunder_name);
     if (!moduleName || !moduleName.isString())
-        return makeString(name, "()"_s);
+        return concatenate(name, "()"_s);
     String module = asString(moduleName)->value(globalObject);
-    return module == "builtins"_s ? makeString(name, "()"_s) : makeString(module, '.', name, "()"_s);
+    return module == "builtins"_s ? concatenate(name, "()"_s) : concatenate(module, '.', name, "()"_s);
 }
 
 bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
@@ -256,19 +256,19 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
         if (signature.family() == NativeSignature::Family::Unchecked)
             return true;
         if (keywordCount)
-            return fail(makeString("wrapper "_s, name, "() takes no keyword arguments"_s));
+            return fail(concatenate("wrapper "_s, name, "() takes no keyword arguments"_s));
         if (given >= minimum && given <= maximum)
             return true;
         // In CPython each kind of slot has a function that takes the arguments of its wrappers apart, and they do not all go about it the same way.
         if (name.endsWith("pow__"_s))
-            return fail(makeString("expected "_s, minimum, " or "_s, maximum, " arguments, got "_s, given));
+            return fail(concatenate("expected "_s, minimum, " or "_s, maximum, " arguments, got "_s, given));
         bool saysItsName = maximum > 1 || name == "__buffer__"_s || name == "__release_buffer__"_s;
-        String prefix = saysItsName ? makeString(name, ' ') : emptyString();
+        String prefix = saysItsName ? concatenate(name, ' ') : emptyString();
         if (minimum == maximum)
-            return fail(makeString(prefix, "expected "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
+            return fail(concatenate(prefix, "expected "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
         if (given < minimum)
-            return fail(makeString(prefix, "expected at least "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
-        return fail(makeString(prefix, "expected at most "_s, maximum, " argument"_s, plural(maximum), ", got "_s, given));
+            return fail(concatenate(prefix, "expected at least "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
+        return fail(concatenate(prefix, "expected at most "_s, maximum, " argument"_s, plural(maximum), ", got "_s, given));
     }
 
     auto family = signature.family();
@@ -281,20 +281,20 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     case NativeSignature::Family::NoArguments:
     case NativeSignature::Family::OneArgument:
         if (keywordCount)
-            return fail(makeString(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
+            return fail(concatenate(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
         if (given == maximum)
             return true;
-        return fail(makeString(functionString(globalObject, callFrame), maximum ? " takes exactly one argument ("_s : " takes no arguments ("_s, given, " given)"_s));
+        return fail(concatenate(functionString(globalObject, callFrame), maximum ? " takes exactly one argument ("_s : " takes no arguments ("_s, given, " given)"_s));
     case NativeSignature::Family::Positional:
         if (keywordCount)
-            return fail(makeString(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
+            return fail(concatenate(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
         if (given >= minimum && (signature.hasVarPositional() || given <= maximum))
             return true;
         if (minimum == maximum && !signature.hasVarPositional())
-            return fail(makeString(name, " expected "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
+            return fail(concatenate(name, " expected "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
         if (given < minimum)
-            return fail(makeString(name, " expected at least "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
-        return fail(makeString(name, " expected at most "_s, maximum, " argument"_s, plural(maximum), ", got "_s, given));
+            return fail(concatenate(name, " expected at least "_s, minimum, " argument"_s, plural(minimum), ", got "_s, given));
+        return fail(concatenate(name, " expected at most "_s, maximum, " argument"_s, plural(maximum), ", got "_s, given));
     case NativeSignature::Family::Keywords:
         break;
     }
@@ -308,14 +308,14 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     bool hasVarPositional = signature.hasVarPositional();
 
     if (!hasVarPositional && !signature.hasVarKeywords() && given + keywordCount > total)
-        return fail(makeString(name, "() takes at most "_s, total, given ? " "_s : " keyword "_s, "argument"_s, plural(total), " ("_s, given + keywordCount, " given)"_s));
+        return fail(concatenate(name, "() takes at most "_s, total, given ? " "_s : " keyword "_s, "argument"_s, plural(total), " ("_s, given + keywordCount, " given)"_s));
     if (!hasVarPositional && given > maximum) {
         if (!maximum)
-            return fail(makeString(name, "() takes no positional arguments"_s));
-        return fail(makeString(name, "() takes "_s, minimum < maximum ? "at most "_s : "exactly "_s, maximum, " positional argument"_s, plural(maximum), " ("_s, given, " given)"_s));
+            return fail(concatenate(name, "() takes no positional arguments"_s));
+        return fail(concatenate(name, "() takes "_s, minimum < maximum ? "at most "_s : "exactly "_s, maximum, " positional argument"_s, plural(maximum), " ("_s, given, " given)"_s));
     }
     if (given < minimumPositionalOnly)
-        return fail(makeString(name, "() takes "_s, hasVarPositional || minimumPositionalOnly < maximum ? "at least "_s : "exactly "_s, minimumPositionalOnly, " positional argument"_s, plural(minimumPositionalOnly), " ("_s, given, " given)"_s));
+        return fail(concatenate(name, "() takes "_s, hasVarPositional || minimumPositionalOnly < maximum ? "at least "_s : "exactly "_s, minimumPositionalOnly, " positional argument"_s, plural(minimumPositionalOnly), " ("_s, given, " given)"_s));
 
     auto isGivenByName = [&] (const String& parameter) {
         for (unsigned k = 0; k < keywordCount; ++k) {
@@ -332,14 +332,14 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             continue;
         }
         if (i < minimum || (maximum <= i && i < requiredLimit))
-            return fail(makeString(name, "() missing required argument '"_s, names[i], "' (pos "_s, i + 1, ')'));
+            return fail(concatenate(name, "() missing required argument '"_s, names[i], "' (pos "_s, i + 1, ')'));
     }
     if (!unmatched || signature.hasVarKeywords())
         return true;
 
     for (unsigned i = positionalOnly; i < byPosition; ++i) {
         if (isGivenByName(names[i]))
-            return fail(makeString("argument for "_s, name, "() given by name ('"_s, names[i], "') and position ("_s, i + 1, ')'));
+            return fail(concatenate("argument for "_s, name, "() given by name ('"_s, names[i], "') and position ("_s, i + 1, ')'));
     }
     Vector<String> candidates;
     for (unsigned i = positionalOnly; i < total; ++i)
@@ -350,10 +350,10 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             continue;
         String suggestion = calculateSuggestion(candidates, keyword);
         if (!suggestion.isNull())
-            return fail(makeString(name, "() got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s));
-        return fail(makeString(name, "() got an unexpected keyword argument '"_s, keyword, '\''));
+            return fail(concatenate(name, "() got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s));
+        return fail(concatenate(name, "() got an unexpected keyword argument '"_s, keyword, '\''));
     }
-    return fail(makeString("invalid keyword argument for "_s, name, "()"_s));
+    return fail(concatenate("invalid keyword argument for "_s, name, "()"_s));
 }
 
 JSValue NativeArguments::givenByName(unsigned index) const
@@ -439,13 +439,20 @@ String calculateSuggestion(const Vector<String>& candidates, const String& name)
 {
     if (candidates.size() >= maximumCandidates)
         return { };
-    CString nameBytes = name.utf8();
+    // A name for whose bytes there is no room is like nothing else.
+    auto nameConverted = name.tryGetUTF8();
+    if (!nameConverted)
+        return { };
+    CString nameBytes = WTF::move(*nameConverted);
     size_t best = std::numeric_limits<size_t>::max();
     String suggestion;
     for (auto& candidate : candidates) {
         if (candidate == name)
             continue;
-        CString candidateBytes = candidate.utf8();
+        auto candidateConverted = candidate.tryGetUTF8();
+        if (!candidateConverted)
+            continue;
+        CString candidateBytes = WTF::move(*candidateConverted);
         // No more than a third of the characters are to need changing, and it is to beat what there is.
         size_t maximumDistance = std::min((nameBytes.length() + candidateBytes.length() + 3) * moveCost / 6, best - 1);
         size_t distance = levenshteinDistance(byteCast<uint8_t>(nameBytes.span()), byteCast<uint8_t>(candidateBytes.span()), maximumDistance);

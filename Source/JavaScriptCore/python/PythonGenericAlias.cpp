@@ -292,7 +292,7 @@ PyTuple* substituteParameters(JSGlobalObject* globalObject, JSValue self, JSValu
     if (!parameterCount) {
         String text = repr(globalObject, self);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        raiseTypeError(globalObject, scope, makeString(text, " is not a generic class"_s));
+        raiseTypeError(globalObject, scope, concatenate(text, " is not a generic class"_s));
         return nullptr;
     }
     item = unpackArguments(globalObject, item);
@@ -313,7 +313,7 @@ PyTuple* substituteParameters(JSGlobalObject* globalObject, JSValue self, JSValu
     if (given.size() != parameterCount) {
         String text = repr(globalObject, self);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        raiseTypeError(globalObject, scope, makeString("Too "_s, given.size() > parameterCount ? "many"_s : "few"_s, " arguments for "_s, text, "; actual "_s, given.size(), ", expected "_s, parameterCount));
+        raiseTypeError(globalObject, scope, concatenate("Too "_s, given.size() > parameterCount ? "many"_s : "few"_s, " arguments for "_s, text, "; actual "_s, given.size(), ", expected "_s, parameterCount));
         return nullptr;
     }
 
@@ -356,7 +356,7 @@ PyTuple* substituteParameters(JSGlobalObject* globalObject, JSValue self, JSValu
             continue;
         }
         if (!isTuple(replaced)) {
-            raiseTypeError(globalObject, scope, makeString("expected __typing_subst__ of "_s, typeName(globalObject, argument), " objects to return a tuple, not "_s, typeName(globalObject, replaced)));
+            raiseTypeError(globalObject, scope, concatenate("expected __typing_subst__ of "_s, typeName(globalObject, argument), " objects to return a tuple, not "_s, typeName(globalObject, replaced)));
             return nullptr;
         }
         appendAll(result, asTuple(replaced));
@@ -417,7 +417,7 @@ PYTHON_NATIVE(genericAliasRepr)
 {
     NATIVE_PROLOGUE();
     auto* alias = asNativeObject(args[0]);
-    StringBuilder out;
+    TextBuilder out;
     if (isStarred(alias))
         out.append('*');
     appendTypeRepr(globalObject, out, alias->field(AliasField::Origin));
@@ -448,7 +448,7 @@ PYTHON_NATIVE(genericAliasRepr)
     if (!arguments->length())
         out.append("()"_s);
     out.append(']');
-    return JSValue::encode(jsString(vm, out.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, out.tryFinish())));
 }
 
 PYTHON_NATIVE(genericAliasGetItem)
@@ -514,7 +514,7 @@ PYTHON_NATIVE(genericAliasGetAttribute)
     JSValue value = genericGetAttribute(globalObject, args[0], *name);
     RETURN_IF_EXCEPTION(scope, { });
     if (!value)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
     return JSValue::encode(value);
 }
 
@@ -784,7 +784,7 @@ PYTHON_NATIVE(unionHash)
             hash(globalObject, argument.get());
             RETURN_IF_EXCEPTION(scope, { });
         }
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("union contains "_s, asTuple(unhashable)->length(), " unhashable elements"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("union contains "_s, asTuple(unhashable)->length(), " unhashable elements"_s)));
     }
     int64_t result = hash(globalObject, self->field(UnionField::Hashable));
     RETURN_IF_EXCEPTION(scope, { });
@@ -830,7 +830,7 @@ PYTHON_NATIVE(unionCompare)
 PYTHON_NATIVE(unionRepr)
 {
     NATIVE_PROLOGUE();
-    StringBuilder out;
+    TextBuilder out;
     PyTuple* arguments = argumentsOfUnion(args[0]);
     for (unsigned i = 0; i < arguments->length(); ++i) {
         if (i)
@@ -838,7 +838,7 @@ PYTHON_NATIVE(unionRepr)
         appendTypeRepr(globalObject, out, arguments->at(i));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(jsString(vm, out.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, out.tryFinish())));
 }
 
 PYTHON_NATIVE(unionGetItem)
@@ -863,7 +863,7 @@ PYTHON_NATIVE(unionGetAttribute)
     JSValue value = genericGetAttribute(globalObject, args[0], *name);
     RETURN_IF_EXCEPTION(scope, { });
     if (!value)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
     return JSValue::encode(value);
 }
 
@@ -878,7 +878,7 @@ PYTHON_NATIVE(unionMroEntries)
     NATIVE_PROLOGUE();
     String text = repr(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Cannot subclass "_s, text)));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Cannot subclass "_s, text)));
 }
 
 template<unsigned index>

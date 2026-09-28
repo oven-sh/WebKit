@@ -145,7 +145,7 @@ PYTHON_NATIVE(constEvaluatorRepr)
     NATIVE_PROLOGUE();
     String text = repr(globalObject, asNativeObject(args[0])->field(0));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("<constevaluator "_s, text, '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<constevaluator "_s, text, '>'))));
 }
 
 PYTHON_NATIVE(constEvaluatorCall)
@@ -154,14 +154,14 @@ PYTHON_NATIVE(constEvaluatorCall)
     if (!args.checkNoKeywords(globalObject, scope, "constevaluator.__call__"_s))
         return { };
     if (args.size() != 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("constevaluator.__call__() takes exactly 1 argument ("_s, args.size() - 1, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("constevaluator.__call__() takes exactly 1 argument ("_s, args.size() - 1, " given)"_s)));
     auto format = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = asNativeObject(args[0])->field(0);
     constexpr int64_t formatString = 4;
     if (format != formatString)
         return JSValue::encode(value);
-    StringBuilder out;
+    TextBuilder out;
     if (isTuple(value)) {
         out.append('(');
         for (unsigned i = 0; i < asTuple(value)->length(); ++i) {
@@ -175,7 +175,7 @@ PYTHON_NATIVE(constEvaluatorCall)
         appendTypeRepr(globalObject, out, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(jsString(vm, out.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, out.tryFinish())));
 }
 
 // ---- NoDefault
@@ -274,7 +274,7 @@ PYTHON_NATIVE(variableRepr)
     JSString* name = asString(variable->field(VariableField::Name));
     if (variance & IsInferred)
         return JSValue::encode(name);
-    return JSValue::encode(jsString(vm, makeString(variance & IsCovariant ? '+' : variance & IsContravariant ? '-' : '~', name->value(globalObject).data)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(variance & IsCovariant ? '+' : variance & IsContravariant ? '-' : '~', name->value(globalObject).data))));
 }
 
 // __repr__ of what has no variance to show, and __reduce__ of them all: what is pickled is where to find it again.
@@ -297,7 +297,7 @@ PYTHON_NATIVE(variableHasDefault)
 PYTHON_NATIVE(cannotSubclassInstance)
 {
     NATIVE_PROLOGUE();
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Cannot subclass an instance of "_s, typeOf(globalObject, args[0])->nameWithoutModule(globalObject))));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Cannot subclass an instance of "_s, typeOf(globalObject, args[0])->nameWithoutModule(globalObject))));
 }
 
 // T | int
@@ -321,7 +321,7 @@ static bool checkNameIsString(JSGlobalObject* globalObject, ThrowScope& scope, A
 {
     if (name.isString())
         return true;
-    raiseTypeError(globalObject, scope, makeString(function, "() argument 'name' must be str, not "_s, typeNameOfArgument(globalObject, name)));
+    raiseTypeError(globalObject, scope, concatenate(function, "() argument 'name' must be str, not "_s, typeNameOfArgument(globalObject, name)));
     return false;
 }
 
@@ -438,7 +438,7 @@ PYTHON_NATIVE(typeVarPrepareSubstitution)
     }
     String text = str(globalObject, alias);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Too few arguments for "_s, text, "; actual "_s, count, ", expected at least "_s, index + 1)));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Too few arguments for "_s, text, "; actual "_s, count, ", expected at least "_s, index + 1)));
 }
 
 // ---- ParamSpec, and P.args and P.kwargs
@@ -491,10 +491,10 @@ PYTHON_NATIVE(paramSpecPartRepr)
     JSValue origin = asNativeObject(args[0])->field(0);
     ASCIILiteral suffix = typeOf(globalObject, args[0]) == realm->typeParamSpecArgs() ? ".args"_s : ".kwargs"_s;
     if (isExactly(globalObject, origin, realm->typeParamSpec()))
-        return JSValue::encode(jsString(vm, makeString(asString(asTypingObject(origin)->field(VariableField::Name))->value(globalObject).data, suffix)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(asString(asTypingObject(origin)->field(VariableField::Name))->value(globalObject).data, suffix))));
     String text = repr(globalObject, origin);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString(text, suffix)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(text, suffix))));
 }
 
 PYTHON_NATIVE(paramSpecPartCompare)
@@ -567,7 +567,7 @@ PYTHON_NATIVE(typeAliasNew)
             if (!isTypeParameter(globalObject, parameter)) {
                 String text = repr(globalObject, parameter);
                 RETURN_IF_EXCEPTION(scope, { });
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Expected a type param, got "_s, text)));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Expected a type param, got "_s, text)));
             }
             JSValue defaultValue = getDefault(globalObject, parameter);
             RETURN_IF_EXCEPTION(scope, { });
@@ -578,7 +578,7 @@ PYTHON_NATIVE(typeAliasNew)
             if (hasSeenDefault) {
                 String text = repr(globalObject, parameter);
                 RETURN_IF_EXCEPTION(scope, { });
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("non-default type parameter '"_s, text, "' follows default type parameter"_s)));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("non-default type parameter '"_s, text, "' follows default type parameter"_s)));
             }
         }
     }
@@ -836,7 +836,7 @@ void initializeTypeParameters(JSGlobalObject* globalObject)
         auto scope = DECLARE_THROW_SCOPE(vm);
         PyType* type = asType(self);
         if (!type->hasFlag(PyType::IsHeapType) || !value) {
-            raiseTypeError(globalObject, scope, makeString("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '__type_params__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+            raiseTypeError(globalObject, scope, concatenate("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '__type_params__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
             return;
         }
         type->setAttribute(vm, vm.pythonNames().dunder_type_params, value);

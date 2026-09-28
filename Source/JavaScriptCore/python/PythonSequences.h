@@ -38,6 +38,8 @@ inline JSArray* tryList(JSValue value) { return isList(value) ? asList(value) : 
 
 JSArray* newList(JSGlobalObject*, unsigned length = 0); // Of that many Nones.
 JSArray* newList(JSGlobalObject*, const ArgList&);
+JSArray* newList(JSGlobalObject*, MarkedArgumentBuffer&); // Of what was gathered, which takes no more when there is no room, and says nothing unless it is asked. It is asked here.
+void reverseList(JSGlobalObject*, JSArray*);
 JSArray* listFromIterable(JSGlobalObject*, JSValue);
 PyTuple* tupleFromIterable(JSGlobalObject*, JSValue);
 

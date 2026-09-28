@@ -58,6 +58,8 @@ public:
     static PyTuple* create(JSGlobalObject*, std::span<const JSValue>);
     static PyTuple* create(JSGlobalObject*, std::initializer_list<JSValue>);
     static PyTuple* createFromArguments(JSGlobalObject*, const ArgList&);
+    // Of what was gathered, of which there are as many as a program makes them. Null, with MemoryError raised, if there was no room for them, there or here.
+    static PyTuple* createFromArguments(JSGlobalObject*, MarkedArgumentBuffer&);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     unsigned length() const { return m_length; }

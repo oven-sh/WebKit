@@ -99,7 +99,7 @@ int64_t PyHashTable::hashOfKey(JSGlobalObject* globalObject, JSValue key)
         return 0;
     String reason = Python::str(globalObject, error);
     RETURN_IF_EXCEPTION(scope, 0);
-    Python::raiseTypeError(globalObject, scope, makeString("cannot use '"_s, Python::typeName(globalObject, key), type() == PyDictType ? "' as a dict key ("_s : "' as a set element ("_s, reason, ')'));
+    Python::raiseTypeError(globalObject, scope, Python::concatenate("cannot use '"_s, Python::typeName(globalObject, key), type() == PyDictType ? "' as a dict key ("_s : "' as a set element ("_s, reason, ')'));
     return 0;
 }
 

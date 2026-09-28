@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "PythonSymbolTable.h"
+#include "PythonText.h"
 
 #include "VM.h"
 #include <wtf/HexNumber.h>
@@ -62,7 +63,7 @@ const Identifier& SymbolTable::mangle(VM& vm, Arena& arena, const Identifier* cl
         ++underscores;
     if (underscores == owner.length())
         return name;
-    String mangled = makeString('_', owner.substring(underscores), ident);
+    String mangled = concatenate('_', owner.substring(underscores), ident);
     if (mangled.is8Bit())
         return arena.identifiers().makeIdentifier(vm, mangled.span8());
     return arena.identifiers().makeIdentifier(vm, mangled.span16());
@@ -214,7 +215,7 @@ public:
                 else if (*alias->name == "braces"_s)
                     return fail("not a chance"_s, *alias);
                 else if (std::ranges::none_of(thatMakeNoDifference, [&] (ASCIILiteral feature) { return *alias->name == feature; }))
-                    return fail(makeString("future feature "_s, alias->name->string(), " is not defined"_s), *alias);
+                    return fail(concatenate("future feature "_s, alias->name->string(), " is not defined"_s), *alias);
             }
             m_lastFutureStatement = &statement;
         }
@@ -297,13 +298,13 @@ private:
         const Identifier& mangled = maybeMangle(*m_current, name);
         Symbol& symbol = block.add(mangled);
         if ((flag & DefParameter) && (symbol.flags & DefParameter))
-            return fail(makeString("duplicate argument '"_s, name.string(), "' in function definition"_s), location);
+            return fail(concatenate("duplicate argument '"_s, name.string(), "' in function definition"_s), location);
         if ((flag & DefTypeParameter) && (symbol.flags & DefTypeParameter))
-            return fail(makeString("duplicate type parameter '"_s, name.string(), '\''), location);
+            return fail(concatenate("duplicate type parameter '"_s, name.string(), '\''), location);
         unsigned flags = symbol.flags | flag;
         if (block.isVisitingComprehensionTarget) {
             if (flags & (DefGlobal | DefNonlocal))
-                return fail(makeString("comprehension inner loop cannot rebind assignment expression target '"_s, name.string(), '\''), location);
+                return fail(concatenate("comprehension inner loop cannot rebind assignment expression target '"_s, name.string(), '\''), location);
             flags |= DefComprehensionIteration;
         }
         symbol.flags = flags;
@@ -507,7 +508,7 @@ private:
         if (auto* name = node.target->tryAs<Name>()) {
             unsigned flags = lookup(*name->id);
             if ((flags & (DefGlobal | DefNonlocal)) && m_current != m_table.m_top && node.isSimple)
-                return fail(makeString("annotated name '"_s, name->id->string(), flags & DefGlobal ? "' can't be global"_s : "' can't be nonlocal"_s), node);
+                return fail(concatenate("annotated name '"_s, name->id->string(), flags & DefGlobal ? "' can't be global"_s : "' can't be nonlocal"_s), node);
             if (node.isSimple) {
                 if (!addDefinition(*name->id, DefAnnotation | DefLocal, *name))
                     return false;
@@ -526,13 +527,13 @@ private:
         for (const Identifier* name : names) {
             unsigned flags = lookup(*name);
             if (flags & DefParameter)
-                return fail(makeString("name '"_s, name->string(), "' is parameter and "_s, kind), location);
+                return fail(concatenate("name '"_s, name->string(), "' is parameter and "_s, kind), location);
             if (flags & Use)
-                return fail(makeString("name '"_s, name->string(), "' is used prior to "_s, kind, " declaration"_s), location);
+                return fail(concatenate("name '"_s, name->string(), "' is used prior to "_s, kind, " declaration"_s), location);
             if (flags & DefAnnotation)
-                return fail(makeString("annotated name '"_s, name->string(), "' can't be "_s, kind), location);
+                return fail(concatenate("annotated name '"_s, name->string(), "' can't be "_s, kind), location);
             if (flags & DefLocal)
-                return fail(makeString("name '"_s, name->string(), "' is assigned to before "_s, kind, " declaration"_s), location);
+                return fail(concatenate("name '"_s, name->string(), "' is assigned to before "_s, kind, " declaration"_s), location);
             if (!addDefinition(*name, isGlobal ? DefGlobal : DefNonlocal, location))
                 return false;
             recordDirective(*name, location);
@@ -673,7 +674,7 @@ private:
             if (block.comprehension != ComprehensionType::None) {
                 unsigned flags = lookup(block, name);
                 if ((flags & DefComprehensionIteration) && (flags & DefLocal))
-                    return fail(makeString("assignment expression cannot rebind comprehension iteration variable '"_s, name.string(), '\''), target);
+                    return fail(concatenate("assignment expression cannot rebind comprehension iteration variable '"_s, name.string(), '\''), target);
                 continue;
             }
             // What stands in for whatever a fragment is in has the variables that the fragment is known to use of it. Any other is a global.
@@ -714,13 +715,13 @@ private:
     {
         switch (m_current->type) {
         case BlockType::Annotation:
-            return fail(makeString(what, " cannot be used within an annotation"_s), location);
+            return fail(concatenate(what, " cannot be used within an annotation"_s), location);
         case BlockType::TypeVariable:
-            return fail(makeString(what, " cannot be used within "_s, m_current->scopeInfo), location);
+            return fail(concatenate(what, " cannot be used within "_s, m_current->scopeInfo), location);
         case BlockType::TypeAlias:
-            return fail(makeString(what, " cannot be used within a type alias"_s), location);
+            return fail(concatenate(what, " cannot be used within a type alias"_s), location);
         case BlockType::TypeParameters:
-            return fail(makeString(what, " cannot be used within the definition of a generic"_s), location);
+            return fail(concatenate(what, " cannot be used within the definition of a generic"_s), location);
         default:
             return true;
         }
@@ -904,7 +905,7 @@ private:
     bool visitTypeParameterExpression(Expression* expression, const Identifier& name, const void* key, TypeParameter& parameter, ASCIILiteral scopeInfo)
     {
         if (name.impl() == m_classdict.impl())
-            return fail(makeString("reserved name '"_s, name.string(), "' cannot be used for type parameter"_s), parameter);
+            return fail(concatenate("reserved name '"_s, name.string(), "' cannot be used for type parameter"_s), parameter);
         if (!expression)
             return true;
         bool isInClass = m_current->canSeeClassScope;
@@ -1186,7 +1187,7 @@ private:
         UniquedStringImpl* name = identifier.impl();
         if (flags & DefGlobal) {
             if (flags & DefNonlocal)
-                return failAtDirective(block, identifier, makeString("name '"_s, identifier.string(), "' is nonlocal and global"_s));
+                return failAtDirective(block, identifier, concatenate("name '"_s, identifier.string(), "' is nonlocal and global"_s));
             scopes.set(name, NameScope::GlobalExplicit);
             global.add(name);
             if (bound)
@@ -1197,9 +1198,9 @@ private:
             if (!bound)
                 return failAtDirective(block, identifier, "nonlocal declaration not allowed at module level"_s);
             if (!bound->contains(name) && m_fragmentIs != FragmentIs::WhatHasWhatIsCompiled)
-                return failAtDirective(block, identifier, makeString("no binding for nonlocal '"_s, identifier.string(), "' found"_s));
+                return failAtDirective(block, identifier, concatenate("no binding for nonlocal '"_s, identifier.string(), "' found"_s));
             if (typeParameters.contains(name))
-                return failAtDirective(block, identifier, makeString("nonlocal binding not allowed for type parameter '"_s, identifier.string(), '\''));
+                return failAtDirective(block, identifier, concatenate("nonlocal binding not allowed for type parameter '"_s, identifier.string(), '\''));
             scopes.set(name, NameScope::Free);
             free.add(name);
             return true;

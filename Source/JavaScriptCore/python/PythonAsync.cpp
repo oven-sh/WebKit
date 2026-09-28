@@ -80,7 +80,7 @@ bool warnOfThrowSignature(JSGlobalObject* globalObject, const NativeArguments& a
 {
     if (args.size() <= 2) [[likely]]
         return true;
-    return warn(globalObject, BuiltinType::DeprecationWarning, makeString("the (type, exc, tb) signature of "_s, method, "() is deprecated, use the single-arg signature instead."_s));
+    return warn(globalObject, BuiltinType::DeprecationWarning, concatenate("the (type, exc, tb) signature of "_s, method, "() is deprecated, use the single-arg signature instead."_s));
 }
 
 JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValue value)
@@ -93,7 +93,7 @@ JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValu
         RELEASE_AND_RETURN(scope, value && !isNone(value) ? call(globalObject, exception, value) : call(globalObject, exception));
     }
     if (!typeOf(globalObject, exception)->isExceptionType())
-        return raiseTypeError(globalObject, scope, makeString("exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception)));
+        return raiseTypeError(globalObject, scope, concatenate("exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception)));
     if (value && !isNone(value))
         return raiseTypeError(globalObject, scope, "instance exception may not have a separate value"_s);
     return exception;
@@ -136,7 +136,7 @@ static JSValue finishPromiseAwaiter(JSGlobalObject* globalObject, PyNativeObject
     self->setField(vm, 1, jsNumber(AwaiterDone));
     if (self->field(2).isTrue()) {
         if (!settled.isObject())
-            return raiseTypeError(globalObject, scope, makeString("iterator result "_s, repr(globalObject, settled), " is not an object"_s));
+            return raiseTypeError(globalObject, scope, concatenate("iterator result "_s, repr(globalObject, settled), " is not an object"_s));
         JSValue done = asObject(settled)->get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
         bool isDone = done.toBoolean(globalObject);
@@ -266,7 +266,7 @@ void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue r
         String shown = repr(globalObject, yielded);
         if (scope.exception() && !scope.clearExceptionExceptTermination())
             return;
-        received = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), makeString("Task got bad yield: "_s, shown));
+        received = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), concatenate("Task got bad yield: "_s, shown));
         wasThrown = true;
     }
 }
@@ -337,8 +337,8 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned conte
     RETURN_IF_EXCEPTION(scope, { });
     if (!method) {
         if (context)
-            return raiseTypeError(globalObject, scope, makeString("'async with' received an object from "_s, context == 1 ? "__aenter__"_s : "__aexit__"_s, " that does not implement __await__: "_s, type->nameString(globalObject)));
-        return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object can't be awaited"_s));
+            return raiseTypeError(globalObject, scope, concatenate("'async with' received an object from "_s, context == 1 ? "__aenter__"_s : "__aexit__"_s, " that does not implement __await__: "_s, type->nameString(globalObject)));
+        return raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object can't be awaited"_s));
     }
     JSValue result = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -346,7 +346,7 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned conte
     if (resultType == realm->typeCoroutine())
         return raiseTypeError(globalObject, scope, "__await__() returned a coroutine"_s);
     if (!resultType->lookup(vm, vm.pythonNames().dunder_next))
-        return raiseTypeError(globalObject, scope, makeString("__await__() returned non-iterator of type '"_s, resultType->nameString(globalObject), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("__await__() returned non-iterator of type '"_s, resultType->nameString(globalObject), '\''));
     return result;
 }
 
@@ -401,11 +401,11 @@ JSValue getAsyncIterator(JSGlobalObject* globalObject, JSValue value)
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_aiter, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString("'async for' requires an object with __aiter__ method, got "_s, typeName(globalObject, value)));
+        return raiseTypeError(globalObject, scope, concatenate("'async for' requires an object with __aiter__ method, got "_s, typeName(globalObject, value)));
     JSValue iterator = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!typeOf(globalObject, iterator)->lookup(vm, vm.pythonNames().dunder_anext) && !typeOf(globalObject, iterator)->hasFlag(PyType::IsJavaScript))
-        return raiseTypeError(globalObject, scope, makeString("'async for' received an object from __aiter__ that does not implement __anext__: "_s, typeName(globalObject, iterator)));
+        return raiseTypeError(globalObject, scope, concatenate("'async for' received an object from __aiter__ that does not implement __anext__: "_s, typeName(globalObject, iterator)));
     return iterator;
 }
 
@@ -419,14 +419,14 @@ JSValue getAsyncNext(JSGlobalObject* globalObject, JSValue iterator)
     JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_anext, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString("'async for' requires an iterator with __anext__ method, got "_s, typeName(globalObject, iterator)));
+        return raiseTypeError(globalObject, scope, concatenate("'async for' requires an iterator with __anext__ method, got "_s, typeName(globalObject, iterator)));
     JSValue next = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue awaitable = getAwaitable(globalObject, next, 0);
     if (scope.exception()) {
         JSValue cause = scope.exception()->value();
         if (catchException(globalObject, BuiltinType::TypeError)) {
-            JSObject* error = createException(globalObject, globalObject->pyRealm()->typeTypeError(), makeString("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
+            JSObject* error = createException(globalObject, globalObject->pyRealm()->typeTypeError(), concatenate("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
             error->putDirect(vm, vm.pythonNames().private_cause, cause);
             error->putDirect(vm, vm.pythonNames().private_context, cause);
             error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
@@ -826,11 +826,11 @@ PYTHON_NATIVE(builtinAIter)
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_aiter, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterable"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, args[0]), "' object is not an async iterable"_s)));
     JSValue iterator = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!typeOf(globalObject, iterator)->lookup(vm, names.dunder_anext))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("aiter() returned not an async iterator of type '"_s, typeName(globalObject, iterator), '\'')));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("aiter() returned not an async iterator of type '"_s, typeName(globalObject, iterator), '\'')));
     return JSValue::encode(iterator);
 }
 
@@ -845,7 +845,7 @@ PYTHON_NATIVE(builtinANext)
         JSValue method = lookupSpecial(globalObject, args[0], names.dunder_anext, self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!method)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterator"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, args[0]), "' object is not an async iterator"_s)));
         awaitable = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, { });
     }

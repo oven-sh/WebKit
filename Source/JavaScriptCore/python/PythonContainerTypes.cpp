@@ -36,7 +36,7 @@ static JSArray* selfList(JSGlobalObject* globalObject, ThrowScope& scope, const 
 {
     JSValue self = args.at(0);
     if (!self || !isList(self)) {
-        raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method, "' for 'list' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
+        raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, method, "' for 'list' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
         return nullptr;
     }
     return asList(self);
@@ -154,17 +154,8 @@ PYTHON_NATIVE(listCopy)
 PYTHON_NATIVE(listReverse)
 {
     LIST_PROLOGUE("reverse");
-    unsigned length = self->length();
-    for (unsigned i = 0; i < length / 2; ++i) {
-        JSValue a = listGet(globalObject, self, i);
-        RETURN_IF_EXCEPTION(scope, { });
-        JSValue b = listGet(globalObject, self, length - 1 - i);
-        RETURN_IF_EXCEPTION(scope, { });
-        listSet(globalObject, self, i, b);
-        RETURN_IF_EXCEPTION(scope, { });
-        listSet(globalObject, self, length - 1 - i, a);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    reverseList(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
 }
 
@@ -193,7 +184,7 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
         if (same)
             return JSValue::encode(jsNumber(static_cast<int32_t>(i)));
     }
-    return JSValue::encode(raiseValueError(globalObject, scope, makeString(typeName, ".index(x): x not in "_s, typeName)));
+    return JSValue::encode(raiseValueError(globalObject, scope, concatenate(typeName, ".index(x): x not in "_s, typeName)));
 }
 
 template<typename Get>
@@ -340,7 +331,7 @@ static PyDict* selfDict(JSGlobalObject* globalObject, ThrowScope& scope, const N
 {
     JSValue self = args.at(0);
     if (!self || !isDict(self)) {
-        raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method, "' for 'dict' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
+        raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, method, "' for 'dict' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
         return nullptr;
     }
     return uncheckedDowncast<PyDict>(self.asCell());
@@ -405,12 +396,12 @@ void updateDictFrom(JSGlobalObject* globalObject, PyDict* dict, JSValue source)
                     if (scope.exception()) {
                         if (catchException(globalObject, BuiltinType::TypeError)) {
                             raiseTypeError(globalObject, scope, "object is not iterable"_s);
-                            addNoteToRaised(globalObject, makeString("Cannot convert dictionary update sequence element #"_s, position, " to a sequence"_s));
+                            addNoteToRaised(globalObject, concatenate("Cannot convert dictionary update sequence element #"_s, position, " to a sequence"_s));
                         }
                         return false;
                     }
                     if (parts.size() != 2) {
-                        raiseValueError(globalObject, scope, makeString("dictionary update sequence element #"_s, position, " has length "_s, parts.size(), "; 2 is required"_s));
+                        raiseValueError(globalObject, scope, concatenate("dictionary update sequence element #"_s, position, " has length "_s, parts.size(), "; 2 is required"_s));
                         return false;
                     }
                     ++position;
@@ -428,7 +419,7 @@ static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeA
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (args.size() > 2) {
-        raiseTypeError(globalObject, scope, makeString(method, " expected at most 1 argument, got "_s, args.size() - 1));
+        raiseTypeError(globalObject, scope, concatenate(method, " expected at most 1 argument, got "_s, args.size() - 1));
         return;
     }
     if (args.size() == 2) {
@@ -559,7 +550,7 @@ static PySet* selfSet(JSGlobalObject* globalObject, ThrowScope& scope, const Nat
 {
     JSValue self = args.at(0);
     if (!self || !isSet(self)) {
-        raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method, "' for 'set' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
+        raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, method, "' for 'set' objects doesn't apply to a '"_s, self ? typeName(globalObject, self) : "NULL"_str, "' object"_s));
         return nullptr;
     }
     return uncheckedDowncast<PySet>(self.asCell());
@@ -727,14 +718,14 @@ PYTHON_NATIVE(enumerateNew)
     if (!given || given > 2) {
         if (args.size() == 1)
             return JSValue::encode(raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s));
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("enumerate() takes at most 2 arguments ("_s, given, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("enumerate() takes at most 2 arguments ("_s, given, " given)"_s)));
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         // Each is to be the name of what has not been given yet.
         String keyword = args.keywordName(i)->value(globalObject);
         bool isExpected = given == 1 ? keyword == "iterable"_s : args.keywordCount() == 1 ? keyword == "start"_s : keyword == "iterable"_s || keyword == "start"_s;
         if (!isExpected || (i && keyword == String(args.keywordName(0)->value(globalObject))))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', keyword, "' is an invalid keyword argument for enumerate()"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', keyword, "' is an invalid keyword argument for enumerate()"_s)));
     }
     JSValue startValue = args.at(2);
     int64_t start = 0;
@@ -809,7 +800,7 @@ PYTHON_NATIVE(reversedNew)
     PyType* type = typeOf(globalObject, args[1]);
     // PySequence_Check(). That it has no __len__() is for len() to say.
     if (method || !type->lookup(vm, names.dunder_getitem) || isDict(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not reversible"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object is not reversible"_s)));
     int64_t size = length(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Reversed, args[1], JSValue(), size - 1));

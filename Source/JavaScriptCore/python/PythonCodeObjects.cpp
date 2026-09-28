@@ -105,7 +105,7 @@ PYTHON_NATIVE(cellNew)
     if (!args.checkNoKeywords(globalObject, scope, "cell"_s))
         return { };
     if (args.size() > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cell expected at most 1 argument, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cell expected at most 1 argument, got "_s, args.size() - 1)));
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::Cell, JSValue(), JSValue(), args.size() == 2 ? args[1] : JSValue()));
 }
 
@@ -145,10 +145,10 @@ PYTHON_NATIVE(cellRepr)
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
     JSValue value = variableOfCell(args.at(0)).get();
-    String address = makeString("0x"_s, hex(std::bit_cast<uintptr_t>(&variableOfCell(args[0])), Lowercase));
+    String address = concatenate("0x"_s, hex(std::bit_cast<uintptr_t>(&variableOfCell(args[0])), Lowercase));
     if (!value)
-        return JSValue::encode(jsString(vm, makeString("<cell at "_s, address, ": empty>"_s)));
-    return JSValue::encode(jsString(vm, makeString("<cell at "_s, address, ": "_s, typeName(globalObject, value), " object at 0x"_s, hex(static_cast<uint64_t>(JSValue::encode(value)), Lowercase), '>')));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<cell at "_s, address, ": empty>"_s))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<cell at "_s, address, ": "_s, typeName(globalObject, value), " object at 0x"_s, hex(static_cast<uint64_t>(JSValue::encode(value)), Lowercase), '>'))));
 }
 
 // By what is in them. One with nothing in it comes before one with something.
@@ -230,9 +230,9 @@ PYTHON_NATIVE(functionNew)
     JSValue keywordDefaults = orNone(args.at(6));
     auto describe = [&] (JSValue value) { return typeNameOfArgument(globalObject, value); };
     if (!isCode(globalObject, code))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function() argument 'code' must be code, not "_s, describe(code))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("function() argument 'code' must be code, not "_s, describe(code))));
     if (!isDict(globals))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function() argument 'globals' must be dict, not "_s, describe(globals))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("function() argument 'globals' must be dict, not "_s, describe(globals))));
     if (!isNone(name) && !stringIn(name))
         return JSValue::encode(raiseTypeError(globalObject, scope, "arg 3 (name) must be None or string"_s));
     if (!isNone(defaults) && !isTuple(defaults))
@@ -249,10 +249,10 @@ PYTHON_NATIVE(functionNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, "arg 6 (kwdefaults) must be None or dict"_s));
     unsigned given = isNone(closure) ? 0 : asTuple(closure)->length();
     if (given != freeVariables.size())
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString(info.name.string(), " requires closure of length "_s, freeVariables.size(), ", not "_s, given)));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate(info.name.string(), " requires closure of length "_s, freeVariables.size(), ", not "_s, given)));
     for (unsigned i = 0; i < given; ++i) {
         if (!isCell(globalObject, asTuple(closure)->at(i)))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("arg 5 (closure) expected cell, found "_s, typeName(globalObject, asTuple(closure)->at(i)))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("arg 5 (closure) expected cell, found "_s, typeName(globalObject, asTuple(closure)->at(i)))));
     }
     if (!audit(globalObject, "function.__new__"_s, code))
         return { };
@@ -289,7 +289,7 @@ static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue 
     unsigned has = isNone(closure) ? 0 : asTuple(closure)->length();
     auto freeVariables = sortedFreeVariables(infoOfExecutable(executableOfCode(value)));
     if (has != freeVariables.size()) {
-        raiseValueError(globalObject, scope, makeString(nameOfFunction(globalObject, function, false), "() requires a code object with "_s, has, " free vars, not "_s, freeVariables.size()));
+        raiseValueError(globalObject, scope, concatenate(nameOfFunction(globalObject, function, false), "() requires a code object with "_s, has, " free vars, not "_s, freeVariables.size()));
         return;
     }
     auto kindOf = [] (const FunctionInfo& info) { return std::tuple { info.isGenerator, info.isCoroutine }; };
@@ -469,12 +469,15 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
         while (skipsBlanks && start < buffer->size() && isBlank((*buffer)[start]))
             ++start;
         // What a hook does could change what is in it.
-        ByteVector bytes(buffer->subspan(start));
-        if (!audit(globalObject, "compile"_s, newBytes(globalObject, bytes.span()), jsString(vm, filename)))
+        ByteVector bytes;
+        bytes.append(buffer->subspan(start));
+        JSValue copy = newBytes(globalObject, bytes);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!audit(globalObject, "compile"_s, copy, jsString(vm, filename)))
             return { };
         RELEASE_AND_RETURN(scope, makeSource(globalObject, bytes.span(), SourceOrigin(), filename));
     }
-    raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
+    raiseTypeError(globalObject, scope, concatenate(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
     return { };
 }
 
@@ -495,7 +498,7 @@ PYTHON_NATIVE(builtinCompile)
     String filename = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(path->span()));
     JSValue modeValue = args.at(2);
     if (!stringIn(modeValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, typeNameOfArgument(globalObject, modeValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("compile() argument 'mode' must be str, not "_s, typeNameOfArgument(globalObject, modeValue))));
     String mode = stringIn(modeValue)->value(globalObject);
     auto number = [&] (unsigned index, int otherwise) -> int {
         JSValue value = args.at(index);
@@ -606,9 +609,9 @@ PYTHON_NATIVE(builtinExecOrEval)
     }
     if (!isEval) {
         if (hasGlobals && !isDict(globalsValue))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("exec() globals must be a dict, not "_s, typeName(globalObject, globalsValue))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("exec() globals must be a dict, not "_s, typeName(globalObject, globalsValue))));
         if (!hasItems(localsValue))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("locals must be a mapping or None, not "_s, typeName(globalObject, localsValue))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("locals must be a mapping or None, not "_s, typeName(globalObject, localsValue))));
     }
     if (hasGlobals)
         globals = namespaceOf(globalObject, asDict(globalsValue));
@@ -629,7 +632,7 @@ PYTHON_NATIVE(builtinExecOrEval)
                 for (unsigned i = 0; isRight && i < freeVariableCount; ++i)
                     isRight = isCell(globalObject, asTuple(closure)->at(i));
                 if (!isRight)
-                    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code object requires a closure of exactly length "_s, freeVariableCount)));
+                    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("code object requires a closure of exactly length "_s, freeVariableCount)));
             }
             if (!audit(globalObject, "exec"_s, source))
                 return { };
@@ -693,7 +696,7 @@ PYTHON_NATIVE(generatorRepr)
     NATIVE_PROLOGUE();
     String name = asString(getGeneratorName<true>(globalObject, args[0]))->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString('<', typeName(globalObject, args[0]), " object "_s, name, " at "_s, addressOf(args[0].asCell()), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate('<', typeName(globalObject, args[0]), " object "_s, name, " at "_s, addressOf(args[0].asCell()), '>'))));
 }
 
 template<bool qualified>

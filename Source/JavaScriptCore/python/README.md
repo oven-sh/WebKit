@@ -361,6 +361,21 @@ What such a method returns is not to be taken for what it should be either. `str
 `asString()` is only for what `isString()` has been asked of: an instance of a class derived from `str` is another kind of cell. And where `str()`, `repr()`, `format()` and `bytes()` give what the method
 returned, they give that very object, of whatever class it is: `strObject()` and `reprObject()`.
 
+### What there is no room for
+
+Nearly everything that is put together here has in it something that is as long as a program makes it, and a program of one line can make that as long as a string can be: `getattr(1, 'a' * (2 ** 31 - 5))` has
+only to say what it did not find. WTF's `makeString()`, `StringBuilder` and `Vector` bring the process down when it comes to too much, which is right for what the engine decides the size of, and not for this.
+JavaScriptCore has `tryMakeString()`, and builders that remember that they overflowed, for where a program decides, and throws an out of memory error. So it is here, and it is a `MemoryError`:
+
+- **Text** is put together with `concatenate()` and `TextBuilder`, of `PythonText.h`, and never with `makeString()` or `StringBuilder`. They give a null string if there was no room, and a null string that goes into
+  either makes what comes out null, so it does not matter how far down it went wrong. So a string that is left out is `emptyString()`, and not `String()`.
+- **What is done with a null string** is one of three things. As what an exception was to say, it makes the exception a `MemoryError`, which `createException()` and `raise()` see to, so nothing need be done
+  where it is raised. As what was to be a `str`, it goes through `strOrMemoryError()`. And returned as text, from what says that it raised by returning null, it goes through `textOrMemoryError()`.
+- **Bytes** are put together in a `ByteVector`, which holds as many as a typed array does and remembers likewise. `newBytes()` and `newByteArray()` ask it. It will not give up what is in it once it has overflowed.
+- **Values** are gathered in a `MarkedArgumentBuffer`, which takes no more when there is no room and says nothing unless it is asked. `newList()` and `PyTuple::createFromArguments()` ask it.
+- **How long something will be** is worked out by dividing what there is room for, and not by multiplying, which comes round to a small number: `[0, 1, 2, 3] * 2 ** 62` was once an empty list.
+- **What may have no end**, as an iterator may not, is not gone on with once there is no room for what it gives.
+
 ### `+` and `*`, of numbers and of sequences
 
 `binaryOperation()` is in two parts, as `PyNumber_Add()` and `PyNumber_Multiply()` are. **First as numbers**: `__add__` and `__radd__`, and so on. **Then as sequences.** What `str`, `list`, `tuple`, `bytes` and `bytearray` have
@@ -613,7 +628,8 @@ There is nothing that is per process, nothing that is set after something is mad
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.
 - **There is less room.** An int can be no larger than a `BigInt`, which is 2\*\*30 bits, a `str` no longer than a JavaScript string, which is 2\*\*31 - 1 code units, a `bytes` no longer than a typed array,
   which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it
-  will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine.
+  will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine. What has to be gone
+  back and forth in on the way to being made, as a `str` that is not ASCII is when it is encoded, can be refused sooner than that.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
 - **The last bits of a complex quotient or power can differ.** The steps are CPython's, but a compiler may do a multiplication and an addition in one, without rounding between them. JavaScriptCore is built
@@ -638,6 +654,10 @@ of it, so that what is kept to compare with is small, and given `everything` pri
 `special-methods.py` is the other way about: it is of what the language does with what a program's classes do. Each special method is given each of some eighty things to do, which are to return something, mostly
 not what is wanted of it, to raise something, to take the wrong number of arguments, and not to be a function at all. Then everything that would call it is tried: the operators, the statements, the built-in
 functions, and the methods of the built-in classes that take such a thing. That is ninety thousand things tried.
+
+`run-large.sh` is apart from the rest. It makes things that there is no room for, or barely room for, each in a process of its own, and what is looked for is that the engine is still there afterwards. It takes
+gigabytes of memory and a quarter of an hour, so it is run when what it is about has been changed. `programs/no-room.py` and `interop/how-much-room-there-is.py` are of what is refused before anything is made,
+which takes no time.
 
 ## What is not decided
 

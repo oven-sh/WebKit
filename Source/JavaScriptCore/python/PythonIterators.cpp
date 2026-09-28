@@ -167,7 +167,7 @@ PYTHON_NATIVE(iteratorReduce)
         return JSValue::encode(a && iterator->index() != -1 ? tuple({ type, tuple({ a }), index() }) : tuple({ type, tuple({ tuple({ }) }) }));
     case IteratorKind::JavaScript:
     case IteratorKind::Memory:
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot pickle '"_s, typeName(globalObject, iterator), "' object"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot pickle '"_s, typeName(globalObject, iterator), "' object"_s)));
     default:
         break;
     }
@@ -257,7 +257,7 @@ PYTHON_NATIVE(iteratorSetState)
     }
     case IteratorKind::LongRange: {
         if (!isExactly(globalObject, state, realm->typeInt()))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("state must be an int, not "_s, typeName(globalObject, state))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("state must be an int, not "_s, typeName(globalObject, state))));
         JSValue left = numberBinaryOperation(globalObject, BinaryOperator::Sub, uncheckedDowncast<PyRange>(iterator->a().asCell())->length(), iterator->b());
         RETURN_IF_EXCEPTION(scope, { });
         if (compareInts(state, jsNumber(0)) < 0)

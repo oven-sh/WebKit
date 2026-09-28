@@ -48,12 +48,12 @@ static std::optional<CodecInfo> findCodec(const String& encoding)
 {
     if (encoding.isNull())
         return CodecInfo { Codec::UTF8, "utf-8"_s };
-    StringBuilder builder;
+    TextBuilder builder;
     for (unsigned i = 0; i < encoding.length(); ++i) {
         char16_t c = encoding[i];
         builder.append(c == '-' || c == ' ' ? static_cast<char16_t>('_') : toASCIILower(c));
     }
-    String name = builder.toString();
+    String name = builder.tryFinish();
     static constexpr std::pair<ASCIILiteral, CodecInfo> table[] = {
         { "utf_8"_s, { Codec::UTF8, "utf-8"_s } }, { "utf8"_s, { Codec::UTF8, "utf-8"_s } }, { "u8"_s, { Codec::UTF8, "utf-8"_s } }, { "utf"_s, { Codec::UTF8, "utf-8"_s } }, { "cp65001"_s, { Codec::UTF8, "utf-8"_s } },
         { "utf_8_sig"_s, { Codec::UTF8Signature, "utf-8"_s } },
@@ -99,12 +99,12 @@ static std::optional<ErrorHandler> findErrorHandler(const String& errors)
 
 static void raiseUnknownEncoding(JSGlobalObject* globalObject, ThrowScope& scope, const String& encoding)
 {
-    raise(globalObject, scope, BuiltinType::LookupError, makeString("unknown encoding: "_s, encoding));
+    raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
 }
 
 static void raiseUnknownErrorHandler(JSGlobalObject* globalObject, ThrowScope& scope, const String& errors)
 {
-    raise(globalObject, scope, BuiltinType::LookupError, makeString("unknown error handler name '"_s, errors, '\''));
+    raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown error handler name '"_s, errors, '\''));
 }
 
 // UnicodeEncodeError(encoding, object, start, end, reason), and UnicodeDecodeError likewise.
@@ -133,10 +133,10 @@ static void appendASCII(ByteVector& output, const String& text)
 static String backslashEscape(char32_t c)
 {
     if (c <= 0xFF)
-        return makeString("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
+        return concatenate("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
     if (c <= 0xFFFF)
-        return makeString("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
-    return makeString("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
+        return concatenate("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
+    return concatenate("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
 }
 
 static String nameEscape(char32_t c)
@@ -146,7 +146,7 @@ static String nameEscape(char32_t c)
     int32_t length = u_charName(c, U_UNICODE_CHAR_NAME, buffer, sizeof(buffer), &status);
     if (U_FAILURE(status) || !length)
         return backslashEscape(c);
-    return makeString("\\N{"_s, String::fromLatin1(buffer), '}');
+    return concatenate("\\N{"_s, String::fromLatin1(buffer), '}');
 }
 
 static void appendUnit(ByteVector& output, uint32_t unit, unsigned size, bool isBigEndian)
@@ -181,8 +181,8 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
 
     // The characters, since errors are counted in them.
     Vector<char32_t, 64> characters;
-    for (char32_t c : view.codePoints())
-        characters.append(c);
+    charactersOf(globalObject, view, characters);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     unsigned unitSize = 1;
     bool isBigEndian = false;
@@ -287,7 +287,7 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
             break;
         case ErrorHandler::XMLCharacterReference:
             for (size_t k = i; k < end; ++k)
-                encodeText(makeString("&#"_s, static_cast<unsigned>(characters[k]), ';'));
+                encodeText(concatenate("&#"_s, static_cast<unsigned>(characters[k]), ';'));
             break;
         case ErrorHandler::NameReplace:
             for (size_t k = i; k < end; ++k)
@@ -320,6 +320,10 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
         i = end;
     }
     UNUSED_PARAM(appendASCII);
+    if (output.hasOverflowed()) {
+        raiseMemoryError(globalObject, scope);
+        return std::nullopt;
+    }
     return output;
 }
 
@@ -400,10 +404,8 @@ String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const
         return { };
     }
     Codec codec = info->codec;
-    if (codec == Codec::Latin1)
-        return String(byteCast<Latin1Character>(input));
-    if ((codec == Codec::UTF8 || codec == Codec::ASCII) && charactersAreAllASCII(input))
-        return String(byteCast<Latin1Character>(input));
+    if (codec == Codec::Latin1 || ((codec == Codec::UTF8 || codec == Codec::ASCII) && charactersAreAllASCII(input)))
+        RELEASE_AND_RETURN(scope, textOfBytes(globalObject, input));
 
     size_t position = 0;
     unsigned unitSize = 1;
@@ -453,7 +455,7 @@ String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const
         break;
     }
 
-    StringBuilder output;
+    TextBuilder output;
     std::optional<ErrorHandler> handler;
     while (position < input.size()) {
         auto rest = input.subspan(position);
@@ -558,8 +560,7 @@ String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const
         }
         position += error.length;
     }
-    String result = output.toString();
-    return result.isNull() ? emptyString() : result;
+    RELEASE_AND_RETURN(scope, output.finish(globalObject));
 }
 
 } } // namespace JSC::Python

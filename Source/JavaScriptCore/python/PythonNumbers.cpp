@@ -29,6 +29,7 @@
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "PyObjects.h"
+#include "PythonText.h"
 #include <wtf/dtoa/double-conversion.h>
 
 namespace JSC { namespace Python {
@@ -728,7 +729,7 @@ String reprOfInt(JSGlobalObject* globalObject, const Number& number, unsigned ra
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto raiseTooLong = [&] {
-        raiseValueError(globalObject, scope, makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"_s));
+        raiseValueError(globalObject, scope, concatenate("Exceeds the limit ("_s, limit, " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"_s));
         return String();
     };
     constexpr double digitsPerBit = 0.30102999566398114; // log10(2), rounded down
@@ -756,7 +757,7 @@ String reprOfDouble(double value)
     int point;
     WTF::double_conversion::DoubleToStringConverter::DoubleToAscii(value, WTF::double_conversion::DoubleToStringConverter::SHORTEST, 0, std::span<char> { digits }, isNegative, length, point);
 
-    StringBuilder builder;
+    TextBuilder builder;
     if (isNegative)
         builder.append('-');
     auto digit = [&] (int i) -> char { return i < length ? digits[i] : '0'; };
@@ -773,7 +774,7 @@ String reprOfDouble(double value)
         if (exponent < 10)
             builder.append('0');
         builder.append(exponent);
-        return builder.toString();
+        return builder.tryFinish();
     }
     if (point <= 0) {
         builder.append("0."_s);
@@ -781,7 +782,7 @@ String reprOfDouble(double value)
             builder.append('0');
         for (int i = 0; i < length; ++i)
             builder.append(digits[i]);
-        return builder.toString();
+        return builder.tryFinish();
     }
     for (int i = 0; i < point; ++i)
         builder.append(digit(i));
@@ -790,7 +791,7 @@ String reprOfDouble(double value)
         builder.append('0');
     for (int i = point; i < length; ++i)
         builder.append(digits[i]);
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 } } // namespace JSC::Python

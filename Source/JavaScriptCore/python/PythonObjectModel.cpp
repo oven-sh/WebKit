@@ -206,7 +206,49 @@ JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue ar
 
 JSObject* createException(JSGlobalObject* globalObject, PyType* type, const String& message)
 {
+    // There was no room for what was to be said, which has in it things that are as long as a program makes them.
+    if (message.isNull()) [[unlikely]]
+        return createException(globalObject, globalObject->pyRealm()->typeMemoryError(), JSValue());
     return createException(globalObject, type, jsString(globalObject->vm(), message));
+}
+
+String textOrMemoryError(JSGlobalObject* globalObject, String&& text)
+{
+    if (text.isNull()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+    }
+    return WTF::move(text);
+}
+
+JSValue strOrMemoryError(JSGlobalObject* globalObject, const String& text)
+{
+    VM& vm = globalObject->vm();
+    if (text.isNull()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return raiseMemoryError(globalObject, scope);
+    }
+    return jsString(vm, text);
+}
+
+String textOfBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes)
+{
+    if (bytes.empty())
+        return emptyString();
+    std::span<Latin1Character> characters;
+    RefPtr text = bytes.size() > String::MaxLength ? nullptr : StringImpl::tryCreateUninitialized(bytes.size(), characters);
+    if (!text) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+        return { };
+    }
+    memcpySpan(characters, byteCast<Latin1Character>(bytes));
+    return String(text.releaseNonNull());
+}
+
+String TextBuilder::finish(JSGlobalObject* globalObject)
+{
+    return textOrMemoryError(globalObject, tryFinish());
 }
 
 JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type, JSValue argument)
@@ -243,12 +285,15 @@ void setContext(JSGlobalObject* globalObject, JSObject* exception)
 
 JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type, const String& message)
 {
+    // As in createException().
+    if (message.isNull()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope);
     return raise(globalObject, scope, type, jsString(globalObject->vm(), message));
 }
 
 JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, const String& name)
 {
-    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), makeString("name '"_s, name, "' is not defined"_s));
+    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), concatenate("name '"_s, name, "' is not defined"_s));
     exception->putDirect(globalObject->vm(), globalObject->vm().pythonNames().field_name, jsString(globalObject->vm(), name));
     setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
@@ -268,9 +313,9 @@ void throwUnboundVariable(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
         }
     }
     if (isFree)
-        raise(globalObject, scope, BuiltinType::NameError, makeString("cannot access free variable '"_s, string, "' where it is not associated with a value in enclosing scope"_s));
+        raise(globalObject, scope, BuiltinType::NameError, concatenate("cannot access free variable '"_s, string, "' where it is not associated with a value in enclosing scope"_s));
     else
-        raise(globalObject, scope, BuiltinType::UnboundLocalError, makeString("cannot access local variable '"_s, string, "' where it is not associated with a value"_s));
+        raise(globalObject, scope, BuiltinType::UnboundLocalError, concatenate("cannot access local variable '"_s, string, "' where it is not associated with a value"_s));
 }
 
 bool catchException(JSGlobalObject* globalObject, BuiltinType type)
@@ -450,7 +495,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         // One of a built-in type has a value from the start.
         if (JSValue initial = member->initialValue())
             return initial;
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, member->name()->value(globalObject).data, '\''));
+        return raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, member->name()->value(globalObject).data, '\''));
     }
     case DescriptorKind::General:
         if (!descriptor.getter)
@@ -585,16 +630,16 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     StringView attribute { name.uid() };
     String message;
     if (isClass(value))
-        message = makeString("type object '"_s, asType(value)->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
+        message = concatenate("type object '"_s, asType(value)->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
     else if (JSObject* module = tryModule(globalObject, value)) {
         JSValue moduleName = getStoredAttribute(vm, module, vm.pythonNames().dunder_name);
         if (JSString* text = moduleName ? stringIn(moduleName) : nullptr)
-            message = makeString("module '"_s, text->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
+            message = concatenate("module '"_s, text->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
         else
-            message = makeString("module has no attribute '"_s, attribute, '\'');
+            message = concatenate("module has no attribute '"_s, attribute, '\'');
     }
     if (message.isNull())
-        message = makeString('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
+        message = concatenate('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
     JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeAttributeError(), message);
     exception->putDirect(vm, vm.pythonNames().field_name, jsString(vm, attribute.toString()));
     exception->putDirect(vm, vm.pythonNames().field_object, value);
@@ -786,7 +831,7 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
             if (getSet->isMember())
                 raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
             else
-                raise(globalObject, scope, BuiltinType::AttributeError, makeString("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
+                raise(globalObject, scope, BuiltinType::AttributeError, concatenate("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
             return true;
         }
         scope.release();
@@ -799,7 +844,7 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
         return true;
     case DescriptorKind::JavaScriptAccessor:
         if (!newValue) {
-            raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no deleter"_s));
+            raise(globalObject, scope, BuiltinType::AttributeError, concatenate("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no deleter"_s));
             return true;
         }
         scope.release();
@@ -857,7 +902,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
 
     // Nothing of a built-in class can be set, whatever there may be to set it with.
     if (isType(value) && !asType(value)->hasFlag(PyType::IsHeapType)) {
-        raiseTypeError(globalObject, scope, makeString("cannot set '"_s, attribute, "' attribute of immutable type '"_s, asType(value)->nameString(globalObject), '\''));
+        raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, asType(value)->nameString(globalObject), '\''));
         return;
     }
 
@@ -872,7 +917,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
     if (isClass(value)) {
         auto* target = asType(value);
         if (!target->hasFlag(PyType::IsHeapType)) {
-            raiseTypeError(globalObject, scope, makeString("cannot set '"_s, attribute, "' attribute of immutable type '"_s, target->nameString(globalObject), '\''));
+            raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, target->nameString(globalObject), '\''));
             return;
         }
         if (JSObject* constructor = target->javaScriptConstructor()) {
@@ -886,7 +931,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
                 return;
             }
             if (!holder->getDirect(vm, name)) {
-                raise(globalObject, scope, BuiltinType::AttributeError, makeString("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
+                raise(globalObject, scope, BuiltinType::AttributeError, concatenate("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
                 return;
             }
             scope.release();
@@ -900,7 +945,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         bool deleted = target->deleteAttribute(vm, globalObject, name);
         RETURN_IF_EXCEPTION(scope, void());
         if (!deleted)
-            raise(globalObject, scope, BuiltinType::AttributeError, makeString("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
+            raise(globalObject, scope, BuiltinType::AttributeError, concatenate("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
         return;
     }
 
@@ -911,7 +956,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         }
         if (!getStoredAttribute(vm, storage, name)) {
             // Whatever it is: a module says no more of itself than anything else does.
-            raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
+            raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
             return;
         }
         scope.release();
@@ -930,11 +975,11 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
     }
 
     if (found) {
-        raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object attribute '"_s, attribute, "' is read-only"_s));
+        raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object attribute '"_s, attribute, "' is read-only"_s));
         return;
     }
     // Deleting is setting to nothing, and is spoken of as setting.
-    raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s));
+    raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s));
 }
 
 void setAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue newValue)
@@ -1061,7 +1106,7 @@ bool isCallable(JSGlobalObject* globalObject, JSValue value)
 
 JSObject* createNotCallableError(JSGlobalObject* globalObject, JSValue callable)
 {
-    return createException(globalObject, globalObject->pyRealm()->typeTypeError(), makeString('\'', typeName(globalObject, callable), "' object is not callable"_s));
+    return createException(globalObject, globalObject->pyRealm()->typeTypeError(), concatenate('\'', typeName(globalObject, callable), "' object is not callable"_s));
 }
 
 static JSValue raiseNotCallable(JSGlobalObject* globalObject, ThrowScope& scope, JSValue callable)
@@ -1138,13 +1183,13 @@ JSValue callMethod(JSGlobalObject* globalObject, JSValue function, JSValue self,
 static String joinNames(const Vector<String>& names)
 {
     // 'a', 'b' and 'c'
-    StringBuilder builder;
+    TextBuilder builder;
     for (size_t i = 0; i < names.size(); ++i) {
         if (i)
             builder.append(i + 1 == names.size() ? (names.size() > 2 ? ", and "_s : " and "_s) : ", "_s);
         builder.append('\'', names[i], '\'');
     }
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 // Works out the value of each parameter of a function written in Python, as Python/ceval.c of CPython does, and in its words if it
@@ -1190,7 +1235,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             if (info.parameterNames[i].string() != keywordString)
                 continue;
             if (bound[i]) {
-                raiseTypeError(globalObject, scope, makeString(functionName, "() got multiple values for argument '"_s, keywordString, '\''));
+                raiseTypeError(globalObject, scope, concatenate(functionName, "() got multiple values for argument '"_s, keywordString, '\''));
                 return false;
             }
             bound[i] = value;
@@ -1211,14 +1256,14 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             positionalOnlyGivenByKeyword.append(keywordString);
             continue;
         }
-        raiseTypeError(globalObject, scope, makeString(functionName, "() got an unexpected keyword argument '"_s, keywordString, '\''));
+        raiseTypeError(globalObject, scope, concatenate(functionName, "() got an unexpected keyword argument '"_s, keywordString, '\''));
         return false;
     }
     if (!positionalOnlyGivenByKeyword.isEmpty()) {
-        StringBuilder list;
+        TextBuilder list;
         for (size_t i = 0; i < positionalOnlyGivenByKeyword.size(); ++i)
             list.append(i ? ", "_s : ""_s, positionalOnlyGivenByKeyword[i]);
-        raiseTypeError(globalObject, scope, makeString(functionName, "() got some positional-only arguments passed as keyword arguments: '"_s, list.toString(), '\''));
+        raiseTypeError(globalObject, scope, concatenate(functionName, "() got some positional-only arguments passed as keyword arguments: '"_s, list.tryFinish(), '\''));
         return false;
     }
 
@@ -1230,7 +1275,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
         unsigned keywordOnlyGiven = 0;
         for (unsigned i = positionalCount; i < namedCount; ++i)
             keywordOnlyGiven += !!bound[i];
-        StringBuilder message;
+        TextBuilder message;
         message.append(functionName, "() takes "_s);
         if (defaultCount)
             message.append("from "_s, positionalCount - defaultCount, " to "_s, positionalCount, " positional arguments"_s);
@@ -1240,7 +1285,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
         if (keywordOnlyGiven)
             message.append(" positional argument"_s, given == 1 ? ""_s : "s"_s, " (and "_s, keywordOnlyGiven, " keyword-only argument"_s, keywordOnlyGiven == 1 ? ""_s : "s"_s, ')');
         message.append(given == 1 && !keywordOnlyGiven ? " was given"_s : " were given"_s);
-        raiseTypeError(globalObject, scope, message.toString());
+        raiseTypeError(globalObject, scope, message.tryFinish());
         return false;
     }
 
@@ -1255,7 +1300,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             missing.append(info.parameterNames[i].string());
     }
     if (!missing.isEmpty()) {
-        raiseTypeError(globalObject, scope, makeString(functionName, "() missing "_s, missing.size(), " required positional argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
+        raiseTypeError(globalObject, scope, concatenate(functionName, "() missing "_s, missing.size(), " required positional argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
         return false;
     }
 
@@ -1272,7 +1317,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
                 missing.append(info.parameterNames[i].string());
         }
         if (!missing.isEmpty()) {
-            raiseTypeError(globalObject, scope, makeString(functionName, "() missing "_s, missing.size(), " required keyword-only argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
+            raiseTypeError(globalObject, scope, concatenate(functionName, "() missing "_s, missing.size(), " required keyword-only argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
             return false;
         }
     }
@@ -1346,7 +1391,7 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
     bool isContinuing = type != from;
 
     if (type->cannotBeInstantiated(vm))
-        return raiseTypeError(globalObject, scope, makeString("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
+        return raiseTypeError(globalObject, scope, concatenate("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
     JSValue constructor = type->lookupFrom(vm, from, names.dunder_new);
     ASSERT(constructor);
     // slot_tp_new(): it is what the class has by that name, as `type.__new__` would find it. A function is a static method whether or not it says so, and whatever else has a __get__() is asked.
@@ -1389,7 +1434,7 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
         result = callWithKeywords(globalObject, initializer, arguments, keywordNames);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isNone(result))
-        return raiseTypeError(globalObject, scope, makeString("__init__() should return None, not '"_s, typeName(globalObject, result), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("__init__() should return None, not '"_s, typeName(globalObject, result), '\''));
     return instance;
 }
 
@@ -1408,7 +1453,7 @@ bool NativeArguments::checkNoKeywords(JSGlobalObject* globalObject, ThrowScope& 
 {
     if (!keywordCount())
         return true;
-    raiseTypeError(globalObject, scope, makeString(functionName, "() takes no keyword arguments"_s));
+    raiseTypeError(globalObject, scope, concatenate(functionName, "() takes no keyword arguments"_s));
     return false;
 }
 
@@ -1431,18 +1476,18 @@ bool NativeArguments::check(JSGlobalObject* globalObject, ThrowScope& scope, ASC
     if (minimum == maximum && minimum <= 1) {
         String qualified = name.toString();
         if (callee && callee->hasImplicitFirst() && callee->kind() != PyNativeFunction::Kind::New && callee->owner() && isType(callee->owner()))
-            qualified = makeString(asType(callee->owner())->nameString(globalObject), '.', name.substring(name.reverseFind('.') + 1));
-        raiseTypeError(globalObject, scope, makeString(qualified, minimum ? "() takes exactly one argument ("_s : "() takes no arguments ("_s, given, " given)"_s));
+            qualified = concatenate(asType(callee->owner())->nameString(globalObject), '.', name.substring(name.reverseFind('.') + 1));
+        raiseTypeError(globalObject, scope, concatenate(qualified, minimum ? "() takes exactly one argument ("_s : "() takes no arguments ("_s, given, " given)"_s));
         return false;
     }
     if (hasImplicitFirst)
         name = name.substring(name.reverseFind('.') + 1);
     if (minimum == maximum)
-        raiseTypeError(globalObject, scope, makeString(name, " expected "_s, minimum, " arguments, got "_s, given));
+        raiseTypeError(globalObject, scope, concatenate(name, " expected "_s, minimum, " arguments, got "_s, given));
     else if (given < minimum)
-        raiseTypeError(globalObject, scope, makeString(name, " expected at least "_s, minimum, " argument"_s, minimum == 1 ? ""_s : "s"_s, ", got "_s, given));
+        raiseTypeError(globalObject, scope, concatenate(name, " expected at least "_s, minimum, " argument"_s, minimum == 1 ? ""_s : "s"_s, ", got "_s, given));
     else
-        raiseTypeError(globalObject, scope, makeString(name, " expected at most "_s, maximum, " argument"_s, maximum == 1 ? ""_s : "s"_s, ", got "_s, given));
+        raiseTypeError(globalObject, scope, concatenate(name, " expected at most "_s, maximum, " argument"_s, maximum == 1 ? ""_s : "s"_s, ", got "_s, given));
     return false;
 }
 

@@ -27,6 +27,7 @@
 #include "PythonParser.h"
 
 #include "PythonLexer.h"
+#include "PythonText.h"
 #include "VM.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -106,7 +107,7 @@ public:
         // A bracket that was never closed is, if it was opened before the line that the parser got to.
         if (m_scannerError.openBracket && m_tokens[m_furthest].line > m_scannerError.openBracketLine) {
             unsigned tokenizerLine = m_scannerError.tokenizerLine;
-            m_error = { SyntaxError::Kind::SyntaxError, true, makeString('\'', m_scannerError.openBracket, "' was never closed"_s), m_scannerError.openBracketLine, static_cast<int>(m_scannerError.openBracketColumn), m_scannerError.openBracketLine, -1 };
+            m_error = { SyntaxError::Kind::SyntaxError, true, concatenate('\'', m_scannerError.openBracket, "' was never closed"_s), m_scannerError.openBracketLine, static_cast<int>(m_scannerError.openBracketColumn), m_scannerError.openBracketLine, -1 };
             m_error.tokenizerLine = tokenizerLine;
             m_error.lastLineIsEnded = m_lastLineIsEnded;
         }
@@ -704,7 +705,7 @@ private:
     void failForInvalidTarget(Expression& expression, Targets targets)
     {
         if (Expression* invalid = invalidTarget(expression, targets))
-            fail(makeString(targets == Targets::Del ? "cannot delete "_s : "cannot assign to "_s, describe(*invalid)), *invalid);
+            fail(concatenate(targets == Targets::Del ? "cannot delete "_s : "cannot assign to "_s, describe(*invalid)), *invalid);
     }
 
     // star_target
@@ -930,7 +931,7 @@ private:
         lookForWhatIsWrong([&] {
             Expression* target = parseExpression();
             if (target && consume(TokenKind::ColonEqual) && parseExpression())
-                fail(makeString("cannot use assignment expressions with "_s, describe(*target)), *target);
+                fail(concatenate("cannot use assignment expressions with "_s, describe(*target)), *target);
             return false;
         });
         if (m_error)
@@ -961,7 +962,7 @@ private:
             }
             Expression* target = parseBitwiseOr();
             if (target && consume(TokenKind::Equal) && parseBitwiseOr() && !isFollowedByAnother())
-                fail(makeString("cannot assign to "_s, describe(*target), " here. Maybe you meant '==' instead of '='?"_s), *target);
+                fail(concatenate("cannot assign to "_s, describe(*target), " here. Maybe you meant '==' instead of '='?"_s), *target);
             return false;
         });
     }
@@ -1097,7 +1098,7 @@ private:
             Name* name = makeName(next());
             Expression* rest = parseStarExpressions();
             if (rest && isLegacyStatement(*name))
-                fail(makeString("Missing parentheses in call to '"_s, name->id->string(), "'. Did you mean "_s, name->id->string(), "(...)?"_s), *name, *rest);
+                fail(concatenate("Missing parentheses in call to '"_s, name->id->string(), "'. Did you mean "_s, name->id->string(), "(...)?"_s), *name, *rest);
             return false;
         });
     }
@@ -1573,7 +1574,7 @@ private:
     void recognizeInvalidKeywordArgument()
     {
         if ((at(TokenKind::KeywordTrue) || at(TokenKind::KeywordFalse) || at(TokenKind::KeywordNone)) && atAhead(1, TokenKind::Equal)) {
-            fail(makeString("cannot assign to "_s, at(TokenKind::KeywordTrue) ? "True"_s : at(TokenKind::KeywordFalse) ? "False"_s : "None"_s), peek(), peek(1));
+            fail(concatenate("cannot assign to "_s, at(TokenKind::KeywordTrue) ? "True"_s : at(TokenKind::KeywordFalse) ? "False"_s : "None"_s), peek(), peek(1));
             return;
         }
         bool isNamed = at(TokenKind::Name) && atAhead(1, TokenKind::Equal);
@@ -2626,7 +2627,7 @@ private:
 
     String prefixed(bool isTemplate, ASCIILiteral message)
     {
-        return makeString(isTemplate ? 't' : 'f', "-string: "_s, message);
+        return concatenate(isTemplate ? 't' : 'f', "-string: "_s, message);
     }
 
     // fstring_replacement_field and its like. `isTemplate` is what kind of string this is in, for what to say when it is wrong, and
@@ -2684,7 +2685,7 @@ private:
             }
             StringView text = name.text->string();
             if (text.length() != 1 || (text[0] != 's' && text[0] != 'r' && text[0] != 'a')) {
-                failInEitherPass(makeString(isTemplate ? 't' : 'f', "-string: invalid conversion character '"_s, text, "': expected 's', 'r', or 'a'"_s), name);
+                failInEitherPass(concatenate(isTemplate ? 't' : 'f', "-string: invalid conversion character '"_s, text, "': expected 's', 'r', or 'a'"_s), name);
                 return false;
             }
             conversion = text[0];
@@ -2997,7 +2998,7 @@ private:
                     return false;
                 if (kind != TypeParameter::Kind::TypeVar) {
                     ASCIILiteral what = bound->is<Tuple>() ? "constraints"_s : "bound"_s;
-                    failStartingFrom(makeString("cannot use "_s, what, " with "_s, kind == TypeParameter::Kind::TypeVarTuple ? "TypeVarTuple"_s : "ParamSpec"_s), colon);
+                    failStartingFrom(concatenate("cannot use "_s, what, " with "_s, kind == TypeParameter::Kind::TypeVarTuple ? "TypeVarTuple"_s : "ParamSpec"_s), colon);
                     return false;
                 }
             }
@@ -3098,7 +3099,7 @@ private:
             if (!m_callsInvalidRules)
                 return nullptr;
             if (Expression* target = parseExpression())
-                fail(makeString("cannot use "_s, describe(*target), " as pattern target"_s), *target);
+                fail(concatenate("cannot use "_s, describe(*target), " as pattern target"_s), *target);
             return nullptr;
         }
         const Token& name = next();
@@ -3406,7 +3407,7 @@ private:
         Vector<Statement*, 16> body;
         if (consume(TokenKind::Newline)) {
             if (!consume(TokenKind::Indent)) {
-                failAtLastToken(isAfterTypeComment ? "expected an indented block"_str : makeString("expected an indented block after "_s, after, " on line "_s, line), SyntaxError::Kind::IndentationError);
+                failAtLastToken(isAfterTypeComment ? "expected an indented block"_str : concatenate("expected an indented block after "_s, after, " on line "_s, line), SyntaxError::Kind::IndentationError);
                 return false;
             }
             if (!parseStatementsUntil(TokenKind::Dedent, body))
@@ -3690,7 +3691,7 @@ private:
             if (!target || !(isBracket ? target->is<List>() : target->is<Tuple>() || target->is<List>()))
                 return false;
             if (consume(TokenKind::Colon) && parseExpression())
-                fail(makeString("only single target (not "_s, describe(*target), ") can be annotated"_s), *target);
+                fail(concatenate("only single target (not "_s, describe(*target), ") can be annotated"_s), *target);
             return false;
         });
         if (m_error)
@@ -3758,7 +3759,7 @@ private:
                 return false;
             next();
             if (parseYieldOrStarExpressions())
-                fail(makeString('\'', describe(*target), "' is an illegal expression for augmented assignment"_s), *target);
+                fail(concatenate('\'', describe(*target), "' is an illegal expression for augmented assignment"_s), *target);
             return false;
         });
     }
@@ -3894,7 +3895,7 @@ private:
             bool isName = at(TokenKind::Name) && (atAhead(1, TokenKind::Comma) || atAhead(1, TokenKind::RightParenthesis) || atAhead(1, TokenKind::Semicolon) || atAhead(1, TokenKind::Newline));
             if (!isName) {
                 if (Expression* target = lookForWhatIsWrong([&] { return parseExpression(); }))
-                    fail(makeString("cannot use "_s, describe(*target), " as import target"_s), *target);
+                    fail(concatenate("cannot use "_s, describe(*target), " as import target"_s), *target);
                 if (m_error)
                     return false;
             }
@@ -4252,7 +4253,7 @@ private:
                 return false;
             Sequence<Statement*> body;
             if (parseBlock(body, isStar ? "'except*' statement"_s : "'except' statement"_s, 0))
-                fail(makeString("cannot use except"_s, isStar ? "*"_s : ""_s, " statement with "_s, describe(*target)), *target);
+                fail(concatenate("cannot use except"_s, isStar ? "*"_s : ""_s, " statement with "_s, describe(*target)), *target);
             return false;
         });
     }
@@ -4398,7 +4399,7 @@ private:
         next();
         next();
         if (!consume(TokenKind::Indent))
-            return failAtLastToken(makeString("expected an indented block after 'match' statement on line "_s, start.line), SyntaxError::Kind::IndentationError);
+            return failAtLastToken(concatenate("expected an indented block after 'match' statement on line "_s, start.line), SyntaxError::Kind::IndentationError);
 
         Vector<MatchCase*, 8> cases;
         while (at(SoftKeyword::Case)) {

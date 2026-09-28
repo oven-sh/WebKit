@@ -136,7 +136,7 @@ PYTHON_NATIVE(sysAudit)
     if (!args.size())
         return JSValue::encode(raiseTypeError(globalObject, scope, "audit expected at least 1 argument, got 0"_s));
     if (!stringIn(args[0]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("audit() argument 1 must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("audit() argument 1 must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
     if (!realm->auditHooks())
         RETURN_NONE();
     MarkedArgumentBuffer rest;
@@ -166,7 +166,7 @@ PYTHON_NATIVE(sysExceptHook)
         RETURN_NONE();
     }
     if (!isInstance(globalObject, value, realm->typeBaseException())) {
-        writeToStandardError(globalObject, makeString("TypeError: print_exception(): Exception expected for value, "_s, typeName(globalObject, value), " found\n"_s));
+        writeToStandardError(globalObject, concatenate("TypeError: print_exception(): Exception expected for value, "_s, typeName(globalObject, value), " found\n"_s));
         RETURN_NONE();
     }
     // One that has no traceback of its own is given the one that came with it.
@@ -234,7 +234,7 @@ static void writeUnraisable(JSGlobalObject* globalObject, JSValue type, JSValue 
         }
         return text;
     };
-    StringBuilder builder;
+    TextBuilder builder;
     bool hasMessage = message && !isNone(message);
     if (object && !isNone(object)) {
         if (hasMessage)
@@ -246,7 +246,7 @@ static void writeUnraisable(JSGlobalObject* globalObject, JSValue type, JSValue 
         builder.append(textOf(message, false, ""_s), ":\n"_s);
     builder.append(formatTraceback(globalObject, traceback));
     if (!type || isNone(type)) {
-        writeTo(globalObject, file, builder.toString());
+        writeTo(globalObject, file, builder.tryFinish());
         return;
     }
     JSValue module = getAttributeIfPresent(globalObject, type, vm.pythonNames().dunder_module);
@@ -264,7 +264,7 @@ static void writeUnraisable(JSGlobalObject* globalObject, JSValue type, JSValue 
     if (value && !isNone(value))
         builder.append(": "_s, textOf(value, false, "<exception str() failed>"_s));
     builder.append('\n');
-    writeTo(globalObject, file, builder.toString());
+    writeTo(globalObject, file, builder.tryFinish());
 }
 
 // sys.unraisablehook(unraisable)
@@ -344,7 +344,7 @@ PYTHON_NATIVE(sysBreakpointHook)
     size_t lastDot = named.reverseFind('.');
     // What cannot be imported is warned of and passed over.
     auto ignore = [&] {
-        warn(globalObject, BuiltinType::RuntimeWarning, makeString("Ignoring unimportable $PYTHONBREAKPOINT: \""_s, named, '"'), 0);
+        warn(globalObject, BuiltinType::RuntimeWarning, concatenate("Ignoring unimportable $PYTHONBREAKPOINT: \""_s, named, '"'), 0);
         return JSValue::encode(jsUndefined());
     };
     if (!lastDot)
@@ -392,15 +392,15 @@ PYTHON_NATIVE(sysIntern)
     if (args[0].isString())
         RELEASE_AND_RETURN(scope, JSValue::encode(realm->intern(globalObject, asString(args[0]))));
     if (stringIn(args[0]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't intern "_s, typeName(globalObject, args[0]))));
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("intern() argument must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can't intern "_s, typeName(globalObject, args[0]))));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("intern() argument must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
 }
 
 PYTHON_NATIVE(sysIsInterned)
 {
     NATIVE_PROLOGUE();
     if (!stringIn(args[0]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("_is_interned() argument must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_is_interned() argument must be str, not "_s, isNone(args[0]) ? "None"_s : typeName(globalObject, args[0]))));
     return JSValue::encode(jsBoolean(args[0].isString() && realm->isInterned(globalObject, asString(args[0]))));
 }
 
@@ -415,7 +415,7 @@ PYTHON_NATIVE(sysGetSizeOf)
         JSValue method = lookupSpecial(globalObject, object, Identifier::fromString(vm, "__sizeof__"_s), self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!method)
-            return raiseTypeError(globalObject, scope, makeString("Type "_s, typeName(globalObject, object), " doesn't define __sizeof__"_s));
+            return raiseTypeError(globalObject, scope, concatenate("Type "_s, typeName(globalObject, object), " doesn't define __sizeof__"_s));
         JSValue result = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isInstance(globalObject, result, realm->typeInt()))
@@ -487,7 +487,7 @@ PYTHON_NATIVE(sysSetRecursionLimit)
         return JSValue::encode(raiseValueError(globalObject, scope, "recursion limit must be greater or equal than 1"_s));
     // It is not to be made so low that where this is called from is already beyond it.
     if (vm.pythonDepth() >= static_cast<uint32_t>(*limit))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::RecursionError, makeString("cannot set the recursion limit to "_s, *limit, " at the recursion depth "_s, vm.pythonDepth(), ": the limit is too low"_s)));
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RecursionError, concatenate("cannot set the recursion limit to "_s, *limit, " at the recursion depth "_s, vm.pythonDepth(), ": the limit is too low"_s)));
     vm.setPythonRecursionLimit(*limit);
     RETURN_NONE();
 }
@@ -505,7 +505,7 @@ PYTHON_NATIVE(sysSetIntMaxStrDigits)
     RETURN_IF_EXCEPTION(scope, { });
     constexpr int threshold = 640;
     if (*digits && *digits < threshold)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("maxdigits must be >= "_s, threshold, " or 0 for unlimited"_s)));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("maxdigits must be >= "_s, threshold, " or 0 for unlimited"_s)));
     realm->maximumDigitsOfIntAsString = *digits;
     RETURN_NONE();
 }
@@ -560,13 +560,13 @@ PYTHON_NATIVE(sysSetAsyncGeneratorHooks)
     NATIVE_PROLOGUE();
     // It does not say what it is called.
     if (unsigned given = args.size() + args.keywordCount(); given > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes at most 2 arguments ("_s, given, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("function takes at most 2 arguments ("_s, given, " given)"_s)));
     JSValue firstIteration = args.at(0);
     JSValue finalizer = args.at(1);
     if (finalizer && !isNone(finalizer) && !isCallable(globalObject, finalizer))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("callable finalizer expected, got "_s, typeName(globalObject, finalizer))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("callable finalizer expected, got "_s, typeName(globalObject, finalizer))));
     if (firstIteration && !isNone(firstIteration) && !isCallable(globalObject, firstIteration))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("callable firstiter expected, got "_s, typeName(globalObject, firstIteration))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("callable firstiter expected, got "_s, typeName(globalObject, firstIteration))));
     if (finalizer) {
         audit(globalObject, "sys.set_asyncgen_hooks_finalizer"_s);
         RETURN_IF_EXCEPTION(scope, { });
@@ -599,7 +599,7 @@ PYTHON_NATIVE(sysCallTracing)
 {
     NATIVE_PROLOGUE();
     if (!isTuple(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("call_tracing() argument 2 must be tuple, not "_s, isNone(args[1]) ? "None"_s : typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("call_tracing() argument 2 must be tuple, not "_s, isNone(args[1]) ? "None"_s : typeName(globalObject, args[1]))));
     MarkedArgumentBuffer arguments;
     for (auto& argument : asTuple(args[1])->span())
         arguments.append(argument.get());
@@ -690,7 +690,7 @@ PYTHON_NATIVE(standardStreamWrite)
     int descriptor = asObject(args[0])->getDirect(vm, names.private_descriptor).asInt32();
     JSValue text = args[1];
     if (!text.isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("write() argument must be str, not "_s, typeName(globalObject, text))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("write() argument must be str, not "_s, typeName(globalObject, text))));
     // What cannot be written is an error, but not in the middle of reporting one.
     auto bytes = encodeString(globalObject, text, "utf-8"_s, descriptor == 2 ? "backslashreplace"_s : "strict"_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -799,7 +799,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     JSValue versionInfo = structOf(realm->typeSysVersionInfo(), versionFields, 5, { jsNumber(major), jsNumber(minor), jsNumber(micro), text("final"_s), jsNumber(0) });
     set("version_info"_s, versionInfo);
     set("hexversion"_s, jsNumber(hexVersion));
-    set("version"_s, jsString(vm, makeString(major, '.', minor, '.', micro, " (JavaScriptCore)"_s)));
+    set("version"_s, strOrMemoryError(globalObject, concatenate(major, '.', minor, '.', micro, " (JavaScriptCore)"_s)));
     set("api_version"_s, jsNumber(1013));
     set("abiflags"_s, jsEmptyString(vm));
     set("copyright"_s, text("Copyright (c) 2001 Python Software Foundation.\nAll Rights Reserved.\n\nCopyright (c) 2000 BeOpen.com.\nAll Rights Reserved.\n\nCopyright (c) 1995-2001 Corporation for National Research Initiatives.\nAll Rights Reserved.\n\nCopyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\nAll Rights Reserved."_s));

@@ -71,11 +71,11 @@ PYTHON_NATIVE(groupNew)
     NATIVE_PROLOGUE();
     PyType* givenClass = asType(args[0]);
     if (args.size() != 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseExceptionGroup.__new__() takes exactly 2 arguments ("_s, args.size() - 1, " given)"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("BaseExceptionGroup.__new__() takes exactly 2 arguments ("_s, args.size() - 1, " given)"_s)));
     JSValue message = args[1];
     JSValue given = args[2];
     if (!isInstance(globalObject, message, realm->typeStr()))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseExceptionGroup.__new__() argument 1 must be str, not "_s, isNone(message) ? String("None"_s) : typeName(globalObject, message))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("BaseExceptionGroup.__new__() argument 1 must be str, not "_s, isNone(message) ? String("None"_s) : typeName(globalObject, message))));
     if (!isSequence(globalObject, given))
         return JSValue::encode(raiseTypeError(globalObject, scope, "second argument (exceptions) must be a sequence"_s));
 
@@ -95,7 +95,7 @@ PYTHON_NATIVE(groupNew)
     for (unsigned i = 0; i < exceptions->length(); ++i) {
         JSValue exception = exceptions->at(i);
         if (!isExceptionInstance(globalObject, exception))
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("Item "_s, i, " of second argument (exceptions) is not an exception"_s)));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("Item "_s, i, " of second argument (exceptions) is not an exception"_s)));
         nestsBaseExceptions |= !isInstance(globalObject, exception, realm->typeException());
     }
 
@@ -108,7 +108,7 @@ PYTHON_NATIVE(groupNew)
         if (!nestsBaseExceptions)
             type = realm->exceptionGroupType();
     } else if (nestsBaseExceptions && type->isSubtypeOf(realm->typeException()))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Cannot nest BaseExceptions in '"_s, type->name(), '\'')));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Cannot nest BaseExceptions in '"_s, type->name(), '\'')));
 
     PyException* self = PyException::create(vm, type);
     self->putDirect(vm, names.private_args, PyTuple::create(globalObject, { message, given }));
@@ -132,7 +132,7 @@ PYTHON_NATIVE(groupStr)
     String message = str(globalObject, asObject(args[0])->getDirect(vm, names.private_groupMessage));
     RETURN_IF_EXCEPTION(scope, { });
     unsigned count = exceptionsOf(vm, args[0])->length();
-    return JSValue::encode(jsString(vm, makeString(message, " ("_s, count, " sub-exception"_s, count > 1 ? "s"_s : ""_s, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(message, " ("_s, count, " sub-exception"_s, count > 1 ? "s"_s : ""_s, ')'))));
 }
 
 // BaseExceptionGroup_repr()
@@ -157,7 +157,7 @@ PYTHON_NATIVE(groupRepr)
     RETURN_IF_EXCEPTION(scope, { });
     String message = repr(globalObject, self->getDirect(vm, names.private_groupMessage));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString(typeOf(globalObject, self)->name(), '(', message, ", "_s, exceptions, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(typeOf(globalObject, self)->name(), '(', message, ", "_s, exceptions, ')'))));
 }
 
 // BaseExceptionGroup.derive()
@@ -456,10 +456,10 @@ JSValue matchExceptionGroup(JSGlobalObject* globalObject, CallFrame* frame, JSVa
     JSValue result = call(globalObject, method, pattern);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isTuple(result) || typeOf(globalObject, result) != globalObject->pyRealm()->typeTuple())
-        return raiseTypeError(globalObject, scope, makeString(typeName(globalObject, exception), ".split must return a tuple, not "_s, typeName(globalObject, result)));
+        return raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, exception), ".split must return a tuple, not "_s, typeName(globalObject, result)));
     // More than two are let by, for what was written before this was looked at.
     if (asTuple(result)->length() < 2)
-        return raiseTypeError(globalObject, scope, makeString(typeName(globalObject, exception), ".split must return a 2-tuple, got tuple of size "_s, asTuple(result)->length()));
+        return raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, exception), ".split must return a 2-tuple, got tuple of size "_s, asTuple(result)->length()));
     return pair(asTuple(result)->at(0), asTuple(result)->at(1));
 }
 

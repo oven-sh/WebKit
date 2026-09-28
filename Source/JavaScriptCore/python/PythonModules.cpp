@@ -166,7 +166,7 @@ PYTHON_NATIVE(mathSqrt)
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*x < 0)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("expected a nonnegative input, got "_s, reprOfDouble(*x))));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("expected a nonnegative input, got "_s, reprOfDouble(*x))));
     return JSValue::encode(floatFromDouble(std::sqrt(*x)));
 }
 
@@ -195,13 +195,13 @@ PYTHON_NATIVE(mathLog)
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*x <= 0)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("expected a positive input, got "_s, reprOfDouble(*x))));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("expected a positive input, got "_s, reprOfDouble(*x))));
     double result = std::log(*x);
     if (args.size() > 1) {
         auto base = toDouble(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         if (*base <= 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("expected a positive input, got "_s, reprOfDouble(*base))));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("expected a positive input, got "_s, reprOfDouble(*base))));
         result /= std::log(*base);
     }
     return JSValue::encode(floatFromDouble(result));
@@ -264,7 +264,7 @@ PYTHON_NATIVE(mathTrunc)
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_trunc, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("type "_s, typeName(globalObject, args[0]), " doesn't define __trunc__ method"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type "_s, typeName(globalObject, args[0]), " doesn't define __trunc__ method"_s)));
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
 }
 
@@ -581,7 +581,7 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
             return module;
         }
         if (auto source = librarySourceFor(fullName))
-            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeSource(*source, SourceOrigin(), makeString("<frozen "_s, fullName, '>')), false, ImplementationVisibility::Private));
+            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeSource(*source, SourceOrigin(), concatenate("<frozen "_s, fullName, '>')), false, ImplementationVisibility::Private));
     }
 
     JSValue searchPath;
@@ -604,11 +604,11 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
         String directory = asString(directories.at(i))->value(globalObject);
         if (directory.isEmpty())
             directory = "."_s;
-        SourceCode source = readSource(globalObject, makeString(directory, '/', leaf, "/__init__.py"_s));
+        SourceCode source = readSource(globalObject, concatenate(directory, '/', leaf, "/__init__.py"_s));
         RETURN_IF_EXCEPTION(scope, { });
         bool isPackage = !source.isNull();
         if (!isPackage) {
-            source = readSource(globalObject, makeString(directory, '/', leaf, ".py"_s));
+            source = readSource(globalObject, concatenate(directory, '/', leaf, ".py"_s));
             RETURN_IF_EXCEPTION(scope, { });
             if (source.isNull())
                 continue;
@@ -740,7 +740,7 @@ JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const Stri
                 return raise(globalObject, scope, BuiltinType::ImportError, "attempted relative import beyond top-level package"_s);
             package = package.left(dot);
         }
-        name = name.isEmpty() ? package : makeString(package, '.', name);
+        name = name.isEmpty() ? package : concatenate(package, '.', name);
     } else if (name.isEmpty())
         return raiseValueError(globalObject, scope, "Empty module name"_s);
 
@@ -755,8 +755,8 @@ JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const Stri
         RETURN_IF_EXCEPTION(scope, { });
         if (!next) {
             JSObject* error = createException(globalObject, globalObject->pyRealm()->typeModuleNotFoundError(), module && !getAttributeIfPresent(globalObject, module, names.dunder_path)
-                ? makeString("No module named '"_s, fullName, "'; '"_s, name.left(position - 1), "' is not a package"_s)
-                : makeString("No module named '"_s, fullName, '\''));
+                ? concatenate("No module named '"_s, fullName, "'; '"_s, name.left(position - 1), "' is not a package"_s)
+                : concatenate("No module named '"_s, fullName, '\''));
             error->putDirect(vm, vm.pythonNames().field_name, jsString(vm, fullName));
             throwException(globalObject, scope, error);
             return { };
@@ -797,7 +797,7 @@ JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const Stri
             RETURN_IF_EXCEPTION(scope, { });
             if (present)
                 continue;
-            findOrLoad(globalObject, makeString(name, '.', item), module);
+            findOrLoad(globalObject, concatenate(name, '.', item), module);
             RETURN_IF_EXCEPTION(scope, { });
         }
     }

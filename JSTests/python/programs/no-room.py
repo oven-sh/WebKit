@@ -36,3 +36,28 @@ for x in (2 ** 62, 2 ** 63 - 1, 2 ** 63, 2 ** 70):
         if x == 2 ** 62 and label in ("bytearray(b'a') * x", "bytearray(b'a').center(x)", "bytearray(b'a').zfill(x)"):
             continue
         t(label, f)
+
+print("---- how wide, and how much of it")
+
+
+def v(label, f):
+    try:
+        r = repr(f())
+    except Exception as e:
+        r = type(e).__name__ + ": " + str(e)
+    print(label, "=>", r)
+
+
+for text in ("%9223372036854775807d", "%9223372036854775808d", "%99999999999999999999d", "%.2147483647d", "%.2147483648d", "%.99999999999d", "%.2147483648f", "%.2147483648s", "%2147483648.2147483648s"):
+    t(repr(text) + " % 1", lambda: text % 1)
+# Not with zeros to the width and the digits in threes: CPython counts out the threes before it asks whether there is room for them.
+for spec in ("9223372036854775807", "9223372036854775808", "99999999999999999999", ".9223372036854775807", ".9223372036854775808", ".2147483648f", ".2147483648e", ".2147483648g", ".2147483648%", ".2147483648", ".9223372036854775807s"):
+    for value in (1, 1.5, "a", 1j):
+        t("format(%r, %r)" % (value, spec), lambda: format(value, spec))
+for label, f in (("a bool for how wide", lambda: "%*d|%-*d|" % (True, 1, True, 1)), ("less than nothing is to the left", lambda: "%*d|" % (-5, 1)), ("and for how much of it, is nothing", lambda: "%.*f|%.*s|" % (-5, 1.5, -5, "abc")), ("not an int", lambda: "%*d" % (1.0, 1)),
+                 ("nor for how much", lambda: "%.*f" % ("1", 1.5)), ("what has __index__() is not one", lambda: "%*d" % (type("I", (), {"__index__": lambda s: 3})(), 1)), ("the least there is", lambda: "%*d" % (-2 ** 63, 1)), ("less than that", lambda: "%*d" % (-2 ** 63 - 1, 1)),
+                 ("the least an int of C's can be", lambda: "%.*f" % (-2 ** 31, 1.5)), ("less than that", lambda: "%.*f" % (-2 ** 31 - 1, 1.5)), ("more digits than a float has", lambda: (format(0.1, ".60f"), format(5e-324, ".20e"), format(1e308, ".3f")[:12], len(format(5e-324, ".1100f")), format(5e-324, ".1100f")[-30:])),
+                 ("more than it has at all", lambda: (len(format(5e-324, ".2000f")), format(5e-324, ".2000f")[-4:], len(format(1.5, ".5000e")), format(1.5, ".5000e")[-8:], len(format(1e308, ".1500f")), format(2.5, ".2000g"), len(format(2.5, "#.2000g")))),
+                 ("ties", lambda: [format(x, ".0f") for x in (0.5, 1.5, 2.5, 3.5)] + [format(x, ".1f") for x in (0.25, 0.35, 0.75)] + [format(x, ".2e") for x in (1.125, 1.135, 1.145e10)]),
+                 ("digits in threes, to a width", lambda: [format(1234567, s) for s in (",", "015,", "016,", "017,", "_", "012_x", "013_x")] + [format(1234.5, s) for s in (",", "015,", "016,", "017,.2f")])):
+    v(label, f)

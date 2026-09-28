@@ -75,6 +75,26 @@ static JSUint8Array* newView(JSGlobalObject* globalObject, Structure* structure,
     return view;
 }
 
+static JSUint8Array* newView(JSGlobalObject* globalObject, Structure* structure, const ByteVector& content)
+{
+    if (content.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return newView(globalObject, structure, content.span());
+}
+
+JSUint8Array* newBytes(JSGlobalObject* globalObject, const ByteVector& content)
+{
+    return newView(globalObject, globalObject->pyRealm()->structureFor(BuiltinType::Bytes), content);
+}
+
+JSUint8Array* newByteArray(JSGlobalObject* globalObject, const ByteVector& content)
+{
+    return newView(globalObject, globalObject->pyRealm()->structureFor(BuiltinType::ByteArray), content);
+}
+
 JSUint8Array* newBytes(JSGlobalObject* globalObject, std::span<const uint8_t> content)
 {
     return newView(globalObject, globalObject->pyRealm()->structureFor(BuiltinType::Bytes), content);
@@ -87,6 +107,11 @@ JSUint8Array* newByteArray(JSGlobalObject* globalObject, std::span<const uint8_t
 
 // A bytes from a method of bytes, and a bytearray from one of bytearray.
 static JSValue newLike(JSGlobalObject* globalObject, JSValue self, std::span<const uint8_t> content)
+{
+    return isBytes(self) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
+}
+
+static JSValue newLike(JSGlobalObject* globalObject, JSValue self, const ByteVector& content)
 {
     return isBytes(self) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
 }
@@ -188,7 +213,7 @@ void releaseBufferOfProgram(JSGlobalObject* globalObject, JSValue exporter, JSVa
         scope.clearException();
         callSpecial(globalObject, typeOf(globalObject, exporter), method, exporter, view);
         if (scope.exception())
-            reportUnraisable(globalObject, makeString("Exception ignored in __release_buffer__ of "_s, typeName(globalObject, exporter)));
+            reportUnraisable(globalObject, concatenate("Exception ignored in __release_buffer__ of "_s, typeName(globalObject, exporter)));
     }
     if (raised) {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -220,7 +245,7 @@ void Buffer::appendTo(ByteVector& result) const
         result.append(span());
         return;
     }
-    result.appendVector(bytesOfMemory(memory));
+    result.append(bytesOfMemory(memory).span());
 }
 
 Buffer bufferOrNothing(JSGlobalObject* globalObject, JSValue value)
@@ -241,7 +266,7 @@ Buffer bufferOf(JSGlobalObject* globalObject, JSValue value)
     Buffer buffer = tryBufferOf(globalObject, value);
     RETURN_IF_EXCEPTION(scope, { });
     if (!buffer)
-        raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, value), '\''));
+        raiseTypeError(globalObject, scope, concatenate("a bytes-like object is required, not '"_s, typeName(globalObject, value), '\''));
     return buffer;
 }
 
@@ -254,7 +279,7 @@ String reprOfBytes(std::span<const uint8_t> content)
         hasDouble |= byte == '"';
     }
     char quote = hasSingle && !hasDouble ? '"' : '\'';
-    StringBuilder builder;
+    TextBuilder builder;
     builder.append('b', quote);
     for (uint8_t byte : content) {
         if (byte == quote || byte == '\\')
@@ -271,13 +296,13 @@ String reprOfBytes(std::span<const uint8_t> content)
             builder.append(static_cast<char>(byte));
     }
     builder.append(quote);
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 // The same as of a str with the same characters, as it is in CPython.
 int64_t hashOfBytes(std::span<const uint8_t> content)
 {
-    return hashOfString(String(byteCast<Latin1Character>(content)));
+    return content.empty() ? 0 : static_cast<int64_t>(StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(content))) + 1;
 }
 
 // ---- Changing the length of a bytearray
@@ -319,11 +344,13 @@ static bool resize(JSGlobalObject* globalObject, JSUint8Array* view, size_t newL
 }
 
 // Puts `replacement` in place of `count` bytes at `start`. False if it raised.
-static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_t start, size_t count, std::span<const uint8_t> replacement)
+static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_t start, size_t count, const ByteVector& copy)
 {
-    // It may be part of the view itself.
-    ByteVector copy;
-    copy.append(replacement);
+    if (copy.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
     size_t length = view->length();
     size_t tail = length - start - count;
     if (copy.size() > count) {
@@ -344,12 +371,20 @@ static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_
     return true;
 }
 
+static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_t start, size_t count, std::span<const uint8_t> replacement)
+{
+    // It may be part of the view itself.
+    ByteVector copy;
+    copy.append(replacement);
+    return replaceRange(globalObject, view, start, count, copy);
+}
+
 // ---- Arguments
 
 #define BYTES_PROLOGUE(method) \
     NATIVE_PROLOGUE(); \
     if (bytesKindOf(args.at(0)) == BytesKind::None) \
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method ""_s, "' requires a bytes-like object but received a '"_s, typeName(globalObject, args.at(0) ? args.at(0) : jsUndefined()), '\''))); \
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, method ""_s, "' requires a bytes-like object but received a '"_s, typeName(globalObject, args.at(0) ? args.at(0) : jsUndefined()), '\''))); \
     JSValue selfValue = args[0]; \
     [[maybe_unused]] JSUint8Array* self = asView(selfValue); \
     [[maybe_unused]] Buffer content { selfValue };
@@ -379,7 +414,7 @@ static bool needleFrom(JSGlobalObject* globalObject, JSValue value, ByteVector& 
     }
     RETURN_IF_EXCEPTION(scope, false);
     if (!classify(value).isInt() && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index)) {
-        raiseTypeError(globalObject, scope, makeString("argument should be integer or bytes-like object, not '"_s, typeName(globalObject, value), '\''));
+        raiseTypeError(globalObject, scope, concatenate("argument should be integer or bytes-like object, not '"_s, typeName(globalObject, value), '\''));
         return false;
     }
     auto byte = byteFrom(globalObject, value, "byte must be in range(0, 256)"_s);
@@ -474,7 +509,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASCIILiteral typeText = isByteArray ? "bytearray"_s : "bytes"_s;
     if (args.size() > 4) {
-        raiseTypeError(globalObject, scope, makeString(typeText, "() takes at most 3 arguments ("_s, args.size() - 1, " given)"_s));
+        raiseTypeError(globalObject, scope, concatenate(typeText, "() takes at most 3 arguments ("_s, args.size() - 1, " given)"_s));
         return false;
     }
     JSValue source = args.at(1);
@@ -485,7 +520,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             return { };
         JSString* string = stringIn(value);
         if (!string) {
-            raiseTypeError(globalObject, scope, makeString(typeText, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
+            raiseTypeError(globalObject, scope, concatenate(typeText, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
             return { };
         }
         return string->value(globalObject);
@@ -532,7 +567,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             JSValue result = callMethod(globalObject, method, self);
             RETURN_IF_EXCEPTION(scope, false);
             if (!isBytes(result)) {
-                raiseTypeError(globalObject, scope, makeString("__bytes__ returned non-bytes (type "_s, typeName(globalObject, result), ')'));
+                raiseTypeError(globalObject, scope, concatenate("__bytes__ returned non-bytes (type "_s, typeName(globalObject, result), ')'));
                 return false;
             }
             if (whatBytesMethodGave)
@@ -551,8 +586,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             }
             if (!reserve(globalObject, scope, content, *count, !isByteArray))
                 return false;
-            content.grow(*count);
-            memset(content.mutableSpan().data(), 0, *count);
+            content.appendFill(0, *count);
             return true;
         }
         if (!catchException(globalObject, BuiltinType::TypeError))
@@ -570,7 +604,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
         toGoThrough = getIterator(globalObject, source);
         if (scope.exception()) [[unlikely]] {
             if (catchException(globalObject, BuiltinType::TypeError))
-                raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to "_s, typeText));
+                raiseTypeError(globalObject, scope, concatenate("cannot convert '"_s, typeName(globalObject, source), "' object to "_s, typeText));
             return false;
         }
         // A bytes asks how many there will be, and makes room for them.
@@ -591,7 +625,9 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
         auto byte = byteFrom(globalObject, item, isByteArray ? "byte must be in range(0, 256)"_s : "bytes must be in range(0, 256)"_s);
         if (!byte)
             return false;
-        if (!content.tryAppend(*byte)) [[unlikely]] {
+        content.append(*byte);
+        // There is no going on to the end of what may have no end.
+        if (content.hasOverflowed()) [[unlikely]] {
             raiseMemoryError(globalObject, scope);
             return false;
         }
@@ -614,7 +650,7 @@ PYTHON_NATIVE(bytesNew)
     // bytes() gives what __bytes__() gave, which can be of a class derived from bytes. A class derived from bytes makes one of its own of what is in it.
     if (whatBytesMethodGave && type == realm->typeBytes())
         return JSValue::encode(whatBytesMethodGave);
-    RELEASE_AND_RETURN(scope, JSValue::encode(newView(globalObject, type->instanceStructure(), content.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newView(globalObject, type->instanceStructure(), content)));
 }
 
 PYTHON_NATIVE(byteArrayNew)
@@ -636,7 +672,7 @@ PYTHON_NATIVE(byteArrayInit)
                 auto whileItIsSetAside = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 raised = whileItIsSetAside.exception();
                 whileItIsSetAside.clearException();
-                replaceRange(globalObject, self, 0, self->length(), newContent.span());
+                replaceRange(globalObject, self, 0, self->length(), newContent);
                 whileItIsSetAside.clearException();
             }
             throwException(globalObject, scope, raised);
@@ -644,7 +680,7 @@ PYTHON_NATIVE(byteArrayInit)
         return { };
     }
     scope.release();
-    replaceRange(globalObject, self, 0, self->length(), newContent.span());
+    replaceRange(globalObject, self, 0, self->length(), newContent);
     RETURN_NONE();
 }
 
@@ -660,11 +696,12 @@ PYTHON_NATIVE(bytesFromHex)
     String text;
     if (JSString* string = stringIn(args[1]))
         text = string->value(globalObject);
-    else if (auto buffer = tryBufferOf(globalObject, args[1]))
-        text = String(byteCast<Latin1Character>(*buffer));
-    else {
+    else if (auto buffer = tryBufferOf(globalObject, args[1])) {
+        text = textOfBytes(globalObject, *buffer);
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("fromhex() argument must be str or bytes-like, not "_s, typeName(globalObject, args[1]))));
+    } else {
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("fromhex() argument must be str or bytes-like, not "_s, typeName(globalObject, args[1]))));
     }
     ByteVector content;
     unsigned length = text.length();
@@ -675,17 +712,17 @@ PYTHON_NATIVE(bytesFromHex)
         }
         int high = hexDigit(text[i]);
         if (high < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("non-hexadecimal number found in fromhex() arg at position "_s, i)));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("non-hexadecimal number found in fromhex() arg at position "_s, i)));
         if (i + 1 >= length)
             return JSValue::encode(raiseValueError(globalObject, scope, "fromhex() arg must contain an even number of hexadecimal digits"_s));
         int low = hexDigit(text[i + 1]);
         if (low < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("non-hexadecimal number found in fromhex() arg at position "_s, i + 1)));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("non-hexadecimal number found in fromhex() arg at position "_s, i + 1)));
         content.append(static_cast<uint8_t>(high << 4 | low));
         i += 2;
     }
     PyType* type = asType(args[0]);
-    JSValue result = type->hasFlag(PyType::IsBytes) ? newBytes(globalObject, content.span()) : newByteArray(globalObject, content.span());
+    JSValue result = type->hasFlag(PyType::IsBytes) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
     RETURN_IF_EXCEPTION(scope, { });
     if (type == realm->typeBytes() || type == realm->typeByteArray())
         return JSValue::encode(result);
@@ -697,10 +734,11 @@ PYTHON_NATIVE(bytesFromHex)
 PYTHON_NATIVE(bytesRepr)
 {
     BYTES_PROLOGUE("__repr__");
-    String text = reprOfBytes(content);
+    String text = textOrMemoryError(globalObject, reprOfBytes(content));
+    RETURN_IF_EXCEPTION(scope, { });
     if (isBytes(selfValue))
         return JSValue::encode(jsString(vm, text));
-    return JSValue::encode(jsString(vm, makeString(typeName(globalObject, selfValue), '(', text, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(typeName(globalObject, selfValue), '(', text, ')'))));
 }
 
 PYTHON_NATIVE(bytesHash)
@@ -741,10 +779,10 @@ PYTHON_NATIVE(bytesGetItem)
         ByteVector selected;
         for (int64_t i = 0, at = indices->start; i < indices->length; ++i, at += indices->step)
             selected.append(content[at]);
-        RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, selected.span())));
+        RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, selected)));
     }
     if (!classify(args[1]).isInt() && !typeOf(globalObject, args[1])->lookup(vm, names.dunder_index))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeText, " indices must be integers or slices, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeText, " indices must be integers or slices, not "_s, typeName(globalObject, args[1]))));
     auto index = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t at = *index < 0 ? *index + static_cast<int64_t>(content.size()) : *index;
@@ -762,7 +800,7 @@ PYTHON_NATIVE(bytesContains)
     else {
         RETURN_IF_EXCEPTION(scope, { });
         if (!classify(args[1]).isInt() && !typeOf(globalObject, args[1])->lookup(vm, names.dunder_index))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
         auto byte = byteFrom(globalObject, args[1], "byte must be in range(0, 256)"_s);
         RETURN_IF_EXCEPTION(scope, { });
         needle.append(*byte);
@@ -819,11 +857,11 @@ PYTHON_NATIVE(bytesAdd)
     if (scope.exception())
         catchException(globalObject, BuiltinType::BaseException);
     if (!other)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
     ByteVector joined;
     joined.append(content.span());
     joined.append(*other);
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, joined.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, joined)));
 }
 
 static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, JSValue self, const Buffer& content, JSValue countValue, ByteVector& result)
@@ -857,7 +895,7 @@ PYTHON_NATIVE(bytesMultiply)
     ByteVector result;
     repeated(globalObject, scope, selfValue, content, args[1], result);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 // ---- Searching
@@ -936,7 +974,7 @@ PYTHON_NATIVE(bytesStartsOrEndsWith)
     if (scope.exception() && !catchException(globalObject, BuiltinType::TypeError))
         return { };
     if (!affix)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(method, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, args[1]))));
     return JSValue::encode(jsBoolean(matches(*affix)));
 }
 
@@ -945,7 +983,7 @@ PYTHON_NATIVE(bytesReplace)
 {
     BYTES_PROLOGUE("replace");
     if (args.size() < 3 || args.size() > 4)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("replace expected at least 2 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("replace expected at least 2 arguments, got "_s, args.size() - 1)));
     auto from = bufferOf(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     auto to = bufferOf(globalObject, args[2]);
@@ -981,7 +1019,7 @@ PYTHON_NATIVE(bytesReplace)
         }
         result.append(content.subspan(start));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 // ---- Splitting and joining
@@ -1001,7 +1039,7 @@ PYTHON_NATIVE(bytesJoin)
         if (scope.exception())
             catchException(globalObject, BuiltinType::BaseException);
         if (!item)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, items.at(i)), " found"_s)));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, items.at(i)), " found"_s)));
         buffers.append(WTF::move(item));
     }
     ByteVector result;
@@ -1010,7 +1048,7 @@ PYTHON_NATIVE(bytesJoin)
             result.append(content.span());
         result.append(buffers.at(i));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 // split and rsplit(sep=None, maxsplit=-1)
@@ -1039,7 +1077,14 @@ PYTHON_NATIVE(bytesSplit)
     }
 
     size_t length = content.size();
-    Vector<std::pair<size_t, size_t>, 16> pieces;
+    // No more than a list has room for, and one more, which is how it is seen that there are too many.
+    limit = std::min<int64_t>(limit, maxListLength);
+    MarkedArgumentBuffer pieces;
+    // False if it raised.
+    auto add = [&] (size_t start, size_t end) {
+        pieces.append(newLike(globalObject, selfValue, spanOf(self).subspan(start, end - start)));
+        return !scope.exception();
+    };
     auto count = [&] { return static_cast<int64_t>(pieces.size()); };
     if (splitsAtBlanks) {
         if (!fromRight) {
@@ -1050,13 +1095,15 @@ PYTHON_NATIVE(bytesSplit)
                 if (i >= length)
                     break;
                 if (count() == limit) {
-                    pieces.append({ i, length });
+                    if (!add(i, length))
+                        return { };
                     break;
                 }
                 size_t start = i;
                 while (i < length && !isByteSpace(content[i]))
                     ++i;
-                pieces.append({ start, i });
+                if (!add(start, i))
+                    return { };
             }
         } else {
             size_t i = length;
@@ -1066,15 +1113,16 @@ PYTHON_NATIVE(bytesSplit)
                 if (!i)
                     break;
                 if (count() == limit) {
-                    pieces.append({ 0, i });
+                    if (!add(0, i))
+                        return { };
                     break;
                 }
                 size_t end = i;
                 while (i && !isByteSpace(content[i - 1]))
                     --i;
-                pieces.append({ i, end });
+                if (!add(i, end))
+                    return { };
             }
-            pieces.reverse();
         }
     } else {
         if (!fromRight) {
@@ -1083,29 +1131,33 @@ PYTHON_NATIVE(bytesSplit)
                 size_t found = findIn(content, *separator, start);
                 if (found == notFound)
                     break;
-                pieces.append({ start, found });
+                if (!add(start, found))
+                    return { };
                 start = found + separator->size();
             }
-            pieces.append({ start, length });
+            if (!add(start, length))
+                return { };
         } else {
             size_t end = length;
             while (count() < limit) {
                 size_t found = reverseFindIn(content.first(end), *separator);
                 if (found == notFound)
                     break;
-                pieces.append({ found + separator->size(), end });
+                if (!add(found + separator->size(), end))
+                    return { };
                 end = found;
             }
-            pieces.append({ 0, end });
-            pieces.reverse();
+            if (!add(0, end))
+                return { };
         }
     }
-    MarkedArgumentBuffer result;
-    for (auto [start, end] : pieces) {
-        result.append(newLike(globalObject, selfValue, spanOf(self).subspan(start, end - start)));
+    JSArray* result = newList(globalObject, pieces);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (fromRight) {
+        reverseList(globalObject, result);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, result)));
+    return JSValue::encode(result);
 }
 
 PYTHON_NATIVE(bytesSplitLines)
@@ -1140,7 +1192,7 @@ PYTHON_NATIVE(bytesPartition)
     auto separator = tryBufferOf(globalObject, args[1], isBytes(selfValue) ? SimpleBuffer : FullReadOnlyBuffer);
     RETURN_IF_EXCEPTION(scope, { });
     if (!separator)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
     if (separator->empty())
         return JSValue::encode(raiseValueError(globalObject, scope, "empty separator"_s));
     size_t found = fromRight ? reverseFindIn(content, *separator) : findIn(content, *separator);
@@ -1194,8 +1246,8 @@ PYTHON_NATIVE(bytesJustify)
         auto given = bytesKindOf(args[2]) == BytesKind::None ? std::nullopt : builtinBufferOf(args[2]);
         if (!given || given->size() != 1) {
             if (given)
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "(): argument 2 must be a byte string of length 1, not a "_s, typeName(globalObject, args[2]), " object of length "_s, given->size())));
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "() argument 2 must be a byte string of length 1, not "_s, typeNameOfArgument(globalObject, args[2]))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(method, "(): argument 2 must be a byte string of length 1, not a "_s, typeName(globalObject, args[2]), " object of length "_s, given->size())));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(method, "() argument 2 must be a byte string of length 1, not "_s, typeNameOfArgument(globalObject, args[2]))));
         }
         fill = (*given)[0];
     }
@@ -1205,10 +1257,10 @@ PYTHON_NATIVE(bytesJustify)
     ByteVector result;
     if (!reserve(globalObject, scope, result, length + padding, isBytes(selfValue)))
         return { };
-    result.appendUsingFunctor(before, [&] (size_t) { return fill; });
+    result.appendFill(fill, before);
     result.append(content.span());
-    result.appendUsingFunctor(padding - before, [&] (size_t) { return fill; });
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    result.appendFill(fill, padding - before);
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 PYTHON_NATIVE(bytesZfill)
@@ -1225,7 +1277,7 @@ PYTHON_NATIVE(bytesZfill)
     for (int64_t i = content.size(); i < *width; ++i)
         result.append('0');
     result.append(content.subspan(start));
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 PYTHON_NATIVE(bytesExpandTabs)
@@ -1248,7 +1300,7 @@ PYTHON_NATIVE(bytesExpandTabs)
                 if (tabSize > 0) {
                     int64_t spaces = tabSize - column % tabSize;
                     if (isMaking)
-                        result.appendUsingFunctor(spaces, [] (size_t) -> uint8_t { return ' '; });
+                        result.appendFill(' ', spaces);
                     else
                         total += spaces;
                     column += spaces;
@@ -1268,7 +1320,7 @@ PYTHON_NATIVE(bytesExpandTabs)
         if (!result.tryReserveCapacity(total.value()))
             return JSValue::encode(raiseMemoryError(globalObject, scope));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 PYTHON_NATIVE(bytesRemoveAffix)
@@ -1319,7 +1371,7 @@ PYTHON_NATIVE(bytesChangeCase)
         }
         result.append(byte);
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 enum class ByteClass : uint8_t { Alpha, Digit, Alphanumeric, Space, ASCII };
@@ -1377,9 +1429,10 @@ PYTHON_NATIVE(bytesIsTitle)
 // ---- To and from text
 
 // The digits of the bytes, with a separator after every so many, counted from the right, or from the left if the number is negative.
+// Null if there is no room for it.
 static String hexOf(std::span<const uint8_t> content, std::optional<char> separator, int64_t bytesPerGroup)
 {
-    StringBuilder builder;
+    TextBuilder builder;
     size_t size = content.size();
     size_t group = bytesPerGroup < 0 ? -bytesPerGroup : bytesPerGroup;
     for (size_t i = 0; i < size; ++i) {
@@ -1390,8 +1443,7 @@ static String hexOf(std::span<const uint8_t> content, std::optional<char> separa
         }
         builder.append(hex(content[i], 2, Lowercase));
     }
-    String result = builder.toString();
-    return result.isNull() ? emptyString() : result;
+    return builder.tryFinish();
 }
 
 // hex(sep=<none>, bytes_per_sep=1). Null if it raised.
@@ -1432,7 +1484,7 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
         }
         separator = static_cast<char>(character);
     }
-    return hexOf(content.span(), separator, group);
+    RELEASE_AND_RETURN(scope, textOrMemoryError(globalObject, hexOf(content.span(), separator, group)));
 }
 
 PYTHON_NATIVE(bytesHex)
@@ -1452,7 +1504,7 @@ static String optionalText(JSGlobalObject* globalObject, ThrowScope& scope, cons
         return { };
     JSString* string = stringIn(value);
     if (!string) {
-        raiseTypeError(globalObject, scope, makeString(function, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate(function, "() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, value)));
         return { };
     }
     return string->value(globalObject);
@@ -1541,7 +1593,7 @@ PYTHON_NATIVE(bytesTranslate)
         if (!isDeleted[byte])
             result.append(table ? (*table)[byte] : byte);
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
 // bytes.maketrans(from, to)
@@ -1573,7 +1625,7 @@ static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVecto
         // bytearray_setslice(): whatever comes of asking it for its bytes, if it is not bytes, is lost.
         auto buffer = bufferOrNothing(globalObject, value);
         if (!buffer) {
-            raiseTypeError(globalObject, scope, makeString("can't set bytearray slice from "_s, typeName(globalObject, value)));
+            raiseTypeError(globalObject, scope, concatenate("can't set bytearray slice from "_s, typeName(globalObject, value)));
             return false;
         }
         buffer.appendTo(result);
@@ -1585,7 +1637,7 @@ static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVecto
     }
     RETURN_IF_EXCEPTION(scope, false);
     if (!typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_getitem)) {
-        raiseTypeError(globalObject, scope, makeString(complaint, typeName(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate(complaint, typeName(globalObject, value)));
         return false;
     }
     JSValue toGoThrough = value;
@@ -1609,6 +1661,11 @@ static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVecto
             return false;
         }
         result.append(*byte);
+        // There is no going on to the end of what may have no end.
+        if (result.hasOverflowed()) [[unlikely]] {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
     });
     return !scope.exception();
@@ -1630,7 +1687,7 @@ PYTHON_NATIVE(byteArraySetItem)
             if (stringIn(value) || isNumber())
                 return JSValue::encode(raiseTypeError(globalObject, scope, "can assign only bytes, buffers, or iterables of ints in range(0, 256)"_s));
             if (!hasBuffer(globalObject, value) && !typeOf(globalObject, value)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, value)->lookup(vm, names.dunder_getitem))
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, value), "' object to bytearray"_s)));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot convert '"_s, typeName(globalObject, value), "' object to bytearray"_s)));
             bytesToInsert(globalObject, value, replacement, ""_s);
             RETURN_IF_EXCEPTION(scope, { });
         }
@@ -1638,12 +1695,12 @@ PYTHON_NATIVE(byteArraySetItem)
         RETURN_IF_EXCEPTION(scope, { });
         if (indices->step == 1) {
             scope.release();
-            replaceRange(globalObject, self, indices->start, indices->length, replacement.span());
+            replaceRange(globalObject, self, indices->start, indices->length, replacement);
             RETURN_NONE();
         }
         if (value) {
             if (static_cast<int64_t>(replacement.size()) != indices->length)
-                return JSValue::encode(raiseValueError(globalObject, scope, makeString("attempt to assign bytes of size "_s, replacement.size(), " to extended slice of size "_s, indices->length)));
+                return JSValue::encode(raiseValueError(globalObject, scope, concatenate("attempt to assign bytes of size "_s, replacement.size(), " to extended slice of size "_s, indices->length)));
             auto data = mutableSpanOf(self);
             for (int64_t i = 0, at = indices->start; i < indices->length; ++i, at += indices->step)
                 data[at] = replacement[i];
@@ -1660,11 +1717,11 @@ PYTHON_NATIVE(byteArraySetItem)
                 kept.append(data[i]);
         }
         scope.release();
-        replaceRange(globalObject, self, 0, self->length(), kept.span());
+        replaceRange(globalObject, self, 0, self->length(), kept);
         RETURN_NONE();
     }
     if (!classify(args.at(1)).isInt() && !typeOf(globalObject, args.at(1))->lookup(vm, names.dunder_index))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("bytearray indices must be integers or slices, not "_s, typeName(globalObject, args.at(1)))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("bytearray indices must be integers or slices, not "_s, typeName(globalObject, args.at(1)))));
     auto index = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     // What the value is is asked before how long the bytearray is, since asking can change that.
@@ -1705,7 +1762,7 @@ PYTHON_NATIVE(byteArrayExtend)
     bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s, SimpleBuffer, true);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
-    replaceRange(globalObject, self, self->length(), 0, added.span());
+    replaceRange(globalObject, self, self->length(), 0, added);
     RETURN_NONE();
 }
 
@@ -1717,7 +1774,7 @@ PYTHON_NATIVE(byteArrayInPlaceAdd)
     if (scope.exception())
         catchException(globalObject, BuiltinType::BaseException);
     if (!other)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
     replaceRange(globalObject, self, self->length(), 0, *other);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(selfValue);
@@ -1729,7 +1786,7 @@ PYTHON_NATIVE(byteArrayInPlaceMultiply)
     ByteVector result;
     repeated(globalObject, scope, selfValue, content, args[1], result);
     RETURN_IF_EXCEPTION(scope, { });
-    replaceRange(globalObject, self, 0, self->length(), result.span());
+    replaceRange(globalObject, self, 0, self->length(), result);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(selfValue);
 }
@@ -1811,7 +1868,7 @@ PYTHON_NATIVE(byteArrayResize)
     auto size = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*size < 0)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("Can only resize to positive sizes, got "_s, *size)));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("Can only resize to positive sizes, got "_s, *size)));
     scope.release();
     resize(globalObject, self, *size);
     RETURN_NONE();
@@ -1826,7 +1883,7 @@ static String byteOrderArgument(JSGlobalObject* globalObject, ThrowScope& scope,
         return "big"_s;
     JSString* string = stringIn(value);
     if (!string) {
-        raiseTypeError(globalObject, scope, makeString(function, "() argument 'byteorder' must be str, not "_s, typeNameOfArgument(globalObject, value)));
+        raiseTypeError(globalObject, scope, concatenate(function, "() argument 'byteorder' must be str, not "_s, typeNameOfArgument(globalObject, value)));
         return { };
     }
     return string->value(globalObject);
@@ -1893,11 +1950,11 @@ PYTHON_NATIVE(intToBytes)
     if (!reserve(globalObject, scope, result, length, true))
         return { };
     result.append(magnitude.span());
-    result.appendUsingFunctor(length - magnitude.size(), [] (size_t) -> uint8_t { return 0; });
+    result.appendFill(0, length - magnitude.size());
     if (isNegative) {
         // Two's complement: every bit turned over, and one added.
         unsigned carry = 1;
-        for (auto& byte : result) {
+        for (auto& byte : result.mutableSpan()) {
             unsigned sum = static_cast<uint8_t>(~byte) + carry;
             byte = static_cast<uint8_t>(sum);
             carry = sum >> 8;
@@ -1910,7 +1967,7 @@ PYTHON_NATIVE(intToBytes)
         return tooBig();
     if (*isBigEndian)
         result.reverse();
-    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, result.span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, result)));
 }
 
 // int.from_bytes(bytes, byteorder='big', *, signed=False)
@@ -1931,7 +1988,7 @@ PYTHON_NATIVE(intFromBytes)
 
     ByteVector content;
     if (stringIn(source) || (!hasBuffer(globalObject, source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to bytes"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot convert '"_s, typeName(globalObject, source), "' object to bytes"_s)));
     bytesToInsert(globalObject, source, content, ""_s);
     RETURN_IF_EXCEPTION(scope, { });
     if (!*isBigEndian)
@@ -1946,7 +2003,8 @@ PYTHON_NATIVE(intFromBytes)
             carry = sum >> 8;
         }
     }
-    String digits = hexOf(content.span(), std::nullopt, 0);
+    String digits = textOrMemoryError(globalObject, hexOf(content.span(), std::nullopt, 0));
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue result = jsNumber(0);
     if (!digits.isEmpty()) {
         result = JSBigInt::parseInt(globalObject, vm, StringView(digits), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
@@ -2196,11 +2254,11 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto invalidType = [&] {
-        raiseTypeError(globalObject, scope, makeString("memoryview: invalid type for format '"_s, format, '\''));
+        raiseTypeError(globalObject, scope, concatenate("memoryview: invalid type for format '"_s, format, '\''));
         return false;
     };
     auto invalidValue = [&] {
-        raiseValueError(globalObject, scope, makeString("memoryview: invalid value for format '"_s, format, '\''));
+        raiseValueError(globalObject, scope, concatenate("memoryview: invalid value for format '"_s, format, '\''));
         return false;
     };
     auto store = [&] (auto number) {
@@ -2369,7 +2427,7 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
     }
     auto buffer = builtinBufferOf(object);
     if (!buffer) {
-        raiseTypeError(globalObject, scope, makeString("memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\''));
+        raiseTypeError(globalObject, scope, concatenate("memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\''));
         return nullptr;
     }
     if ((flags & WritableBuffer) && isBytes(object)) {
@@ -2478,7 +2536,7 @@ PYTHON_NATIVE(memoryRepr)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    return JSValue::encode(jsString(vm, makeString(asMemory(args[0])->isReleased() ? "<released memory at "_s : "<memory at "_s, addressOf(args[0].asCell()), '>')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate(asMemory(args[0])->isReleased() ? "<released memory at "_s : "<memory at "_s, addressOf(args[0].asCell()), '>'))));
 }
 
 PYTHON_NATIVE(memoryCount)
@@ -2579,7 +2637,7 @@ static std::optional<int64_t> distanceAlong(JSGlobalObject* globalObject, PyMemo
     if (index < 0)
         index += dimension.length;
     if (index < 0 || index >= dimension.length) {
-        raise(globalObject, scope, BuiltinType::IndexError, makeString("index out of bounds on dimension "_s, which + 1));
+        raise(globalObject, scope, BuiltinType::IndexError, concatenate("index out of bounds on dimension "_s, which + 1));
         return std::nullopt;
     }
     return dimension.stride * index;
@@ -2590,7 +2648,7 @@ static std::optional<int64_t> distanceOf(JSGlobalObject* globalObject, PyMemoryV
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (indices->length() > self->dimensions().size()) {
-        raiseTypeError(globalObject, scope, makeString("cannot index "_s, self->dimensions().size(), "-dimension view with "_s, indices->length(), "-element tuple"_s));
+        raiseTypeError(globalObject, scope, concatenate("cannot index "_s, self->dimensions().size(), "-dimension view with "_s, indices->length(), "-element tuple"_s));
         return std::nullopt;
     }
     int64_t distance = 0;
@@ -2767,7 +2825,7 @@ PYTHON_NATIVE(memoryToBytes)
     if (JSValue given = args.at(1); given && !isNone(given)) {
         JSString* string = stringIn(given);
         if (!string)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("tobytes() argument 'order' must be str or None, not "_s, typeName(globalObject, given))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("tobytes() argument 'order' must be str or None, not "_s, typeName(globalObject, given))));
         orderText = string->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (orderText.contains('\0'))
@@ -2848,7 +2906,7 @@ PYTHON_NATIVE(memoryCast)
     JSValue formatValue = args.at(1);
     JSValue shape = args.at(2);
     if (!formatValue || !stringIn(formatValue))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cast() argument 'format' must be str, not "_s, typeNameOfArgument(globalObject, formatValue))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cast() argument 'format' must be str, not "_s, typeNameOfArgument(globalObject, formatValue))));
     PyMemoryView* self = asMemory(args.at(0));
     if (self->isReleased())
         return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
@@ -2863,7 +2921,7 @@ PYTHON_NATIVE(memoryCast)
         collect(globalObject, shape, lengths);
         RETURN_IF_EXCEPTION(scope, { });
         if (lengths.size() > PyMemoryView::maxDimensionCount)
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("memoryview: number of dimensions must not exceed "_s, PyMemoryView::maxDimensionCount)));
+            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("memoryview: number of dimensions must not exceed "_s, PyMemoryView::maxDimensionCount)));
         if (self->dimensions().size() != 1 && lengths.size() != 1)
             return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: cast must be 1D -> ND or ND -> 1D"_s));
     }
@@ -3169,7 +3227,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, memory, "format"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue {
         VM& vm = globalObject->vm();
         if (self->layout().formatHasAtSign)
-            return jsString(vm, makeString('@', self->format()));
+            return strOrMemoryError(globalObject, concatenate('@', self->format()));
         return jsSingleCharacterString(vm, static_cast<Latin1Character>(self->format()));
     }>);
     addGetSet(globalObject, memory, "ndim"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(static_cast<unsigned>(self->dimensions().size())); }>);

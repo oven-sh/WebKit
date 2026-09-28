@@ -61,6 +61,32 @@ JSArray* newList(JSGlobalObject* globalObject, const ArgList& values)
     return list;
 }
 
+JSArray* newList(JSGlobalObject* globalObject, MarkedArgumentBuffer& values)
+{
+    if (values.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return newList(globalObject, ArgList(values));
+}
+
+void reverseList(JSGlobalObject* globalObject, JSArray* list)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    unsigned length = list->length();
+    for (unsigned i = 0; i < length / 2; ++i) {
+        JSValue a = listGet(globalObject, list, i);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSValue b = listGet(globalObject, list, length - 1 - i);
+        RETURN_IF_EXCEPTION(scope, void());
+        listSet(globalObject, list, i, b);
+        RETURN_IF_EXCEPTION(scope, void());
+        listSet(globalObject, list, length - 1 - i, a);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 JSValue listGetSlow(JSGlobalObject* globalObject, JSArray* list, unsigned index)
 {
     VM& vm = globalObject->vm();
@@ -147,11 +173,7 @@ PyTuple* tupleFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     MarkedArgumentBuffer values;
     collect(globalObject, iterable, values);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    PyTuple* tuple = PyTuple::tryCreate(globalObject, values.size());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    for (unsigned i = 0; i < values.size(); ++i)
-        tuple->initializeAt(vm, i, values.at(i));
-    return tuple;
+    RELEASE_AND_RETURN(scope, PyTuple::createFromArguments(globalObject, values));
 }
 
 void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned start, unsigned count, const ArgList& values)

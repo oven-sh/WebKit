@@ -69,7 +69,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     const void* blockKey = nullptr;
     const Identifier* privateName = info->privateName.isNull() ? nullptr : &info->privateName;
     auto disagrees = [&] {
-        syntaxError.message = makeString("what is said of '"_s, info->name.string(), "' is not so of its source"_s);
+        syntaxError.message = concatenate("what is said of '"_s, info->name.string(), "' is not so of its source"_s);
         error = ParserError(syntaxError);
         return nullptr;
     };
@@ -140,7 +140,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     if (!table) {
         // Only a module can fail here. All that is in it was parsed along with it.
         if (!syntaxError)
-            syntaxError.message = makeString("internal error: '"_s, info->name.string(), "' on line "_s, info->line, " was Python and is Python no more"_s);
+            syntaxError.message = concatenate("internal error: '"_s, info->name.string(), "' on line "_s, info->line, " was Python and is Python no more"_s);
         error = ParserError(syntaxError);
         return nullptr;
     }
@@ -342,7 +342,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     // if the tokenizer has gone on. What the tokenizer raises for itself never has it.
     bool hasEndOfLine = foundIn == FoundIn::Parsing ? !error.isFromTokenizer && error.tokenizerLine <= error.line && (endsLine || error.lastLineIsEnded) : endsLine;
     if (hasLine)
-        lineText = jsString(vm, makeString(line, hasEndOfLine ? "\n"_s : ""_s));
+        lineText = strOrMemoryError(globalObject, concatenate(line, hasEndOfLine ? "\n"_s : ""_s));
 
     // _PyPegen_byte_offset_to_character_offset(): how many characters there are in so many bytes of the line. It is the line that is wrong that is gone by, though it end on another.
     auto characterOffset = [&] (int bytes) -> int {
@@ -436,7 +436,7 @@ static String normalizedEncodingName(const String& name)
     if (start == "utf-8"_s || start.startsWith("utf-8-"_s))
         return "utf-8"_s;
     for (ASCIILiteral latin1 : { "latin-1"_s, "iso-8859-1"_s, "iso-latin-1"_s }) {
-        if (start == latin1 || start.startsWith(makeString(latin1, '-')))
+        if (start == latin1 || start.startsWith(concatenate(latin1, '-')))
             return "iso-8859-1"_s;
     }
     return name;
@@ -521,7 +521,7 @@ SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> byt
         if (!encoding.isNull()) {
             if (hasByteOrderMark && encoding != "utf-8"_s) {
                 // CPython counts the end of the line before as part of the second line.
-                raiseTokenizerError(globalObject, scope, makeString("encoding problem: "_s, encoding, " with BOM"_s), sourceURL, line, 0, bytes.subspan(lineStart, lineEnd - lineStart), lineEnd - lineStart + line - 1);
+                raiseTokenizerError(globalObject, scope, concatenate("encoding problem: "_s, encoding, " with BOM"_s), sourceURL, line, 0, bytes.subspan(lineStart, lineEnd - lineStart), lineEnd - lineStart + line - 1);
                 return { };
             }
             break;
@@ -557,7 +557,7 @@ SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> byt
             }
             i = next;
         }
-        raiseTokenizerError(globalObject, scope, makeString("Non-UTF-8 code starting with '\\x"_s, hex(bytes[i], 2, Lowercase), "' on line "_s, line, ", but no encoding declared; see https://peps.python.org/pep-0263/ for details"_s), sourceURL, line, column + 1, bytes.subspan(start, endOfLine(start) - start), column + 1);
+        raiseTokenizerError(globalObject, scope, concatenate("Non-UTF-8 code starting with '\\x"_s, hex(bytes[i], 2, Lowercase), "' on line "_s, line, ", but no encoding declared; see https://peps.python.org/pep-0263/ for details"_s), sourceURL, line, column + 1, bytes.subspan(start, endOfLine(start) - start), column + 1);
         return { };
     }
 
@@ -891,7 +891,7 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
         if (!scope.exception() && file && !isNone(file)) {
             JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
             if (!scope.exception())
-                call(globalObject, write, jsString(vm, makeString(message, '\n')));
+                call(globalObject, write, strOrMemoryError(globalObject, concatenate(message, '\n')));
         }
         scope.clearException();
         return 1;

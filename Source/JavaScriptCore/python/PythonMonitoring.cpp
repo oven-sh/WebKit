@@ -404,7 +404,7 @@ static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValu
             if (static_cast<unsigned>(event) >= numberOfLocalMonitoringEvents) {
                 // So that it does not go on for ever.
                 state.callbacks[tool][static_cast<unsigned>(event)].clear();
-                raiseValueError(globalObject, scope, makeString("Cannot disable "_s, eventNames[static_cast<unsigned>(event)], " events. Callback removed."_s));
+                raiseValueError(globalObject, scope, concatenate("Cannot disable "_s, eventNames[static_cast<unsigned>(event)], " events. Callback removed."_s));
                 return false;
             }
             disableAt(site, event, tool);
@@ -846,7 +846,7 @@ static std::optional<unsigned> toolArgument(JSGlobalObject* globalObject, JSValu
     auto tool = toCInt(globalObject, value);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (*tool < 0 || *tool >= static_cast<int>(profileTool)) {
-        raiseValueError(globalObject, scope, makeString("invalid tool "_s, *tool, " (must be between 0 and 5)"_s));
+        raiseValueError(globalObject, scope, concatenate("invalid tool "_s, *tool, " (must be between 0 and 5)"_s));
         return std::nullopt;
     }
     return static_cast<unsigned>(*tool);
@@ -859,7 +859,7 @@ static bool checkToolIsInUse(JSGlobalObject* globalObject, unsigned tool)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stateOf(globalObject).toolNames[tool])
         return true;
-    raiseValueError(globalObject, scope, makeString("tool "_s, tool, " is not in use"_s));
+    raiseValueError(globalObject, scope, concatenate("tool "_s, tool, " is not in use"_s));
     return false;
 }
 
@@ -883,7 +883,7 @@ PYTHON_NATIVE(monitoringUseToolID)
         return JSValue::encode(raiseValueError(globalObject, scope, "tool name must be a str"_s));
     MonitoringState& state = stateOf(globalObject);
     if (state.toolNames[*tool])
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("tool "_s, *tool, " is already in use"_s)));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("tool "_s, *tool, " is already in use"_s)));
     state.toolNames[*tool].set(vm, realm, args.at(1));
     RETURN_NONE();
 }
@@ -923,7 +923,7 @@ PYTHON_NATIVE(monitoringRegisterCallback)
         return JSValue::encode(raiseValueError(globalObject, scope, "The callback can only be set for one event at a time"_s));
     unsigned event = std::countr_zero(static_cast<uint32_t>(*events));
     if (event >= numberOfMonitoringEvents)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid event "_s, *events)));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("invalid event "_s, *events)));
     JSValue function = args.at(2);
     if (!audit(globalObject, "sys.monitoring.register_callback"_s, function))
         return { };
@@ -983,7 +983,7 @@ PYTHON_NATIVE(monitoringSetEvents)
     auto given = toCInt(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     if (*given < 0 || *given >= 1 << numberOfMonitoringEvents)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid event set 0x"_s, hex(static_cast<uint32_t>(*given), Lowercase))));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("invalid event set 0x"_s, hex(static_cast<uint32_t>(*given), Lowercase))));
     auto events = normalizeEvents(globalObject, *given);
     RETURN_IF_EXCEPTION(scope, { });
     if (!checkToolIsInUse(globalObject, *tool))
@@ -1019,7 +1019,7 @@ PYTHON_NATIVE(monitoringSetLocalEvents)
     auto events = normalizeEvents(globalObject, *given);
     RETURN_IF_EXCEPTION(scope, { });
     if (static_cast<int32_t>(*events) < 0 || *events >= 1u << numberOfLocalMonitoringEvents)
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid local event set 0x"_s, hex(*events, Lowercase))));
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("invalid local event set 0x"_s, hex(*events, Lowercase))));
     if (!checkToolIsInUse(globalObject, *tool))
         return { };
     setLocalEvents(globalObject, executableOfCode(args.at(1)), *tool, *events);

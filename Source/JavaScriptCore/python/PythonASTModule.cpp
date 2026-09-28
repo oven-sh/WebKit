@@ -88,7 +88,7 @@ PYTHON_NATIVE(astInit)
     RETURN_IF_EXCEPTION(scope, { });
 
     if (fieldCount < static_cast<int64_t>(given))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameWithoutModule(globalObject), " constructor takes at most "_s, fieldCount, " positional argument"_s, fieldCount == 1 ? ""_s : "s"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameWithoutModule(globalObject), " constructor takes at most "_s, fieldCount, " positional argument"_s, fieldCount == 1 ? ""_s : "s"_s)));
 
     auto set = [&] (JSValue name, JSValue value) {
         auto property = attributeName(globalObject, scope, name);
@@ -114,7 +114,7 @@ PYTHON_NATIVE(astInit)
             bool wasRemaining = !!remaining->remove(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
             if (!wasRemaining)
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(nameOfClass(globalObject, type), " got multiple values for argument "_s, repr(globalObject, key))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), " got multiple values for argument "_s, repr(globalObject, key))));
         } else {
             if (!attributes) {
                 attributes = getAttribute(globalObject, type, Identifier::fromString(vm, "_attributes"_s));
@@ -123,7 +123,7 @@ PYTHON_NATIVE(astInit)
             bool isAttribute = contains(globalObject, attributes, key);
             RETURN_IF_EXCEPTION(scope, { });
             if (!isAttribute) {
-                if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString(nameOfClass(globalObject, type), ".__init__ got an unexpected keyword argument "_s, repr(globalObject, key),
+                if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(nameOfClass(globalObject, type), ".__init__ got an unexpected keyword argument "_s, repr(globalObject, key),
                     ". Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15."_s)))
                     return { };
             }
@@ -149,7 +149,7 @@ PYTHON_NATIVE(astInit)
         JSValue fieldType = isDict(fieldTypes) ? asDict(fieldTypes)->get(globalObject, name) : JSValue();
         RETURN_IF_EXCEPTION(scope, { });
         if (!fieldType) {
-            if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString("Field "_s, repr(globalObject, name), " is missing from "_s, nameOfClass(globalObject, type), "._field_types. This will become an error in Python 3.15."_s)))
+            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate("Field "_s, repr(globalObject, name), " is missing from "_s, nameOfClass(globalObject, type), "._field_types. This will become an error in Python 3.15."_s)))
                 return { };
         } else if (isUnion(globalObject, fieldType)) {
             // It may be left out, and the class has None for it.
@@ -162,7 +162,7 @@ PYTHON_NATIVE(astInit)
             set(name, state->singletonFor(ASTClass::Load));
             RETURN_IF_EXCEPTION(scope, { });
         } else {
-            if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString(nameOfClass(globalObject, type), ".__init__ missing 1 required positional argument: "_s, repr(globalObject, name), ". This will become an error in Python 3.15."_s)))
+            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(nameOfClass(globalObject, type), ".__init__ missing 1 required positional argument: "_s, repr(globalObject, name), ". This will become an error in Python 3.15."_s)))
                 return { };
         }
     }
@@ -231,7 +231,7 @@ static bool checkReplacement(JSGlobalObject* globalObject, JSValue self, JSValue
         bool wasExpected = !!expecting->remove(globalObject, args.keywordName(i));
         RETURN_IF_EXCEPTION(scope, false);
         if (!wasExpected) {
-            raiseTypeError(globalObject, scope, makeString(nameOfClass(globalObject, type), ".__replace__ got an unexpected keyword argument "_s, repr(globalObject, args.keywordName(i)), '.'));
+            raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), ".__replace__ got an unexpected keyword argument "_s, repr(globalObject, args.keywordName(i)), '.'));
             return false;
         }
     }
@@ -268,7 +268,7 @@ static bool checkReplacement(JSGlobalObject* globalObject, JSValue self, JSValue
     StringBuilder joined;
     for (auto& name : names)
         joined.append(joined.isEmpty() ? ""_s : ", "_s, name);
-    raiseTypeError(globalObject, scope, makeString(nameOfClass(globalObject, type), ".__replace__ missing "_s, names.size(), " keyword argument"_s, names.size() == 1 ? ""_s : "s"_s, ": "_s, joined.toString(), '.'));
+    raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), ".__replace__ missing "_s, names.size(), " keyword argument"_s, names.size() == 1 ? ""_s : "s"_s, ": "_s, joined.toString(), '.'));
     return false;
 }
 
@@ -353,10 +353,10 @@ static String reprOfNode(JSGlobalObject* globalObject, JSValue self, int depth)
     PyType* type = typeOf(globalObject, self);
     String name = nameOfClass(globalObject, type);
     if (depth <= 0)
-        return makeString(name, "(...)"_s);
+        return concatenate(name, "(...)"_s);
     ReprGuard guard(globalObject, self.asCell());
     if (guard.isRecursive())
-        return makeString(name, "(...)"_s);
+        return concatenate(name, "(...)"_s);
 
     JSValue fields = getAttributeIfPresent(globalObject, type, Identifier::fromString(vm, "_fields"_s));
     RETURN_IF_EXCEPTION(scope, { });
@@ -692,9 +692,9 @@ public:
         case Constant::Type::Integer:
             if (node.integer <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
                 return emit(intFromInt64(m_globalObject, node.isNegative ? -static_cast<int64_t>(node.integer) : static_cast<int64_t>(node.integer)));
-            return emit(parseInt(m_globalObject, makeString(node.isNegative ? "-"_s : ""_s, node.integer), 10));
+            return emit(parseInt(m_globalObject, concatenate(node.isNegative ? "-"_s : ""_s, node.integer), 10));
         case Constant::Type::BigInteger:
-            return emit(parseInt(m_globalObject, makeString(node.isNegative ? "-"_s : ""_s, node.text->string()), node.radix));
+            return emit(parseInt(m_globalObject, concatenate(node.isNegative ? "-"_s : ""_s, node.text->string()), node.radix));
         case Constant::Type::Float:
             return emit(floatFromDouble(node.real));
         case Constant::Type::Imaginary:
@@ -842,7 +842,7 @@ public:
     {
         if (m_vm.isSafeToRecurse()) [[likely]]
             return true;
-        fail(ASTError::Kind::RecursionError, makeString("maximum recursion depth exceeded while traversing '"_s, descriptionOf(owner).name, "' node"_s));
+        fail(ASTError::Kind::RecursionError, concatenate("maximum recursion depth exceeded while traversing '"_s, descriptionOf(owner).name, "' node"_s));
         return false;
     }
 
@@ -864,7 +864,7 @@ public:
             return ASTClass::AST;
         }
         scope.release();
-        fail(ASTError::Kind::TypeError, makeString("expected some sort of "_s, descriptionOf(sum).name, ", but got "_s, text));
+        fail(ASTError::Kind::TypeError, concatenate("expected some sort of "_s, descriptionOf(sum).name, ", but got "_s, text));
         return ASTClass::AST;
     }
 
@@ -880,7 +880,7 @@ public:
             return value;
         scope.release();
         if (field.quantifier == ASDLField::Quantifier::One)
-            fail(ASTError::Kind::TypeError, makeString("required field \""_s, field.name, "\" missing from "_s, descriptionOf(owner).name));
+            fail(ASTError::Kind::TypeError, concatenate("required field \""_s, field.name, "\" missing from "_s, descriptionOf(owner).name));
         return std::nullopt;
     }
 
@@ -888,7 +888,7 @@ public:
     bool forEachElement(JSValue value, ASTClass owner, const ASDLField& field, const Function& function)
     {
         if (!isList(value)) {
-            fail(ASTError::Kind::TypeError, makeString(descriptionOf(owner).name, " field \""_s, field.name, "\" must be a list, not a "_s, typeOf(m_globalObject, value)->nameWithoutModule(m_globalObject)));
+            fail(ASTError::Kind::TypeError, concatenate(descriptionOf(owner).name, " field \""_s, field.name, "\" must be a list, not a "_s, typeOf(m_globalObject, value)->nameWithoutModule(m_globalObject)));
             return false;
         }
         auto scope = DECLARE_THROW_SCOPE(m_vm);
@@ -904,7 +904,7 @@ public:
                 return false;
             if (list->length() != size) {
                 scope.release();
-                fail(ASTError::Kind::RuntimeError, makeString(descriptionOf(owner).name, " field \""_s, field.name, "\" changed size during iteration"_s));
+                fail(ASTError::Kind::RuntimeError, concatenate(descriptionOf(owner).name, " field \""_s, field.name, "\" changed size during iteration"_s));
                 return false;
             }
         }
@@ -945,7 +945,7 @@ public:
                 return std::nullopt;
             }
             scope.release();
-            fail(ASTError::Kind::ValueError, makeString("invalid integer value: "_s, text));
+            fail(ASTError::Kind::ValueError, concatenate("invalid integer value: "_s, text));
             return std::nullopt;
         }
         auto result = toCInt(m_globalObject, value);
@@ -1106,7 +1106,7 @@ Module* astFromObject(JSGlobalObject* globalObject, Arena& arena, JSValue object
     bool isRequired = isInstanceOf(globalObject, object, state->classFor(required));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isRequired) {
-        raiseTypeError(globalObject, scope, makeString("expected "_s, descriptionOf(required).name, " node, got "_s, typeOf(globalObject, object)->nameWithoutModule(globalObject)));
+        raiseTypeError(globalObject, scope, concatenate("expected "_s, descriptionOf(required).name, " node, got "_s, typeOf(globalObject, object)->nameWithoutModule(globalObject)));
         return nullptr;
     }
 

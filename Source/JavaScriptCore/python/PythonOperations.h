@@ -33,9 +33,9 @@
 #include "PythonCommonNames.h"
 #include "PythonFunctionInfo.h"
 #include "PythonOperators.h"
+#include "PythonText.h"
 #include <wtf/HexNumber.h>
 #include <wtf/ScopedLambda.h>
-#include <wtf/text/MakeString.h>
 
 namespace JSC {
 
@@ -90,6 +90,26 @@ JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue argument);
 inline JSValue raiseTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::TypeError, message); }
 inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::ValueError, message); }
 inline JSValue raiseMemoryError(JSGlobalObject* globalObject, ThrowScope& scope) { return raise(globalObject, scope, BuiltinType::MemoryError, JSValue()); }
+
+// ---- Text that there may be no room for: see PythonText.h
+JSValue strOrMemoryError(JSGlobalObject*, const String&); // A str of the text. Empty if it raised.
+String textOrMemoryError(JSGlobalObject*, String&&); // The text.
+String textOfBytes(JSGlobalObject*, std::span<const uint8_t>); // A character for each byte. There can be more bytes than a string has room for. Null if it raised.
+
+// The characters of a string, one to an element, for what has to go back and forth among them. False, with MemoryError raised, if there is no room.
+template<size_t inlineCapacity>
+bool charactersOf(JSGlobalObject* globalObject, StringView text, Vector<char32_t, inlineCapacity>& characters)
+{
+    if (!characters.tryReserveCapacity(text.length())) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
+    for (char32_t character : text.codePoints())
+        characters.append(character);
+    return true;
+}
+
 void throwUnboundVariable(JSGlobalObject*, CodeBlock*, JSString* name);
 // Whether what has been thrown is an instance of the type. If so it is caught, and no longer thrown.
 bool catchException(JSGlobalObject*, BuiltinType);

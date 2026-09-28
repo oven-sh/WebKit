@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "PythonASTValidator.h"
+#include "PythonText.h"
 
 #include "VM.h"
 #include <wtf/text/MakeString.h>
@@ -143,9 +144,9 @@ public:
             if (!validateBody(node.body, owner))
                 return false;
             if (node.handlers.empty() && node.finalBody.empty())
-                return fail(makeString(owner, " has neither except handlers nor finalbody"_s));
+                return fail(concatenate(owner, " has neither except handlers nor finalbody"_s));
             if (node.handlers.empty() && !node.orElse.empty())
-                return fail(makeString(owner, " has orelse but no except handlers"_s));
+                return fail(concatenate(owner, " has orelse but no except handlers"_s));
             for (ExceptHandler* handler : node.handlers) {
                 // CPython does not look, and falls over.
                 if (!handler)
@@ -211,11 +212,11 @@ public:
             break;
         default:
             if (context != Load)
-                return fail(makeString("expression which can't be assigned to in "_s, nameOf(context), " context"_s));
+                return fail(concatenate("expression which can't be assigned to in "_s, nameOf(context), " context"_s));
             break;
         }
         if (actual && *actual != context)
-            return fail(makeString("expression must have "_s, nameOf(context), " context but has "_s, nameOf(*actual), " instead"_s));
+            return fail(concatenate("expression must have "_s, nameOf(context), " context but has "_s, nameOf(*actual), " instead"_s));
 
         switch (expression->kind) {
         case Expression::Kind::BoolOp:
@@ -339,11 +340,11 @@ private:
         int endLine = node.endLine;
         int endColumn = node.endColumn;
         if (line > endLine)
-            return fail(makeString("AST node line range ("_s, line, ", "_s, endLine, ") is not valid"_s));
+            return fail(concatenate("AST node line range ("_s, line, ", "_s, endLine, ") is not valid"_s));
         if ((line < 0 && endLine != line) || (column < 0 && column != endColumn))
-            return fail(makeString("AST node column range ("_s, column, ", "_s, endColumn, ") for line range ("_s, line, ", "_s, endLine, ") is not valid"_s));
+            return fail(concatenate("AST node column range ("_s, column, ", "_s, endColumn, ") for line range ("_s, line, ", "_s, endLine, ") is not valid"_s));
         if (line == endLine && column > endColumn)
-            return fail(makeString("line "_s, line, ", column "_s, column, '-', endColumn, " is not a valid range"_s));
+            return fail(concatenate("line "_s, line, ", column "_s, column, '-', endColumn, " is not a valid range"_s));
         return true;
     }
 
@@ -351,7 +352,7 @@ private:
     {
         for (ASCIILiteral forbidden : { "None"_s, "True"_s, "False"_s }) {
             if (name == forbidden)
-                return fail(makeString("identifier field can't represent '"_s, forbidden, "' constant"_s));
+                return fail(concatenate("identifier field can't represent '"_s, forbidden, "' constant"_s));
         }
         return true;
     }
@@ -419,7 +420,7 @@ private:
             }
             return true;
         case Constant::Type::Invalid:
-            return fail(ASTError::Kind::TypeError, makeString("got an invalid type in Constant: "_s, constant.text->string()));
+            return fail(ASTError::Kind::TypeError, concatenate("got an invalid type in Constant: "_s, constant.text->string()));
         default:
             return true;
         }
@@ -597,7 +598,7 @@ private:
     {
         if (!sequence.empty())
             return true;
-        return fail(makeString("empty "_s, what, " on "_s, owner));
+        return fail(concatenate("empty "_s, what, " on "_s, owner));
     }
 
     // CPython does not look, and falls over.

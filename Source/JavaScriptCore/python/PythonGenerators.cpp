@@ -29,6 +29,7 @@
 #include "JSCInlines.h"
 #include "PyInstance.h"
 #include "PyObjects.h"
+#include "PythonText.h"
 #include "TopExceptionScope.h"
 
 namespace JSC { namespace Python {
@@ -47,7 +48,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     GeneratorKind kind = generatorKindOf(globalObject, generator);
     ASCIILiteral what = kind == GeneratorKind::Generator ? "generator"_s : kind == GeneratorKind::Coroutine ? "coroutine"_s : "async generator"_s;
     if (state == static_cast<int32_t>(JSGenerator::State::Executing))
-        return raiseValueError(globalObject, scope, makeString(what, " already executing"_s));
+        return raiseValueError(globalObject, scope, concatenate(what, " already executing"_s));
     if (state == static_cast<int32_t>(JSGenerator::State::Completed)) {
         if (kind == GeneratorKind::Coroutine)
             return raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited coroutine"_s);
@@ -59,7 +60,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         return { };
     }
     if (state == static_cast<int32_t>(JSGenerator::State::Init) && mode == JSGenerator::ResumeMode::NormalMode && !isNone(sent))
-        return raiseTypeError(globalObject, scope, makeString("can't send non-None value to a just-started "_s, what));
+        return raiseTypeError(globalObject, scope, concatenate("can't send non-None value to a just-started "_s, what));
 
     setState(static_cast<int32_t>(JSGenerator::State::Executing));
     MarkedArgumentBuffer arguments;
@@ -97,7 +98,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         if (isStop || isAsyncStop) {
             JSValue cause = exception->value();
             if (scope.tryClearException()) {
-                JSObject* error = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), makeString(what, isStop ? " raised StopIteration"_s : " raised StopAsyncIteration"_s));
+                JSObject* error = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), concatenate(what, isStop ? " raised StopIteration"_s : " raised StopAsyncIteration"_s));
                 error->putDirect(vm, vm.pythonNames().private_cause, cause);
                 error->putDirect(vm, vm.pythonNames().private_context, cause);
                 error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
@@ -168,7 +169,7 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
         JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_next, self);
         RETURN_IF_EXCEPTION(scope, { });
         if (!method)
-            return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
+            return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
         return finishCall(callMethod(globalObject, method, self));
     }
     JSValue send = getAttribute(globalObject, iterator, Identifier::fromString(vm, "send"_s));

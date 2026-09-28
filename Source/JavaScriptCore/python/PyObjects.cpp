@@ -77,7 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame*
     JSValue function = Python::lookupSpecial(globalObject, instance, vm.pythonNames().dunder_call, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!function)
-        return JSValue::encode(Python::raiseTypeError(globalObject, scope, makeString('\'', Python::typeName(globalObject, instance), "' object is not callable"_s)));
+        return JSValue::encode(Python::raiseTypeError(globalObject, scope, concatenate('\'', Python::typeName(globalObject, instance), "' object is not callable"_s)));
     MarkedArgumentBuffer arguments;
     if (self)
         arguments.append(self);
@@ -397,6 +397,21 @@ PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, const ArgLis
 {
     VM& vm = globalObject->vm();
     PyTuple* tuple = create(globalObject, arguments.size());
+    for (unsigned i = 0; i < arguments.size(); ++i)
+        tuple->initializeAt(vm, i, arguments.at(i));
+    return tuple;
+}
+
+PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, MarkedArgumentBuffer& arguments)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (arguments.hasOverflowed()) [[unlikely]] {
+        Python::raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    PyTuple* tuple = tryCreate(globalObject, arguments.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
     for (unsigned i = 0; i < arguments.size(); ++i)
         tuple->initializeAt(vm, i, arguments.at(i));
     return tuple;
@@ -1042,12 +1057,12 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
                 return { };
             // strict=True: they all have to run out together.
             if (i)
-                return Python::raiseValueError(globalObject, scope, makeString(name, "() argument "_s, i + 1, " is shorter than argument"_s, i == 1 ? " "_s : "s 1-"_s, i));
+                return Python::raiseValueError(globalObject, scope, concatenate(name, "() argument "_s, i + 1, " is shorter than argument"_s, i == 1 ? " "_s : "s 1-"_s, i));
             for (unsigned j = 1; j < count; ++j) {
                 JSValue other = Python::iteratorNext(globalObject, iterators->at(j));
                 RETURN_IF_EXCEPTION(scope, { });
                 if (other)
-                    return Python::raiseValueError(globalObject, scope, makeString(name, "() argument "_s, j + 1, " is longer than argument"_s, j == 1 ? " "_s : "s 1-"_s, j));
+                    return Python::raiseValueError(globalObject, scope, concatenate(name, "() argument "_s, j + 1, " is longer than argument"_s, j == 1 ? " "_s : "s 1-"_s, j));
             }
             return { };
         }

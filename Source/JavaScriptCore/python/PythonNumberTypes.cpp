@@ -239,7 +239,7 @@ PYTHON_NATIVE(numberFormat)
     NATIVE_PROLOGUE();
     JSString* specification = stringIn(args[1]);
     if (!specification)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 
@@ -247,6 +247,8 @@ PYTHON_NATIVE(numberFormat)
 
 JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     unsigned start = 0;
     unsigned end = text.length();
     while (start < end && isUnicodeCompatibleASCIIWhitespace(text[start]))
@@ -283,6 +285,8 @@ JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
         return { };
 
     Vector<Latin1Character, 32> digits;
+    if (!digits.tryReserveCapacity(end - start))
+        return { };
     bool previousWasUnderscore = true; // Not at the front.
     for (unsigned i = start; i < end; ++i) {
         char16_t c = text[i];
@@ -301,13 +305,16 @@ JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
         return { };
 
     // As for writing one. A base that is a power of two takes no time to speak of.
-    if (int limit = globalObject->pyRealm()->maximumDigitsOfIntAsString; limit && !hasOneBitSet(base) && digits.size() > static_cast<size_t>(limit)) {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return raiseValueError(globalObject, scope, makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit"_s));
-    }
+    if (int limit = globalObject->pyRealm()->maximumDigitsOfIntAsString; limit && !hasOneBitSet(base) && digits.size() > static_cast<size_t>(limit))
+        return raiseValueError(globalObject, scope, concatenate("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit"_s));
 
-    JSValue magnitude = JSBigInt::parseInt(globalObject, globalObject->vm(), StringView(digits.span()), base, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+    JSValue magnitude = JSBigInt::parseInt(globalObject, vm, StringView(digits.span()), base, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+    // What it raises whatever it is told is that there is no room for so large a BigInt.
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return { };
+        return raiseMemoryError(globalObject, scope);
+    }
     if (!magnitude)
         return { };
     if (isNegative)
@@ -320,11 +327,12 @@ JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
 static JSValue intFromBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, int64_t base)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    String text { byteCast<Latin1Character>(bytes) };
+    String text = textOfBytes(globalObject, bytes);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue result = text.containsOnlyASCII() ? parseInt(globalObject, text, base) : JSValue();
     RETURN_IF_EXCEPTION(scope, { });
     if (!result)
-        return raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfBytes(bytes.first(std::min<size_t>(bytes.size(), 200))).left(200)));
+        return raiseValueError(globalObject, scope, concatenate("invalid literal for int() with base "_s, base, ": "_s, reprOfBytes(bytes.first(std::min<size_t>(bytes.size(), 200))).left(200)));
     return result;
 }
 
@@ -338,8 +346,11 @@ static JSValue intFromText(JSGlobalObject* globalObject, JSValue value, int64_t 
         RETURN_IF_EXCEPTION(scope, { });
         JSValue result = parseInt(globalObject, view, base);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!result)
-            return raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfString(view)));
+        if (!result) {
+            String shown = textOrMemoryError(globalObject, reprOfString(view));
+            RETURN_IF_EXCEPTION(scope, { });
+            return raiseValueError(globalObject, scope, concatenate("invalid literal for int() with base "_s, base, ": "_s, shown));
+        }
         return result;
     }
     RELEASE_AND_RETURN(scope, intFromBytes(globalObject, *builtinBufferOf(value), base));
@@ -364,7 +375,7 @@ JSValue numberLong(JSGlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, { });
         Number converted = classify(result);
         if (!converted.isInt())
-            return raiseTypeError(globalObject, scope, makeString("__int__ returned non-int (type "_s, typeName(globalObject, result), ')'));
+            return raiseTypeError(globalObject, scope, concatenate("__int__ returned non-int (type "_s, typeName(globalObject, result), ')'));
         if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__int__ returned non-int"_s, "int"_s))
             return { };
         RELEASE_AND_RETURN(scope, toInt(globalObject, scope, converted));
@@ -375,7 +386,7 @@ JSValue numberLong(JSGlobalObject* globalObject, JSValue value)
         RELEASE_AND_RETURN(scope, intFromText(globalObject, value, 10));
     if (auto buffer = bufferOrNothing(globalObject, value))
         RELEASE_AND_RETURN(scope, intFromBytes(globalObject, *buffer, 10));
-    return raiseTypeError(globalObject, scope, makeString("int() argument must be a string, a bytes-like object or a real number, not '"_s, typeName(globalObject, value), '\''));
+    return raiseTypeError(globalObject, scope, concatenate("int() argument must be a string, a bytes-like object or a real number, not '"_s, typeName(globalObject, value), '\''));
 }
 
 PYTHON_NATIVE(intNew)
@@ -384,7 +395,7 @@ PYTHON_NATIVE(intNew)
     auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
     if (args.size() > 3 && !args.keywordCount() && type == realm->typeInt())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int expected at most 2 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("int expected at most 2 arguments, got "_s, args.size() - 1)));
     if (!checkArgumentsSlow(globalObject, callFrame))
         return { };
     JSValue value = args.at(1);
@@ -454,6 +465,8 @@ PYTHON_NATIVE(returnTrue)
 static std::optional<double> parseFloat(StringView text)
 {
     Vector<Latin1Character, 32> characters;
+    if (!characters.tryReserveCapacity(text.length()))
+        return std::nullopt;
     unsigned start = 0;
     unsigned end = text.length();
     while (start < end && isUnicodeCompatibleASCIIWhitespace(text[start]))
@@ -507,27 +520,31 @@ PYTHON_NATIVE(floatNew)
             auto view = asString(plain)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             auto parsed = parseFloat(view);
-            if (!parsed)
-                return JSValue::encode(raiseValueError(globalObject, scope, makeString("could not convert string to float: "_s, reprOfString(view))));
+            if (!parsed) {
+                String shown = textOrMemoryError(globalObject, reprOfString(view));
+                RETURN_IF_EXCEPTION(scope, { });
+                return JSValue::encode(raiseValueError(globalObject, scope, concatenate("could not convert string to float: "_s, shown)));
+            }
             result = *parsed;
         } else {
             bool isNumber = classify(value) || typeOf(globalObject, value)->lookup(vm, names.dunder_float) || typeOf(globalObject, value)->lookup(vm, names.dunder_index);
             if (!isNumber) {
                 // Anything that has bytes to show has them read as ASCII. Whatever else comes of asking it for them is lost.
                 if (auto buffer = bufferOrNothing(globalObject, value)) {
-                    String text { byteCast<Latin1Character>(*buffer) };
+                    String text = textOfBytes(globalObject, *buffer);
+                    RETURN_IF_EXCEPTION(scope, { });
                     auto parsed = text.containsOnlyASCII() ? parseFloat(text) : std::nullopt;
                     if (!parsed) {
                         String shown = repr(globalObject, value);
                         RETURN_IF_EXCEPTION(scope, { });
-                        return JSValue::encode(raiseValueError(globalObject, scope, makeString("could not convert string to float: "_s, shown)));
+                        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("could not convert string to float: "_s, shown)));
                     }
                     return JSValue::encode(boxIfDerived(globalObject, type, realm->typeFloat(), floatFromDouble(*parsed)));
                 }
                 RETURN_IF_EXCEPTION(scope, { });
             }
             if (!isNumber)
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("float() argument must be a string or a real number, not '"_s, typeName(globalObject, value), '\'')));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("float() argument must be a string or a real number, not '"_s, typeName(globalObject, value), '\'')));
             auto converted = toDouble(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });
             result = *converted;
@@ -560,7 +577,7 @@ PYTHON_NATIVE(floatHex)
     mantissa = std::ldexp(mantissa, shift);
     exponent -= shift;
 
-    StringBuilder builder;
+    TextBuilder builder;
     if (value < 0)
         builder.append('-');
     builder.append("0x"_s, static_cast<char>('0' + static_cast<int>(mantissa)), '.');
@@ -573,7 +590,7 @@ PYTHON_NATIVE(floatHex)
         mantissa -= static_cast<int>(mantissa);
     }
     builder.append('p', exponent < 0 ? '-' : '+', std::abs(exponent));
-    return JSValue::encode(jsString(vm, builder.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, builder.tryFinish())));
 }
 
 // float.fromhex(string): float_fromhex_impl() of the same, where the limits are accounted for.
@@ -737,7 +754,7 @@ PYTHON_NATIVE(floatGetFormat)
     NATIVE_PROLOGUE();
     JSString* given = stringIn(args[1]);
     if (!given)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__getformat__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__getformat__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     String kind = given->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (kind != "double"_s && kind != "float"_s)

@@ -96,7 +96,7 @@ PYTHON_NATIVE(objectLen)
         if (value.isNumber() && value.asNumber() >= 0 && value.asNumber() == std::trunc(value.asNumber()))
             return JSValue::encode(intFromDouble(globalObject, value.asNumber()));
     }
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("object of type '"_s, typeName(globalObject, args[0]), "' has no len()"_s)));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("object of type '"_s, typeName(globalObject, args[0]), "' has no len()"_s)));
 }
 
 // An object is true to JavaScript, whatever is in it.
@@ -141,7 +141,7 @@ PYTHON_NATIVE(objectIter)
             return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::JavaScript, iterator, next));
         }
     }
-    return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not iterable"_s)));
+    return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, args[0]), "' object is not iterable"_s)));
 }
 
 // isinstance(value, constructor): value instanceof constructor
@@ -159,7 +159,7 @@ PYTHON_NATIVE(objectNew)
     NATIVE_PROLOGUE();
     auto constructData = JSC::getConstructData(args[0]);
     if (constructData.type == CallData::Type::None)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not a constructor"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, args[0]), "' object is not a constructor"_s)));
     MarkedArgumentBuffer arguments;
     for (unsigned i = 1; i < args.size(); ++i)
         arguments.append(args[i]);
@@ -192,7 +192,7 @@ PYTHON_NATIVE(objectRepr)
         JSValue name = object->get(globalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(scope, { });
         String text = name.isString() ? String(asString(name)->value(globalObject)) : String();
-        return JSValue::encode(jsString(vm, makeString("<JSFunction "_s, text.isEmpty() ? "(anonymous)"_str : text, '>')));
+        RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<JSFunction "_s, text.isEmpty() ? "(anonymous)"_str : text, '>'))));
     }
     // A plain object, as it would be written.
     if (object->type() == FinalObjectType) {
@@ -367,7 +367,7 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptToJSON, (JSGlobalObject* globalObject, CallFr
             else if (classify(key))
                 name = repr(globalObject, key);
             else {
-                raiseTypeError(globalObject, scope, makeString("keys must be str, int, float, bool or None, not "_s, typeName(globalObject, key)));
+                raiseTypeError(globalObject, scope, concatenate("keys must be str, int, float, bool or None, not "_s, typeName(globalObject, key)));
                 return false;
             }
             result->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, name), value);
@@ -530,7 +530,7 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptToPrimitive, (JSGlobalObject* globalObject, C
             JSValue result = callMethod(globalObject, method, instance);
             RETURN_IF_EXCEPTION(scope, { });
             if (!result.isNumber() && !result.isHeapBigInt())
-                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, self), '.', name->string(), " returned non-"_s, name == &names.dunder_float ? "float"_s : "int"_s, " (type "_s, typeName(globalObject, result), ')')));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, self), '.', name->string(), " returned non-"_s, name == &names.dunder_float ? "float"_s : "int"_s, " (type "_s, typeName(globalObject, result), ')')));
             return JSValue::encode(result);
         }
     }
@@ -1002,7 +1002,7 @@ static JSValue callExitMethod(JSGlobalObject* globalObject, CallFrame* callFrame
     JSValue method = lookupSpecial(globalObject, manager, name, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), "' object has no "_s, name.string()));
+        return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, manager), "' object has no "_s, name.string()));
     MarkedArgumentBuffer arguments;
     if (callFrame->argument(0).toBoolean(globalObject)) {
         JSValue thrown = callFrame->argument(1);
@@ -1035,7 +1035,7 @@ JSC_DEFINE_HOST_FUNCTION(pythonEnterContext, (JSGlobalObject* globalObject, Call
     JSValue method = Python::lookupSpecial(globalObject, manager, name, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(Python::raiseTypeError(globalObject, scope, makeString('\'', Python::typeName(globalObject, manager), "' object does not support the context manager protocol (missed "_s, name.string(), " method)"_s)));
+        return JSValue::encode(Python::raiseTypeError(globalObject, scope, Python::concatenate('\'', Python::typeName(globalObject, manager), "' object does not support the context manager protocol (missed "_s, name.string(), " method)"_s)));
     RELEASE_AND_RETURN(scope, JSValue::encode(Python::callMethod(globalObject, method, self)));
 }
 

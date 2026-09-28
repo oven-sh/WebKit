@@ -40,7 +40,7 @@ static JSValue callAnnotate(JSGlobalObject* globalObject, JSValue annotate)
     JSValue annotations = call(globalObject, annotate, jsNumber(1));
     RETURN_IF_EXCEPTION(scope, { });
     if (!isDict(annotations))
-        return raiseTypeError(globalObject, scope, makeString("__annotate__ returned non-dict of type '"_s, typeName(globalObject, annotations), '\''));
+        return raiseTypeError(globalObject, scope, concatenate("__annotate__ returned non-dict of type '"_s, typeName(globalObject, annotations), '\''));
     return annotations;
 }
 
@@ -118,7 +118,7 @@ static bool checkIsHeapType(JSGlobalObject* globalObject, ThrowScope& scope, PyT
 {
     if (type->hasFlag(PyType::IsHeapType))
         return true;
-    raise(globalObject, scope, BuiltinType::AttributeError, makeString("type object '"_s, type->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
+    raise(globalObject, scope, BuiltinType::AttributeError, concatenate("type object '"_s, type->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
     return false;
 }
 
@@ -126,7 +126,7 @@ static bool checkIsMutable(JSGlobalObject* globalObject, ThrowScope& scope, PyTy
 {
     if (type->hasFlag(PyType::IsHeapType))
         return true;
-    raiseTypeError(globalObject, scope, makeString("cannot set '"_s, attribute, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+    raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
     return false;
 }
 
@@ -319,7 +319,7 @@ static void setWrappedAttribute(JSGlobalObject* globalObject, JSValue self, JSVa
         return;
     }
     if (!getStoredAttribute(vm, asObject(self), attribute)) {
-        raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', typeName(globalObject, self), "' object has no attribute '"_s, attribute.string(), '\''));
+        raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, self), "' object has no attribute '"_s, attribute.string(), '\''));
         return;
     }
     scope.release();

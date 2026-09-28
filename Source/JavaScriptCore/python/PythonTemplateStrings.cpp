@@ -62,14 +62,14 @@ PYTHON_NATIVE(interpolationNew)
     auto checkIsString = [&] (JSValue argument, ASCIILiteral name) {
         if (!argument || stringIn(argument))
             return true;
-        raiseTypeError(globalObject, scope, makeString("Interpolation() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, argument)));
+        raiseTypeError(globalObject, scope, concatenate("Interpolation() argument '"_s, name, "' must be str, not "_s, typeNameOfArgument(globalObject, argument)));
         return false;
     };
     if (!checkIsString(expression, "expression"_s))
         return { };
     if (conversion && !isNone(conversion)) {
         if (!stringIn(conversion))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Interpolation() argument 'conversion' must be str, not "_s, fullyQualifiedTypeName(globalObject, conversion))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Interpolation() argument 'conversion' must be str, not "_s, fullyQualifiedTypeName(globalObject, conversion))));
         String text = stringIn(conversion)->value(globalObject);
         if (text != "a"_s && text != "r"_s && text != "s"_s)
             return JSValue::encode(raise(globalObject, scope, BuiltinType::ValueError, "Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'"_s));
@@ -83,7 +83,7 @@ PYTHON_NATIVE(interpolationRepr)
 {
     NATIVE_PROLOGUE();
     auto* self = asNativeObject(args[0]);
-    StringBuilder out;
+    TextBuilder out;
     out.append("Interpolation("_s);
     for (unsigned i = 0; i < 4; ++i) {
         if (i)
@@ -93,7 +93,7 @@ PYTHON_NATIVE(interpolationRepr)
         out.append(text);
     }
     out.append(')');
-    return JSValue::encode(jsString(vm, out.toString()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, out.tryFinish())));
 }
 
 PYTHON_NATIVE(interpolationReduce)
@@ -120,7 +120,7 @@ PYTHON_NATIVE(templateNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, "Template.__new__ only accepts *args arguments"_s));
     for (unsigned i = 1; i < args.size(); ++i) {
         if (!stringIn(args[i]) && !isExactly(globalObject, args[i], BuiltinType::Interpolation))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Template.__new__ *args need to be of type 'str' or 'Interpolation', got "_s, fullyQualifiedTypeName(globalObject, args[i]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Template.__new__ *args need to be of type 'str' or 'Interpolation', got "_s, fullyQualifiedTypeName(globalObject, args[i]))));
     }
     MarkedArgumentBuffer strings;
     MarkedArgumentBuffer interpolations;
@@ -156,7 +156,7 @@ PYTHON_NATIVE(templateRepr)
     RETURN_IF_EXCEPTION(scope, { });
     String interpolations = repr(globalObject, self->field(TemplateField::Interpolations));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("Template(strings="_s, strings, ", interpolations="_s, interpolations, ')')));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("Template(strings="_s, strings, ", interpolations="_s, interpolations, ')'))));
 }
 
 // The strings and the interpolations by turns, without the strings that are empty.
@@ -210,7 +210,7 @@ PYTHON_NATIVE(templateAdd)
 {
     NATIVE_PROLOGUE();
     if (!isExactly(globalObject, args[1], BuiltinType::Template))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can only concatenate string.templatelib.Template (not \""_s, fullyQualifiedTypeName(globalObject, args[1]), "\") to string.templatelib.Template"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can only concatenate string.templatelib.Template (not \""_s, fullyQualifiedTypeName(globalObject, args[1]), "\") to string.templatelib.Template"_s)));
     auto* left = asNativeObject(args[0]);
     auto* right = asNativeObject(args[1]);
     PyTuple* leftStrings = asTuple(left->field(TemplateField::Strings));
@@ -222,9 +222,9 @@ PYTHON_NATIVE(templateAdd)
     JSValue last = leftStrings->at(leftStrings->length() - 1);
     JSValue first = rightStrings->at(0);
     if (!stringIn(last))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("must be str, not "_s, typeName(globalObject, last))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("must be str, not "_s, typeName(globalObject, last))));
     if (!stringIn(first))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can only concatenate str (not \""_s, typeName(globalObject, first), "\") to str"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can only concatenate str (not \""_s, typeName(globalObject, first), "\") to str"_s)));
     JSString* joined = jsString(globalObject, stringIn(last), stringIn(first));
     RETURN_IF_EXCEPTION(scope, { });
     strings.append(joined);

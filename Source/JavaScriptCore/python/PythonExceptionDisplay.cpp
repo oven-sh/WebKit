@@ -63,9 +63,9 @@ void append(StringBuilder& builder, std::span<const char32_t> characters)
 
 String toString(std::span<const char32_t> characters)
 {
-    StringBuilder builder;
+    TextBuilder builder;
     append(builder, characters);
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 bool isBlank(std::span<const char32_t> characters)
@@ -145,13 +145,13 @@ size_t displayWidth(const Line& line, std::optional<size_t> offset = std::nullop
 
 String join(const Vector<Line>& lines)
 {
-    StringBuilder builder;
+    TextBuilder builder;
     for (size_t i = 0; i < lines.size(); ++i) {
         if (i)
             builder.append('\n');
         append(builder, lines[i].span());
     }
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 Module* parseQuietly(VM& vm, Arena& arena, const String& source)
@@ -183,7 +183,7 @@ public:
     std::optional<Anchors> find()
     {
         Arena arena;
-        Module* tree = parseQuietly(m_vm, arena, makeString("(\n"_s, join(m_lines), "\n)"_s));
+        Module* tree = parseQuietly(m_vm, arena, concatenate("(\n"_s, join(m_lines), "\n)"_s));
         if (!tree || tree->body.size() != 1 || !tree->body[0]->is<Expr>())
             return std::nullopt;
         Expression* expression = tree->body[0]->as<Expr>().value;
@@ -403,7 +403,7 @@ void appendSource(VM& vm, StringBuilder& builder, StringView source, unsigned st
             if (difference == 2)
                 outputLine(index - 1);
             else if (difference > 2)
-                result.append(toLine(StringView(makeString("...<"_s, difference - 1, " lines>..."_s))));
+                result.append(toLine(StringView(concatenate("...<"_s, difference - 1, " lines>..."_s))));
         }
         outputLine(index);
         previous = index;
@@ -458,7 +458,7 @@ FrameSummary summarize(JSGlobalObject* globalObject, PyFrame* frame, unsigned by
     VM& vm = globalObject->vm();
     SourceProvider* provider = frame->executable()->source().provider();
     FrameSummary summary { provider->sourceURL(), frame->functionInfo().name.string(), line, { } };
-    StringBuilder builder;
+    TextBuilder builder;
     builder.append("  File \""_s, summary.filename, "\", line "_s, line, ", in "_s, summary.name, '\n');
     if (!isNameOfNoFile(summary.filename)) {
         if (auto range = frame->sourceRangeAt(vm, BytecodeIndex(bytecodeOffset))) {
@@ -468,7 +468,7 @@ FrameSummary summarize(JSGlobalObject* globalObject, PyFrame* frame, unsigned by
                 appendSource(vm, builder, provider->source(), range->first, range->second);
         }
     }
-    summary.text = builder.toString();
+    summary.text = builder.tryFinish();
     return summary;
 }
 
@@ -479,7 +479,7 @@ String formatStack(JSGlobalObject* globalObject, JSValue traceback)
 {
     // _RECURSIVE_CUTOFF
     static constexpr unsigned cutoff = 3;
-    StringBuilder builder;
+    TextBuilder builder;
     std::optional<FrameSummary> last;
     unsigned count = 0;
     auto finishRun = [&] {
@@ -501,7 +501,7 @@ String formatStack(JSGlobalObject* globalObject, JSValue traceback)
         builder.append(last->text);
     });
     finishRun();
-    return builder.toString();
+    return builder.tryFinish();
 }
 
 namespace {
@@ -516,7 +516,7 @@ String safeString(JSGlobalObject* globalObject, JSValue value, ASCIILiteral what
     String result = function(globalObject, value);
     if (scope.exception()) {
         scope.clearException();
-        return makeString('<', what, ' ', functionName, "() failed>"_s);
+        return concatenate('<', what, ' ', functionName, "() failed>"_s);
     }
     return result;
 }
@@ -653,7 +653,7 @@ String computeSuggestion(JSGlobalObject* globalObject, JSValue exception, JSValu
             if (scope.exception())
                 scope.clearException();
             else if (found)
-                return makeString("self."_s, wrongName);
+                return concatenate("self."_s, wrongName);
         }
     }
     return calculateSuggestion(names, wrongName);
@@ -685,7 +685,7 @@ public:
     {
         auto summary = summarizeAll(exception);
         format(*summary);
-        return m_builder.toString();
+        return m_builder.tryFinish();
     }
 
 private:
@@ -712,7 +712,7 @@ private:
 
         bool raised = false;
         JSValue notes = attributeOrNone(globalObject, exception, names.dunder_notes, &raised);
-        StringBuilder noteLines;
+        TextBuilder noteLines;
         if (raised) {
             JSValue error = scope.exception()->value();
             scope.clearException();
@@ -725,27 +725,27 @@ private:
             scope.clearException();
         } else if (!isNone(notes))
             noteLines.append(safeRepr(globalObject, notes, "__notes__"_s), '\n');
-        summary->notes = noteLines.toString();
+        summary->notes = noteLines.tryFinish();
 
         // exc_type_str
         PyType* type = typeOf(globalObject, exception);
         JSValue module = attributeOrNone(globalObject, type, names.dunder_module);
         String qualifiedName = safeStr(globalObject, attributeOrNone(globalObject, type, names.dunder_qualname), "exception"_s);
         String moduleName = module.isString() ? asString(module)->value(globalObject) : String("<unknown>"_s);
-        summary->type = moduleName == "__main__"_s || moduleName == "builtins"_s ? qualifiedName : makeString(moduleName, '.', qualifiedName);
+        summary->type = moduleName == "__main__"_s || moduleName == "builtins"_s ? qualifiedName : concatenate(moduleName, '.', qualifiedName);
 
         if (isInstance(globalObject, exception, realm->typeSyntaxError())) {
             // Where it is comes with the message, when that is printed.
         } else if (JSValue nameFrom = isInstance(globalObject, exception, realm->typeImportError()) ? attributeOrNone(globalObject, exception, "name_from"_s) : jsUndefined(); !isNone(nameFrom)) {
             if (String suggestion = computeSuggestion(globalObject, exception, traceback, nameFrom); !suggestion.isNull())
-                summary->message = makeString(summary->message, ". Did you mean: '"_s, suggestion, "'?"_s);
+                summary->message = concatenate(summary->message, ". Did you mean: '"_s, suggestion, "'?"_s);
         } else if (bool isNameError = isInstance(globalObject, exception, realm->typeNameError()); isNameError || isInstance(globalObject, exception, realm->typeAttributeError())) {
             if (JSValue wrongName = attributeOrNone(globalObject, exception, "name"_s); !isNone(wrongName)) {
                 String suggestion = computeSuggestion(globalObject, exception, traceback, wrongName);
                 if (!suggestion.isNull())
-                    summary->message = makeString(summary->message, ". Did you mean: '"_s, suggestion, "'?"_s);
+                    summary->message = concatenate(summary->message, ". Did you mean: '"_s, suggestion, "'?"_s);
                 if (isNameError && isNameOfStandardModule(wrongName))
-                    summary->message = makeString(summary->message, suggestion.isNull() ? ". Did"_s : " Or did"_s, " you forget to import '"_s, safeStr(globalObject, wrongName, "exception"_s), "'?"_s);
+                    summary->message = concatenate(summary->message, suggestion.isNull() ? ". Did"_s : " Or did"_s, " you forget to import '"_s, safeStr(globalObject, wrongName, "exception"_s), "'?"_s);
             }
         }
         scope.clearException();
@@ -830,7 +830,7 @@ private:
 
     void emitExceptionOnly(const ExceptionSummary& summary)
     {
-        StringBuilder builder;
+        TextBuilder builder;
         String message = appendSyntaxErrorLocation(m_globalObject, builder, summary.exception);
         if (message.isNull())
             message = summary.message;
@@ -838,7 +838,7 @@ private:
         if (!message.isEmpty())
             builder.append(": "_s, message);
         builder.append('\n', summary.notes);
-        emit(builder.toString());
+        emit(builder.tryFinish());
     }
 
     // ---- TracebackException.format()
@@ -872,7 +872,7 @@ private:
                 continue;
             }
             if (m_groupDepth > maxGroupDepth) {
-                emit(makeString("... (max_group_depth is "_s, maxGroupDepth, ")\n"_s));
+                emit(concatenate("... (max_group_depth is "_s, maxGroupDepth, ")\n"_s));
                 continue;
             }
 
@@ -904,7 +904,7 @@ private:
                     format(*summary->exceptions->at(i));
                 else {
                     size_t remaining = total - maxGroupWidth;
-                    emit(makeString("and "_s, remaining, " more exception"_s, remaining > 1 ? "s"_s : ""_s, '\n'));
+                    emit(concatenate("and "_s, remaining, " more exception"_s, remaining > 1 ? "s"_s : ""_s, '\n'));
                 }
                 if (isLast && m_needsClose) {
                     appendIndent();
@@ -920,7 +920,7 @@ private:
 
     JSGlobalObject* m_globalObject;
     VM& m_vm;
-    StringBuilder m_builder;
+    TextBuilder m_builder;
     MarkedArgumentBuffer m_kept;
     UncheckedKeyHashSet<JSCell*> m_seen;
     unsigned m_groupDepth { 0 };
@@ -932,7 +932,7 @@ private:
 String formatTraceback(JSGlobalObject* globalObject, JSValue traceback)
 {
     String stack = formatStack(globalObject, traceback);
-    return stack.isEmpty() ? stack : makeString("Traceback (most recent call last):\n"_s, stack);
+    return stack.isEmpty() ? stack : concatenate("Traceback (most recent call last):\n"_s, stack);
 }
 
 String formatException(JSGlobalObject* globalObject, JSValue exception)
