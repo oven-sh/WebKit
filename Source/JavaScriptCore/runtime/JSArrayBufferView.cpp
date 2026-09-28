@@ -234,7 +234,7 @@ void JSArrayBufferView::finalize(JSCell* cell)
     // to get to this finalizer and found the mode to be WastefulTypedArray.
     ASSERT(thisObject->m_mode == OversizeTypedArray || thisObject->hasArrayBuffer());
     if (thisObject->m_mode == OversizeTypedArray)
-        Gigacage::free(Gigacage::Primitive, thisObject->vector());
+        Gigacage::free(Gigacage::Primitive, static_cast<uint8_t*>(thisObject->vector()) - thisObject->m_byteOffset);
 }
 
 JSArrayBuffer* JSArrayBufferView::unsharedJSBuffer(JSGlobalObject* globalObject)
@@ -288,6 +288,7 @@ bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byt
         return false;
 
     void* oldVector = vector();
+    void* oldAllocation = static_cast<uint8_t*>(oldVector) - m_byteOffset;
     size_t kept = std::min(byteLengthRaw(), byteLength);
     if (kept)
         memcpy(newVector, oldVector, kept);
@@ -297,9 +298,11 @@ bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byt
         Locker locker { cellLock() };
         m_vector.setWithoutBarrier(newVector);
         m_length = length;
+        m_byteOffset = 0;
         WTF::storeStoreFence();
         m_mode = newMode;
     }
+    vm.didChangeOwnedTypedArrayStorage();
     if (newMode == FastTypedArray) {
         // The vector is marked when the view is visited, which may have been already.
         vm.writeBarrier(this);
@@ -307,7 +310,7 @@ bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byt
     }
     vm.heap.reportExtraMemoryAllocated(this, capacity);
     if (oldMode == OversizeTypedArray)
-        Gigacage::free(Gigacage::Primitive, oldVector);
+        Gigacage::free(Gigacage::Primitive, oldAllocation);
     else
         vm.heap.addFinalizer(this, finalize);
     return true;
@@ -316,8 +319,24 @@ bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byt
 void JSArrayBufferView::setLengthWithinOwnedStorage(size_t length)
 {
     RELEASE_ASSERT(ownsStorage());
-    Locker locker { cellLock() };
-    m_length = length;
+    {
+        Locker locker { cellLock() };
+        m_length = length;
+    }
+    vm().didChangeOwnedTypedArrayStorage();
+}
+
+void JSArrayBufferView::dropFrontOfOwnedStorage(size_t byteCount, size_t length)
+{
+    RELEASE_ASSERT(canDropFrontOfOwnedStorage());
+    RELEASE_ASSERT(byteCount <= byteLengthRaw());
+    {
+        Locker locker { cellLock() };
+        m_vector.setWithoutBarrier(static_cast<uint8_t*>(vector()) + byteCount);
+        m_byteOffset += byteCount;
+        m_length = length;
+    }
+    vm().didChangeOwnedTypedArrayStorage();
 }
 
 ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
@@ -357,7 +376,8 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     case OversizeTypedArray: {
         // The buffer adopts the vector. ConstructionContext reported the vector as
         // allocated when it allocated it, so only the ArrayBuffer itself is new.
-        buffer = ArrayBuffer::createAdopted(span());
+        // It begins where the allocation does, which is before the view does if the front of the view has been given up.
+        buffer = ArrayBuffer::createAdopted(unsafeMakeSpan(static_cast<uint8_t*>(vector()) - m_byteOffset, m_byteOffset + byteLengthRaw()));
         bytesAlreadyReported = buffer->byteLength();
         break;
     }
@@ -376,7 +396,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
     {
         Locker locker { cellLock() };
         butterfly()->indexingHeader()->setArrayBuffer(buffer.get());
-        m_vector.setWithoutBarrier(buffer->data());
+        m_vector.setWithoutBarrier(static_cast<uint8_t*>(buffer->data()) + m_byteOffset);
         WTF::storeStoreFence();
         m_mode = WastefulTypedArray; // There is no possibility that FastTypedArray or OversizeTypedArray becomes resizable ones since resizable ones do not start with FastTypedArray or OversizeTypedArray.
     }

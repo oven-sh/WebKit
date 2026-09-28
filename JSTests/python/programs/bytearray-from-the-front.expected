@@ -1,0 +1,82 @@
+what comes in is dealt with 0 ('right', 35, 86201466)
+what comes in is dealt with 10 ('right', 7, 827200622)
+what comes in is dealt with 999 ('right', 221, 513639987)
+what comes in is dealt with 1000 ('right', 184, 427501905)
+what comes in is dealt with 1001 ('right', 41, 402477978)
+what comes in is dealt with 5000 ('right', 9, 381442837)
+what comes in is dealt with 20000 ('right', 19, 529089895)
+in large pieces 0 ('right', 212789, 297043869)
+in large pieces 10 ('right', 179266, 54240905)
+in large pieces 999 ('right', 172643, 48592871)
+in large pieces 1000 ('right', 191214, 64286657)
+in large pieces 1001 ('right', 196378, 357618070)
+in large pieces 5000 ('right', 226058, 276883405)
+in large pieces 20000 ('right', 198385, 150169957)
+from both ends 0 ('right', 75168, 471102438)
+from both ends 10 ('right', 92779, 437312960)
+from both ends 999 ('right', 41574, 239937241)
+from both ends 1000 ('right', 79969, 745196143)
+from both ends 1001 ('right', 87257, 12093716)
+from both ends 5000 ('right', 64492, 990844383)
+from both ends 20000 ('right', 81540, 207614779)
+put back 0 ('right', 121897, 984623477)
+put back 10 ('right', 117883, 309066793)
+put back 999 ('right', 110958, 828647854)
+put back 1000 ('right', 110846, 752902781)
+put back 1001 ('right', 144735, 131591485)
+put back 5000 ('right', 141866, 772711931)
+put back 20000 ('right', 145571, 788431302)
+everything 0 ('right', 3748, 951347624)
+everything 10 ('right', 87, 800796966)
+everything 999 ('right', 1013, 816359281)
+everything 1000 ('right', 5000, 42609085)
+everything 1001 ('right', 1119, 139245225)
+everything 5000 ('right', 266, 383883139)
+everything 20000 ('right', 1118, 211632596)
+taken 1 at a time from 0 True 0 True
+taken 7 at a time from 0 True 0 True
+taken 999 at a time from 0 True 0 True
+taken 1000 at a time from 0 True 0 True
+taken 1001 at a time from 0 True 0 True
+taken 1 at a time from 1 True 0 True
+taken 7 at a time from 1 True 0 True
+taken 999 at a time from 1 True 0 True
+taken 1000 at a time from 1 True 0 True
+taken 1001 at a time from 1 True 0 True
+taken 1 at a time from 999 True 0 True
+taken 7 at a time from 999 True 0 True
+taken 999 at a time from 999 True 0 True
+taken 1000 at a time from 999 True 0 True
+taken 1001 at a time from 999 True 0 True
+taken 1 at a time from 1000 True 0 True
+taken 7 at a time from 1000 True 0 True
+taken 999 at a time from 1000 True 0 True
+taken 1000 at a time from 1000 True 0 True
+taken 1001 at a time from 1000 True 0 True
+taken 1 at a time from 1001 True 0 True
+taken 7 at a time from 1001 True 0 True
+taken 999 at a time from 1001 True 0 True
+taken 1000 at a time from 1001 True 0 True
+taken 1001 at a time from 1001 True 0 True
+taken 1 at a time from 1002 True 0 True
+taken 7 at a time from 1002 True 0 True
+taken 999 at a time from 1002 True 0 True
+taken 1000 at a time from 1002 True 0 True
+taken 1001 at a time from 1002 True 0 True
+taken 1 at a time from 2000 True 0 True
+taken 7 at a time from 2000 True 0 True
+taken 999 at a time from 2000 True 0 True
+taken 1000 at a time from 2000 True 0 True
+taken 1001 at a time from 2000 True 0 True
+taken 1 at a time from 4096 True 0 True
+taken 7 at a time from 4096 True 0 True
+taken 999 at a time from 4096 True 0 True
+taken 1000 at a time from 4096 True 0 True
+taken 1001 at a time from 4096 True 0 True
+taken 1 at a time from 20000 True 0 True
+taken 7 at a time from 20000 True 0 True
+taken 999 at a time from 20000 True 0 True
+taken 1000 at a time from 20000 True 0 True
+taken 1001 at a time from 20000 True 0 True
+copies, and what looks at it 1000 1000 1000 1000 True b'xxx' 120 787878 True
+and after 5000 {121} True True

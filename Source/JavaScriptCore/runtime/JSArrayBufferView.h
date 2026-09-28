@@ -365,6 +365,10 @@ public:
     JS_EXPORT_PRIVATE bool reallocateOwnedStorage(VM&, size_t length, size_t byteLength, size_t capacity);
     // The same, when there is room already.
     JS_EXPORT_PRIVATE void setLengthWithinOwnedStorage(size_t length);
+    // Gives up the first `byteCount` bytes without moving the rest, leaving `length` elements. What has been given up is byteOffset(), as it would be if the view had an ArrayBuffer and began that far into it,
+    // which is how it will be if it is asked for one. Only for storage that the collector does not look after, since that is found by where it begins.
+    bool canDropFrontOfOwnedStorage() const { return m_mode == OversizeTypedArray; }
+    JS_EXPORT_PRIVATE void dropFrontOfOwnedStorage(size_t byteCount, size_t length);
 
 private:
     enum Requester { Mutator, ConcurrentThread };

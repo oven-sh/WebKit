@@ -1511,11 +1511,13 @@ JSArrayBufferView* Graph::tryGetFoldableView(JSValue value)
     JSArrayBufferView* view = dynamicDowncast<JSArrayBufferView>(value);
     if (!view)
         return nullptr;
+    // Before anything about the view is read.
+    uint64_t ownedStorageVersion = m_vm.ownedTypedArrayStorageVersion();
     if (!view->length())
         return nullptr;
     WTF::loadLoadFence();
     freeze(view);
-    watchpoints().addLazily(view);
+    watchpoints().addLazily(view, ownedStorageVersion);
     return view;
 }
 

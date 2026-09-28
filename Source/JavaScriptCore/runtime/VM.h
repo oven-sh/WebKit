@@ -990,6 +990,12 @@ public:
     LazyUniqueRef<VM, StringSplitCache> m_stringSplitCache;
     ALWAYS_INLINE StringSplitCache* stringSplitCache() { return m_stringSplitCache.getIfExists(); }
     StringSplitCache& ensureStringSplitCache() { return m_stringSplitCache.get(*this); }
+    // How many times the storage of a typed array that owns it has been changed where it is: see JSArrayBufferView::reallocateOwnedStorage().
+    // A compilation that has folded the storage or the length of a typed array is not to be used if this has changed since.
+    uint64_t ownedTypedArrayStorageVersion() const { return m_ownedTypedArrayStorageVersion.load(std::memory_order_acquire); }
+    void didChangeOwnedTypedArrayStorage() { m_ownedTypedArrayStorageVersion.fetch_add(1, std::memory_order_release); }
+    std::atomic<uint64_t> m_ownedTypedArrayStorageVersion { 0 };
+
     LazyUniqueRef<VM, Python::SurrogatePairCache> m_pythonSurrogatePairCache;
     ALWAYS_INLINE Python::SurrogatePairCache* pythonSurrogatePairCache() { return m_pythonSurrogatePairCache.getIfExists(); }
     Python::SurrogatePairCache& ensurePythonSurrogatePairCache() { return m_pythonSurrogatePairCache.get(*this); }

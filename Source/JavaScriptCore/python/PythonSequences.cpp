@@ -184,6 +184,18 @@ void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned star
     start = std::min(start, length);
     count = std::min(count, length - start);
     unsigned added = values.size();
+    if (added > maxListLength - (length - count)) {
+        raiseMemoryError(globalObject, scope);
+        return;
+    }
+    // All at once, if the elements are side by side, which they are unless JavaScript has been at it.
+    if (list->tryResizeRangeKeepingIndexingType(vm, start, count, added)) {
+        for (unsigned i = 0; i < added; ++i) {
+            listSet(globalObject, list, start + i, values.at(i));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        return;
+    }
     unsigned tail = length - start - count;
     auto move = [&] (unsigned from, unsigned to) {
         JSValue value = listGet(globalObject, list, from);

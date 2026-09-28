@@ -1677,6 +1677,46 @@ bool JSArray::shiftCountWithArrayStorage(VM& vm, unsigned startIndex, unsigned c
     return true;
 }
 
+bool JSArray::tryResizeRangeKeepingIndexingType(VM& vm, unsigned startIndex, unsigned oldCount, unsigned newCount)
+{
+    ensureWritable(vm);
+
+    auto indexingType = this->indexingType();
+    if (indexingType != ArrayWithInt32 && indexingType != ArrayWithContiguous && indexingType != ArrayWithDouble)
+        return false;
+
+    unsigned oldLength = butterfly()->publicLength();
+    RELEASE_ASSERT(startIndex <= oldLength && oldCount <= oldLength - startIndex);
+    unsigned moveCount = oldLength - startIndex - oldCount;
+    unsigned newLength = oldLength - oldCount;
+    if (newCount > MAX_STORAGE_VECTOR_LENGTH - newLength)
+        return false;
+    newLength += newCount;
+    if (newLength > oldLength && !ensureLength(vm, newLength))
+        return false;
+
+    // Both kinds of element are eight bytes.
+    static_assert(sizeof(JSValue) == sizeof(double));
+    Butterfly* butterfly = this->butterfly();
+    auto* elements = butterfly->contiguous().data();
+    if (moveCount && newCount != oldCount)
+        gcSafeMemmove(elements + startIndex + newCount, elements + startIndex + oldCount, sizeof(JSValue) * moveCount);
+
+    if (newLength < oldLength) {
+        if (indexingType == ArrayWithDouble) {
+            for (unsigned i = newLength; i < oldLength; ++i)
+                butterfly->contiguousDouble().at(this, i) = PNaN;
+        } else
+            gcSafeZeroMemory(elements + newLength, (oldLength - newLength) * sizeof(JSValue));
+        butterfly->setPublicLength(newLength);
+    }
+
+    // Moving values around could have concealed some of them from the collector, so it is to scan this object again.
+    if (indexingType == ArrayWithContiguous)
+        vm.writeBarrier(this);
+    return true;
+}
+
 bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsigned& startIndex, unsigned count, unsigned shiftArrayStorageThreshold)
 {
     VM& vm = globalObject->vm();

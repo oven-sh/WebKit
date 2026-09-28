@@ -135,9 +135,11 @@ void DesiredWatchpoints::addLazily(Graph& graph, FunctionExecutable* executable)
     m_functionExecutables.addLazily(executable);
 }
 
-void DesiredWatchpoints::addLazily(JSArrayBufferView* view)
+void DesiredWatchpoints::addLazily(JSArrayBufferView* view, uint64_t ownedTypedArrayStorageVersion)
 {
     m_bufferViews.addLazily(view);
+    if (!m_ownedTypedArrayStorageVersion)
+        m_ownedTypedArrayStorageVersion = ownedTypedArrayStorageVersion;
 }
 
 void DesiredWatchpoints::addLazily(const ObjectPropertyCondition& key)
@@ -201,6 +203,9 @@ bool DesiredWatchpoints::reallyAdd(CodeBlock* codeBlock, DesiredIdentifiers& ide
 
 bool DesiredWatchpoints::areStillValidOnMainThread(VM& vm, DesiredIdentifiers& identifiers)
 {
+    // Until a view has an ArrayBuffer, which it is given when the watchpoints are added, its storage can be changed with nothing to watch for.
+    if (m_ownedTypedArrayStorageVersion && *m_ownedTypedArrayStorageVersion != vm.ownedTypedArrayStorageVersion())
+        return false;
     return m_globalProperties.isStillValidOnMainThread(vm, identifiers);
 }
 

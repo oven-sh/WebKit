@@ -165,6 +165,16 @@ arguments first, and only then at how much there is of what it is a method of. A
 `PySlice::unpack()`, which can run anything, and `PySlice::adjust()`, which is told the length as it is afterwards. The end of `programs/buffer-protocol.py` has every
 method shrink what it is working on from within an argument.
 
+A `bytearray` is a `Uint8Array` like any other, and until something asks for its `ArrayBuffer` it owns the memory that it is in, and Python changes its length where it is: `JSArrayBufferView::reallocateOwnedStorage()`
+and what is beside it. What is taken from the front of a large one, `del a[:n]`, which is how what has been dealt with is taken out of what has come in, is not made up for by moving the rest. It begins further on, as
+in CPython, and how far on is its `byteOffset`, which is what that would be if it had an `ArrayBuffer`, and is if it is given one. What was given up is given back when it comes to more than what is left.
+
+The optimizing compilers put the length of a typed array, and where its elements are, into the code that they make, if it is an array that the code always uses. They go by nothing being able to change those until
+the array has an `ArrayBuffer`, which it is given when the code is put to use, and after which Python may not change its length. But the code is made on another thread, while Python runs. There is no telling a
+`bytearray` from any other `Uint8Array`, so not doing it for those is not to be had. So the VM counts how many times memory that a view owns has been changed where it is, `ownedTypedArrayStorageVersion()`, and code
+that was made with anything of the kind in it is thrown away if the count has moved since the array was looked at. Only Python moves it. `interop/resized-while-being-compiled.mjs` goes wrong three times in four
+without that.
+
 ### A class is the prototype of its instances
 
 `instance.[[Prototype]]` is the class, so `type(x)` is a load from `x`'s structure. `class.[[Prototype]]` is what the instances of its first base have for a

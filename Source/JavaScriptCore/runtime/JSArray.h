@@ -167,6 +167,12 @@ public:
         return unshiftCountWithAnyIndexingType(globalObject, startIndex, count);
     }
 
+    // Makes the `oldCount` elements at `startIndex` into `newCount`, by moving what follows them and changing the length. What is in
+    // those `newCount` places afterwards is unspecified, but safe to leave there: the caller stores to them. Unlike shiftCount() and
+    // unshiftCount() this never changes the indexing type, however much has to be moved. Returns false, having done nothing, if the
+    // elements are not stored contiguously or there is no room.
+    JS_EXPORT_PRIVATE bool tryResizeRangeKeepingIndexingType(VM&, unsigned startIndex, unsigned oldCount, unsigned newCount);
+
     JS_EXPORT_PRIVATE void fillArgList(JSGlobalObject*, MarkedArgumentBuffer&);
     JS_EXPORT_PRIVATE void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 

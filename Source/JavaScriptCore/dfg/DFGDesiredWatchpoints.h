@@ -249,7 +249,7 @@ public:
     void addLazily(InlineWatchpointSet&);
     void addLazily(Graph&, SymbolTable*);
     void addLazily(Graph&, FunctionExecutable*);
-    void addLazily(JSArrayBufferView*);
+    void addLazily(JSArrayBufferView*, uint64_t ownedTypedArrayStorageVersion);
     
     // It's recommended that you don't call this directly. Use Graph::watchCondition(), which does
     // the required GC magic as well as some other bookkeeping.
@@ -309,6 +309,7 @@ private:
     GenericDesiredWatchpoints<SymbolTable*, SymbolTableAdaptor> m_symbolTables;
     GenericDesiredWatchpoints<FunctionExecutable*, FunctionExecutableAdaptor> m_functionExecutables;
     GenericDesiredWatchpoints<JSArrayBufferView*, ArrayBufferViewWatchpointAdaptor> m_bufferViews;
+    std::optional<uint64_t> m_ownedTypedArrayStorageVersion; // VM::ownedTypedArrayStorageVersion() from before the first of those was looked at.
     GenericDesiredWatchpoints<ObjectPropertyCondition, AdaptiveStructureWatchpointAdaptor> m_adaptiveStructureSets;
     DesiredGlobalProperties m_globalProperties;
     UncheckedKeyHashSet<Structure*> m_registeredNotWatchedStructures;

@@ -313,19 +313,23 @@ static bool resize(JSGlobalObject* globalObject, JSUint8Array* view, size_t newL
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     size_t length = view->length();
-    if (newLength == length)
+    // What has been given up at the front is still there.
+    size_t front = view->ownsStorage() ? view->byteOffsetRaw() : 0;
+    if (newLength == length && !front)
         return true;
     if (!view->ownsStorage()) {
         // JavaScript has its ArrayBuffer, which is not to change under it.
         raise(globalObject, scope, BuiltinType::BufferError, "Existing exports of data: object cannot be re-sized"_s);
         return false;
     }
-    // How much room there is is not something that a Uint8Array knows. One that has never been resized has none to spare.
+    // How much room there is, from where it begins, is not something that a Uint8Array knows. One that has never been resized has none to spare.
     auto& capacityName = vm.pythonNames().private_capacity;
     JSValue known = view->getDirect(vm, capacityName);
     size_t capacity = known ? static_cast<size_t>(known.asNumber()) : length;
 
-    if (newLength <= capacity && newLength >= capacity / 2) {
+    if (newLength <= capacity && newLength >= (front + capacity) / 2) {
+        if (newLength == length)
+            return true;
         if (newLength > length)
             memset(view->typedVector() + length, 0, newLength - length);
         view->setLengthWithinOwnedStorage(newLength);
@@ -361,6 +365,22 @@ static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_
     } else if (copy.size() < count) {
         if (!view->ownsStorage())
             return resize(globalObject, view, length - 1);
+        if (!start && view->canDropFrontOfOwnedStorage()) {
+            // From the front, which is how what has been dealt with is taken out of what has come in. The rest is not moved: it begins further on, as in CPython. What was before it is given back when there
+            // is more of that than of anything else.
+            VM& vm = globalObject->vm();
+            size_t dropped = count - copy.size();
+            auto& capacityName = vm.pythonNames().private_capacity;
+            JSValue known = view->getDirect(vm, capacityName);
+            size_t capacity = known ? static_cast<size_t>(known.asNumber()) : length;
+            view->dropFrontOfOwnedStorage(dropped, length - dropped);
+            view->putDirect(vm, capacityName, jsNumber(static_cast<double>(capacity - dropped)));
+            if (!resize(globalObject, view, length - dropped))
+                return false;
+            if (!copy.isEmpty())
+                memcpy(view->typedVector(), copy.span().data(), copy.size());
+            return true;
+        }
         uint8_t* data = view->typedVector();
         memmove(data + start + copy.size(), data + start + count, tail);
         if (!resize(globalObject, view, length - (count - copy.size())))
