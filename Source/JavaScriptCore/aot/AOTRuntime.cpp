@@ -215,7 +215,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         // Where cells can be that the collector did not allocate.
         environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
         size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + Image::numberOfFunctionsOfImageWithEnvironments() * sizeof(Data*));
-        instance = reinterpret_cast<Instance*>(static_cast<char*>(StaticHeap::allocateBlock(environmentsSize + size)) + environmentsSize);
+        instance = reinterpret_cast<Instance*>(static_cast<char*>(StaticHeap::allocateBlock(vm, environmentsSize + size)) + environmentsSize);
     } else {
         size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*));
         instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
@@ -692,6 +692,22 @@ const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned table
     if (!facts)
         return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
     return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionFacts::StringSwitchJumpTables))[tableIndex];
+}
+
+BytecodeIndex FunctionRef::resumePointOf(int32_t state) const
+{
+    if (state <= 0)
+        return BytecodeIndex(0);
+    int32_t offset = 0;
+    if (auto* facts = this->facts()) {
+        if (const uint32_t* word = facts->find(FunctionFacts::ResumePoints)) {
+            const int32_t* table = StaticHeap::inData<int32_t>(*word);
+            if (state >= table[0] && static_cast<uint32_t>(state - table[0]) < static_cast<uint32_t>(table[1]))
+                offset = table[2 + state - table[0]];
+        }
+    } else if (UnlinkedCodeBlock* codeBlock = unlinkedCodeBlockIfThereIsOne(); codeBlock && codeBlock->numberOfUnlinkedSwitchJumpTables())
+        offset = codeBlock->unlinkedSwitchJumpTable(codeBlock->numberOfUnlinkedSwitchJumpTables() - 1).offsetForValue(state);
+    return BytecodeIndex(std::max(offset, 0));
 }
 
 static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionFacts& facts, FunctionFacts::Fact which)

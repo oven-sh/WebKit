@@ -272,6 +272,24 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
     VM& vm, const SourceCode& source, CodeSpecializationKind specializationKind, 
     OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // One that was made when the program was built is every VM's to look at, and nobody's to store to. What a VM gets for it, the
+    // VM keeps.
+    if (m_isCached && StaticHeap::contains(this) && !StaticHeap::isBuilding()) [[unlikely]] {
+        if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
+            return kept;
+        UnlinkedFunctionCodeBlock* result = nullptr;
+        if (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset)
+            result = decodeCodeLeftInPayload(vm, specializationKind, vm.structureStructure.get());
+        else {
+            result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);
+            if (error.isValid())
+                return nullptr;
+        }
+        StaticHeap::setCodeOf(vm, *this, specializationKind, result);
+        return result;
+    }
+#endif
     if (m_isCached) {
 #if USE(BUN_JSC_ADDITIONS)
         // Code of a payload that outlives the program, about to be run: what a payload order file is about. (Not what

@@ -66,17 +66,11 @@ void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, voi
     (isCall(kind) ? m_jitCodeForCallWithArityCheck : m_jitCodeForConstructWithArityCheck) = CodePtr<JSEntryPtrTag>::fromTaggedPtr(stub);
 }
 
-void FunctionExecutable::forgetAOTCode(CodeSpecializationKind kind)
-{
-    m_aotEntry[static_cast<unsigned>(kind)] = nullptr;
-    (isCall(kind) ? m_jitCodeForCallWithArityCheck : m_jitCodeForConstructWithArityCheck) = nullptr;
-}
-
 ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() const
 {
     SourceProvider* provider = source().provider();
     RELEASE_ASSERT(StaticHeap::isPlaceOfSourceProvider(provider));
-    return StaticHeap::topLevelExecutableOfModuleWithProvider(provider);
+    return StaticHeap::topLevelExecutableOfModuleWithProvider(vm(), provider);
 }
 
 void FunctionExecutable::destroy(JSCell* cell)

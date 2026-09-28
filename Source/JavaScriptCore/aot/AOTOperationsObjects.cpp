@@ -418,6 +418,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
 {
     AOT_OPERATION_BEGIN(globalObject);
     static constexpr bool areLegacyFeaturesEnabled = true;
+    // A RegExp is written to when it is matched with. One that was made when the program was built is the first VM's to write to.
+    if (StaticHeap::isOnlyForFirstVM(regExp) && !StaticHeap::isFirst(vm)) [[unlikely]]
+        regExp = RegExp::create(vm, uncheckedDowncast<RegExp>(regExp)->pattern(), uncheckedDowncast<RegExp>(regExp)->flags());
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(regExp), areLegacyFeaturesEnabled));
 }
 

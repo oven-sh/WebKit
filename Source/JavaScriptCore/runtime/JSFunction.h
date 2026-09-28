@@ -213,6 +213,10 @@ private:
     }
 
     FunctionRareData* allocateRareData(VM&);
+public:
+    // For an executable of StaticHeap that turns out to be no good in this realm: another, of the same function.
+    void replaceExecutable(VM&, FunctionExecutable*);
+private:
     FunctionRareData* allocateAndInitializeRareData(JSGlobalObject*, size_t inlineCapacity);
     FunctionRareData* initializeRareData(JSGlobalObject*, size_t inlineCapacity);
 

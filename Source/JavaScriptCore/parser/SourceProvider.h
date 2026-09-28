@@ -134,6 +134,8 @@ public:
     void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
     // A program that was compiled ahead of time can be built without its text. Then source() is as long as the text was, so that
     // what says where something is in it still does, and there is nothing in it to read.
+    // From now on nothing in it changes, and its strings are nobody's to count references to. It is never destroyed.
+    JS_EXPORT_PRIVATE void becomeShareableBetweenThreads();
     bool hasNoText() const { return m_hasNoText; }
     void setHasNoText() { m_hasNoText = true; }
 #endif

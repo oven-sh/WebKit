@@ -6451,7 +6451,7 @@ RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder& d
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)
 {
-    if (StaticHeap::vm() == &vm) [[unlikely]] {
+    if (StaticHeap::isUsedBy(vm)) [[unlikely]] {
         if (UnlinkedCodeBlock* codeBlock = StaticHeap::codeFor(vm, key, cachedBytecode.get()))
             return codeBlock;
     }

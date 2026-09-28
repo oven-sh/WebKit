@@ -33,6 +33,7 @@ using Region = bmalloc::StaticRegion;
 
 bool StaticHeap::s_isBuilding = false;
 VM* StaticHeap::s_vm = nullptr;
+bool StaticHeap::s_isShared = false;
 bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 static constexpr size_t pageSizeOfImage = 16 * KB;
@@ -114,6 +115,54 @@ void StaticHeap::makeContainer(VM& vm)
     PreciseAllocation::setContainerOfStaticCells(PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace));
 }
 
+// What a VM other than the first has of its own, where the first has something that there is one of.
+struct StaticHeapOfVM {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StaticHeapOfVM);
+
+    uint64_t number { 0 }; // No other VM of the process has it, or has had it. (Another may well come to be where this one was.)
+    PreciseAllocation* container { nullptr };
+    Vector<ScriptExecutable*> topLevelExecutables; // By module.
+    UncheckedKeyHashMap<Decoder*, Ref<Decoder>> decoders;
+    UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, std::array<Strong<UnlinkedFunctionCodeBlock>, 2>> code;
+    UncheckedKeyHashMap<FunctionExecutable*, Strong<FunctionExecutable>> standIns;
+};
+static thread_local StaticHeapOfVM* t_ofVMOfThread = nullptr;
+static thread_local bool t_threadIsPrepared = false;
+
+static StaticHeapOfVM* ofVM(VM& vm) { return static_cast<StaticHeapOfVM*>(vm.m_staticHeapOfVM); }
+static uint64_t numberOf(VM& vm) { return ofVM(vm) ? ofVM(vm)->number : 1; }
+
+bool StaticHeap::isUsedBy(VM& vm)
+{
+    return s_vm == &vm || vm.m_staticHeapOfVM;
+}
+
+// Whose the blocks are that cells are placed in.
+struct OwnerOfBlock {
+    std::atomic<uintptr_t> start { 0 };
+    std::atomic<size_t> size { 0 };
+    std::atomic<PreciseAllocation*> container { nullptr };
+};
+static constexpr unsigned maxBlocks = 256;
+static OwnerOfBlock s_ownersOfBlocks[maxBlocks];
+static std::atomic<unsigned> s_numberOfOwnersEverUsed { 0 }; // The first so many.
+
+PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
+{
+    uintptr_t address = std::bit_cast<uintptr_t>(cell);
+    if (address - (Region::startOf(Region::Arena::Bss) + Region::offsetOfBlocksInBss) < Region::arenaReservation - Region::offsetOfBlocksInBss) {
+        for (unsigned i = 0, count = s_numberOfOwnersEverUsed.load(std::memory_order_acquire); i < count; ++i) {
+            auto& owner = s_ownersOfBlocks[i];
+            if (address - owner.start.load(std::memory_order_relaxed) < owner.size.load(std::memory_order_acquire))
+                return owner.container.load(std::memory_order_relaxed);
+        }
+    }
+    // (A thread that helps a collector has none. All it wants to know is that the cell is marked, which any of them says.)
+    if (auto* ofVM = t_ofVMOfThread)
+        return ofVM->container;
+    return PreciseAllocation::containerOfStaticCells();
+}
+
 void StaticHeap::placeNextCell(VM& vm, void* address)
 {
     RELEASE_ASSERT(!vm.heap.m_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
@@ -126,7 +175,7 @@ bool StaticHeap::canPlaceCellsOf(VM& vm)
     Locker locker { lock };
     if (!s_vmOfContainer && !s_isBuilding)
         makeContainer(vm);
-    return s_vmOfContainer == &vm;
+    return s_vmOfContainer == &vm || vm.m_staticHeapOfVM;
 }
 
 static Lock s_blocksLock;
@@ -137,26 +186,45 @@ static Vector<std::pair<void*, size_t>>& freeBlocks() WTF_REQUIRES_LOCK(s_blocks
     return blocks;
 }
 
-void* StaticHeap::allocateBlock(size_t size)
+void* StaticHeap::allocateBlock(VM& vm, size_t size)
 {
     RELEASE_ASSERT(!(size % WTF::pageSize()));
     Locker locker { s_blocksLock };
+    void* result = nullptr;
     auto& free = freeBlocks();
     for (unsigned i = 0; i < free.size(); ++i) {
         if (free[i].second == size) {
-            void* result = free[i].first;
+            result = free[i].first;
             free.removeAt(i);
-            return result;
+            break;
         }
     }
-    size_t offset = Region::offsetOfBlocksInBss + s_blocksUsed;
-    RELEASE_ASSERT(size <= Region::arenaReservation - offset);
-    s_blocksUsed += size;
-    return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + offset);
+    if (!result) {
+        size_t offset = Region::offsetOfBlocksInBss + s_blocksUsed;
+        RELEASE_ASSERT(size <= Region::arenaReservation - offset);
+        s_blocksUsed += size;
+        result = reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + offset);
+    }
+    for (unsigned i = 0; i < maxBlocks; ++i) {
+        auto& owner = s_ownersOfBlocks[i];
+        if (owner.size.load(std::memory_order_relaxed))
+            continue;
+        if (i >= s_numberOfOwnersEverUsed.load(std::memory_order_relaxed))
+            s_numberOfOwnersEverUsed.store(i + 1, std::memory_order_release);
+        owner.container.store(ofVM(vm) ? ofVM(vm)->container : PreciseAllocation::containerOfStaticCells(), std::memory_order_relaxed);
+        owner.start.store(std::bit_cast<uintptr_t>(result), std::memory_order_relaxed);
+        owner.size.store(size, std::memory_order_release);
+        return result;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void StaticHeap::freeBlock(void* block, size_t size)
 {
+    for (auto& owner : s_ownersOfBlocks) {
+        if (owner.start.load(std::memory_order_relaxed) == std::bit_cast<uintptr_t>(block) && owner.size.load(std::memory_order_relaxed))
+            owner.size.store(0, std::memory_order_release);
+    }
     // Zeroed again, and nobody's memory until it is written to.
     void* result = mmap(block, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE | MAP_FIXED, -1, 0);
     RELEASE_ASSERT(result == block);
@@ -384,6 +452,16 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock)
         words[0] |= Facts::RealmConstants;
         words.append(in(Region::Arena::Data, copy));
     }
+    if (size_t count = codeBlock->numberOfUnlinkedSwitchJumpTables(); count && isAsyncFunctionBodyParseMode(codeBlock->parseMode())) {
+        auto& table = codeBlock->unlinkedSwitchJumpTable(count - 1);
+        Vector<int32_t, 16> list { table.m_min, static_cast<int32_t>(table.m_branchOffsets.size()) };
+        for (int32_t offset : table.m_branchOffsets)
+            list.append(offset ? offset : table.m_defaultOffset);
+        auto* copy = static_cast<int32_t*>(Region::allocate(Region::Arena::Data, list.sizeInBytes(), alignof(int32_t)));
+        memcpySpan(std::span { copy, list.size() }, list.span());
+        words[0] |= Facts::ResumePoints;
+        words.append(in(Region::Arena::Data, copy));
+    }
     auto* facts = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, words.sizeInBytes(), alignof(uint32_t)));
     memcpySpan(std::span { facts, words.size() }, words.span());
     s_factsBeingBuilt[index] = in(Region::Arena::Data, facts);
@@ -499,11 +577,43 @@ const uint32_t* StaticHeap::factsOfFunctions(VM& vm)
 
 Ref<Decoder> StaticHeap::decoderOfWhatWasLeftInPayload(VM& vm, Decoder& placed)
 {
-    RELEASE_ASSERT(s_vm == &vm);
-    static NeverDestroyed<UncheckedKeyHashMap<Decoder*, Ref<Decoder>>> decoders;
-    return decoders->ensure(&placed, [&] {
+    RELEASE_ASSERT(isUsedBy(vm));
+    static NeverDestroyed<UncheckedKeyHashMap<Decoder*, Ref<Decoder>>> decodersOfFirstVM;
+    auto& decoders = ofVM(vm) ? ofVM(vm)->decoders : decodersOfFirstVM.get();
+    return decoders.ensure(&placed, [&] {
         return Decoder::create(vm, placed.cachedBytecode(), placed.provider(), Decoder::RecoverableCode::No);
     }).iterator->value;
+}
+
+FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executable)
+{
+    RELEASE_ASSERT(isUsedBy(vm) && contains(executable));
+    static NeverDestroyed<decltype(StaticHeapOfVM::standIns)> standInsOfFirstVM;
+    auto& standIns = ofVM(vm) ? ofVM(vm)->standIns : standInsOfFirstVM.get();
+    if (auto it = standIns.find(executable); it != standIns.end())
+        return it->value.get();
+    FunctionExecutable* result = FunctionExecutable::create(vm, executable->topLevelExecutable(), executable->source(), executable->unlinkedExecutable(), NoIntrinsic, executable->isInsideOrdinaryFunction());
+    standIns.add(executable, Strong<FunctionExecutable> { vm, result });
+    return result;
+}
+
+static decltype(StaticHeapOfVM::code)& codeKeptBy(VM& vm)
+{
+    RELEASE_ASSERT(StaticHeap::isUsedBy(vm));
+    static NeverDestroyed<decltype(StaticHeapOfVM::code)> codeOfFirstVM;
+    return ofVM(vm) ? ofVM(vm)->code : codeOfFirstVM.get();
+}
+
+UnlinkedFunctionCodeBlock* StaticHeap::codeOf(VM& vm, const UnlinkedFunctionExecutable& executable, CodeSpecializationKind kind)
+{
+    auto& code = codeKeptBy(vm);
+    auto it = code.find(&executable);
+    return it == code.end() ? nullptr : it->value[static_cast<unsigned>(kind)].get();
+}
+
+void StaticHeap::setCodeOf(VM& vm, const UnlinkedFunctionExecutable& executable, CodeSpecializationKind kind, UnlinkedFunctionCodeBlock* codeBlock)
+{
+    codeKeptBy(vm).add(&executable, std::array<Strong<UnlinkedFunctionCodeBlock>, 2> { }).iterator->value[static_cast<unsigned>(kind)].set(vm, codeBlock);
 }
 
 AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM& vm)
@@ -513,22 +623,59 @@ AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM& vm)
 
 bool StaticHeap::hasExecutablesOfFunctions(VM& vm)
 {
-    return s_header && s_vm == &vm && s_header->numberOfFunctions;
+    return s_header && isUsedBy(vm) && s_header->numberOfFunctions;
 }
 
-void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider)
+ScriptExecutable*& StaticHeap::topLevelExecutableOfModuleInOtherVM(VM& vm, size_t index)
+{
+    return ofVM(vm)->topLevelExecutables[index];
+}
+
+// Of each place for a SourceProvider: nobody's, somebody's who is making one there (whose), or that of one that is made.
+struct StateOfPlace {
+    std::atomic<uint64_t> maker { 0 }; // numberOf()
+    std::atomic<bool> isMade { false };
+};
+static StateOfPlace* statesOfPlaces(size_t numberOfModules)
+{
+    static StateOfPlace* states;
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        states = new StateOfPlace[numberOfModules];
+    });
+    return states;
+}
+
+void StaticHeap::didMakeSourceProvider(void* place)
+{
+    size_t index = (std::bit_cast<uintptr_t>(place) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
+    statesOfPlaces(s_header->numberOfModules)[index].isMade.store(true, std::memory_order_release);
+}
+
+void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider, SourceProvider*& made)
 {
     RELEASE_ASSERT(sizeOfProvider <= sizeOfPlaceForSourceProvider);
-    if (!s_header || s_vm != &vm)
+    made = nullptr;
+    if (!s_header || !isUsedBy(vm))
         return nullptr;
     std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
     size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
     if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
         return nullptr;
-    void* place = addressOfSourceProvider(index);
-    if (*static_cast<uintptr_t*>(place)) // What is there starts with the address of a table of virtual functions.
+    if (Options::staticHeapModuleToRefuseOtherVMs() == index + 1 && !isFirst(vm)) [[unlikely]]
         return nullptr;
-    return place;
+    void* place = addressOfSourceProvider(index);
+    StateOfPlace& state = statesOfPlaces(modules.size())[index];
+    uint64_t maker = 0;
+    if (state.maker.compare_exchange_strong(maker, numberOf(vm)))
+        return place;
+    // (A VM that loads a module a second time gets what it always got: a provider like any other.)
+    if (maker == numberOf(vm))
+        return nullptr;
+    while (!state.isMade.load(std::memory_order_acquire))
+        Thread::yield();
+    made = static_cast<SourceProvider*>(place);
+    return nullptr;
 }
 
 Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode)
@@ -826,8 +973,48 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
     return true;
 }
 
+void StaticHeap::prepareThread()
+{
+    if (!s_header || !s_vm || !Options::useStaticHeapInEveryVM() || t_threadIsPrepared)
+        return;
+    AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
+    if (!atoms->table().isEmpty())
+        return;
+    atoms->setStaticTable(&std::bit_cast<AtomStringTable*>(s_header->atomStringTable)->table());
+    t_threadIsPrepared = true;
+}
+
+void StaticHeap::willDestroy(VM& vm)
+{
+    auto* ofVM = JSC::ofVM(vm);
+    if (!ofVM)
+        return;
+    if (t_ofVMOfThread == ofVM)
+        t_ofVMOfThread = nullptr;
+    vm.m_staticHeapOfVM = nullptr;
+    // (The container is not: something may yet ask a cell whose it is.)
+    delete ofVM;
+}
+
 void StaticHeap::install(VM& vm)
 {
+    if (s_header && s_vm && s_vm != &vm && !vm.m_staticHeapOfVM) {
+        // What has locks that are not taken (needsNoLocking()) is not for the compiler's threads to look at, whoever's they are.
+        if (!t_threadIsPrepared || !s_hasNoCompilerThreads || t_ofVMOfThread)
+            return;
+        static std::atomic<uint64_t> lastNumber { 1 };
+        auto* ofVM = new StaticHeapOfVM;
+        ofVM->number = ++lastNumber;
+        ofVM->container = PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace);
+        ofVM->topLevelExecutables.fill(nullptr, s_header->numberOfModules);
+        vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
+        vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
+        vm.m_staticHeapOfVM = ofVM;
+        t_ofVMOfThread = ofVM;
+        WTF::storeStoreFence();
+        s_isShared = true;
+        return;
+    }
     if (!s_header || s_vm || &vm != addressOfVM())
         return;
     // Otherwise the strings are still good, as strings; the cells are not looked at again.
@@ -846,7 +1033,7 @@ void StaticHeap::install(VM& vm)
 
 std::unique_ptr<DecoderStringTable> StaticHeap::tryCreateStringTable(VM& vm, std::span<const uint8_t> strings)
 {
-    if (!s_header || s_vm != &vm || strings.size() != s_header->stringsSize)
+    if (!s_header || !isUsedBy(vm) || strings.size() != s_header->stringsSize)
         return nullptr;
     auto* copy = std::bit_cast<const uint8_t*>(s_header->strings);
     // They come out of the same file. This is against a mistake, not against malice.
@@ -863,12 +1050,15 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     if (found == all.end() || found->executable != std::bit_cast<uint64_t>(&executable))
         return nullptr;
     // (Which is there: the executable came out of a code block that codeFor() returned.)
-    return decodeParentScopeTDZVariablesForStaticHeap(*static_cast<Decoder*>(addressOfDecoder(found->moduleIndex)), std::bit_cast<const void*>(found->record));
+    // What comes of it is of a VM. The one that is there is of whichever VM got there first, which may be no more: it says which
+    // module, and that is all it is asked.
+    auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
+    return decodeParentScopeTDZVariablesForStaticHeap(decoderOfWhatWasLeftInPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
 }
 
 UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const CachedBytecode& cachedBytecode)
 {
-    ASSERT(s_vm == &vm);
+    ASSERT(isUsedBy(vm));
     if (!s_header->numberOfModules || !cachedBytecode.payloadIsPersistent() || cachedBytecode.size() < s_header->payloadSize)
         return nullptr;
     // A recording is of what is read out of the payload.
@@ -891,7 +1081,14 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     if (key.hash() != module->keyHash || key.length() != module->keyLength || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
 
+    // What is here refers to the module's provider by where it is. A module that is loaded with some other provider is another
+    // module, as far as that goes, and gets code of its own.
+    if (&key.source().provider() != addressOfSourceProvider(index))
+        return nullptr;
+
     static NeverDestroyed<BitVector> s_hasDecoder;
+    static Lock s_decodersLock;
+    Locker locker { s_decodersLock };
     auto* decoder = static_cast<Decoder*>(addressOfDecoder(index));
     if (!s_hasDecoder->get(index)) {
         Ref ownBytecode = CachedBytecode::create(payload, [](const void*) { }, { });

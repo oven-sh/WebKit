@@ -307,8 +307,11 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     calleeFrame->setCodeBlock(nullptr);
     if (executable->aotEntryFor(kind)) {
         DeferGCForAWhile deferGC(vm);
-        if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]]
-            executable->forgetAOTCode(kind);
+        // (The executable is every VM's, and says what it says. It is the function that gets another.)
+        if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]] {
+            executable = StaticHeap::standInFor(vm, executable);
+            function->replaceExecutable(vm, executable);
+        }
     }
     executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *calleeFrame->addressOfCodeBlock());
     if (scope.exception()) [[unlikely]]

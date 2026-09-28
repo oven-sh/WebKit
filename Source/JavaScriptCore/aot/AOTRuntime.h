@@ -438,8 +438,11 @@ struct FunctionFacts {
         // Unless FunctionInfo::constantsAreOfNoRealm. Where there are: how many constants there are, how many of them are
         // SourceCodeRepresentation::LinkTimeConstant, and which those are.
         RealmConstants = 1 << 5,
+        // Of the body of an async function: where it goes on from in each of the states it can be waiting in, which is what the
+        // last of its UnlinkedSimpleJumpTables says. Where there are: the least state, how many there are, and an offset for each.
+        ResumePoints = 1 << 6,
     };
-    static constexpr uint32_t isBuiltinFunction = 1 << 6;
+    static constexpr uint32_t isBuiltinFunction = 1 << 7;
     static constexpr unsigned shiftOfInstructionsSize = 8;
     static unsigned wordsFor(Fact fact) { return fact == Handlers || fact == FunctionDecls || fact == FunctionExprs ? 2 : 1; }
 

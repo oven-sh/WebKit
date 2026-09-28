@@ -64,7 +64,7 @@ public:
     static PreciseAllocation* fromCell(const void* cell)
     {
         if (StaticHeap::contains(cell)) [[unlikely]]
-            return s_containerOfStaticCells;
+            return StaticHeap::isShared() ? StaticHeap::containerOfSlow(cell) : s_containerOfStaticCells;
         return std::bit_cast<PreciseAllocation*>(std::bit_cast<char*>(cell) - headerSize());
     }
     

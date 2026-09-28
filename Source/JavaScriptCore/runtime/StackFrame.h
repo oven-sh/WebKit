@@ -71,7 +71,7 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex, bool isAsyncFrame);
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
-    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, FunctionExecutable*, CodeSpecializationKind, BytecodeIndex); // JSFrameData::aotExecutable
+    StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, FunctionExecutable*, CodeSpecializationKind, BytecodeIndex, bool isAsyncFrame = false); // JSFrameData::aotExecutable
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
     StackFrame(Wasm::IndexOrName);
     StackFrame(Wasm::IndexOrName, size_t functionIndex);

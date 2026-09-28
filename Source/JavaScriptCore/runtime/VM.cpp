@@ -682,6 +682,7 @@ VM::~VM()
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
     heap.lastChanceToFinalize();
+    StaticHeap::willDestroy(*this);
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();

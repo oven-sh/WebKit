@@ -52,7 +52,8 @@ class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
 
-class CachedBytecode : public RefCounted<CachedBytecode> {
+// (One that a SourceProvider has may be asked for by more than one VM: see StaticHeap::takePlaceForSourceProvider().)
+class CachedBytecode : public ThreadSafeRefCounted<CachedBytecode> {
     WTF_MAKE_NONCOPYABLE(CachedBytecode);
 
 public:

@@ -571,6 +571,12 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
                 if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
                     BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
                     results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+#if ENABLE(FTL_JIT)
+                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall); function && function.instance->data[function.index]) {
+                    // Code from the static compiler has none, and does not need one for this.
+                    JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
+                    results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
+#endif
                 } else
                     results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
             }

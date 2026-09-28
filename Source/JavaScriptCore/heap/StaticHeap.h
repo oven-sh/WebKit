@@ -29,8 +29,10 @@ struct FunctionInfo;
 }
 class ScriptExecutable;
 class SourceCodeKey;
+class SourceProvider;
 class TDZEnvironmentLink;
 class UnlinkedCodeBlock;
+class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
 
@@ -40,7 +42,9 @@ class VM;
 // them that they are marked. So it never visits them, and never writes to them. What one of them refers to is another of them,
 // unless it has been stored to since the program started: the write barrier says which those are (Heap::addToRememberedSet()).
 //
-// They belong to one VM of the process.
+// They are made for the first VM of the process, and say so: what a cell says it is, it says with a Structure of that VM's. But
+// nothing writes to them, so any other VM can refer to them as well (Options::useStaticHeapInEveryVM()), for as long as the first
+// is there. The exception is what is in the arenas for what is written to, which is for the first VM alone (isOnlyForFirstVM()).
 class StaticHeap {
 public:
     static ALWAYS_INLINE bool contains(const void* pointer) { return bmalloc::StaticRegion::contains(pointer); }
@@ -70,9 +74,22 @@ public:
         size_t sizeOfPayload;
     };
     JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
-    // From now on the static cells are this VM's: the first of the process, on the thread that called map().
+    // On a thread that is going to have a VM other than the first, before it has made an atom: as map() does for its own thread.
+    JS_EXPORT_PRIVATE static void prepareThread();
+    // From now on the VM has the static cells. The first of the process, on the thread that called map(); any other, on a thread
+    // that called prepareThread(), which is the only thread that is going to run it.
     JS_EXPORT_PRIVATE static void install(VM&);
-    static VM* vm() { return s_vm; }
+    static void willDestroy(VM&);
+    static bool isUsedBy(VM&);
+    static bool isFirst(VM& vm) { return s_vm == &vm; }
+    static ALWAYS_INLINE bool isOnlyForFirstVM(const void* pointer)
+    {
+        return std::bit_cast<uintptr_t>(pointer) - bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::MutableCells) < 2 * bmalloc::StaticRegion::arenaReservation;
+    }
+    // What a static cell has for a PreciseAllocation, once there is more than one VM to be asked about: that of the VM that placed
+    // it, or else of the VM of the thread that asks.
+    static ALWAYS_INLINE bool isShared() { return s_isShared; }
+    JS_EXPORT_PRIVATE static PreciseAllocation* containerOfSlow(const void* cell);
     // Of a lock that is for keeping the compiler's threads from what the mutator is changing: taking it would be writing to it, and
     // there are no such threads.
     static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && s_hasNoCompilerThreads; }
@@ -118,7 +135,10 @@ public:
     static constexpr size_t sizeOfPlaceForSourceProvider = 256;
     // For the provider of the module whose bytecode is there in the payload. Null if there is none, or it has been taken, or the
     // VM is not the one that the static heap is for. What is made there stays.
-    JS_EXPORT_PRIVATE static void* takePlaceForSourceProvider(VM&, size_t entryOffsetOfModule, size_t sizeOfProvider);
+    // Or, if some other VM has made one there: `made`. There is one for all of them, so it had better be
+    // SourceProvider::becomeShareableBetweenThreads(). Whoever is given the place says when the provider is made.
+    JS_EXPORT_PRIVATE static void* takePlaceForSourceProvider(VM&, size_t entryOffsetOfModule, size_t sizeOfProvider, SourceProvider*& made);
+    JS_EXPORT_PRIVATE static void didMakeSourceProvider(void* place);
     // The function that has this number in the image of code (AOT::CodeHeader::index), and which of its two kinds of code has it.
     static std::pair<FunctionExecutable*, CodeSpecializationKind> executableOfFunction(uint32_t index);
     static bool hasExecutablesOfFunctions(VM&);
@@ -130,6 +150,12 @@ public:
     template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
     // For the code of a function, which was left in the payload. `placed` is what UnlinkedFunctionExecutable::leaveCodeInPayload() was given.
     static Ref<Decoder> decoderOfWhatWasLeftInPayload(VM&, Decoder& placed);
+    // What the VM has got for an executable of the static heap, if it has had to: see UnlinkedFunctionExecutable::unlinkedCodeBlockFor().
+    // An executable like any other, of the VM's own, for the same function as one of the static heap's: for where that one's code
+    // is no good, and there is nowhere in it to put any other.
+    static FunctionExecutable* standInFor(VM&, FunctionExecutable*);
+    static UnlinkedFunctionCodeBlock* codeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind);
+    static void setCodeOf(VM&, const UnlinkedFunctionExecutable&, CodeSpecializationKind, UnlinkedFunctionCodeBlock*);
     static bool isPlaceOfSourceProvider(const void* pointer)
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
@@ -137,18 +163,21 @@ public:
         return address >= start + bmalloc::StaticRegion::offsetOfSourceProvidersInBss && address < start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss;
     }
     // The executable of the code of the module itself, in the realm that runs the program.
-    static ScriptExecutable*& topLevelExecutableOfModuleWithProvider(const void* provider)
+    static ScriptExecutable*& topLevelExecutableOfModuleWithProvider(VM& vm, const void* provider)
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
         size_t index = (std::bit_cast<uintptr_t>(provider) - start - bmalloc::StaticRegion::offsetOfSourceProvidersInBss) / sizeOfPlaceForSourceProvider;
+        if (!isFirst(vm)) [[unlikely]]
+            return topLevelExecutableOfModuleInOtherVM(vm, index);
         return reinterpret_cast<ScriptExecutable**>(start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss)[index];
     }
+    JS_EXPORT_PRIVATE static ScriptExecutable*& topLevelExecutableOfModuleInOtherVM(VM&, size_t index);
 
     // Cells that are not in the collector's own memory all say that they are of one VM. Whether it is this one: the first to ask,
     // if there is no static heap to have settled it.
     JS_EXPORT_PRIVATE static bool canPlaceCellsOf(VM&);
     // Zeroed memory to place cells in, a multiple of the size of a page. Any thread.
-    JS_EXPORT_PRIVATE static void* allocateBlock(size_t);
+    JS_EXPORT_PRIVATE static void* allocateBlock(VM&, size_t);
     JS_EXPORT_PRIVATE static void freeBlock(void*, size_t);
 
 private:
@@ -158,6 +187,7 @@ private:
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
     JS_EXPORT_PRIVATE static VM* s_vm;
+    JS_EXPORT_PRIVATE static bool s_isShared;
     JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;
     static const Header* s_header; // Of what is mapped.
 };

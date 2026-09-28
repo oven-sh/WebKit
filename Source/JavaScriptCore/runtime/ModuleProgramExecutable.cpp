@@ -102,7 +102,7 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
 #if ENABLE(FTL_JIT)
     if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !givesStaticExecutables()
         && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
-        if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(provider); !slot) {
+        if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
             slot = this;
             setGivesStaticExecutables();
         }
@@ -246,7 +246,7 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
     if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->givesStaticExecutables())
-        StaticHeap::topLevelExecutableOfModuleWithProvider(executable->source().provider()) = nullptr;
+        StaticHeap::topLevelExecutableOfModuleWithProvider(executable->vm(), executable->source().provider()) = nullptr;
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();
 }
 

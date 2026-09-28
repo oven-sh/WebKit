@@ -70,6 +70,8 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
+    // Of the body of an async function that is waiting in that state: where it goes on from. Nowhere in particular: the beginning.
+    JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs() const;
 

@@ -73,12 +73,12 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 {
 }
 
-StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex)
+StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, FunctionExecutable* executable, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
     : m_frameData(JSFrameData {
         callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
         WriteBarrier<CodeBlock>(),
         bytecodeIndex,
-        false,
+        isAsyncFrame,
         kind,
         WriteBarrier<FunctionExecutable>(vm, owner, executable)
     })
