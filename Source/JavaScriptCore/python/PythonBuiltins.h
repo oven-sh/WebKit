@@ -65,6 +65,7 @@ inline T unpack(CallFrame* callFrame, unsigned position)
 
 void addMethods(JSGlobalObject*, PyType*, std::initializer_list<MethodDefinition>);
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
+void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 PyNativeFunction* addFunction(JSGlobalObject*, JSObject* namespaceObject, ASCIILiteral name, NativeFunction, unsigned data = 0);
 
 #define PYTHON_NATIVE(name) \
@@ -84,6 +85,7 @@ PyNativeFunction* addFunction(JSGlobalObject*, JSObject* namespaceObject, ASCIIL
 // Each sets up some of the built-in types.
 void initializeObjectAndType(JSGlobalObject*);
 void initializeNumberTypes(JSGlobalObject*);
+void initializeComplexType(JSGlobalObject*);
 void initializeFunctionTypes(JSGlobalObject*);
 void initializeStrType(JSGlobalObject*);
 void initializeContainerTypes(JSGlobalObject*);

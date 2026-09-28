@@ -26,6 +26,8 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "PythonBytes.h"
+
 #include <unicode/uchar.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/StringBuilder.h>
@@ -135,7 +137,28 @@ PYTHON_NATIVE(strNew)
     if (!value)
         value = args.keyword(globalObject, "object"_s);
     JSValue result = jsEmptyString(vm);
-    if (value) {
+    JSValue encodingValue = args.at(2);
+    if (!encodingValue)
+        encodingValue = args.keyword(globalObject, "encoding"_s);
+    JSValue errorsValue = args.at(3);
+    if (!errorsValue)
+        errorsValue = args.keyword(globalObject, "errors"_s);
+    if (encodingValue || errorsValue) {
+        for (JSValue option : { encodingValue, errorsValue }) {
+            if (option && !option.isString())
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, typeName(globalObject, option))));
+        }
+        if (value) {
+            if (value.isString())
+                return JSValue::encode(raiseTypeError(globalObject, scope, "decoding str is not supported"_s));
+            auto buffer = tryBufferOf(value);
+            if (!buffer)
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
+            String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(asString(encodingValue)->value(globalObject)) : String(), errorsValue ? String(asString(errorsValue)->value(globalObject)) : String());
+            RETURN_IF_EXCEPTION(scope, { });
+            result = jsString(vm, text);
+        }
+    } else if (value) {
         String text = str(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
         result = value.isString() ? value : jsString(vm, text);
@@ -222,10 +245,7 @@ PYTHON_NATIVE(strSplit)
                 if (i >= length)
                     break;
                 if (static_cast<int64_t>(pieces.size()) == limit) {
-                    unsigned end = length;
-                    while (end > i && isSpace(view[end - 1]))
-                        --end;
-                    pieces.append({ i, end });
+                    pieces.append({ i, length });
                     break;
                 }
                 unsigned start = i;
@@ -241,10 +261,7 @@ PYTHON_NATIVE(strSplit)
                 if (!i)
                     break;
                 if (static_cast<int64_t>(pieces.size()) == limit) {
-                    unsigned start = 0;
-                    while (start < i && isSpace(view[start]))
-                        ++start;
-                    pieces.append({ start, i });
+                    pieces.append({ 0, i });
                     break;
                 }
                 unsigned end = i;

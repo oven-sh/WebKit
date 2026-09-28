@@ -1186,9 +1186,9 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "count"_s, rangeCount },
     });
     addComparisons(globalObject, range, false);
-    addGetSet(globalObject, range, "start"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->start()); });
-    addGetSet(globalObject, range, "stop"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->stop()); });
-    addGetSet(globalObject, range, "step"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->step()); });
+    addMember(globalObject, range, "start"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->start()); });
+    addMember(globalObject, range, "stop"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->stop()); });
+    addMember(globalObject, range, "step"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->step()); });
 
     PyType* slice = realm->typeSlice();
     slice->setInstanceStructure(vm, PySlice::createStructure(vm, globalObject, slice));
@@ -1197,9 +1197,9 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "__repr__"_s, nativeRepr },
         { "indices"_s, sliceIndices },
     });
-    addGetSet(globalObject, slice, "start"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->start(); });
-    addGetSet(globalObject, slice, "stop"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->stop(); });
-    addGetSet(globalObject, slice, "step"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->step(); });
+    addMember(globalObject, slice, "start"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->start(); });
+    addMember(globalObject, slice, "stop"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->stop(); });
+    addMember(globalObject, slice, "step"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->step(); });
 }
 
 void initializeIteratorTypes(JSGlobalObject* globalObject)

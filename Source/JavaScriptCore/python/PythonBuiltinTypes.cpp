@@ -48,6 +48,12 @@ void addGetSet(JSGlobalObject* globalObject, PyType* type, ASCIILiteral name, Py
     type->putDirect(vm, Identifier::fromString(vm, name), PyGetSetDescriptor::create(globalObject, type, String(name), getter, setter));
 }
 
+void addMember(JSGlobalObject* globalObject, PyType* type, ASCIILiteral name, PyGetSetDescriptor::Getter getter, PyGetSetDescriptor::Setter setter)
+{
+    VM& vm = globalObject->vm();
+    type->putDirect(vm, Identifier::fromString(vm, name), PyGetSetDescriptor::create(globalObject, type, String(name), getter, setter, true));
+}
+
 PyNativeFunction* addFunction(JSGlobalObject* globalObject, JSObject* namespaceObject, ASCIILiteral name, NativeFunction function, unsigned data)
 {
     VM& vm = globalObject->vm();
@@ -985,8 +991,8 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "__eq__"_s, methodEq },
         { "__getattribute__"_s, methodGetAttribute },
     });
-    addGetSet(globalObject, method, "__func__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->function(); });
-    addGetSet(globalObject, method, "__self__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->self(); });
+    addMember(globalObject, method, "__func__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->function(); });
+    addMember(globalObject, method, "__self__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->self(); });
 
     PyType* property = realm->typeProperty();
     addMethods(globalObject, property, {
@@ -999,9 +1005,9 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "setter"_s, propertyWith, PyNativeFunction::Kind::Method, pack(1) },
         { "deleter"_s, propertyWith, PyNativeFunction::Kind::Method, pack(2) },
     });
-    addGetSet(globalObject, property, "fget"_s, getField<0>);
-    addGetSet(globalObject, property, "fset"_s, getField<1>);
-    addGetSet(globalObject, property, "fdel"_s, getField<2>);
+    addMember(globalObject, property, "fget"_s, getField<0>);
+    addMember(globalObject, property, "fset"_s, getField<1>);
+    addMember(globalObject, property, "fdel"_s, getField<2>);
     addGetSet(globalObject, property, "__doc__"_s, getField<3>);
 
     for (PyType* type : { realm->typeStaticMethod(), realm->typeClassMethod() }) {
@@ -1010,8 +1016,8 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
             { "__init__"_s, wrapperInit },
             { "__get__"_s, descriptorGet },
         });
-        addGetSet(globalObject, type, "__func__"_s, getField<0>);
-        addGetSet(globalObject, type, "__wrapped__"_s, getField<0>);
+        addMember(globalObject, type, "__func__"_s, getField<0>);
+        addMember(globalObject, type, "__wrapped__"_s, getField<0>);
     }
     addMethods(globalObject, realm->typeStaticMethod(), { { "__call__"_s, staticMethodCall } });
 

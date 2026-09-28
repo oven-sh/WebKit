@@ -30,6 +30,8 @@
 #include "BytecodeGeneratorBaseInlines.h"
 #include "BytecodeStructs.h"
 #include "JSBigInt.h"
+#include "PythonOperations.h"
+#include "PythonSequences.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGenerator.h"
@@ -458,8 +460,8 @@ private:
         case Constant::Type::Float:
             return g.emitLoad(dst, jsTaggedFloat(node.real));
         case Constant::Type::Imaginary:
-            fail("complex numbers are not supported yet"_s, node);
-            return g.emitLoad(dst, jsUndefined());
+            // It is a cell of this realm's, so it cannot be a constant of code that any realm may run.
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.real)) }, node);
         case Constant::Type::String:
             return g.emitLoad(dst, *node.text);
         case Constant::Type::Bytes:
@@ -1801,10 +1803,358 @@ private:
         case Statement::Kind::ImportFrom:
             return emitImportFrom(statement.as<ImportFrom>());
         case Statement::Kind::Match:
+            return emitMatch(statement.as<Match>());
         case Statement::Kind::TypeAlias:
             return fail("this statement is not supported yet"_s, statement);
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // ---- match
+
+    // What a pattern has captured is kept aside, and given its name only once the whole pattern has matched.
+    struct Capture {
+        const Identifier* name;
+        Reg value;
+    };
+
+    struct PatternContext {
+        Vector<Capture, 4> captures;
+        // Whether a pattern that always matches may stand here. It may not where there are others after it to try.
+        bool allowIrrefutable { true };
+    };
+
+    void addCapture(PatternContext& context, const Identifier& name, RegisterID* value, const Node& node)
+    {
+        for (auto& capture : context.captures) {
+            if (*capture.name == name)
+                return fail(makeString("multiple assignments to name '"_s, name.string(), "' in pattern"_s), node);
+        }
+        Reg copy = g.newTemporary();
+        g.move(copy.get(), value);
+        context.captures.append({ &name, WTF::move(copy) });
+    }
+
+    static bool isWildcard(Pattern& pattern)
+    {
+        return pattern.is<MatchAs>() && !pattern.as<MatchAs>().name;
+    }
+
+    static bool isStarWildcard(Pattern& pattern)
+    {
+        return pattern.is<MatchStar>() && !pattern.as<MatchStar>().name;
+    }
+
+    // The number that a constant is, if it is one: True is 1.
+    static std::optional<double> numberOf(Constant& constant)
+    {
+        switch (constant.type) {
+        case Constant::Type::True:
+            return 1;
+        case Constant::Type::False:
+            return 0;
+        case Constant::Type::Integer:
+            return static_cast<double>(constant.integer);
+        case Constant::Type::Float:
+            return constant.real;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // Whether they would be the same key of a dict.
+    static bool isSameConstant(Constant& a, Constant& b)
+    {
+        if (auto number = numberOf(a))
+            return number == numberOf(b);
+        if (a.type != b.type)
+            return false;
+        return a.type == Constant::Type::None || (a.text && b.text && *a.text == *b.text);
+    }
+
+    static String reprOfConstant(Constant& constant)
+    {
+        switch (constant.type) {
+        case Constant::Type::None:
+            return "None"_s;
+        case Constant::Type::True:
+            return "True"_s;
+        case Constant::Type::False:
+            return "False"_s;
+        case Constant::Type::Integer:
+            return String::number(constant.integer);
+        case Constant::Type::Float:
+            return reprOfDouble(constant.real);
+        case Constant::Type::String:
+            return reprOfString(constant.text->string());
+        case Constant::Type::Bytes:
+            return makeString('b', reprOfString(constant.text->string()));
+        default:
+            return constant.text ? constant.text->string() : String();
+        }
+    }
+
+    // A pattern inside another. There, one that always matches hides nothing.
+    void emitSubpattern(Pattern& pattern, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        SetForScope allow(context.allowIrrefutable, true);
+        emitPattern(pattern, subject, mismatch, context);
+    }
+
+    void emitJumpIfMarker(RegisterID* value, Label& target)
+    {
+        OpJeqPtr::emit(&g, value, marker(), target.bind(&g));
+    }
+
+    // The elements of a tuple that the runtime made, each in a register.
+    Vector<Reg, 8> emitUnpackExactly(RegisterID* tuple, unsigned count)
+    {
+        Vector<Reg, 8> values;
+        for (unsigned i = 0; i < count; ++i)
+            values.append(g.newTemporary());
+        if (count)
+            OpPyUnpackSequence::emit(&g, values[0]->virtualRegister(), count, count, tuple);
+        return values;
+    }
+
+    // Goes on if the subject matches, and jumps if it does not.
+    void emitPattern(Pattern& pattern, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        if (m_error)
+            return;
+        switch (pattern.kind) {
+        case Pattern::Kind::MatchValue: {
+            Reg value = emit(pattern.as<MatchValue>().value);
+            Reg same = g.newTemporary();
+            mark(pattern);
+            emitCompare(same.get(), ComparisonOperator::Eq, subject, value.get());
+            emitJumpIfFalse(same.get(), mismatch);
+            return;
+        }
+        case Pattern::Kind::MatchSingleton: {
+            Reg same = g.newTemporary();
+            Constant::Type value = pattern.as<MatchSingleton>().value;
+            if (value == Constant::Type::None)
+                g.emitIsUndefinedOrNull(same.get(), subject);
+            else
+                emitCompare(same.get(), ComparisonOperator::Is, subject, constant(jsBoolean(value == Constant::Type::True)));
+            g.emitJumpIfFalse(same.get(), mismatch);
+            return;
+        }
+        case Pattern::Kind::MatchAs: {
+            auto& node = pattern.as<MatchAs>();
+            if (!node.pattern) {
+                if (!context.allowIrrefutable) {
+                    if (node.name)
+                        return fail(makeString("name capture '"_s, node.name->string(), "' makes remaining patterns unreachable"_s), node);
+                    return fail("wildcard makes remaining patterns unreachable"_s, node);
+                }
+            } else
+                emitPattern(*node.pattern, subject, mismatch, context);
+            if (node.name)
+                addCapture(context, *node.name, subject, node);
+            return;
+        }
+        case Pattern::Kind::MatchOr:
+            return emitOrPattern(pattern.as<MatchOr>(), subject, mismatch, context);
+        case Pattern::Kind::MatchSequence:
+            return emitSequencePattern(pattern.as<MatchSequence>(), subject, mismatch, context);
+        case Pattern::Kind::MatchMapping:
+            return emitMappingPattern(pattern.as<MatchMapping>(), subject, mismatch, context);
+        case Pattern::Kind::MatchClass:
+            return emitClassPattern(pattern.as<MatchClass>(), subject, mismatch, context);
+        case Pattern::Kind::MatchStar:
+            // The parser lets it be only in a sequence, which deals with it.
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    void emitOrPattern(MatchOr& node, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        Ref<Label> matched = g.newLabel();
+        // Whichever alternative matches, what it captured ends up here.
+        Vector<Capture, 4> common;
+        for (size_t i = 0; i < node.patterns.size(); ++i) {
+            PatternContext alternative;
+            alternative.allowIrrefutable = i + 1 == node.patterns.size() && context.allowIrrefutable;
+            Ref<Label> next = g.newLabel();
+            emitPattern(*node.patterns[i], subject, next.get(), alternative);
+            if (m_error)
+                return;
+            if (!i) {
+                for (auto& capture : alternative.captures)
+                    common.append({ capture.name, g.newTemporary() });
+            } else if (alternative.captures.size() != common.size())
+                return fail("alternative patterns bind different names"_s, node);
+            for (auto& capture : alternative.captures) {
+                auto* target = common.findIf([&] (auto& candidate) { return *candidate.name == *capture.name; }) == notFound ? nullptr : &common[common.findIf([&] (auto& candidate) { return *candidate.name == *capture.name; })];
+                if (!target)
+                    return fail("alternative patterns bind different names"_s, node);
+                g.move(target->value.get(), capture.value.get());
+            }
+            g.emitJump(matched.get());
+            g.emitLabel(next.get());
+        }
+        g.emitJump(mismatch);
+        g.emitLabel(matched.get());
+        for (auto& capture : common)
+            addCapture(context, *capture.name, capture.value.get(), node);
+    }
+
+    void emitSequencePattern(MatchSequence& node, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        unsigned size = node.patterns.size();
+        int star = -1;
+        bool onlyWildcards = true;
+        bool starIsWildcard = false;
+        for (unsigned i = 0; i < size; ++i) {
+            Pattern& element = *node.patterns[i];
+            if (element.is<MatchStar>()) {
+                if (star >= 0)
+                    return fail("multiple starred names in sequence pattern"_s, node);
+                starIsWildcard = isStarWildcard(element);
+                onlyWildcards &= starIsWildcard;
+                star = i;
+                continue;
+            }
+            onlyWildcards &= isWildcard(element);
+        }
+
+        // That it is a sequence, and how long: exactly so, or at least so if a star takes up the slack.
+        Reg fits = g.newTemporary();
+        emitRuntimeCall(fits.get(), "matchSequence"_s, { subject, constant(jsNumber(star < 0 ? size : size - 1)), constant(jsBoolean(star >= 0)) }, node);
+        g.emitJumpIfFalse(fits.get(), mismatch);
+        if (onlyWildcards)
+            return;
+
+        if (starIsWildcard) {
+            // Only what is wanted is got, by its index.
+            Reg length;
+            for (unsigned i = 0; i < size; ++i) {
+                Pattern& element = *node.patterns[i];
+                if (static_cast<int>(i) == star || isWildcard(element))
+                    continue;
+                Reg index = g.newTemporary();
+                if (static_cast<int>(i) < star)
+                    g.emitLoad(index.get(), jsNumber(i));
+                else {
+                    if (!length) {
+                        length = g.newTemporary();
+                        emitRuntimeCall(length.get(), "length"_s, { subject }, node);
+                    }
+                    emitBinaryOperation(index.get(), BinaryOperator::Sub, false, length.get(), constant(jsNumber(size - i)));
+                }
+                Reg value = g.newTemporary();
+                mark(element);
+                emitGetItem(value.get(), subject, index.get());
+                emitSubpattern(element, value.get(), mismatch, context);
+            }
+            return;
+        }
+
+        Vector<Reg, 8> values;
+        for (unsigned i = 0; i < size; ++i)
+            values.append(g.newTemporary());
+        mark(node);
+        OpPyUnpackSequence::emit(&g, values[0]->virtualRegister(), size, star < 0 ? size : star, subject);
+        for (unsigned i = 0; i < size; ++i) {
+            Pattern& element = *node.patterns[i];
+            if (auto* starred = element.is<MatchStar>() ? &element.as<MatchStar>() : nullptr)
+                addCapture(context, *starred->name, values[i].get(), element);
+            else
+                emitSubpattern(element, values[i].get(), mismatch, context);
+        }
+    }
+
+    void emitMappingPattern(MatchMapping& node, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        unsigned size = node.keys.size();
+        Reg fits = g.newTemporary();
+        emitRuntimeCall(fits.get(), "matchMapping"_s, { subject, constant(jsNumber(size)) }, node);
+        g.emitJumpIfFalse(fits.get(), mismatch);
+        if (!size && !node.rest)
+            return;
+
+        // A key that is written out twice can be seen now. One that is looked up has to wait until it is.
+        for (unsigned i = 0; i < size; ++i) {
+            auto* key = node.keys[i]->tryAs<Constant>();
+            if (!key) {
+                if (!node.keys[i]->is<Attribute>() && !node.keys[i]->is<UnaryOp>() && !node.keys[i]->is<BinOp>())
+                    return fail("mapping pattern keys may only match literals and attribute lookups"_s, *node.keys[i]);
+                continue;
+            }
+            for (unsigned j = 0; j < i; ++j) {
+                auto* other = node.keys[j]->tryAs<Constant>();
+                if (other && isSameConstant(*key, *other))
+                    return fail(makeString("mapping pattern checks duplicate key ("_s, reprOfConstant(*key), ')'), node);
+            }
+        }
+
+        Vector<Reg, 8> keyRegisters;
+        emitElements(node.keys, keyRegisters);
+        Reg keys = g.newTemporary();
+        emitNewTuple(keys.get(), keyRegisters);
+        Reg found = g.newTemporary();
+        emitRuntimeCall(found.get(), "matchKeys"_s, { subject, keys.get() }, node);
+        emitJumpIfMarker(found.get(), mismatch);
+        auto values = emitUnpackExactly(found.get(), size);
+        for (unsigned i = 0; i < size; ++i)
+            emitSubpattern(*node.patterns[i], values[i].get(), mismatch, context);
+        if (node.rest) {
+            Reg rest = g.newTemporary();
+            emitRuntimeCall(rest.get(), "matchRest"_s, { subject, keys.get() }, node);
+            addCapture(context, *node.rest, rest.get(), node);
+        }
+    }
+
+    void emitClassPattern(MatchClass& node, RegisterID* subject, Label& mismatch, PatternContext& context)
+    {
+        unsigned positional = node.patterns.size();
+        unsigned keywords = node.keywordAttributes.size();
+        for (unsigned i = 0; i < keywords; ++i) {
+            for (unsigned j = i + 1; j < keywords; ++j) {
+                if (*node.keywordAttributes[i] == *node.keywordAttributes[j])
+                    return fail(makeString("attribute name repeated in class pattern: "_s, node.keywordAttributes[i]->string()), *node.keywordPatterns[j]);
+            }
+        }
+        auto* names = JSCellButterfly::create(m_vm, CopyOnWriteArrayWithContiguous, keywords);
+        for (unsigned i = 0; i < keywords; ++i)
+            names->setIndex(m_vm, i, g.addStringConstant(*node.keywordAttributes[i]));
+
+        Reg cls = emitToTemporary(node.cls);
+        Reg found = g.newTemporary();
+        emitRuntimeCall(found.get(), "matchClass"_s, { subject, cls.get(), constant(jsNumber(positional)), constant(names) }, node);
+        emitJumpIfMarker(found.get(), mismatch);
+        auto values = emitUnpackExactly(found.get(), positional + keywords);
+        for (unsigned i = 0; i < positional + keywords; ++i) {
+            Pattern& element = i < positional ? *node.patterns[i] : *node.keywordPatterns[i - positional];
+            if (!isWildcard(element))
+                emitSubpattern(element, values[i].get(), mismatch, context);
+        }
+    }
+
+    void emitMatch(Match& node)
+    {
+        Reg subject = emitToTemporary(node.subject);
+        Ref<Label> end = g.newLabel();
+        for (size_t i = 0; i < node.cases.size(); ++i) {
+            MatchCase& matchCase = *node.cases[i];
+            Ref<Label> next = g.newLabel();
+            PatternContext context;
+            context.allowIrrefutable = matchCase.guard || i + 1 == node.cases.size();
+            emitPattern(*matchCase.pattern, subject.get(), next.get(), context);
+            if (m_error)
+                return;
+            for (auto& capture : context.captures)
+                emitStoreName(*capture.name, capture.value.get(), *matchCase.pattern);
+            context.captures.clear();
+            if (matchCase.guard)
+                emitBranch(matchCase.guard, next.get(), false);
+            emit(matchCase.body);
+            g.emitJump(end.get());
+            g.emitLabel(next.get());
+        }
+        g.emitLabel(end.get());
     }
 
     void emitFor(For& node)

@@ -33,6 +33,10 @@ JSValue stringGetItem(JSGlobalObject*, JSString*, JSValue key);
 JSValue stringRepeat(JSGlobalObject*, JSString*, int64_t count);
 // format % values
 JSValue stringPercentFormat(JSGlobalObject*, JSString* format, JSValue values);
+// The same of bytes. The result has a character for each byte, and is null if it raised.
+String bytesPercentFormat(JSGlobalObject*, std::span<const uint8_t> format, JSValue values);
+// What ascii() does to what repr() gives.
+String escapeNonASCII(const String&);
 
 // [[fill]align][sign][z][#][0][width][grouping][.precision][type], which is what comes after the colon in f"{x:>10.2f}".
 struct FormatSpecification {

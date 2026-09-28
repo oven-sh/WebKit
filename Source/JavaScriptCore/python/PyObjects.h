@@ -85,6 +85,73 @@ private:
     int64_t m_length;
 };
 
+class PyComplex final : public JSNonFinalObject {
+public:
+    PYTHON_CELL_BOILERPLATE(PyComplex)
+
+    static PyComplex* create(VM&, Structure*, double real, double imaginary);
+    static PyComplex* create(JSGlobalObject*, double real, double imaginary);
+    double real() const { return m_real; }
+    double imaginary() const { return m_imaginary; }
+
+private:
+    PyComplex(VM& vm, Structure* structure, double real, double imaginary)
+        : Base(vm, structure)
+        , m_real(real)
+        , m_imaginary(imaginary)
+    {
+    }
+
+    double m_real;
+    double m_imaginary;
+};
+
+// A window on the bytes of something else. It holds no pointer into them, only where they are in it, and looks again each time, so what it
+// is a view of can be resized or detached under it and the worst that comes of it is an error.
+class PyMemoryView final : public JSNonFinalObject {
+public:
+    PYTHON_CELL_BOILERPLATE(PyMemoryView)
+
+    static PyMemoryView* create(JSGlobalObject*, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly);
+
+    JSValue object() const { return m_object.get(); }
+    char format() const { return m_format; }
+    unsigned itemSize() const { return m_itemSize; }
+    int64_t offset() const { return m_offset; } // In bytes, of the first item.
+    int64_t length() const { return m_length; } // In items.
+    int64_t stride() const { return m_stride; } // In bytes, from one item to the next. It can be negative.
+    bool isReadOnly() const { return m_isReadOnly; }
+    bool isReleased() const { return !m_object; }
+    void release() { m_object.clear(); }
+    bool isContiguous() const { return m_stride == static_cast<int64_t>(m_itemSize) || m_length <= 1; }
+
+    // All of it, if its items are one after another and are still there.
+    std::optional<std::span<const uint8_t>> contiguousSpan() const;
+    // The bytes of one item. Empty if it is no longer there.
+    std::span<uint8_t> item(int64_t index) const;
+
+private:
+    PyMemoryView(VM& vm, Structure* structure, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly)
+        : Base(vm, structure)
+        , m_object(object, WriteBarrierEarlyInit)
+        , m_offset(offset)
+        , m_length(length)
+        , m_stride(stride)
+        , m_itemSize(itemSize)
+        , m_format(format)
+        , m_isReadOnly(isReadOnly)
+    {
+    }
+
+    WriteBarrier<Unknown> m_object;
+    int64_t m_offset;
+    int64_t m_length;
+    int64_t m_stride;
+    unsigned m_itemSize;
+    char m_format;
+    bool m_isReadOnly;
+};
+
 class PySlice final : public JSNonFinalObject {
 public:
     PYTHON_CELL_BOILERPLATE(PySlice)
@@ -210,7 +277,9 @@ public:
     using Getter = JSValue (*)(JSGlobalObject*, JSValue self);
     using Setter = void (*)(JSGlobalObject*, JSValue self, JSValue value); // The value is empty to delete.
 
-    static PyGetSetDescriptor* create(JSGlobalObject*, PyType* owner, const String& name, Getter, Setter);
+    // A member is what in CPython is a field of a C struct. It differs in what it is called and in what it says when it cannot be set.
+    static PyGetSetDescriptor* create(JSGlobalObject*, PyType* owner, const String& name, Getter, Setter, bool isMember = false);
+    bool isMember() const { return m_isMember; }
     Getter getter() const { return m_getter; }
     Setter setter() const { return m_setter; }
     PyType* owner() const { return m_owner.get(); }
@@ -226,6 +295,7 @@ private:
 
     Getter m_getter;
     Setter m_setter;
+    bool m_isMember { false };
     WriteBarrier<PyType> m_owner;
     WriteBarrier<JSString> m_name;
 };

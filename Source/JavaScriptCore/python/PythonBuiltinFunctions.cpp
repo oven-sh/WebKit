@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "JSLexicalEnvironment.h"
+#include "PythonBytes.h"
 #include "PythonGenerators.h"
 #include <wtf/text/StringBuilder.h>
 
@@ -205,6 +206,60 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
     RETURN_NONE();
 }
 
+// UnicodeEncodeError(encoding, object, start, end, reason), and UnicodeDecodeError the same.
+PYTHON_NATIVE(unicodeErrorInit)
+{
+    bool isDecode = unpack<bool>(callFrame, 0);
+    NATIVE_PROLOGUE();
+    ASCIILiteral name = isDecode ? "UnicodeDecodeError"_s : "UnicodeEncodeError"_s;
+    if (args.size() != 6)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes exactly 5 arguments ("_s, args.size() - 1, " given)"_s)));
+    if (!args[1].isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, "() argument 1 must be str, not "_s, typeName(globalObject, args[1]))));
+    if (isDecode ? !tryBufferOf(args[2]) : !args[2].isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, isDecode ? makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[2]), '\'') : makeString(name, "() argument 2 must be str, not "_s, typeName(globalObject, args[2]))));
+    JSObject* self = asObject(args[0]);
+    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
+    static constexpr ASCIILiteral attributes[] = { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s };
+    for (unsigned i = 0; i < 5; ++i)
+        self->putDirect(vm, Identifier::fromString(vm, attributes[i]), args[i + 1]);
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(unicodeErrorStr)
+{
+    bool isDecode = unpack<bool>(callFrame, 0);
+    NATIVE_PROLOGUE();
+    JSObject* self = asObject(args.at(0));
+    auto get = [&] (ASCIILiteral name) { return self->getDirect(vm, Identifier::fromString(vm, name)); };
+    JSValue object = get("object"_s);
+    if (!object)
+        return JSValue::encode(jsEmptyString(vm));
+    String encoding = str(globalObject, get("encoding"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    String reason = str(globalObject, get("reason"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    auto start = toIndex(globalObject, get("start"_s), true);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto end = toIndex(globalObject, get("end"_s), true);
+    RETURN_IF_EXCEPTION(scope, { });
+    ASCIILiteral verb = isDecode ? "decode"_s : "encode"_s;
+    if (*end == *start + 1 && *start >= 0) {
+        if (isDecode) {
+            auto buffer = tryBufferOf(object);
+            if (buffer && static_cast<size_t>(*start) < buffer->size())
+                return JSValue::encode(jsString(vm, makeString('\'', encoding, "' codec can't decode byte 0x"_s, hex((*buffer)[*start], 2, Lowercase), " in position "_s, *start, ": "_s, reason)));
+        } else if (object.isString() && *start < static_cast<int64_t>(stringLength(globalObject, asString(object)))) {
+            JSValue character = stringGetItem(globalObject, asString(object), jsNumber(static_cast<int32_t>(*start)));
+            RETURN_IF_EXCEPTION(scope, { });
+            char32_t c = *asString(character)->view(globalObject)->codePoints().begin();
+            String escaped = c <= 0xFF ? makeString("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase)) : c <= 0xFFFF ? makeString("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase)) : makeString("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
+            return JSValue::encode(jsString(vm, makeString('\'', encoding, "' codec can't encode character '"_s, escaped, "' in position "_s, *start, ": "_s, reason)));
+        }
+    }
+    return JSValue::encode(jsString(vm, makeString('\'', encoding, "' codec can't "_s, verb, isDecode ? " bytes in position "_s : " characters in position "_s, *start, '-', *end - 1, ": "_s, reason)));
+}
+
 void initializeExceptionTypes(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -231,6 +286,14 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
     addMethods(globalObject, realm->typeOSError(), {
         { "__init__"_s, osErrorInit },
         { "__str__"_s, osErrorStr },
+    });
+    addMethods(globalObject, realm->typeUnicodeEncodeError(), {
+        { "__init__"_s, unicodeErrorInit, Kind::Method, pack(false) },
+        { "__str__"_s, unicodeErrorStr, Kind::Method, pack(false) },
+    });
+    addMethods(globalObject, realm->typeUnicodeDecodeError(), {
+        { "__init__"_s, unicodeErrorInit, Kind::Method, pack(true) },
+        { "__str__"_s, unicodeErrorStr, Kind::Method, pack(true) },
     });
     for (PyType* type : { realm->typeImportError(), realm->typeAttributeError(), realm->typeNameError() }) {
         addMethods(globalObject, type, { { "__init__"_s, exceptionInitWithKeywords } });

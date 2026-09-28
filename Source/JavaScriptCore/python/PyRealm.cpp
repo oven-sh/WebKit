@@ -29,6 +29,7 @@
 #include "FunctionPrototype.h"
 #include "ObjectConstructor.h"
 #include "PythonBuiltins.h"
+#include "PythonBytes.h"
 #include "PythonRuntimeFunctions.h"
 
 namespace JSC {
@@ -100,8 +101,10 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     m_notImplemented.set(vm, this, PyNativeObject::create(globalObject, BuiltinType::NotImplementedType));
     m_ellipsis.set(vm, this, PyNativeObject::create(globalObject, BuiltinType::Ellipsis));
     Python::initializeNumberTypes(globalObject);
+    Python::initializeComplexType(globalObject);
     Python::initializeStrType(globalObject);
     Python::initializeContainerTypes(globalObject);
+    Python::initializeBytesTypes(globalObject);
     Python::initializeIteratorTypes(globalObject);
     Python::initializeExceptionTypes(globalObject);
 
@@ -112,7 +115,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
 
     Python::initializeBuiltinFunctions(globalObject, builtins);
     static constexpr BuiltinType publicTypes[] = {
-        BuiltinType::Object, BuiltinType::Type, BuiltinType::Int, BuiltinType::Bool, BuiltinType::Float, BuiltinType::Str, BuiltinType::List, BuiltinType::Tuple, BuiltinType::Dict,
+        BuiltinType::Object, BuiltinType::Type, BuiltinType::Int, BuiltinType::Bool, BuiltinType::Float, BuiltinType::Complex, BuiltinType::Str, BuiltinType::Bytes, BuiltinType::ByteArray, BuiltinType::MemoryView, BuiltinType::List, BuiltinType::Tuple, BuiltinType::Dict,
         BuiltinType::Set, BuiltinType::FrozenSet, BuiltinType::Range, BuiltinType::Slice, BuiltinType::Property, BuiltinType::StaticMethod, BuiltinType::ClassMethod, BuiltinType::Super,
         BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed,
     };

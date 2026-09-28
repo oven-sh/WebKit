@@ -27,6 +27,7 @@
 #include "PyObjects.h"
 
 #include "JSCInlines.h"
+#include "JSGenericTypedArrayViewInlines.h"
 #include "PyDict.h"
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
@@ -417,11 +418,12 @@ void PyGetSetDescriptor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_PYTHON_CELL(PyGetSetDescriptor, "getset_descriptor", ObjectType)
 
-PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyType* owner, const String& name, Getter getter, Setter setter)
+PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyType* owner, const String& name, Getter getter, Setter setter, bool isMember)
 {
     VM& vm = globalObject->vm();
     auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, globalObject->pyRealm()->structureFor(BuiltinType::GetSetDescriptor), getter, setter);
     descriptor->finishCreation(vm);
+    descriptor->m_isMember = isMember;
     descriptor->m_owner.set(vm, descriptor, owner);
     descriptor->m_name.set(vm, descriptor, jsString(vm, name));
     return descriptor;
@@ -801,8 +803,14 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         }
         RELEASE_AND_RETURN(scope, asObject(result)->get(globalObject, vm.propertyNames->value));
     }
-    case Kind::Bytes:
-        break;
+    case Kind::Bytes: {
+        auto* view = uncheckedDowncast<JSUint8Array>(m_a.get().asCell());
+        if (view->isDetached() || static_cast<uint64_t>(m_index) >= view->length()) {
+            finish();
+            return { };
+        }
+        return jsNumber(view->typedVector()[m_index++]);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

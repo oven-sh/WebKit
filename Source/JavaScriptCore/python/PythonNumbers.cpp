@@ -367,12 +367,10 @@ static JSValue powerOfFloats(JSGlobalObject* globalObject, ThrowScope& scope, do
         return floatFromDouble(base);
     if (std::isnan(exponent))
         return floatFromDouble(base == 1.0 ? 1.0 : exponent);
-    if (!base && exponent < 0)
+    if (!base && exponent < 0 && std::isfinite(exponent))
         return raise(globalObject, scope, BuiltinType::ZeroDivisionError, "zero to a negative power"_s);
-    if (base < 0 && std::isfinite(base) && std::isfinite(exponent) && exponent != std::floor(exponent)) {
-        // FIXME: This is a complex number.
-        return raiseValueError(globalObject, scope, "negative number cannot be raised to a fractional power"_s);
-    }
+    if (base < 0 && std::isfinite(base) && std::isfinite(exponent) && exponent != std::floor(exponent))
+        return powerOfNegativeFloat(globalObject, base, exponent);
     double result = std::pow(base, exponent);
     if (std::isinf(result) && std::isfinite(base) && std::isfinite(exponent))
         return raise(globalObject, scope, BuiltinType::OverflowError, PyTuple::create(globalObject, { jsNumber(34), jsNontrivialString(globalObject->vm(), "Result too large"_s) }));

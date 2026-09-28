@@ -268,6 +268,58 @@ void JSArrayBufferView::detachFromArrayBuffer()
     realm()->notifyArrayBufferDetaching();
 }
 
+bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byteLength, size_t capacity)
+{
+    RELEASE_ASSERT(ownsStorage());
+    RELEASE_ASSERT(byteLength <= capacity);
+
+    // It stays where the collector looks after it for as long as it is small. Once it is not, it does not go back.
+    TypedArrayMode oldMode = m_mode;
+    TypedArrayMode newMode = oldMode == FastTypedArray && capacity <= fastSizeLimit ? FastTypedArray : OversizeTypedArray;
+    void* newVector;
+    if (newMode == FastTypedArray)
+        newVector = vm.primitiveGigacageAuxiliarySpace().allocate(vm, sizeOf(capacity, 1), nullptr, AllocationFailureMode::ReturnNull);
+    else {
+        if (capacity > MAX_ARRAY_BUFFER_SIZE)
+            return false;
+        newVector = Gigacage::tryMalloc(Gigacage::Primitive, capacity);
+    }
+    if (!newVector)
+        return false;
+
+    void* oldVector = vector();
+    size_t kept = std::min(byteLengthRaw(), byteLength);
+    if (kept)
+        memcpy(newVector, oldVector, kept);
+    memset(static_cast<uint8_t*>(newVector) + kept, 0, capacity - kept);
+
+    {
+        Locker locker { cellLock() };
+        m_vector.setWithoutBarrier(newVector);
+        m_length = length;
+        WTF::storeStoreFence();
+        m_mode = newMode;
+    }
+    if (newMode == FastTypedArray) {
+        // The vector is marked when the view is visited, which may have been already.
+        vm.writeBarrier(this);
+        return true;
+    }
+    vm.heap.reportExtraMemoryAllocated(this, capacity);
+    if (oldMode == OversizeTypedArray)
+        Gigacage::free(Gigacage::Primitive, oldVector);
+    else
+        vm.heap.addFinalizer(this, finalize);
+    return true;
+}
+
+void JSArrayBufferView::setLengthWithinOwnedStorage(size_t length)
+{
+    RELEASE_ASSERT(ownsStorage());
+    Locker locker { cellLock() };
+    m_length = length;
+}
+
 ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
 {
     ASSERT(!hasArrayBuffer());

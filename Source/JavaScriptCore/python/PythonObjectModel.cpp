@@ -105,6 +105,8 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             return uncheckedDowncast<PyType>(prototype.asCell());
         if (isJSArray(cell))
             return realm->typeList();
+        if (cell->type() == Uint8ArrayType)
+            return realm->typeByteArray();
         if (cell->type() == ErrorInstanceType)
             return typeOfError(realm, uncheckedDowncast<ErrorInstance>(cell));
         return realm->typeJSObject();
@@ -507,7 +509,10 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         case DescriptorKind::GetSet: {
             auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(found.asCell());
             if (!getSet->setter()) {
-                raise(globalObject, scope, BuiltinType::AttributeError, makeString("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
+                if (getSet->isMember())
+                    raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
+                else
+                    raise(globalObject, scope, BuiltinType::AttributeError, makeString("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
                 return;
             }
             RELEASE_AND_RETURN(scope, getSet->setter()(globalObject, value, newValue));

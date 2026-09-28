@@ -54,7 +54,9 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | `str` | a `JSString` |
 | `list` | a `JSArray` |
 | function | a `JSFunction` |
-| `tuple`, `dict`, `set`, `bytes`, `range`, `slice`... | cells of their own |
+| `bytearray` | a `Uint8Array`, any that is not a `bytes`. So what JavaScript makes is one, a `Buffer` included |
+| `bytes` | a `Uint8Array` whose prototype is the class `bytes`, beyond which is `Uint8Array.prototype`. Nothing in Python changes what is in it |
+| `tuple`, `dict`, `set`, `complex`, `range`, `slice`, `memoryview`... | cells of their own |
 | an instance of a class | a `PyInstance`: an object with inline properties, like a `JSFinalObject` |
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
@@ -120,6 +122,20 @@ JavaScript `Error` is an instance of a Python class too, by its kind.
 ### Where the library is written
 
 Data structures and what the language itself needs, in C++. The long tail of methods, in Python, compiled by this front end.
+
+### `__dict__` is the object
+
+The attributes of an instance and the globals of a module are properties, which is what lets them be cached inline. `obj.__dict__`,
+`vars()` and `globals()` give a real `dict` that is *backed by* the object: its items with string keys are those properties. Neither
+can be out of date, since there is only the one copy. A plain dict that is given to `exec()` for its globals becomes backed by a
+new namespace object, so compiled code always finds its globals the same way.
+
+## Where it differs from CPython on purpose
+
+- **A `bytearray` can be resized while there is a `memoryview` of it.** CPython raises `BufferError`, and can because the view is released the
+  moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
+  holds no pointer, only where it is looking, and checks each time.
+- **A set is in the order in which it was added to**, and not in the order of a hash table's slots.
 
 ## What is not decided
 

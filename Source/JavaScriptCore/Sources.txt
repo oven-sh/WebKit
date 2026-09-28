@@ -744,10 +744,13 @@ python/PyType.cpp
 python/PythonASTDumper.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp
+python/PythonBytes.cpp
 python/PythonClasses.cpp
 python/PythonCodeGenerator.cpp
+python/PythonCodecs.cpp
 python/PythonCommonNames.cpp
 python/PythonCompiler.cpp
+python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
 python/PythonGenerators.cpp
 python/PythonLexer.cpp

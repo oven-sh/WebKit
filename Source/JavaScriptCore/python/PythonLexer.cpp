@@ -30,6 +30,7 @@
 #include <unicode/uchar.h>
 #include <unicode/unorm2.h>
 #include <wtf/ASCIICType.h>
+#include <wtf/HexNumber.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/MakeString.h>
 

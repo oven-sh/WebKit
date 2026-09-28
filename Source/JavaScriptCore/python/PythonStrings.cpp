@@ -29,6 +29,7 @@
 #include "JSCInlines.h"
 #include "PyDict.h"
 #include "PyObjects.h"
+#include "PythonBytes.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
 #include <unicode/uchar.h>
@@ -780,12 +781,31 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
 
 // ---- format % values
 
-JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString_, JSValue values)
+String escapeNonASCII(const String& text)
+{
+    if (text.containsOnlyASCII())
+        return text;
+    StringBuilder builder;
+    for (char32_t c : StringView(text).codePoints()) {
+        if (c < 0x80)
+            builder.append(static_cast<Latin1Character>(c));
+        else if (c <= 0xFF)
+            builder.append("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
+        else if (c <= 0xFFFF)
+            builder.append("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
+        else
+            builder.append("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
+    }
+    return builder.toString();
+}
+
+// For bytes, the format and the result have a character for each byte.
+static String percentFormat(JSGlobalObject* globalObject, const String& format, JSValue values, bool isForBytes)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String format = formatString_->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    auto raiseTypeError = [] (JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { Python::raiseTypeError(globalObject, scope, message); return String(); };
+    auto raiseValueError = [] (JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { Python::raiseValueError(globalObject, scope, message); return String(); };
 
     // A tuple is the arguments. Anything else is the one argument, and a mapping is where %(name)s looks.
     PyTuple* tuple = isTuple(values) ? uncheckedDowncast<PyTuple>(values.asCell()) : nullptr;
@@ -826,9 +846,10 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
             }
             if (depth)
                 return raiseValueError(globalObject, scope, "incomplete format key"_s);
-            if (tuple || values.isString() || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem))
+            if (tuple || values.isString() || bytesKindOf(values) != BytesKind::None || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem))
                 return raiseTypeError(globalObject, scope, "format requires a mapping"_s);
-            argument = getItem(globalObject, values, jsString(vm, format.substring(start, i - 1 - start)));
+            String key = format.substring(start, i - 1 - start);
+            argument = getItem(globalObject, values, isForBytes ? JSValue(newBytes(globalObject, key.span8())) : JSValue(jsString(vm, key)));
             RETURN_IF_EXCEPTION(scope, { });
             usedMapping = true;
         }
@@ -906,10 +927,37 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
 
         String piece;
         switch (conversion) {
+        case 'b':
+            if (!isForBytes)
+                return raiseValueError(globalObject, scope, makeString("unsupported format character 'b' (0x62) at index "_s, i - 1));
+            [[fallthrough]];
         case 's':
         case 'r':
         case 'a': {
-            String text = conversion == 's' ? str(globalObject, argument) : repr(globalObject, argument);
+            String text;
+            if (conversion == 'r' || conversion == 'a') {
+                text = repr(globalObject, argument);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (conversion == 'a' || isForBytes)
+                    text = escapeNonASCII(text);
+            } else if (!isForBytes)
+                text = str(globalObject, argument);
+            else {
+                auto buffer = tryBufferOf(argument);
+                if (!buffer && argument.isObject()) {
+                    JSValue self;
+                    JSValue method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_bytes, self);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (method) {
+                        argument = callMethod(globalObject, method, self);
+                        RETURN_IF_EXCEPTION(scope, { });
+                        buffer = tryBufferOf(argument);
+                    }
+                }
+                if (!buffer)
+                    return raiseTypeError(globalObject, scope, makeString("%b requires a bytes-like object, or an object that implements __bytes__, not '"_s, typeName(globalObject, argument), '\''));
+                text = String(byteCast<Latin1Character>(*buffer));
+            }
             RETURN_IF_EXCEPTION(scope, { });
             specification.sign = '-';
             specification.alternate = false;
@@ -918,7 +966,23 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
         }
         case 'c': {
             String text;
-            if (argument.isString()) {
+            if (isForBytes) {
+                if (auto buffer = bytesKindOf(argument) == BytesKind::None ? std::nullopt : tryBufferOf(argument)) {
+                    if (buffer->size() != 1)
+                        return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not a "_s, typeName(globalObject, argument), " object of length "_s, buffer->size()));
+                    text = String(byteCast<Latin1Character>(*buffer));
+                } else {
+                    Number number = classify(argument);
+                    if (!number.isInt())
+                        return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not "_s, typeName(globalObject, argument)));
+                    if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 255) {
+                        raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(256)"_s);
+                        return { };
+                    }
+                    Latin1Character byte = number.small;
+                    text = String(std::span<const Latin1Character>(&byte, 1));
+                }
+            } else if (argument.isString()) {
                 text = asString(argument)->value(globalObject);
                 if (lengthInCharacters(text) != 1)
                     return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
@@ -926,8 +990,10 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
                 Number number = classify(argument);
                 if (!number.isInt())
                     return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, argument)));
-                if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF)
-                    return raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
+                if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
+                    raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
+                    return { };
+                }
                 StringBuilder builder;
                 builder.append(static_cast<char32_t>(number.small));
                 text = builder.toString();
@@ -947,6 +1013,22 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
             if (number.kind == Number::Kind::Float && (conversion == 'd' || conversion == 'i' || conversion == 'u')) {
                 argument = intFromDouble(globalObject, number.real);
                 number = classify(argument);
+            }
+            if (!number && argument.isObject()) {
+                // By __int__ for a decimal, and only by __index__ otherwise.
+                bool isDecimal = conversion == 'd' || conversion == 'i' || conversion == 'u';
+                JSValue self;
+                JSValue method = isDecimal ? lookupSpecial(globalObject, argument, vm.pythonNames().dunder_int, self) : JSValue();
+                RETURN_IF_EXCEPTION(scope, { });
+                if (!method) {
+                    method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_index, self);
+                    RETURN_IF_EXCEPTION(scope, { });
+                }
+                if (method) {
+                    argument = callMethod(globalObject, method, self);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    number = classify(argument);
+                }
             }
             if (!number.isInt()) {
                 if (conversion == 'd' || conversion == 'i' || conversion == 'u')
@@ -1006,9 +1088,26 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString
         result.append(piece);
     }
 
-    if (nextArgument < argumentCount && !usedMapping && (tuple || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem) || values.isString()))
-        return raiseTypeError(globalObject, scope, "not all arguments converted during string formatting"_s);
-    return jsString(vm, result.toString());
+    if (nextArgument < argumentCount && !usedMapping && (tuple || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem) || values.isString() || bytesKindOf(values) != BytesKind::None))
+        return raiseTypeError(globalObject, scope, isForBytes ? "not all arguments converted during bytes formatting"_s : "not all arguments converted during string formatting"_s);
+    String text = result.toString();
+    return text.isNull() ? emptyString() : text;
+}
+
+JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* format, JSValue values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = format->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String result = percentFormat(globalObject, text, values, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsString(vm, result);
+}
+
+String bytesPercentFormat(JSGlobalObject* globalObject, std::span<const uint8_t> format, JSValue values)
+{
+    return percentFormat(globalObject, String(byteCast<Latin1Character>(format)), values, true);
 }
 
 } } // namespace JSC::Python

@@ -412,8 +412,9 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
         case PyTupleType:
             return uncheckedDowncast<PyTuple>(cell)->length();
         case PyDictType:
+            return uncheckedDowncast<PyDict>(cell)->size();
         case PySetType:
-            return uncheckedDowncast<PyHashTable>(cell)->size();
+            return uncheckedDowncast<PySet>(cell)->size();
         case PyRangeType:
             return uncheckedDowncast<PyRange>(cell)->length();
         default:

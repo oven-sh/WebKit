@@ -55,6 +55,10 @@ public:
         IsAbstract = 1 << 3,
         HasNoInstanceDict = 1 << 4, // __slots__, or a built-in type whose instances have no attributes of their own.
         IsTypeSubclass = 1 << 5, // A metaclass.
+        IsSequence = 1 << 6, // A sequence pattern can match it.
+        IsMapping = 1 << 7, // A mapping pattern can match it.
+        IsBytes = 1 << 12, // bytes or derived from it: a Uint8Array that is not to be changed.
+        MatchesSelf = 1 << 11, // In a class pattern, int(x) binds x to the subject itself.
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.

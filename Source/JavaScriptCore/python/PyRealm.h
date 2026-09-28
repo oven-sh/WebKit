@@ -37,19 +37,20 @@ namespace JSC {
     v(NoneType, "NoneType", Object, Native, 0) \
     v(NotImplementedType, "NotImplementedType", Object, Native, 0) \
     v(Ellipsis, "ellipsis", Object, Native, 0) \
-    v(Int, "int", Object, Boxed, PyType::IsBaseType) \
-    v(Bool, "bool", Int, Native, 0) \
-    v(Float, "float", Object, Boxed, PyType::IsBaseType) \
+    v(Int, "int", Object, Boxed, PyType::IsBaseType | PyType::MatchesSelf) \
+    v(Bool, "bool", Int, Native, PyType::MatchesSelf) \
+    v(Float, "float", Object, Boxed, PyType::IsBaseType | PyType::MatchesSelf) \
     v(Complex, "complex", Object, Native, PyType::IsBaseType) \
-    v(Str, "str", Object, Boxed, PyType::IsBaseType) \
-    v(Bytes, "bytes", Object, Native, PyType::IsBaseType) \
-    v(ByteArray, "bytearray", Object, Native, PyType::IsBaseType) \
-    v(List, "list", Object, List, PyType::IsBaseType) \
-    v(Tuple, "tuple", Object, Tuple, PyType::IsBaseType) \
-    v(Dict, "dict", Object, Dict, PyType::IsBaseType) \
-    v(Set, "set", Object, Set, PyType::IsBaseType) \
-    v(FrozenSet, "frozenset", Object, Set, PyType::IsBaseType) \
-    v(Range, "range", Object, Native, 0) \
+    v(Str, "str", Object, Boxed, PyType::IsBaseType | PyType::MatchesSelf) \
+    v(Bytes, "bytes", Object, Native, PyType::IsBaseType | PyType::MatchesSelf | PyType::IsBytes) \
+    v(ByteArray, "bytearray", Object, Native, PyType::IsBaseType | PyType::MatchesSelf) \
+    v(MemoryView, "memoryview", Object, Native, PyType::IsSequence) \
+    v(List, "list", Object, List, PyType::IsBaseType | PyType::MatchesSelf | PyType::IsSequence) \
+    v(Tuple, "tuple", Object, Tuple, PyType::IsBaseType | PyType::MatchesSelf | PyType::IsSequence) \
+    v(Dict, "dict", Object, Dict, PyType::IsBaseType | PyType::MatchesSelf | PyType::IsMapping) \
+    v(Set, "set", Object, Set, PyType::IsBaseType | PyType::MatchesSelf) \
+    v(FrozenSet, "frozenset", Object, Set, PyType::IsBaseType | PyType::MatchesSelf) \
+    v(Range, "range", Object, Native, PyType::IsSequence) \
     v(Slice, "slice", Object, Native, 0) \
     v(Function, "function", Object, Native, 0) \
     v(BuiltinFunction, "builtin_function_or_method", Object, Native, 0) \
@@ -68,7 +69,7 @@ namespace JSC {
     v(AsyncGenerator, "async_generator", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
-    v(MappingProxy, "mappingproxy", Object, Native, 0) \
+    v(MappingProxy, "mappingproxy", Object, Native, PyType::IsMapping) \
     v(ListIterator, "list_iterator", Object, Native, 0) \
     v(ListReverseIterator, "list_reverseiterator", Object, Native, 0) \
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \

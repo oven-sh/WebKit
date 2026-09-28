@@ -357,6 +357,15 @@ public:
 
     bool isIteratorProtocolFastAndNonObservable();
 
+    // For a view that owns its storage, which is one whose ArrayBuffer nothing has asked for yet. To JavaScript it is as if the view
+    // had been given the result of buffer.transfer(newLength), which is something that any call can do to a view.
+    bool ownsStorage() const { return m_mode == FastTypedArray || m_mode == OversizeTypedArray; }
+    // Gives it room for `capacity` bytes, of which `byteLength` are in use as `length` elements. What was in it is kept as far as it fits,
+    // and the rest is zero. False if there is no memory.
+    JS_EXPORT_PRIVATE bool reallocateOwnedStorage(VM&, size_t length, size_t byteLength, size_t capacity);
+    // The same, when there is room already.
+    JS_EXPORT_PRIVATE void setLengthWithinOwnedStorage(size_t length);
+
 private:
     enum Requester { Mutator, ConcurrentThread };
     template<Requester> ArrayBuffer* possiblySharedBufferImpl();

@@ -63,6 +63,8 @@ JSBigInt* toBigInt(JSGlobalObject*, const Number&);
 double toDouble(JSGlobalObject*, ThrowScope&, const Number&); // Raises OverflowError if it is an int too large.
 int64_t hashOfNumber(JSGlobalObject*, const Number&);
 int64_t hashOfDouble(double);
+// A negative number to a power that is not whole: a complex number.
+JSValue powerOfNegativeFloat(JSGlobalObject*, double base, double exponent);
 String reprOfInt(JSGlobalObject*, const Number&, unsigned radix = 10);
 
 } } // namespace JSC::Python

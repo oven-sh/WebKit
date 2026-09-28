@@ -32,6 +32,7 @@
 #include "PyDict.h"
 #include "PyInstance.h"
 #include "PyObjects.h"
+#include "PythonBytes.h"
 #include "PythonGenerators.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
@@ -120,7 +121,15 @@ PYTHON_RUNTIME_FUNCTION(deleteName)
 PYTHON_RUNTIME_FUNCTION(newBytes)
 {
     PROLOGUE();
-    return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "bytes are not supported yet"_s));
+    // The literal comes as a string with a character for each byte.
+    String text = asString(argument(0))->value(globalObject);
+    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, text.is8Bit() ? byteCast<uint8_t>(text.span8()) : std::span<const uint8_t>())));
+}
+
+// 2j
+PYTHON_RUNTIME_FUNCTION(newComplex)
+{
+    return JSValue::encode(PyComplex::create(globalObject, 0, callFrame->uncheckedArgument(0).asNumber()));
 }
 
 PYTHON_RUNTIME_FUNCTION(newSlice)
@@ -635,6 +644,165 @@ PYTHON_RUNTIME_FUNCTION(callExit)
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isTrue(globalObject, result))));
 }
 
+// ---- match
+
+// matchSequence(subject, count, hasStar): whether it is a sequence with so many elements, or at least so many.
+PYTHON_RUNTIME_FUNCTION(matchSequence)
+{
+    PROLOGUE();
+    if (!typeOf(globalObject, argument(0))->hasFlag(PyType::IsSequence))
+        return JSValue::encode(jsBoolean(false));
+    int64_t size = length(globalObject, argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    int64_t count = argument(1).asInt32();
+    return JSValue::encode(jsBoolean(argument(2).asBoolean() ? size >= count : size == count));
+}
+
+// matchMapping(subject, count): whether it is a mapping with at least so many items.
+PYTHON_RUNTIME_FUNCTION(matchMapping)
+{
+    PROLOGUE();
+    if (!typeOf(globalObject, argument(0))->hasFlag(PyType::IsMapping))
+        return JSValue::encode(jsBoolean(false));
+    int64_t count = argument(1).asInt32();
+    if (!count)
+        return JSValue::encode(jsBoolean(true));
+    int64_t size = length(globalObject, argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsBoolean(size >= count));
+}
+
+// matchKeys(subject, keys): a tuple of what the mapping has for each of the keys, or the marker if it lacks one.
+PYTHON_RUNTIME_FUNCTION(matchKeys)
+{
+    PROLOGUE();
+    JSValue subject = argument(0);
+    auto* keys = uncheckedDowncast<PyTuple>(argument(1).asCell());
+    // By get(), so that a defaultdict is not made to invent what it does not have.
+    JSValue self;
+    JSValue get = loadMethod(globalObject, subject, Identifier::fromString(vm, "get"_s), self);
+    RETURN_IF_EXCEPTION(scope, { });
+    PySet* seen = PySet::create(globalObject);
+    PyTuple* values = PyTuple::create(globalObject, keys->length());
+    JSValue missing = realm->boundArgumentsMarker();
+    for (unsigned i = 0; i < keys->length(); ++i) {
+        JSValue key = keys->at(i);
+        bool wasAdded;
+        seen->add(globalObject, key, &wasAdded);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!wasAdded) {
+            String text = repr(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, { });
+            return JSValue::encode(raiseValueError(globalObject, scope, makeString("mapping pattern checks duplicate key ("_s, text, ')')));
+        }
+        JSValue value = self ? call(globalObject, get, self, key, missing) : call(globalObject, get, key, missing);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value == missing)
+            return JSValue::encode(missing);
+        values->initializeAt(vm, i, value);
+    }
+    return JSValue::encode(values);
+}
+
+// matchRest(subject, keys): a dict of what is in the mapping under other keys than those.
+PYTHON_RUNTIME_FUNCTION(matchRest)
+{
+    PROLOGUE();
+    PyDict* rest = PyDict::create(globalObject);
+    forEachItem(globalObject, argument(0), [&] (JSValue key, JSValue value) {
+        rest->set(globalObject, key, value);
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& key : uncheckedDowncast<PyTuple>(argument(1).asCell())->span()) {
+        rest->remove(globalObject, key.get());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(rest);
+}
+
+// matchClass(subject, class, how many patterns are by position, the names of the others): a tuple of the attributes for the patterns to be
+// matched against, or the marker if it is not an instance or lacks one of them.
+PYTHON_RUNTIME_FUNCTION(matchClass)
+{
+    PROLOGUE();
+    auto& names = vm.pythonNames();
+    JSValue subject = argument(0);
+    if (!isType(argument(1)))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "called match pattern must be a class"_s));
+    PyType* type = asType(argument(1));
+    unsigned positional = argument(2).asInt32();
+    auto* keywords = uncheckedDowncast<KeywordNames>(argument(3).asCell());
+    JSValue mismatch = realm->boundArgumentsMarker();
+
+    bool isInstance = isInstanceOf(globalObject, subject, type);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isInstance)
+        return JSValue::encode(mismatch);
+
+    PyTuple* attributes = PyTuple::create(globalObject, positional + keywords->length());
+    Vector<String, 8> seen;
+    // False if there is no match, or it raised.
+    auto take = [&] (unsigned index, JSValue name) -> bool {
+        String text = asString(name)->value(globalObject);
+        if (seen.contains(text)) {
+            raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() got multiple sub-patterns for attribute "_s, reprOfString(text)));
+            return false;
+        }
+        seen.append(text);
+        JSValue value = getAttributeIfPresent(globalObject, subject, Identifier::fromString(vm, text));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value)
+            return false;
+        attributes->initializeAt(vm, index, value);
+        return true;
+    };
+
+    if (positional) {
+        JSValue matchArguments = getAttributeIfPresent(globalObject, type, names.dunder_match_args);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool matchesSelf = false;
+        unsigned allowed;
+        if (matchArguments) {
+            if (!isTuple(matchArguments))
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), ".__match_args__ must be a tuple (got "_s, typeName(globalObject, matchArguments), ')')));
+            allowed = uncheckedDowncast<PyTuple>(matchArguments.asCell())->length();
+        } else {
+            matchesSelf = type->hasFlag(PyType::MatchesSelf);
+            allowed = matchesSelf;
+        }
+        if (allowed < positional)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() accepts "_s, allowed, " positional sub-pattern"_s, allowed == 1 ? ""_s : "s"_s, " ("_s, positional, " given)"_s)));
+        if (matchesSelf)
+            attributes->initializeAt(vm, 0, subject);
+        else {
+            for (unsigned i = 0; i < positional; ++i) {
+                JSValue name = uncheckedDowncast<PyTuple>(matchArguments.asCell())->at(i);
+                if (!name.isString())
+                    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__match_args__ elements must be strings (got "_s, typeName(globalObject, name), ')')));
+                bool found = take(i, name);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (!found)
+                    return JSValue::encode(mismatch);
+            }
+        }
+    }
+    for (unsigned i = 0; i < keywords->length(); ++i) {
+        bool found = take(positional + i, keywords->get(i));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!found)
+            return JSValue::encode(mismatch);
+    }
+    return JSValue::encode(attributes);
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeLength)
+{
+    PROLOGUE();
+    int64_t size = length(globalObject, argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
+}
+
 // ---- Classes and modules
 
 PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
@@ -722,6 +890,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("deleteGlobal"_s, deleteGlobal);
     add("deleteName"_s, deleteName);
     add("newBytes"_s, newBytes);
+    add("newComplex"_s, newComplex);
     add("newSlice"_s, newSlice);
     add("listExtend"_s, runtimeListExtend);
     add("listAppend"_s, runtimeListAppend);
@@ -748,6 +917,12 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("loadExit"_s, loadExit);
     add("callEnter"_s, callEnter);
     add("callExit"_s, callExit);
+    add("matchSequence"_s, matchSequence);
+    add("matchMapping"_s, matchMapping);
+    add("matchKeys"_s, matchKeys);
+    add("matchRest"_s, matchRest);
+    add("matchClass"_s, matchClass);
+    add("length"_s, runtimeLength);
     add("buildClass"_s, runtimeBuildClass);
     add("importName"_s, importName);
     add("importFrom"_s, importFrom);

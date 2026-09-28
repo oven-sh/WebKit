@@ -52,7 +52,7 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(dict) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(dict) v(capacity) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
 
 struct CommonNames {
