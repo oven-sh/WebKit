@@ -309,6 +309,13 @@ public:
     using Setter = void (*)(JSGlobalObject*, JSValue self, JSValue value); // The value is empty to delete.
 
     // A member is what in CPython is a field of a C struct. It differs in what it is called and in what it says when it cannot be set.
+    // A member for which the instance has a slot: one of __slots__, or a field of a built-in exception. What is in the slot is a property of the
+    // instance under `storage`, which is a private name. `initialValue` is what it has until it is set, or empty if until then there is no such attribute.
+    static PyGetSetDescriptor* createForSlot(JSGlobalObject*, PyType* owner, JSString* name, Symbol* storage, JSValue initialValue);
+    // Null unless it is such a one.
+    Symbol* storage() const { return m_storage.get(); }
+    JSValue initialValue() const { return m_initialValue.get(); }
+
     // `doc` is for one that CPython has in no built-in class.
     static PyGetSetDescriptor* create(JSGlobalObject*, PyType* owner, const String& name, Getter, Setter, bool isMember = false, ASCIILiteral doc = { });
     bool isMember() const { return m_isMember; }
@@ -333,6 +340,8 @@ private:
     ASCIILiteral m_doc;
     WriteBarrier<PyType> m_owner;
     WriteBarrier<JSString> m_name;
+    WriteBarrier<Symbol> m_storage;
+    WriteBarrier<Unknown> m_initialValue;
 };
 
 // An instance of a class derived from list. A list is an Array, and so is this, made and worked on as one. It differs only in what its Structure

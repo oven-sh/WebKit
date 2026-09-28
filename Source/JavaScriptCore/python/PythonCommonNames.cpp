@@ -53,6 +53,11 @@ CommonNames::CommonNames(VM& vm)
 {
 }
 
+const Identifier& CommonNames::slotStorage(unsigned offset)
+{
+    return m_slotStorage.ensure(offset, [&] { return Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, makeString("slot at "_s, offset))); }).iterator->value;
+}
+
 const NativeSignature* CommonNames::signatureFor(ASCIILiteral text)
 {
     return m_signatures.ensure(text.characters(), [&] { return makeUnique<NativeSignature>(text); }).iterator->value.get();

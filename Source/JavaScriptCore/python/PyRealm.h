@@ -253,10 +253,6 @@ public:
     // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
     JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
-    // For a member_descriptor of a built-in class, which is not the same kind of cell as one that __slots__ makes.
-    Structure* builtinMemberDescriptorStructure() const { return m_builtinMemberDescriptorStructure.get(); }
-    void setBuiltinMemberDescriptorStructure(VM& vm, Structure* structure) { m_builtinMemberDescriptorStructure.set(vm, this, structure); }
-
     // The module builtins.
     JSObject* builtinsModule() const { return m_builtinsModule.get(); }
     // sys.modules
@@ -296,7 +292,6 @@ private:
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<PyType> m_frameLocalsProxyType;
     WriteBarrier<JSObject> m_builtinsModule;
-    WriteBarrier<Structure> m_builtinMemberDescriptorStructure;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Exception> m_handledException;
     WriteBarrier<Exception> m_outerHandledException;

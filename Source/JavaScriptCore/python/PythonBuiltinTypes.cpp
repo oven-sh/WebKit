@@ -537,17 +537,75 @@ static JSValue getClass(JSGlobalObject* globalObject, JSValue self)
     return typeOf(globalObject, self);
 }
 
+// Whether an instance of one class could as well be an instance of another: compatible_for_assignment() of CPython's Objects/typeobject.c, and what that
+// calls. It is easier to tell of a class and its base than of any two, so each is followed up to the last that it is laid out like, and those are
+// compared.
+static bool areLaidOutAlike(JSGlobalObject* globalObject, PyType* oldType, PyType* newType)
+{
+    VM& vm = globalObject->vm();
+    constexpr unsigned long inlineValues = 1ul << 2;
+    constexpr unsigned long preheader = 1ul << 3 | 1ul << 4;
+    constexpr unsigned long haveGC = 1ul << 14;
+    auto isLaidOutLikeItsBase = [] (PyType* child) {
+        PyType* parent = child->base();
+        return parent && child->basicSize() == parent->basicSize() && child->itemSize() == parent->itemSize() && child->dictOffset() == parent->dictOffset()
+            && child->weakReferenceOffset() == parent->weakReferenceOffset() && (child->flagsForPython() & haveGC) == (parent->flagsForPython() & haveGC) && child->hasFlag(PyType::IsHeapType);
+    };
+    auto addTheSameSlots = [&] (PyType* a, PyType* b) {
+        if (!a->hasFlag(PyType::IsHeapType) || !b->hasFlag(PyType::IsHeapType))
+            return false;
+        int size = a->base()->basicSize();
+        JSValue slotsOfA = a->getDirect(vm, vm.pythonNames().private_slots);
+        JSValue slotsOfB = b->getDirect(vm, vm.pythonNames().private_slots);
+        if (slotsOfA && slotsOfB) {
+            if (!isEqual(globalObject, slotsOfA, slotsOfB))
+                return false;
+            size += sizeof(void*) * uncheckedDowncast<PyTuple>(slotsOfA.asCell())->length();
+        }
+        return size == a->basicSize() && size == b->basicSize();
+    };
+    PyType* newBase = newType;
+    PyType* oldBase = oldType;
+    while (isLaidOutLikeItsBase(newBase))
+        newBase = newBase->base();
+    while (isLaidOutLikeItsBase(oldBase))
+        oldBase = oldBase->base();
+    if (newBase != oldBase && (newBase->base() != oldBase->base() || !addTheSameSlots(newBase, oldBase)))
+        return false;
+    return (oldType->flagsForPython() & (inlineValues | preheader)) == (newType->flagsForPython() & (inlineValues | preheader));
+}
+
 static void setClass(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!value || !isType(value)) {
-        raiseTypeError(globalObject, scope, makeString("__class__ must be set to a class, not '"_s, value ? typeName(globalObject, value) : "NULL"_str, "' object"_s));
+    PyRealm* realm = globalObject->pyRealm();
+    if (!value) {
+        raiseTypeError(globalObject, scope, "can't delete __class__ attribute"_s);
+        return;
+    }
+    if (!isType(value)) {
+        raiseTypeError(globalObject, scope, makeString("__class__ must be set to a class, not '"_s, typeName(globalObject, value), "' object"_s));
         return;
     }
     auto* newType = uncheckedDowncast<PyType>(value.asCell());
     PyType* oldType = typeOf(globalObject, self);
-    if (!self.isObject() || !oldType->hasFlag(PyType::IsHeapType) || !newType->hasFlag(PyType::IsHeapType) || oldType->layout() != newType->layout()) {
+    bool areModules = newType->isSubtypeOf(realm->typeModule()) && oldType->isSubtypeOf(realm->typeModule());
+    if (!areModules && (!oldType->hasFlag(PyType::IsHeapType) || !newType->hasFlag(PyType::IsHeapType))) {
+        raiseTypeError(globalObject, scope, "__class__ assignment only supported for mutable types or ModuleType subclasses"_s);
+        return;
+    }
+    // The class of a class is not its prototype, which is the class that it is derived from.
+    if (isType(self)) {
+        if (!areLaidOutAlike(globalObject, oldType, newType) || !newType->hasFlag(PyType::IsTypeSubclass)) {
+            raiseTypeError(globalObject, scope, makeString("__class__ assignment: '"_s, newType->nameString(globalObject), "' object layout differs from '"_s, oldType->nameString(globalObject), '\''));
+            return;
+        }
+        asType(self)->setMetatype(vm, newType);
+        return;
+    }
+    // The last is what matters here, where it is a kind of cell that a class goes with. It follows from the rest, and is not left to.
+    if (!areLaidOutAlike(globalObject, oldType, newType) || !self.isObject() || !newType->instanceStructure() || newType->instanceStructure()->classInfoForCells() != self.asCell()->classInfo()) {
         raiseTypeError(globalObject, scope, makeString("__class__ assignment: '"_s, newType->nameString(globalObject), "' object layout differs from '"_s, oldType->nameString(globalObject), '\''));
         return;
     }
@@ -1065,10 +1123,8 @@ PYTHON_NATIVE(descriptorGet)
 // The class that a descriptor written in C++ is an attribute of, and what it is called.
 static std::pair<PyType*, JSString*> ownerAndNameOf(JSValue descriptor)
 {
-    if (auto* getSet = dynamicDowncast<PyGetSetDescriptor>(descriptor))
-        return { getSet->owner(), getSet->name() };
-    auto* member = asNativeObject(descriptor);
-    return { asType(member->field(1)), asString(member->field(0)) };
+    auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(descriptor.asCell());
+    return { getSet->owner(), getSet->name() };
 }
 
 // member.__get__(instance, owner=None), member.__set__(instance, value) and member.__delete__(instance), and the same of a getset_descriptor
@@ -1101,8 +1157,8 @@ PYTHON_NATIVE(nativeDescriptorRepr)
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
     auto [owner, name] = ownerAndNameOf(args[0]);
-    auto* getSet = dynamicDowncast<PyGetSetDescriptor>(args[0]);
-    return JSValue::encode(jsString(vm, makeString('<', getSet && !getSet->isMember() ? "attribute"_s : "member"_s, " '"_s, name->value(globalObject).data, "' of '"_s, owner->nameString(globalObject), "' objects>"_s)));
+    auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(args[0].asCell());
+    return JSValue::encode(jsString(vm, makeString('<', getSet->isMember() ? "member"_s : "attribute"_s, " '"_s, name->value(globalObject).data, "' of '"_s, owner->nameString(globalObject), "' objects>"_s)));
 }
 
 PYTHON_NATIVE(propertySet)
@@ -1376,10 +1432,10 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     using Kind = PyNativeFunction::Kind;
 
     // What the rest of the setting up is done with comes first.
-    for (PyType* type : { realm->typeProperty(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeSuper(), realm->typeMemberDescriptor(), realm->typeNotImplementedType(), realm->typeEllipsis(), realm->typeDictKeys(), realm->typeDictValues(), realm->typeDictItems(), realm->typeMappingProxy() })
+    for (PyType* type : { realm->typeProperty(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeSuper(), realm->typeNotImplementedType(), realm->typeEllipsis(), realm->typeDictKeys(), realm->typeDictValues(), realm->typeDictItems(), realm->typeMappingProxy() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
     realm->typeGetSetDescriptor()->setInstanceStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeGetSetDescriptor()));
-    realm->setBuiltinMemberDescriptorStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeMemberDescriptor()));
+    realm->typeMemberDescriptor()->setInstanceStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeMemberDescriptor()));
 
     addMethods(globalObject, realm->typeFunction(), {
         { "__repr__"_s, nativeRepr },
@@ -1428,8 +1484,8 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
             { "__repr__"_s, nativeDescriptorRepr },
         });
         addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
-            auto* getSet = dynamicDowncast<PyGetSetDescriptor>(self);
-            return getSet && !getSet->doc().isNull() ? JSValue(jsString(globalObject->vm(), String(getSet->doc()))) : jsUndefined();
+            auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(self.asCell());
+            return !getSet->doc().isNull() ? JSValue(jsString(globalObject->vm(), String(getSet->doc()))) : jsUndefined();
         });
         addMember(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).second; });
         addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first; });

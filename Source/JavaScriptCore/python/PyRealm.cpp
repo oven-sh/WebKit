@@ -57,7 +57,6 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_frameLocalsProxyType);
     visitor.append(thisObject->m_builtinsModule);
-    visitor.append(thisObject->m_builtinMemberDescriptorStructure);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_handledException);
     visitor.append(thisObject->m_outerHandledException);
@@ -68,7 +67,7 @@ DEFINE_VISIT_CHILDREN(PyRealm);
 
 Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)

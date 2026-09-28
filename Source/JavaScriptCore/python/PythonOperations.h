@@ -112,7 +112,7 @@ void setDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, String
 
 // What is in a slot: one of __slots__, or what in CPython is a field of the C struct of a built-in type. It is a property of the instance under
 // a name that no attribute can have, and that __dict__ does not show. Empty if nothing is in it.
-JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name, const Identifier* storage = nullptr, JSValue initialValue = JSValue());
+JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name, const Identifier* storage, JSValue initialValue = JSValue());
 
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
@@ -150,6 +150,9 @@ inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSVa
 // Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's
 // `delete` does to something of Python's, which is delattr().
 bool deleteStoredAttribute(JSGlobalObject*, JSObject*, PropertyName);
+// Whether an object that JavaScript is working on is Python's: a class, or an instance of the class that is its prototype. Something of JavaScript's can
+// have a class for a prototype, or further up, if it was made to.
+bool isPythonObject(JSGlobalObject*, JSValue);
 // Getting a property of something of Python's, or asking whether it has one, as far as that is up to what it has of its own. `ordinary` is what
 // finds that.
 bool getOwnPropertySlotFromJavaScript(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&, bool (*ordinary)(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&));

@@ -318,8 +318,18 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     }
 
     // ---- What the class provides for its instances
-    for (auto& slot : slots)
-        type->putDirect(vm, Identifier::fromString(vm, slot), createMemberDescriptor(globalObject, type, jsString(vm, slot)));
+    if (slotsValue) {
+        // As they were made out to be, which is not always as __slots__ has them. Two classes are laid out alike only if these are the same.
+        PyTuple* names = PyTuple::create(globalObject, slots.size());
+        for (unsigned i = 0; i < slots.size(); ++i)
+            names->initializeAt(vm, i, jsString(vm, slots[i]));
+        type->putDirect(vm, vm.pythonNames().private_slots, names);
+    }
+    unsigned slotOffset = base->basicSize();
+    for (auto& slot : slots) {
+        type->putDirect(vm, Identifier::fromString(vm, slot), createMemberDescriptor(globalObject, type, jsString(vm, slot), &names.slotStorage(slotOffset)));
+        slotOffset += sizeof(void*);
+    }
     if (addsDict)
         type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
     if (addsWeakReferences)

@@ -108,10 +108,14 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
         }
         if (!cell->isObject())
             return realm->typeJSObject();
-        // Anything whose prototype is a class is an instance of it.
+        // What has a class for its prototype is an instance of it, if it is the kind of cell that its instances are. JavaScript can give anything any
+        // prototype, with Object.create() or Reflect.construct(), and what is written in C++ takes an instance of dict for a PyDict.
         JSValue prototype = cell->structure()->storedPrototype(asObject(cell));
-        if (isType(prototype))
-            return uncheckedDowncast<PyType>(prototype.asCell());
+        if (isType(prototype)) {
+            auto* type = uncheckedDowncast<PyType>(prototype.asCell());
+            if (Structure* structure = type->instanceStructure(); structure && structure->classInfoForCells() == cell->classInfo()) [[likely]]
+                return type;
+        }
         if (isListCell(cell))
             return realm->typeList();
         if (cell->type() == Uint8ArrayType)
@@ -143,16 +147,10 @@ String typeName(JSGlobalObject* globalObject, JSValue value)
 JSObject* createMemberDescriptor(JSGlobalObject* globalObject, PyType* owner, JSString* name, const Identifier* storage, JSValue initialValue)
 {
     VM& vm = globalObject->vm();
-    // What is in a slot is a property of the instance under a name that is the descriptor's own, as a private field of a class of JavaScript's
-    // is. Nothing else can name it, so it is in no dict and no list of properties, and a slot of a class and a slot of the same name of a class
-    // derived from it are two slots.
-    Symbol* key = storage ? Symbol::create(vm, static_cast<SymbolImpl&>(*storage->impl())) : Symbol::create(vm, PrivateSymbolImpl::create(*name->value(globalObject)->impl()).get());
-    return PyNativeObject::create(globalObject, BuiltinType::MemberDescriptor, name, owner, initialValue, key);
-}
-
-static PropertyName storageOfMember(PyNativeObject* member)
-{
-    return uncheckedDowncast<Symbol>(member->field(3).asCell())->privateName();
+    // What is in a slot is a property of the instance under a private name, as a private field of a class of JavaScript's is. Nothing else can name it,
+    // so it is in no dict and no list of properties.
+    Symbol* key = Symbol::create(vm, static_cast<SymbolImpl&>(*storage->impl()));
+    return PyGetSetDescriptor::createForSlot(globalObject, owner, name, key, initialValue);
 }
 
 // ---- Exceptions
@@ -346,8 +344,8 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
     }
     if (!cell->isObject())
         return { };
-    if (cell->inherits<PyGetSetDescriptor>())
-        return { DescriptorKind::GetSet, true, { } };
+    if (auto* getSet = dynamicDowncast<PyGetSetDescriptor>(cell))
+        return { getSet->storage() ? DescriptorKind::Member : DescriptorKind::GetSet, true, { } };
 
     PyType* type = typeOf(globalObject, value);
     if (type == realm->typeProperty())
@@ -356,8 +354,6 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
         return { DescriptorKind::StaticMethod, false, { } };
     if (type == realm->typeClassMethod())
         return { DescriptorKind::ClassMethod, false, { } };
-    if (type == realm->typeMemberDescriptor())
-        return { DescriptorKind::Member, true, { } };
     if (type == realm->typeJSObject() || type == realm->typeJSFunction() || type == realm->typeList())
         return { };
 
@@ -403,13 +399,13 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
     case DescriptorKind::Member: {
         if (!instance)
             return value;
-        auto* member = uncheckedDowncast<PyNativeObject>(value.asCell());
-        if (JSValue stored = asObject(instance)->getDirect(vm, storageOfMember(member)))
+        auto* member = uncheckedDowncast<PyGetSetDescriptor>(value.asCell());
+        if (JSValue stored = asObject(instance)->getDirect(vm, member->storage()->privateName()))
             return stored;
         // One of a built-in type has a value from the start.
-        if (JSValue initial = member->field(2))
+        if (JSValue initial = member->initialValue())
             return initial;
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, asString(member->field(0))->value(globalObject).data, '\''));
+        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, member->name()->value(globalObject).data, '\''));
     }
     case DescriptorKind::General:
         if (!descriptor.getter)
@@ -706,7 +702,7 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
         return true;
     }
     case DescriptorKind::Member: {
-        PropertyName storage = storageOfMember(uncheckedDowncast<PyNativeObject>(found.asCell()));
+        PropertyName storage = uncheckedDowncast<PyGetSetDescriptor>(found.asCell())->storage()->privateName();
         if (newValue) {
             asObject(value)->putDirect(vm, storage, newValue);
             return true;

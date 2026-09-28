@@ -29,6 +29,11 @@
 
 namespace JSC {
 
+// The class of something of Python's is its prototype, and functions written in C++ go by the class for what kind of cell they have been given. So the
+// prototype is not JavaScript's to set: every Structure for a cell of Python's has IsImmutablePrototypeExoticObject, as Object.prototype has. Assigning
+// to __class__ sets it, having checked. And the other way about, something of JavaScript's that is given a class for a prototype is no instance of it:
+// see Python::typeOf().
+
 // What makes something of Python's an exotic object to JavaScript: see PyType.h. Every kind of cell that can have attributes of its own has these.
 #define PYTHON_DECLARE_EXOTIC_METHODS \
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&); \

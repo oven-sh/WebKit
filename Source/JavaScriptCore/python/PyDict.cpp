@@ -311,7 +311,7 @@ PyDict* PyDict::create(JSGlobalObject* globalObject)
 
 Structure* PyDict::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 template<typename Visitor>
@@ -527,7 +527,7 @@ PySet* PySet::create(JSGlobalObject* globalObject)
 
 Structure* PySet::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PySetType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PySetType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 } // namespace JSC

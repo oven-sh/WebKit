@@ -62,7 +62,7 @@ PyInstance* PyInstance::create(VM& vm, Structure* structure)
 
 Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned inlineCapacity)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyInstanceType, StructureFlags), info(), NonArray, inlineCapacity);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyInstanceType, StructureFlags | IsImmutablePrototypeExoticObject), info(), NonArray, inlineCapacity);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callInstance);
@@ -105,7 +105,7 @@ const ClassInfo PyException::s_info = { "Error"_s, &Base::s_info, nullptr, nullp
 
 Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 PyException* PyException::create(VM& vm, PyType* type)
@@ -204,12 +204,12 @@ const ClassInfo PyDerivedBytes::s_info = { "bytes"_s, &Base::s_info, nullptr, nu
 
 Structure* PyDerivedList::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), ArrayWithUndecided);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags | IsImmutablePrototypeExoticObject), info(), ArrayWithUndecided);
 }
 
 Structure* PyDerivedBytes::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags), info(), NonArray);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags | IsImmutablePrototypeExoticObject), info(), NonArray);
 }
 
 CallData PyInstance::getCallData(JSCell* cell)
@@ -303,7 +303,7 @@ void PyNativeFunction::setSignature(const Python::NativeSignature* signature, Ar
 
 Structure* PyNativeFunction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 // ---- PyTuple
@@ -363,7 +363,7 @@ PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, const ArgLis
 
 Structure* PyTuple::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 bool PyTuple::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -436,7 +436,7 @@ void PyTuple::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject
     const ClassInfo ClassName::s_info = { pythonName ""_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ClassName) }; \
     Structure* ClassName::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype) \
     { \
-        return Structure::create(vm, globalObject, prototype, TypeInfo(jsType, StructureFlags), info()); \
+        return Structure::create(vm, globalObject, prototype, TypeInfo(jsType, StructureFlags | IsImmutablePrototypeExoticObject), info()); \
     } \
     DEFINE_VISIT_CHILDREN(ClassName);
 
@@ -614,6 +614,8 @@ void PyGetSetDescriptor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_owner);
     visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_storage);
+    visitor.append(thisObject->m_initialValue);
 }
 
 DEFINE_PYTHON_CELL(PyGetSetDescriptor, "getset_descriptor", ObjectType)
@@ -629,12 +631,26 @@ PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyT
         isMember = description->kind == Python::BuiltinDescription::Kind::MemberDescriptor;
         doc = description->doc;
     }
-    auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, isMember ? realm->builtinMemberDescriptorStructure() : realm->structureFor(BuiltinType::GetSetDescriptor), getter, setter);
+    auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, realm->structureFor(isMember ? BuiltinType::MemberDescriptor : BuiltinType::GetSetDescriptor), getter, setter);
     descriptor->finishCreation(vm);
     descriptor->m_doc = doc;
     descriptor->m_isMember = isMember;
     descriptor->m_owner.set(vm, descriptor, owner);
     descriptor->m_name.set(vm, descriptor, jsString(vm, name));
+    return descriptor;
+}
+
+PyGetSetDescriptor* PyGetSetDescriptor::createForSlot(JSGlobalObject* globalObject, PyType* owner, JSString* name, Symbol* storage, JSValue initialValue)
+{
+    VM& vm = globalObject->vm();
+    auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, globalObject->pyRealm()->structureFor(BuiltinType::MemberDescriptor), nullptr, nullptr);
+    descriptor->finishCreation(vm);
+    descriptor->m_isMember = true;
+    descriptor->m_owner.set(vm, descriptor, owner);
+    descriptor->m_name.set(vm, descriptor, name);
+    descriptor->m_storage.set(vm, descriptor, storage);
+    if (initialValue)
+        descriptor->m_initialValue.set(vm, descriptor, initialValue);
     return descriptor;
 }
 

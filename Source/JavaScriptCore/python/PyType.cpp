@@ -60,7 +60,7 @@ DEFINE_VISIT_CHILDREN(PyType);
 
 Structure* PyType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, PyType* prototype)
@@ -409,9 +409,14 @@ bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, 
     // In Python, what an attribute is is settled when it is got: a function of the class becomes a method bound to the instance, a property is
     // computed, __getattr__ is asked. So the class of the receiver answers with what getattr() would give. The classes beyond it have
     // nothing to add, since that has been through all of them, in Python's order and not in that of the prototypes.
+    //
+    // Something of JavaScript's can inherit from a class too, as what Object.create(C) makes does. It is no instance, so what it inherits is what the class
+    // itself has: C.name.
     bool isForClass = receiver == JSValue(type);
-    if (!isForClass && asObject(receiver)->getPrototypeDirect() != JSValue(type))
+    if (!isForClass && asObject(receiver)->getPrototypeDirect() != JSValue(type) && Python::isPythonObject(globalObject, receiver))
         return false;
+    if (!isForClass && Python::typeOf(globalObject, receiver) != type)
+        receiver = type;
     JSValue value = Python::getPropertyForJavaScript(globalObject, receiver, name);
     RETURN_IF_EXCEPTION(scope, false);
     if (!value)

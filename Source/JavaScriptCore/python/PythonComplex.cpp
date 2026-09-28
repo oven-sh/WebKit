@@ -45,7 +45,7 @@ DEFINE_VISIT_CHILDREN(PyComplex);
 
 Structure* PyComplex::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | IsImmutablePrototypeExoticObject), info());
 }
 
 PyComplex* PyComplex::create(VM& vm, Structure* structure, double real, double imaginary)

@@ -55,7 +55,7 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(dict) v(foreignDict) v(capacity) v(descriptor) v(code) v(yieldFrom) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(dict) v(foreignDict) v(slots) v(capacity) v(descriptor) v(code) v(yieldFrom) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
@@ -85,6 +85,11 @@ struct CommonNames {
     const Identifier globals; // ".globals"
     const Identifier builtins; // ".builtins"
 
+    // The private name that what is in a slot of an instance is a property under: one of __slots__. In CPython a slot is so many bytes into the instance, and
+    // this goes by the same, so that two classes that are laid out alike have their slots in the same places, and an instance of one that is made an
+    // instance of the other, by assigning to __class__, keeps what is in them.
+    const Identifier& slotStorage(unsigned offset);
+
     // The signature that is written so, taken apart. There is one, for as long as the VM lasts.
     const NativeSignature* signatureFor(ASCIILiteral);
 
@@ -98,6 +103,7 @@ private:
     const Identifier* m_reflectedMethods[numberOfBinaryOperators];
     const Identifier* m_inPlaceMethods[numberOfBinaryOperators];
     UncheckedKeyHashMap<const void*, std::unique_ptr<NativeSignature>> m_signatures;
+    UncheckedKeyHashMap<unsigned, Identifier, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_slotStorage;
 };
 
 } } // namespace JSC::Python

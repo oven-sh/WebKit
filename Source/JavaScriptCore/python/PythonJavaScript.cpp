@@ -449,11 +449,12 @@ bool isCalledByPython(VM& vm, CallFrame* callFrame)
     return callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType || callee->type() == PyInstanceType;
 }
 
-// Whether what JavaScript is working on is Python's: a class, or something whose prototype is one. Something of JavaScript's can have a class
-// further up, if it was made to.
-static bool isPythonObject(JSValue value)
+bool isPythonObject(JSGlobalObject* globalObject, JSValue value)
 {
-    return isType(value) || isType(asObject(value)->getPrototypeDirect());
+    if (isType(value))
+        return true;
+    JSValue prototype = asObject(value)->getPrototypeDirect();
+    return isType(prototype) && typeOf(globalObject, value) == asType(prototype);
 }
 
 bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot, bool (*ordinary)(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&))
@@ -506,7 +507,7 @@ bool setPropertyFromJavaScript(JSGlobalObject* globalObject, JSValue receiver, P
     // FIXME: Setting an attribute that the class has nothing to say about could be remembered, if a PutPropertySlot could say what has to hold,
     // as a PropertySlot can.
     slot.disableCaching();
-    if (!isPythonObject(receiver))
+    if (!isPythonObject(globalObject, receiver))
         RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));
     setAttribute(globalObject, receiver, name, value);
     RETURN_IF_EXCEPTION(scope, false);
