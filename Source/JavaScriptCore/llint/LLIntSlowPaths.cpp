@@ -646,7 +646,7 @@ static ALWAYS_INLINE void* firstCallToJSFunction(VM& vm, CallFrame* calleeFrame,
     CodeBlock** codeBlockSlot = calleeFrame->addressOfCodeBlock();
     functionExecutable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *codeBlockSlot);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
-    ArityCheckMode arity = calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
+    ArityCheckMode arity = !*codeBlockSlot || calleeFrame->argumentCountIncludingThis() < static_cast<size_t>((*codeBlockSlot)->numParameters()) ? ArityCheckMode::MustCheckArity : ArityCheckMode::ArityCheckNotRequired;
     return functionExecutable->entrypointFor(kind, arity).taggedPtr();
 }
 
@@ -2242,10 +2242,9 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
         LLINT_CALL_CHECK_EXCEPTION(globalObject);
 
         CodeBlock* codeBlock = *codeBlockSlot;
-        ASSERT(codeBlock);
 
         ArityCheckMode arity;
-        if (calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()))
+        if (!codeBlock || calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()))
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;

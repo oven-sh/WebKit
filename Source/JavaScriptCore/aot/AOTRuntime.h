@@ -23,6 +23,8 @@ namespace JSC {
 class CodeBlock;
 class JSGlobalObject;
 class CallFrame;
+class FunctionExecutable;
+class ScriptExecutable;
 class UnlinkedCodeBlock;
 class VM;
 
@@ -267,11 +269,19 @@ JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*);
 struct Data {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Data);
 
-    // Puts it in its place in the Instance, and takes it out.
-    static Data* create(Instance&, CodeBlock*, JITCode&);
+    // Puts it in its place in the Instance, and takes it out. The code of a program or a module comes with a CodeBlock, since that is
+    // what the interpreter enters it with. A function does not. Null: an exception was thrown.
+    static Data* create(Instance&, ScriptExecutable*, UnlinkedCodeBlock*, JITCode&, CodeBlock* = nullptr);
     static void destroy(Data*);
     void noteFilled();
     template<typename Visitor> void visit(Visitor&);
+
+    // What the rest of the engine takes the function's frames to be running, for whoever asks: it is made then. Nothing that the
+    // function itself does asks. Not while the collector is at work, and on no thread but the VM's.
+    JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock();
+    // For the functions that the function makes closures of: made when the first closure is.
+    FunctionExecutable* functionDecl(unsigned);
+    FunctionExecutable* functionExpr(unsigned);
 
     // Structures do not keep their IDs to themselves when they die.
     void finalizeUnconditionally(VM&);
@@ -282,16 +292,19 @@ struct Data {
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
 
-    CodeBlock* codeBlock; // For the time being: what the rest of the engine takes the function's frames to be running.
+    CodeBlock* codeBlock; // See ensureCodeBlock().
     Instance* instance;
+    ScriptExecutable* executable;
     UnlinkedCodeBlock* unlinkedCodeBlock;
     JITCode* code; // Has a reference.
+    FunctionExecutable** functions; // The declarations, then the expressions. Null until one is asked for.
     const void* constants; // const WriteBarrier<Unknown>*
     const void* identifiers; // const Identifier*
     const Site* sites; // One for each slot. The code's, not this CodeBlock's.
     SlotWatchpointMap* watchpoints; // For the slots whose caches rest on more than the code checks. Null until there is one.
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
+    bool ownsConstants; // Some are of the realm: this is a copy of the unlinked code's with those filled in.
     // Another number whenever the cache of a property access has become one for something else, or for nothing. What code has found
     // out about such caches, and nothing but them, it need not find out again while this is the same (GuardKind::BeginSlotChecks).
     uint64_t slotEpoch;
@@ -349,8 +362,11 @@ class JITCode final : public JSC::JITCode {
 public:
     // The code is either in memory that the handle owns, or in an image that is mapped for as long as the process lives. What there
     // is to know about code in an image is in the image, and stays there.
-    JITCode(void* code, RefPtr<ExecutableMemoryHandle>&&, CompiledFunctionInfo&&);
-    JITCode(void* code, const ImageFunction&);
+    // Way: how whoever makes frames the way the interpreter wants them gets in (generateEnter(), generateEnterFunction()).
+    enum class Way : uint8_t { TopLevel, Call, Construct };
+    static Way wayInto(UnlinkedCodeBlock*);
+    JITCode(void* code, RefPtr<ExecutableMemoryHandle>&&, CompiledFunctionInfo&&, Way);
+    JITCode(void* code, const ImageFunction&, Way);
     ~JITCode() final;
 
     CodePtr<JSEntryPtrTag> addressForCall(ArityCheckMode) final;
@@ -384,6 +400,10 @@ public:
     const CodeHeader& header() const { return *static_cast<const CodeHeader*>(m_code); }
     // Where a caller that has put the Instance in the frame goes. Checks the number of arguments.
     static constexpr ptrdiff_t offsetOfEntry() { return OBJECT_OFFSETOF(JITCode, m_entry); }
+    // One of these is the code of one executable, which is of one realm.
+    static constexpr ptrdiff_t offsetOfInstance() { return OBJECT_OFFSETOF(JITCode, m_instance); }
+    Instance* instance() const { return m_instance; }
+    void setInstance(Instance& instance) { m_instance = &instance; }
 
 private:
     struct Owned {
@@ -394,10 +414,14 @@ private:
 
     void* m_code;
     void* m_entry;
+    Instance* m_instance { nullptr };
     const ImageFunction* m_function { nullptr };
     const RegisterAtOffsetList* m_calleeSaveRegisters;
     std::unique_ptr<Owned> m_owned;
 };
+
+// Makes the code the function's. It gets no CodeBlock. False: an exception was thrown.
+bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSGlobalObject*, Ref<JITCode>&&);
 
 unsigned hashOfBytecode(UnlinkedCodeBlock*);
 // Where code from the JIT that wants to call `code` with a call instruction, whose reach is limited, can call. Any thread.

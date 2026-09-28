@@ -99,6 +99,8 @@ public:
     void NODELETE recordParse(CodeFeatures, LexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn);
     void installCode(CodeBlock*);
     void installCode(VM&, CodeBlock*, CodeType, CodeSpecializationKind, Profiler::JettisonReason);
+    // Code from the static compiler (aot/), for a function: it runs without a CodeBlock, and the function does not get one.
+    void installAOTCode(VM&, CodeSpecializationKind, Ref<JITCode>&&);
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);
 

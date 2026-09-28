@@ -1174,7 +1174,6 @@ static void generateThrowStackOverflowAtPrologue(CCallHelpers& jit)
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), T10);
     jit.move(T10, keptInstance);
     loadDataOf(jit, boxedHeaderGPR, T10, A0);
-    jit.loadPtr(Address(A0, OBJECT_OFFSETOF(Data, codeBlock)), A0);
     jit.call(T9, OperationPtrTag);
 
     jit.move(keptInstance, T9);
@@ -1227,6 +1226,23 @@ static void generateEnter(CCallHelpers& jit)
     jit.storePtr(T10, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
     jit.farJump(T9, JSEntryPtrTag);
 }
+
+// The same for a function, which has no CodeBlock. What its callers put in the frame for one is nothing.
+static void generateEnterFunction(CCallHelpers& jit, CodeSpecializationKind kind)
+{
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), T9);
+    jit.loadPtr(Address(T9, JSFunction::offsetOfExecutableOrRareData()), T9);
+    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T9, TrustedImm32(JSFunction::rareDataTag));
+    jit.loadPtr(Address(T9, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T9);
+    hasExecutable.link(&jit);
+    jit.loadPtr(Address(T9, ExecutableBase::offsetOfJITCodeFor(kind)), T9);
+    jit.loadPtr(Address(T9, JITCode::offsetOfInstance()), T10);
+    jit.loadPtr(Address(T9, JITCode::offsetOfEntry()), T9);
+    jit.storePtr(T10, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
+    jit.farJump(T9, JSEntryPtrTag);
+}
+static void generateEnterFunctionForCall(CCallHelpers& jit) { generateEnterFunction(jit, CodeSpecializationKind::CodeForCall); }
+static void generateEnterFunctionForConstruct(CCallHelpers& jit) { generateEnterFunction(jit, CodeSpecializationKind::CodeForConstruct); }
 
 // ---- Calls
 

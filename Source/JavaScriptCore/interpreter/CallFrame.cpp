@@ -126,7 +126,7 @@ unsigned CallFrame::callSiteBitsAsBytecodeOffset() const
 
 BytecodeIndex CallFrame::bytecodeIndex() const
 {
-    if (callee().isNativeCallee())
+    if (rawCallee().isNativeCallee())
         return callSiteIndex().bytecodeIndex();
     if (!codeBlock())
         return BytecodeIndex(0);
@@ -147,6 +147,8 @@ BytecodeIndex CallFrame::bytecodeIndex() const
 
 CodeOrigin CallFrame::codeOrigin() const
 {
+    if (isAOTFrame())
+        return CodeOrigin(callSiteIndex().bytecodeIndex());
     if (!codeBlock())
         return CodeOrigin(BytecodeIndex(0));
 #if ENABLE(DFG_JIT)

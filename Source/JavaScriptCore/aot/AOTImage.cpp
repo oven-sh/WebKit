@@ -443,7 +443,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     // a second time is another function: it has constants of its own, for one thing.
     if (Instance* instance = scope->realm()->aotInstance()) {
         Data* data = instance->data[reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index];
-        if (data && data->codeBlock->ownerExecutable() != executable)
+        if (data && data->executable != executable)
             return { };
     }
 
@@ -469,16 +469,16 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     return { image, function };
 }
 
-void installFromImage(CodeBlock* codeBlock, ImageCode code)
+Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
 {
     auto [image, function] = code;
-    codeBlock->installAOTCode(adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function)));
     s_installedFromImage++;
+    return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::wayInto(unlinkedCodeBlock)));
 }
 
 // ---- Options::aotWriteImage()
 
-void addToImageBeingWritten(CodeBlock* codeBlock, const JITCode& jitCode)
+void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind kind, const JITCode& jitCode)
 {
     static NeverDestroyed<ImageBuilder> builder;
     static std::atomic<uint64_t> rank;
@@ -491,7 +491,7 @@ void addToImageBeingWritten(CodeBlock* codeBlock, const JITCode& jitCode)
         });
     });
 
-    auto key = imageKeyFor(codeBlock->ownerExecutable(), codeBlock->specializationKind());
+    auto key = imageKeyFor(executable, kind);
     if (!key)
         return;
     CompiledCode code;

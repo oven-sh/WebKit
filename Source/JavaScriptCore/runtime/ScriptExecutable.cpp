@@ -232,6 +232,23 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
     vm.writeBarrier(this);
 }
 
+void ScriptExecutable::installAOTCode(VM& vm, CodeSpecializationKind kind, Ref<JITCode>&& code)
+{
+    ASSERT(type() == FunctionExecutableType && !uncheckedDowncast<FunctionExecutable>(this)->codeBlockFor(kind));
+    switch (kind) {
+    case CodeSpecializationKind::CodeForCall:
+        m_jitCodeForCall = WTF::move(code);
+        m_jitCodeForCallWithArityCheck = nullptr;
+        break;
+    case CodeSpecializationKind::CodeForConstruct:
+        m_jitCodeForConstruct = WTF::move(code);
+        m_jitCodeForConstructWithArityCheck = nullptr;
+        break;
+    }
+    Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()).add(this);
+    vm.writeBarrier(this);
+}
+
 bool ScriptExecutable::hasClearableCode() const
 {
     if (m_jitCodeForCall
@@ -298,7 +315,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
                 ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 if (codeBlock)
-                    AOT::installFromImage(codeBlock, code);
+                    codeBlock->installAOTCode(AOT::codeFromImage(code, executable->unlinkedCodeBlock()));
                 return codeBlock;
             }
         }
@@ -321,7 +338,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
                 ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 if (codeBlock)
-                    AOT::installFromImage(codeBlock, code);
+                    codeBlock->installAOTCode(AOT::codeFromImage(code, unlinkedCodeBlock));
                 return codeBlock;
             }
             if (Options::aotReportStats()) [[unlikely]]
@@ -360,14 +377,20 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
 #if ENABLE(FTL_JIT)
     if (AOT::Image::hasAny() || Options::aotImagePath()) {
         if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
-            FunctionCodeBlock* codeBlock = FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
-            RETURN_IF_EXCEPTION(throwScope, nullptr);
-            if (codeBlock)
-                AOT::installFromImage(codeBlock, code);
-            return codeBlock;
+            // Nothing, and no exception: it has code, which wants no CodeBlock.
+            throwScope.release();
+            AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, AOT::codeFromImage(code, unlinkedCodeBlock));
+            return nullptr;
         }
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: not in an image: ", executable->ecmaName().string(), " of ", executable->source().provider()->sourceURL(), " at ", executable->source().startOffset(), kind == CodeSpecializationKind::CodeForCall ? "" : " (construct)");
+    }
+    if (Options::useAOT()) [[unlikely]] {
+        if (auto code = AOT::tryCompile(vm, executable, kind, unlinkedCodeBlock, scope)) {
+            throwScope.release();
+            AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, code.releaseNonNull());
+            return nullptr;
+        }
     }
 #endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
@@ -451,8 +474,11 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);
     RETURN_IF_EXCEPTION(throwScope, void());
 
-    ASSERT(codeBlock);
     resultCodeBlock = codeBlock;
+    if (!codeBlock) {
+        ASSERT(hasJITCodeFor(kind));
+        return;
+    }
 
     if (Options::validateBytecode())
         codeBlock->validate();
@@ -466,8 +492,12 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     }
 #endif
 #if ENABLE(FTL_JIT)
-    if (!installedUnlinkedBaselineCode && Options::useAOT()) [[unlikely]]
-        installedUnlinkedBaselineCode = AOT::tryCompileAndInstall(vm, codeBlock, scope);
+    if (!installedUnlinkedBaselineCode && Options::useAOT() && codeBlock->codeType() != FunctionCode) [[unlikely]] {
+        if (auto code = AOT::tryCompile(vm, this, kind, codeBlock->unlinkedCodeBlock(), scope)) {
+            codeBlock->installAOTCode(code.releaseNonNull());
+            installedUnlinkedBaselineCode = true;
+        }
+    }
 #endif
     if (!installedUnlinkedBaselineCode) {
         if (Options::useLLInt())

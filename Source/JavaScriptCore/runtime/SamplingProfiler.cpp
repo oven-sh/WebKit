@@ -126,8 +126,9 @@ protected:
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
 #if ENABLE(FTL_JIT)
         if (unsafeCallee.isNativeCallee() && AOT::isCodeHeader(unsafeCallee.asNativeCallee())) {
-            // See CallFrame::callee().
-            codeBlock = AOT::codeBlockOf(m_callFrame);
+            // See CallFrame::callee(). If nobody has asked for the CodeBlock of such a frame before there is none, and this is no
+            // place to make one: the callee says which function it is.
+            codeBlock = AOT::dataOf(m_callFrame)->codeBlock;
             unsafeCallee = CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame)));
         }
 #endif

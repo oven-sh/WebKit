@@ -1073,29 +1073,29 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 #endif // ENABLE(JIT)
 
 #if ENABLE(FTL_JIT)
-void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
+void CodeBlock::adoptAOTCode(AOT::JITCode& jitCode, AOT::Data* data)
 {
     ASSERT(!m_jitData);
     for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
         HandlerInfo& handler = exceptionHandler(i);
-        jitCode->forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
+        jitCode.forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
             if (bytecodeOffset == handler.target)
-                handler.nativeCode = CodeLocationLabel<ExceptionHandlerPtrTag>(tagCodePtr<ExceptionHandlerPtrTag>(jitCode->executableAddressAtOffset(codeOffset)));
+                handler.nativeCode = CodeLocationLabel<ExceptionHandlerPtrTag>(tagCodePtr<ExceptionHandlerPtrTag>(jitCode.executableAddressAtOffset(codeOffset)));
         });
     }
-    // There is one Data to a function and a realm, and it is the code that says where. A function may come to have a second
-    // CodeBlock in the same realm (it is inside one that has code both for a call and for `new`, say): that shares the Data of the
-    // first, which is what the frames of either are taken to be running, and which stays for that reason.
-    AOT::Instance& instance = AOT::Instance::ensure(globalObject());
-    AOT::Data* data = instance.data[jitCode->header().index];
-    if (!data) {
-        data = AOT::Data::create(instance, this, jitCode.get());
-        vm().heap.protect(this);
-    }
-    setJITCode(WTF::move(jitCode));
+    setJITCode(Ref { jitCode });
     WTF::storeStoreFence();
     m_jitData = data;
     m_shouldAlwaysBeInlined = false;
+}
+
+void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
+{
+    RELEASE_ASSERT(codeType() != FunctionCode);
+    AOT::Instance& instance = AOT::Instance::ensure(globalObject());
+    jitCode->setInstance(instance);
+    AOT::Data* data = AOT::Data::create(instance, ownerExecutable(), unlinkedCodeBlock(), jitCode.get(), this);
+    adoptAOTCode(jitCode.get(), data);
 }
 
 void CodeBlock::releaseAOTData()
@@ -1106,7 +1106,6 @@ void CodeBlock::releaseAOTData()
     if (auto* data = aotData(); data && data->codeBlock == this) {
         m_jitData = nullptr;
         AOT::Data::destroy(data);
-        vm().heap.unprotect(this);
     }
 }
 #endif
@@ -3873,6 +3872,8 @@ void CodeBlock::tallyFrequentExitSites()
 
 void CodeBlock::notifyLexicalBindingUpdate()
 {
+    if (!m_metadata)
+        return; // LinkMode::ForCodeFromImage: the instructions are not what runs.
     JSGlobalObject* globalObject = m_globalObject.get();
     JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(globalObject->globalScope());
     SymbolTable* symbolTable = globalLexicalEnvironment->symbolTable();

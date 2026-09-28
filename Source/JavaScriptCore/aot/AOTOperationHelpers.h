@@ -44,8 +44,8 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         data->noteFilled();
 }
 ALWAYS_INLINE const Identifier& identifierAt(CallFrame* callFrame, unsigned index) { return callerCode(callFrame)->identifier(index); }
-ALWAYS_INLINE FunctionExecutable* functionDeclAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->codeBlock->functionDecl(index); }
-ALWAYS_INLINE FunctionExecutable* functionExprAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->codeBlock->functionExpr(index); }
+ALWAYS_INLINE FunctionExecutable* functionDeclAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->functionDecl(index); }
+ALWAYS_INLINE FunctionExecutable* functionExprAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->functionExpr(index); }
 ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(CallFrame* callFrame) { return callerCode(callFrame)->codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT

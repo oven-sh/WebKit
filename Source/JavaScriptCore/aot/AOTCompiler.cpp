@@ -629,7 +629,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     }
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::aotDumpDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
-    result = adoptRef(*new JITCode(start, codeRef.executableMemory(), WTF::move(info)));
+    result = adoptRef(*new JITCode(start, codeRef.executableMemory(), WTF::move(info), JITCode::wayInto(unlinkedCodeBlock)));
     return true;
 }
 
@@ -669,63 +669,66 @@ bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode&
     return true;
 }
 
-bool tryCompileAndInstall(VM& vm, CodeBlock* codeBlock, JSScope* scope)
+static CString nameOf(ScriptExecutable* executable)
 {
-    if (codeBlock->codeType() == EvalCode)
-        return false;
+    if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
+        return function->ecmaName().utf8();
+    return executable->type() == ModuleProgramExecutableType ? "<module>" : "<global>";
+}
+
+RefPtr<JITCode> tryCompile(VM& vm, ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
+{
+    if (unlinkedCodeBlock->codeType() == EvalCode)
+        return nullptr;
     if (const char* filter = Options::aotFilter()) {
-        if (!strstr(codeBlock->inferredName().data(), filter))
-            return false;
+        if (!strstr(nameOf(executable).data(), filter))
+            return nullptr;
     }
 
     if (unsigned skip = Options::aotSkip()) {
         static std::atomic<unsigned> count;
         if (++count == skip)
-            return false;
+            return nullptr;
     }
     if (unsigned limit = Options::aotLimit()) {
         // For finding the function that is miscompiled: bisect on the limit, and the last one compiled is it.
         static std::atomic<unsigned> count;
         unsigned index = ++count;
         if (index > limit)
-            return false;
+            return nullptr;
         if (index == limit) {
-            codeBlock->dumpBytecode();
             Options::aotDumpGraph() = true;
+            dataLogLn("AOT: function #", index, " is ", nameOf(executable), " ", executable->source().view().left(400));
         }
-        if (index == limit)
-            dataLogLn("AOT: function #", index, " is ",codeBlock->inferredName(), " ", String::fromUTF8(codeBlock->sourceCodeForTools().span()).left(400));
     }
 
     MonotonicTime before = MonotonicTime::now();
     RefPtr<JITCode> jitCode;
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    UnlinkedCodeBlock* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
     // By default, with no more to go by than there is when a program is compiled before it is run.
     std::unique_ptr<LiveHints> hints;
     if (Options::aotUseLiveCalleeHints())
-        hints = makeUnique<LiveHints>(codeBlock->globalObject());
-    bool ok = compile(vm, unlinkedCodeBlock, Options::aotUseLiveScopes() ? scopeChainFor(scope) : unknownScopeChain(), hints.get(), nullptr, codeBlock, jitCode, reason, reasonOpcode);
+        hints = makeUnique<LiveHints>(scope->realm());
+    bool ok = compile(vm, unlinkedCodeBlock, Options::aotUseLiveScopes() ? scopeChainFor(scope) : unknownScopeChain(), hints.get(), nullptr, executable, jitCode, reason, reasonOpcode);
 
     if (Options::aotVerbose()) [[unlikely]] {
         if (ok) {
-            dataLogLn("AOT: compiled ", codeBlock->inferredName(), ": ", jitCode->size(), " bytes for ", unlinkedCodeBlock->instructionsSize(), " of bytecode, frame ", jitCode->info().frameSizeInBytes);
-            if (auto key = imageKeyFor(codeBlock->ownerExecutable(), codeBlock->specializationKind()))
-                dataLogLn("AOT: ", codeBlock->inferredName(), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") is at ", RawPointer(jitCode->dataAddressAtOffset(0)), " size ", jitCode->size(), " hash ", hashOfCode({ static_cast<const uint8_t*>(jitCode->dataAddressAtOffset(0)), jitCode->size() }));
+            dataLogLn("AOT: compiled ", nameOf(executable), ": ", jitCode->size(), " bytes for ", unlinkedCodeBlock->instructionsSize(), " of bytecode, frame ", jitCode->info().frameSizeInBytes);
+            if (auto key = imageKeyFor(executable, kind))
+                dataLogLn("AOT: ", nameOf(executable), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") is at ", RawPointer(jitCode->dataAddressAtOffset(0)), " size ", jitCode->size(), " hash ", hashOfCode({ static_cast<const uint8_t*>(jitCode->dataAddressAtOffset(0)), jitCode->size() }));
         }
         else
-            dataLogLn("AOT: declined ", codeBlock->inferredName(), ": ", reason, reasonOpcode != op_nop ? " " : "", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
+            dataLogLn("AOT: declined ", nameOf(executable), ": ", reason, reasonOpcode != op_nop ? " " : "", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
     }
     if (Options::aotReportStats()) [[unlikely]]
         recordStatistics(ok, ok ? jitCode->size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
     if (!ok)
-        return false;
+        return nullptr;
 
     if (Options::aotWriteImage()) [[unlikely]]
-        addToImageBeingWritten(codeBlock, *jitCode);
-    codeBlock->installAOTCode(jitCode.releaseNonNull());
-    return true;
+        addToImageBeingWritten(executable, kind, *jitCode);
+    return jitCode;
 }
 
 void reportStatistics()

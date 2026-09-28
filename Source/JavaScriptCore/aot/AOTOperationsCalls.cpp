@@ -26,6 +26,7 @@
 #include "JSSet.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
+#include "LLIntSlowPaths.h"
 #include "ScriptExecutableInlines.h"
 
 namespace JSC { namespace AOT {
@@ -250,16 +251,58 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         return;
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
-    CodeBlock* codeBlock = executable->codeBlockFor(kind);
-    if (!codeBlock || codeBlock->jitType() != JITType::AOTJIT || codeBlock->globalObject() != globalObject)
+    if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
+        return;
+    auto* codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
+    if (codeOfCallee->instance() != caller->instance)
         return;
     auto key = imageKeyFor(executable, kind);
     if (!key || !key->sameFunction(code->knownCallee(knownCallee)))
         return;
     auto [image, record] = Image::find(*key);
-    if (!record || image->codeFor(*record) != static_cast<JITCode*>(codeBlock->jitCode().get())->start())
+    if (!record || image->codeFor(*record) != codeOfCallee->start())
         return;
-    fillCallCache(vm, caller, cache, function, codeBlock);
+    fillCallCache(vm, caller, cache, function);
+}
+
+// llint_virtual_call(), which begins by asking for the CodeBlock of the caller, in case there is an error to report. Nearly always
+// what there is to do is get a function that has not been called before its code.
+extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
+{
+    JSValue callee = calleeFrame->guaranteedJSValueCallee();
+    if (!callee.isCell())
+        return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
+    CodeSpecializationKind kind = callLinkInfo->specializationKind();
+    VM& vm = callee.asCell()->vm();
+    if (callee.inherits<InternalFunction>())
+        return encodeResult(vm.getCTIInternalFunctionTrampolineFor(kind).taggedPtr(), nullptr);
+    auto* function = dynamicDowncast<JSFunction>(callee.asCell());
+    if (!function || function->isHostFunction())
+        return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
+    FunctionExecutable* executable = function->jsExecutable();
+    if (!isCall(kind) && executable->constructAbility() == ConstructAbility::CannotConstruct)
+        return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
+
+    NativeCallFrameTracer tracer(vm, calleeFrame);
+    sanitizeStackForVM(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    DeferTraps deferTraps(vm); // Nothing gets to throw away the code that is about to run.
+    calleeFrame->setCodeBlock(nullptr);
+    executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *calleeFrame->addressOfCodeBlock());
+    if (scope.exception()) [[unlikely]]
+        return encodeResult(nullptr, std::bit_cast<void*>(&vm));
+    return encodeResult(executable->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
+}
+
+// The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Data* data))
+{
+    VM& vm = *data->instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    callFrame->convertToZombieFrame(vm, data->ensureCodeBlock());
+    throwStackOverflowError(data->instance->globalObject, scope);
 }
 
 // calleeFrame: what a call to the callee would be made with, complete but for the return address. Empty if the callee is not
@@ -271,7 +314,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, callerData(callFrame)->codeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
+    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, callerData(callFrame)->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
 }
 
 } } // namespace JSC::AOT

@@ -344,11 +344,8 @@ void countAttemptToLinkCall(Slot* cache)
     countFailure(cache);
 }
 
-void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, CodeBlock* codeBlockOfCallee)
+void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee)
 {
-    // The code goes by the second only if the first is what it wants.
-    cache[0].clear();
-    fill(vm, data, &cache[1], codeBlockOfCallee->structure(), Slot::pointerIsCell, codeBlockOfCallee);
     fill(vm, data, &cache[0], callee->structure(), Slot::pointerIsCell, callee);
 }
 

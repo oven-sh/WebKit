@@ -74,7 +74,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
     const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
     ObjectAllocationProfile profile;
-    profile.initializeProfile(vm, globalObject, codeBlock, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
+    profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
     JSObject* object = constructEmptyObject(vm, profile.structure());
     unsigned index = 0;
     bool inOrder = true;

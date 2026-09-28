@@ -281,7 +281,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
     Slot unusedSlot { };
     if (Options::aotDisableFastPaths() & 32) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = callFrame->codeBlock()->identifier(identifierIndex);
+    const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     UNUSED_VARIABLE(uid);
     // The compiler has seen what the code around the function declares, and this is not among it: asking each of those scopes by
@@ -352,7 +352,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     Slot unusedSlot { };
     if (Options::aotDisableFastPaths() & 32) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = callFrame->codeBlock()->identifier(identifierIndex);
+    const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     noteSlowPath("get_from_scope"_s, scopeObject, uid);
 
@@ -475,7 +475,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
     Slot unusedSlot { };
     if (Options::aotDisableFastPaths() & 64) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = callFrame->codeBlock()->identifier(identifierIndex);
+    const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     GetPutInfo getPutInfo(static_cast<ResolveMode>(how & 1), GlobalProperty, static_cast<InitializationMode>((how >> 1) & 3), how & 8 ? ECMAMode::strict() : ECMAMode::sloppy());
     JSValue value = JSValue::decode(encodedValue);

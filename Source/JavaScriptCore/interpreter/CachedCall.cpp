@@ -71,7 +71,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
     auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
     if (scope.exception()) [[unlikely]]
         return;
-    m_numParameters = newCodeBlock->numParameters();
+    m_numParameters = newCodeBlock ? newCodeBlock->numParameters() : function->jsExecutable()->parameterCount() + 1;
     m_protoCallFrame.init(newCodeBlock, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
 }
 

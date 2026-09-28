@@ -122,10 +122,10 @@ struct ImageCode {
     explicit operator bool() const { return !!function; }
 };
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
-void installFromImage(CodeBlock*, ImageCode);
+Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 
 // Options::aotWriteImage(): everything the process compiles goes to Options::aotImagePath() when it exits.
-void addToImageBeingWritten(CodeBlock*, const JITCode&);
+void addToImageBeingWritten(ScriptExecutable*, CodeSpecializationKind, const JITCode&);
 
 } } // namespace JSC::AOT
 

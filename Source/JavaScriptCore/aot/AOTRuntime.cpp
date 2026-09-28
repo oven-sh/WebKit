@@ -6,6 +6,9 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "FrameTracers.h"
+#include "FunctionCodeBlock.h"
+#include "JSTemplateObjectDescriptor.h"
 #include "JSWebAssemblyInstance.h"
 
 #if ENABLE(FTL_JIT)
@@ -104,14 +107,14 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::ArityFixup, LLInt::arityFixup().taggedPtr());
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::LookupExceptionHandlerFromCallerFrame, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandlerFromCallerFrame));
-    set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationThrowStackOverflowError));
+    set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();
         static_assert(!OBJECT_OFFSETOF(VirtualCallInfo, callLinkInfo));
         info->callLinkInfo.initialize(vm, nullptr, type, CodeOrigin { });
         info->callLinkInfo.setVirtualCall(vm);
-        info->findTarget = tagCFunctionPtr<void*, OperationPtrTag>(LLInt::llint_virtual_call);
+        info->findTarget = tagCFunctionPtr<void*, OperationPtrTag>(findCallTarget);
         info->lookupExceptionHandler = tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler);
         set(entry, &info->callLinkInfo);
         m_callLinkInfos.append(WTF::move(info));
@@ -214,7 +217,7 @@ Data* dataOf(const CallFrame* callFrame)
 
 CodeBlock* codeBlockOf(const CallFrame* callFrame)
 {
-    return dataOf(callFrame)->codeBlock;
+    return dataOf(callFrame)->ensureCodeBlock();
 }
 
 JSObject* calleeOf(const CallFrame* callFrame)
@@ -222,17 +225,68 @@ JSObject* calleeOf(const CallFrame* callFrame)
     return callFrame->registers()[CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot].object();
 }
 
-Data* Data::create(Instance& instance, CodeBlock* codeBlock, JITCode& code)
+// The constants of unlinked code are good as they are, but for the ones that are of a realm.
+static bool linkConstants(VM& vm, Data& data)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
+    auto& constants = unlinkedCodeBlock->constantRegisters();
+    auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
+    bool someAreOfTheRealm = false;
+    for (unsigned i = 0; i < constants.size(); ++i) {
+        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant) {
+            someAreOfTheRealm = true;
+            continue;
+        }
+        JSValue constant = constants[i].get();
+        if (!constant || !constant.isCell())
+            continue;
+        if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
+            // What becomes of these is a long story, about code from the other compilers (CodeBlock::setConstantRegisters()).
+            if (!symbolTable->isItsOwnClone()) {
+                data.constants = data.ensureCodeBlock()->constantRegisters().span().data();
+                return true;
+            }
+        } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
+            someAreOfTheRealm = true;
+    }
+    if (!someAreOfTheRealm) {
+        data.constants = constants.span().data();
+        return true;
+    }
+
+    JSGlobalObject* globalObject = data.instance->globalObject;
+    auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size() * sizeof(WriteBarrier<Unknown>)));
+    data.constants = copy;
+    data.ownsConstants = true;
+    for (unsigned i = 0; i < constants.size(); ++i) {
+        JSValue constant = constants[i].get();
+        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
+            constant = globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()));
+        else if (constant && constant.isCell()) {
+            if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
+                constant = data.executable->topLevelExecutable()->createTemplateObject(globalObject, descriptor);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+        }
+        copy[i].setWithoutWriteBarrier(constant);
+    }
+    return true;
+}
+
+Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
+{
+    VM& vm = *instance.vm;
+    DeferGCForAWhile deferGC(vm);
     unsigned numSlots = code.numSlots();
     Data* data = static_cast<Data*>(fastZeroedMalloc(sizeof(Data) + numSlots * sizeof(Slot)));
     data->codeBlock = codeBlock;
     data->instance = &instance;
-    data->unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+    data->executable = executable;
+    data->unlinkedCodeBlock = unlinkedCodeBlock;
     code.ref();
     data->code = &code;
-    data->constants = codeBlock->constantRegisters().span().data();
-    data->identifiers = data->unlinkedCodeBlock->identifiers().span().data();
+    data->identifiers = unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
     data->numSlots = numSlots;
     data->slotEpoch = 1;
@@ -241,6 +295,14 @@ Data* Data::create(Instance& instance, CodeBlock* codeBlock, JITCode& code)
     RELEASE_ASSERT(!place);
     place = data;
     instance.collections->all.append(data);
+    data->noteFilled(); // It is new.
+
+    if (codeBlock)
+        data->constants = codeBlock->constantRegisters().span().data();
+    else if (!linkConstants(vm, *data)) {
+        destroy(data);
+        return nullptr;
+    }
     return data;
 }
 
@@ -254,8 +316,81 @@ void Data::destroy(Data* data)
     if (data->hasBeenFilledSinceLastCollection)
         instance.collections->filledSinceLastCollection.removeFirst(data);
     delete data->watchpoints;
+    if (data->ownsConstants)
+        fastFree(const_cast<void*>(data->constants));
+    if (data->functions)
+        fastFree(data->functions);
     data->code->deref();
     fastFree(data);
+}
+
+CodeBlock* Data::ensureCodeBlock()
+{
+    if (codeBlock)
+        return codeBlock;
+    VM& vm = *instance->vm;
+    RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
+    DeferGCForAWhile deferGC(vm);
+    // Whoever asks may well be dealing with an exception.
+    SuspendExceptionScope suspendExceptions(vm);
+    FunctionCodeBlock* result = FunctionCodeBlock::create(vm, uncheckedDowncast<FunctionExecutable>(executable), uncheckedDowncast<UnlinkedFunctionCodeBlock>(unlinkedCodeBlock), instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
+    RELEASE_ASSERT(result);
+    result->adoptAOTCode(*code, this);
+    codeBlock = result;
+    if (Options::aotReportStats()) [[unlikely]] {
+        // TEMPORARY-FUNCTION-STATS
+        static std::atomic<unsigned> count;
+        unsigned now = ++count;
+        if (!(now & (now - 1)) || !(now % 500))
+            dataLogLn("AOT: ", now, " CodeBlocks made because somebody asked");
+    }
+    if (!hasBeenFilledSinceLastCollection)
+        noteFilled();
+    return result;
+}
+
+static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
+    if (!data.functions)
+        data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((unlinkedCodeBlock->numberOfFunctionDecls() + unlinkedCodeBlock->numberOfFunctionExprs()) * sizeof(FunctionExecutable*)));
+    FunctionExecutable*& function = data.functions[index];
+    if (!function) {
+        ScriptExecutable* executable = data.executable;
+        function = unlinkedExecutable->link(*data.instance->vm, executable->topLevelExecutable(), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
+        if (!data.hasBeenFilledSinceLastCollection)
+            data.noteFilled();
+    }
+    return function;
+}
+
+FunctionExecutable* Data::functionDecl(unsigned index)
+{
+    // A module shares them with whoever else runs its code.
+    if (unlinkedCodeBlock->codeType() != FunctionCode)
+        return codeBlock->functionDecl(index);
+    return functionOf(*this, index, unlinkedCodeBlock->functionDecl(index));
+}
+
+FunctionExecutable* Data::functionExpr(unsigned index)
+{
+    if (unlinkedCodeBlock->codeType() != FunctionCode)
+        return codeBlock->functionExpr(index);
+    return functionOf(*this, unlinkedCodeBlock->numberOfFunctionDecls() + index, unlinkedCodeBlock->functionExpr(index));
+}
+
+bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSGlobalObject* globalObject, Ref<JITCode>&& code)
+{
+    Instance& instance = Instance::ensure(globalObject);
+    code->setInstance(instance);
+    Data* data = instance.data[code->header().index];
+    if (!data) {
+        if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
+            return false;
+    } else
+        RELEASE_ASSERT(data->executable == executable);
+    executable->installAOTCode(vm, kind, WTF::move(code));
+    return true;
 }
 
 void Data::noteFilled()
@@ -267,7 +402,21 @@ void Data::noteFilled()
 template<typename Visitor>
 void Data::visit(Visitor& visitor)
 {
+    visitor.appendUnbarriered(executable);
     visitor.appendUnbarriered(unlinkedCodeBlock);
+    if (codeBlock)
+        visitor.appendUnbarriered(codeBlock);
+    if (functions) {
+        for (unsigned i = unlinkedCodeBlock->numberOfFunctionDecls() + unlinkedCodeBlock->numberOfFunctionExprs(); i--;) {
+            if (functions[i])
+                visitor.appendUnbarriered(functions[i]);
+        }
+    }
+    if (ownsConstants) {
+        auto* values = static_cast<const WriteBarrier<Unknown>*>(constants);
+        for (unsigned i = unlinkedCodeBlock->constantRegisters().size(); i--;)
+            visitor.appendUnbarriered(values[i].get());
+    }
     // Code that has cached a transition can put an object that has already been visited in the new structure.
     for (unsigned i = 0; i < numSlots; ++i) {
         Slot& slot = slots[i];
@@ -335,8 +484,28 @@ void Data::finalizeUnconditionally(VM& vm)
     }
 }
 
-JITCode::JITCode(void* code, RefPtr<ExecutableMemoryHandle>&& handle, CompiledFunctionInfo&& info)
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter))), handle ? ShareAttribute::NotShared : ShareAttribute::Shared)
+static Stub stubFor(JITCode::Way way)
+{
+    switch (way) {
+    case JITCode::Way::TopLevel:
+        return Stub::Enter;
+    case JITCode::Way::Call:
+        return Stub::EnterFunctionForCall;
+    case JITCode::Way::Construct:
+        return Stub::EnterFunctionForConstruct;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JITCode::Way JITCode::wayInto(UnlinkedCodeBlock* codeBlock)
+{
+    if (codeBlock->codeType() != FunctionCode)
+        return Way::TopLevel;
+    return codeBlock->isConstructor() ? Way::Construct : Way::Call;
+}
+
+JITCode::JITCode(void* code, RefPtr<ExecutableMemoryHandle>&& handle, CompiledFunctionInfo&& info, Way way)
+    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), handle ? ShareAttribute::NotShared : ShareAttribute::Shared)
     , m_code(code)
     , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + info.arityCheckOffset))
     , m_owned(makeUnique<Owned>(WTF::move(handle), WTF::move(info)))
@@ -383,9 +552,9 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
     return candidates.last().get();
 }
 
-JITCode::JITCode(void* code, const ImageFunction& function)
+JITCode::JITCode(void* code, const ImageFunction& function, Way way)
     // Code in an image is nobody's memory: the collector, which paces itself by what the heap holds on to, is not to count it.
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter))), ShareAttribute::Shared)
+    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), ShareAttribute::Shared)
     , m_code(code)
     , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.arityCheckOffset))
     , m_function(&function)
@@ -398,7 +567,7 @@ JITCode::~JITCode() = default;
 CodePtr<JSEntryPtrTag> JITCode::addressForCall(ArityCheckMode)
 {
     // Whoever asks makes frames the way the interpreter wants them.
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter)));
+    return m_addressForCall;
 }
 
 void* JITCode::executableAddressAtOffset(size_t offset) { return static_cast<uint8_t*>(m_code) + offset; }

@@ -52,7 +52,7 @@ void cachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure,
 //     cache[1].offset: the other half of a new cell's header. cache[1].pointer: the allocator.
 // cache[0]: the callee. cache[1]: its CodeBlock. See Lowering::lowerCallToKnownFunction().
 void countAttemptToLinkCall(Slot* cache);
-void fillCallCache(VM&, Data*, Slot* cache, JSFunction* callee, CodeBlock* codeBlockOfCallee);
+void fillCallCache(VM&, Data*, Slot* cache, JSFunction* callee);
 // cache[0] and cache[1]: as for fillAllocationCache(), for the structure the object ends up with, and for that callee only.
 // cache[2]: the structure that the callee has to be making its instances from.
 void fillConstructionCache(VM&, Data*, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator);

@@ -1344,8 +1344,8 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(function), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
+            if (newCodeBlock) // Code from the static compiler runs without one (ScriptExecutable::installAOTCode()).
+                newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
@@ -1440,8 +1440,8 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
             // Compile the callee:
             constructData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(constructor), scope, CodeSpecializationKind::CodeForConstruct, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, nullptr);
-            ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
+            if (newCodeBlock)
+                newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
@@ -1477,7 +1477,11 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     cachedCall.functionExecutable()->prepareForExecution<FunctionExecutable>(vm, function, cachedCall.scope(), CodeSpecializationKind::CodeForCall, newCodeBlock);
     RETURN_IF_EXCEPTION(throwScope, { });
 
-    ASSERT(newCodeBlock);
+    if (!newCodeBlock) {
+        // Code from the static compiler, which stays.
+        cachedCall.m_addressForCall = cachedCall.functionExecutable()->generatedJITCodeForCall()->addressForCall();
+        return nullptr;
+    }
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     cachedCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
@@ -1495,7 +1499,10 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     microtaskCall.functionExecutable()->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, newCodeBlock);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, { });
 
-    ASSERT(newCodeBlock);
+    if (!newCodeBlock) {
+        microtaskCall.m_addressForCall = microtaskCall.functionExecutable()->generatedJITCodeForCall()->addressForCall();
+        return nullptr;
+    }
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     microtaskCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
