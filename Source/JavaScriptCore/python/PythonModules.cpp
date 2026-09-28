@@ -339,7 +339,8 @@ PYTHON_NATIVE(sysExcInfo)
     JSValue handled = globalObject->pyRealm()->handledException();
     if (!handled)
         return JSValue::encode(PyTuple::create(globalObject, { jsUndefined(), jsUndefined(), jsUndefined() }));
-    return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, handled), handled, jsUndefined() }));
+    JSValue traceback = handled.isObject() ? asObject(handled)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_traceback) : JSValue();
+    return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, handled), handled, traceback ? traceback : jsUndefined() }));
 }
 
 PYTHON_NATIVE(sysGetRecursionLimit)
@@ -418,6 +419,7 @@ static PyModule* createSysModule(JSGlobalObject* globalObject)
 #endif
     set("stdout"_s, createStream(globalObject, stdoutWrite, stdoutFlush));
     set("stderr"_s, createStream(globalObject, stderrWrite, returnNone));
+    addFrameFunctions(globalObject, ns);
     addFunction(globalObject, ns, "exit"_s, sysExit);
     addFunction(globalObject, ns, "exception"_s, sysException);
     addFunction(globalObject, ns, "exc_info"_s, sysExcInfo);
@@ -450,6 +452,24 @@ static PyModule* createNativeModule(JSGlobalObject* globalObject, const String& 
     if (name == "builtins"_s)
         return createBuiltinsModule(globalObject);
     return nullptr;
+}
+
+// ---- The modules that are written in Python and come with the engine
+
+struct LibrarySource {
+    ASCIILiteral name;
+    std::span<const unsigned char> source;
+};
+
+#include "PythonLibrarySources.h"
+
+static std::optional<String> librarySourceFor(const String& name)
+{
+    for (auto& library : s_librarySources) {
+        if (name == library.name)
+            return String::fromUTF8(byteCast<char8_t>(library.source));
+    }
+    return std::nullopt;
 }
 
 // ---- import
@@ -512,6 +532,8 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
             registerModule(globalObject, fullName, module);
             return module;
         }
+        if (auto source = librarySourceFor(fullName))
+            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeString("<frozen "_s, fullName, '>'), *source, false));
     }
     if (!s_sourceReader)
         return { };
@@ -564,6 +586,22 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
         return module;
     }
     return { };
+}
+
+void initializeLibrary(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    auto attribute = [&] (JSValue module, ASCIILiteral name) {
+        return uncheckedDowncast<PyModule>(module.asCell())->namespaceObject()->getDirect(vm, Identifier::fromString(vm, name));
+    };
+    JSValue groups = findOrLoad(globalObject, "_exceptiongroup"_s, JSValue());
+    RELEASE_ASSERT(groups);
+    for (ASCIILiteral name : { "BaseExceptionGroup"_s, "ExceptionGroup"_s })
+        realm->builtinsNamespace()->putDirect(vm, Identifier::fromString(vm, name), attribute(groups, name));
+    // Compiled code calls these as it calls what is written in C++.
+    realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "matchExceptionGroup"_s), attribute(groups, "match_exception_group"_s));
+    realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "prepareReraiseStar"_s), attribute(groups, "prepare_reraise_star"_s));
 }
 
 JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const String& givenName, JSValue fromList, unsigned level, bool wantsLeaf)

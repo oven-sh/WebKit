@@ -89,11 +89,15 @@ void initializeComplexType(JSGlobalObject*);
 void initializeFunctionTypes(JSGlobalObject*);
 void initializeCodeTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
+void initializeTracebackTypes(JSGlobalObject*);
+void addFrameFunctions(JSGlobalObject*, JSObject* sysNamespace);
 void initializeStrType(JSGlobalObject*);
 void initializeContainerTypes(JSGlobalObject*);
 void initializeIteratorTypes(JSGlobalObject*);
 void initializeExceptionTypes(JSGlobalObject*);
 void initializeBuiltinFunctions(JSGlobalObject*, JSObject* namespaceObject);
+// Last of all, since it runs Python: what is written in it.
+void initializeLibrary(JSGlobalObject*);
 
 // What is in other files, and shared among these.
 String builtinRepr(JSGlobalObject*, JSValue);

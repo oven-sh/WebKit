@@ -237,19 +237,8 @@ JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source
 
 static void reportException(JSGlobalObject* globalObject, JSValue exception)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    String name = typeName(globalObject, exception);
-    String message = str(globalObject, exception);
-    if (scope.exception()) {
-        scope.clearException();
-        message = "<exception str() failed>"_s;
-    }
-    // FIXME: The traceback.
-    if (message.isEmpty())
-        dataLogLn(name);
-    else
-        dataLogLn(name, ": ", message);
+    auto text = formatException(globalObject, exception).utf8();
+    fwrite(text.data(), 1, text.length(), stderr);
 }
 
 int runMain(JSGlobalObject* globalObject, const SourceCode& source)

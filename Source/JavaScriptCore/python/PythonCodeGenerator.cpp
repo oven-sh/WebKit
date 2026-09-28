@@ -1921,6 +1921,8 @@ private:
             auto& node = statement.as<Return>();
             if (!isFunctionLike() || m_info.kind == CodeKind::Class)
                 return fail("'return' outside function"_s, node);
+            if (m_isInExceptStar)
+                return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, node);
             if (node.value && m_info.isCoroutine && m_info.isGenerator)
                 return fail("'return' with value in async generator"_s, node);
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
@@ -1955,6 +1957,7 @@ private:
         case Statement::Kind::While: {
             auto& node = statement.as<While>();
             Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
+            SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
             Ref<Label> otherwise = g.newLabel();
             g.emitLabel(*scope->continueTarget());
             g.emitLoopHint();
@@ -1972,6 +1975,8 @@ private:
             LabelScope* scope = g.breakTarget(Identifier());
             if (!scope)
                 return fail("'break' outside loop"_s, statement);
+            if (m_isInExceptStarOutsideLoop)
+                return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), scope->breakTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 g.emitJump(scope->breakTarget());
@@ -1982,6 +1987,8 @@ private:
             LabelScope* scope = g.continueTarget(Identifier());
             if (!scope)
                 return fail("'continue' not properly in loop"_s, statement);
+            if (m_isInExceptStarOutsideLoop)
+                return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), *scope->continueTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 g.emitJump(*scope->continueTarget());
@@ -2387,6 +2394,7 @@ private:
                 OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
         Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
+        SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
         Ref<Label> exhausted = g.newLabel();
         g.emitLabel(*scope->continueTarget());
         g.emitLoopHint();
@@ -2516,8 +2524,6 @@ private:
 
     void emitTry(Try& node)
     {
-        if (node.isStar)
-            return fail("'except*' is not supported yet"_s, node);
         if (!node.finalBody.empty()) {
             emitTryFinally([&] {
                 emitTryExcept(node);
@@ -2542,6 +2548,8 @@ private:
     {
         if (node.handlers.empty())
             return emit(node.body);
+        if (node.isStar)
+            return emitTryExceptStar(node);
 
         for (size_t i = 0; i + 1 < node.handlers.size(); ++i) {
             if (!node.handlers[i]->type)
@@ -2579,6 +2587,68 @@ private:
                 // Nothing wanted it.
                 g.emitThrow(exception);
                 g.emitLabel(handled.get());
+            });
+        }, [&] {
+            emit(node.orElse);
+        });
+    }
+
+    // try: ... except* E: ... Each clause is given the part of the exception that is for it, and they can all run. What they raise, and what none
+    // of them took, is put together again at the end.
+    void emitTryExceptStar(Try& node)
+    {
+        emitTryCatch([&] {
+            emit(node.body);
+        }, [&] (RegisterID* original) {
+            emitWhileHandling(original, node, [&] {
+                Reg results = g.newTemporary();
+                emitNewList(results.get(), { });
+                Reg rest = g.newTemporary();
+                g.move(rest.get(), original);
+                for (ExceptHandler* handler : node.handlers) {
+                    Ref<Label> next = g.newLabel();
+                    Reg match = g.newTemporary();
+                    {
+                        Reg type = emit(handler->type);
+                        Reg pair = g.newTemporary();
+                        emitRuntimeCall(pair.get(), "matchExceptionGroup"_s, { rest.get(), type.get() }, *handler->type);
+                        auto parts = emitUnpackExactly(pair.get(), 2);
+                        g.move(match.get(), parts[0].get());
+                        g.move(rest.get(), parts[1].get());
+                    }
+                    Reg isNone = g.newTemporary();
+                    g.emitIsUndefinedOrNull(isNone.get(), match.get());
+                    g.emitJumpIfTrue(isNone.get(), next.get());
+
+                    emitTryCatch([&] {
+                        emitWhileHandling(match.get(), *handler, [&] {
+                            SetForScope noReturn(m_isInExceptStar, true);
+                            SetForScope noBreak(m_isInExceptStarOutsideLoop, true);
+                            if (handler->name) {
+                                emitStoreName(*handler->name, match.get(), *handler);
+                                emitTryFinally([&] {
+                                    emit(handler->body);
+                                }, [&] {
+                                    emitStoreName(*handler->name, none(), *handler);
+                                    emitDeleteName(*handler->name, *handler);
+                                });
+                            } else
+                                emit(handler->body);
+                        });
+                    }, [&] (RegisterID* raised) {
+                        emitRuntimeCall(nullptr, "listAppend"_s, { results.get(), raised }, *handler);
+                    }, [] { });
+                    g.emitLabel(next.get());
+                }
+                emitRuntimeCall(nullptr, "listAppend"_s, { results.get(), rest.get() }, node);
+                Reg toRaise = g.newTemporary();
+                emitRuntimeCall(toRaise.get(), "prepareReraiseStar"_s, { original, results.get() }, node);
+                Ref<Label> done = g.newLabel();
+                Reg isNone = g.newTemporary();
+                g.emitIsUndefinedOrNull(isNone.get(), toRaise.get());
+                g.emitJumpIfTrue(isNone.get(), done.get());
+                g.emitThrow(toRaise.get());
+                g.emitLabel(done.get());
             });
         }, [&] {
             emit(node.orElse);
@@ -2781,6 +2851,8 @@ private:
     BytecodeGenerator& g;
     VM& m_vm;
     std::unique_ptr<CodeDetails> m_details;
+    bool m_isInExceptStar { false };
+    bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.
     CommonNames& m_names;
     Arena& m_arena;
     SymbolTable& m_table;

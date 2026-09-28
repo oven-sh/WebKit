@@ -625,6 +625,7 @@ PYTHON_RUNTIME_FUNCTION(runtimeRaise)
         object->putDirect(vm, names.private_suppressContext, jsBoolean(true));
     }
     setContext(globalObject, object);
+    addTracebackEntryForRaise(globalObject, exception, callerOf(callFrame));
     throwException(globalObject, scope, exception);
     return { };
 }
@@ -711,7 +712,8 @@ PYTHON_RUNTIME_FUNCTION(callExit)
     JSValue exception = argument(1);
     if (isNone(exception))
         RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), jsUndefined(), jsUndefined(), jsUndefined())));
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), typeOf(globalObject, exception), exception, jsUndefined())));
+    JSValue traceback = exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), typeOf(globalObject, exception), exception, traceback ? traceback : jsUndefined())));
 }
 
 // ---- match

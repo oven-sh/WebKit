@@ -77,6 +77,7 @@
 #include "NativeCallee.h"
 #include "ProgramCodeBlock.h"
 #include "ProtoCallFrameInlines.h"
+#include "PythonOperations.h"
 #include "Register.h"
 #include "RegisterAtOffsetList.h"
 #include "ScopedArguments.h"
@@ -826,6 +827,7 @@ public:
         , m_codeBlock(codeBlock)
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
+        , m_thrownValue(thrownValue)
 #if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
     {
@@ -848,7 +850,6 @@ public:
     }
 #else
     {
-        UNUSED_PARAM(thrownValue);
     }
 #endif
 
@@ -861,6 +862,9 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (!m_isTermination) {
+                // An exception in Python remembers each frame that it goes through.
+                if (m_codeBlock->source().provider()->language() == SourceLanguage::Python) [[unlikely]]
+                    Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
@@ -921,6 +925,7 @@ private:
     CodeBlock*& m_codeBlock;
     CatchInfo& m_handler;
     JSRemoteFunction*& m_seenRemoteFunction;
+    JSValue m_thrownValue;
 
 #if ENABLE(WEBASSEMBLY)
     Exception* m_exception;

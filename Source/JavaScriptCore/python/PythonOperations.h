@@ -39,6 +39,7 @@
 
 namespace JSC {
 
+class BytecodeIndex;
 class CodeBlock;
 class PyDict;
 
@@ -158,6 +159,13 @@ JSObject* globalsOfFrame(JSGlobalObject*, CallFrame*);
 JSValue localsOfFrame(JSGlobalObject*, CallFrame*);
 // The frame of the Python code that called a function written in C++.
 CallFrame* callerOf(CallFrame*);
+
+// Notes that an exception is passing through, or being caught in, a frame of Python code. The unwinder calls it.
+void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
+// `raise exception`, of one that has been raised before, in the frame that it was last seen in: that is another entry.
+void addTracebackEntryForRaise(JSGlobalObject*, JSValue exception, CallFrame*);
+// What Python prints when an exception gets away: the traceback, and those of what led to it.
+String formatException(JSGlobalObject*, JSValue exception);
 
 // ---- Operators
 

@@ -236,7 +236,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         bool basesHaveDict = false;
         for (auto& entry : order->span()) {
             auto* ancestor = uncheckedDowncast<PyType>(entry.get().asCell());
-            basesHaveDict |= ancestor->hasFlag(PyType::IsHeapType) && !ancestor->hasFlag(PyType::HasNoInstanceDict);
+            basesHaveDict |= (ancestor->hasFlag(PyType::IsHeapType) || ancestor->isExceptionType()) && !ancestor->hasFlag(PyType::HasNoInstanceDict);
         }
         if (!basesHaveDict)
             type->setFlag(PyType::HasNoInstanceDict);

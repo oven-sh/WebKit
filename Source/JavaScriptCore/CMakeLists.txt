@@ -2155,6 +2155,19 @@ add_custom_command(
     COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/yarr/generateYarrCanonicalizeUnicode ${JAVASCRIPTCORE_DIR}/ucd/CaseFolding.txt ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/YarrCanonicalizeUnicode.cpp
     VERBATIM)
 
+# GENERATOR: "PythonLibrarySources.h": the parts of Python's library that are written in Python
+set(JavaScriptCore_PYTHON_LIBRARY
+    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_exceptiongroup.py
+)
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-library-sources.py
+    DEPENDS ${JavaScriptCore_PYTHON_LIBRARY}
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-library-sources.py ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h ${JavaScriptCore_PYTHON_LIBRARY}
+    VERBATIM)
+list(APPEND JavaScriptCore_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h)
+WEBKIT_ADD_SOURCE_DEPENDENCIES(${CMAKE_CURRENT_SOURCE_DIR}/python/PythonModules.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h)
+
 # GENERATOR: "KeywordLookup.h": keyword decision tree used by the lexer
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/KeywordLookup.h

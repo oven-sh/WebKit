@@ -768,6 +768,7 @@ python/PythonSequences.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonSymbolTable.cpp
+python/PythonTraceback.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp
