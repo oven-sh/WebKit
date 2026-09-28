@@ -820,10 +820,10 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
     // Jump slow if either is a double. First test if it's an integer, which is fine, and then test
     // if it's a double.
     includesNonCell.link(this);
-    Jump leftOK = branchIfPlainInt32(regT0); // A whole float is not to be compared by its bits either.
+    Jump leftOK = branchIfPlainInt32(regT0, 24); // A whole float is not to be compared by its bits either.
     addSlowCase(branchIfNumber(regT0));
     leftOK.link(this);
-    Jump rightOK = branchIfPlainInt32(regT1);
+    Jump rightOK = branchIfPlainInt32(regT1, 24);
     addSlowCase(branchIfNumber(regT1));
     rightOK.link(this);
     comparePointers.link(this);
@@ -1012,10 +1012,10 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
     // if it's a double. We must filter doubles before doing the bitwise identity check below,
     // since NaN === NaN must be false even when both sides have identical encoded bits.
     includesNonCell.link(this);
-    Jump leftOK = branchIfPlainInt32(regT0); // A whole float is not to be compared by its bits either.
+    Jump leftOK = branchIfPlainInt32(regT0, 24); // A whole float is not to be compared by its bits either.
     addSlowCase(branchIfNumber(regT0));
     leftOK.link(this);
-    Jump rightOK = branchIfPlainInt32(regT1);
+    Jump rightOK = branchIfPlainInt32(regT1, 24);
     addSlowCase(branchIfNumber(regT1));
     rightOK.link(this);
 

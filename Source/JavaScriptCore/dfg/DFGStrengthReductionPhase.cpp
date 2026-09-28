@@ -365,6 +365,16 @@ private:
             break;
         }
 
+        case DoubleRep: {
+            // What was boxed as a float, and is wanted as a double again. Fixup sees to this where it can see it.
+            Node* child = m_node->child1().node();
+            if (child->op() == BoxTaggedFloat && (m_node->child1().useKind() == NumberUse || m_node->child1().useKind() == NotCellNorBigIntUse)) {
+                m_node->convertToIdentityOn(child->child1().node());
+                m_changed = true;
+            }
+            break;
+        }
+
         case ValueRep:
         case Int52Rep: {
             // This short-circuits circuitous conversions, like ValueRep(Int52Rep(value)).

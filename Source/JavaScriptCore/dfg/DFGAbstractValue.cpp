@@ -134,9 +134,13 @@ void AbstractValue::fixTypeForRepresentation(Graph& graph, NodeFlags representat
             if (m_value.isInt32())
                 m_value = jsDoubleNumber(m_value.asNumber());
         }
-        if (m_type & SpecIntAnyFormat) {
-            m_type &= ~SpecIntAnyFormat;
-            m_type |= SpecAnyIntAsDouble;
+        if (m_type & (SpecInt32Only | SpecWholeFloat | SpecInt32AsInt52)) {
+            m_type &= ~(SpecInt32Only | SpecWholeFloat | SpecInt32AsInt52);
+            m_type |= SpecInt32AsDouble;
+        }
+        if (m_type & SpecNonInt32AsInt52) {
+            m_type &= ~SpecNonInt32AsInt52;
+            m_type |= SpecNonInt32AnyIntAsDouble;
         }
         if (m_type & ~SpecFullDouble)
             DFG_CRASH(graph, node, toUTF8CString("Abstract value ", *this, " for double node has type outside SpecFullDouble.\n").legacyCStringPointer());

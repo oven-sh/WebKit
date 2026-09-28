@@ -384,7 +384,7 @@ public:
 
                     switch (m_graph.m_argumentFormats[0][i]) {
                     case FlushedInt32:
-                        speculate(BadType, jsValueValue(jsValue), profile, isNotPlainInt32(jsValue));
+                        speculate(BadType, jsValueValue(jsValue), profile, isNotPlainInt32(jsValue, 10));
                         break;
                     case FlushedBoolean:
                         speculate(BadType, jsValueValue(jsValue), profile, isNotBoolean(jsValue));
@@ -2274,7 +2274,7 @@ private:
 
             FTL_TYPE_CHECK(
                 jsValueValue(value), m_node->child1(), SpecBytecodeRealNumber,
-                isNotPlainInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
+                isNotPlainInt32(value, 18, provenType(m_node->child1()) & ~SpecDoubleReal));
             ValueFromBlock slowResult = m_out.anchor(m_out.intToDouble(unboxInt32(value)));
             m_out.jump(continuation);
 
@@ -2468,7 +2468,7 @@ private:
 
         m_out.appendTo(intCase, continuation);
         LValue boxedJSValue = m_out.bitCast(boxed, Int64);
-        speculate(BadType, noValue(), node, Options::guardsWholeFloats(6) ? isNotPlainInt32(boxedJSValue) : isNotInt32(boxedJSValue));
+        speculate(BadType, noValue(), node, isNotPlainInt32(boxedJSValue, 6));
         ValueFromBlock slowResult = m_out.anchor(m_out.intToDouble(unboxInt32(boxedJSValue)));
         m_out.jump(continuation);
 
@@ -7520,7 +7520,7 @@ IGNORE_CLANG_WARNINGS_END
                 LValue value = lowJSValue(child3, ManualOperandSpeculation);
 
                 if (arrayMode.type() == Array::Int32)
-                    FTL_TYPE_CHECK(jsValueValue(value), child3, SpecInt32Only, isNotPlainInt32(value));
+                    FTL_TYPE_CHECK(jsValueValue(value), child3, SpecInt32Only, isNotPlainInt32(value, 15));
 
                 IndexedAbstractHeap& heap = arrayMode.type() == Array::Int32 ? m_heaps.indexedInt32Properties : m_heaps.indexedContiguousProperties;
                 TypedPointer elementPointer = baseIndexWithProvenValue(heap, storage, index, child2);
@@ -7773,7 +7773,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(indexEdge);
         LValue value = lowJSValue(valueEdge, ManualOperandSpeculation);
 
-        FTL_TYPE_CHECK(jsValueValue(value), valueEdge, SpecInt32Only, isNotPlainInt32(value));
+        FTL_TYPE_CHECK(jsValueValue(value), valueEdge, SpecInt32Only, isNotPlainInt32(value, 15));
 
         ArrayMode arrayMode = m_node->arrayMode().modeForPut();
         ArrayModes arrayModes = m_node->arrayModes();
@@ -13734,7 +13734,7 @@ IGNORE_CLANG_WARNINGS_END
         // And a whole float, which is equal to the Int32 with its value. Of what is left, only it has this bit after the addition above.
         LValue cellCheck = m_out.bitOr(left, right);
         ValueFromBlock fastFalse = m_out.anchor(m_out.booleanFalse);
-        m_out.branch(m_out.bitOr(isCell(cellCheck), m_out.testNonZero64(combined, m_out.constInt64(JSValue::WholeFloatMark))), rarely(slowPath), usually(continuation));
+        m_out.branch(Options::guardsWholeFloats(24) ? m_out.bitOr(isCell(cellCheck), m_out.testNonZero64(combined, m_out.constInt64(JSValue::WholeFloatMark))) : isCell(cellCheck), rarely(slowPath), usually(continuation));
 
         m_out.appendTo(slowPath, continuation);
         ValueFromBlock slowResult = m_out.anchor(m_out.notNull(vmCall(
@@ -13831,7 +13831,7 @@ IGNORE_CLANG_WARNINGS_END
         // Logically we want speculateNeitherDoubleNorHeapBigInt, but we cannot use it here as it changes the state of the abstract interpreter.
         // So if we used it here, we would skip the later checks.
         // Instead we reimplement it in this and the next few blocks, using typeCheckWithoutUpdatingInterpreter.
-        m_out.branch(isPlainInt32(leftValue, leftValueType), unsure(returnTrueBlock), unsure(leftIsNotInt32EqualCase));
+        m_out.branch(isPlainInt32(leftValue, 16, leftValueType), unsure(returnTrueBlock), unsure(leftIsNotInt32EqualCase));
 
         m_out.appendTo(leftIsNotInt32EqualCase, leftIsCellEqualCase);
         typeCheckWithoutUpdatingInterpreter(jsValueValue(leftValue), leftNeitherDoubleNorHeapBigIntEdge, ~(SpecFullDouble | SpecWholeFloat), isNumber(leftValue));
@@ -16447,10 +16447,14 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock leftIsRight = m_out.newBlock();
         LBasicBlock bothAreRight = m_out.newBlock();
         LBasicBlock fits = m_out.newBlock();
+        LBasicBlock notBothInt32 = m_out.newBlock();
+        LBasicBlock leftIsNumber = m_out.newBlock();
+        LBasicBlock bothAreNumbers = m_out.newBlock();
+        LBasicBlock floatCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        Vector<ValueFromBlock, 2> results;
+        Vector<ValueFromBlock, 3> results;
 
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(leftIsRight);
 
@@ -16468,13 +16472,15 @@ IGNORE_CLANG_WARNINGS_END
             results.append(m_out.anchor(boxTaggedFloat(m_out.doubleDiv(asDouble(left, leftType), asDouble(right, rightType)))));
             m_out.jump(continuation);
 
-            m_out.appendTo(fits, slowCase);
-            m_out.unreachable();
+            for (LBasicBlock unused : { fits, notBothInt32, leftIsNumber, bothAreNumbers, floatCase }) {
+                m_out.appendTo(unused);
+                m_out.unreachable();
+            }
         } else {
-            m_out.branch(isPlainInt32(left, leftType), unsure(leftIsRight), unsure(slowCase));
+            m_out.branch(isPlainInt32(left, 20, leftType), unsure(leftIsRight), unsure(notBothInt32));
 
             m_out.appendTo(leftIsRight, bothAreRight);
-            m_out.branch(isPlainInt32(right, rightType), unsure(bothAreRight), unsure(slowCase));
+            m_out.branch(isPlainInt32(right, 20, rightType), unsure(bothAreRight), unsure(notBothInt32));
 
             // In 64 bits, where none of these can overflow.
             m_out.appendTo(bothAreRight, fits);
@@ -16484,8 +16490,31 @@ IGNORE_CLANG_WARNINGS_END
             LValue narrow = m_out.castToInt32(wide);
             m_out.branch(m_out.equal(m_out.signExt32To64(narrow), wide), usually(fits), rarely(slowCase));
 
-            m_out.appendTo(fits, slowCase);
+            m_out.appendTo(fits, notBothInt32);
             results.append(m_out.anchor(boxInt32(narrow)));
+            m_out.jump(continuation);
+
+            // A float comes of it if either operand is one. Integers that are not both encoded as int32s are left to the slow path.
+            m_out.appendTo(notBothInt32, leftIsNumber);
+            m_out.branch(isNumber(left, leftType), usually(leftIsNumber), rarely(slowCase));
+
+            m_out.appendTo(leftIsNumber, bothAreNumbers);
+            m_out.branch(isNumber(right, rightType), usually(bothAreNumbers), rarely(slowCase));
+
+            m_out.appendTo(bothAreNumbers, floatCase);
+            auto asDouble = [&] (LValue value, SpeculatedType type) {
+                return m_out.select(isInt32(value, type), m_out.intToDouble(unboxInt32(value)), unboxDouble(value));
+            };
+            auto isFloat = [&] (LValue value, LValue doubleValue, SpeculatedType type) {
+                return m_out.select(isInt32(value, type), m_out.testNonZero64(value, m_out.constInt64(JSValue::WholeFloatMark)), m_out.logicalNot(doubleIsTaggedInteger(doubleValue, m_out.doubleToInt32(doubleValue))));
+            };
+            LValue leftDouble = asDouble(left, leftType);
+            LValue rightDouble = asDouble(right, rightType);
+            m_out.branch(m_out.bitOr(isFloat(left, leftDouble, leftType), isFloat(right, rightDouble, rightType)), usually(floatCase), rarely(slowCase));
+
+            m_out.appendTo(floatCase, slowCase);
+            LValue doubleResult = op == TaggedAdd ? m_out.doubleAdd(leftDouble, rightDouble) : op == TaggedSub ? m_out.doubleSub(leftDouble, rightDouble) : m_out.doubleMul(leftDouble, rightDouble);
+            results.append(m_out.anchor(boxTaggedFloat(doubleResult)));
             m_out.jump(continuation);
         }
 
@@ -19766,7 +19795,7 @@ IGNORE_CLANG_WARNINGS_END
                         case ALL_INT32_INDEXING_TYPES:
                             // FIXME: This could use the proven type if we had the Edge for the
                             // value. https://bugs.webkit.org/show_bug.cgi?id=155311
-                            speculate(BadType, noValue(), nullptr, isNotPlainInt32(value));
+                            speculate(BadType, noValue(), nullptr, isNotPlainInt32(value, 15));
                             storeType = Output::Store64;
                             heap = &m_heaps.indexedInt32Properties;
                             break;
@@ -25963,7 +25992,7 @@ IGNORE_CLANG_WARNINGS_END
         if (isValid(value)) {
             LValue boxedResult = value.value();
             FTL_TYPE_CHECK(
-                jsValueValue(boxedResult), edge, SpecInt32Only, isNotPlainInt32(boxedResult));
+                jsValueValue(boxedResult), edge, SpecInt32Only, isNotPlainInt32(boxedResult, 7));
             LValue result = unboxInt32(boxedResult);
             setInt32(edge.node(), result);
             return result;
@@ -26490,14 +26519,19 @@ IGNORE_CLANG_WARNINGS_END
     }
     // isInt32() is also true of a whole float. These are for where the int32 may be boxed again afterwards, or is put where it
     // will be taken for a plain one. The upper half of a plain int32 is its tag and nothing else.
-    LValue isPlainInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
+    // (The number is for Options::guardsWholeFloats.)
+    LValue isPlainInt32(LValue jsValue, unsigned guard, SpeculatedType type = SpecFullTop)
     {
+        if (!Options::guardsWholeFloats(guard))
+            return isInt32(jsValue, type);
         if (LValue proven = isProvenValue(type, SpecInt32Only))
             return proven;
         return m_out.equal(m_out.lShr(jsValue, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
     }
-    LValue isNotPlainInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
+    LValue isNotPlainInt32(LValue jsValue, unsigned guard, SpeculatedType type = SpecFullTop)
     {
+        if (!Options::guardsWholeFloats(guard))
+            return isNotInt32(jsValue, type);
         if (LValue proven = isProvenValue(type, ~SpecInt32Only))
             return proven;
         return m_out.notEqual(m_out.lShr(jsValue, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
@@ -26510,6 +26544,8 @@ IGNORE_CLANG_WARNINGS_END
     }
     LValue makeInt32Plain(LValue jsValue)
     {
+        if (!Options::guardsWholeFloats(19))
+            return jsValue;
         return m_out.bitAnd(jsValue, m_out.constInt64(~JSValue::WholeFloatMark));
     }
     LValue unboxInt32(LValue jsValue)
@@ -26632,7 +26668,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.branch(isNotInt32, unsure(doubleCase), unsure(intCase));
 
         LBasicBlock lastNext = m_out.appendTo(intCase, doubleCase);
-        if (m_interpreter.needsTypeCheck(edge, ~SpecWholeFloat))
+        if (m_interpreter.needsTypeCheck(edge, ~SpecWholeFloat) && Options::guardsWholeFloats(12))
             speculate(BadType, jsValueValue(boxedValue), edge.node(), m_out.testNonZero64(boxedValue, m_out.constInt64(JSValue::WholeFloatMark)));
         ValueFromBlock intToInt52 = m_out.anchor(m_out.signExt32To64(unboxInt32(boxedValue)));
         m_out.jump(continuation);
@@ -27014,7 +27050,7 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock isNotInt32 = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isPlainInt32(value, provenType(edge)), unsure(continuation), unsure(isNotInt32));
+        m_out.branch(isPlainInt32(value, 16, provenType(edge)), unsure(continuation), unsure(isNotInt32));
 
         LBasicBlock lastNext = m_out.appendTo(isNotInt32, continuation);
         FTL_TYPE_CHECK(jsValueValue(value), edge, ~(SpecFullDouble | SpecWholeFloat), isNumber(value));
@@ -27034,7 +27070,7 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock isCellBlock = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isPlainInt32(value, provenType(edge)), unsure(continuation), unsure(isNotInt32));
+        m_out.branch(isPlainInt32(value, 16, provenType(edge)), unsure(continuation), unsure(isNotInt32));
 
         LBasicBlock lastNext = m_out.appendTo(isNotInt32, isCellBlock);
         FTL_TYPE_CHECK(jsValueValue(value), edge, ~(SpecFullDouble | SpecWholeFloat), isNumber(value));
@@ -27058,7 +27094,7 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock isCellBlock = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isPlainInt32(value, provenType(edge)), unsure(continuation), unsure(isNotInt32));
+        m_out.branch(isPlainInt32(value, 16, provenType(edge)), unsure(continuation), unsure(isNotInt32));
 
         LBasicBlock lastNext = m_out.appendTo(isNotInt32, isCellBlock);
         FTL_TYPE_CHECK(jsValueValue(value), edge, ~(SpecFullDouble | SpecWholeFloat), isNumber(value));
@@ -27844,7 +27880,7 @@ IGNORE_CLANG_WARNINGS_END
 
         typeCheck(
             jsValueValue(value), m_node->child1(), SpecBytecodeRealNumber,
-            isNotPlainInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
+            isNotPlainInt32(value, 18, provenType(m_node->child1()) & ~SpecDoubleReal));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
@@ -28496,6 +28532,17 @@ IGNORE_CLANG_WARNINGS_END
             case Int52Constant:
             case DoubleConstant:
                 return ExitValue::constant(node->asJSValue());
+
+            case BoxTaggedFloat: {
+                // Boxed on the way out, so that where nothing else wants it boxed, nothing is left of it.
+                Node* child = node->child1().node();
+                if (child->isNumberConstant())
+                    return ExitValue::constant(jsTaggedFloat(child->asNumber()));
+                LoweredNodeValue value = m_doubleValues.get(child);
+                if (isValid(value))
+                    return exitArgument(arguments, DataFormatTaggedFloat, value.value());
+                break;
+            }
 
             default:
                 if (node->isPhantomAllocation())

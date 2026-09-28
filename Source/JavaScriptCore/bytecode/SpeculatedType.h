@@ -95,7 +95,9 @@ static constexpr SpeculatedType SpecInt32AsInt52                      = 1ull << 
 static constexpr SpeculatedType SpecNonInt32AsInt52                   = 1ull << 40; // It's an Int52 and it can't fit in an int32.
 static constexpr SpeculatedType SpecInt52Any                          = SpecInt32AsInt52 | SpecNonInt32AsInt52; // It's any kind of Int52.
 
-static constexpr SpeculatedType SpecAnyIntAsDouble                    = 1ull << 41; // It's definitely an Int52 and it's inside a double.
+static constexpr SpeculatedType SpecInt32AsDouble                     = 1ull << 41; // It's definitely a double, and it could have been an Int32.
+static constexpr SpeculatedType SpecNonInt32AnyIntAsDouble            = 1ull << 52; // It's definitely an Int52 inside a double, and it couldn't have been an Int32.
+static constexpr SpeculatedType SpecAnyIntAsDouble                    = SpecInt32AsDouble | SpecNonInt32AnyIntAsDouble; // It's definitely an Int52 and it's inside a double.
 static constexpr SpeculatedType SpecNonIntAsDouble                    = 1ull << 42; // It's definitely not an Int52 but it's a real number and it's a double.
 static constexpr SpeculatedType SpecDoubleReal                        = SpecNonIntAsDouble | SpecAnyIntAsDouble; // It's definitely a non-NaN double.
 static constexpr SpeculatedType SpecDoublePureNaN                     = 1ull << 43; // It's definitely a NaN that is safe to tag (i.e. pure).
@@ -109,6 +111,9 @@ static constexpr SpeculatedType SpecBytecodeNumber                    = SpecInt3
 static constexpr SpeculatedType SpecIntAnyFormat                      = SpecInt52Any | SpecInt32Only | SpecWholeFloat | SpecAnyIntAsDouble;
 
 static constexpr SpeculatedType SpecFullNumber                        = SpecIntAnyFormat | SpecFullDouble; // It's either an Int32, Int52, or a Double, and the Double can be impure NaN.
+// What TaggedArithmetic.h calls an integer and a float.
+static constexpr SpeculatedType SpecTaggedInteger                     = SpecInt32Only | SpecInt32AsDouble;
+static constexpr SpeculatedType SpecTaggedFloat                       = SpecWholeFloat | SpecNonInt32AnyIntAsDouble | SpecNonIntAsDouble | SpecDoublePureNaN;
 static constexpr SpeculatedType SpecBoolean                           = 1ull << 45; // It's definitely a Boolean.
 static constexpr SpeculatedType SpecOther                             = 1ull << 46; // It's definitely either Null or Undefined.
 static constexpr SpeculatedType SpecMisc                              = SpecBoolean | SpecOther; // It's definitely either a boolean, Null, or Undefined.
@@ -421,7 +426,7 @@ inline bool isIntAnyFormat(SpeculatedType value)
 
 inline bool isAnyIntAsDoubleSpeculation(SpeculatedType value)
 {
-    return value == SpecAnyIntAsDouble;
+    return !!value && (value & SpecAnyIntAsDouble) == value;
 }
 
 inline bool isDoubleRealSpeculation(SpeculatedType value)

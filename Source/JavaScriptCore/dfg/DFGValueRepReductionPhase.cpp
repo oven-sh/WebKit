@@ -53,10 +53,109 @@ public:
         changed |= convertValueRepsToUnboxed<DoubleRepUse>();
         changed |= convertValueRepsToUnboxed<Int52RepUse>();
         changed |= convertValueRepsToUnboxed<Int32Use>();
+        changed |= unboxTaggedFloatPhis();
         return changed;
     }
 
 private:
+    // A Phi that only floats flow into: BoxTaggedFloat, constants, and other such Phis. It is made a Phi of doubles. What wants a
+    // double takes it as it is, and for whatever else there is BoxTaggedFloat again, at the use. An exit is such a use,
+    // and the FTL boxes on the way out.
+    bool unboxTaggedFloatPhis()
+    {
+        UncheckedKeyHashSet<Node*> candidates;
+        for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            for (Node* node : *block) {
+                if (node->op() == Phi && node->hasJSResult())
+                    candidates.add(node);
+            }
+        }
+        if (candidates.isEmpty())
+            return false;
+
+        PhiChildren phiChildren(m_graph);
+        auto isFloatConstant = [&] (Node* node) {
+            return node->op() == JSConstant && node->asJSValue().isNumber() && !taggedInteger(node->asJSValue());
+        };
+        while (true) {
+            Vector<Node*> toRemove;
+            for (Node* candidate : candidates) {
+                bool ok = true;
+                bool sawIncoming = false;
+                phiChildren.forAllIncomingValues(candidate, [&] (Node* incoming) {
+                    sawIncoming = true;
+                    if (incoming->op() == BoxTaggedFloat || isFloatConstant(incoming))
+                        return;
+                    if (incoming->op() == Phi && candidates.contains(incoming))
+                        return;
+                    ok = false;
+                });
+                if (!ok || !sawIncoming)
+                    toRemove.append(candidate);
+            }
+            if (toRemove.isEmpty())
+                break;
+            for (Node* node : toRemove)
+                candidates.remove(node);
+        }
+        if (candidates.isEmpty())
+            return false;
+
+        for (Node* candidate : candidates)
+            candidate->setResult(NodeResultDouble);
+
+        for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Node* node = block->at(index);
+                switch (node->op()) {
+                case Upsilon: {
+                    if (!candidates.contains(node->phi()))
+                        break;
+                    Node* incoming = node->child1().node();
+                    if (incoming->op() == BoxTaggedFloat)
+                        incoming = incoming->child1().node();
+                    else if (incoming->op() == JSConstant)
+                        incoming = m_insertionSet.insertConstant(index, node->origin, jsDoubleNumber(incoming->asNumber()), DoubleConstant);
+                    node->child1() = Edge(incoming, DoubleRepUse);
+                    continue;
+                }
+
+                case DoubleRep:
+                    if (candidates.contains(node->child1().node()) && (node->child1().useKind() == NumberUse || node->child1().useKind() == RealNumberUse || node->child1().useKind() == NotCellNorBigIntUse)) {
+                        node->convertToIdentityOn(node->child1().node());
+                        continue;
+                    }
+                    break;
+
+                case CheckTaggedFloat:
+                    if (candidates.contains(node->child1().node())) {
+                        node->removeWithoutChecks();
+                        continue;
+                    }
+                    break;
+
+                default:
+                    break;
+                }
+
+                Node* box = nullptr;
+                Node* boxed = nullptr;
+                m_graph.doToChildren(node, [&] (Edge& edge) {
+                    if (!candidates.contains(edge.node()))
+                        return;
+                    if (boxed != edge.node()) {
+                        boxed = edge.node();
+                        box = m_insertionSet.insertNode(index, SpecTaggedFloat, BoxTaggedFloat, node->origin, Edge(boxed, DoubleRepUse));
+                    }
+                    edge.setNode(box);
+                });
+            }
+            m_insertionSet.execute(block);
+        }
+
+        return true;
+    }
+
     template<UseKind useKind>
     bool convertValueRepsToUnboxed()
     {
@@ -79,7 +178,7 @@ private:
 
                     // If what is loaded were a whole float, nothing that uses it here would know, but an exit would hand it on as
                     // a double. So none is expected, and to find one is to be wrong (unboxRealNumberDouble).
-                    if (Options::guardsWholeFloats(13) && (node->child1()->prediction() & SpecWholeFloat))
+                    if (Options::guardsWholeFloats(13) && ((node->child1()->prediction() & SpecWholeFloat) || m_graph.m_usesTaggedArithmetic))
                         break;
 
                     switch (node->child1()->op()) {

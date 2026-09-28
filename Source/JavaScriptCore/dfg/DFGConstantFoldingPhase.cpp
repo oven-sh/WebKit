@@ -343,8 +343,7 @@ private:
             }
 
             case CheckTaggedFloat: {
-                // A double with a whole value may be an integer.
-                if (!(m_state.forNode(node->child1()).m_type & ~(SpecWholeFloat | SpecNonIntAsDouble | SpecDoublePureNaN))) {
+                if (!(m_state.forNode(node->child1()).m_type & ~SpecTaggedFloat)) {
                     m_interpreter.execute(indexInBlock);
                     node->remove(m_graph);
                     eliminated = true;

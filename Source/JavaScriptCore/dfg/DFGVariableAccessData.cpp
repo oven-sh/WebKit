@@ -98,6 +98,9 @@ bool VariableAccessData::shouldUseDoubleFormatAccordingToVote()
         return false;
     }
         
+    if (m_holdsTaggedNumbers)
+        return false;
+
     // If the variable is predicted to hold only doubles, then it's a
     // no-brainer: it should be formatted as a double.
     if (isDoubleSpeculation(prediction()))

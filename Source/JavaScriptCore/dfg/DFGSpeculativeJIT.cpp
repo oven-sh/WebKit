@@ -2274,7 +2274,10 @@ void SpeculativeJIT::checkArgumentTypes()
         switch (format) {
         case FlushedInt32: {
             // The upper half of a plain int32 is its tag and nothing else.
-            speculationCheck(BadType, valueSource, node, branch32(NotEqual, addressFor(virtualRegister).withOffset(sizeof(int32_t)), TrustedImm32(static_cast<int32_t>(static_cast<uint64_t>(JSValue::NumberTag) >> 32))));
+            if (Options::guardsWholeFloats(10))
+                speculationCheck(BadType, valueSource, node, branch32(NotEqual, addressFor(virtualRegister).withOffset(sizeof(int32_t)), TrustedImm32(static_cast<int32_t>(static_cast<uint64_t>(JSValue::NumberTag) >> 32))));
+            else
+                speculationCheck(BadType, valueSource, node, branch64(Below, addressFor(virtualRegister), GPRInfo::numberTagRegister));
             break;
         }
         case FlushedBoolean: {
@@ -2937,7 +2940,7 @@ void SpeculativeJIT::compileDoubleRep(Node* node)
         Jump done = branchIfNotNaN(resultFPR);
         
         DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), node->child1(), SpecBytecodeRealNumber, branchIfNotPlainInt32(op1GPR));
+            JSValueSource(op1GPR), node->child1(), SpecBytecodeRealNumber, branchIfNotPlainInt32(op1GPR, 18));
         convertInt32ToDouble(op1GPR, resultFPR);
         
         done.link(this);
@@ -9270,7 +9273,7 @@ void SpeculativeJIT::compileNewArray(Node* node)
                 GPRReg operandGPR = operand.gpr();
                 DFG_TYPE_CHECK(
                     JSValueSource(operandGPR), use, SpecInt32Only,
-                    branchIfNotPlainInt32(operandGPR));
+                    branchIfNotPlainInt32(operandGPR, 15));
             }
         }
         for (unsigned operandIdx = 0; operandIdx < node->numChildren(); ++operandIdx) {
@@ -11749,7 +11752,7 @@ void SpeculativeJIT::speculateRealNumber(Edge edge)
     
     Jump done = branchIfNotNaN(resultFPR);
 
-    typeCheck(JSValueSource(op1GPR), edge, SpecBytecodeRealNumber, branchIfNotPlainInt32(op1GPR));
+    typeCheck(JSValueSource(op1GPR), edge, SpecBytecodeRealNumber, branchIfNotPlainInt32(op1GPR, 18));
     
     done.link(this);
 }
@@ -12286,7 +12289,7 @@ void SpeculativeJIT::speculateNotDouble(Edge edge, GPRReg valueGPR)
 
     bool mayBeInt32 = needsTypeCheck(edge, ~SpecInt32Only);
     if (mayBeInt32)
-        done = branchIfPlainInt32(valueGPR);
+        done = branchIfPlainInt32(valueGPR, 16);
 
     DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, ~(SpecFullDouble | SpecWholeFloat), branchIfNumber(valueGPR));
 
@@ -12312,7 +12315,7 @@ void SpeculativeJIT::speculateNeitherDoubleNorHeapBigInt(Edge edge, GPRReg value
 
     bool mayBeInt32 = needsTypeCheck(edge, ~SpecInt32Only);
     if (mayBeInt32)
-        done.append(branchIfPlainInt32(valueGPR));
+        done.append(branchIfPlainInt32(valueGPR, 16));
 
     DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, ~(SpecFullDouble | SpecWholeFloat), branchIfNumber(valueGPR));
 
@@ -12344,7 +12347,7 @@ void SpeculativeJIT::speculateNeitherDoubleNorHeapBigIntNorString(Edge edge, GPR
 
     bool mayBeInt32 = needsTypeCheck(edge, ~SpecInt32Only);
     if (mayBeInt32)
-        done.append(branchIfPlainInt32(valueGPR));
+        done.append(branchIfPlainInt32(valueGPR, 16));
 
     DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, ~(SpecFullDouble | SpecWholeFloat), branchIfNumber(valueGPR));
 
@@ -16555,8 +16558,18 @@ void SpeculativeJIT::compileTaggedArith(Node* node)
         return;
     }
 
-    slowCases.append(branchIfNotPlainInt32(leftGPR));
-    slowCases.append(branchIfNotPlainInt32(rightGPR));
+    GPRTemporary scratch(this);
+    FPRTemporary leftDouble(this);
+    FPRTemporary rightDouble(this);
+    FPRTemporary scratchDouble(this);
+    GPRReg scratchGPR = scratch.gpr();
+    FPRReg leftFPR = leftDouble.fpr();
+    FPRReg rightFPR = rightDouble.fpr();
+    FPRReg scratchFPR = scratchDouble.fpr();
+
+    JumpList notBothInt32;
+    notBothInt32.append(branchIfNotPlainInt32(leftGPR, 20));
+    notBothInt32.append(branchIfNotPlainInt32(rightGPR, 20));
     switch (node->op()) {
     case TaggedAdd:
         slowCases.append(branchAdd32(Overflow, leftGPR, rightGPR, resultGPR));
@@ -16571,6 +16584,60 @@ void SpeculativeJIT::compileTaggedArith(Node* node)
         RELEASE_ASSERT_NOT_REACHED();
     }
     boxInt32(resultGPR, resultGPR);
+    Jump done = jump();
+
+    // A float comes of it if either operand is one. Integers that are not both encoded as int32s are left to the slow path.
+    notBothInt32.link(this);
+    JumpList leftIsFloat;
+    JumpList haveDoubles;
+    {
+        Jump notInt32 = branchIfNotInt32(leftGPR);
+        convertInt32ToDouble(leftGPR, leftFPR);
+        leftIsFloat.append(branchIfInt32IsWholeFloat(leftGPR));
+        Jump isInteger = jump();
+        notInt32.link(this);
+        slowCases.append(branchIfNotNumber(leftGPR));
+        unboxDoubleWithoutAssertions(leftGPR, scratchGPR, leftFPR);
+        leftIsFloat.append(branchIfDoubleIsNotTaggedInteger(leftFPR, scratchGPR, scratchFPR));
+        isInteger.link(this);
+    }
+    {
+        // The left is an integer, so it is for the right to be a float.
+        Jump notInt32 = branchIfNotInt32(rightGPR);
+        slowCases.append(branchIfInt32IsPlain(rightGPR));
+        convertInt32ToDouble(rightGPR, rightFPR);
+        haveDoubles.append(jump());
+        notInt32.link(this);
+        slowCases.append(branchIfNotNumber(rightGPR));
+        unboxDoubleWithoutAssertions(rightGPR, scratchGPR, rightFPR);
+        haveDoubles.append(branchIfDoubleIsNotTaggedInteger(rightFPR, scratchGPR, scratchFPR));
+        slowCases.append(jump());
+    }
+    {
+        leftIsFloat.link(this);
+        Jump isInt32 = branchIfInt32(rightGPR);
+        slowCases.append(branchIfNotNumber(rightGPR));
+        unboxDoubleWithoutAssertions(rightGPR, scratchGPR, rightFPR);
+        haveDoubles.append(jump());
+        isInt32.link(this);
+        convertInt32ToDouble(rightGPR, rightFPR);
+    }
+    haveDoubles.link(this);
+    switch (node->op()) {
+    case TaggedAdd:
+        addDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    case TaggedSub:
+        subDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    case TaggedMul:
+        mulDouble(leftFPR, rightFPR, leftFPR);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    boxTaggedFloat(leftFPR, resultGPR, scratchGPR, scratchFPR);
+    done.link(this);
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operation, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, leftGPR, rightGPR));
     jsValueResult(resultGPR, node);

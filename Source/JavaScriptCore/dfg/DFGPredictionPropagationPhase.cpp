@@ -340,7 +340,7 @@ private:
                 changed |= mergePrediction(SpecInt32Only);
                 break;
             case Graph::TaggedArithMode::Double:
-                changed |= mergePrediction(SpecWholeFloat | SpecBytecodeDouble);
+                changed |= mergePrediction(SpecTaggedFloat);
                 break;
             case Graph::TaggedArithMode::Generic:
                 changed |= mergePrediction(node->getHeapPrediction());
@@ -959,7 +959,27 @@ private:
                 m_graph.voteNode(node->child1(), VoteValue, weight);
             break;
                 
+        case TaggedAdd:
+        case TaggedSub:
+        case TaggedMul:
+        case TaggedDiv:
+            for (Edge edge : { node->child1(), node->child2() }) {
+                if (edge->op() == GetLocal)
+                    edge->variableAccessData()->mergeHoldsTaggedNumbers(true);
+            }
+            break;
+
         case SetLocal: {
+            switch (node->child1()->op()) {
+            case TaggedAdd:
+            case TaggedSub:
+            case TaggedMul:
+            case TaggedDiv:
+                node->variableAccessData()->mergeHoldsTaggedNumbers(true);
+                break;
+            default:
+                break;
+            }
             SpeculatedType prediction = node->child1()->prediction();
             if (isDoubleSpeculation(prediction))
                 node->variableAccessData()->vote(VoteDouble, weight);
@@ -1064,7 +1084,7 @@ private:
         switch (m_currentNode->op()) {
         case JSConstant: {
             SpeculatedType type = speculationFromValue(m_currentNode->asJSValue());
-            if (type == SpecAnyIntAsDouble)
+            if (isAnyIntAsDoubleSpeculation(type))
                 type = int52AwareSpeculationFromValue(m_currentNode->asJSValue());
             setPrediction(type);
             break;

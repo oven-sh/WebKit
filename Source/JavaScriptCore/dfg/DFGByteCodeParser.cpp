@@ -4443,6 +4443,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 3)
                 return CallOptimizationResult::DidNothing;
             insertChecks();
+            m_graph.m_usesTaggedArithmetic = true;
             NodeType op = intrinsic == TaggedAddIntrinsic ? TaggedAdd : intrinsic == TaggedSubIntrinsic ? TaggedSub : intrinsic == TaggedMulIntrinsic ? TaggedMul : TaggedDiv;
             Node* left = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
             Node* right = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));

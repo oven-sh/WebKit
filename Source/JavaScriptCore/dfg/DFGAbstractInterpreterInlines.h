@@ -2024,12 +2024,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
             break;
         case IsTaggedInt:
-            if (!(child.m_type & ~SpecInt32Only)) {
+            if (!(child.m_type & ~SpecTaggedInteger)) {
                 setConstant(node, jsBoolean(true));
                 constantWasSet = true;
                 break;
             }
-            if (!(child.m_type & (SpecInt32Only | SpecAnyIntAsDouble))) {
+            if (!(child.m_type & SpecTaggedInteger)) {
                 setConstant(node, jsBoolean(false));
                 constantWasSet = true;
                 break;
@@ -4843,7 +4843,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case CheckTaggedFloat: {
-        filter(node->child1(), SpecWholeFloat | SpecBytecodeDouble);
+        filter(node->child1(), SpecTaggedFloat);
         break;
     }
 
@@ -4856,8 +4856,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         SpeculatedType type = forNode(node->child1()).m_type & SpecFullDouble;
         if (type & SpecDoubleImpureNaN)
             type = (type & ~SpecDoubleImpureNaN) | SpecDoublePureNaN;
-        if (type & SpecAnyIntAsDouble)
-            type |= SpecWholeFloat;
+        if (type & SpecInt32AsDouble)
+            type = (type & ~SpecInt32AsDouble) | SpecWholeFloat;
         setNonCellTypeForNode(node, type);
         break;
     }

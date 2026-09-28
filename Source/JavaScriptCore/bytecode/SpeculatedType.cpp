@@ -308,10 +308,15 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
     if ((value & SpecBytecodeDouble) == SpecBytecodeDouble)
         strOut.print("BytecodeDouble");
     else {
-        if (value & SpecAnyIntAsDouble)
+        if ((value & SpecAnyIntAsDouble) == SpecAnyIntAsDouble)
             strOut.print("AnyIntAsDouble");
-        else
+        else {
+            if (value & SpecInt32AsDouble)
+                strOut.print("Int32AsDouble");
+            if (value & SpecNonInt32AnyIntAsDouble)
+                strOut.print("NonInt32AnyIntAsDouble");
             isTop = false;
+        }
         
         if (value & SpecNonIntAsDouble)
             strOut.print("NonIntAsDouble");
@@ -658,7 +663,7 @@ static ALWAYS_INLINE SpeculatedType speculationFromValueImpl(JSValue value)
         if (number != number)
             return SpecDoublePureNaN;
         if (value.isAnyInt())
-            return SpecAnyIntAsDouble;
+            return value.isInt32AsAnyInt() ? SpecInt32AsDouble : SpecNonInt32AnyIntAsDouble;
         return SpecNonIntAsDouble;
     }
     if (value.isBigInt32())
@@ -976,6 +981,8 @@ SpeculatedType speculationFromString(StringView speculation)
 {
     static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, SpeculatedType>>({
         { "SpecAnyIntAsDouble"_s, SpecAnyIntAsDouble },
+        { "SpecInt32AsDouble"_s, SpecInt32AsDouble },
+        { "SpecNonInt32AnyIntAsDouble"_s, SpecNonInt32AnyIntAsDouble },
         { "SpecArray"_s, SpecArray },
         { "SpecBigInt"_s, SpecBigInt },
         { "SpecBigInt64Array"_s, SpecBigInt64Array },

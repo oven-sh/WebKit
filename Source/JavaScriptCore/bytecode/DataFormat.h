@@ -57,6 +57,7 @@ enum DataFormat : uint8_t {
     
     // Special data formats used only for OSR.
     DataFormatDead = 33, // Implies jsUndefined().
+    DataFormatTaggedFloat = 34, // A double, to be boxed as jsTaggedFloat() does.
 };
 
 inline const char* dataFormatToString(DataFormat dataFormat)
@@ -72,6 +73,8 @@ inline const char* dataFormatToString(DataFormat dataFormat)
         return "StrictInt52";
     case DataFormatDouble:
         return "Double";
+    case DataFormatTaggedFloat:
+        return "TaggedFloat";
     case DataFormatCell:
         return "Cell";
     case DataFormatBoolean:

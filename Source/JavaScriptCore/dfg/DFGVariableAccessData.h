@@ -65,6 +65,13 @@ public:
         return m_machineLocal;
     }
 
+    // It is an operand of tagged arithmetic, or holds what came of it. A float there is a double at one time and a whole float at
+    // another, so that to keep it as a double is to be wrong sooner or later.
+    bool mergeHoldsTaggedNumbers(bool holdsTaggedNumbers)
+    {
+        return checkAndSet(m_holdsTaggedNumbers, m_holdsTaggedNumbers || holdsTaggedNumbers);
+    }
+
     bool mergeIsProfitableToUnbox(bool isProfitableToUnbox)
     {
         return checkAndSet(m_isProfitableToUnbox, m_isProfitableToUnbox || isProfitableToUnbox);
@@ -221,6 +228,7 @@ private:
     bool m_structureCheckHoistingFailed;
     bool m_checkArrayHoistingFailed;
     bool m_isProfitableToUnbox;
+    bool m_holdsTaggedNumbers { false };
     bool m_isLoadedFrom;
 
     float m_votes[2]; // Used primarily for double voting but may be reused for other purposes.

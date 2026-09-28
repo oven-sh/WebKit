@@ -397,9 +397,7 @@ public:
             return TaggedKind::Unknown;
         if (isInt32Speculation(prediction))
             return TaggedKind::Integer;
-        // It may have been a double with a whole value, and so an integer that JavaScript has had its hands on. That is rare
-        // enough to be found out by CheckTaggedFloat.
-        if (!(prediction & SpecInt32Only))
+        if (!(prediction & ~SpecTaggedFloat))
             return TaggedKind::Float;
         return TaggedKind::Either;
     }
@@ -1552,6 +1550,7 @@ public:
     RefCountState m_refCountState;
     bool m_hasDebuggerEnabled;
     bool m_hasExceptionHandlers { false };
+    bool m_usesTaggedArithmetic { false }; // Here a float is a double at one time and a whole float at another.
     bool m_isInSSAConversion { false };
     bool m_isValidating { false };
     bool m_shouldFixAvailability { false };

@@ -3623,7 +3623,7 @@ private:
                 break;
             }
             SpeculatedType prediction = node->child1()->prediction();
-            if (prediction && !(prediction & ~(SpecWholeFloat | SpecNonIntAsDouble | SpecDoublePureNaN)) && !m_graph.hasExitSite(node, BadType)) {
+            if (prediction && !(prediction & ~SpecTaggedFloat) && !m_graph.hasExitSite(node, BadType)) {
                 m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckTaggedFloat, node->origin, Edge(node->child1().node(), UntypedUse));
                 m_graph.convertToConstant(node, jsBoolean(false));
                 break;
@@ -5593,7 +5593,7 @@ private:
         // So FTL will do conversion of this in ValueRepReduction phase instead.
         UNUSED_PARAM(node);
         // A whole float would be taken for a double, so none is expected, and to find one is to be wrong (unboxRealNumberDouble).
-        if (Options::guardsWholeFloats(3) && (node->prediction() & SpecWholeFloat))
+        if (Options::guardsWholeFloats(3) && ((node->prediction() & SpecWholeFloat) || m_graph.m_usesTaggedArithmetic))
             return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
@@ -5615,7 +5615,7 @@ private:
         UNUSED_PARAM(node);
         UNUSED_PARAM(edge);
         // A whole float would be stored as a double, so none is expected, and there is a check where the conversion is put in.
-        if (Options::guardsWholeFloats(4) && (edge->prediction() & SpecWholeFloat))
+        if (Options::guardsWholeFloats(4) && ((edge->prediction() & SpecWholeFloat) || m_graph.m_usesTaggedArithmetic))
             return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {

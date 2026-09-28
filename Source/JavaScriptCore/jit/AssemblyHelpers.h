@@ -549,6 +549,10 @@ public:
     // What is computed is a plain number. This is for where the result is an operand, or is made from the boxed operands.
     void makeInt32Plain(GPRReg src, GPRReg dest)
     {
+        if (!Options::guardsWholeFloats(19)) {
+            move(src, dest);
+            return;
+        }
         and64(TrustedImm64(~JSValue::WholeFloatMark), src, dest);
     }
 
@@ -593,17 +597,21 @@ public:
     }
 
     // For where the int32 may be boxed again afterwards, or is put where it will be taken for a plain one.
-    JumpList branchIfNotPlainInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
+    // (The number is for Options::guardsWholeFloats.)
+    JumpList branchIfNotPlainInt32(GPRReg gpr, unsigned guard)
     {
         JumpList result;
-        result.append(branchIfNotInt32(gpr, mode));
-        result.append(branchIfInt32IsWholeFloat(gpr));
+        result.append(branchIfNotInt32(gpr));
+        if (Options::guardsWholeFloats(guard))
+            result.append(branchIfInt32IsWholeFloat(gpr));
         return result;
     }
 
-    Jump branchIfPlainInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
+    Jump branchIfPlainInt32(GPRReg gpr, unsigned guard)
     {
-        Jump notInt32 = branchIfNotInt32(gpr, mode);
+        if (!Options::guardsWholeFloats(guard))
+            return branchIfInt32(gpr);
+        Jump notInt32 = branchIfNotInt32(gpr);
         Jump isPlain = branchIfInt32IsPlain(gpr);
         notInt32.link(this);
         return isPlain;

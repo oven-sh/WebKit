@@ -96,6 +96,27 @@ static void reboxAccordingToFormat(
         break;
     }
 
+    case DataFormatTaggedFloat: {
+        // AssemblyHelpers::boxTaggedFloat(), with what there is to work with here.
+        jit.moveDoubleTo64(FPRInfo::fpRegT0, scratch1);
+        jit.move64ToDouble(value, FPRInfo::fpRegT0);
+        jit.truncateDoubleToInt32(FPRInfo::fpRegT0, scratch2);
+        jit.convertInt32ToDouble(scratch2, FPRInfo::fpRegT0);
+        jit.moveDoubleTo64(FPRInfo::fpRegT0, scratch2);
+        jit.move64ToDouble(value, FPRInfo::fpRegT0);
+        auto notWhole = jit.branch64(MacroAssembler::NotEqual, scratch2, value);
+        jit.truncateDoubleToInt32(FPRInfo::fpRegT0, value);
+        jit.zeroExtend32ToWord(value, value);
+        jit.or64(MacroAssembler::TrustedImm64(JSValue::WholeFloatTag), value);
+        auto done = jit.jump();
+        notWhole.link(&jit);
+        jit.purifyNaN(FPRInfo::fpRegT0, FPRInfo::fpRegT0);
+        jit.boxDouble(FPRInfo::fpRegT0, value);
+        done.link(&jit);
+        jit.move64ToDouble(scratch1, FPRInfo::fpRegT0);
+        break;
+    }
+
     default:
         RELEASE_ASSERT_NOT_REACHED();
         break;
