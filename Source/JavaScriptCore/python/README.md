@@ -33,7 +33,7 @@ and can raise.
 
 ### All Python code is function code
 
-A module's body, a class's body, a function, a lambda, a generator expression, and what evaluates annotations are each an
+A module's body, a class's body, a function, a lambda, a generator expression, and what is evaluated when it is asked for are each an
 `UnlinkedFunctionExecutable`, with a `Python::FunctionInfo` that says which. So there is one place where the languages part:
 `generateUnlinkedFunctionCodeBlock`.
 
@@ -41,6 +41,25 @@ Functions are compiled when first called, as JavaScript's are, from their range 
 of the blocks around it is worked out when those are compiled, and kept in its `FunctionInfo`. **The whole file is checked when it is
 loaded**, since Python reports a syntax error anywhere in a file before running any of it. What is wrong travels in a `ParserError`,
 as for JavaScript, which has room for what Python has to say besides.
+
+### What is evaluated when it is asked for
+
+An annotation, the bound or the default of a type parameter, and what a `type` statement makes an alias of are not evaluated where they are
+written but when they are asked for, each by a function that is made for it (PEP 649, 695 and 696). And `def f[T]`, `class C[T]` and `type A[T]`
+have their type parameters for the variables of a function that is made for it and called at once.
+
+- **These have no source of their own.** They are kinds of code like any other (`CodeKind::Annotations`, `TypeParameters`, `Evaluator`) and are
+  compiled when first called like any other, from the source of what they belong to: `FunctionInfo::owner` says what kind of thing that is.
+- **In a class they see its names without being part of its body.** The class keeps its namespace for them in a variable, `__classdict__`. Once there
+  is a class that is the class's `__dict__`, so that what they find is what the class has by then.
+- **Which annotations of a class or a module count depends on which statements were come to.** What has the annotations and what evaluates
+  them are compiled at different times, so both work out which is which by going through the body in the same way.
+- Where the names of a class can be seen so, a comprehension is a function that is called at once, and elsewhere it is part of the code that it is in.
+- Under `from __future__ import annotations` an annotation is the expression written out again, as `_PyAST_ExprAsUnicode()` writes it:
+  `PythonUnparse.cpp`.
+- `list[int]`, `int | str`, type variables and aliases are CPython's `Objects/genericaliasobject.c`, `unionobject.c` and `typevarobject.c`. Like those they
+  leave a good deal to the `typing` module, which is Python and is imported when it is first wanted: making a generic class asks it for
+  `Generic[T]`. `_typing` is here, since it is only the way to these.
 
 ### `BytecodeGenerator` is shared
 
@@ -137,7 +156,11 @@ wrong is said in one place, in CPython's words. That every one has a signature i
 The signatures, the docstrings, what kind of thing each attribute of a built-in class is, and how each built-in class is laid out are CPython's
 own. `lib/dump-builtin-descriptions.py`, run by CPython, writes them to `lib/builtin-descriptions.json`, which is put into a header when this is
 built. A module that is written in C++ is added to the list in that script. What CPython does not have gives its signature where it is
-defined.
+defined, and so does what has one in CPython that a program cannot see. It can begin with what the function is called when its arguments are
+wrong, where that is neither its name nor its class's: `typevar(name, *constraints, ...)`.
+
+A built-in class of a module other than `builtins` is named as in CPython, `types.GenericAlias`. That is what is said wherever something is said about
+it or its instances, and its `__name__` and `__module__` are the two parts.
 
 ### Opcodes
 

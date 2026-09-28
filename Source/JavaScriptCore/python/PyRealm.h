@@ -78,6 +78,15 @@ namespace JSC {
     v(GenericAlias, "types.GenericAlias", Object, Native, PyType::IsBaseType) \
     v(GenericAliasIterator, "generic_alias_iterator", Object, Native, 0) \
     v(Union, "typing.Union", Object, Native, 0) \
+    v(TypeVar, "typing.TypeVar", Object, Native, 0) \
+    v(ParamSpec, "typing.ParamSpec", Object, Native, 0) \
+    v(ParamSpecArgs, "typing.ParamSpecArgs", Object, Native, 0) \
+    v(ParamSpecKwargs, "typing.ParamSpecKwargs", Object, Native, 0) \
+    v(TypeVarTuple, "typing.TypeVarTuple", Object, Native, 0) \
+    v(TypeAliasType, "typing.TypeAliasType", Object, Native, 0) \
+    v(Generic, "typing.Generic", Object, Object, PyType::IsBaseType) \
+    v(NoDefaultType, "NoDefaultType", Object, Native, 0) \
+    v(ConstEvaluator, "_typing._ConstEvaluator", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \
@@ -248,6 +257,7 @@ public:
     PyTuple* emptyTuple() const { return m_emptyTuple.get(); }
     JSObject* notImplemented() const { return m_notImplemented.get(); }
     JSObject* ellipsis() const { return m_ellipsis.get(); }
+    JSObject* noDefault() const { return m_noDefault.get(); } // typing.NoDefault
 
     // `this`, in a call whose arguments are the function's parameters, one for one.
     JSObject* boundArgumentsMarker() const { return m_boundArgumentsMarker.get(); }
@@ -294,6 +304,7 @@ private:
     WriteBarrier<PyTuple> m_emptyTuple;
     WriteBarrier<JSObject> m_notImplemented;
     WriteBarrier<JSObject> m_ellipsis;
+    WriteBarrier<JSObject> m_noDefault;
     WriteBarrier<JSObject> m_boundArgumentsMarker;
     WriteBarrier<JSObject> m_runtimeFunctions;
     WriteBarrier<JSObject> m_javaScriptFunctions;

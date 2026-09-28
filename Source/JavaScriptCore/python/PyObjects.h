@@ -306,6 +306,34 @@ private:
     }
 };
 
+// The same, for what has more to keep than that has room for: a type variable, and what a `type` statement makes.
+class PyTypingObject final : public JSInternalFieldObjectImpl<8> {
+public:
+    using Base = JSInternalFieldObjectImpl<8>;
+
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.pyTypingObjectSpace<mode>();
+    }
+
+    DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
+    PYTHON_OVERLOADS_OPERATORS
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+
+    static PyTypingObject* create(VM&, Structure*);
+
+    JSValue field(unsigned index) const { return internalField(index).get(); }
+    void setField(VM& vm, unsigned index, JSValue value) { internalField(index).set(vm, this, value); }
+
+private:
+    PyTypingObject(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 // An attribute of a built-in type that is worked out by C++: function.__name__.
 class PyGetSetDescriptor final : public JSNonFinalObject {
 public:

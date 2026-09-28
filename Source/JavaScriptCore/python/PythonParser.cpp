@@ -90,7 +90,7 @@ public:
         return nullptr;
     }
 
-    Statement* parseDefinitionAlone() { return parseDefinition(); }
+    Statement* parseDefinitionAlone() { return at(SoftKeyword::Type) ? parseTypeAlias() : parseDefinition(); }
     Expression* parseExpressionAlone() { return parseExpression(); }
 
 private:
@@ -2433,8 +2433,8 @@ private:
         }
         case TokenKind::Name:
             if (at(SoftKeyword::Type) && atAhead(1, TokenKind::Name) && (atAhead(2, TokenKind::Equal) || atAhead(2, TokenKind::LeftBracket))) {
-                if (Statement* alias = speculate([&] { return parseTypeAlias(); }))
-                    return alias;
+                // Two names side by side begin nothing else, so what is wrong with it is what is wrong with a type statement.
+                return parseTypeAlias();
             }
             return parseAssignmentOrExpression();
         default:

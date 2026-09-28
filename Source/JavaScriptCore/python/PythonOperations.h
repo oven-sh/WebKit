@@ -242,6 +242,16 @@ JSValue unionFrom(JSGlobalObject*, JSValue arguments);
 PyTuple* makeParameters(JSGlobalObject*, JSValue arguments);
 PyTuple* substituteParameters(JSGlobalObject*, JSValue self, JSValue arguments, PyTuple* parameters, JSValue item);
 void appendTypeRepr(JSGlobalObject*, StringBuilder&, JSValue);
+
+// What `def f[T]`, `class C[T]` and `type A = ...` make
+bool isTypeAlias(JSGlobalObject*, JSValue);
+JSValue newTypeVar(JSGlobalObject*, JSString* name, JSValue evaluator, bool isConstraints);
+JSValue newParamSpec(JSGlobalObject*, JSString* name);
+JSValue newTypeVarTuple(JSGlobalObject*, JSString* name);
+void setTypeParameterDefault(JSGlobalObject*, JSValue parameter, JSValue evaluator);
+JSValue newTypeAlias(JSGlobalObject*, JSString* name, JSValue typeParameters, JSValue computeValue);
+JSValue subscriptGeneric(JSGlobalObject*, PyTuple* typeParameters);
+JSObject* createTypingModule(JSGlobalObject*); // _typing
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 // An attribute got through super().
 JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);

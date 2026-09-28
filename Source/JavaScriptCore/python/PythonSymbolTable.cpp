@@ -357,9 +357,24 @@ private:
         bool m_previous;
     };
 
+    // Directly, that is. A fragment is told whether it was.
+    bool isInClassBody() const { return m_current->type == BlockType::Class || (m_current == m_fragmentTop && m_current->canSeeClassScope); }
+
+    bool visitTypeParameters(Sequence<TypeParameter*> parameters)
+    {
+        bool hasSeenDefault = false;
+        for (TypeParameter* parameter : parameters) {
+            if (parameter->defaultValue)
+                hasSeenDefault = true;
+            else if (hasSeenDefault)
+                return fail(makeString("non-default type parameter '"_s, parameter->name->string(), "' follows default type parameter"_s), *parameter);
+        }
+        return visit(parameters);
+    }
+
     bool enterTypeParameterBlock(const Identifier& name, const void* key, bool hasDefaults, bool hasKeywordDefaults, bool isClass, const Node& location)
     {
-        bool isInClass = m_current->type == BlockType::Class;
+        bool isInClass = isInClassBody();
         if (!enterBlock(name, BlockType::TypeParameters, key, location))
             return false;
         if (isInClass) {
@@ -402,7 +417,7 @@ private:
             // CPython asks whether there is a sequence of defaults, and there always is one.
             if (!enterTypeParameterBlock(*node.name, node.typeParameters.data(), true, hasKeywordOnlyDefaults(arguments), false, node))
                 return false;
-            if (!visit(node.typeParameters))
+            if (!visitTypeParameters(node.typeParameters))
                 return false;
         }
         Block* block = newBlock(*node.name, BlockType::Function, &node, node);
@@ -431,7 +446,7 @@ private:
                 return false;
             m_private = node.name;
             m_current->mangledNames = adoptRef(*new RefCountedNameSet);
-            if (!visit(node.typeParameters))
+            if (!visitTypeParameters(node.typeParameters))
                 return false;
         }
         if (!visit(node.bases) || !checkKeywords(node.keywords) || !visit(node.keywords))
@@ -458,12 +473,12 @@ private:
         if (!visit(node.name))
             return false;
         const Identifier& name = *node.name->as<Name>().id;
-        bool isInClass = m_current->type == BlockType::Class;
+        bool isInClass = isInClassBody();
         bool isGeneric = !node.typeParameters.empty();
         if (isGeneric) {
             if (!enterTypeParameterBlock(name, node.typeParameters.data(), false, false, false, node))
                 return false;
-            if (!visit(node.typeParameters))
+            if (!visitTypeParameters(node.typeParameters))
                 return false;
         }
         if (!enterBlock(name, BlockType::TypeAlias, &node, node))

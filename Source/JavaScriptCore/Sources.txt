@@ -775,6 +775,7 @@ python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonSymbolTable.cpp
 python/PythonTraceback.cpp
+python/PythonTypeParameters.cpp
 python/PythonUnparse.cpp
 
 runtime/AbstractModuleRecord.cpp

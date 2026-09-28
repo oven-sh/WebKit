@@ -59,12 +59,30 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     void* root = nullptr;
     const void* blockKey = nullptr;
     const Identifier* privateName = info->privateName.isNull() ? nullptr : &info->privateName;
-    // What evaluates annotations is compiled from the source of what they are the annotations of.
-    bool isAnnotations = info->kind == CodeKind::Annotations;
-    CodeKind sourceKind = isAnnotations ? info->annotationsOf : info->kind;
+    // What belongs to something else is compiled from the source of that.
+    CodeKind sourceKind = info->kind;
+    switch (info->owner) {
+    case OwnerKind::None:
+        break;
+    case OwnerKind::Function:
+    case OwnerKind::TypeAlias:
+        sourceKind = CodeKind::Function;
+        break;
+    case OwnerKind::Class:
+        sourceKind = CodeKind::Class;
+        break;
+    case OwnerKind::Module:
+        sourceKind = CodeKind::Module;
+        break;
+    case OwnerKind::Interactive:
+        sourceKind = CodeKind::Interactive;
+        break;
+    }
 
     switch (sourceKind) {
     case CodeKind::Annotations:
+    case CodeKind::TypeParameters:
+    case CodeKind::Evaluator:
         RELEASE_ASSERT_NOT_REACHED();
     case CodeKind::Module:
     case CodeKind::Expression:
@@ -84,12 +102,9 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         const Identifier* outerPrivateName = sourceKind == CodeKind::Class ? nullptr : privateName;
         Statement* statement = parseDefinition(vm, arena, text, start, end, info->line);
         if (statement)
-            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, isAnnotations && sourceKind == CodeKind::Function && info->canSeeClassScope);
+            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope);
         root = statement;
         blockKey = statement;
-        // The block for those of a function goes by its parameters.
-        if (statement && isAnnotations && sourceKind == CodeKind::Function)
-            blockKey = statement->as<FunctionDef>().arguments;
         break;
     }
     case CodeKind::Lambda:
@@ -111,9 +126,45 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         error = ParserError(syntaxError);
         return nullptr;
     }
+    // What each kind of block goes by is for PythonSymbolTable.cpp to say, and this follows it.
+    auto typeParametersOf = [&] () -> Sequence<TypeParameter*> {
+        auto& statement = *static_cast<Statement*>(root);
+        switch (info->owner) {
+        case OwnerKind::Function:
+            return statement.as<FunctionDef>().typeParameters;
+        case OwnerKind::Class:
+            return statement.as<ClassDef>().typeParameters;
+        case OwnerKind::TypeAlias:
+            return statement.as<TypeAlias>().typeParameters;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    };
+    bool wantsAnnotationBlock = false;
+    switch (info->kind) {
+    case CodeKind::Annotations:
+        if (info->owner == OwnerKind::Function)
+            blockKey = static_cast<Statement*>(root)->as<FunctionDef>().arguments;
+        else
+            wantsAnnotationBlock = true;
+        break;
+    case CodeKind::TypeParameters:
+        blockKey = typeParametersOf().data();
+        break;
+    case CodeKind::Evaluator:
+        if (info->evaluates != Evaluates::Value) {
+            TypeParameter* parameter = typeParametersOf()[info->typeParameterIndex];
+            // Only a TypeVar can have both, and then the default goes by the address after.
+            bool isSecond = info->evaluates == Evaluates::Default && parameter->kind == TypeParameter::Kind::TypeVar;
+            blockKey = reinterpret_cast<const char*>(parameter) + isSecond;
+        }
+        break;
+    default:
+        break;
+    }
     Block* block = table->blockFor(blockKey);
     RELEASE_ASSERT(block);
-    if (isAnnotations && sourceKind != CodeKind::Function) {
+    if (wantsAnnotationBlock) {
         block = block->annotationBlock;
         RELEASE_ASSERT(block);
     }

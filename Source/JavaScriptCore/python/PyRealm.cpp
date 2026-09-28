@@ -52,6 +52,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_emptyTuple);
     visitor.append(thisObject->m_notImplemented);
     visitor.append(thisObject->m_ellipsis);
+    visitor.append(thisObject->m_noDefault);
     visitor.append(thisObject->m_boundArgumentsMarker);
     visitor.append(thisObject->m_runtimeFunctions);
     visitor.append(thisObject->m_javaScriptFunctions);
@@ -121,6 +122,8 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeAnnotations(globalObject);
     Python::initializeGenericAliasAndUnion(globalObject);
+    Python::initializeTypeParameters(globalObject);
+    m_noDefault.set(vm, this, PyNativeObject::create(globalObject, BuiltinType::NoDefaultType));
     Python::initializeTracebackTypes(globalObject);
     Python::initializeJavaScriptTypes(globalObject);
     static constexpr BuiltinType publicTypes[] = {

@@ -101,6 +101,8 @@ public:
     };
 
     ASCIILiteral text() const { return m_text; }
+    // What the function is called when its arguments are wrong, if that is neither its name nor its class's: "typevar(name, ...)". Null otherwise.
+    const String& functionName() const { return m_functionName; }
     Family family() const { return m_family; }
     // Whether it begins with $self, $type or $module.
     bool hasImplicitFirst() const { return m_hasImplicitFirst; }
@@ -115,6 +117,7 @@ public:
 
 private:
     ASCIILiteral m_text;
+    String m_functionName;
     Vector<String> m_names;
     unsigned m_positionalOnlyCount { 0 };
     unsigned m_requiredPositionalCount { 0 };

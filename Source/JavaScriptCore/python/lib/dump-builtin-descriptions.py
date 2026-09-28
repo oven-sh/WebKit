@@ -39,12 +39,13 @@
 # where nothing is laid out as in CPython, but programs can see them. And whether they are zero decides what a class derived from it can have: whether
 # instances have a __dict__ already, whether there can be weak references to them already, and whether they can be given __slots__.
 
+import _typing
 import builtins
 import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "math", "time", "posix"]
+MODULES = ["builtins", "sys", "math", "time", "posix", "_typing"]
 
 
 def generator():
@@ -85,7 +86,7 @@ def examples():
         {}.keys(), {}.values(), {}.items(), iter([]), reversed([]), iter(()), iter(""), iter("ሴ"), iter(b""), iter(bytearray()), iter(range(1)), iter(range(1 << 100)), iter(set()),
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),
         (lambda x: lambda: x)(1).__closure__[0], list[int], iter(list[int]), int | str, generator.__code__.co_lines(), generator.__code__.co_positions(), sys.flags, sys.version_info, sys.float_info, sys.int_info, sys.hash_info,
-        sys.implementation,
+        sys.implementation, _typing.NoDefault, _typing.TypeVar("T", default=int).evaluate_default,
     ]
     yield from awaitables
     for awaitable in awaitables:
@@ -97,7 +98,7 @@ types = {}
 
 def add_type(a_type):
     is_heap_type = a_type.__flags__ & (1 << 9)
-    if a_type.__name__ in types or (is_heap_type and a_type.__module__ != "sys"):
+    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in ("sys", "typing", "_typing")):
         return
     types[a_type.__name__] = a_type
     for base in a_type.__bases__:
@@ -105,6 +106,9 @@ def add_type(a_type):
 
 
 for value in vars(builtins).values():
+    if isinstance(value, type):
+        add_type(value)
+for value in vars(_typing).values():
     if isinstance(value, type):
         add_type(value)
 for example in examples():

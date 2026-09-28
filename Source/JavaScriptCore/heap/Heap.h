@@ -298,6 +298,7 @@ class Heap;
     v(pyRangeSpace, cellHeapCellType, PyRange) \
     v(pyRealmSpace, cellHeapCellType, PyRealm) \
     v(pySetSpace, cellHeapCellType, PySet) \
+    v(pyTypingObjectSpace, cellHeapCellType, PyTypingObject) \
     v(pySliceSpace, cellHeapCellType, PySlice) \
     v(pyTypeSpace, pyTypeHeapCellType, PyType) \
     v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \

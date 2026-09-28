@@ -1,0 +1,112 @@
+function => (1, (T,), {'x': T, 'return': T}, 'f', 'f', <class 'typing.TypeVar'>)
+same variable => True
+kinds => ((T, U, Ts, P, V), ['TypeVar', 'TypeVar', 'TypeVarTuple', 'ParamSpec', 'TypeVar'])
+bound and constraints => (<class 'int'>, (), None, (<class 'str'>, <class 'bytes'>), <class 'float'>)
+variance => [(False, False, True), (False, False, True), (False, False, True), (False, False, True)]
+has default => [False, False, False, False, True]
+no default => [typing.NoDefault, typing.NoDefault, typing.NoDefault, typing.NoDefault]
+module of a variable => ['typing', 'typing', 'typing', 'typing', 'typing']
+annotations => {'a': T, 'b': *Ts, 'c': P.kwargs, 'return': U}
+lazy bound !! NameError name 'Undefined1' is not defined
+lazy default !! NameError name 'Undefined2' is not defined
+lazy later => ('one', 'two')
+kept => one
+evaluators => ('changed', 'changed', 'T', 'T', 'T', None, 'function', (1,), ('.format',))
+evaluator format !! NotImplementedError 
+defaults => ((1, [], 2, 3), (1, []), {'c': 2, 'd': 3}, (5, [], 2, 6))
+only keyword defaults => (2, None, {'c': 2})
+order => ['default', 'function']
+closure => ('local', 'local', 'local', 'outer.<locals>.inner', 'outer.<locals>.T')
+async and generator => ((T,), [1], (T,))
+variable is not visible outside !! NameError name 'T' is not defined
+shadows => (int, {'x': int})
+one refers to another => True
+set type params => (1,)
+set type params wrong !! TypeError __type_params__ must be set to a tuple
+delete type params !! TypeError __type_params__ must be set to a tuple
+plain function => ((), ())
+lambda in a bound !! NameError name 'lam' is not defined
+lambda in a bound => ('<generic parameters of lam>.<lambda>', 'called')
+comprehension in a bound => [0, 1, 2]
+alias => (A, 'A', <class 'typing.TypeAliasType'>, 'A', <class 'int'>, (), (), '__main__')
+generic alias => (B, list[T], (T,), (T,), B[int], True, (<class 'int'>,), 'GenericAlias')
+not generic !! TypeError Only generic type aliases are subscriptable
+lazy alias !! NameError name 'NotYet' is not defined
+lazy alias later => 5
+alias kept => 5
+recursive => (list[R] | int, True)
+alias in a union => (A | str, str | A, A | None, (A, <class 'str'>), A)
+alias evaluate => (<class 'int'>, <class 'int'>, 'A', 'A')
+alias evaluate format !! NotImplementedError 
+alias reduce => A
+alias read only !! AttributeError attribute '__value__' of 'typing.TypeAliasType' objects is not writable
+alias no attributes !! AttributeError 'typing.TypeAliasType' object has no attribute 'x' and no __dict__ for setting new attributes
+alias not callable !! TypeError 'typing.TypeAliasType' object is not callable
+alias isinstance !! TypeError isinstance() arg 2 must be a type, a tuple of types, or a union
+alias iter => [*B]
+alias parameters => ((T, Ts, P), (T, *Ts, P), tuple[T, *Ts])
+alias defaults => [<class 'int'>, <class 'str'>]
+starred default => *tuple[int, str]
+alias in function => ('local', 'local', 'alias_in_function.<locals>.X')
+type is still a name => 6
+made by hand => (H, <class 'int'>, '__main__', <constevaluator <class 'int'>>, (T,))
+by hand wrong !! TypeError type_params must be a tuple
+by hand wrong 2 !! TypeError Expected a type param, got 1
+by hand wrong 3 !! TypeError typealias() argument 'name' must be str, not int
+by hand wrong 4 !! TypeError typealias() missing required argument 'value' (pos 2)
+by hand wrong 5 !! TypeError non-default type parameter 'T' follows default type parameter
+class => (<class '__main__.C'>, (T,), (<class 'typing.Generic'>,), (Generic[T],), (<class '__main__.C'>, <class 'typing.Generic'>, <class 'object'>), {'x': T}, {'a': T, 'return': T}, 1)
+what the library was asked => [('init_subclass', 'C', (), {})]
+class dict order => ['__module__', '__firstlineno__', '__type_params__', 'm', '__static_attributes__', '__orig_bases__', '__dict__', '__weakref__', '__doc__']
+subscript => (C[<class 'int'>], [('getitem', 'C', <class 'int'>)])
+class with bases => ((<class 'dict'>, <class 'typing.Generic'>), (<class 'dict'>, Generic[T, *Ts, P]), (T, Ts, P), [('init_subclass', 'E', (), {})])
+class bound => (<class '__main__.Base'>, <class '__main__.Base'>, (<class '__main__.Base'>, <class 'typing.Generic'>))
+in a class => ('in class', 'in class', 'in class', 'in class', 'in class', 'in class')
+names in a class => ('Nested.method', 'Nested.Inner', 'Nested.T', 'Nested.Alias')
+mangled => ((__T,), {'return': __T}, {'v': __T})
+the class as it is now => ({'x': <class 'str'>}, <class 'str'>)
+type params of a class => ((), (), ())
+set on a class => ((1,), True)
+set on a built-in class !! TypeError cannot set '__type_params__' attribute of immutable type 'int'
+delete on a class !! TypeError cannot delete '__type_params__' attribute of immutable type 'Base'
+Generic => (<class 'typing.Generic'>, 'typing', (<class 'object'>,), Generic[<class 'int'>], [('init_subclass', 'F', (), {}), ('init_subclass', 'Inner', (), {}), ('init_subclass', 'Mangled', (), {}), ('getitem', 'Generic', <class 'int'>)])
+derived from Generic => ((<class '__main__.Sub'>, <class 'typing.Generic'>, <class 'object'>), [('init_subclass', 'Sub', (), {})], 'Sub')
+TypeVar => (~T, +T, -T, T, (<class 'int'>, <class 'str'>), <class 'int'>, None, None, ~T, [('type_check', <class 'int'>, 'Bound must be a type.')])
+TypeVar module => ('__main__', '__main__', '__main__')
+wrong: no name !! TypeError typevar() missing required argument 'name' (pos 1)
+wrong: name !! TypeError typevar() argument 'name' must be str, not int
+wrong: bivariant !! ValueError Bivariant types are not supported.
+wrong: infer !! ValueError Variance cannot be specified with infer_variance.
+wrong: one constraint !! TypeError A single constraint is not allowed
+wrong: both !! TypeError Constraints cannot be combined with bound=...
+wrong: keyword !! TypeError typevar() got an unexpected keyword argument 'nope'
+wrong: ParamSpec name !! TypeError paramspec() argument 'name' must be str, not int
+wrong: ParamSpec positional !! TypeError paramspec() takes exactly 1 positional argument (2 given)
+wrong: TypeVarTuple name !! TypeError typevartuple() argument 'name' must be str, not None
+wrong: NoDefault !! TypeError NoDefaultType takes no arguments
+evaluators by hand => (<constevaluator <class 'int'>>, <class 'int'>, 'int', '(int, str)', None, <constevaluator typing.NoDefault>, 'list[int]')
+const evaluator wrong !! TypeError constevaluator.__call__() takes exactly 1 argument (0 given)
+const evaluator wrong 2 !! TypeError constevaluator.__call__() takes no keyword arguments
+const evaluator wrong 3 !! TypeError 'str' object cannot be interpreted as an integer
+attributes => (None, 1)
+read only !! AttributeError readonly attribute
+reduce => ('T', 'P', 'Ts', 'NoDefault')
+cannot subclass !! NameError name 'cannot' is not defined
+cannot subclass => ['Cannot subclass an instance of TypeVar', 'Cannot subclass an instance of ParamSpec', 'Cannot subclass an instance of TypeVarTuple', 'Cannot subclass an instance of ParamSpecArgs', 'Cannot subclass an instance of ParamSpecKwargs']
+cannot subclass the classes => ["type 'typing.TypeVar' is not an acceptable base type", "type 'typing.ParamSpec' is not an acceptable base type", "type 'typing.TypeVarTuple' is not an acceptable base type", "type 'typing.TypeAliasType' is not an acceptable base type", "type 'typing.ParamSpecArgs' is not an acceptable base type", "type 'NoDefaultType' is not an acceptable base type"]
+or => (~T | int, int | ~T, ~T | None, ~P | int, [('type_check', ~T, 'Union[arg, ...]: each arg must be a type.'), ('type_check', ~T, 'Union[arg, ...]: each arg must be a type.'), ('type_check', ~T, 'Union[arg, ...]: each arg must be a type.'), ('type_check', ~P, 'Union[arg, ...]: each arg must be a type.')])
+ParamSpec => (~P, P.args, P.kwargs, True, True, False, False, False, <class 'NoneType'>, typing.NoDefault, False)
+ParamSpec parts are unhashable !! TypeError unhashable type: 'typing.ParamSpecArgs'
+names in a generator expression => <lambda>.<locals>.<genexpr>.<lambda>
+names in a generator expression in a function => ('in_function.<locals>.<genexpr>.<lambda>', 'in_function.<locals>.<lambda>')
+ParamSpec parts => (1.args, 'a'.kwargs, 2)
+ParamSpec parts order !! TypeError '<' not supported between instances of 'typing.ParamSpecArgs' and 'typing.ParamSpecArgs'
+TypeVarTuple => (Ts, [*Ts], [*Ts], typing.NoDefault, False, True)
+bare TypeVarTuple !! TypeError Substitution of bare TypeVarTuple is not supported
+NoDefault => (typing.NoDefault, <class 'NoDefaultType'>, True, 'builtins', True)
+substitution => (list[int], dict[int, str], dict[int, bytes], dict[int, list[bytes]], [('typevar_subst', ~X, <class 'int'>), ('typevar_subst', ~X, <class 'int'>), ('typevar_subst', ~Y, <class 'str'>), ('typevar_subst', ~X, <class 'int'>), ('typevar_subst', ~Y, <class 'bytes'>), ('typevar_subst', ~X, <class 'int'>), ('typevar_subst', ~Y, <class 'bytes'>)])
+too few !! TypeError Too few arguments for dict[~X, ~Z]; actual 1, expected at least 2
+prepare => ((<class 'int'>, <class 'bytes'>), (<class 'int'>, <class 'str'>))
+prepare not there !! ValueError sequence.index(x): x not in sequence
+idfunc => 5
+errors => ["non-default type parameter 'U' follows default type parameter", "non-default type parameter 'Ts' follows default type parameter", "non-default type parameter 'T' follows default type parameter", "duplicate type parameter 'T'", 'yield expression cannot be used within a TypeVar bound', 'yield expression cannot be used within a type alias', 'named expression cannot be used within a TypeVar bound', "reserved name '__classdict__' cannot be used for type parameter", 'named expression cannot be used within the definition of a generic', "nonlocal binding not allowed for type parameter 'T'", 'await expression cannot be used within a type alias', 'cannot use bound with TypeVarTuple', 'cannot use bound with ParamSpec', 'Type parameter list cannot be empty', 'Type parameter list cannot be empty', "non-default type parameter 'U' follows default type parameter"]

@@ -72,6 +72,8 @@ void addMethodsThatCPythonHas(JSGlobalObject*, PyType*, std::initializer_list<Me
 std::optional<Identifier> attributeName(JSGlobalObject*, ThrowScope&, JSValue);
 void initializeAnnotations(JSGlobalObject*);
 void initializeGenericAliasAndUnion(JSGlobalObject*);
+void initializeTypeParameters(JSGlobalObject*);
+JSC_DECLARE_HOST_FUNCTION(typeOr); // __or__ and __ror__ of what there can be a union of
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 PyNativeFunction* addFunction(JSGlobalObject*, JSObject* module, ASCIILiteral name, NativeFunction, unsigned data = 0, ASCIILiteral signature = { }, PyNativeFunction::Arguments = PyNativeFunction::Arguments::AreChecked);

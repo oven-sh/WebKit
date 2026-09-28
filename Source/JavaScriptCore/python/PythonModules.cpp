@@ -525,6 +525,8 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createTimeModule(globalObject);
     if (name == "_frame"_s)
         return createFrameModule(globalObject);
+    if (name == "_typing"_s)
+        return createTypingModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
         return create(globalObject, name);
     return nullptr;

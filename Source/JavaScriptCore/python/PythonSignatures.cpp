@@ -88,6 +88,10 @@ NativeSignature::NativeSignature(ASCIILiteral text)
     : m_text(text)
 {
     auto characters = text.span8();
+    if (size_t open = StringView(characters).find('('); open) {
+        m_functionName = String(characters.first(open));
+        characters = characters.subspan(open);
+    }
     ASSERT(characters.size() >= 2 && characters.front() == '(' && characters.back() == ')');
 
     // The parameters are between commas that are not inside anything: a default can be () or ', '. Those that are in square brackets can be left out
@@ -201,6 +205,8 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
     JSObject* owner = function->owner();
     if (!owner)
         return makeString(name, "()"_s);
+    if (function->signature() && !function->signature()->functionName().isNull())
+        return makeString(function->signature()->functionName(), "()"_s);
     if (function->takesArgumentsOfTheClass())
         return makeString(asType(owner)->nameWithoutModule(globalObject), "()"_s);
     if (isType(owner)) {
@@ -241,7 +247,7 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     unsigned keywordCount = args.keywordCount();
     unsigned minimum = signature.requiredPositionalCount();
     unsigned maximum = signature.positionalCount();
-    String name = function->takesArgumentsOfTheClass() ? asType(function->owner())->nameWithoutModule(globalObject) : function->name(vm);
+    String name = !signature.functionName().isNull() ? signature.functionName() : function->takesArgumentsOfTheClass() ? asType(function->owner())->nameWithoutModule(globalObject) : function->name(vm);
 
     if (function->kind() == PyNativeFunction::Kind::Wrapper && !function->takesArgumentsOfTheClass()) {
         if (signature.family() == NativeSignature::Family::Unchecked)

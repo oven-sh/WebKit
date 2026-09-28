@@ -44,6 +44,25 @@ enum class CodeKind : uint8_t {
     GeneratorExpression,
     Comprehension, // [x for ...] and its like, where it is not part of the code that it is in.
     Annotations, // What evaluates the annotations of a function, a class or a module, when they are asked for: its __annotate__.
+    TypeParameters, // What makes the type parameters of a generic function, class or alias, and then that. It is called at once.
+    Evaluator, // What evaluates, when it is asked for, the bound or the default of a type parameter, or what an alias is an alias of.
+};
+
+// The last three have no source of their own. They are compiled from the source of what they belong to, which is one of these.
+enum class OwnerKind : uint8_t {
+    None,
+    Function,
+    Class,
+    TypeAlias,
+    Module,
+    Interactive,
+};
+
+// What an Evaluator evaluates.
+enum class Evaluates : uint8_t {
+    Bound, // T: bound, and T: (a, b)
+    Default, // T = default
+    Value, // type A = value
 };
 
 // What is only known about a piece of code once it has been compiled, and is only wanted by what looks into it: a code object, and locals().
@@ -83,7 +102,9 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     bool hasDocstring { false };
     // It is in a class, though it is no part of the body of one, and what it does not find among its own names it looks for there first.
     bool canSeeClassScope { false };
-    CodeKind annotationsOf { CodeKind::Function }; // For Annotations: what kind of thing they are the annotations of. Its source is the source of that.
+    OwnerKind owner { OwnerKind::None };
+    Evaluates evaluates { Evaluates::Value };
+    unsigned typeParameterIndex { 0 }; // For an Evaluator of a bound or a default: of which.
     unsigned futureFeatures { 0 };
     // Private for what comes with the engine and stands for what in CPython is written in C: it is in no traceback and no stack trace.
     ImplementationVisibility visibility { ImplementationVisibility::Public };
@@ -91,6 +112,8 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
 
     Identifier name;
     String qualifiedName;
+    // For the three kinds that belong to something else. What is in one of them is named as if it were where that is.
+    String qualifiedNamePrefix;
     String docstring; // Null if it has none.
     Identifier privateName; // The class that names like __x are mangled for, if it is in one.
 
@@ -121,12 +144,15 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->isMethod = isMethod;
         result->hasDocstring = hasDocstring;
         result->canSeeClassScope = canSeeClassScope;
-        result->annotationsOf = annotationsOf;
+        result->owner = owner;
+        result->evaluates = evaluates;
+        result->typeParameterIndex = typeParameterIndex;
         result->futureFeatures = futureFeatures;
         result->visibility = visibility;
         result->line = line;
         result->name = name;
         result->qualifiedName = qualifiedName;
+        result->qualifiedNamePrefix = qualifiedNamePrefix;
         result->docstring = docstring;
         result->privateName = privateName;
         result->freeVariables = freeVariables;

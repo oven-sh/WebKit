@@ -152,6 +152,12 @@ public:
         case CodeKind::Annotations:
             generateAnnotations(root);
             break;
+        case CodeKind::TypeParameters:
+            generateTypeParameters(*static_cast<Statement*>(root));
+            break;
+        case CodeKind::Evaluator:
+            generateEvaluator(*static_cast<Statement*>(root));
+            break;
         }
     }
 
@@ -330,7 +336,13 @@ private:
 
     // ---- Names
 
-    const Identifier& mangle(const Identifier& name) { return SymbolTable::mangle(m_vm, m_arena, m_private, name); }
+    const Identifier& mangle(const Identifier& name)
+    {
+        // Where the type parameters of a class are, only their names are mangled for it, and not what is in its bases.
+        if (m_block.mangledNames && !m_block.mangledNames->names.contains(name.impl()))
+            return name;
+        return SymbolTable::mangle(m_vm, m_arena, m_private, name);
+    }
 
     bool isFunctionLike() const { return m_block.isFunctionLike(); }
 
@@ -675,7 +687,7 @@ private:
             return emitCall(dst, expression->as<Call>());
         case Expression::Kind::Lambda: {
             auto& node = expression->as<Lambda>();
-            return emitFunction(dst, CodeKind::Lambda, m_arena.identifiers().makeIdentifier(m_vm, "<lambda>"_span8), node.arguments, node, &node, false);
+            return emitFunction(dst, CodeKind::Lambda, m_arena.identifiers().makeIdentifier(m_vm, "<lambda>"_span8), node.arguments, node, &node);
         }
         case Expression::Kind::JoinedStr:
             return emitJoinedString(dst, expression->as<JoinedStr>());
@@ -1052,17 +1064,26 @@ private:
 
     // ---- Making functions
 
-    String qualifiedNameFor(const Identifier& name)
+    bool belongsToSomethingElse() const { return m_info.owner != OwnerKind::None; }
+
+    // What comes before the name of what is in this. This is compiler_set_qualname() of CPython's Python/compile.c.
+    String ownQualifiedNamePrefix()
     {
         switch (m_info.kind) {
         case CodeKind::Module:
-            return name.string();
-        case CodeKind::Class:
-            return makeString(m_info.qualifiedName, '.', name.string());
+        case CodeKind::Expression:
+        case CodeKind::Interactive:
+            return emptyString();
+        case CodeKind::Function:
+        case CodeKind::Lambda:
+            return makeString(m_info.qualifiedName, ".<locals>."_s);
         default:
-            return makeString(m_info.qualifiedName, ".<locals>."_s, name.string());
+            return makeString(m_info.qualifiedName, '.');
         }
     }
+
+    // What is defined in what belongs to something else is named as if it were where that is.
+    String qualifiedNameFor(const Identifier& name) { return makeString(belongsToSomethingElse() ? m_info.qualifiedNamePrefix : ownQualifiedNamePrefix(), name.string()); }
 
     Ref<FunctionInfo> makeInfo(CodeKind kind, const Identifier& name, Arguments* arguments, Block& block, const Node& node)
     {
@@ -1079,6 +1100,9 @@ private:
         info->line = node.line;
         info->name = name;
         info->qualifiedName = qualifiedNameFor(name);
+        info->canSeeClassScope = block.canSeeClassScope;
+        if (kind == CodeKind::Annotations || kind == CodeKind::TypeParameters || kind == CodeKind::Evaluator)
+            info->qualifiedNamePrefix = ownQualifiedNamePrefix();
         if (kind == CodeKind::Class)
             info->privateName = name;
         else if (m_private)
@@ -1188,12 +1212,13 @@ private:
     }
 
     // def and lambda: the defaults are evaluated now, and kept in the function.
-    RegisterID* emitFunction(RegisterID* dst, CodeKind kind, const Identifier& name, Arguments* arguments, const Node& node, const void* blockKey, bool isAsync)
-    {
-        UNUSED_PARAM(isAsync);
-        Block* block = m_table.blockFor(blockKey);
-        RELEASE_ASSERT(block);
+    struct Defaults {
+        Reg positional; // A tuple, or null.
+        Reg keywordOnly; // A dict, or null.
+    };
 
+    Defaults emitDefaults(Arguments* arguments, const Node& node)
+    {
         Reg defaults;
         if (!arguments->defaults.empty()) {
             Vector<Reg, 8> values;
@@ -1212,7 +1237,19 @@ private:
             Reg value = emit(arguments->keywordDefaults[i]);
             OpPySetItem::emit(&g, keywordDefaults.get(), stringConstant(mangle(*arguments->keywordOnly[i]->name)), value.get());
         }
+        return { defaults, keywordDefaults };
+    }
 
+    RegisterID* emitFunction(RegisterID* dst, CodeKind kind, const Identifier& name, Arguments* arguments, const Node& node, const void* blockKey)
+    {
+        Defaults defaults = emitDefaults(arguments, node);
+        return emitFunctionWithDefaults(dst, kind, name, arguments, node, blockKey, defaults.positional.get(), defaults.keywordOnly.get());
+    }
+
+    RegisterID* emitFunctionWithDefaults(RegisterID* dst, CodeKind kind, const Identifier& name, Arguments* arguments, const Node& node, const void* blockKey, RegisterID* defaults, RegisterID* keywordDefaults)
+    {
+        Block* block = m_table.blockFor(blockKey);
+        RELEASE_ASSERT(block);
         Reg function = temporaryDestination(dst);
         auto info = makeInfo(kind, name, arguments, *block, node);
         if (block->hasDocstring && kind == CodeKind::Function)
@@ -1220,13 +1257,13 @@ private:
         emitNewFunction(function.get(), WTF::move(info), node);
         if (Block* annotations = kind == CodeKind::Function ? m_table.blockFor(arguments) : nullptr; annotations && annotations->usesAnnotations) {
             Reg annotate = g.newTemporary();
-            emitNewAnnotateFunction(annotate.get(), *annotations, CodeKind::Function, node);
+            emitNewAnnotateFunction(annotate.get(), *annotations, OwnerKind::Function, node);
             g.emitDirectPutById(function.get(), m_names.private_annotate, annotate.get());
         }
         if (defaults)
-            g.emitDirectPutById(function.get(), m_names.private_defaults, defaults.get());
+            g.emitDirectPutById(function.get(), m_names.private_defaults, defaults);
         if (keywordDefaults)
-            g.emitDirectPutById(function.get(), m_names.private_kwdefaults, keywordDefaults.get());
+            g.emitDirectPutById(function.get(), m_names.private_kwdefaults, keywordDefaults);
         return finish(dst, function.get());
     }
 
@@ -2119,10 +2156,13 @@ private:
         }
         case Statement::Kind::FunctionDef: {
             auto& node = statement.as<FunctionDef>();
-            if (!node.typeParameters.empty())
-                return fail("type parameters are not supported yet"_s, node);
             emitDecorated(node.decorators, *node.name, node, [&] (RegisterID* dst) {
-                emitFunction(dst, CodeKind::Function, *node.name, node.arguments, node, &node, node.isAsync);
+                if (node.typeParameters.empty()) {
+                    emitFunction(dst, CodeKind::Function, *node.name, node.arguments, node, &node);
+                    return;
+                }
+                Defaults defaults = emitDefaults(node.arguments, node);
+                emitCallTypeParameters(dst, OwnerKind::Function, *node.name, node.typeParameters, node, defaults.positional.get(), defaults.keywordOnly.get());
             });
             return;
         }
@@ -2149,8 +2189,17 @@ private:
             return emitImportFrom(statement.as<ImportFrom>());
         case Statement::Kind::Match:
             return emitMatch(statement.as<Match>());
-        case Statement::Kind::TypeAlias:
-            return fail("this statement is not supported yet"_s, statement);
+        case Statement::Kind::TypeAlias: {
+            auto& node = statement.as<TypeAlias>();
+            const Identifier& name = *node.name->as<Name>().id;
+            Reg alias = g.newTemporary();
+            if (node.typeParameters.empty())
+                emitNewTypeAlias(alias.get(), node, nullptr);
+            else
+                emitCallTypeParameters(alias.get(), OwnerKind::TypeAlias, name, node.typeParameters, node);
+            emitStoreName(name, alias.get(), node);
+            return;
+        }
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -2839,12 +2888,20 @@ private:
     // class C(bases, keywords): body is C = __build_class__(a function that runs the body, "C", bases, keywords)
     void emitClass(ClassDef& node)
     {
-        if (!node.typeParameters.empty())
-            return fail("type parameters are not supported yet"_s, node);
+        emitDecorated(node.decorators, *node.name, node, [&] (RegisterID* dst) {
+            if (node.typeParameters.empty())
+                emitBuildClass(dst, node, nullptr);
+            else
+                emitCallTypeParameters(dst, OwnerKind::Class, *node.name, node.typeParameters, node);
+        });
+    }
+
+    // `genericBase` is what a generic class is derived from besides what it says.
+    void emitBuildClass(RegisterID* dst, ClassDef& node, RegisterID* genericBase)
+    {
         Block* block = m_table.blockFor(&node);
         RELEASE_ASSERT(block);
-
-        emitDecorated(node.decorators, *node.name, node, [&] (RegisterID* dst) {
+        {
             auto info = makeInfo(CodeKind::Class, *node.name, nullptr, *block, node);
             info->parameterNames.append(Identifier::fromString(m_vm, ".namespace"_s));
             info->positionalCount = 1;
@@ -2854,6 +2911,8 @@ private:
 
             Reg bases = g.newTemporary();
             emitListWithStarred(bases.get(), node.bases, node);
+            if (genericBase)
+                emitRuntimeCall(nullptr, "listAppend"_s, { bases.get(), genericBase }, node);
             Reg keywords = g.newTemporary();
             if (node.keywords.empty())
                 g.emitLoad(keywords.get(), jsUndefined());
@@ -2868,11 +2927,11 @@ private:
                 }
             }
             emitRuntimeCall(dst, "buildClass"_s, { body.get(), stringConstant(*node.name), bases.get(), keywords.get() }, node);
-        });
+        }
     }
 
     // The function that runs the body of a class statement. It is given the namespace to fill in. It returns the environment that
-    // __class__ is a variable of, for the class to be put in once there is one, or None.
+    // __class__ and __classdict__ are variables of, for the class to be put in once there is one, or None.
     void generateClassBody(ClassDef& node)
     {
         m_namespace = parameterRegister(0);
@@ -2894,7 +2953,7 @@ private:
             emitStoreClosure(m_names.dunder_conditional_annotations, set.get());
         }
         Reg environment = g.newTemporary();
-        if (m_block.needsClassClosure)
+        if (m_block.needsClassClosure || m_block.needsClassDict)
             g.move(environment.get(), g.scopeRegister());
         else
             g.emitLoad(environment.get(), jsUndefined());
@@ -2910,13 +2969,17 @@ private:
         }
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));
         store(m_names.dunder_firstlineno, constant(jsNumber(node.line)));
+        if (!node.typeParameters.empty()) {
+            Reg typeParameters = emitLoadClosure(nullptr, Identifier::fromString(m_vm, ".type_params"_s), node);
+            store(m_names.dunder_type_params, typeParameters.get());
+        }
         if (m_block.hasDocstring)
             store(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(node.body))));
 
         emitSetUpAnnotations(node);
-        collectDeferredAnnotations(node.body, CodeKind::Class);
+        collectDeferredAnnotations(node.body, OwnerKind::Class);
         emit(node.body);
-        if (Reg annotate = emitAnnotateFunctionForBody(CodeKind::Class, node))
+        if (Reg annotate = emitAnnotateFunctionForBody(OwnerKind::Class, node))
             store(m_names.dunder_annotate_func, annotate.get());
         {
             Vector<String> attributes;
@@ -3002,13 +3065,12 @@ private:
         return result;
     }
 
-    void emitNewAnnotateFunction(RegisterID* dst, Block& block, CodeKind owner, const Node& node)
+    void emitNewAnnotateFunction(RegisterID* dst, Block& block, OwnerKind owner, const Node& node)
     {
         auto info = makeInfo(CodeKind::Annotations, m_names.dunder_annotate, nullptr, block, node);
-        info->annotationsOf = owner;
-        info->canSeeClassScope = block.canSeeClassScope;
+        info->owner = owner;
         // That of a function goes by the function's name, though it is beside the function and not in it.
-        if (owner == CodeKind::Function)
+        if (owner == OwnerKind::Function)
             info->qualifiedName = makeString(qualifiedNameFor(*static_cast<const FunctionDef&>(node).name), ".__annotate__"_s);
         // To the symbol table it is `.format`, so that an annotation can name the built-in function. It is `format` to whoever asks.
         info->parameterNames.append(Identifier::fromString(m_vm, "format"_s));
@@ -3018,14 +3080,14 @@ private:
     }
 
     // To be done before the body of a class or a module is gone through.
-    void collectDeferredAnnotations(Sequence<Statement*> body, CodeKind owner)
+    void collectDeferredAnnotations(Sequence<Statement*> body, OwnerKind owner)
     {
         if (!hasFutureAnnotations() && m_block.annotationBlock)
-            m_deferredAnnotations = deferredAnnotationsOf(body, owner != CodeKind::Class);
+            m_deferredAnnotations = deferredAnnotationsOf(body, owner != OwnerKind::Class);
     }
 
     // The __annotate__ of a class or a module. Null if there is nothing for it to evaluate.
-    Reg emitAnnotateFunctionForBody(CodeKind owner, const Node& node)
+    Reg emitAnnotateFunctionForBody(OwnerKind owner, const Node& node)
     {
         if (m_deferredAnnotations.isEmpty())
             return nullptr;
@@ -3114,10 +3176,8 @@ private:
             const Node& node = m_block.location;
             emitRuntimeCall(nullptr, "checkAnnotationFormat"_s, { parameterRegister(0) }, node);
             // If they are strings there is nothing to look up, and the class has not kept its namespace for it.
-            if (m_info.canSeeClassScope && !hasFutureAnnotations()) {
-                m_namespace = g.newTemporary();
-                emitLoadClosure(m_namespace.get(), m_names.dunder_classdict, node);
-            }
+            if (!hasFutureAnnotations())
+                emitLoadClassNamespace(node);
             Reg annotations = g.newTemporary();
             emitRuntimeCall(annotations.get(), "newDict"_s, { }, node);
             auto add = [&] (const Identifier& name, Expression& annotation) {
@@ -3126,7 +3186,7 @@ private:
                 OpPySetItem::emit(&g, annotations.get(), stringConstant(name), value.get());
             };
 
-            if (m_info.annotationsOf == CodeKind::Function) {
+            if (m_info.owner == OwnerKind::Function) {
                 auto& function = *static_cast<FunctionDef*>(root);
                 Arguments& arguments = *function.arguments;
                 auto addArgument = [&] (Argument* argument) {
@@ -3144,7 +3204,7 @@ private:
                 if (function.returns)
                     add(Identifier::fromString(m_vm, "return"_s), *function.returns);
             } else {
-                bool isClass = m_info.annotationsOf == CodeKind::Class;
+                bool isClass = m_info.owner == OwnerKind::Class;
                 Sequence<Statement*> body = isClass ? static_cast<ClassDef*>(root)->body : static_cast<Module*>(root)->body;
                 for (auto& deferred : deferredAnnotationsOf(body, !isClass)) {
                     Ref<Label> notComeTo = g.newLabel();
@@ -3160,6 +3220,186 @@ private:
                 }
             }
             g.emitReturn(annotations.get());
+        });
+    }
+
+    // ---- Type parameters, and the `type` statement
+    //
+    // def f[T](): ..., class C[T]: ... and type A[T] = ... have their type parameters for the variables of a function that is made for it and called at once. It
+    // makes them, and then the function, the class or the alias, which it returns. What follows the colon or the equals sign of one, and what an alias is an alias
+    // of, are worked out when they are asked for, each by a function of its own: PEP 695 and 696. This is codegen_type_params(), codegen_typealias() and parts of
+    // codegen_function() and codegen_class() of CPython's Python/codegen.c.
+
+    // What is in a class without being part of its body looks in the class for what is not its own. The class keeps its namespace for it.
+    void emitLoadClassNamespace(const Node& node)
+    {
+        if (!m_info.canSeeClassScope)
+            return;
+        m_namespace = g.newTemporary();
+        emitLoadClosure(m_namespace.get(), m_names.dunder_classdict, node);
+    }
+
+    void emitCallTypeParameters(RegisterID* dst, OwnerKind owner, const Identifier& name, Sequence<TypeParameter*> typeParameters, const Node& node, RegisterID* defaults = nullptr, RegisterID* keywordDefaults = nullptr)
+    {
+        Block* block = m_table.blockFor(typeParameters.data());
+        RELEASE_ASSERT(block);
+        auto info = makeInfo(CodeKind::TypeParameters, Identifier::fromString(m_vm, makeString("<generic parameters of "_s, name.string(), '>')), nullptr, *block, node);
+        info->owner = owner;
+        if (owner == OwnerKind::Class)
+            info->privateName = name;
+        // The defaults of a function's parameters are evaluated where the statement is, and passed in.
+        Vector<RegisterID*, 2> arguments;
+        if (defaults) {
+            info->parameterNames.append(Identifier::fromString(m_vm, ".defaults"_s));
+            arguments.append(defaults);
+        }
+        if (keywordDefaults) {
+            info->parameterNames.append(Identifier::fromString(m_vm, ".kwdefaults"_s));
+            arguments.append(keywordDefaults);
+        }
+        info->positionalCount = arguments.size();
+        info->positionalOnlyCount = arguments.size();
+
+        Reg function = g.newTemporary();
+        emitNewFunction(function.get(), WTF::move(info), node);
+        CallArguments call(g, nullptr, arguments.size());
+        g.emitLoad(call.thisRegister(), jsUndefined());
+        for (unsigned i = 0; i < arguments.size(); ++i)
+            g.move(call.argumentRegister(i), arguments[i]);
+        emitRawCall(dst, function.get(), call, arguments.size(), node);
+    }
+
+    // def name(format=1, /): return expression
+    void emitEvaluator(RegisterID* dst, const void* blockKey, const Identifier& name, OwnerKind owner, Evaluates evaluates, unsigned typeParameterIndex, const Node& ownerNode)
+    {
+        Block* block = m_table.blockFor(blockKey);
+        RELEASE_ASSERT(block);
+        auto info = makeInfo(CodeKind::Evaluator, name, nullptr, *block, ownerNode);
+        info->owner = owner;
+        info->evaluates = evaluates;
+        info->typeParameterIndex = typeParameterIndex;
+        info->parameterNames.append(Identifier::fromString(m_vm, ".format"_s));
+        info->positionalOnlyCount = 1;
+        info->positionalCount = 1;
+        emitNewFunction(dst, WTF::move(info), ownerNode);
+        Vector<Reg, 8> one { g.newTemporary() };
+        g.emitLoad(one[0].get(), jsNumber(1));
+        Reg defaults = g.newTemporary();
+        emitNewTuple(defaults.get(), one);
+        g.emitDirectPutById(dst, m_names.private_defaults, defaults.get());
+    }
+
+    // Makes each and gives it its name. The result is a tuple of them.
+    Reg emitTypeParameters(Sequence<TypeParameter*> parameters, const Node& ownerNode)
+    {
+        Vector<Reg, 8> values;
+        for (unsigned i = 0; i < parameters.size(); ++i) {
+            TypeParameter& parameter = *parameters[i];
+            Reg value = g.newTemporary();
+            const void* defaultKey = &parameter;
+            switch (parameter.kind) {
+            case TypeParameter::Kind::TypeVar: {
+                Reg evaluator = g.newTemporary();
+                if (parameter.bound)
+                    emitEvaluator(evaluator.get(), &parameter, *parameter.name, m_info.owner, Evaluates::Bound, i, ownerNode);
+                else
+                    g.emitLoad(evaluator.get(), jsUndefined());
+                emitRuntimeCall(value.get(), "newTypeVar"_s, { stringConstant(*parameter.name), evaluator.get(), constant(jsBoolean(parameter.bound && parameter.bound->is<Tuple>())) }, parameter);
+                defaultKey = reinterpret_cast<const char*>(&parameter) + 1;
+                break;
+            }
+            case TypeParameter::Kind::TypeVarTuple:
+                emitRuntimeCall(value.get(), "newTypeVarTuple"_s, { stringConstant(*parameter.name) }, parameter);
+                break;
+            case TypeParameter::Kind::ParamSpec:
+                emitRuntimeCall(value.get(), "newParamSpec"_s, { stringConstant(*parameter.name) }, parameter);
+                break;
+            }
+            if (parameter.defaultValue) {
+                Reg evaluator = g.newTemporary();
+                emitEvaluator(evaluator.get(), defaultKey, *parameter.name, m_info.owner, Evaluates::Default, i, ownerNode);
+                emitRuntimeCall(nullptr, "setTypeParameterDefault"_s, { value.get(), evaluator.get() }, parameter);
+            }
+            emitStoreName(*parameter.name, value.get(), parameter);
+            values.append(value);
+        }
+        Reg tuple = g.newTemporary();
+        emitNewTuple(tuple.get(), values);
+        return tuple;
+    }
+
+    void emitNewTypeAlias(RegisterID* dst, TypeAlias& node, RegisterID* typeParameters)
+    {
+        const Identifier& name = *node.name->as<Name>().id;
+        Reg evaluator = g.newTemporary();
+        emitEvaluator(evaluator.get(), &node, name, OwnerKind::TypeAlias, Evaluates::Value, 0, node);
+        emitRuntimeCall(dst, "newTypeAlias"_s, { stringConstant(name), typeParameters ? typeParameters : none(), evaluator.get() }, node);
+    }
+
+    void generateTypeParameters(Statement& statement)
+    {
+        generateFunction([&] {
+            emitLoadClassNamespace(statement);
+            Reg result = g.newTemporary();
+            switch (m_info.owner) {
+            case OwnerKind::Function: {
+                auto& node = statement.as<FunctionDef>();
+                Reg typeParameters = emitTypeParameters(node.typeParameters, node);
+                RegisterID* defaults = nullptr;
+                RegisterID* keywordDefaults = nullptr;
+                for (unsigned i = 0; i < m_info.parameterNames.size(); ++i)
+                    (m_info.parameterNames[i] == ".defaults"_s ? defaults : keywordDefaults) = parameterRegister(i);
+                emitFunctionWithDefaults(result.get(), CodeKind::Function, *node.name, node.arguments, node, &node, defaults, keywordDefaults);
+                g.emitDirectPutById(result.get(), m_names.private_typeParams, typeParameters.get());
+                break;
+            }
+            case OwnerKind::Class: {
+                auto& node = statement.as<ClassDef>();
+                Reg typeParameters = emitTypeParameters(node.typeParameters, node);
+                // The body wants them, for __type_params__.
+                emitStoreName(Identifier::fromString(m_vm, ".type_params"_s), typeParameters.get(), node);
+                Reg genericBase = g.newTemporary();
+                emitRuntimeCall(genericBase.get(), "subscriptGeneric"_s, { typeParameters.get() }, node);
+                emitBuildClass(result.get(), node, genericBase.get());
+                break;
+            }
+            case OwnerKind::TypeAlias: {
+                auto& node = statement.as<TypeAlias>();
+                Reg typeParameters = emitTypeParameters(node.typeParameters, node);
+                emitNewTypeAlias(result.get(), node, typeParameters.get());
+                break;
+            }
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            g.emitReturn(result.get());
+        });
+    }
+
+    void generateEvaluator(Statement& statement)
+    {
+        generateFunction([&] {
+            emitRuntimeCall(nullptr, "checkAnnotationFormat"_s, { parameterRegister(0) }, statement);
+            emitLoadClassNamespace(statement);
+            Expression* expression = nullptr;
+            bool canBeStarred = false;
+            if (m_info.evaluates == Evaluates::Value)
+                expression = statement.as<TypeAlias>().value;
+            else {
+                auto parameters = m_info.owner == OwnerKind::Function ? statement.as<FunctionDef>().typeParameters : m_info.owner == OwnerKind::Class ? statement.as<ClassDef>().typeParameters : statement.as<TypeAlias>().typeParameters;
+                TypeParameter& parameter = *parameters[m_info.typeParameterIndex];
+                expression = m_info.evaluates == Evaluates::Bound ? parameter.bound : parameter.defaultValue;
+                // *Ts = *tuple[int, str]
+                canBeStarred = parameter.kind == TypeParameter::Kind::TypeVarTuple;
+            }
+            Reg value = g.newTemporary();
+            if (auto* starred = expression->tryAs<Starred>(); starred && canBeStarred) {
+                Reg iterable = emitToTemporary(starred->value);
+                mark(*expression);
+                OpPyUnpackSequence::emit(&g, value->virtualRegister(), 1, 1, iterable.get());
+            } else
+                emitInto(value.get(), expression);
+            g.emitReturn(value.get());
         });
     }
 
@@ -3234,7 +3474,7 @@ private:
         }
         emitSetUpAnnotations(whole);
         // It is there from the start, and says of each annotation whether the statement that it is in has been come to.
-        CodeKind kind = module.kind == Module::Kind::Interactive ? CodeKind::Interactive : CodeKind::Module;
+        OwnerKind kind = module.kind == Module::Kind::Interactive ? OwnerKind::Interactive : OwnerKind::Module;
         collectDeferredAnnotations(module.body, kind);
         if (Reg annotate = emitAnnotateFunctionForBody(kind, whole))
             emitStoreName(m_names.dunder_annotate, annotate.get(), whole);

@@ -127,6 +127,52 @@ PYTHON_RUNTIME_FUNCTION(setUpAnnotations)
     return JSValue::encode(jsUndefined());
 }
 
+// ---- Type parameters
+
+// newTypeVar(name, what works out its bound or its constraints or None, which of the two)
+PYTHON_RUNTIME_FUNCTION(runtimeNewTypeVar)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newTypeVar(globalObject, asString(argument(0)), isNone(argument(1)) ? JSValue() : argument(1), argument(2).asBoolean()));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeNewParamSpec)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newParamSpec(globalObject, asString(argument(0))));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeNewTypeVarTuple)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newTypeVarTuple(globalObject, asString(argument(0))));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeSetTypeParameterDefault)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    setTypeParameterDefault(globalObject, argument(0), argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+// newTypeAlias(name, its type parameters or None, what works out its value)
+PYTHON_RUNTIME_FUNCTION(runtimeNewTypeAlias)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newTypeAlias(globalObject, asString(argument(0)), argument(1), argument(2)));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeSubscriptGeneric)
+{
+    PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(subscriptGeneric(globalObject, uncheckedDowncast<PyTuple>(argument(0).asCell()))));
+}
+
 static JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, JSString* name)
 {
     return raiseNameError(globalObject, scope, name->value(globalObject));
@@ -995,6 +1041,12 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     };
     add("loadName"_s, loadName);
     add("checkAnnotationFormat"_s, checkAnnotationFormat);
+    add("newTypeVar"_s, runtimeNewTypeVar);
+    add("newParamSpec"_s, runtimeNewParamSpec);
+    add("newTypeVarTuple"_s, runtimeNewTypeVarTuple);
+    add("setTypeParameterDefault"_s, runtimeSetTypeParameterDefault);
+    add("newTypeAlias"_s, runtimeNewTypeAlias);
+    add("subscriptGeneric"_s, runtimeSubscriptGeneric);
     add("setUpAnnotations"_s, setUpAnnotations);
     add("loadFromNamespace"_s, loadFromNamespace);
     add("deleteGlobal"_s, deleteGlobal);

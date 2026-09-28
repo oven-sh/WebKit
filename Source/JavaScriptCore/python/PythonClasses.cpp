@@ -505,6 +505,13 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
         SymbolTableEntry::Fast entry = scopeObject->symbolTable()->get(names.dunder_class.impl());
         if (!entry.isNull())
             scopeObject->variableAt(entry.scopeOffset()).set(vm, scopeObject, result);
+        // And what looks in the class for names, as its annotations do, looks from now on in the class and not in what it was made from.
+        entry = scopeObject->symbolTable()->get(names.dunder_classdict.impl());
+        if (!entry.isNull() && isType(result)) {
+            JSValue dict = getAttribute(globalObject, result, names.dunder_dict);
+            RETURN_IF_EXCEPTION(scope, { });
+            scopeObject->variableAt(entry.scopeOffset()).set(vm, scopeObject, dict);
+        }
     }
     return result;
 }

@@ -613,6 +613,21 @@ PyNativeObject* PyNativeObject::create(JSGlobalObject* globalObject, BuiltinType
 }
 
 template<typename Visitor>
+void PyTypingObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Base::visitChildren(cell, visitor);
+}
+
+DEFINE_PYTHON_CELL(PyTypingObject, "object", ObjectType)
+
+PyTypingObject* PyTypingObject::create(VM& vm, Structure* structure)
+{
+    auto* object = new (NotNull, allocateCell<PyTypingObject>(vm)) PyTypingObject(vm, structure);
+    object->finishCreation(vm);
+    return object;
+}
+
+template<typename Visitor>
 void PyGetSetDescriptor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<PyGetSetDescriptor>(cell);

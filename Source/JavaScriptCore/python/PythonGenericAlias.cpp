@@ -632,8 +632,7 @@ PYTHON_NATIVE(genericAliasIteratorReduce)
 
 static bool isUnionable(JSGlobalObject* globalObject, JSValue value)
 {
-    // FIXME: And what a `type` statement makes.
-    return isNone(value) || isClass(value) || isGenericAlias(globalObject, value) || isUnion(globalObject, value);
+    return isNone(value) || isClass(value) || isGenericAlias(globalObject, value) || isUnion(globalObject, value) || isTypeAlias(globalObject, value);
 }
 
 namespace {
@@ -970,7 +969,8 @@ void initializeGenericAliasAndUnion(JSGlobalObject* globalObject)
     // The built-in classes that are generic.
     for (unsigned i = 0; i < numberOfBuiltinTypes; ++i) {
         PyType* type = realm->type(static_cast<BuiltinType>(i));
-        if (type != unionType)
+        // Those two have something of their own to do.
+        if (type != unionType && type != realm->typeGeneric())
             addMethodsThatCPythonHas(globalObject, type, { { "__class_getitem__"_s, genericClassGetItem, Kind::ClassMethod } });
     }
 }
