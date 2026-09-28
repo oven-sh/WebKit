@@ -742,6 +742,7 @@ python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
 python/PythonASTDumper.cpp
+python/PythonAsync.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp
 python/PythonBytes.cpp

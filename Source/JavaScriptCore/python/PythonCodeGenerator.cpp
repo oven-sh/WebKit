@@ -659,6 +659,7 @@ private:
             fail("can't use starred expression here"_s, *expression);
             return g.emitLoad(dst, jsUndefined());
         case Expression::Kind::Await:
+            return emitAwait(dst, expression->as<Await>());
         case Expression::Kind::TemplateStr:
         case Expression::Kind::Interpolation:
             fail("this is not supported yet"_s, *expression);
@@ -1122,8 +1123,7 @@ private:
     // def and lambda: the defaults are evaluated now, and kept in the function.
     RegisterID* emitFunction(RegisterID* dst, CodeKind kind, const Identifier& name, Arguments* arguments, const Node& node, const void* blockKey, bool isAsync)
     {
-        if (isAsync)
-            fail("async functions are not supported yet"_s, node);
+        UNUSED_PARAM(isAsync);
         Block* block = m_table.blockFor(blockKey);
         RELEASE_ASSERT(block);
 
@@ -1354,8 +1354,8 @@ private:
 
         emitBindArguments(node);
 
-        if (m_info.isGenerator) {
-            // The function proper only makes the generator. Its parameters are kept where the body, which is another function, finds them.
+        if (m_info.isGenerator || m_info.isCoroutine) {
+            // The function proper only makes the generator, or the coroutine, which is the same thing under another name. Its parameters are kept where the body, which is another function, finds them.
             Vector<const Identifier*, 8> cells;
             for (auto& name : m_info.parameterNames)
                 cells.append(&name);
@@ -1368,9 +1368,13 @@ private:
             Reg body = g.newTemporary();
             emitNewFunction(body.get(), WTF::move(info), node, SourceParseMode::GeneratorBodyMode);
             Reg generator = g.newTemporary();
-            g.emitNewGenerator(generator.get());
-            g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::Next), body.get());
-            g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::This), none());
+            if (m_info.isCoroutine)
+                emitRuntimeCall(generator.get(), "newCoroutine"_s, { body.get(), constant(jsBoolean(m_info.isGenerator)) }, node);
+            else {
+                g.emitNewGenerator(generator.get());
+                g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::Next), body.get());
+                g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::This), none());
+            }
             g.emitReturn(generator.get());
             return;
         }
@@ -1436,8 +1440,66 @@ private:
         }
         Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
         mark(node);
-        RegisterID* sent = g.emitYield(value.get());
-        return g.move(destination(dst).get(), sent);
+        return g.move(destination(dst).get(), emitYieldValue(value.get(), node));
+    }
+
+    // In an asynchronous generator, what is yielded is marked, to tell it from what an await passes up on its way to the event loop.
+    RegisterID* emitYieldValue(RegisterID* value, const Node& node)
+    {
+        if (!m_info.isCoroutine)
+            return g.emitYield(value);
+        Reg wrapped = g.newTemporary();
+        emitRuntimeCall(wrapped.get(), "wrapAsyncYield"_s, { value }, node);
+        return g.emitYield(wrapped.get());
+    }
+
+    enum class AwaitContext : uint8_t { Await, AsyncEnter, AsyncExit };
+
+    // await value
+    RegisterID* emitAwaitValue(RegisterID* dst, RegisterID* value, const Node& node, AwaitContext context = AwaitContext::Await)
+    {
+        Reg awaitable = g.newTemporary();
+        emitRuntimeCall(awaitable.get(), "getAwaitable"_s, { value, constant(jsNumber(static_cast<unsigned>(context))) }, node);
+        return emitDelegate(dst, awaitable.get(), node);
+    }
+
+    // False, with an error reported, if this is no place for something asynchronous.
+    bool checkIsAsync(ASCIILiteral what, const Node& node)
+    {
+        if (m_info.isCoroutine && m_info.isGeneratorBody)
+            return true;
+        if (!isFunctionLike() && what == "'await'"_s)
+            fail("'await' outside function"_s, node);
+        else if (what == "asynchronous comprehension"_s)
+            fail("asynchronous comprehension outside of an asynchronous function"_s, node);
+        else
+            fail(makeString(what, " outside async function"_s), node);
+        return false;
+    }
+
+    RegisterID* emitAwait(RegisterID* dst, Await& node)
+    {
+        if (!checkIsAsync("'await'"_s, node))
+            return g.emitLoad(dst, jsUndefined());
+        Reg value = emitToTemporary(node.value);
+        return emitAwaitValue(dst, value.get(), node);
+    }
+
+    // The next item of an asynchronous iterator, or a jump if there are no more.
+    void emitAsyncNext(RegisterID* dst, RegisterID* iterator, Label& exhausted, const Node& node)
+    {
+        emitTryCatch([&] {
+            Reg awaitable = g.newTemporary();
+            emitRuntimeCall(awaitable.get(), "getAsyncNext"_s, { iterator }, node);
+            emitDelegate(dst, awaitable.get(), node);
+        }, [&] (RegisterID* exception) {
+            Reg type = g.newTemporary();
+            g.emitGetById(type.get(), runtime(), Identifier::fromString(m_vm, "StopAsyncIteration"_s));
+            Reg matches = g.newTemporary();
+            emitCompare(matches.get(), ComparisonOperator::ExceptionMatch, exception, type.get());
+            g.emitJumpIfTrue(matches.get(), exhausted);
+            g.emitThrow(exception);
+        }, [] { });
     }
 
     // yield from iterable: everything that is sent to or thrown into this generator goes to that one, until it is done.
@@ -1447,12 +1509,22 @@ private:
             fail("'yield from' outside function"_s, node);
             return g.emitLoad(dst, jsUndefined());
         }
+        if (m_info.isCoroutine) {
+            fail("'yield from' inside async function"_s, node);
+            return g.emitLoad(dst, jsUndefined());
+        }
         Reg iterator = g.newTemporary();
         {
             Reg iterable = emit(node.value);
-            mark(node);
-            OpPyGetIter::emit(&g, iterator.get(), iterable.get());
+            emitRuntimeCall(iterator.get(), "getYieldFromIterator"_s, { iterable.get() }, node);
         }
+        return emitDelegate(dst, iterator.get(), node);
+    }
+
+    // Everything that is sent to or thrown into this generator goes to the iterator, until it is done. The result is what it returned.
+    RegisterID* emitDelegate(RegisterID* dst, RegisterID* iteratorRegister, const Node& node)
+    {
+        Reg iterator = iteratorRegister;
         Reg received = g.emitLoad(g.newTemporary(), jsUndefined());
         Reg wasThrown = g.emitLoad(g.newTemporary(), jsBoolean(false));
         Reg yielded = g.newTemporary();
@@ -1492,15 +1564,18 @@ private:
         if (index == generators.size())
             return innermost();
         Comprehension& generator = *generators[index];
-        if (generator.isAsync)
-            fail("asynchronous comprehensions are not supported yet"_s, *generator.target);
+        if (generator.isAsync && !checkIsAsync("asynchronous comprehension"_s, *generator.target))
+            return;
 
         Reg iterator = firstIterator;
         if (!iterator) {
             iterator = g.newTemporary();
             Reg iterable = emit(generator.iterable);
             mark(*generator.iterable);
-            OpPyGetIter::emit(&g, iterator.get(), iterable.get());
+            if (generator.isAsync)
+                emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *generator.iterable);
+            else
+                OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
         Ref<Label> loop = g.newLabel();
         Ref<Label> end = g.newLabel();
@@ -1509,10 +1584,14 @@ private:
         {
             Reg value = g.newTemporary();
             mark(*generator.iterable);
-            OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
-            Reg isEmpty = g.newTemporary();
-            g.emitIsEmpty(isEmpty.get(), value.get());
-            g.emitJumpIfTrue(isEmpty.get(), end.get());
+            if (generator.isAsync)
+                emitAsyncNext(value.get(), iterator.get(), end.get(), *generator.iterable);
+            else {
+                OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
+                Reg isEmpty = g.newTemporary();
+                g.emitIsEmpty(isEmpty.get(), value.get());
+                g.emitJumpIfTrue(isEmpty.get(), end.get());
+            }
             emitAssign(generator.target, value.get());
         }
         for (Expression* condition : generator.conditions)
@@ -1537,7 +1616,10 @@ private:
         {
             Reg iterable = emit(generators[0]->iterable);
             mark(*generators[0]->iterable);
-            OpPyGetIter::emit(&g, iterator.get(), iterable.get());
+            if (generators[0]->isAsync)
+                emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *generators[0]->iterable);
+            else
+                OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
 
         ComprehensionScope scope;
@@ -1622,7 +1704,10 @@ private:
         {
             Reg iterable = emit(node.generators[0]->iterable);
             mark(*node.generators[0]->iterable);
-            OpPyGetIter::emit(&g, call.argumentRegister(0), iterable.get());
+            if (node.generators[0]->isAsync)
+                emitRuntimeCall(call.argumentRegister(0), "getAsyncIterator"_s, { iterable.get() }, *node.generators[0]->iterable);
+            else
+                OpPyGetIter::emit(&g, call.argumentRegister(0), iterable.get());
         }
         return emitRawCall(destination(dst).get(), function.get(), call, 1, node);
     }
@@ -1634,7 +1719,7 @@ private:
             Reg iterator = emitLoadClosure(nullptr, m_info.parameterNames[0], node);
             emitComprehensionLoops(node.generators, 0, iterator.get(), [&] {
                 Reg value = emitToTemporary(node.element);
-                g.emitYield(value.get());
+                emitYieldValue(value.get(), node);
             });
         });
     }
@@ -1836,6 +1921,8 @@ private:
             auto& node = statement.as<Return>();
             if (!isFunctionLike() || m_info.kind == CodeKind::Class)
                 return fail("'return' outside function"_s, node);
+            if (node.value && m_info.isCoroutine && m_info.isGenerator)
+                return fail("'return' with value in async generator"_s, node);
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
             if (!g.emitReturnViaFinallyIfNeeded(value.get()))
                 g.emitReturn(value.get());
@@ -2288,13 +2375,16 @@ private:
 
     void emitFor(For& node)
     {
-        if (node.isAsync)
-            return fail("'async for' is not supported yet"_s, node);
+        if (node.isAsync && !checkIsAsync("'async for'"_s, node))
+            return;
         Reg iterator = g.newTemporary();
         {
             Reg iterable = emit(node.iterable);
             mark(*node.iterable);
-            OpPyGetIter::emit(&g, iterator.get(), iterable.get());
+            if (node.isAsync)
+                emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *node.iterable);
+            else
+                OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
         Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
         Ref<Label> exhausted = g.newLabel();
@@ -2305,10 +2395,14 @@ private:
             // Not straight into the variable: it keeps its last value when there is no more.
             Reg value = g.newTemporary();
             mark(*node.iterable);
-            OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
-            Reg isEmpty = g.newTemporary();
-            g.emitIsEmpty(isEmpty.get(), value.get());
-            g.emitJumpIfTrue(isEmpty.get(), exhausted.get());
+            if (node.isAsync)
+                emitAsyncNext(value.get(), iterator.get(), exhausted.get(), *node.iterable);
+            else {
+                OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
+                Reg isEmpty = g.newTemporary();
+                g.emitIsEmpty(isEmpty.get(), value.get());
+                g.emitJumpIfTrue(isEmpty.get(), exhausted.get());
+            }
             if (local)
                 g.move(local, value.get());
             else
@@ -2482,8 +2576,8 @@ private:
     // with a as x, b as y: body is with a as x: with b as y: body
     void emitWith(With& node, size_t index)
     {
-        if (node.isAsync)
-            return fail("'async with' is not supported yet"_s, node);
+        if (node.isAsync && !checkIsAsync("'async with'"_s, node))
+            return;
         if (index == node.items.size())
             return emit(node.body);
 
@@ -2492,9 +2586,12 @@ private:
         Reg manager = emitToTemporary(item.contextExpression);
         // __exit__ is looked up before __enter__ is called.
         Reg exit = g.newTemporary();
-        emitRuntimeCall(exit.get(), "loadExit"_s, { manager.get() }, position);
+        RegisterID* isAsync = constant(jsBoolean(node.isAsync));
+        emitRuntimeCall(exit.get(), "loadExit"_s, { manager.get(), isAsync }, position);
         Reg entered = g.newTemporary();
-        emitRuntimeCall(entered.get(), "callEnter"_s, { manager.get() }, position);
+        emitRuntimeCall(entered.get(), "callEnter"_s, { manager.get(), isAsync }, position);
+        if (node.isAsync)
+            emitAwaitValue(entered.get(), entered.get(), position, AwaitContext::AsyncEnter);
 
         Reg finishedNormally = g.emitLoad(g.newTemporary(), jsBoolean(true));
         emitTryFinally([&] {
@@ -2508,8 +2605,10 @@ private:
                 emitWhileHandling(exception, position, [&] {
                     Reg suppress = g.newTemporary();
                     emitRuntimeCall(suppress.get(), "callExit"_s, { exit.get(), exception }, position);
+                    if (node.isAsync)
+                        emitAwaitValue(suppress.get(), suppress.get(), position, AwaitContext::AsyncExit);
                     Ref<Label> suppressed = g.newLabel();
-                    g.emitJumpIfTrue(suppress.get(), suppressed.get());
+                    emitJumpIfTrue(suppress.get(), suppressed.get());
                     g.emitThrow(exception);
                     g.emitLabel(suppressed.get());
                 });
@@ -2517,7 +2616,10 @@ private:
         }, [&] {
             Ref<Label> done = g.newLabel();
             g.emitJumpIfFalse(finishedNormally.get(), done.get());
-            emitRuntimeCall(nullptr, "callExit"_s, { exit.get(), none() }, position);
+            Reg result = g.newTemporary();
+            emitRuntimeCall(result.get(), "callExit"_s, { exit.get(), none() }, position);
+            if (node.isAsync)
+                emitAwaitValue(result.get(), result.get(), position, AwaitContext::AsyncExit);
             g.emitLabel(done.get());
         });
     }

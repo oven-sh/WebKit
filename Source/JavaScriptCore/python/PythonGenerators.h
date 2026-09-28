@@ -30,15 +30,32 @@
 
 namespace JSC { namespace Python {
 
+inline JSGenerator* asGenerator(JSValue value) { return uncheckedDowncast<JSGenerator>(value.asCell()); }
+
 // A Python generator is a JavaScript generator: a JSGenerator, resumed in the same way. So each language can iterate the other's.
 
 // Runs it until it yields, and gives what it yielded. If it returns instead, the result is empty and `returned` is what it returned.
 // If it raises, both are empty.
 JSValue resumeGenerator(JSGlobalObject*, JSGenerator*, JSValue sent, JSGenerator::ResumeMode, JSValue& returned);
 
+// A coroutine and an asynchronous generator are generators too. They differ in their class, which is their prototype.
+enum class GeneratorKind : uint8_t { Generator, Coroutine, AsyncGenerator };
+GeneratorKind generatorKindOf(JSGlobalObject*, JSGenerator*);
+JSGenerator* newCoroutine(JSGlobalObject*, JSValue body, bool isAsyncGenerator);
+
+// What `await value` iterates. `context` is 1 if the value is what __aenter__ gave and 2 if it is what __aexit__ gave, for the message.
+JSValue getAwaitable(JSGlobalObject*, JSValue, unsigned context);
+// What `async for` does first, and then each time round.
+JSValue getAsyncIterator(JSGlobalObject*, JSValue);
+JSValue getAsyncNext(JSGlobalObject*, JSValue iterator);
+JSValue wrapAsyncYield(JSGlobalObject*, JSValue);
+// An exception, from what may be the class of one, with a value to make it from. Empty if it raised.
+JSValue exceptionToThrow(JSGlobalObject*, JSValue typeOrValue, JSValue value);
+
 // generator.send(), .throw() and .close(), which raise StopIteration when it returns.
 JSValue generatorSend(JSGlobalObject*, JSGenerator*, JSValue);
 JSValue generatorThrow(JSGlobalObject*, JSGenerator*, JSValue exception);
-void generatorClose(JSGlobalObject*, JSGenerator*);
+// What it returned, if being closed made it return.
+JSValue generatorClose(JSGlobalObject*, JSGenerator*);
 
 } } // namespace JSC::Python

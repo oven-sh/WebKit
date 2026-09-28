@@ -43,9 +43,13 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     auto setState = [&] (int32_t state) { generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).set(vm, generator, jsNumber(state)); };
 
     int32_t state = field(JSGenerator::Field::State).asInt32();
+    GeneratorKind kind = generatorKindOf(globalObject, generator);
+    ASCIILiteral what = kind == GeneratorKind::Generator ? "generator"_s : kind == GeneratorKind::Coroutine ? "coroutine"_s : "async generator"_s;
     if (state == static_cast<int32_t>(JSGenerator::State::Executing))
-        return raiseValueError(globalObject, scope, "generator already executing"_s);
+        return raiseValueError(globalObject, scope, makeString(what, " already executing"_s));
     if (state == static_cast<int32_t>(JSGenerator::State::Completed)) {
+        if (kind == GeneratorKind::Coroutine)
+            return raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited coroutine"_s);
         if (mode == JSGenerator::ResumeMode::ThrowMode) {
             throwException(globalObject, scope, sent);
             return { };
@@ -54,7 +58,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         return { };
     }
     if (state == static_cast<int32_t>(JSGenerator::State::Init) && mode == JSGenerator::ResumeMode::NormalMode && !isNone(sent))
-        return raiseTypeError(globalObject, scope, "can't send non-None value to a just-started generator"_s);
+        return raiseTypeError(globalObject, scope, makeString("can't send non-None value to a just-started "_s, what));
 
     setState(static_cast<int32_t>(JSGenerator::State::Executing));
     MarkedArgumentBuffer arguments;
@@ -64,16 +68,35 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     arguments.append(jsNumber(static_cast<int32_t>(mode)));
     arguments.append(field(JSGenerator::Field::Frame));
     JSValue next = field(JSGenerator::Field::Next);
+
+    // What it was handling when it yielded, it is handling again, and beyond that whatever is being handled here.
+    PyRealm* realm = globalObject->pyRealm();
+    auto& handledName = vm.pythonNames().private_handled;
+    JSValue callersOwn = realm->ownHandledException();
+    JSValue callersOuter = realm->outerHandledException();
+    JSValue generatorsOwn = generator->getDirect(vm, handledName);
+    realm->setOuterHandledException(vm, realm->handledException());
+    realm->setOwnHandledException(vm, generatorsOwn && !isNone(generatorsOwn) ? generatorsOwn : JSValue());
+
     JSValue value = JSC::call(globalObject, next, JSC::getCallData(next), field(JSGenerator::Field::This), arguments);
+
+    JSValue nowHandling = realm->ownHandledException();
+    if (nowHandling || generatorsOwn)
+        generator->putDirect(vm, handledName, nowHandling ? nowHandling : jsUndefined());
+    realm->setOwnHandledException(vm, callersOwn);
+    realm->setOuterHandledException(vm, callersOuter);
+
 
     if (scope.exception()) [[unlikely]] {
         setState(static_cast<int32_t>(JSGenerator::State::Completed));
         // A StopIteration that gets out of a generator would look like the end of whatever is iterating it.
         Exception* exception = scope.exception();
-        if (!vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopIteration())) {
+        bool isStop = !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopIteration());
+        bool isAsyncStop = !isStop && kind == GeneratorKind::AsyncGenerator && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration());
+        if (isStop || isAsyncStop) {
             JSValue cause = exception->value();
             if (scope.tryClearException()) {
-                JSObject* error = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), "generator raised StopIteration"_str);
+                JSObject* error = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), makeString(what, isStop ? " raised StopIteration"_s : " raised StopAsyncIteration"_s));
                 error->putDirect(vm, vm.pythonNames().private_cause, cause);
                 error->putDirect(vm, vm.pythonNames().private_context, cause);
                 error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
@@ -120,16 +143,16 @@ JSValue generatorThrow(JSGlobalObject* globalObject, JSGenerator* generator, JSV
     return raiseStopIteration(globalObject, scope, returned);
 }
 
-void generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
+JSValue generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int32_t state = generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).get().asInt32();
     if (state == static_cast<int32_t>(JSGenerator::State::Completed))
-        return;
+        return jsUndefined();
     if (state == static_cast<int32_t>(JSGenerator::State::Init)) {
         generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).set(vm, generator, jsNumber(static_cast<int32_t>(JSGenerator::State::Completed)));
-        return;
+        return jsUndefined();
     }
     JSObject* exit = createException(globalObject, globalObject->pyRealm()->typeGeneratorExit(), JSValue());
     JSValue returned;
@@ -137,10 +160,12 @@ void generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
     if (scope.exception()) {
         if (!catchException(globalObject, BuiltinType::GeneratorExit))
             catchException(globalObject, BuiltinType::StopIteration);
-        return;
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsUndefined();
     }
     if (yielded)
-        raise(globalObject, scope, BuiltinType::RuntimeError, "generator ignored GeneratorExit"_s);
+        return raise(globalObject, scope, BuiltinType::RuntimeError, generatorKindOf(globalObject, generator) == GeneratorKind::Coroutine ? "coroutine ignored GeneratorExit"_s : "generator ignored GeneratorExit"_s);
+    return returned;
 }
 
 } } // namespace JSC::Python

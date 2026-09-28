@@ -1379,8 +1379,10 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
         return PyIterator::create(globalObject, Kind::Range, JSValue(), JSValue(), range->start(), range->length(), range->step());
     }
     case PyIteratorType:
-    case JSGeneratorType:
         return value;
+    case JSGeneratorType:
+        // Not a coroutine, nor an asynchronous generator.
+        return generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(cell)) == GeneratorKind::Generator ? value : JSValue();
     default:
         if (isJSArray(cell))
             return PyIterator::create(globalObject, Kind::List, value);
@@ -1437,7 +1439,7 @@ JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator)
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType) {
+    if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType && generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell())) == GeneratorKind::Generator) {
         JSValue returned;
         RELEASE_AND_RETURN(scope, resumeGenerator(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell()), jsUndefined(), JSGenerator::ResumeMode::NormalMode, returned));
     }

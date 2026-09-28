@@ -870,7 +870,6 @@ PYTHON_NATIVE(moduleNew)
 
 // ---- Generators
 
-static JSGenerator* asGenerator(JSValue value) { return uncheckedDowncast<JSGenerator>(value.asCell()); }
 
 PYTHON_NATIVE(generatorSendMethod)
 {
@@ -908,9 +907,7 @@ PYTHON_NATIVE(generatorThrowMethod)
 PYTHON_NATIVE(generatorCloseMethod)
 {
     NATIVE_PROLOGUE();
-    scope.release();
-    generatorClose(globalObject, asGenerator(args.at(0)));
-    RETURN_NONE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorClose(globalObject, asGenerator(args.at(0)))));
 }
 
 // ---- Setting them up

@@ -32,6 +32,7 @@
 #include "JSLexicalEnvironment.h"
 #include "PythonBytes.h"
 #include "PythonCompiler.h"
+#include "PythonGenerators.h"
 #include "SourceProvider.h"
 #include "UnlinkedFunctionExecutable.h"
 
@@ -527,7 +528,6 @@ PYTHON_NATIVE(builtinExecOrEval)
 
 // ---- Generators
 
-static JSGenerator* asGenerator(JSValue value) { return uncheckedDowncast<JSGenerator>(value.asCell()); }
 
 // The function that is resumed, which knows what the generator is a generator of.
 static JSFunction* bodyOf(JSValue generator)
@@ -651,14 +651,32 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     addMember(globalObject, function, "__globals__"_s, getFunctionGlobals);
     addMember(globalObject, function, "__builtins__"_s, getFunctionBuiltins);
 
+    for (PyType* generator : { realm->typeGenerator(), realm->typeCoroutine(), realm->typeAsyncGenerator() }) {
+        addGetSet(globalObject, generator, "__name__"_s, getGeneratorName<false>, setGeneratorName<false>);
+        addGetSet(globalObject, generator, "__qualname__"_s, getGeneratorName<true>, setGeneratorName<true>);
+    }
     PyType* generator = realm->typeGenerator();
-    addGetSet(globalObject, generator, "__name__"_s, getGeneratorName<false>, setGeneratorName<false>);
-    addGetSet(globalObject, generator, "__qualname__"_s, getGeneratorName<true>, setGeneratorName<true>);
     addGetSet(globalObject, generator, "gi_code"_s, getGeneratorCode);
     addGetSet(globalObject, generator, "gi_running"_s, getGeneratorRunning);
     addGetSet(globalObject, generator, "gi_suspended"_s, getGeneratorSuspended);
     addGetSet(globalObject, generator, "gi_yieldfrom"_s, getGeneratorYieldFrom);
     addGetSet(globalObject, generator, "gi_frame"_s, getGeneratorFrame);
+    PyType* coroutine = realm->typeCoroutine();
+    addGetSet(globalObject, coroutine, "cr_code"_s, getGeneratorCode);
+    addGetSet(globalObject, coroutine, "cr_running"_s, getGeneratorRunning);
+    addGetSet(globalObject, coroutine, "cr_suspended"_s, getGeneratorSuspended);
+    addGetSet(globalObject, coroutine, "cr_await"_s, getGeneratorYieldFrom);
+    addGetSet(globalObject, coroutine, "cr_frame"_s, getGeneratorFrame);
+    addMember(globalObject, coroutine, "cr_origin"_s, [] (JSGlobalObject*, JSValue) -> JSValue { return jsUndefined(); });
+    PyType* asyncGenerator = realm->typeAsyncGenerator();
+    addGetSet(globalObject, asyncGenerator, "ag_code"_s, getGeneratorCode);
+    addGetSet(globalObject, asyncGenerator, "ag_suspended"_s, getGeneratorSuspended);
+    addGetSet(globalObject, asyncGenerator, "ag_await"_s, getGeneratorYieldFrom);
+    addGetSet(globalObject, asyncGenerator, "ag_frame"_s, getGeneratorFrame);
+    addMember(globalObject, asyncGenerator, "ag_running"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        JSValue value = asGenerator(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_isRunningAsync);
+        return jsBoolean(value && value.asBoolean());
+    });
 
     addFunction(globalObject, builtins, "locals"_s, builtinLocals);
     addFunction(globalObject, builtins, "globals"_s, builtinGlobals);

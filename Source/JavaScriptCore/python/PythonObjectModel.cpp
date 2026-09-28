@@ -80,8 +80,6 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             return realm->typeJSSymbol();
         case PyTypeType:
             return uncheckedDowncast<PyType>(cell)->metatype();
-        case JSGeneratorType:
-            return realm->typeGenerator();
         case JSFunctionType:
             if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
                 switch (native->kind()) {
@@ -107,6 +105,8 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             return realm->typeList();
         if (cell->type() == Uint8ArrayType)
             return realm->typeByteArray();
+        if (cell->type() == JSGeneratorType)
+            return realm->typeGenerator();
         if (cell->type() == ErrorInstanceType)
             return typeOfError(realm, uncheckedDowncast<ErrorInstance>(cell));
         return realm->typeJSObject();

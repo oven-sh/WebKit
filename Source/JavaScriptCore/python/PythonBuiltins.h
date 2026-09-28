@@ -88,6 +88,7 @@ void initializeNumberTypes(JSGlobalObject*);
 void initializeComplexType(JSGlobalObject*);
 void initializeFunctionTypes(JSGlobalObject*);
 void initializeCodeTypes(JSGlobalObject*, JSObject* builtinsNamespace);
+void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeStrType(JSGlobalObject*);
 void initializeContainerTypes(JSGlobalObject*);
 void initializeIteratorTypes(JSGlobalObject*);

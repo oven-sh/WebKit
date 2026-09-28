@@ -67,6 +67,11 @@ namespace JSC {
     v(Generator, "generator", Object, Native, 0) \
     v(Coroutine, "coroutine", Object, Native, 0) \
     v(AsyncGenerator, "async_generator", Object, Native, 0) \
+    v(CoroutineWrapper, "coroutine_wrapper", Object, Native, 0) \
+    v(AsyncGeneratorASend, "async_generator_asend", Object, Native, 0) \
+    v(AsyncGeneratorAThrow, "async_generator_athrow", Object, Native, 0) \
+    v(AsyncGeneratorWrappedValue, "async_generator_wrapped_value", Object, Native, 0) \
+    v(ANextAwaitable, "anext_awaitable", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \
@@ -243,8 +248,13 @@ public:
     JSObject* modules() const { return m_modules.get(); }
 
     // The exception being handled: what sys.exception() gives, and what a new exception's __context__ is.
-    JSValue handledException() const { return m_handledException.get(); }
-    void setHandledException(VM& vm, JSValue exception) { m_handledException.set(vm, this, exception); }
+    // The exception that is being handled: what sys.exception() gives, a bare `raise` raises again, and a new exception has for its context.
+    // A generator has its own, which is put away with it when it yields. While it has none, it is that of whatever resumed it.
+    JSValue handledException() const { return m_handledException ? m_handledException.get() : m_outerHandledException.get(); }
+    JSValue ownHandledException() const { return m_handledException.get(); }
+    void setOwnHandledException(VM& vm, JSValue exception) { m_handledException.set(vm, this, exception); }
+    JSValue outerHandledException() const { return m_outerHandledException.get(); }
+    void setOuterHandledException(VM& vm, JSValue exception) { m_outerHandledException.set(vm, this, exception); }
 
     // What the iterator that a `yield from` was going through returned, on its way from the runtime to the code that wants it.
     JSValue takeReturnValue() { return std::exchange(m_returnValue, WriteBarrier<Unknown>()).get(); }
@@ -270,6 +280,7 @@ private:
     WriteBarrier<JSObject> m_builtinsNamespace;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Unknown> m_handledException;
+    WriteBarrier<Unknown> m_outerHandledException;
     WriteBarrier<Unknown> m_returnValue;
 };
 

@@ -1,0 +1,645 @@
+/*
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "PythonBuiltins.h"
+
+#include "PythonGenerators.h"
+
+// Coroutines, asynchronous generators, and what is awaited to drive them. The state machines are CPython's, Objects/genobject.c.
+
+namespace JSC { namespace Python {
+
+static PyNativeObject* asNative(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
+
+static bool isOfType(JSGlobalObject* globalObject, JSValue value, BuiltinType type)
+{
+    return value.isCell() && typeOf(globalObject, value) == globalObject->pyRealm()->type(type);
+}
+
+GeneratorKind generatorKindOf(JSGlobalObject* globalObject, JSGenerator* generator)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    JSValue prototype = generator->structure()->storedPrototype(generator);
+    if (prototype == JSValue(realm->typeCoroutine()))
+        return GeneratorKind::Coroutine;
+    if (prototype == JSValue(realm->typeAsyncGenerator()))
+        return GeneratorKind::AsyncGenerator;
+    return GeneratorKind::Generator;
+}
+
+JSGenerator* newCoroutine(JSGlobalObject* globalObject, JSValue body, bool isAsyncGenerator)
+{
+    VM& vm = globalObject->vm();
+    JSGenerator* generator = JSGenerator::create(vm, globalObject->pyRealm()->structureFor(isAsyncGenerator ? BuiltinType::AsyncGenerator : BuiltinType::Coroutine));
+    generator->internalField(static_cast<unsigned>(JSGenerator::Field::Next)).set(vm, generator, body);
+    generator->internalField(static_cast<unsigned>(JSGenerator::Field::This)).set(vm, generator, jsUndefined());
+    return generator;
+}
+
+JSValue wrapAsyncYield(JSGlobalObject* globalObject, JSValue value)
+{
+    return PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorWrappedValue, value);
+}
+
+static int32_t stateOf(JSGenerator* generator)
+{
+    return generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).get().asInt32();
+}
+
+JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isType(exception) && asType(exception)->isExceptionType()) {
+        if (value && typeOf(globalObject, value)->isExceptionType())
+            return value;
+        RELEASE_AND_RETURN(scope, value && !isNone(value) ? call(globalObject, exception, value) : call(globalObject, exception));
+    }
+    if (!typeOf(globalObject, exception)->isExceptionType())
+        return raiseTypeError(globalObject, scope, makeString("exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception)));
+    if (value && !isNone(value))
+        return raiseTypeError(globalObject, scope, "instance exception may not have a separate value"_s);
+    return exception;
+}
+
+// ---- await
+
+JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned context)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    PyType* type = typeOf(globalObject, value);
+    if (type == realm->typeCoroutine()) {
+        JSValue awaited = asGenerator(value)->getDirect(vm, vm.pythonNames().private_yieldFrom);
+        if (awaited && !isNone(awaited) && stateOf(asGenerator(value)) > 0)
+            return raise(globalObject, scope, BuiltinType::RuntimeError, "coroutine is being awaited already"_s);
+        return value;
+    }
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_await, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method) {
+        if (context)
+            return raiseTypeError(globalObject, scope, makeString("'async with' received an object from "_s, context == 1 ? "__aenter__"_s : "__aexit__"_s, " that does not implement __await__: "_s, type->nameString(globalObject)));
+        return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object can't be awaited"_s));
+    }
+    JSValue result = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyType* resultType = typeOf(globalObject, result);
+    if (resultType == realm->typeCoroutine())
+        return raiseTypeError(globalObject, scope, "__await__() returned a coroutine"_s);
+    if (!resultType->lookup(vm, vm.pythonNames().dunder_next))
+        return raiseTypeError(globalObject, scope, makeString("__await__() returned non-iterator of type '"_s, resultType->nameString(globalObject), '\''));
+    return result;
+}
+
+JSValue getAsyncIterator(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_aiter, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return raiseTypeError(globalObject, scope, makeString("'async for' requires an object with __aiter__ method, got "_s, typeName(globalObject, value)));
+    JSValue iterator = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!typeOf(globalObject, iterator)->lookup(vm, vm.pythonNames().dunder_anext))
+        return raiseTypeError(globalObject, scope, makeString("'async for' received an object from __aiter__ that does not implement __anext__: "_s, typeName(globalObject, iterator)));
+    return iterator;
+}
+
+JSValue getAsyncNext(JSGlobalObject* globalObject, JSValue iterator)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_anext, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return raiseTypeError(globalObject, scope, makeString("'async for' requires an iterator with __anext__ method, got "_s, typeName(globalObject, iterator)));
+    JSValue next = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue awaitable = getAwaitable(globalObject, next, 0);
+    if (scope.exception()) {
+        JSValue cause = scope.exception()->value();
+        if (catchException(globalObject, BuiltinType::TypeError)) {
+            JSObject* error = createException(globalObject, globalObject->pyRealm()->typeTypeError(), makeString("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
+            error->putDirect(vm, vm.pythonNames().private_cause, cause);
+            error->putDirect(vm, vm.pythonNames().private_context, cause);
+            error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
+            throwException(globalObject, scope, error);
+        }
+        return { };
+    }
+    return awaitable;
+}
+
+// ---- Coroutines
+
+PYTHON_NATIVE(coroutineAwait)
+{
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::CoroutineWrapper, callFrame->argument(0)));
+}
+
+// send, throw and close, of a generator, a coroutine, or the wrapper that a coroutine's __await__() gives.
+static JSGenerator* generatorOfSelf(JSGlobalObject* globalObject, JSValue self)
+{
+    if (isOfType(globalObject, self, BuiltinType::CoroutineWrapper))
+        return asGenerator(asNative(self)->field(0));
+    return asGenerator(self);
+}
+
+PYTHON_NATIVE(coroutineSend)
+{
+    NATIVE_PROLOGUE();
+    // With no argument, it is __next__.
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorSend(globalObject, generatorOfSelf(globalObject, args.at(0)), args.size() > 1 ? args[1] : jsUndefined())));
+}
+
+PYTHON_NATIVE(coroutineThrow)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
+        return { };
+    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, generatorOfSelf(globalObject, args[0]), exception)));
+}
+
+PYTHON_NATIVE(coroutineClose)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorClose(globalObject, generatorOfSelf(globalObject, args.at(0)))));
+}
+
+// ---- Asynchronous generators
+
+enum AwaitableState : int32_t { Init, Iterating, Closed };
+
+static bool flag(JSGenerator* generator, const Identifier& name)
+{
+    JSValue value = generator->getDirect(generator->vm(), name);
+    return value && value.asBoolean();
+}
+
+static void setFlag(JSGenerator* generator, const Identifier& name, bool value)
+{
+    generator->putDirect(generator->vm(), name, jsBoolean(value));
+}
+
+// Resumes it. When it returns, that is StopAsyncIteration.
+static JSValue resumeAsyncGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JSValue sent, JSGenerator::ResumeMode mode)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue returned;
+    JSValue yielded = resumeGenerator(globalObject, generator, sent, mode, returned);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (yielded)
+        return yielded;
+    return raise(globalObject, scope, BuiltinType::StopAsyncIteration, JSValue());
+}
+
+static bool isWrappedValue(JSGlobalObject* globalObject, JSValue value)
+{
+    return value && isOfType(globalObject, value, BuiltinType::AsyncGeneratorWrappedValue);
+}
+
+static bool hasRaised(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type)
+{
+    Exception* exception = scope.exception();
+    return exception && isInstance(globalObject, exception->value(), globalObject->pyRealm()->type(type));
+}
+
+// What the generator yielded ends the await, by StopIteration. What an await inside it passed up goes on up.
+static JSValue unwrapAsyncValue(JSGlobalObject* globalObject, JSGenerator* generator, JSValue result)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    if (!result) {
+        if (hasRaised(globalObject, scope, BuiltinType::StopAsyncIteration) || hasRaised(globalObject, scope, BuiltinType::GeneratorExit))
+            setFlag(generator, names.private_isClosedAsync, true);
+        setFlag(generator, names.private_isRunningAsync, false);
+        return { };
+    }
+    if (isWrappedValue(globalObject, result)) {
+        setFlag(generator, names.private_isRunningAsync, false);
+        JSValue value = asNative(result)->field(0);
+        JSObject* stop = createException(globalObject, globalObject->pyRealm()->typeStopIteration(), isNone(value) ? JSValue() : value);
+        throwException(globalObject, scope, stop);
+        return { };
+    }
+    return result;
+}
+
+// asend: fields are the generator, what to send, and the state.
+static JSValue newASend(JSGlobalObject* globalObject, JSValue generator, JSValue value)
+{
+    return PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorASend, generator, value, jsNumber(AwaitableState::Init));
+}
+
+static int32_t awaitableState(PyNativeObject* object) { return object->field(2).asInt32(); }
+static void setAwaitableState(VM& vm, PyNativeObject* object, AwaitableState state) { object->setField(vm, 2, jsNumber(state)); }
+
+PYTHON_NATIVE(asendSend)
+{
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args.at(0));
+    JSGenerator* generator = asGenerator(self->field(0));
+    JSValue argument = args.size() > 1 ? args[1] : jsUndefined();
+    if (awaitableState(self) == AwaitableState::Closed)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited __anext__()/asend()"_s));
+    if (awaitableState(self) == AwaitableState::Init) {
+        if (flag(generator, names.private_isRunningAsync)) {
+            setAwaitableState(vm, self, AwaitableState::Closed);
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "anext(): asynchronous generator is already running"_s));
+        }
+        if (isNone(argument))
+            argument = self->field(1);
+        setAwaitableState(vm, self, AwaitableState::Iterating);
+    }
+    setFlag(generator, names.private_isRunningAsync, true);
+    JSValue result = resumeAsyncGenerator(globalObject, generator, argument, JSGenerator::ResumeMode::NormalMode);
+    result = unwrapAsyncValue(globalObject, generator, result);
+    if (!result)
+        setAwaitableState(vm, self, AwaitableState::Closed);
+    scope.release();
+    return JSValue::encode(result);
+}
+
+static JSValue asendThrowImpl(JSGlobalObject* globalObject, PyNativeObject* self, JSValue exception)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSGenerator* generator = asGenerator(self->field(0));
+    if (awaitableState(self) == AwaitableState::Closed)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited __anext__()/asend()"_s);
+    if (awaitableState(self) == AwaitableState::Init) {
+        if (flag(generator, names.private_isRunningAsync)) {
+            setAwaitableState(vm, self, AwaitableState::Closed);
+            return raise(globalObject, scope, BuiltinType::RuntimeError, "anext(): asynchronous generator is already running"_s);
+        }
+        setAwaitableState(vm, self, AwaitableState::Iterating);
+        setFlag(generator, names.private_isRunningAsync, true);
+    }
+    JSValue result = resumeAsyncGenerator(globalObject, generator, exception, JSGenerator::ResumeMode::ThrowMode);
+    result = unwrapAsyncValue(globalObject, generator, result);
+    if (!result) {
+        setFlag(generator, names.private_isRunningAsync, false);
+        setAwaitableState(vm, self, AwaitableState::Closed);
+    }
+    scope.release();
+    return result;
+}
+
+PYTHON_NATIVE(asendThrow)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
+        return { };
+    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(asendThrowImpl(globalObject, asNative(args[0]), exception)));
+}
+
+// What close() makes of throwing GeneratorExit in: nothing, if that ended it.
+static EncodedJSValue finishClose(JSGlobalObject* globalObject, ThrowScope& scope, JSValue result)
+{
+    if (!result) {
+        if (!catchException(globalObject, BuiltinType::StopIteration) && !catchException(globalObject, BuiltinType::StopAsyncIteration))
+            catchException(globalObject, BuiltinType::GeneratorExit);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsUndefined());
+    }
+    return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "coroutine ignored GeneratorExit"_s));
+}
+
+PYTHON_NATIVE(asendClose)
+{
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args.at(0));
+    if (awaitableState(self) == AwaitableState::Closed)
+        RETURN_NONE();
+    JSValue result = asendThrowImpl(globalObject, self, createException(globalObject, realm->typeGeneratorExit(), JSValue()));
+    return finishClose(globalObject, scope, result);
+}
+
+// athrow and aclose: fields are the generator, the exception to throw (empty for aclose), and the state.
+static JSValue athrowFinish(JSGlobalObject* globalObject, PyNativeObject* self, bool ignoredExit)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGenerator* generator = asGenerator(self->field(0));
+    setFlag(generator, vm.pythonNames().private_isRunningAsync, false);
+    setAwaitableState(vm, self, AwaitableState::Closed);
+    if (ignoredExit)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "async generator ignored GeneratorExit"_s);
+    // aclose() is done when the generator is: neither of these is anyone else's business.
+    if (!self->field(1) && (catchException(globalObject, BuiltinType::StopAsyncIteration) || catchException(globalObject, BuiltinType::GeneratorExit)))
+        return raise(globalObject, scope, BuiltinType::StopIteration, JSValue());
+    return { };
+}
+
+static ASCIILiteral alreadyRunningMessage(PyNativeObject* self)
+{
+    return self->field(1) ? "athrow(): asynchronous generator is already running"_s : "aclose(): asynchronous generator is already running"_s;
+}
+
+PYTHON_NATIVE(athrowSend)
+{
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args.at(0));
+    JSGenerator* generator = asGenerator(self->field(0));
+    JSValue argument = args.size() > 1 ? args[1] : jsUndefined();
+    bool isClose = !self->field(1);
+
+    if (awaitableState(self) == AwaitableState::Closed)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited aclose()/athrow()"_s));
+    if (stateOf(generator) == static_cast<int32_t>(JSGenerator::State::Completed)) {
+        setAwaitableState(vm, self, AwaitableState::Closed);
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::StopIteration, JSValue()));
+    }
+
+    JSValue result;
+    if (awaitableState(self) == AwaitableState::Init) {
+        if (flag(generator, names.private_isRunningAsync)) {
+            setAwaitableState(vm, self, AwaitableState::Closed);
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, alreadyRunningMessage(self)));
+        }
+        if (flag(generator, names.private_isClosedAsync)) {
+            setAwaitableState(vm, self, AwaitableState::Closed);
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::StopAsyncIteration, JSValue()));
+        }
+        if (!isNone(argument))
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "can't send non-None value to a just-started coroutine"_s));
+        setAwaitableState(vm, self, AwaitableState::Iterating);
+        setFlag(generator, names.private_isRunningAsync, true);
+
+        if (isClose) {
+            setFlag(generator, names.private_isClosedAsync, true);
+            result = resumeAsyncGenerator(globalObject, generator, createException(globalObject, realm->typeGeneratorExit(), JSValue()), JSGenerator::ResumeMode::ThrowMode);
+            if (isWrappedValue(globalObject, result))
+                RELEASE_AND_RETURN(scope, JSValue::encode(athrowFinish(globalObject, self, true)));
+        } else {
+            result = resumeAsyncGenerator(globalObject, generator, self->field(1), JSGenerator::ResumeMode::ThrowMode);
+            result = unwrapAsyncValue(globalObject, generator, result);
+        }
+        if (!result)
+            RELEASE_AND_RETURN(scope, JSValue::encode(athrowFinish(globalObject, self, false)));
+        return JSValue::encode(result);
+    }
+
+    result = resumeAsyncGenerator(globalObject, generator, argument, JSGenerator::ResumeMode::NormalMode);
+    if (!isClose)
+        RELEASE_AND_RETURN(scope, JSValue::encode(unwrapAsyncValue(globalObject, generator, result)));
+    if (!result)
+        RELEASE_AND_RETURN(scope, JSValue::encode(athrowFinish(globalObject, self, false)));
+    if (isWrappedValue(globalObject, result))
+        RELEASE_AND_RETURN(scope, JSValue::encode(athrowFinish(globalObject, self, true)));
+    return JSValue::encode(result);
+}
+
+static JSValue athrowThrowImpl(JSGlobalObject* globalObject, PyNativeObject* self, JSValue exception)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSGenerator* generator = asGenerator(self->field(0));
+    bool isClose = !self->field(1);
+    if (awaitableState(self) == AwaitableState::Closed)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited aclose()/athrow()"_s);
+    if (awaitableState(self) == AwaitableState::Init) {
+        if (flag(generator, names.private_isRunningAsync)) {
+            setAwaitableState(vm, self, AwaitableState::Closed);
+            return raise(globalObject, scope, BuiltinType::RuntimeError, alreadyRunningMessage(self));
+        }
+        setAwaitableState(vm, self, AwaitableState::Iterating);
+        setFlag(generator, names.private_isRunningAsync, true);
+    }
+    JSValue result = resumeAsyncGenerator(globalObject, generator, exception, JSGenerator::ResumeMode::ThrowMode);
+    if (!isClose) {
+        result = unwrapAsyncValue(globalObject, generator, result);
+        if (!result) {
+            setFlag(generator, names.private_isRunningAsync, false);
+            setAwaitableState(vm, self, AwaitableState::Closed);
+        }
+        scope.release();
+        return result;
+    }
+    if (isWrappedValue(globalObject, result))
+        RELEASE_AND_RETURN(scope, athrowFinish(globalObject, self, true));
+    if (!result)
+        RELEASE_AND_RETURN(scope, athrowFinish(globalObject, self, false));
+    return result;
+}
+
+PYTHON_NATIVE(athrowThrow)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
+        return { };
+    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(athrowThrowImpl(globalObject, asNative(args[0]), exception)));
+}
+
+PYTHON_NATIVE(athrowClose)
+{
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args.at(0));
+    if (awaitableState(self) == AwaitableState::Closed)
+        RETURN_NONE();
+    JSValue result = athrowThrowImpl(globalObject, self, createException(globalObject, realm->typeGeneratorExit(), JSValue()));
+    return finishClose(globalObject, scope, result);
+}
+
+PYTHON_NATIVE(asyncGeneratorANext)
+{
+    return JSValue::encode(newASend(globalObject, callFrame->argument(0), jsUndefined()));
+}
+
+PYTHON_NATIVE(asyncGeneratorASend)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "asend"_s, 2, 2))
+        return { };
+    return JSValue::encode(newASend(globalObject, args[0], args[1]));
+}
+
+PYTHON_NATIVE(asyncGeneratorAThrow)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "athrow"_s, 2, 4))
+        return { };
+    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], exception, jsNumber(AwaitableState::Init)));
+}
+
+PYTHON_NATIVE(asyncGeneratorAClose)
+{
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, callFrame->argument(0), JSValue(), jsNumber(AwaitableState::Init)));
+}
+
+// ---- aiter() and anext()
+
+PYTHON_NATIVE(builtinAIter)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "aiter"_s, 1, 1))
+        return { };
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_aiter, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterable"_s)));
+    JSValue iterator = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!typeOf(globalObject, iterator)->lookup(vm, names.dunder_anext))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("aiter() returned not an async iterator of type '"_s, typeName(globalObject, iterator), '\'')));
+    return JSValue::encode(iterator);
+}
+
+// anext(iterator[, default])
+PYTHON_NATIVE(builtinANext)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "anext"_s, 1, 2))
+        return { };
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_anext, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterator"_s)));
+    JSValue awaitable = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (args.size() == 1)
+        return JSValue::encode(awaitable);
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::ANextAwaitable, awaitable, args[1]));
+}
+
+// What anext() with a default gives: the awaitable, but that the end of the iteration is the default instead.
+static JSValue anextIterator(JSGlobalObject* globalObject, PyNativeObject* self)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue awaitable = getAwaitable(globalObject, self->field(0), 0);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isOfType(globalObject, awaitable, BuiltinType::Coroutine))
+        return PyNativeObject::create(globalObject, BuiltinType::CoroutineWrapper, awaitable);
+    return awaitable;
+}
+
+// __next__, send, throw and close: data says which.
+PYTHON_NATIVE(anextProxy)
+{
+    static constexpr ASCIILiteral methods[] = { "__next__"_s, "send"_s, "throw"_s, "close"_s };
+    ASCIILiteral method = methods[unpack<unsigned>(callFrame, 0)];
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args.at(0));
+    JSValue iterator = anextIterator(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue function = getAttribute(globalObject, iterator, Identifier::fromString(vm, method));
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 1; i < args.size(); ++i)
+        arguments.append(args[i]);
+    JSValue result = call(globalObject, function, arguments);
+    if (scope.exception() && catchException(globalObject, BuiltinType::StopAsyncIteration)) {
+        JSValue defaultValue = self->field(1);
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::StopIteration, isNone(defaultValue) ? JSValue() : defaultValue));
+    }
+    scope.release();
+    return JSValue::encode(result);
+}
+
+// ---- Setting them up
+
+void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    using Kind = PyNativeFunction::Kind;
+    for (PyType* type : { realm->typeCoroutine(), realm->typeAsyncGenerator() })
+        type->setInstanceStructure(vm, JSGenerator::createStructure(vm, globalObject, type));
+    for (PyType* type : { realm->typeCoroutineWrapper(), realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow(), realm->typeAsyncGeneratorWrappedValue(), realm->typeANextAwaitable() })
+        type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
+
+    addMethods(globalObject, realm->typeCoroutine(), {
+        { "__await__"_s, coroutineAwait },
+        { "send"_s, coroutineSend },
+        { "throw"_s, coroutineThrow },
+        { "close"_s, coroutineClose },
+        { "__repr__"_s, nativeRepr },
+    });
+    addMethods(globalObject, realm->typeCoroutineWrapper(), {
+        { "__iter__"_s, nativeSelf },
+        { "__next__"_s, coroutineSend },
+        { "send"_s, coroutineSend },
+        { "throw"_s, coroutineThrow },
+        { "close"_s, coroutineClose },
+    });
+    addMethods(globalObject, realm->typeAsyncGenerator(), {
+        { "__aiter__"_s, nativeSelf },
+        { "__anext__"_s, asyncGeneratorANext },
+        { "asend"_s, asyncGeneratorASend },
+        { "athrow"_s, asyncGeneratorAThrow },
+        { "aclose"_s, asyncGeneratorAClose },
+        { "__repr__"_s, nativeRepr },
+    });
+    addMethods(globalObject, realm->typeAsyncGeneratorASend(), {
+        { "__await__"_s, nativeSelf },
+        { "__iter__"_s, nativeSelf },
+        { "__next__"_s, asendSend },
+        { "send"_s, asendSend },
+        { "throw"_s, asendThrow },
+        { "close"_s, asendClose },
+    });
+    addMethods(globalObject, realm->typeAsyncGeneratorAThrow(), {
+        { "__await__"_s, nativeSelf },
+        { "__iter__"_s, nativeSelf },
+        { "__next__"_s, athrowSend },
+        { "send"_s, athrowSend },
+        { "throw"_s, athrowThrow },
+        { "close"_s, athrowClose },
+    });
+    addMethods(globalObject, realm->typeANextAwaitable(), {
+        { "__await__"_s, nativeSelf },
+        { "__iter__"_s, nativeSelf },
+        { "__next__"_s, anextProxy, Kind::Method, 0 },
+        { "send"_s, anextProxy, Kind::Method, 1 },
+        { "throw"_s, anextProxy, Kind::Method, 2 },
+        { "close"_s, anextProxy, Kind::Method, 3 },
+    });
+    addFunction(globalObject, builtins, "aiter"_s, builtinAIter);
+    addFunction(globalObject, builtins, "anext"_s, builtinANext);
+}
+
+} } // namespace JSC::Python

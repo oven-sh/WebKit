@@ -461,6 +461,7 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
     asObject(argument(3))->putDirect(vm, vm.pythonNames().private_yieldFrom, iterator);
 
     auto finish = [&] (JSValue returned) {
+        asObject(argument(3))->putDirect(vm, vm.pythonNames().private_yieldFrom, jsUndefined());
         realm->setReturnValue(vm, returned);
         return JSValue::encode(realm->boundArgumentsMarker());
     };
@@ -529,6 +530,42 @@ PYTHON_RUNTIME_FUNCTION(takeReturnValue)
     return JSValue::encode(value ? value : jsUndefined());
 }
 
+// ---- async
+
+PYTHON_RUNTIME_FUNCTION(runtimeNewCoroutine)
+{
+    return JSValue::encode(newCoroutine(globalObject, callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1).asBoolean()));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeWrapAsyncYield)
+{
+    return JSValue::encode(wrapAsyncYield(globalObject, callFrame->uncheckedArgument(0)));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeGetAwaitable)
+{
+    return JSValue::encode(getAwaitable(globalObject, callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1).asInt32()));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeGetAsyncIterator)
+{
+    return JSValue::encode(getAsyncIterator(globalObject, callFrame->uncheckedArgument(0)));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeGetAsyncNext)
+{
+    return JSValue::encode(getAsyncNext(globalObject, callFrame->uncheckedArgument(0)));
+}
+
+// What `yield from` iterates.
+PYTHON_RUNTIME_FUNCTION(getYieldFromIterator)
+{
+    PROLOGUE();
+    if (typeOf(globalObject, argument(0)) == realm->typeCoroutine())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "cannot 'yield from' a coroutine object in a non-coroutine generator"_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(getIterator(globalObject, argument(0))));
+}
+
 // ---- Exceptions
 
 PYTHON_RUNTIME_FUNCTION(raiseAssertionError)
@@ -587,8 +624,8 @@ PYTHON_RUNTIME_FUNCTION(pushHandledException)
 {
     PROLOGUE();
     UNUSED_PARAM(scope);
-    JSValue previous = realm->handledException();
-    realm->setHandledException(vm, argument(0));
+    JSValue previous = realm->ownHandledException();
+    realm->setOwnHandledException(vm, argument(0));
     return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
 }
 
@@ -596,21 +633,29 @@ PYTHON_RUNTIME_FUNCTION(popHandledException)
 {
     PROLOGUE();
     UNUSED_PARAM(scope);
-    realm->setHandledException(vm, isMarker(realm, argument(0)) ? JSValue() : argument(0));
+    realm->setOwnHandledException(vm, isMarker(realm, argument(0)) ? JSValue() : argument(0));
     return JSValue::encode(jsUndefined());
 }
 
 // ---- with
 
-static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, const Identifier& name, ASCIILiteral spelled)
+static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, const Identifier& name, ASCIILiteral spelled, bool isAsync)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue self;
     JSValue method = lookupSpecial(globalObject, manager, name, self);
     RETURN_IF_EXCEPTION(scope, { });
+    if (!method) {
+        auto& names = vm.pythonNames();
+        PyType* type = typeOf(globalObject, manager);
+        bool hasOther = isAsync ? type->lookup(vm, names.dunder_enter) && type->lookup(vm, names.dunder_exit) : type->lookup(vm, names.dunder_aenter) && type->lookup(vm, names.dunder_aexit);
+        if (hasOther)
+            return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled,
+                isAsync ? " method) but it supports the context manager protocol. Did you mean to use 'with'?"_s : " method) but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?"_s));
+    }
     if (!method)
-        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), "' object does not support the context manager protocol (missed "_s, spelled, " method)"_s));
+        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled, " method)"_s));
     return self ? JSValue(PyBoundMethod::create(globalObject, method, self)) : method;
 }
 
@@ -618,32 +663,31 @@ PYTHON_RUNTIME_FUNCTION(loadExit)
 {
     PROLOGUE();
     auto& names = vm.pythonNames();
-    loadContextMethod(globalObject, argument(0), names.dunder_enter, "__enter__"_s);
+    bool isAsync = argument(1).asBoolean();
+    JSValue exit = loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aexit : names.dunder_exit, isAsync ? "__aexit__"_s : "__exit__"_s, isAsync);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(loadContextMethod(globalObject, argument(0), names.dunder_exit, "__exit__"_s)));
+    loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aenter : names.dunder_enter, isAsync ? "__aenter__"_s : "__enter__"_s, isAsync);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(exit);
 }
 
 PYTHON_RUNTIME_FUNCTION(callEnter)
 {
     PROLOGUE();
     JSValue self;
-    JSValue method = lookupSpecial(globalObject, argument(0), vm.pythonNames().dunder_enter, self);
+    JSValue method = lookupSpecial(globalObject, argument(0), argument(1).asBoolean() ? vm.pythonNames().dunder_aenter : vm.pythonNames().dunder_enter, self);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
 }
 
-// callExit(__exit__, the exception or None): whether the exception has been dealt with.
+// callExit(__exit__, the exception or None): what it gives, which if true says that the exception has been dealt with.
 PYTHON_RUNTIME_FUNCTION(callExit)
 {
     PROLOGUE();
     JSValue exception = argument(1);
-    if (isNone(exception)) {
-        call(globalObject, argument(0), jsUndefined(), jsUndefined(), jsUndefined());
-        return JSValue::encode(jsBoolean(false));
-    }
-    JSValue result = call(globalObject, argument(0), typeOf(globalObject, exception), exception, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isTrue(globalObject, result))));
+    if (isNone(exception))
+        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), jsUndefined(), jsUndefined(), jsUndefined())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), typeOf(globalObject, exception), exception, jsUndefined())));
 }
 
 // ---- match
@@ -924,6 +968,13 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("keywordDefault"_s, keywordDefault);
     add("yieldFromStep"_s, yieldFromStep);
     add("takeReturnValue"_s, takeReturnValue);
+    add("newCoroutine"_s, runtimeNewCoroutine);
+    add("wrapAsyncYield"_s, runtimeWrapAsyncYield);
+    add("getAwaitable"_s, runtimeGetAwaitable);
+    add("getAsyncIterator"_s, runtimeGetAsyncIterator);
+    add("getAsyncNext"_s, runtimeGetAsyncNext);
+    add("getYieldFromIterator"_s, getYieldFromIterator);
+    object->putDirect(vm, Identifier::fromString(vm, "StopAsyncIteration"_s), globalObject->pyRealm()->typeStopAsyncIteration());
     add("raiseAssertionError"_s, raiseAssertionError);
     add("reraise"_s, reraise);
     add("raise"_s, runtimeRaise);

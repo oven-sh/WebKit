@@ -672,7 +672,7 @@ PYTHON_NATIVE(builtinNext)
     if (!args.check(globalObject, scope, "next"_s, 1, 2))
         return { };
     // What a generator returns is carried by the StopIteration.
-    if (args[0].isCell() && args[0].asCell()->type() == JSGeneratorType && args.size() == 1)
+    if (args[0].isCell() && args[0].asCell()->type() == JSGeneratorType && args.size() == 1 && generatorKindOf(globalObject, asGenerator(args[0])) == GeneratorKind::Generator)
         RELEASE_AND_RETURN(scope, JSValue::encode(generatorSend(globalObject, uncheckedDowncast<JSGenerator>(args[0].asCell()), jsUndefined())));
     JSValue value = iteratorNext(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });

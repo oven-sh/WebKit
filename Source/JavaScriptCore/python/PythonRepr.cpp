@@ -264,7 +264,11 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         return makeString("<module "_s, text, '>');
     }
     case JSGeneratorType:
-        return makeString("<generator object at "_s, addressOf(cell), '>');
+    {
+        JSValue name = getAttribute(globalObject, value, vm.pythonNames().dunder_qualname);
+        RETURN_IF_EXCEPTION(scope, { });
+        return makeString('<', type->nameString(globalObject), " object "_s, asString(name)->value(globalObject).data, " at "_s, addressOf(cell), '>');
+    }
     default:
         break;
     }

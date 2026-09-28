@@ -716,7 +716,11 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     }
     case Kind::Callable: {
         JSValue value = Python::call(globalObject, m_a.get());
-        RETURN_IF_EXCEPTION(scope, { });
+        if (scope.exception()) [[unlikely]] {
+            if (Python::catchException(globalObject, BuiltinType::StopIteration))
+                finish();
+            return { };
+        }
         bool isSentinel = Python::isEqual(globalObject, value, m_b.get());
         RETURN_IF_EXCEPTION(scope, { });
         if (isSentinel) {
