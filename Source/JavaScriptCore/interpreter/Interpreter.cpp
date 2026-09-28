@@ -909,6 +909,9 @@ public:
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
         }
 
+        if (m_codeBlock && m_codeBlock->source().provider()->language() == SourceLanguage::Python) [[unlikely]]
+            Python::leaveFrame(m_vm, m_callFrame, visitor->bytecodeIndex());
+
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
 

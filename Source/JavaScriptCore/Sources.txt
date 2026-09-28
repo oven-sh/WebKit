@@ -738,6 +738,7 @@ profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
 python/PyDict.cpp
+python/PyFrame.cpp
 python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp

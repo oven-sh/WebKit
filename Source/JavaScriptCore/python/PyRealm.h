@@ -244,6 +244,9 @@ public:
     JSObject* boundArgumentsMarker() const { return m_boundArgumentsMarker.get(); }
     // What compiled code calls for what there is no opcode for. See PythonRuntimeFunctions.h.
     JSObject* runtimeFunctions() const { return m_runtimeFunctions.get(); }
+    // What frame.f_locals is an instance of. It is written in Python.
+    PyType* frameLocalsProxyType() const { return m_frameLocalsProxyType.get(); }
+    void setFrameLocalsProxyType(VM& vm, PyType* type) { m_frameLocalsProxyType.set(vm, this, type); }
     // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
     JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
@@ -284,6 +287,7 @@ private:
     WriteBarrier<JSObject> m_boundArgumentsMarker;
     WriteBarrier<JSObject> m_runtimeFunctions;
     WriteBarrier<JSObject> m_javaScriptFunctions;
+    WriteBarrier<PyType> m_frameLocalsProxyType;
     WriteBarrier<JSObject> m_builtinsNamespace;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Exception> m_handledException;

@@ -912,6 +912,8 @@ FunctionExecutable* CodeBlock::linkFunctionExpr(unsigned index, UnlinkedFunction
     ScriptExecutable* ownerExecutable = this->ownerExecutable();
     if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables())
         return uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable)->functionExpression(vm(), index, m_functionExprs.size(), unlinkedExecutable);
+    if (unlinkedExecutable->pythonInfo())
+        return uncheckedDowncast<FunctionExecutable>(ownerExecutable)->pythonFunctionExpression(vm(), index, m_functionExprs.size(), unlinkedExecutable);
     return unlinkedExecutable->link(vm(), ownerExecutable->topLevelExecutable(), ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
 }
 
@@ -923,7 +925,7 @@ FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 
 FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 {
-    if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) {
+    if ((codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) || m_unlinkedCode->functionExpr(index)->pythonInfo()) {
         ASSERT(!m_functionExprs[index] && m_numberOfUnmaterializedFunctionExecutables);
         RELEASE_ASSERT(!isCompilationThread());
         FunctionExecutable* executable = linkFunctionExpr(index, m_unlinkedCode->functionExpr(index));

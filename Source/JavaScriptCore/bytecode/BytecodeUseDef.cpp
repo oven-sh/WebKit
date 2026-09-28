@@ -177,6 +177,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpPySetAttr, base, value)
     USES(OpPyDelAttr, base)
     USES(OpPyLoadMethod, base)
+    USES(OpPyRet, value, frame)
     USES(OpPyGetItem, base, property)
     USES(OpPySetItem, base, property, value)
     USES(OpPyDelItem, base, property)
@@ -425,6 +426,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_check_tdz:
     case op_debug:
     case op_ret:
+    case op_py_ret:
     case op_jmp:
     case op_jtrue:
     case op_jfalse:

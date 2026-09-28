@@ -42,6 +42,7 @@ namespace JSC {
 class BytecodeIndex;
 class CodeBlock;
 class PyDict;
+class PyFrame;
 
 namespace Python {
 
@@ -162,11 +163,14 @@ void writeToStandardOutput(StringView);
 JSObject* globalsOfFrame(JSGlobalObject*, CallFrame*);
 // What locals() gives there: the namespace itself for a module or the body of a class, and for a function a new dict of its variables.
 JSValue localsOfFrame(JSGlobalObject*, CallFrame*);
+JSValue localsOfFrame(JSGlobalObject*, PyFrame*);
 // The frame of the Python code that called a function written in C++.
 CallFrame* callerOf(CallFrame*);
 
 // Notes that an exception has come to a frame of Python code, by being raised in it or by coming out of what it called. The unwinder calls it.
 void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
+// A frame of Python code is about to be no more. If it has a frame object, that outlives it. The unwinder calls it, and op_py_ret.
+void leaveFrame(VM&, CallFrame*, BytecodeIndex);
 // What Python prints when an exception gets away: the traceback, and those of what led to it.
 String formatException(JSGlobalObject*, JSValue exception);
 

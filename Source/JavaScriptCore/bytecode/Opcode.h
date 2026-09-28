@@ -279,6 +279,7 @@ inline bool isTerminal(OpcodeID opcodeID)
 {
     switch (opcodeID) {
     case op_ret:
+    case op_py_ret:
     case op_unreachable:
         return true;
     default:

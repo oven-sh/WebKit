@@ -1407,6 +1407,14 @@ op :py_new_tuple,
         argc: unsigned,
     }
 
+# ret, from code that may have a frame object. `frame` is the register that it is in, which is undefined if nothing has asked for one.
+# If there is one it outlives the frame, so it is told to take what it needs.
+op :py_ret,
+    args: {
+        value: VirtualRegister,
+        frame: VirtualRegister,
+    }
+
 op :mov,
     args: {
         dst: VirtualRegister,

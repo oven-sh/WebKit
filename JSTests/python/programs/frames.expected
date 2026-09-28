@@ -1,0 +1,47 @@
+identity => (True, 1, True, 'show', True)
+after return => (10, 'two', ['f', 'x', 'y'], 5)
+back after return => ('<module>', False)
+same locals proxy frame => True
+type => ('frame', 'FrameLocalsProxy', 'FrameLocalsProxy')
+module f_locals => False
+write through => (2, 3, True, ['extra', 'f', 'x'], 3)
+callee writes caller => after
+cells => ((1, [('c', 1)], 1), 5, 5)
+parameter that is a cell => (2, 2)
+unbound => ((False, ['f']), False)
+missing key !! KeyError "local variable ''nope'' is not defined"
+cannot remove !! ValueError cannot remove local variables from FrameLocalsProxy
+cannot pop !! ValueError cannot remove local variables from FrameLocalsProxy
+proxy ops => (1, None, 0, 1, 8, 26, None, ['w', 'p', 'a'], {'a': 1, 'p': {'a': 1, 'p': {...}, 'w': 8}, 'w': 8, 'k': 1}, {'k': 1, 'a': 1, 'p': {'a': 1, 'p': {...}, 'w': 8}, 'w': 8}, True, True, "{'a': 1,")
+proxy new => two
+proxy new bad !! TypeError expect frame, not int
+proxy unhashable !! TypeError unhashable type: 'FrameLocalsProxy'
+proxy is a mapping => 1
+locals snapshot => (1, 2, False)
+class body => (True, 'K')
+clear running !! RuntimeError cannot clear an executing frame
+clear => ({}, 'keep')
+tb_frame => (True, 'here', 42, True, True, True)
+same frame for two exceptions => True
+incomplete => ['bad_call']
+with defaults => show
+not started => (True, 0, {'a': 1}, None, True)
+same inside and out => (True, True, True)
+suspended => (2, {'a': 1, 'b': 2}, None, True)
+dead local is seen => (4, {'a': 1, 'b': 2, 'got': None, 'dead': 'not read again'})
+clear suspended !! RuntimeError cannot clear a suspended frame
+gi_code => (True, True, ('a', 'b', 'got', 'dead', 'c'))
+finish !! StopIteration 
+finished => (None, {'a': 1, 'b': 100, 'got': None, 'dead': 'not read again', 'c': 3}, None, 6)
+write to suspended => 42
+running => (1, True, '<lambda>', True)
+clear not started => (None, [], {'a': 5})
+generator traceback => (True, 9, None, False)
+coroutine => (True, None, {'q': 1}, True)
+genexpr => ['.0', '_']
+code identity => (True, True, False)
+repr => <frame, line 22, code keep>
+depth !! ValueError call stack is not deep enough
+f_lineno set !! ValueError f_lineno can only be set in a trace function
+f_trace => (None, True, False, None, True)
+f_builtins => True

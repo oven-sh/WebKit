@@ -284,6 +284,16 @@ public:
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
 
     JSString* toString(JSGlobalObject*);
+    // What Python sees this as: function.__code__. It is made when it is first asked for, and there is one.
+    JSObject* pythonCodeObject() const { return m_rareData ? m_rareData->m_pythonCodeObject.get() : nullptr; }
+    void setPythonCodeObject(VM& vm, JSObject* code) { ensureRareData().m_pythonCodeObject.set(vm, this, code); }
+    // In Python the code of a function is a constant of the code that the function is defined in, so it is the same however often that is
+    // linked. As with ModuleProgramExecutable::functionExpression(), it is kept here and not in the CodeBlock, which comes and goes.
+    FunctionExecutable* pythonFunctionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
+    // A generator is two functions, one that makes it and one that resumes it, and to Python they are one piece of code. For the second,
+    // this is the first.
+    FunctionExecutable* pythonGeneratorFunction() const { return m_rareData ? m_rareData->m_pythonGeneratorFunction.get() : nullptr; }
+
     JSString* asStringConcurrently() const
     {
         if (!m_rareData)
@@ -318,6 +328,9 @@ public:
         WriteBarrierStructureID m_cachedPolyProtoStructureID;
         std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
         WriteBarrier<JSString> m_asString;
+        WriteBarrier<JSObject> m_pythonCodeObject;
+        WriteBarrier<FunctionExecutable> m_pythonGeneratorFunction;
+        FixedVector<WriteBarrier<FunctionExecutable>> m_pythonFunctionExpressions;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
     };

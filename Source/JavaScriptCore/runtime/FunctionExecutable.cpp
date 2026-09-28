@@ -104,6 +104,13 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (RareData* rareData = thisObject->m_rareData.get()) {
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
+        visitor.append(rareData->m_pythonCodeObject);
+        visitor.append(rareData->m_pythonGeneratorFunction);
+        if (!rareData->m_pythonFunctionExpressions.isEmpty()) {
+            Locker locker { thisObject->cellLock() };
+            for (auto& functionExpression : rareData->m_pythonFunctionExpressions)
+                visitor.append(functionExpression);
+        }
         if (TemplateObjectMap* map = rareData->m_templateObjectMap.get()) {
             Locker locker { thisObject->cellLock() };
             for (auto& entry : *map)
@@ -179,6 +186,24 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
     WTF::storeStoreFence();
     m_rareData = WTF::move(rareData);
     return *m_rareData;
+}
+
+FunctionExecutable* FunctionExecutable::pythonFunctionExpression(VM& vm, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable* unlinkedExecutable)
+{
+    RareData& rareData = ensureRareData();
+    if (rareData.m_pythonFunctionExpressions.size() != numberOfFunctionExpressions) {
+        RELEASE_ASSERT(rareData.m_pythonFunctionExpressions.isEmpty());
+        FixedVector<WriteBarrier<FunctionExecutable>> functionExpressions(numberOfFunctionExpressions);
+        Locker locker { cellLock() };
+        rareData.m_pythonFunctionExpressions = WTF::move(functionExpressions);
+    }
+    if (FunctionExecutable* executable = rareData.m_pythonFunctionExpressions[index].get())
+        return executable;
+    FunctionExecutable* executable = unlinkedExecutable->link(vm, topLevelExecutable(), source(), std::nullopt, NoIntrinsic, isInsideOrdinaryFunction());
+    if (unlinkedExecutable->pythonInfo()->isGeneratorBody)
+        executable->ensureRareData().m_pythonGeneratorFunction.set(vm, executable, this);
+    rareData.m_pythonFunctionExpressions[index].set(vm, this, executable);
+    return executable;
 }
 
 JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)

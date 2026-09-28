@@ -1105,6 +1105,7 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
+        const Vector<VirtualRegister>& localsToSaveAtEveryYield() const LIFETIME_BOUND { return m_localsToSaveAtEveryYield; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1419,6 +1420,11 @@ namespace JSC {
         std::optional<int> m_moduleEnvironmentSymbolTableConstantIndex;
         UncheckedKeyHashSet<UniquedStringImpl*> m_lazyModuleFunctionDeclarations;
         int m_generatorFrameSymbolTableIndex { 0 };
+        // Locals that a generator saves at every yield even if it will not read them again, because something else may: in Python, whatever
+        // has the generator's frame can see its local variables.
+        Vector<VirtualRegister> m_localsToSaveAtEveryYield;
+        // In Python code, the register that the frame object is in if there is one. See PyFrame.h.
+        RegisterID* m_pythonFrameObjectRegister { nullptr };
 
         enum FunctionVariableType : uint8_t { NormalFunctionVariable, TopLevelFunctionVariable };
         Vector<std::pair<FunctionMetadataNode*, FunctionVariableType>> m_functionsToInitialize;

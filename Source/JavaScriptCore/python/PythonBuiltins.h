@@ -105,6 +105,25 @@ void initializeFunctionTypes(JSGlobalObject*);
 void initializeCodeTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeTracebackTypes(JSGlobalObject*);
+PyModule* createFrameModule(JSGlobalObject*);
+
+inline JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
+
+// ---- Looking into what is running
+
+// Null if it is not a frame of Python code.
+const FunctionInfo* pythonInfoOfFrame(CallFrame*);
+// Whether Python counts it as a frame: it is running what somebody wrote in Python.
+bool isFrameToPython(CallFrame*, BytecodeIndex);
+// The environment that has a variable of the name, going outward from the scope, and where in it. Null if there is none.
+JSLexicalEnvironment* findVariable(JSScope*, UniquedStringImpl* name, ScopeOffset&);
+JSObject* globalsOfScope(VM&, JSScope*);
+// What is only known about code once it has been compiled, which it is now if it had not been.
+void ensureCodeDetails(VM&, FunctionExecutable*);
+// The bytecode, which is generated again if it has been thrown away. It comes out the same.
+UnlinkedCodeBlock* unlinkedCodeBlockOf(VM&, FunctionExecutable*);
+// function.__code__. There is one for each piece of code.
+JSObject* codeObjectFor(JSGlobalObject*, FunctionExecutable*);
 void addFrameFunctions(JSGlobalObject*, JSObject* sysNamespace);
 void initializeStrType(JSGlobalObject*);
 void initializeContainerTypes(JSGlobalObject*);

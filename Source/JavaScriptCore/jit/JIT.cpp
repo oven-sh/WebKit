@@ -438,6 +438,7 @@ void JIT::privateCompileMainPass()
         DEFINE_OP(op_async_iterator_next)
 
         DEFINE_OP(op_ret)
+        DEFINE_OP(op_py_ret)
         DEFINE_OP(op_rshift)
         DEFINE_OP(op_unsigned)
         DEFINE_OP(op_urshift)

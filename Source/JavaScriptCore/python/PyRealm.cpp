@@ -56,6 +56,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_boundArgumentsMarker);
     visitor.append(thisObject->m_runtimeFunctions);
     visitor.append(thisObject->m_javaScriptFunctions);
+    visitor.append(thisObject->m_frameLocalsProxyType);
     visitor.append(thisObject->m_builtinsNamespace);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_handledException);

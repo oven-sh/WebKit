@@ -47,6 +47,7 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
 #include "PythonCodeGenerator.h"
+#include "PythonCommonNames.h"
 #include "PrivateFieldPutKind.h"
 #include "StrongInlines.h"
 #include "SuperSampler.h"
@@ -1032,6 +1033,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, Python::ScopeNode* scopeNode, Unlin
     emitEnter();
     allocateScope();
     m_calleeRegister.setIndex(CallFrameSlot::callee);
+    m_pythonFrameObjectRegister = addVar();
 }
 
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
@@ -4143,6 +4145,14 @@ void BytecodeGenerator::emitCallDefineProperty(RegisterID* newObj, RegisterID* p
 
 RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
 {
+    if (m_pythonFrameObjectRegister) {
+        // A generator has a new frame each time it is resumed, so it keeps its frame object itself.
+        if (m_generatorRegister)
+            emitDirectGetById(m_pythonFrameObjectRegister, m_generatorRegister, m_vm.pythonNames().private_frame);
+        OpPyRet::emit(this, src, m_pythonFrameObjectRegister);
+        return src;
+    }
+
     // Normal functions and naked constructors do not handle `return` specially.
     if (isConstructor() && constructorKind() != ConstructorKind::Naked) {
         bool isDerived = constructorKind() == ConstructorKind::Extends;

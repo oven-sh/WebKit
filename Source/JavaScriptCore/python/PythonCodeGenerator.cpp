@@ -66,18 +66,53 @@ public:
     {
         m_details = makeUnique<CodeDetails>();
         for (auto& name : m_info.parameterNames) {
-            if (!name.string().startsWith('.'))
+            // The mapping that the names of a class body are looked up in is a parameter of ours, and not one of Python's.
+            if (!m_info.usesNamespace)
                 m_details->variableNames.append(name);
         }
         generateKind(root);
-        for (auto& [name, local] : m_locals)
-            m_details->registers.append({ Identifier::fromUid(m_vm, name), local->index() });
         for (Symbol& symbol : m_block.symbols) {
             if (symbol.scope == NameScope::Cell)
                 m_details->cellVariables.append(*symbol.name);
         }
-        std::ranges::sort(m_details->cellVariables, [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); });
+        auto byCodePoint = [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); };
+        std::ranges::sort(m_details->cellVariables, byCodePoint);
+        describeFrame(byCodePoint);
         m_info.details = WTF::move(m_details);
+    }
+
+    // What a frame object needs to know.
+    void describeFrame(auto& byCodePoint)
+    {
+        if (!m_info.isGeneratorBody)
+            m_details->frameObjectRegister = g.m_pythonFrameObjectRegister->virtualRegister();
+        m_details->scopeRegister = g.scopeRegister()->virtualRegister();
+        if (!isFunctionLike())
+            return;
+        HashSet<UniquedStringImpl*> seen;
+        auto add = [&] (const Identifier& name, bool isInEnvironment) {
+            if (!seen.add(name.impl()).isNewEntry)
+                return;
+            RegisterID* local = isInEnvironment ? nullptr : m_locals.get(name.impl());
+            m_details->frameVariables.append({ name, local ? local->virtualRegister() : VirtualRegister() });
+        };
+        for (auto& name : m_details->variableNames)
+            add(name, m_block.scopeOf(name) == NameScope::Cell);
+        for (auto& name : m_details->cellVariables)
+            add(name, true);
+        Vector<Identifier> freeVariables = m_info.freeVariables;
+        std::ranges::sort(freeVariables, byCodePoint);
+        for (auto& name : freeVariables)
+            add(name, true);
+
+        if (m_info.isGeneratorBody) {
+            // Whatever has the frame of a suspended generator can see its variables, whether or not the generator will look at them again.
+            g.m_localsToSaveAtEveryYield.append(m_details->scopeRegister);
+            for (auto& variable : m_details->frameVariables) {
+                if (variable.location.isValid())
+                    g.m_localsToSaveAtEveryYield.append(variable.location);
+            }
+        }
     }
 
     void generateKind(void* root)
@@ -1374,8 +1409,11 @@ private:
             return generateGeneratorBody(emitBody);
 
         emitBindArguments(node);
+        m_details->firstTraceableOffset = g.instructions().size();
 
         if (m_info.isGenerator || m_info.isCoroutine) {
+            // Nor is there one at all for this: the frame is the one that the body runs in.
+            m_details->firstTraceableOffset = std::numeric_limits<unsigned>::max();
             // The function proper only makes the generator, or the coroutine, which is the same thing under another name. Its parameters are kept where the body, which is another function, finds them.
             Vector<const Identifier*, 8> cells;
             for (auto& name : m_info.parameterNames)
@@ -1436,6 +1474,10 @@ private:
         OpCreateGeneratorFrameEnvironment::emit(&g, g.generatorFrameRegister(), g.scopeRegister(), VirtualRegister { frameSymbolTableIndex }, none());
         g.emitPutInternalField(g.generatorRegister(), static_cast<unsigned>(JSGenerator::Field::Frame), g.generatorFrameRegister());
 
+        if (usesGlobals())
+            emitLoadGlobals();
+        emitDeclareVariables(true);
+
         // The first time, there is nowhere for a value or an exception to be sent to.
         Ref<Label> start = g.newLabel();
         Ref<Label> thrown = g.newLabel();
@@ -1443,12 +1485,10 @@ private:
         g.emitJumpIfTrue(g.emitEqualityOp<OpStricteq>(g.newTemporary(), g.generatorResumeModeRegister(), g.emitLoad(nullptr, JSGenerator::ResumeMode::ThrowMode)), thrown.get());
         g.emitReturn(g.generatorValueRegister());
         g.emitLabel(thrown.get());
+        mark(m_block.location);
         g.emitThrow(g.generatorValueRegister());
         g.emitLabel(start.get());
 
-        if (usesGlobals())
-            emitLoadGlobals();
-        emitDeclareVariables(true);
         emitBody();
         g.emitReturn(none());
     }

@@ -608,7 +608,6 @@ static JSValue getOwnOr(JSGlobalObject* globalObject, JSValue self, const Identi
 
 // ---- Functions
 
-static JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
 
 static const FunctionInfo* infoOf(JSValue function)
 {

@@ -55,6 +55,19 @@ void JIT::emit_op_ret(const JSInstruction* currentInstruction)
     jumpThunk(CodeLocationLabel { vm().getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
 }
 
+void JIT::emit_op_py_ret(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpPyRet>();
+    emitGetVirtualRegister(bytecode.m_frame, regT0);
+    // This is not a slow case, since those end by going on to the next instruction, and there may be none.
+    Jump hasNoFrameObject = branch64(Equal, regT0, TrustedImm64(JSValue::encode(jsUndefined())));
+    JITSlowPathCall slowPathCall(this, slow_path_py_leave_frame);
+    slowPathCall.call();
+    hasNoFrameObject.link(this);
+    emitGetVirtualRegister(bytecode.m_value, returnValueGPR);
+    jumpThunk(CodeLocationLabel { vm().getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
+}
+
 template<typename Op>
 void JIT::emitPutCallResult(const Op& bytecode)
 {

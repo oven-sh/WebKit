@@ -451,6 +451,8 @@ static PyModule* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createTimeModule(globalObject);
     if (name == "builtins"_s)
         return createBuiltinsModule(globalObject);
+    if (name == "_frame"_s)
+        return createFrameModule(globalObject);
     return nullptr;
 }
 
@@ -609,6 +611,12 @@ void initializeLibrary(JSGlobalObject* globalObject)
     RELEASE_ASSERT(groups);
     for (ASCIILiteral name : { "BaseExceptionGroup"_s, "ExceptionGroup"_s })
         realm->builtinsNamespace()->putDirect(vm, Identifier::fromString(vm, name), attribute(groups, name));
+    JSValue frameLocals = findOrLoad(globalObject, "_framelocals"_s, JSValue());
+    RELEASE_ASSERT(frameLocals);
+    auto* proxy = asType(attribute(frameLocals, "FrameLocalsProxy"_s));
+    proxy->setFlag(PyType::IsMapping);
+    realm->setFrameLocalsProxyType(vm, proxy);
+
     // Compiled code calls these as it calls what is written in C++.
     realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "matchExceptionGroup"_s), attribute(groups, "match_exception_group"_s));
     realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "prepareReraiseStar"_s), attribute(groups, "prepare_reraise_star"_s));

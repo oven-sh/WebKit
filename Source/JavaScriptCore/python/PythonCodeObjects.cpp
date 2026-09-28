@@ -30,10 +30,12 @@
 #include "FunctionExecutable.h"
 #include "JSGenerator.h"
 #include "JSLexicalEnvironment.h"
+#include "PyFrame.h"
 #include "PythonBytes.h"
 #include "PythonCompiler.h"
 #include "PythonGenerators.h"
 #include "SourceProvider.h"
+#include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 
 // Code objects, cells and frames: what a program sees when it looks into itself. And compile(), exec(), eval() and locals().
@@ -58,21 +60,48 @@ static bool isCode(JSGlobalObject* globalObject, JSValue value)
     return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->typeCode();
 }
 
-static JSValue newCode(JSGlobalObject* globalObject, FunctionExecutable* executable)
+JSObject* codeObjectFor(JSGlobalObject* globalObject, FunctionExecutable* executable)
 {
-    return PyNativeObject::create(globalObject, BuiltinType::Code, executable);
+    // Of the two functions that a generator is made of, the code is the one that can be called.
+    if (FunctionExecutable* generatorFunction = executable->pythonGeneratorFunction())
+        executable = generatorFunction;
+    if (JSObject* code = executable->pythonCodeObject())
+        return code;
+    JSObject* code = PyNativeObject::create(globalObject, BuiltinType::Code, executable);
+    executable->setPythonCodeObject(globalObject->vm(), code);
+    return code;
+}
+
+static UnlinkedFunctionCodeBlock* unlinkedCodeBlockOf(VM& vm, UnlinkedFunctionExecutable* unlinked, const SourceCode& source)
+{
+    ParserError error;
+    return unlinked->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, unlinked->parseMode());
+}
+
+UnlinkedCodeBlock* unlinkedCodeBlockOf(VM& vm, FunctionExecutable* executable)
+{
+    return unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source());
+}
+
+void ensureCodeDetails(VM& vm, FunctionExecutable* executable)
+{
+    if (!infoOf(executable).details)
+        unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source());
+    RELEASE_ASSERT(infoOf(executable).details);
 }
 
 // What is known once it has been compiled, which it is now if it had not been.
 static const CodeDetails& detailsOf(VM& vm, FunctionExecutable* executable)
 {
     const FunctionInfo& info = infoOf(executable);
-    if (!info.details) {
-        ParserError error;
-        UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
-        unlinked->unlinkedCodeBlockFor(vm, executable->source(), CodeSpecializationKind::CodeForCall, { }, error, unlinked->parseMode());
-        RELEASE_ASSERT(info.details);
+    if (info.isGenerator || info.isCoroutine) {
+        // What was written is in the function that resumes it, which is the one function that this one makes.
+        UnlinkedFunctionExecutable* body = unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source())->functionExpr(0);
+        if (!body->pythonInfo()->details)
+            unlinkedCodeBlockOf(vm, body, body->linkedSourceCode(executable->source()));
+        return *body->pythonInfo()->details;
     }
+    ensureCodeDetails(vm, executable);
     return *info.details;
 }
 
@@ -154,7 +183,7 @@ static WriteBarrierBase<Unknown>& variableOfCell(JSValue cell)
 }
 
 // The environment that has a variable of the name, going outward from `scope`, and where in it. Null if there is none.
-static JSLexicalEnvironment* findVariable(JSScope* scope, UniquedStringImpl* name, ScopeOffset& offset)
+JSLexicalEnvironment* findVariable(JSScope* scope, UniquedStringImpl* name, ScopeOffset& offset)
 {
     for (; scope; scope = scope->next()) {
         auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
@@ -214,7 +243,6 @@ PYTHON_NATIVE(cellEq)
 
 // ---- Functions
 
-static JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
 
 static JSValue getFunctionCode(JSGlobalObject* globalObject, JSValue self)
 {
@@ -223,9 +251,7 @@ static JSValue getFunctionCode(JSGlobalObject* globalObject, JSValue self)
     auto& name = vm.pythonNames().private_code;
     if (JSValue code = function->getDirect(vm, name))
         return code;
-    JSValue code = newCode(globalObject, function->jsExecutable());
-    function->putDirect(vm, name, code);
-    return code;
+    return codeObjectFor(globalObject, function->jsExecutable());
 }
 
 static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
@@ -245,7 +271,7 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
     return cells;
 }
 
-static JSObject* globalsOfScope(VM& vm, JSScope* scope)
+JSObject* globalsOfScope(VM& vm, JSScope* scope)
 {
     ScopeOffset offset;
     JSLexicalEnvironment* environment = findVariable(scope, vm.pythonNames().globals.impl(), offset);
@@ -264,7 +290,7 @@ static JSValue getFunctionBuiltins(JSGlobalObject* globalObject, JSValue)
 
 // ---- Frames
 
-static const FunctionInfo* pythonInfoOfFrame(CallFrame* frame)
+const FunctionInfo* pythonInfoOfFrame(CallFrame* frame)
 {
     if (!frame || frame->isNativeCalleeFrame())
         return nullptr;
@@ -275,13 +301,19 @@ static const FunctionInfo* pythonInfoOfFrame(CallFrame* frame)
     return executable ? executable->unlinkedExecutable()->pythonInfo() : nullptr;
 }
 
+bool isFrameToPython(CallFrame* frame, BytecodeIndex bytecodeIndex)
+{
+    const FunctionInfo* info = pythonInfoOfFrame(frame);
+    return info && info->visibility == ImplementationVisibility::Public && bytecodeIndex.offset() >= info->details->firstTraceableOffset;
+}
+
 CallFrame* callerOf(CallFrame* callFrame)
 {
     VM& vm = callFrame->deprecatedVM();
     EntryFrame* entryFrame = vm.topEntryFrame;
-    // Past whatever is written in C++, or in JavaScript.
+    // Past whatever is written in C++, or in JavaScript, or comes with the engine, or is still giving its arguments to its parameters.
     for (CallFrame* frame = callFrame->callerFrame(entryFrame); frame; frame = frame->callerFrame(entryFrame)) {
-        if (pythonInfoOfFrame(frame))
+        if (isFrameToPython(frame, frame->bytecodeIndex()))
             return frame;
     }
     return nullptr;
@@ -294,49 +326,32 @@ JSObject* globalsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
     return globalsOfScope(globalObject->vm(), uncheckedDowncast<JSFunction>(frame->jsCallee())->scope());
 }
 
-JSValue localsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
+JSValue localsOfFrame(JSGlobalObject* globalObject, PyFrame* frame)
 {
     VM& vm = globalObject->vm();
-    const FunctionInfo* info = pythonInfoOfFrame(frame);
-    if (!info)
-        return { };
-    if (info->usesNamespace)
-        return frame->argument(0);
-    if (!isFunctionKind(info->kind))
-        return PyDict::backedBy(globalObject, globalsOfFrame(globalObject, frame));
+    if (JSValue mapping = frame->namespaceMapping(vm))
+        return mapping;
+    if (!isFunctionKind(frame->functionInfo().kind))
+        return PyDict::backedBy(globalObject, frame->globals(vm));
 
     // A picture of the variables as they are now. Changing it changes nothing.
     PyDict* locals = PyDict::create(globalObject);
-    const CodeDetails& details = *info->details;
-    HashMap<UniquedStringImpl*, int> registers;
-    for (auto& [name, index] : details.registers)
-        registers.set(name.impl(), index);
-    CodeBlock* codeBlock = frame->codeBlock();
-    JSScope* innermost = frame->scope(codeBlock->scopeRegister().offset());
-    auto add = [&] (const Identifier& name) {
-        if (name.string().startsWith('.') || locals->getString(globalObject, name.string()))
-            return;
-        JSValue value;
-        if (auto iterator = registers.find(name.impl()); iterator != registers.end())
-            value = frame->uncheckedR(VirtualRegister(iterator->value)).jsValue();
-        else {
-            ScopeOffset offset;
-            if (JSLexicalEnvironment* environment = findVariable(innermost, name.impl(), offset))
-                value = environment->variableAt(offset).get();
-        }
-        if (value)
-            locals->setString(globalObject, name.string(), value);
-    };
-    for (auto& name : info->parameterNames)
-        add(name);
-    for (auto& name : details.variableNames)
-        add(name);
-    for (auto& name : details.cellVariables)
-        add(name);
-    for (auto& name : sortedFreeVariables(*info))
-        add(name);
-    UNUSED_PARAM(vm);
+    for (unsigned i = 0; i < frame->variableCount(); ++i) {
+        if (JSValue value = frame->variable(vm, i))
+            locals->setString(globalObject, frame->variableName(i).string(), value);
+    }
+    if (PyDict* extra = frame->extraLocals()) {
+        extra->forEach(globalObject, [&] (JSValue key, JSValue value) {
+            locals->set(globalObject, key, value);
+            return true;
+        });
+    }
     return locals;
+}
+
+JSValue localsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
+{
+    return frame ? localsOfFrame(globalObject, PyFrame::forCallFrame(globalObject->vm(), frame)) : JSValue();
 }
 
 PYTHON_NATIVE(builtinLocals)
@@ -433,7 +448,7 @@ PYTHON_NATIVE(builtinCompile)
     unsigned futureFeatures = inherits ? futureFeaturesOfCaller(callFrame) : 0;
     FunctionExecutable* executable = compileText(globalObject, text, filename, kind, futureFeatures);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(newCode(globalObject, executable));
+    return JSValue::encode(codeObjectFor(globalObject, executable));
 }
 
 // The object whose properties are the items of a dict that is to be the globals of some code.
@@ -565,7 +580,7 @@ static void setGeneratorName(JSGlobalObject* globalObject, JSValue self, JSValue
 
 static JSValue getGeneratorCode(JSGlobalObject* globalObject, JSValue self)
 {
-    return newCode(globalObject, bodyOf(self)->jsExecutable());
+    return codeObjectFor(globalObject, bodyOf(self)->jsExecutable());
 }
 
 static JSValue getGeneratorRunning(JSGlobalObject*, JSValue self)
@@ -584,12 +599,11 @@ static JSValue getGeneratorYieldFrom(JSGlobalObject* globalObject, JSValue self)
     return iterator && stateOf(self) > 0 ? iterator : jsUndefined();
 }
 
-// FIXME: A frame that says where it is. This one only says what it is a frame of.
 static JSValue getGeneratorFrame(JSGlobalObject* globalObject, JSValue self)
 {
     if (stateOf(self) == static_cast<int32_t>(JSGenerator::State::Completed))
         return jsUndefined();
-    return PyNativeObject::create(globalObject, BuiltinType::Frame, getGeneratorCode(globalObject, self), PyDict::backedBy(globalObject, globalsOfScope(globalObject->vm(), bodyOf(self)->scope())));
+    return PyFrame::forGenerator(globalObject, asGenerator(self));
 }
 
 template<unsigned field>
@@ -606,7 +620,7 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
-    for (PyType* type : { realm->typeCode(), realm->typeCell(), realm->typeFrame() })
+    for (PyType* type : { realm->typeCode(), realm->typeCell() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
 
     PyType* code = realm->typeCode();
@@ -640,10 +654,6 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     });
     cell->putDirect(vm, vm.pythonNames().dunder_hash, jsUndefined());
     addGetSet(globalObject, cell, "cell_contents"_s, getCellContents, setCellContents);
-
-    PyType* frame = realm->typeFrame();
-    addMember(globalObject, frame, "f_code"_s, getNativeField<0>);
-    addGetSet(globalObject, frame, "f_globals"_s, getNativeField<1>);
 
     PyType* function = realm->typeFunction();
     addGetSet(globalObject, function, "__code__"_s, getFunctionCode);

@@ -2655,6 +2655,19 @@ llintOp(op_ret, OpRet, macro (size, get, dispatch)
 end)
 
 
+llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
+    get(m_frame, t1)
+    loadq [cfr, t1, 8], t0
+    bqeq t0, ValueUndefined, .opPyRetNoFrameObject
+    callSlowPath(_slow_path_py_leave_frame)
+.opPyRetNoFrameObject:
+    checkSwitchToJITForEpilogue()
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+end)
+
+
 llintOpWithReturn(op_to_primitive, OpToPrimitive, macro (size, get, dispatch, return)
     get(m_src, t2)
     loadConstantOrVariable(size, t2, t0)

@@ -1807,6 +1807,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_method)
     RETURN_PROFILED(result);
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_leave_frame)
+{
+    BEGIN();
+    Python::leaveFrame(vm, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)));
+    END();
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_item)
 {
     BEGIN();

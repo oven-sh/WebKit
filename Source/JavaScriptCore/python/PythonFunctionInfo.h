@@ -27,6 +27,7 @@
 
 #include "Identifier.h"
 #include "ImplementationVisibility.h"
+#include "VirtualRegister.h"
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
@@ -49,8 +50,18 @@ struct CodeDetails {
     Vector<Identifier> variableNames; // co_varnames: the parameters, and then the other local variables as they are first used.
     Vector<Identifier> names; // co_names: the globals and attributes, as they are first used.
     Vector<Identifier> cellVariables; // co_cellvars
-    // Which register each local variable is in, of those that are in one. The rest are in environments.
-    Vector<std::pair<Identifier, int>> registers;
+
+    // What a frame object needs.
+    struct FrameVariable {
+        Identifier name;
+        VirtualRegister location; // Not valid if it is in an environment, because an inner function uses it or it is an outer function's.
+    };
+    Vector<FrameVariable> frameVariables; // In the order of co_varnames, co_cellvars and co_freevars.
+    VirtualRegister frameObjectRegister; // Where the frame object is, if there is one. Not valid for a generator, which keeps it itself.
+    VirtualRegister scopeRegister;
+    // Where what was written begins. Before it the arguments are being given to the parameters, and to Python there is no frame yet: what
+    // is raised there is raised by the call.
+    unsigned firstTraceableOffset { 0 };
 };
 
 // What has to be known about a piece of Python code before it is compiled, to call it and to compile it. It is worked out when what

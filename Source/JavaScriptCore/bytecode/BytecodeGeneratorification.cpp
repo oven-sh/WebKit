@@ -140,6 +140,8 @@ public:
         return m_instructions;
     }
 
+    const Vector<VirtualRegister>& localsToSaveAtEveryYield() const { return m_bytecodeGenerator.localsToSaveAtEveryYield(); }
+
 private:
     Storage storageForGeneratorLocal(VM& vm, unsigned index)
     {
@@ -198,6 +200,8 @@ public:
             if (!data.found)
                 continue;
             data.liveness = getLivenessInfoAtInstruction(codeBlock, instructions, m_generatorification.graph(), BytecodeIndex(m_generatorification.instructions().at(data.point).next().offset()));
+            for (VirtualRegister local : m_generatorification.localsToSaveAtEveryYield())
+                data.liveness[local.toLocal()] = true;
         }
     }
 

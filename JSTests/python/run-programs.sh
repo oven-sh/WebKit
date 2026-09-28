@@ -15,7 +15,7 @@ eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
 failures=0
 runs=0
 for program in "$@"; do
-    for options in "" "--useJIT=0" "$eager" "--collectContinuously=1"; do
+    for options in "" "--useJIT=0" "$eager" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
         runs=$((runs + 1))
         # shellcheck disable=SC2086
         if ! "$jsc" $options "$program" 2>&1 | cmp -s - "${program%.py}.expected"; then
