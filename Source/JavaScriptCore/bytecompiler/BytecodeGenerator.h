@@ -728,7 +728,9 @@ namespace JSC {
             if constexpr (BinaryOp::opcodeID == op_add || BinaryOp::opcodeID == op_mul || BinaryOp::opcodeID == op_sub || BinaryOp::opcodeID == op_div || BinaryOp::opcodeID == op_bitand || BinaryOp::opcodeID == op_bitor || BinaryOp::opcodeID == op_bitxor)
                 BinaryOp::emit(this, dst, src1, src2, m_codeBlock->addBinaryArithProfile(), types);
             else if constexpr (BinaryOp::opcodeID == op_lshift || BinaryOp::opcodeID == op_rshift)
-                BinaryOp::emit(this, dst, src1, src2, m_codeBlock->addBinaryArithProfile());
+                BinaryOp::emit(this, dst, src1, src2, m_codeBlock->addBinaryArithProfile(), types);
+            else if constexpr (BinaryOp::opcodeID == op_mod || BinaryOp::opcodeID == op_pow)
+                BinaryOp::emit(this, dst, src1, src2, types);
             else
                 BinaryOp::emit(this, dst, src1, src2);
             return dst;

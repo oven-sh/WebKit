@@ -22,6 +22,8 @@
 #include "config.h"
 #include "Operations.h"
 
+#include "BytecodeStructs.h"
+#include "CodeBlock.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 
@@ -32,11 +34,48 @@ bool JSValue::equalSlowCase(JSGlobalObject* globalObject, JSValue v1, JSValue v2
     return equalSlowCaseInline(globalObject, v1, v2);
 }
 
+// Whether the operator that is being carried out is that of x += y and its like. Nothing that is compiled for an operator says, since it makes no
+// difference to any of it. The instruction does, and it can be found from here as it is for saying what was being evaluated when something went wrong.
+static bool isCarryingOutCompoundAssignment(VM& vm)
+{
+    CallFrame* callFrame = vm.topCallFrame;
+    if (!callFrame || callFrame->isNativeCalleeFrame())
+        return false;
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (!codeBlock)
+        return false;
+    CodeOrigin origin = callFrame->codeOrigin();
+    if (!origin.isSet())
+        return false;
+    CodeBlock* baseline = baselineCodeBlockForOriginAndBaselineCodeBlock(origin, codeBlock->baselineAlternative());
+    auto instruction = baseline->instructions().at(origin.bytecodeIndex());
+    switch (instruction->opcodeID()) {
+#define CASE(Op) \
+    case Op::opcodeID: \
+        return instruction->as<Op>().m_operandTypes.isCompoundAssignment();
+    CASE(OpAdd)
+    CASE(OpSub)
+    CASE(OpMul)
+    CASE(OpDiv)
+    CASE(OpMod)
+    CASE(OpPow)
+    CASE(OpLshift)
+    CASE(OpRshift)
+    CASE(OpBitand)
+    CASE(OpBitor)
+    CASE(OpBitxor)
+#undef CASE
+    default:
+        return false;
+    }
+}
+
 JSValue callOverloadedOperator(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
 {
     ASSERT(left.overloadsOperators() || right.overloadsOperators());
     JSCell* cell = left.overloadsOperators() ? left.asCell() : right.asCell();
-    return cell->methodTable()->operate(globalObject, op, left, right);
+    bool isCompoundAssignment = op <= OverloadableOperator::BitwiseXor && isCarryingOutCompoundAssignment(globalObject->vm());
+    return cell->methodTable()->operate(globalObject, op, left, right, isCompoundAssignment);
 }
 
 bool compareWithOverloadedOperator(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)

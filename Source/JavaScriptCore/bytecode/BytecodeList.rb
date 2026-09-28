@@ -1449,14 +1449,24 @@ op_group :BinaryOp,
         :greatereq,
         :below,
         :beloweq,
-        :mod,
-        :pow,
         :urshift,
     ],
     args: {
         dst: VirtualRegister,
         lhs: VirtualRegister,
         rhs: VirtualRegister,
+    }
+
+op_group :BinaryOpWithOperandTypes,
+    [
+        :mod,
+        :pow,
+    ],
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operandTypes: OperandTypes,
     }
 
 op_group :ProfiledBinaryOpWithOperandTypes,
@@ -1468,17 +1478,6 @@ op_group :ProfiledBinaryOpWithOperandTypes,
         :bitand,
         :bitor,
         :bitxor,
-    ],
-    args: {
-        dst: VirtualRegister,
-        lhs: VirtualRegister,
-        rhs: VirtualRegister,
-        profileIndex: unsigned,
-        operandTypes: OperandTypes,
-    }
-
-op_group :ProfiledBinaryOp,
-    [
         :lshift,
         :rshift,
     ],
@@ -1487,6 +1486,7 @@ op_group :ProfiledBinaryOp,
         lhs: VirtualRegister,
         rhs: VirtualRegister,
         profileIndex: unsigned,
+        operandTypes: OperandTypes,
     }
 
 op_group :UnaryOp,

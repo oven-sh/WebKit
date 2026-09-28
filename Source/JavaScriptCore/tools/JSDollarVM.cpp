@@ -531,7 +531,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right, bool)
     {
         DollarVMAssertScope assertScope;
         VM& vm = globalObject->vm();

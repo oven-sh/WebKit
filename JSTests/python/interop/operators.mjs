@@ -8,7 +8,7 @@ show("compare", () => [a == m.Vec(1, 2), a != m.Vec(1, 2), a == b, a != b, a < b
 show("identity", () => [a === m.Vec(1, 2), a === a, a !== b, a == null, a != undefined, Object.is(a, a)].join(" "));
 show("assignment", () => { let v = a; v += b; v *= 2; v -= a; let w = a; w++; let u = a; u--; return [v, w, u, a].join(" "); });
 show("with a string", () => [a + "!", "<" + a + ">", `${a}`].join(" "));
-show("in place is not JavaScript's", () => { let p = m.InPlace(); p += 1; return p; });
+show("in place", () => { let p = m.InPlace(); const same = p; p += 1; return [p === same, p.log].join(" "); });
 show("path", () => [m.Path("a") / "b" / "c", "root" / m.Path("x")].join(" "));
 show("nothing defined", () => m.Plain() + 1);
 show("nothing defined, compare", () => m.Plain() < m.Plain());

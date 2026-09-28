@@ -3780,6 +3780,7 @@ static ALWAYS_INLINE RegisterID* emitReadModifyAssignment(BytecodeGenerator& gen
     if (emitExpressionInfoForMe)
         generator.emitExpressionInfo(emitExpressionInfoForMe->divot(), emitExpressionInfoForMe->divotStart(), emitExpressionInfoForMe->divotEnd());
 
+    types.setIsCompoundAssignment();
     RegisterID* result = generator.emitBinaryOp(opcodeID, dst, src1, src2, types);
     if (oper == Operator::URShift)
         return generator.emitUnaryOp<OpUnsigned>(result, result);

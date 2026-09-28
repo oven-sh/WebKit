@@ -307,14 +307,24 @@ struct Fits<OperandTypes, size> {
     // additionally, encode unknown types as 0 rather than the | of all types
     static constexpr unsigned typeWidth = 4;
     static constexpr unsigned maxType = (1 << typeWidth) - 1;
+    // Whether it is a compound assignment matters only if the first operand may be an object. What may be one and fits here is the unknown type. So an
+    // unknown type in a compound assignment is encoded as an int32 that is no number, which there is no such thing as.
+    static constexpr unsigned unknownTypeInCompoundAssignment = ResultType::numberTypeIsInt32().bits() & ~ResultType::numberType().bits();
+    static_assert(unknownTypeInCompoundAssignment && unknownTypeInCompoundAssignment <= maxType);
+
+    static unsigned narrowFirst(OperandTypes types)
+    {
+        auto first = types.first().bits();
+        if (first == ResultType::unknownType().bits())
+            return types.isCompoundAssignment() ? unknownTypeInCompoundAssignment : 0;
+        return first;
+    }
 
     static bool check(OperandTypes types)
     {
         if (size == OpcodeSize::Narrow) {
-            auto first = types.first().bits();
+            auto first = narrowFirst(types);
             auto second = types.second().bits();
-            if (first == ResultType::unknownType().bits())
-                first = 0;
             if (second == ResultType::unknownType().bits())
                 second = 0;
             return first <= maxType && second <= maxType;
@@ -326,10 +336,8 @@ struct Fits<OperandTypes, size> {
     {
         if (size == OpcodeSize::Narrow) {
             ASSERT(check(types));
-            auto first = types.first().bits();
+            auto first = narrowFirst(types);
             auto second = types.second().bits();
-            if (first == ResultType::unknownType().bits())
-                first = 0;
             if (second == ResultType::unknownType().bits())
                 second = 0;
             return (first << typeWidth) | second;
@@ -342,11 +350,15 @@ struct Fits<OperandTypes, size> {
         if (size == OpcodeSize::Narrow) {
             auto first = types >> typeWidth;
             auto second = types & maxType;
-            if (!first)
+            bool isCompoundAssignment = first == unknownTypeInCompoundAssignment;
+            if (!first || isCompoundAssignment)
                 first = ResultType::unknownType().bits();
             if (!second)
                 second = ResultType::unknownType().bits();
-            return OperandTypes(ResultType(first), ResultType(second));
+            OperandTypes result { ResultType(first), ResultType(second) };
+            if (isCompoundAssignment)
+                result.setIsCompoundAssignment();
+            return result;
         }
         return OperandTypes::fromBits(static_cast<uint16_t>(types));
     }

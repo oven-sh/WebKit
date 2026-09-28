@@ -252,9 +252,15 @@ namespace JSC {
         ResultType::Type m_first;
         ResultType::Type m_second;
 
+        // Whether the operator is that of x += y and its like, and not that of x + y. They are the same but to an object that overloads operators, which may
+        // tell them apart. It is kept in the bit of the first type that a type has no use for.
+        static constexpr ResultType::Type compoundAssignmentBit = 1 << ResultType::numBitsNeeded;
+        bool isCompoundAssignment() const { return m_first & compoundAssignmentBit; }
+        void setIsCompoundAssignment() { m_first |= compoundAssignmentBit; }
+
         ResultType first() const
         {
-            return ResultType(m_first);
+            return ResultType(m_first & ~compoundAssignmentBit);
         }
 
         ResultType second() const
@@ -275,7 +281,7 @@ namespace JSC {
 
         void dump(PrintStream& out) const
         {
-            out.print("OperandTypes(", first(),  ", ", second(), ")");
+            out.print("OperandTypes(", first(),  ", ", second(), isCompoundAssignment() ? ", compound assignment" : "", ")");
         }
     };
 

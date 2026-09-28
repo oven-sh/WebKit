@@ -599,11 +599,11 @@ PyType* tryClass(JSGlobalObject* globalObject, JSValue value)
     return nullptr;
 }
 
-JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right, bool isInPlace)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto binary = [&] (BinaryOperator which) { RELEASE_AND_RETURN(scope, binaryOperation(globalObject, which, false, left, right)); };
+    auto binary = [&] (BinaryOperator which) { RELEASE_AND_RETURN(scope, binaryOperation(globalObject, which, isInPlace, left, right)); };
     // A comparison is a boolean to JavaScript, whatever it is that __lt__ returns.
     auto comparison = [&] (ComparisonOperator which) -> JSValue {
         JSValue result = compare(globalObject, which, left, right);

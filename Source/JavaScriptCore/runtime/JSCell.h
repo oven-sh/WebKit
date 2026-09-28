@@ -282,7 +282,7 @@ protected:
     JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue NODELETE getPrototype(JSObject*, JSGlobalObject*);
 
     JS_EXPORT_PRIVATE static bool NODELETE customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    JS_EXPORT_PRIVATE static JSValue NODELETE operate(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
+    JS_EXPORT_PRIVATE static JSValue NODELETE operate(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right, bool isCompoundAssignment);
     JS_EXPORT_PRIVATE static bool NODELETE defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     JS_EXPORT_PRIVATE static bool NODELETE getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE static bool NODELETE getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);

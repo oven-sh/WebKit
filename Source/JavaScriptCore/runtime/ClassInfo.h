@@ -55,7 +55,8 @@ struct HashTable;
 //     unary +          gives a number, and what is compiled for +x - 1 does not check
 //     >>>              gives a number, likewise
 //
-// x != y is !(x == y), x++ is x = x + 1, and x += y is x = x + y, as they are for any operands.
+// x != y is !(x == y) and x++ is x = x + 1, as they are for any operands. So is x += y x = x + y, but the class is told which it is: it may want to
+// change the object that x is where it can, and give that back.
 enum class OverloadableOperator : uint8_t {
     // These give any value.
     Add,
@@ -119,7 +120,7 @@ struct MethodTable {
     CustomHasInstanceFunctionPtr METHOD_TABLE_ENTRY(customHasInstance);
 
     // The class is the left operand's if that has OverloadsOperators, and otherwise the right's.
-    using OperateFunctionPtr = JSValue (*)(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
+    using OperateFunctionPtr = JSValue (*)(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right, bool isCompoundAssignment);
     OperateFunctionPtr METHOD_TABLE_ENTRY(operate);
 
     using DefineOwnPropertyFunctionPtr = bool (*)(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool);

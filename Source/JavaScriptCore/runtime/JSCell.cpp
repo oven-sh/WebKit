@@ -234,7 +234,7 @@ bool JSCell::customHasInstance(JSObject*, JSGlobalObject*, JSValue)
     return false;
 }
 
-JSValue JSCell::operate(JSGlobalObject*, OverloadableOperator, JSValue, JSValue)
+JSValue JSCell::operate(JSGlobalObject*, OverloadableOperator, JSValue, JSValue, bool)
 {
     RELEASE_ASSERT_NOT_REACHED();
     return { };

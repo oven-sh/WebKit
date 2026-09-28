@@ -5,7 +5,7 @@ compare => true false false true true true false false false false
 identity => false true true false true true
 assignment => Vec(7, 10) Vec(2, 3) Vec(0, 1) Vec(1, 2)
 with a string => Vec(1, 2)! <Vec(1, 2)> Vec(1, 2)
-in place is not JavaScript's => added
+in place => true 1
 path => a/b/c root/x
 nothing defined !! TypeError: unsupported operand type(s) for +: 'Plain' and 'int'
 nothing defined, compare !! TypeError: '<' not supported between instances of 'Plain' and 'Plain'
