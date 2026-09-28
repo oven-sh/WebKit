@@ -43,7 +43,7 @@ ALWAYS_INLINE void noteSlowPath(ASCIILiteral operation, JSValue base = { }, Uniq
 // (Which may be the one that is nobody's: SharedData. That goes for its slots too, and neither is written to.)
 ALWAYS_INLINE Data* callerData(CallFrame* callFrame) { return dataOf(callFrame); }
 ALWAYS_INLINE FunctionRef caller(CallFrame* callFrame) { return FunctionRef::of(callFrame); }
-ALWAYS_INLINE UnlinkedCodeBlock* callerCode(CallFrame* callFrame) { return caller(callFrame).unlinkedCodeBlock(); }
+ALWAYS_INLINE UnlinkedCodeBlock* callerCode(CallFrame* callFrame) { return caller(callFrame).ensureUnlinkedCodeBlock(); }
 
 // What a slot refers to it does not keep alive: Data::finalizeUnconditionally() empties it when that dies. A collection of the young
 // only looks at the ones that have said that they have something new. An identifier of a structure that has died is sooner or later
@@ -56,10 +56,10 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
     if (!data->hasBeenFilledSinceLastCollection)
         data->noteFilled();
 }
-ALWAYS_INLINE const Identifier& identifierAt(CallFrame* callFrame, unsigned index) { return callerCode(callFrame)->identifier(index); }
+ALWAYS_INLINE const Identifier& identifierAt(CallFrame* callFrame, unsigned index) { return static_cast<const Identifier*>(caller(callFrame).info().identifiers)[index]; }
 ALWAYS_INLINE FunctionExecutable* functionDeclAt(CallFrame* callFrame, unsigned index) { return caller(callFrame).functionDecl(index); }
 ALWAYS_INLINE FunctionExecutable* functionExprAt(CallFrame* callFrame, unsigned index) { return caller(callFrame).functionExpr(index); }
-ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(CallFrame* callFrame) { return callerCode(callFrame)->codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
+ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(CallFrame* callFrame) { return caller(callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT
 

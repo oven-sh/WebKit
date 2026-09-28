@@ -182,6 +182,22 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
     return *m_expressionInfo;
 }
 
+void UnlinkedCodeBlock::leaveToStaticHeap(bool rareDataToo)
+{
+    auto forget = [](auto& vector) {
+        new (NotNull, &vector) std::remove_reference_t<decltype(vector)>();
+    };
+    forget(m_identifiers);
+    forget(m_constantRegisters);
+    forget(m_functionDecls);
+    forget(m_functionExprs);
+    // (Or it goes now: it may refer to strings of the static heap, which is not going to be there when this is collected.)
+    if (rareDataToo)
+        (void)m_rareData.release();
+    else
+        m_rareData = nullptr;
+}
+
 LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
     return expressionInfo().lineColumnForInstPC(bytecodeIndex.offset());

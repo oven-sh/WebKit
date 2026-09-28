@@ -111,6 +111,15 @@ bool Lowering::tryLowerAllocation(Node* node)
             unsigned slot = allocateSlots(2);
             if (auto shape = m_graph.shapeOfLiteral(node))
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
+            {
+                auto& instructions = m_graph.codeBlock()->instructions();
+                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                RELEASE_ASSERT(stores.size() >= count);
+                Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, count) };
+                for (unsigned i = 0; i < count; ++i)
+                    words.append(AllocationPlan::encode(instructions.at(stores[i])->as<OpPutById>().m_property, true, true));
+                m_graph.notePlanOfSite(slot, WTF::move(words));
+            }
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
@@ -147,6 +156,10 @@ bool Lowering::tryLowerAllocation(Node* node)
                     shape.names.append(m_graph.codeBlock()->identifier(property.identifier).impl());
                 if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
+                Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
+                for (auto& property : plan.properties)
+                    words.append(AllocationPlan::encode(property.identifier, property.isDefined, property.isStrict));
+                m_graph.notePlanOfSite(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();

@@ -243,6 +243,8 @@ struct Site;
 // CodeHeader::index: Instance::infos.
 struct FunctionInfo {
     static constexpr uint16_t hasSiteConstants = 1; // After the last of the sites: ImageFunction::siteConstants().
+    static constexpr uint16_t constructs = 4; // kind(), where there is no executable to say it with.
+    static constexpr uint16_t constantsAreOfNoRealm = 8; // `constants` are all there are, if any.
     static constexpr uint16_t startsCold = 2; // See CompiledFunctionInfo::startsCold.
 
     static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(FunctionInfo, constants); }
@@ -252,9 +254,9 @@ struct FunctionInfo {
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
 
     ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>(executableAndKind & ~static_cast<uintptr_t>(1)); }
-    CodeSpecializationKind kind() const { return executableAndKind & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
+    CodeSpecializationKind kind() const { return executableAndKind & 1 || flags & constructs ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
 
-    const void* constants; // const WriteBarrier<Unknown>*. Null: some are of the realm, and the Data has them.
+    const void* constants; // const WriteBarrier<Unknown>*. Unless constantsAreOfNoRealm, the Data has them.
     const void* identifiers; // const Identifier*
     const Site* sites; // One for each slot.
     const ImageFunction* function; // If the code is in an image.
@@ -329,6 +331,7 @@ struct Instance {
     FunctionInfo* infos; // By CodeHeader::index, like data.
     Data* sharedData; // SharedData::get()
     uint16_t* misses; // By CodeHeader::index: how often a slot has failed a function that has no Data of its own.
+    const uint32_t* factsOfFunctions; // By CodeHeader::index: StaticHeap::factsAt(). Zero: none. Null: no function has any.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
     uintptr_t structureIDBase; // What a StructureID is added to.
@@ -377,6 +380,7 @@ struct Data {
     // What the rest of the engine takes the function's frames to be running, for whoever asks: it is made then. Nothing that the
     // function itself does asks. Not while the collector is at work, and on no thread but the VM's.
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock();
+    FunctionRef function() const;
     // For the functions that the function makes closures of: made when the first closure is.
     FunctionExecutable* functionDecl(unsigned);
     FunctionExecutable* functionExpr(unsigned);
@@ -406,6 +410,7 @@ struct Data {
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
     bool ownsConstants; // Some are of the realm: this is a copy of the unlinked code's with those filled in.
+    uint32_t numberOfOwnConstants;
     bool hasSiteConstants; // After the last of the sites: ImageFunction::siteConstants().
     unsigned indexAmongAll; // Where it is in the Instance's lists.
     unsigned indexAmongFilled; // If hasBeenFilledSinceLastCollection.
@@ -420,6 +425,40 @@ struct Data {
 // to what all functions share (the dispatch table, the megamorphic cache) and then to the operation, which leaves it alone.
 //
 // A function that gets its Data while it is running goes on with this until it returns. So whose a slot is is told from where it is.
+// What else stays the same about a function, and is seldom asked for. A program that is built with a static heap has these instead
+// of the functions' unlinked code, which stays in the payload it would be decoded from (FunctionRef::ensureUnlinkedCodeBlock()).
+// One word, and then a word or two for each thing that there is, in this order.
+struct FunctionFacts {
+    enum Fact : uint32_t {
+        ExpressionInfo = 1 << 0, // Where the record is that it is decoded from (decodeBorrowedExpressionInfo()).
+        Handlers = 1 << 1, // UnlinkedHandlerInfo: where, and how many.
+        FunctionDecls = 1 << 2, // WriteBarrier<UnlinkedFunctionExecutable>: where, and how many.
+        FunctionExprs = 1 << 3,
+        StringSwitchJumpTables = 1 << 4, // UnlinkedStringJumpTable: where the first is.
+        // Unless FunctionInfo::constantsAreOfNoRealm. Where there are: how many constants there are, how many of them are
+        // SourceCodeRepresentation::LinkTimeConstant, and which those are.
+        RealmConstants = 1 << 5,
+    };
+    static constexpr uint32_t isBuiltinFunction = 1 << 6;
+    static constexpr unsigned shiftOfInstructionsSize = 8;
+    static unsigned wordsFor(Fact fact) { return fact == Handlers || fact == FunctionDecls || fact == FunctionExprs ? 2 : 1; }
+
+    const uint32_t* find(Fact fact) const
+    {
+        if (!(flagsAndInstructionsSize & fact))
+            return nullptr;
+        const uint32_t* word = &flagsAndInstructionsSize + 1;
+        for (uint32_t earlier = 1; earlier < fact; earlier <<= 1) {
+            if (flagsAndInstructionsSize & earlier)
+                word += wordsFor(static_cast<Fact>(earlier));
+        }
+        return word;
+    }
+    unsigned instructionsSize() const { return flagsAndInstructionsSize >> shiftOfInstructionsSize; }
+
+    uint32_t flagsAndInstructionsSize;
+};
+
 struct SharedData {
     static constexpr unsigned maxSlots = 8192;
     static constexpr size_t size = sizeof(Data) + maxSlots * sizeof(Slot);
@@ -452,8 +491,11 @@ struct CompiledFunctionInfo {
     Vector<ImageKey> knownCallees; // The functions that calls were compiled for.
     // For each slot, or for none: a number that whoever puts the program together replaces with one that means the same thing all
     // over the program. Here it is one more than an index into selectors (at a property access) or shapes (where an object is made).
+    // Or, of the slot after the one that has a shape, one more than an index into plans, which stays what it is.
     static constexpr uint32_t siteConstantIsShape = 1u << 31;
+    static constexpr uint32_t siteConstantIsPlan = 1u << 30;
     Vector<uint32_t> siteConstants;
+    Vector<uint32_t> plans; // See AllocationPlan.
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
 };
@@ -468,7 +510,8 @@ struct ImageCatchEntrypoint {
 };
 
 // Followed by numberOfCalleeSaves ImageCalleeSave, then numberOfCatchEntrypoints ImageCatchEntrypoint, then numSlots Site, then
-// numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero for none), then numberOfKnownCallees ImageKey.
+// numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero for none), then numberOfKnownCallees ImageKey,
+// then CompiledFunctionInfo::plans.
 struct ImageFunction {
     uint64_t codeOffset; // In the code.
     uint32_t codeSize;
@@ -489,6 +532,7 @@ struct ImageFunction {
     const Site* sites() const { return reinterpret_cast<const Site*>(catchEntrypoints() + numberOfCatchEntrypoints); }
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
     const ImageKey* knownCallees() const { return reinterpret_cast<const ImageKey*>(siteConstants() + numSlots); }
+    const uint32_t* plans() const { return reinterpret_cast<const uint32_t*>(knownCallees() + numberOfKnownCallees); }
 };
 
 class JITCode final : public JSC::JITCode {

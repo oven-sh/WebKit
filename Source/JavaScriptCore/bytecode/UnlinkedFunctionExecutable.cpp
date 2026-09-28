@@ -333,6 +333,32 @@ std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> UnlinkedFuncti
 }
 #endif
 
+void UnlinkedFunctionExecutable::leaveCodeInPayload(Decoder& decoder, std::pair<int32_t, int32_t> offsets)
+{
+    RELEASE_ASSERT(!m_isCached && decoder.isForStaticHeap());
+    m_unlinkedCodeBlockForCall.clear();
+    m_unlinkedCodeBlockForConstruct.clear();
+    new (NotNull, &m_decoder) RefPtr<Decoder>(&decoder);
+    m_cachedCodeBlockForCallOffset = offsets.first;
+    m_cachedCodeBlockForConstructOffset = offsets.second;
+    m_isCached = true;
+}
+
+UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::decodeCodeLeftInPayload(VM& vm, CodeSpecializationKind kind, JSCell* owner)
+{
+    RELEASE_ASSERT(m_isCached && m_decoder->isForStaticHeap() && !StaticHeap::isBuilding());
+    int32_t offset = isCall(kind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset;
+    RELEASE_ASSERT(offset);
+    Ref decoder = StaticHeap::decoderOfWhatWasLeftInPayload(vm, *m_decoder);
+    DeferGC deferGC(vm);
+    WriteBarrier<UnlinkedFunctionCodeBlock> result;
+    if (offset > 0)
+        decodeFunctionCodeBlock(decoder.get(), offset, result, owner);
+    else
+        decodeFunctionCodeBlockFromRecord(decoder.get(), -static_cast<int64_t>(offset), result, owner);
+    return result.get();
+}
+
 void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
 {
     ASSERT(m_isCached);
@@ -340,6 +366,9 @@ void UnlinkedFunctionExecutable::decodeCachedCodeBlocks(VM& vm)
     ASSERT(m_cachedCodeBlockForCallOffset || m_cachedCodeBlockForConstructOffset);
 
     RefPtr<Decoder> decoder = WTF::move(m_decoder);
+    // (What comes of it now is nothing that was there when the program was built.)
+    if (decoder->isForStaticHeap() && !StaticHeap::isBuilding()) [[unlikely]]
+        decoder = StaticHeap::decoderOfWhatWasLeftInPayload(vm, *decoder);
     int32_t cachedCodeBlockForCallOffset = m_cachedCodeBlockForCallOffset;
     int32_t cachedCodeBlockForConstructOffset = m_cachedCodeBlockForConstructOffset;
 

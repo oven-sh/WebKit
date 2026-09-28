@@ -11,6 +11,7 @@
 #include "FunctionCodeBlock.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "JSWebAssemblyInstance.h"
+#include "ParserError.h"
 
 #if ENABLE(FTL_JIT)
 
@@ -33,6 +34,10 @@
 #include "LinkBuffer.h"
 #include "ThunkGenerators.h"
 #include <wtf/TZoneMallocInlines.h>
+
+#if OS(DARWIN)
+#include <execinfo.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -228,6 +233,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->collections->sizeOfInfos = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(FunctionInfo));
         instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
     }
+    instance->factsOfFunctions = environmentsSize ? StaticHeap::factsOfFunctions(vm) : nullptr;
     instance->sharedData = SharedData::get();
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();
@@ -359,6 +365,34 @@ bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWil
 static bool linkConstants(VM& vm, Data& data)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!data.unlinkedCodeBlock) {
+        // Whoever built the program has looked.
+        const FunctionInfo& info = data.function().info();
+        if (info.flags & FunctionInfo::constantsAreOfNoRealm) {
+            data.constants = info.constants;
+            return true;
+        }
+        const uint32_t* list = StaticHeap::inData<uint32_t>(*data.function().facts()->find(FunctionFacts::RealmConstants));
+        std::span constants { static_cast<const WriteBarrier<Unknown>*>(info.constants), list[0] };
+        JSGlobalObject* globalObject = data.instance->globalObject;
+        auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size_bytes()));
+        data.constants = copy;
+        data.ownsConstants = true;
+        data.numberOfOwnConstants = constants.size();
+        for (unsigned i = 0; i < constants.size(); ++i) {
+            JSValue constant = constants[i].get();
+            if (constant && constant.isCell()) {
+                if (auto* descriptor = dynamicDowncast<JSTemplateObjectDescriptor>(constant.asCell())) {
+                    constant = data.executable->topLevelExecutable()->createTemplateObject(globalObject, descriptor);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+            }
+            copy[i].setWithoutWriteBarrier(constant);
+        }
+        for (uint32_t i : std::span { list + 2, list[1] })
+            copy[i].setWithoutWriteBarrier(globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(constants[i].get().asInt32AsAnyInt())));
+        return true;
+    }
     UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
@@ -389,6 +423,7 @@ static bool linkConstants(VM& vm, Data& data)
     auto* copy = static_cast<WriteBarrier<Unknown>*>(fastZeroedMalloc(constants.size() * sizeof(WriteBarrier<Unknown>)));
     data.constants = copy;
     data.ownsConstants = true;
+    data.numberOfOwnConstants = constants.size();
     for (unsigned i = 0; i < constants.size(); ++i) {
         JSValue constant = constants[i].get();
         if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
@@ -427,7 +462,10 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->unlinkedCodeBlock = unlinkedCodeBlock;
     code.ref();
     data->code = &code;
-    data->identifiers = unlinkedCodeBlock->identifiers().span().data();
+    // (Of a program that was put together with all it needs, they are what its FunctionInfo says. The unlinked code, if there is
+    // any, may have been decoded since, and has the same in a place of its own.)
+    FunctionInfo& info = instance.infos[code.header().index];
+    data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
     data->hasSiteConstants = code.isFromImage();
     data->numSlots = numSlots;
@@ -447,8 +485,6 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
         destroy(data);
         return nullptr;
     }
-    // (Those of a program that was put together with all it needs say so already, but for what nobody thought would be run.)
-    FunctionInfo& info = instance.infos[code.header().index];
     if (!info.sites) {
         if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", code.header().index, " when the program was built");
@@ -468,7 +504,7 @@ Data* Instance::ensureData(uint32_t index)
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(info.kind());
     // (An executable that was made when the program was built has no way of holding on to one.)
-    Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeFromImage({ &Image::of(*info.function), info.function }, unlinkedCodeBlock);
+    Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function), info.function }, info.kind());
     RELEASE_ASSERT(code->header().index == index);
     code->setInstance(*this);
     this->data[index] = nullptr;
@@ -481,6 +517,21 @@ Data* Instance::ensureData(uint32_t index)
 FunctionRef FunctionRef::of(const CallFrame* callFrame)
 {
     return { std::bit_cast<Instance*>(callFrame->unsafeCodeBlock()), CodeHeader::fromCallee(callFrame->rawCallee())->index };
+}
+
+FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
+{
+    if (StaticHeap::contains(executable))
+        return { vm.m_aotInstanceOfProgram, executable->aotIndexFor(kind) };
+    if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
+        return { };
+    auto& code = static_cast<JITCode&>(executable->generatedJITCodeFor(kind).get());
+    return { code.instance(), code.header().index };
+}
+
+CodeBlock* FunctionRef::ensureCodeBlock() const
+{
+    return ensureData()->ensureCodeBlock();
 }
 
 Data* FunctionRef::dataIfItHasAny() const
@@ -516,11 +567,145 @@ uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
     return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots];
 }
 
-UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlock() const
+AllocationPlan FunctionRef::planOf(const Slot* firstOfSite) const
 {
-    if (Data* data = dataIfItHasAny())
+    uint32_t constant = siteConstantOf(firstOfSite + 1);
+    if (!constant)
+        return { };
+    return { info().function->plans() + constant - 1 };
+}
+
+UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfThereIsOne() const
+{
+    if (Data* data = dataIfItHasAny(); data && data->unlinkedCodeBlock)
         return data->unlinkedCodeBlock;
     return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfThereIsOne(info().kind());
+}
+
+// TEMPORARY-FUNCTION-STATS
+static void reportWhoAsks(ASCIILiteral what)
+{
+#if OS(DARWIN)
+    if (!getenv("BUN_AOT_WHO_ASKS"))
+        return;
+    void* stack[14];
+    int depth = backtrace(stack, 14);
+    char** symbols = backtrace_symbols(stack, depth);
+    StringPrintStream out;
+    out.print("WHOASKS ", what);
+    for (int i = 2; i < depth; ++i) {
+        // "3   cli   0x0000000104f2c1a4 symbol + 123"
+        const char* symbol = symbols[i];
+        for (unsigned field = 0; field < 3 && *symbol; ++field) {
+            while (*symbol && *symbol != ' ')
+                ++symbol;
+            while (*symbol == ' ')
+                ++symbol;
+        }
+        const char* end = strchr(symbol, ' ');
+        out.print(" ", String::fromUTF8(std::span { symbol, end ? static_cast<size_t>(end - symbol) : strlen(symbol) }));
+    }
+    free(symbols);
+    dataLogLn(out.toCString());
+#else
+    UNUSED_PARAM(what);
+#endif
+}
+
+UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
+{
+    if (UnlinkedCodeBlock* existing = unlinkedCodeBlockIfThereIsOne())
+        return existing;
+    reportWhoAsks("unlinked"_s);
+    VM& vm = *instance->vm;
+    DeferGCForAWhile deferGC(vm);
+    DeferTerminationForAWhile deferTermination(vm);
+    SuspendExceptionScope suspendExceptions(vm);
+    // It is the Data's. (The executable was there when the program was built, and to store to it is to have a page of one's own
+    // for the sake of a word.)
+    Data* data = ensureData();
+    UnlinkedCodeBlock* result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeLeftInPayload(vm, info().kind(), instance->globalObject);
+    RELEASE_ASSERT(result);
+    data->unlinkedCodeBlock = result;
+    if (!data->hasBeenFilledSinceLastCollection)
+        data->noteFilled();
+    if (Options::aotReportStats()) [[unlikely]] {
+        // TEMPORARY-FUNCTION-STATS
+        static std::atomic<unsigned> count;
+        unsigned now = ++count;
+        if (!(now & (now - 1)) || !(now % 500))
+            dataLogLn("AOT: the unlinked code of ", now, " functions decoded because somebody asked");
+    }
+    return result;
+}
+
+const FunctionFacts* FunctionRef::facts() const
+{
+    if (!instance->factsOfFunctions)
+        return nullptr;
+    uint32_t at = instance->factsOfFunctions[index];
+    return at ? StaticHeap::inData<FunctionFacts>(at) : nullptr;
+}
+
+CodeType FunctionRef::codeType() const
+{
+    return facts() ? FunctionCode : unlinkedCodeBlockIfThereIsOne()->codeType();
+}
+
+bool FunctionRef::isBuiltinFunction() const
+{
+    if (auto* facts = this->facts())
+        return facts->flagsAndInstructionsSize & FunctionFacts::isBuiltinFunction;
+    return unlinkedCodeBlockIfThereIsOne()->isBuiltinFunction();
+}
+
+unsigned FunctionRef::instructionsSize() const
+{
+    if (auto* facts = this->facts())
+        return facts->instructionsSize();
+    return unlinkedCodeBlockIfThereIsOne()->instructions().size();
+}
+
+const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) const
+{
+    auto* facts = this->facts();
+    if (!facts)
+        return unlinkedCodeBlockIfThereIsOne()->handlerForIndex(bytecodeOffset, RequiredHandler::AnyHandler);
+    const uint32_t* words = facts->find(FunctionFacts::Handlers);
+    if (!words)
+        return nullptr;
+    std::span<const UnlinkedHandlerInfo> handlers { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
+    return UnlinkedHandlerInfo::handlerForIndex<const UnlinkedHandlerInfo>(handlers, bytecodeOffset, RequiredHandler::AnyHandler);
+}
+
+const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned tableIndex) const
+{
+    auto* facts = this->facts();
+    if (!facts)
+        return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
+    return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionFacts::StringSwitchJumpTables))[tableIndex];
+}
+
+static std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionsIn(const FunctionFacts& facts, FunctionFacts::Fact which)
+{
+    const uint32_t* words = facts.find(which);
+    if (!words)
+        return { };
+    return { StaticHeap::inMalloc<WriteBarrier<UnlinkedFunctionExecutable>>(words[0]), words[1] };
+}
+
+std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionDecls() const
+{
+    if (auto* facts = this->facts())
+        return functionsIn(*facts, FunctionFacts::FunctionDecls);
+    return unlinkedCodeBlockIfThereIsOne()->functionDecls();
+}
+
+std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionExprs() const
+{
+    if (auto* facts = this->facts())
+        return functionsIn(*facts, FunctionFacts::FunctionExprs);
+    return unlinkedCodeBlockIfThereIsOne()->functionExprs();
 }
 
 void Data::destroy(Data* data)
@@ -549,11 +734,19 @@ void Data::destroy(Data* data)
     fastFree(data);
 }
 
+FunctionRef Data::function() const
+{
+    return { instance, code->header().index };
+}
+
 CodeBlock* Data::ensureCodeBlock()
 {
     if (codeBlock)
         return codeBlock;
     VM& vm = *instance->vm;
+    reportWhoAsks("codeblock"_s);
+    if (!unlinkedCodeBlock)
+        function().ensureUnlinkedCodeBlock();
     RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
     DeferGCForAWhile deferGC(vm);
     // Whoever asks may well be dealing with an exception, and this is no place to find out that the VM has been told to stop.
@@ -577,10 +770,14 @@ CodeBlock* Data::ensureCodeBlock()
 
 LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
 {
-    UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     ScriptExecutable* executable = this->executable();
-    RELEASE_ASSERT(bytecodeIndex.offset() < unlinkedCodeBlock->instructions().size());
-    auto lineColumn = unlinkedCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+    RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
+    LineColumn lineColumn;
+    if (auto* facts = this->facts()) {
+        if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo))
+            lineColumn = decodeBorrowedExpressionInfo(StaticHeap::inData<uint8_t>(*word))->lineColumnForInstPC(bytecodeIndex.offset());
+    } else
+        lineColumn = unlinkedCodeBlockIfThereIsOne()->lineColumnForBytecodeIndex(bytecodeIndex);
     lineColumn.column += lineColumn.line ? 1 : executable->startColumn();
     lineColumn.line += executable->firstLine();
     return lineColumn;
@@ -590,9 +787,8 @@ static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFuncti
 {
     if (FunctionExecutable* result = unlinkedExecutable->staticExecutable(); result && StaticHeap::contains(data.executable))
         return result;
-    UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
     if (!data.functions)
-        data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((unlinkedCodeBlock->numberOfFunctionDecls() + unlinkedCodeBlock->numberOfFunctionExprs()) * sizeof(FunctionExecutable*)));
+        data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((data.function().functionDecls().size() + data.function().functionExprs().size()) * sizeof(FunctionExecutable*)));
     FunctionExecutable*& function = data.functions[index];
     if (!function) {
         ScriptExecutable* executable = data.executable;
@@ -606,22 +802,22 @@ static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFuncti
 FunctionExecutable* Data::functionDecl(unsigned index)
 {
     // A module shares them with whoever else runs its code.
-    if (unlinkedCodeBlock->codeType() != FunctionCode)
+    if (function().codeType() != FunctionCode)
         return codeBlock->functionDecl(index);
-    return functionOf(*this, index, unlinkedCodeBlock->functionDecl(index));
+    return functionOf(*this, index, function().functionDecls()[index].get());
 }
 
 FunctionExecutable* Data::functionExpr(unsigned index)
 {
-    if (unlinkedCodeBlock->codeType() != FunctionCode)
+    if (function().codeType() != FunctionCode)
         return codeBlock->functionExpr(index);
-    return functionOf(*this, unlinkedCodeBlock->numberOfFunctionDecls() + index, unlinkedCodeBlock->functionExpr(index));
+    return functionOf(*this, function().functionDecls().size() + index, function().functionExprs()[index].get());
 }
 
 FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 {
     if (!dataIfItHasAny()) {
-        if (FunctionExecutable* result = unlinkedCodeBlock()->functionDecl(index)->staticExecutable())
+        if (FunctionExecutable* result = functionDecls()[index]->staticExecutable())
             return result;
     }
     return ensureData()->functionDecl(index);
@@ -630,7 +826,7 @@ FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
     if (!dataIfItHasAny()) {
-        if (FunctionExecutable* result = unlinkedCodeBlock()->functionExpr(index)->staticExecutable())
+        if (FunctionExecutable* result = functionExprs()[index]->staticExecutable())
             return result;
     }
     return ensureData()->functionExpr(index);
@@ -674,11 +870,10 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
         return true;
     }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind);
-    RELEASE_ASSERT(unlinkedCodeBlock);
     ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
     if (!found)
         return false;
-    Ref<JITCode> code = codeFromImage(found, unlinkedCodeBlock);
+    Ref<JITCode> code = codeOfFunctionFromImage(found, kind);
     RELEASE_ASSERT(code->header().index == executable->aotIndexFor(kind));
     code->setInstance(*instance);
     return !!Data::create(*instance, executable, unlinkedCodeBlock, code.get());
@@ -695,18 +890,19 @@ template<typename Visitor>
 void Data::visit(Visitor& visitor)
 {
     visitor.appendUnbarriered(executable);
-    visitor.appendUnbarriered(unlinkedCodeBlock);
+    if (unlinkedCodeBlock)
+        visitor.appendUnbarriered(unlinkedCodeBlock);
     if (codeBlock)
         visitor.appendUnbarriered(codeBlock);
     if (functions) {
-        for (unsigned i = unlinkedCodeBlock->numberOfFunctionDecls() + unlinkedCodeBlock->numberOfFunctionExprs(); i--;) {
+        for (unsigned i = function().functionDecls().size() + function().functionExprs().size(); i--;) {
             if (functions[i])
                 visitor.appendUnbarriered(functions[i]);
         }
     }
     if (ownsConstants) {
         auto* values = static_cast<const WriteBarrier<Unknown>*>(constants);
-        for (unsigned i = unlinkedCodeBlock->constantRegisters().size(); i--;)
+        for (unsigned i = numberOfOwnConstants; i--;)
             visitor.appendUnbarriered(values[i].get());
     }
     // Code that has cached a transition can put an object that has already been visited in the new structure.

@@ -364,6 +364,20 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
         pinCodeGenerationModeForResumableBody();
     }
+#if ENABLE(FTL_JIT)
+    // What StaticHeap left in the payload stays there, if there is code and enough is known of it to run it.
+    if (executable->m_unlinkedExecutable->isCached() && StaticHeap::contains(executable->m_unlinkedExecutable.get())) {
+        if (auto code = AOT::findInImage(executable, kind, nullptr, scope); code && AOT::canDoWithoutUnlinkedCode(globalObject, code)) {
+            executable->recordParse(
+                executable->m_unlinkedExecutable->features(),
+                executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
+                executable->m_unlinkedExecutable->hasCapturedVariables());
+            throwScope.release();
+            AOT::install(vm, executable, kind, nullptr, globalObject, AOT::codeOfFunctionFromImage(code, kind));
+            return nullptr;
+        }
+    }
+#endif
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 

@@ -71,12 +71,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
         OPERATION_RETURN(scope, object);
     }
 
-    UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
-    const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
-    // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores to
-    // the register, whatever else there is in between.
+    FunctionRef function = caller(callFrame);
     Vector<unsigned, 32> identifiers;
-    {
+    unsigned inlineCapacityInBytecode;
+    if (AllocationPlan plan = function.planOf(cache)) {
+        RELEASE_ASSERT(plan.count() == count);
+        for (unsigned i = 0; i < count; ++i)
+            identifiers.append(plan.identifier(i));
+        inlineCapacityInBytecode = plan.inlineCapacity();
+    } else {
+        // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores
+        // to the register, whatever else there is in between.
+        UnlinkedCodeBlock* codeBlock = function.ensureUnlinkedCodeBlock();
+        const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
+        inlineCapacityInBytecode = instruction->as<OpNewObject>().m_inlineCapacity;
         auto& instructions = codeBlock->instructions();
         VirtualRegister object = instruction->as<OpNewObject>().m_dst;
         for (unsigned offset = callFrame->bytecodeIndex().offset() + instruction->size(); identifiers.size() < count; offset += instructions.at(offset)->size()) {
@@ -89,13 +97,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
         }
     }
     auto identifierOf = [&](unsigned index) -> const Identifier& {
-        return codeBlock->identifier(identifiers[index]);
+        return identifierAt(callFrame, identifiers[index]);
     };
     ObjectAllocationProfile profile;
-    profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
+    profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacityInBytecode);
     if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
         // All of it is known, so there is no call for a structure for every property on the way.
-        FunctionRef function = caller(callFrame);
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
             names.append(identifierOf(i).impl());
@@ -131,16 +138,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlobalObject* globalObject, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
-    unsigned offset = callFrame->bytecodeIndex().offset();
-    NewObjectPlan plan = NewObjectPlan::forCreateThis(codeBlock->instructions(), offset);
-    RELEASE_ASSERT(plan.properties.size() == count);
+    Vector<NewObjectPlan::Property, 8> properties;
+    unsigned inlineCapacityInBytecode;
+    if (AllocationPlan plan = caller(callFrame).planOf(cache)) {
+        for (unsigned i = 0; i < plan.count(); ++i)
+            properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i) });
+        inlineCapacityInBytecode = plan.inlineCapacity();
+    } else {
+        auto& instructions = callerCode(callFrame)->instructions();
+        unsigned offset = callFrame->bytecodeIndex().offset();
+        properties = NewObjectPlan::forCreateThis(instructions, offset).properties;
+        inlineCapacityInBytecode = instructions.at(offset)->as<OpCreateThis>().m_inlineCapacity;
+    }
+    RELEASE_ASSERT(properties.size() == count);
 
     JSObject* object = nullptr;
     JSFunction* constructor = dynamicDowncast<JSFunction>(callee);
     bool cacheable = false;
     if (constructor && constructor->canUseAllocationProfiles()) {
-        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, codeBlock->instructions().at(offset)->as<OpCreateThis>().m_inlineCapacity)->objectAllocationProfile();
+        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacityInBytecode)->objectAllocationProfile();
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
         Structure* structure = allocationProfile->structure();
         object = constructEmptyObject(vm, structure);
@@ -165,9 +181,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     Structure* first = object->structure();
     bool isLaidOutAsPlanned = true;
     for (unsigned i = 0; i < count; ++i) {
-        const Identifier& ident = codeBlock->identifier(plan.properties[i].identifier);
-        PutPropertySlot slot(object, plan.properties[i].isStrict, putByIdContextOf(callFrame));
-        if (plan.properties[i].isDefined)
+        const Identifier& ident = identifierAt(callFrame, properties[i].identifier);
+        PutPropertySlot slot(object, properties[i].isStrict, putByIdContextOf(callFrame));
+        if (properties[i].isDefined)
             CommonSlowPaths::putDirectWithReify(vm, globalObject, object, ident, JSValue::decode(values[i]), slot);
         else
             object->methodTable()->put(object, globalObject, ident, JSValue::decode(values[i]), slot);
@@ -197,9 +213,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     makePrototypeChainWatchable(vm, object);
     ObjectPropertyConditionSet conditions;
     for (unsigned i = 0; i < count; ++i) {
-        if (plan.properties[i].isDefined)
+        if (properties[i].isDefined)
             continue;
-        UniquedStringImpl* uid = codeBlock->identifier(plan.properties[i].identifier).impl();
+        UniquedStringImpl* uid = identifierAt(callFrame, properties[i].identifier).impl();
         auto status = prepareChainForCaching(globalObject, object, uid, nullptr);
         if (!status || status->flattenedDictionary || status->usesPolyProto)
             OPERATION_RETURN(scope, object);

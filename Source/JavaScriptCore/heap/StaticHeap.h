@@ -18,6 +18,7 @@ class SymbolRegistry;
 namespace JSC {
 
 class CachedBytecode;
+class Decoder;
 class DecoderStringTable;
 class JSCell;
 class JSString;
@@ -123,6 +124,12 @@ public:
     static bool hasExecutablesOfFunctions(VM&);
     // What the image's functions are, by that number, as far as that could be told when the program was built. Null: nothing was.
     static AOT::FunctionInfo* infosOfFunctions(VM&);
+    // AOT::Instance::factsOfFunctions, and what the numbers in AOT::FunctionFacts are: how far into an arena.
+    static const uint32_t* factsOfFunctions(VM&);
+    template<typename T> static const T* inData(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Data) + offset); }
+    template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
+    // For the code of a function, which was left in the payload. `placed` is what UnlinkedFunctionExecutable::leaveCodeInPayload() was given.
+    static Ref<Decoder> decoderOfWhatWasLeftInPayload(VM&, Decoder& placed);
     static bool isPlaceOfSourceProvider(const void* pointer)
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);

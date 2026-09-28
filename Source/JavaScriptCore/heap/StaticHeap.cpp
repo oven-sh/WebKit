@@ -80,6 +80,7 @@ struct StaticHeap::Header {
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::CodeHeader::index.
+    uint64_t factsOfFunctions; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
     uint64_t numberOfFunctions;
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
@@ -330,19 +331,79 @@ static void* addressOfSourceProvider(size_t moduleIndex)
     return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfSourceProvidersInBss + moduleIndex * StaticHeap::sizeOfPlaceForSourceProvider);
 }
 
+// AOT::FunctionFacts of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
+static std::span<uint32_t> s_factsBeingBuilt;
+
+static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock)
+{
+    if (s_factsBeingBuilt.empty() || s_factsBeingBuilt[index])
+        return;
+    using Facts = AOT::FunctionFacts;
+    auto in = [](Region::Arena arena, const void* pointer) {
+        uintptr_t offset = std::bit_cast<uintptr_t>(pointer) - Region::startOf(arena);
+        RELEASE_ASSERT(offset && offset < Region::used(arena));
+        return static_cast<uint32_t>(offset);
+    };
+    RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Facts::shiftOfInstructionsSize)));
+    Vector<uint32_t, 10> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Facts::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Facts::isBuiltinFunction : 0) };
+    if (const void* record = codeBlock->cachedExpressionInfo()) {
+        words[0] |= Facts::ExpressionInfo;
+        words.append(in(Region::Arena::Data, record));
+    }
+    if (size_t count = codeBlock->numberOfExceptionHandlers()) {
+        auto* handlers = static_cast<UnlinkedHandlerInfo*>(Region::allocate(Region::Arena::Data, count * sizeof(UnlinkedHandlerInfo), alignof(UnlinkedHandlerInfo)));
+        for (size_t i = 0; i < count; ++i)
+            handlers[i] = codeBlock->exceptionHandler(i);
+        words[0] |= Facts::Handlers;
+        words.append(in(Region::Arena::Data, handlers));
+        words.append(count);
+    }
+    auto functions = [&](Facts::Fact fact, std::span<const WriteBarrier<UnlinkedFunctionExecutable>> all) {
+        if (all.empty())
+            return;
+        words[0] |= fact;
+        words.append(in(Region::Arena::Malloc, all.data()));
+        words.append(all.size());
+    };
+    functions(Facts::FunctionDecls, codeBlock->functionDecls());
+    functions(Facts::FunctionExprs, codeBlock->functionExprs());
+    if (codeBlock->numberOfUnlinkedStringSwitchJumpTables()) {
+        words[0] |= Facts::StringSwitchJumpTables;
+        words.append(in(Region::Arena::Malloc, &codeBlock->unlinkedStringSwitchJumpTable(0)));
+    }
+    if (!AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesWillDo::Yes)) {
+        auto& representations = codeBlock->constantsSourceCodeRepresentation();
+        Vector<uint32_t, 16> list { static_cast<uint32_t>(representations.size()), 0 };
+        for (unsigned i = 0; i < representations.size(); ++i) {
+            if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
+                list.append(i);
+        }
+        list[1] = list.size() - 2;
+        auto* copy = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, list.sizeInBytes(), alignof(uint32_t)));
+        memcpySpan(std::span { copy, list.size() }, list.span());
+        words[0] |= Facts::RealmConstants;
+        words.append(in(Region::Arena::Data, copy));
+    }
+    auto* facts = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, words.sizeInBytes(), alignof(uint32_t)));
+    memcpySpan(std::span { facts, words.size() }, words.span());
+    s_factsBeingBuilt[index] = in(Region::Arena::Data, facts);
+}
+
 static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
 {
     // (Its SymbolTables are being made here and now.)
     bool constantsWillDo = AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesWillDo::Yes);
     RELEASE_ASSERT(constantsWillDo || !function.startsCold);
-    info.constants = constantsWillDo ? codeBlock->constantRegisters().span().data() : nullptr;
+    info.constants = codeBlock->constantRegisters().span().data();
     info.identifiers = codeBlock->identifiers().span().data();
     info.sites = function.sites;
     info.function = function.function;
     info.executableAndKind = executable ? std::bit_cast<uintptr_t>(executable) | !isCall(kind) : 0;
     info.numSlots = function.numSlots;
     // (It takes a Data to say which executable's the code is, if this does not.)
-    info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0);
+    info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | (isCall(kind) ? 0 : AOT::FunctionInfo::constructs) | (constantsWillDo ? AOT::FunctionInfo::constantsAreOfNoRealm : 0);
+    if (codeBlock->codeType() == FunctionCode)
+        fillFacts(function.index, codeBlock);
 }
 
 // The functions of `codeBlock`, whose source is `source`, and theirs.
@@ -424,6 +485,20 @@ std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfF
     const AOT::FunctionInfo& info = std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index];
     RELEASE_ASSERT(info.executableAndKind);
     return { uncheckedDowncast<FunctionExecutable>(info.executable()), info.kind() };
+}
+
+const uint32_t* StaticHeap::factsOfFunctions(VM& vm)
+{
+    return hasExecutablesOfFunctions(vm) ? std::bit_cast<const uint32_t*>(s_header->factsOfFunctions) : nullptr;
+}
+
+Ref<Decoder> StaticHeap::decoderOfWhatWasLeftInPayload(VM& vm, Decoder& placed)
+{
+    RELEASE_ASSERT(s_vm == &vm);
+    static NeverDestroyed<UncheckedKeyHashMap<Decoder*, Ref<Decoder>>> decoders;
+    return decoders->ensure(&placed, [&] {
+        return Decoder::create(vm, placed.cachedBytecode(), placed.provider(), Decoder::RecoverableCode::No);
+    }).iterator->value;
 }
 
 AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM& vm)
@@ -520,6 +595,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::MutableMalloc, size, pageSizeOfImage)), imageView->numberOfFunctions() };
                     memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
                     header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
+                    if (!Options::staticHeapKeepsFunctionCode()) {
+                        s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
+                        zeroSpan(s_factsBeingBuilt);
+                        header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
+                    }
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
                 uint64_t numberOfExecutables = 0;
@@ -550,7 +630,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     decoder.setExternalStrings(table);
                     {
                         SourceCodeKey key;
-                        UnlinkedCodeBlock* codeBlock = decodeAllForStaticHeap(decoder, key);
+                        Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>> functions;
+                        auto forgetFunctions = makeScopeExit([&] {
+                            Region::AllocationScope notInRegion(false);
+                            functions = { };
+                        });
+                        UnlinkedCodeBlock* codeBlock = decodeAllForStaticHeap(decoder, key, functions);
                         if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
                             codeBlock = nullptr;
                         if (!codeBlock)
@@ -565,6 +650,15 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
                         }
+                        if (decoder.leavesFunctionCodeInPayload()) {
+                            for (auto& [function, offsets] : functions) {
+                                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                                    if (auto* code = function->codeBlockIfThereIsOne(kind))
+                                        code->leaveToStaticHeap(!!code->numberOfUnlinkedStringSwitchJumpTables());
+                                }
+                                function->leaveCodeInPayload(decoder, offsets);
+                            }
+                        }
                         modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
                     }
                     // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)
@@ -573,6 +667,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     memset(address, 0, sizeof(Decoder));
                 }
                 s_tdzBeingBuilt = nullptr;
+                s_factsBeingBuilt = { };
                 std::ranges::sort(tdz, { }, &StaticHeapTDZ::executable);
                 header.tdz = std::bit_cast<uint64_t>(copy(asByteSpan(tdz.span())).data());
                 header.numberOfTDZ = tdz.size();

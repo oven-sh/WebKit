@@ -728,11 +728,11 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 m_liveCellPointers.add(function.executable());
                 auto& location = stackTrace.frames.last().semanticLocation;
                 BytecodeIndex bytecodeIndex = unprocessedStackFrame.callSiteIndex.bytecodeIndex();
-                if (bytecodeIndex.offset() < function.unlinkedCodeBlock()->instructions().size()) {
+                if (bytecodeIndex.offset() < function.instructionsSize()) {
                     location.lineColumn = function.lineColumnFor(bytecodeIndex);
                     location.bytecodeIndex = bytecodeIndex;
                 }
-                location.codeBlockHash = CodeBlockHash(function.executable()->source(), function.unlinkedCodeBlock()->isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
+                location.codeBlockHash = CodeBlockHash(function.executable()->source(), function.codeType() == FunctionCode ? function.info().kind() : CodeSpecializationKind::CodeForCall);
                 location.jitType = JITType::AOTJIT;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {

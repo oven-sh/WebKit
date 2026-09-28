@@ -643,6 +643,11 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     };
 
+#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+    constexpr bool builtinsHaveLinesAndColumns = true;
+#else
+    constexpr bool builtinsHaveLinesAndColumns = false;
+#endif
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
@@ -677,10 +682,14 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                     break;
                 }
                 }
+#if ENABLE(FTL_JIT)
+            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && function.codeType() == FunctionCode && !function.codeBlockIfThereIsOne() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), uncheckedDowncast<FunctionExecutable>(function.executable()), function.info().kind(), visitor->bytecodeIndex()));
+#endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
 #else
-            } else if (visitor->hasCode() && !visitor->unlinkedCodeBlock()->isBuiltinFunction())
+            } else if (visitor->hasCode() && !visitor->isBuiltinFunction())
 #endif
                 results.append(visitor->callee().asCell() ? StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()) : StackFrame(vm, owner, visitor->codeBlock(), visitor->bytecodeIndex()));
             else
@@ -806,7 +815,7 @@ CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, AOT::Data* data)
             m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(data->code->executableAddressAtOffset(codeOffset)));
     });
     RELEASE_ASSERT(m_nativeCode);
-    m_catchPCForInterpreter = { data->unlinkedCodeBlock->instructions().at(handler->target).ptr() };
+    m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
 }
 #endif
 
@@ -879,7 +888,7 @@ public:
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
             if (!m_isTermination) {
-                auto* handler = function.unlinkedCodeBlock()->handlerForIndex(m_callFrame->bytecodeIndex().offset(), RequiredHandler::AnyHandler);
+                auto* handler = function.handlerFor(m_callFrame->bytecodeIndex().offset());
                 m_handler = { handler, handler ? function.ensureData() : nullptr };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;

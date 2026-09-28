@@ -667,6 +667,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         info.sites.append(Site { });
     info.knownCallees = WTF::move(graph.knownCallees);
     info.siteConstants = WTF::move(graph.siteConstants);
+    info.plans = WTF::move(graph.plans);
     while (info.siteConstants.size() < info.numSlots)
         info.siteConstants.append(0);
     info.selectors = WTF::move(graph.selectors);

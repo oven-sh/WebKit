@@ -667,7 +667,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalOb
     auto string = asString(value)->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return INT32_MIN; // Out of memory resolving a rope: the caller checks.
-    const UnlinkedStringJumpTable& table = callerCode(callFrame)->unlinkedStringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = caller(callFrame).stringSwitchJumpTable(tableIndex);
     return table.offsetForValue(string.data.impl());
 }
 

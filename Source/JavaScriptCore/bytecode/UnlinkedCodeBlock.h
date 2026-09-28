@@ -185,6 +185,10 @@ public:
     // (a sampling hook inside malloc): unlike expressionInfo() it never decodes. On the result use entryForInstPC(),
     // which does neither; lineColumnForInstPC() fills a cache.
     ExpressionInfo* expressionInfoIfDecoded() const { return m_expressionInfo.get(); }
+    // StaticHeap keeps some of what a function's code has, and not the code: the record that the expression info is decoded from,
+    // and what this then no longer has (the identifiers, the constants, the functions and, if asked, the rare data).
+    const void* cachedExpressionInfo() const { return m_cachedExpressionInfo; }
+    void leaveToStaticHeap(bool rareDataToo);
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }

@@ -353,13 +353,13 @@ ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
     return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
 }
 
-UnlinkedCodeBlock* StackVisitor::Frame::unlinkedCodeBlock() const
+bool StackVisitor::Frame::isBuiltinFunction() const
 {
 #if ENABLE(FTL_JIT)
     if (m_aotFunction)
-        return m_aotFunction.unlinkedCodeBlock();
+        return m_aotFunction.isBuiltinFunction();
 #endif
-    return m_codeBlock ? m_codeBlock->unlinkedCodeBlock() : nullptr;
+    return m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
 StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
@@ -378,7 +378,12 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
     if (!hasCode())
         return CodeType::Native;
 
-    switch (unlinkedCodeBlock()->codeType()) {
+#if ENABLE(FTL_JIT)
+    JSC::CodeType type = m_aotFunction ? m_aotFunction.codeType() : m_codeBlock->codeType();
+#else
+    JSC::CodeType type = m_codeBlock->codeType();
+#endif
+    switch (type) {
     case EvalCode:
         return CodeType::Eval;
     case ModuleCode:

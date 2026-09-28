@@ -209,6 +209,8 @@ ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlo
 // (ImageFunction::usesStaticImports) may.
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
+Ref<JITCode> codeOfFunctionFromImage(ImageCode, CodeSpecializationKind);
+bool canDoWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are FunctionFacts.
 
 // Options::aotWriteImage(): everything the process compiles goes to Options::aotImagePath() when it exits.
 void addToImageBeingWritten(ScriptExecutable*, CodeSpecializationKind, const JITCode&);

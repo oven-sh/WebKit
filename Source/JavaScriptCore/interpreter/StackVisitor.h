@@ -97,7 +97,7 @@ public:
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
         // Of the code that the frame runs, if it is JavaScript.
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
-        JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlock() const;
+        JS_EXPORT_PRIVATE bool isBuiltinFunction() const; // hasCode()
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
         InlineCallFrame* inlineCallFrame() const {
 #if ENABLE(DFG_JIT)

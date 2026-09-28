@@ -657,6 +657,14 @@ void Graph::noteShapeOfSite(unsigned slot, KnownShape&& shape)
     siteConstants[slot] = shapes.size() | CompiledFunctionInfo::siteConstantIsShape;
 }
 
+void Graph::notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words)
+{
+    while (siteConstants.size() <= firstSlot + 1)
+        siteConstants.append(0);
+    siteConstants[firstSlot + 1] = (plans.size() + 1) | CompiledFunctionInfo::siteConstantIsPlan;
+    plans.appendVector(words);
+}
+
 std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
 {
     unsigned count = node->numberOfLiteralProperties;

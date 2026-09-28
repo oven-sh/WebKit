@@ -301,6 +301,15 @@ public:
         return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
     }
     void setStaticExecutable(FunctionExecutable* executable) { m_staticExecutable = executable; }
+    // StaticHeap decodes the code of every function, to see what is in it, and leaves it in the payload all the same.
+    std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks() const
+    {
+        RELEASE_ASSERT(m_isCached);
+        return { m_cachedCodeBlockForCallOffset, m_cachedCodeBlockForConstructOffset };
+    }
+    void leaveCodeInPayload(Decoder&, std::pair<int32_t, int32_t> offsetsOfCachedCodeBlocks);
+    // Which leaves this as it is: the code is `owner`'s to keep.
+    UnlinkedFunctionCodeBlock* decodeCodeLeftInPayload(VM&, CodeSpecializationKind, JSCell* owner);
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }

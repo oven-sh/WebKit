@@ -121,6 +121,10 @@ Vector<uint8_t> ImageBuilder::finish()
         for (uint32_t& constant : info.siteConstants) {
             if (!constant)
                 continue;
+            if (constant & CompiledFunctionInfo::siteConstantIsPlan) {
+                constant &= ~CompiledFunctionInfo::siteConstantIsPlan;
+                continue;
+            }
             if (!(constant & CompiledFunctionInfo::siteConstantIsShape)) {
                 constant = selectorFor(info.selectors[constant - 1]);
                 selectorIsRead.set(constant);
@@ -304,7 +308,7 @@ Vector<uint8_t> ImageBuilder::finish()
     size_t codeSize = 0;
     for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
         auto& function = m_functions[indexOfFunction];
-        recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey);
+        recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey) + function.code.info.plans.sizeInBytes();
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
         if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
@@ -435,6 +439,8 @@ Vector<uint8_t> ImageBuilder::finish()
         recordAt += info.siteConstants.sizeInBytes();
         memcpy(records + recordAt, info.knownCallees.span().data(), info.knownCallees.size() * sizeof(ImageKey));
         recordAt += info.knownCallees.size() * sizeof(ImageKey);
+        memcpy(records + recordAt, info.plans.span().data(), info.plans.sizeInBytes());
+        recordAt += info.plans.sizeInBytes();
 
         memcpy(code + codeAt, function.code.bytes.span().data(), function.code.bytes.size());
         uint32_t indexInProgram = index;
@@ -818,7 +824,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     auto key = imageKeyFor(executable, kind);
     if (!key) {
         if (Options::aotVerbose()) [[unlikely]]
-            dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " bytecode ", unlinkedCodeBlock->instructionsSize());
+            dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
         return { };
     }
     auto [image, function] = Image::find(*key);
@@ -844,7 +850,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         }
     }
 
-    if (Options::aotValidateImage()) [[unlikely]] {
+    if (Options::aotValidateImage() && unlinkedCodeBlock) [[unlikely]] {
         if (hashOfBytecode(unlinkedCodeBlock) != function->bytecodeHash) {
             dataLogLn("AOT: the image's code for ", nameForLogging(executable), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") was compiled from other bytecode");
             return { };
@@ -860,6 +866,18 @@ Ref<JITCode> codeFromImage(ImageCode code, UnlinkedCodeBlock* unlinkedCodeBlock)
     auto [image, function] = code;
     s_installedFromImage++;
     return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, JITCode::wayInto(unlinkedCodeBlock)));
+}
+
+bool canDoWithoutUnlinkedCode(JSGlobalObject* globalObject, ImageCode code)
+{
+    return !!FunctionRef { &Instance::ensure(globalObject), reinterpret_cast<const CodeHeader*>(code.image->codeFor(*code.function))->index }.facts();
+}
+
+Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind)
+{
+    auto [image, function] = code;
+    s_installedFromImage++;
+    return adoptRef(*new JITCode(const_cast<uint8_t*>(image->codeFor(*function)), *function, isCall(kind) ? JITCode::Way::Call : JITCode::Way::Construct));
 }
 
 // ---- Options::aotWriteImage()

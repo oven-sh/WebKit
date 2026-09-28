@@ -1551,6 +1551,24 @@ Decoder& Decoder::createForStaticHeap(void* address, VM& vm, Ref<CachedBytecode>
     return *decoder;
 }
 
+bool Decoder::leavesFunctionCodeInPayload() const
+{
+    return m_isForStaticHeap && StaticHeap::isBuilding() && !Options::staticHeapKeepsFunctionCode();
+}
+
+// Inside CachedFunctionCodeBlock::decode(), which allocates nothing in the static heap that is being built: what does go there.
+class KeptByStaticHeap {
+public:
+    explicit KeptByStaticHeap(Decoder& decoder)
+    {
+        if (decoder.leavesFunctionCodeInPayload()) [[unlikely]]
+            m_scope.emplace(true);
+    }
+
+private:
+    std::optional<bmalloc::StaticRegion::AllocationScope> m_scope;
+};
+
 size_t Decoder::entryOffset() const
 {
     return m_cachedBytecode->entryOffset();
@@ -2734,6 +2752,8 @@ public:
         m_needsClassFieldInitializer = rareData.m_needsClassFieldInitializer;
         m_privateBrandRequirement = rareData.m_privateBrandRequirement;
     }
+
+    bool hasStringSwitchJumpTables() const { return !!m_unlinkedStringSwitchJumpTables.size(); }
 
     UnlinkedCodeBlock::RareData* decode(Decoder& decoder) const
     {
@@ -4328,7 +4348,13 @@ public:
     {
         Tail storage;
         auto* e = extras(tail(decoder, storage).layout);
-        return e ? e->rareData.decode(decoder) : nullptr;
+        if (!e)
+            return nullptr;
+        // (The tables of switches on strings stay where they are decoded to.)
+        std::optional<KeptByStaticHeap> kept;
+        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasStringSwitchJumpTables()) [[unlikely]]
+            kept.emplace(decoder);
+        return e->rareData.decode(decoder);
     }
 
 protected:
@@ -4590,6 +4616,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     if (unsigned expected = strings ? strings->expectedAtomTableInserts(layout.identifiers.count) : layout.identifiers.count + layout.constants.count; expected >= 64)
         AtomStringImpl::reserveCapacityForCurrentThread(expected);
     if (layout.constants.count) {
+        KeptByStaticHeap kept(decoder);
         codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(layout.constants.count);
         CachedJSValuePool::decode(decoder, at<uint8_t>(layout, layout.constants), layout.constants.count, codeBlock.m_constantRegisters.mutableSpan().data(), &codeBlock, strings ? HeadPrefetch::All : HeadPrefetch::None);
     }
@@ -4601,12 +4628,15 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
 #if USE(BUN_JSC_ADDITIONS)
     // The record sits with every other block's in the cold part of the payload (see create()); on a persistent
     // payload leave its page untouched until UnlinkedCodeBlock::expressionInfo() is first asked for a position.
-    if (decoder.canBorrowPayload() && !decoder.isForStaticHeap())
+    if (decoder.canBorrowPayload() && (!decoder.isForStaticHeap() || (std::is_same_v<CodeBlockType, UnlinkedFunctionCodeBlock> && decoder.leavesFunctionCodeInPayload())))
         codeBlock.m_cachedExpressionInfo = m_expressionInfo.operator->();
     else
 #endif
         codeBlock.m_expressionInfo = m_expressionInfo->decode(decoder);
-    decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    {
+        KeptByStaticHeap kept(decoder);
+        decodeArrayFromTail<CachedIdentifier>(decoder, strings ? HeadPrefetch::All : HeadPrefetch::None, at<CachedIdentifier>(layout, layout.identifiers), layout.identifiers.count, codeBlock.m_identifiers);
+    }
     unsigned firstFunctionDeclToDecode = 0;
     if constexpr (std::is_same_v<CodeBlockType, UnlinkedModuleProgramCodeBlock>) {
         // The first ones stay in the payload until UnlinkedCodeBlock::functionDecl() asks: see CachedModuleCodeBlock::decode().
@@ -4642,6 +4672,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
     } else
 #endif
     {
+        KeptByStaticHeap kept(decoder);
         if (firstFunctionDeclToDecode) {
             unsigned count = layout.functionDecls.count;
             codeBlock.m_functionDecls = UnlinkedCodeBlock::FunctionExpressionVector(count);
@@ -4723,6 +4754,9 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     Tail tail = readTail();
     ActiveTailScope activeTail(decoder, this, tail);
     prefetchStringTableSlots(decoder, tail);
+    std::optional<bmalloc::StaticRegion::AllocationScope> notInStaticHeap;
+    if (decoder.leavesFunctionCodeInPayload()) [[unlikely]]
+        notInStaticHeap.emplace(false);
     UnlinkedFunctionCodeBlock* codeBlock = new (NotNull, allocateCell<UnlinkedFunctionCodeBlock>(decoder.vm())) UnlinkedFunctionCodeBlock(decoder, *this);
     codeBlock->finishCreation(decoder.vm());
     Base::decode(decoder, *codeBlock, tail);
@@ -6372,7 +6406,7 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key)
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
 {
     VM& vm = decoder.vm();
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
@@ -6384,6 +6418,10 @@ UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key)
     while (!worklist.isEmpty()) {
         UnlinkedCodeBlock& codeBlock = *worklist.takeLast();
         auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
+            if (executable->isCached()) {
+                bmalloc::StaticRegion::AllocationScope notInRegion(false);
+                functions.append({ executable, executable->offsetsOfCachedCodeBlocks() });
+            }
             auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
             if (forCall)
                 worklist.append(forCall);

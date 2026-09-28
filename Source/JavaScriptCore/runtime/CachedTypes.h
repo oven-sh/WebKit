@@ -298,6 +298,9 @@ public:
     // Neither is ever destroyed.
     static Decoder& createForStaticHeap(void* address, VM&, Ref<CachedBytecode>, RefPtr<SourceProvider>);
     bool isForStaticHeap() const { return m_isForStaticHeap; }
+    // Building one: the code of a function is decoded to see what is in it, and only some of that is kept (AOT::FunctionFacts).
+    bool leavesFunctionCodeInPayload() const;
+    CachedBytecode& cachedBytecode() const { return m_cachedBytecode.get(); }
     // (What refers to one of those was, for the most part, made in another process.)
     void ref() const
     {
@@ -387,7 +390,8 @@ private:
 
 // For StaticHeap. The code of the module whose entry the Decoder's CachedBytecode is for, and of every function in it; null if it
 // is not to be had. And the key it is for.
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&);
+// functions: each with UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks(), as it was.
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder&, const void* recordOfExecutable);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
