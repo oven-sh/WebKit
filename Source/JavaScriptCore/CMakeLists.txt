@@ -2064,6 +2064,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/HeapProfiler.h
 
     python/PyNativeFunction.h
+    python/PythonConfiguration.h
     python/PythonFunctionInfo.h
 
     ffi/BunFFI.h

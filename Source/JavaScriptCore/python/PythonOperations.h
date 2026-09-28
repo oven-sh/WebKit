@@ -43,6 +43,7 @@ class BytecodeIndex;
 class CodeBlock;
 class PyDict;
 class PyFrame;
+class SourceCode;
 
 namespace Python {
 
@@ -151,11 +152,16 @@ JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);
 // import name, as the statement does it. `fromList` is None or a tuple of names.
 JS_EXPORT_PRIVATE JSValue importModule(JSGlobalObject*, JSObject* globals, const String& name, JSValue fromList, unsigned level, bool wantsLeaf);
 void registerModule(JSGlobalObject*, const String& name, JSValue module);
-// How the source of a module is read. It is up to whoever embeds this. False if there is no such file.
-using SourceReader = bool (*)(const String& path, String& source);
-JS_EXPORT_PRIVATE void setSourceReader(SourceReader);
-void flushStandardOutput(JSGlobalObject*);
-void writeToStandardOutput(StringView);
+// The module that a file is, which is run if it has not been. For a module that is asked for by where it is: JavaScript's `import`.
+JSValue importModuleFromSource(JSGlobalObject*, const SourceCode&);
+// The same, as what a module of JavaScript's can import: each of its global variables by name, and itself as the default.
+void exportModule(JSGlobalObject*, const SourceCode&, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
+// OSError(errno, strerror(errno)[, filename]), or the class derived from it that is for that error.
+JS_EXPORT_PRIVATE JSValue raiseOSError(JSGlobalObject*, ThrowScope&, int errorNumber, JSValue filename = JSValue());
+// What is given for the name of a file, as the system wants it: a str, bytes, or what has __fspath__. Nothing if it raised.
+JS_EXPORT_PRIVATE std::optional<CString> toFileSystemPath(JSGlobalObject*, JSValue);
+// An attribute of the module sys, as it is now. Empty if it has been deleted.
+JSValue sysAttribute(JSGlobalObject*, ASCIILiteral name);
 
 // ---- Looking into code that is running
 

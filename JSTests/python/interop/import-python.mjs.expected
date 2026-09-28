@@ -1,0 +1,9 @@
+pkg init
+pkg.inner pkg.inner pkg
+object shapes 3 25 3
+true true Point,add,boom,call_it,data,default,describe,numbers,squares,table
+42 pkg.inner true 42
+true
+missing: Error: Could not open file 
+bad: false SyntaxError invalid syntax (bad.py, line 1)
+raises: KeyError 'k' true

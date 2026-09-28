@@ -886,17 +886,14 @@ PYTHON_RUNTIME_FUNCTION(runtimeLength)
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
 }
 
-// What is done with what an expression comes to at a prompt. FIXME: sys.displayhook
+// What is done with what an expression comes to at a prompt: sys.displayhook(value)
 PYTHON_RUNTIME_FUNCTION(displayHook)
 {
     PROLOGUE();
-    if (isNone(argument(0)))
-        return JSValue::encode(jsUndefined());
-    String text = repr(globalObject, argument(0));
-    RETURN_IF_EXCEPTION(scope, { });
-    writeToStandardOutput(makeString(text, '\n'));
-    realm->builtinsNamespace()->putDirect(vm, Identifier::fromString(vm, "_"_s), argument(0));
-    return JSValue::encode(jsUndefined());
+    JSValue hook = sysAttribute(globalObject, "displayhook"_s);
+    if (!hook)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "lost sys.displayhook"_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, hook, argument(0))));
 }
 
 // ---- Classes and modules

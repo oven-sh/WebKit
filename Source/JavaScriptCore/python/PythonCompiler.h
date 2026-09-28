@@ -68,6 +68,6 @@ JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namesp
 
 // Runs a file as `python file.py` would, as the module __main__. If an exception gets away it is reported on stderr as Python
 // reports it. Returns what the process should exit with.
-JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, const SourceCode&);
+JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, std::span<const uint8_t>, const SourceOrigin&, const String& sourceURL);
 
 } } // namespace JSC::Python

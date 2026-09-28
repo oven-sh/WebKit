@@ -45,6 +45,7 @@
 #include "Nodes.h"
 #include "ObjectConstructor.h"
 #include "Parser.h"
+#include "PythonOperations.h"
 #include "ParserError.h"
 #include "Symbol.h"
 #include "SyntheticModuleRecord.h"
@@ -1486,6 +1487,17 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    // What a Python module exports is what it has defined once it has run, as with a CommonJS module. So it is run as those are: when all of
+    // the graph that imports it has loaded, in the order of the imports, before the graph is linked.
+    case SourceProviderSourceType::Python: {
+        Ref generator = SyntheticSourceProvider::createDeferred([sourceCode] (JSGlobalObject* globalObject, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues) {
+            Python::exportModule(globalObject, sourceCode, exportNames, exportValues);
+        }, sourceCode.provider()->sourceOrigin(), sourceCode.provider()->sourceURL());
+        auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, WTF::move(generator));
+        scope.release();
+        promise->fulfill(vm, moduleRecord);
+        return promise;
+    }
     case SourceProviderSourceType::Synthetic: {
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
         if (syntheticSourceProvider->isDeferred()) {

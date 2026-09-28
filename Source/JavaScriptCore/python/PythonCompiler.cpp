@@ -436,25 +436,34 @@ JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source
 
 static void reportException(JSGlobalObject* globalObject, JSValue exception)
 {
-    auto text = formatException(globalObject, exception).utf8();
-    fwrite(text.data(), 1, text.length(), stderr);
+    // To sys.stderr, if there is one and it can be written to.
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String text = formatException(globalObject, exception);
+    JSValue file = sysAttribute(globalObject, "stderr"_s);
+    if (!file || isNone(file))
+        return;
+    JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
+    if (!scope.exception())
+        call(globalObject, write, jsString(vm, text));
+    scope.clearException();
 }
 
-int runMain(JSGlobalObject* globalObject, const SourceCode& source)
+int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& sourceURL)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
 
     PyModule* module = PyModule::create(globalObject, "__main__"_s);
-    module->namespaceObject()->putDirect(vm, vm.pythonNames().dunder_file, jsString(vm, source.provider()->sourceURL()));
+    module->namespaceObject()->putDirect(vm, vm.pythonNames().dunder_file, jsString(vm, sourceURL));
     registerModule(globalObject, "__main__"_s, module);
 
-    JSFunction* function = compileModule(globalObject, source, module->namespaceObject());
+    SourceCode source = makeSource(globalObject, bytes, origin, sourceURL);
+    JSFunction* function = source.isNull() ? nullptr : compileModule(globalObject, source, module->namespaceObject());
     if (function)
         call(globalObject, function);
 
-    flushStandardOutput(globalObject);
     Exception* exception = scope.exception();
     if (!exception)
         return 0;
@@ -468,7 +477,13 @@ int runMain(JSGlobalObject* globalObject, const SourceCode& source)
             return 0;
         if (tuple->at(0).isInt32())
             return tuple->at(0).asInt32();
-        dataLogLn(str(globalObject, tuple->at(0)));
+        JSValue file = sysAttribute(globalObject, "stderr"_s);
+        String message = str(globalObject, tuple->at(0));
+        if (!scope.exception() && file && !isNone(file)) {
+            JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
+            if (!scope.exception())
+                call(globalObject, write, jsString(vm, makeString(message, '\n')));
+        }
         scope.clearException();
         return 1;
     }

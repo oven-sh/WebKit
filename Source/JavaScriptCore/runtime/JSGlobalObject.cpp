@@ -721,6 +721,8 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+        nullptr, // configurePython
+        nullptr, // createPythonBuiltinModule
     };
     return &table;
 };

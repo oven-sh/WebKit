@@ -1,0 +1,40 @@
+Math.max => 5
+Math.PI type => ('float', 3.141592653589793)
+JSON.parse => [1, 2.5, 'x', None, True]
+attr of object => 7
+item of object => 1
+missing attr !! AttributeError 'JSObject' object has no attribute 'nope'
+set attr => {"k":5}
+set item => {"k":[1,2]}
+stringify python list => [1,"a",null,true,2]
+stringify python dict => {"a":1}
+stringify tuple => [1,2]
+new Map => (1, 1)
+call constructor => str
+iterate Map => [[1, 2], [3, 4]]
+iterate Set => [1, 2, 3]
+len(array) => 3
+array is list => ('list', [3, 1, 2, 9], [1, 2, 3])
+list method on array => [1, 2]
+js method on list !! AttributeError 'list' object has no attribute 'map'
+callback with lambda !! AttributeError 'list' object has no attribute 'filter'
+string method !! AttributeError 'str' object has no attribute 'toUpperCase'
+py str has js method? !! AttributeError 'str' object has no attribute 'toUpperCase'
+throwing js !! SyntaxError JSON Parse error: Expected '}'
+catch by type !! JSError URI error
+isinstance error => True
+repr of object => {"a":1}
+repr of function => <JSFunction max>
+str of Date => 1970-01-01T00:00:00.000Z
+bool of empty object => True
+eq identity => (True, False)
+in operator => True
+dir => ['__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__']
+keywords to js => 1
+typed array => b'hi'
+promise type => JSObject
+symbol => JSSymbol
+bigint => 1180591620717411303424
+undefined vs null => (True, True)
+int stays int => ('int', 'int', 'float')
+float to js and back => float

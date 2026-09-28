@@ -74,7 +74,10 @@
 #include "ObjectConstructor.h"
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
+#include "PythonBuiltins.h"
+#include "PythonBytes.h"
 #include "PythonCompiler.h"
+#include "PythonConfiguration.h"
 #include "PythonOperations.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
@@ -516,7 +519,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionRun);
 static JSC_DECLARE_HOST_FUNCTION(functionRunString);
 static JSC_DECLARE_HOST_FUNCTION(functionLoad);
-static JSC_DECLARE_HOST_FUNCTION(functionImportPython);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadString);
 static JSC_DECLARE_HOST_FUNCTION(functionReadFile);
 static JSC_DECLARE_HOST_FUNCTION(functionWriteFile);
@@ -887,7 +889,6 @@ private:
         addFunction(vm, "run"_s, functionRun, 1);
         addFunction(vm, "runString"_s, functionRunString, 1);
         addFunction(vm, "load"_s, functionLoad, 1);
-        addFunction(vm, "importPython"_s, functionImportPython, 1);
         addFunction(vm, "loadString"_s, functionLoadString, 1);
         addFunction(vm, "readFile"_s, functionReadFile, 2);
         addFunction(vm, "read"_s, functionReadFile, 2);
@@ -1166,6 +1167,8 @@ private:
 #endif
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+    static void configurePython(JSGlobalObject*, Python::Configuration&);
+    static JSObject* createPythonBuiltinModule(JSGlobalObject*, const String& name);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
@@ -1199,6 +1202,8 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &codeForEval,
     &canCompileStrings,
     &trustedScriptStructure,
+    &configurePython,
+    &createPythonBuiltinModule,
 };
 
 GlobalObject::GlobalObject(VM& vm, Structure* structure)
@@ -1738,6 +1743,14 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
         default:
             break;
         }
+    }
+
+    if (moduleKey.endsWith(".py"_s)) {
+        SourceCode source = Python::makeSource(globalObject, buffer.span(), SourceOrigin { moduleURL }, moduleKey);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        scope.release();
+        promise->resolve(globalObject, vm, JSSourceCode::create(vm, WTF::move(source)));
+        return promise;
     }
 
 #if ENABLE(WEBASSEMBLY)
@@ -4454,55 +4467,160 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
         jscExit(EXIT_EXCEPTION);
 }
 
-static bool readPythonSource(const String& path, String& source)
+// ---- Python
+//
+// What is up to whoever embeds the engine: what the program is, and how it gets at the system.
+
+static Python::Configuration& pythonConfiguration()
 {
-    Vector<char> buffer;
-    FILE* file = fopen(path.utf8().legacyCStringPointer(), "r");
-    if (!file)
-        return false;
-    fclose(file);
-    if (!fillBufferWithContentsOfFile(path, buffer))
-        return false;
-    source = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(buffer.span()));
-    return true;
+    static NeverDestroyed<Python::Configuration> configuration;
+    return configuration;
 }
 
-// importPython(name[, directory to look in]): the module.
-JSC_DEFINE_HOST_FUNCTION(functionImportPython, (JSGlobalObject* globalObject, CallFrame* callFrame))
+void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& configuration)
+{
+    configuration = pythonConfiguration();
+}
+
+namespace JSC { namespace Python {
+
+// posix, or as much of it as it takes to find a module and read it.
+
+// open(path, flags, mode=0o777)
+PYTHON_NATIVE(posixOpen)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "open"_s, 2, 3))
+        return { };
+    auto path = toFileSystemPath(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto flags = toIndex(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    int64_t mode = 0777;
+    if (args.size() > 2) {
+        auto given = toIndex(globalObject, args[2]);
+        RETURN_IF_EXCEPTION(scope, { });
+        mode = *given;
+    }
+    int descriptor;
+    do {
+        descriptor = ::open(path->data(), static_cast<int>(*flags) | O_CLOEXEC, static_cast<mode_t>(mode));
+    } while (descriptor < 0 && errno == EINTR);
+    if (descriptor < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno, args[0]));
+    return JSValue::encode(jsNumber(descriptor));
+}
+
+static std::optional<int> descriptorArgument(JSGlobalObject* globalObject, JSValue value)
+{
+    auto index = toIndex(globalObject, value);
+    return index ? std::optional(static_cast<int>(*index)) : std::nullopt;
+}
+
+// read(fd, length)
+PYTHON_NATIVE(posixRead)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "read"_s, 2, 2))
+        return { };
+    auto descriptor = descriptorArgument(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto length = toIndex(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (*length < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, EINVAL));
+    Vector<uint8_t> buffer(static_cast<size_t>(*length));
+    ssize_t count;
+    do {
+        count = ::read(*descriptor, buffer.mutableSpan().data(), buffer.size());
+    } while (count < 0 && errno == EINTR);
+    if (count < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, buffer.span().first(count))));
+}
+
+// write(fd, data)
+PYTHON_NATIVE(posixWrite)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "write"_s, 2, 2))
+        return { };
+    auto descriptor = descriptorArgument(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto data = bufferOf(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    // What print() writes in JavaScript goes by way of these, so this does too, or the two would come out in the wrong order.
+    if (FILE* stream = *descriptor == STDOUT_FILENO ? stdout : *descriptor == STDERR_FILENO ? stderr : nullptr) {
+        size_t written = fwrite(data->data(), 1, data->size(), stream);
+        if (written < data->size() && ferror(stream))
+            return JSValue::encode(raiseOSError(globalObject, scope, errno));
+        return JSValue::encode(jsNumber(written));
+    }
+    ssize_t count;
+    do {
+        count = ::write(*descriptor, data->data(), data->size());
+    } while (count < 0 && errno == EINTR);
+    if (count < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    return JSValue::encode(jsNumber(count));
+}
+
+// close(fd)
+PYTHON_NATIVE(posixClose)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "close"_s, 1, 1))
+        return { };
+    auto descriptor = descriptorArgument(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (::close(*descriptor) < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    RETURN_NONE();
+}
+
+static JSObject* createPosixModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    Python::setSourceReader(readPythonSource);
-    if (callFrame->argumentCount() > 1) {
-        JSValue sys = Python::importModule(globalObject, nullptr, "sys"_s, jsUndefined(), 0, false);
-        RETURN_IF_EXCEPTION(scope, { });
-        uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "path"_s)).asCell())->push(globalObject, callFrame->uncheckedArgument(1));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(Python::importModule(globalObject, nullptr, name, jsUndefined(), 0, true)));
+    PyModule* module = PyModule::create(globalObject, "posix"_s);
+    JSObject* ns = module->namespaceObject();
+    addFunction(globalObject, ns, "open"_s, posixOpen);
+    addFunction(globalObject, ns, "read"_s, posixRead);
+    addFunction(globalObject, ns, "write"_s, posixWrite);
+    addFunction(globalObject, ns, "close"_s, posixClose);
+    auto constant = [&] (ASCIILiteral name, int value) { ns->putDirect(vm, Identifier::fromString(vm, name), jsNumber(value)); };
+    constant("O_RDONLY"_s, O_RDONLY);
+    constant("O_WRONLY"_s, O_WRONLY);
+    constant("O_RDWR"_s, O_RDWR);
+    constant("O_CREAT"_s, O_CREAT);
+    constant("O_EXCL"_s, O_EXCL);
+    constant("O_TRUNC"_s, O_TRUNC);
+    constant("O_APPEND"_s, O_APPEND);
+    return module;
+}
+
+} } // namespace JSC::Python
+
+JSObject* GlobalObject::createPythonBuiltinModule(JSGlobalObject* globalObject, const String& name)
+{
+#if OS(UNIX)
+    if (name == "posix"_s)
+        return Python::createPosixModule(globalObject);
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(name);
+#endif
+    return nullptr;
 }
 
 // jsc file.py, as `python file.py` would run it.
 static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
 {
-    VM& vm = globalObject->vm();
-    String text;
-    if (!readPythonSource(fileName, text)) {
+    Vector<char> buffer;
+    if (!fillBufferWithContentsOfFile(fileName, buffer)) {
         fprintf(stderr, "Could not open file: %s\n", fileName.utf8().legacyCStringPointer());
         return false;
     }
-    Python::setSourceReader(readPythonSource);
-
-    // The directory of the script is where its imports are looked for first.
-    JSValue sys = Python::importModule(globalObject, nullptr, "sys"_s, jsUndefined(), 0, false);
-    size_t slash = fileName.reverseFind('/');
-    JSValue directory = jsString(vm, slash == notFound ? emptyString() : fileName.left(slash));
-    uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "path"_s)).asCell())->push(globalObject, directory);
-    uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "argv"_s)).asCell())->push(globalObject, jsString(vm, fileName));
-
-    return !Python::runMain(globalObject, Python::makeSource(text, SourceOrigin { absoluteFileURL(fileName) }, fileName));
+    return !Python::runMain(globalObject, byteCast<uint8_t>(buffer.span()), SourceOrigin { absoluteFileURL(fileName) }, fileName);
 }
 
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)
@@ -4513,6 +4631,20 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // As for `python file.py arguments`: the program is the first file, whichever language it is in, and its directory is where modules are
+    // looked for first.
+    for (auto& script : scripts) {
+        if (script.codeSource != Script::CodeSource::File)
+            continue;
+        const String& program = script.argument;
+        auto& configuration = pythonConfiguration();
+        configuration.arguments.append(program);
+        configuration.arguments.appendVector(options.m_arguments);
+        String path = absoluteFileURL(program).fileSystemPath();
+        configuration.moduleSearchPaths.append(path.left(path.reverseFind('/')));
+        break;
+    }
 
 #if ENABLE(SAMPLING_FLAGS)
     SamplingFlags::start();

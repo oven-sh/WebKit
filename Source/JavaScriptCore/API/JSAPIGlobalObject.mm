@@ -79,6 +79,8 @@ const GlobalObjectMethodTable* JSAPIGlobalObject::globalObjectMethodTable()
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+        nullptr, // configurePython
+        nullptr, // createPythonBuiltinModule
     };
     return &table;
 };

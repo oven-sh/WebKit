@@ -28,7 +28,9 @@
 
 #include "JSLexicalEnvironment.h"
 #include "PythonBytes.h"
+#include "PythonCodecs.h"
 #include "PythonGenerators.h"
+#include <wtf/SafeStrerror.h>
 #include <wtf/text/StringBuilder.h>
 
 // The exceptions, and the functions of the builtins module.
@@ -388,6 +390,57 @@ PYTHON_NATIVE(osErrorStr)
     return JSValue::encode(jsString(vm, plain));
 }
 
+JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorNumber, JSValue filename)
+{
+    VM& vm = globalObject->vm();
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(errorNumber));
+    arguments.append(jsString(vm, String::fromUTF8(safeStrerror(errorNumber).span())));
+    if (filename)
+        arguments.append(filename);
+    JSValue exception = call(globalObject, globalObject->pyRealm()->typeOSError(), arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    setContext(globalObject, asObject(exception));
+    throwException(globalObject, scope, exception);
+    return { };
+}
+
+std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue given)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue path = given;
+    if (!path.isString() && !tryBufferOf(path)) {
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!method) {
+            raiseTypeError(globalObject, scope, makeString("expected str, bytes or os.PathLike object, not "_s, typeName(globalObject, path)));
+            return std::nullopt;
+        }
+        path = callMethod(globalObject, method, self);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!path.isString() && bytesKindOf(path) != BytesKind::Bytes) {
+            raiseTypeError(globalObject, scope, makeString("expected "_s, typeName(globalObject, given), ".__fspath__() to return str or bytes, not "_s, typeName(globalObject, path)));
+            return std::nullopt;
+        }
+    }
+    std::optional<ByteVector> encoded;
+    std::span<const uint8_t> bytes;
+    if (path.isString()) {
+        // What could not be decoded when the name was read is put back as it was.
+        encoded = encodeString(globalObject, path, "utf-8"_s, "surrogateescape"_s);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        bytes = encoded->span();
+    } else
+        bytes = *tryBufferOf(path);
+    if (WTF::find(bytes, static_cast<uint8_t>(0)) != notFound) {
+        raiseValueError(globalObject, scope, path.isString() ? "embedded null character"_s : "embedded null byte"_s);
+        return std::nullopt;
+    }
+    return CString(byteCast<char>(bytes));
+}
+
 // SyntaxError(msg, (filename, lineno, offset, text, end_lineno, end_offset))
 PYTHON_NATIVE(syntaxErrorInit)
 {
@@ -569,38 +622,28 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
 
 // ---- print()
 
-static Vector<char, 4096>& outputBuffer()
+// file.write(str(value))
+static void writeTo(JSGlobalObject* globalObject, JSValue file, JSValue value)
 {
-    static NeverDestroyed<Vector<char, 4096>> buffer;
-    return buffer;
-}
-
-void flushStandardOutput(JSGlobalObject*)
-{
-    auto& buffer = outputBuffer();
-    if (!buffer.isEmpty())
-        fwrite(buffer.span().data(), 1, buffer.size(), stdout);
-    buffer.shrink(0);
-    fflush(stdout);
-}
-
-void writeToStandardOutput(StringView text)
-{
-    auto& buffer = outputBuffer();
-    auto utf8 = text.utf8(); // FIXME: A lone surrogate is an error.
-    buffer.append(utf8.span());
-    if (buffer.size() >= 4096) {
-        fwrite(buffer.span().data(), 1, buffer.size(), stdout);
-        buffer.shrink(0);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!value.isString()) {
+        String text = str(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, void());
+        value = jsString(vm, text);
     }
+    scope.release();
+    call(globalObject, write, value);
 }
 
 // print(*objects, sep=' ', end='\n', file=None, flush=False)
 PYTHON_NATIVE(builtinPrint)
 {
     NATIVE_PROLOGUE();
-    String separator = " "_s;
-    String end = "\n"_s;
+    JSValue separator;
+    JSValue end;
     JSValue file;
     bool flush = false;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
@@ -611,7 +654,7 @@ PYTHON_NATIVE(builtinPrint)
                 continue;
             if (!value.isString())
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, " must be None or a string, not "_s, typeName(globalObject, value))));
-            (name == "sep"_s ? separator : end) = asString(value)->value(globalObject);
+            (name == "sep"_s ? separator : end) = value;
         } else if (name == "file"_s)
             file = isNone(value) ? JSValue() : value;
         else if (name == "flush"_s) {
@@ -621,31 +664,33 @@ PYTHON_NATIVE(builtinPrint)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("print() got an unexpected keyword argument '"_s, name, '\'')));
     }
 
-    StringBuilder builder;
-    for (unsigned i = 0; i < args.size(); ++i) {
-        if (i)
-            builder.append(separator);
-        String text = str(globalObject, args[i]);
-        RETURN_IF_EXCEPTION(scope, { });
-        builder.append(text);
+    if (!file) {
+        file = sysAttribute(globalObject, "stdout"_s);
+        if (!file)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "lost sys.stdout"_s));
+        // There may be none, as in a program with no console.
+        if (isNone(file))
+            RETURN_NONE();
     }
-    builder.append(end);
 
-    if (file) {
-        JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        call(globalObject, write, jsString(vm, builder.toString()));
-        RETURN_IF_EXCEPTION(scope, { });
-        if (flush) {
-            JSValue flushMethod = getAttribute(globalObject, file, Identifier::fromString(vm, "flush"_s));
+    // Each thing is written by itself, which whatever the file is can tell.
+    for (unsigned i = 0; i < args.size(); ++i) {
+        if (i) {
+            writeTo(globalObject, file, separator ? separator : JSValue(vm.smallStrings.singleCharacterString(' ')));
             RETURN_IF_EXCEPTION(scope, { });
-            call(globalObject, flushMethod);
         }
-        RETURN_NONE();
+        writeTo(globalObject, file, args[i]);
+        RETURN_IF_EXCEPTION(scope, { });
     }
-    writeToStandardOutput(builder.toString());
-    if (flush)
-        flushStandardOutput(globalObject);
+    writeTo(globalObject, file, end ? end : JSValue(vm.smallStrings.singleCharacterString('\n')));
+    RETURN_IF_EXCEPTION(scope, { });
+
+    if (flush) {
+        JSValue flushMethod = getAttribute(globalObject, file, Identifier::fromString(vm, "flush"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        call(globalObject, flushMethod);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RETURN_NONE();
 }
 
