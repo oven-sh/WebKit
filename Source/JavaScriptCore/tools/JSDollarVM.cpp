@@ -74,6 +74,8 @@
 #include "Parser.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "PythonASTDumper.h"
+#include "PythonParser.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
@@ -2399,6 +2401,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsPrivateSymbol);
 static JSC_DECLARE_HOST_FUNCTION(functionIsDefinitelyAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
+static JSC_DECLARE_HOST_FUNCTION(functionPythonAST);
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
@@ -4944,6 +4947,37 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
     return JSValue::encode(jsBoolean(impl && impl->isAtom()));
 }
 
+// Usage: $vm.pythonAST(source[, "exec" | "single" | "eval"])
+// The syntax tree of Python source, as JSON. Throws a SyntaxError that says what CPython would say.
+JSC_DEFINE_HOST_FUNCTION(functionPythonAST, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String source = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto kind = Python::Module::Kind::Module;
+    if (!callFrame->argument(1).isUndefined()) {
+        String mode = callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (mode == "single"_s)
+            kind = Python::Module::Kind::Interactive;
+        else if (mode == "eval"_s)
+            kind = Python::Module::Kind::Expression;
+    }
+
+    Python::Arena arena;
+    Vector<Python::SyntaxWarning> warnings;
+    Python::SyntaxError error;
+    Python::Module* module = Python::parse(vm, arena, source, kind, warnings, error);
+    if (!module) {
+        ASCIILiteral name = error.kind == Python::SyntaxError::Kind::SyntaxError ? "SyntaxError"_s : error.kind == Python::SyntaxError::Kind::IndentationError ? "IndentationError"_s : "TabError"_s;
+        return throwVMError(globalObject, scope, createSyntaxError(globalObject, makeString(name, ": "_s, error.message, " ("_s, error.line, ':', error.column, ')')));
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Python::dumpAST(globalObject, *module))));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -6167,6 +6201,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "isDefinitelyAtomString"_s, functionIsDefinitelyAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "isAtomString"_s, functionIsAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
+    addFunction(vm, allowIfNotFuzz, "pythonAST"_s, functionPythonAST, 2);
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);
     addFunction(vm, alwaysAllow, "wallTimeNow"_s, functionWallTimeNow, 0);

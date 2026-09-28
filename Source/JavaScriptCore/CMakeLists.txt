@@ -43,6 +43,7 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/llint"
     "${JAVASCRIPTCORE_DIR}/lol"
     "${JAVASCRIPTCORE_DIR}/parser"
+    "${JAVASCRIPTCORE_DIR}/python"
     "${JAVASCRIPTCORE_DIR}/profiler"
     "${JAVASCRIPTCORE_DIR}/runtime"
     "${JAVASCRIPTCORE_DIR}/runtime/temporal/core"

@@ -737,6 +737,10 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/PythonASTDumper.cpp
+python/PythonLexer.cpp
+python/PythonParser.cpp
+
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp
 runtime/AggregateErrorConstructor.cpp
