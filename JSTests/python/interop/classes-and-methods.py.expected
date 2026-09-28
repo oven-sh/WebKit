@@ -1,0 +1,30 @@
+class => (3, 4, 5, 7, True)
+derived class => (7, True, True)
+star arguments => 10
+static => (0, 'JSObject')
+builtin constructors => (0, 2, 3, True)
+promise => JSObject
+callable both ways is called => ('called', 1, 0, 'str', 3)
+new still works => 3
+through map() => [4, 6]
+as a key function => ['JSObject']
+constructor raises !! ValueError in constructor
+hot => 4501500
+JavaScript still cannot => ('TypeError: Cannot call a class constructor Point without |new|', 'TypeError: calling Map constructor without new is invalid')
+JS calls Python calls class => 3
+Python calls JS calls class => TypeError: Cannot call a class constructor Point3 without |new|
+bound => (5, 5, 5)
+host function => 1
+old style => 9
+own is as it is => (5, None, True)
+globals => (True, True, True, True)
+namespaces => (True, 2, True, True)
+constructor => (True, True, True)
+what a getter gives => no this
+inner class => True
+equal like methods => (True, False, True, True, 1, True)
+__self__ and __func__ => (True, True, 'bound norm')
+not a method !! AttributeError 'JSFunction' object has no attribute '__self__'
+getattr => 5
+super in JS => 7
+array methods => ('list',)

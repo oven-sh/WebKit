@@ -29,6 +29,7 @@
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
+#include "PythonOperations.h"
 #include "SourceCode.h"
 #include "StackFrame.h"
 #include "TopExceptionScope.h"
@@ -337,9 +338,29 @@ String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const S
     return makeString("The "_s, interfaceNameSpan, '.', attributeName, " setter can only be used on instances of "_s, interfaceNameSpan);
 }
 
-Exception* throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral constructorName)
+JSValue throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral constructorName)
 {
+    VM& vm = globalObject->vm();
+    // This is come to in the constructor's own frame.
+    CallFrame* callFrame = vm.topCallFrame;
+    if (Python::isCalledByPython(vm, callFrame)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, construct(globalObject, callFrame->jsCallee(), ArgList(callFrame), "It is not a constructor"_s));
     return throwTypeError(globalObject, scope, makeString("calling "_s, constructorName, " constructor without new is invalid"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callConstructorWithoutNew, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What called this is the constructor.
+    if (Python::isCalledByPython(vm, callFrame->callerFrame())) [[unlikely]] {
+        MarkedArgumentBuffer arguments;
+        auto* array = uncheckedDowncast<JSArray>(callFrame->uncheckedArgument(1).asCell());
+        for (unsigned i = 0; i < array->length(); ++i)
+            arguments.append(array->getIndexQuickly(i));
+        RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, callFrame->uncheckedArgument(0), arguments, "It is not a constructor"_s)));
+    }
+    return throwVMTypeError(globalObject, scope, asString(callFrame->uncheckedArgument(2))->value(globalObject));
 }
 
 Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope)

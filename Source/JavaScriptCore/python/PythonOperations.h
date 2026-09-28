@@ -145,13 +145,8 @@ bool classComesBeforeInstance(JSGlobalObject*, PyType*, PropertyName, AttributeA
 // Whether it has __set__ or __delete__.
 bool isDataDescriptor(JSGlobalObject*, JSValue);
 
-// ---- Modules
-
-// A module is an instance of the class `module`, or of one derived from it, like any other instance. Its attributes, which are its properties, are
-// the global variables of the code in it.
-JS_EXPORT_PRIVATE JSObject* newModule(JSGlobalObject*, const String& name, PyType* = nullptr);
-// The value, if it is a module. Otherwise null.
-JSObject* tryModule(JSGlobalObject*, JSValue);
+// Whether it is Python that made the call that a frame is for: code in Python, or something of Python's that is written in C++ and calls what it is given.
+JS_EXPORT_PRIVATE bool isCalledByPython(VM&, CallFrame*);
 
 // ---- Global variables
 
@@ -199,6 +194,12 @@ bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);
 
 // ---- Modules
+
+// A module is an instance of the class `module`, or of one derived from it, like any other instance. Its attributes, which are its properties, are
+// the global variables of the code in it.
+JS_EXPORT_PRIVATE JSObject* newModule(JSGlobalObject*, const String& name, PyType* = nullptr);
+// The value, if it is a module. Otherwise null.
+JSObject* tryModule(JSGlobalObject*, JSValue);
 
 // import name, as the statement does it. `fromList` is None or a tuple of names.
 JS_EXPORT_PRIVATE JSValue importModule(JSGlobalObject*, JSObject* globals, const String& name, JSValue fromList, unsigned level, bool wantsLeaf);
@@ -271,6 +272,8 @@ JSValue format(JSGlobalObject*, JSValue, const String& specification);
 // Never -1, unless it raised.
 int64_t hash(JSGlobalObject*, JSValue);
 int64_t hashOfString(const String&);
+// object.__hash__
+int64_t hashOfPointer(const void*);
 
 // ---- Numbers
 

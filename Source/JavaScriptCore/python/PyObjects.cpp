@@ -240,9 +240,9 @@ void PyNativeFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyNativeFunction);
 
-PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, Kind kind, JSObject* owner, unsigned data)
+PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, Kind kind, JSObject* owner, unsigned data, ImplementationVisibility visibility)
 {
-    NativeExecutable* executable = vm.getHostFunction(nativeFunction, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    NativeExecutable* executable = vm.getHostFunction(nativeFunction, visibility, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
     auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, executable, globalObject, globalObject->pyRealm()->nativeFunctionStructure(), kind, owner, data);
     function->finishCreation(vm);
     return function;

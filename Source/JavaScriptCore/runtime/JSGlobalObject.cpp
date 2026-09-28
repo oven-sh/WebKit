@@ -2075,6 +2075,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pyRuntimeFunctions)].initLater([] (const Initializer<JSCell>& init) {
             init.set(init.owner->pyRealm()->runtimeFunctions());
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::callConstructorWithoutNew)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 3, "callConstructorWithoutNew"_s, callConstructorWithoutNew, ImplementationVisibility::Private));
+        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncFunctionDrive)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "asyncFunctionDrive"_s, asyncFunctionDrive, ImplementationVisibility::Private));
         });

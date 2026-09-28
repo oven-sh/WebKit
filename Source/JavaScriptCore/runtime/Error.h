@@ -84,7 +84,11 @@ JSObject* createTypeErrorCopy(JSGlobalObject*, JSValue error);
 // Methods to throw Errors.
 
 // Convenience wrappers, create an throw an exception with a default message.
-JS_EXPORT_PRIVATE Exception* throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject*, ThrowScope&, ASCIILiteral constructorName);
+// What a constructor that is written in C++ does when it is called and not constructed with. It throws, and what it returns is of no account, unless
+// it is Python that called it, which has no `new`. Then the constructor is constructed with, and what is returned is what that made.
+JS_EXPORT_PRIVATE JSValue throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject*, ThrowScope&, ASCIILiteral constructorName);
+// The same, for one that is written in JavaScript: callConstructorWithoutNew(constructor, an array of the arguments, what to say).
+JSC_DECLARE_HOST_FUNCTION(callConstructorWithoutNew);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, ASCIILiteral errorMessage);
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String& errorMessage);

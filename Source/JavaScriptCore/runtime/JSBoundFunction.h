@@ -48,6 +48,8 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, const SourceCode&);
+    // target.bind(boundThis, ...boundArgs). The frame is that of whoever wants it done.
+    JS_EXPORT_PRIVATE static JSBoundFunction* bind(JSGlobalObject*, CallFrame*, JSObject* target, JSValue boundThis, ArgList boundArgs);
     static JSBoundFunction* createRaw(VM&, JSGlobalObject*, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode&);
     
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);

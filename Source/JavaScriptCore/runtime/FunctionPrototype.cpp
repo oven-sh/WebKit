@@ -149,51 +149,15 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
 
     JSValue boundThis;
     ArgList boundArgs;
-    size_t numBoundArgs;
-    if (size_t argCount = callFrame->argumentCount(); argCount > 1) {
+    if (callFrame->argumentCount() > 1) {
         boundThis = callFrame->uncheckedArgument(0);
         boundArgs = ArgList(callFrame, 1);
-        numBoundArgs = argCount - 1;
     } else {
         boundThis = callFrame->argument(0);
         boundArgs = ArgList();
-        numBoundArgs = 0;
     }
 
-    double length = 0;
-    JSString* name = nullptr;
-    JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
-        // Do nothing! 'length' and 'name' computation are lazily done.
-        // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
-        // at the time of creation of JSBoundFunction.
-        length = PNaN; // Defer computation.
-    } else {
-        bool found = target->hasOwnProperty(globalObject, vm.propertyNames->length);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (found) {
-            JSValue lengthValue = target->get(globalObject, vm.propertyNames->length);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (lengthValue.isNumber()) {
-                length = lengthValue.toIntegerOrInfinity(globalObject);
-                RETURN_IF_EXCEPTION(scope, { });
-                if (length > numBoundArgs)
-                    length -= numBoundArgs;
-                else
-                    length = 0;
-            }
-        }
-        JSValue nameValue = target->get(globalObject, vm.propertyNames->name);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (nameValue.isString())
-            name = asString(nameValue);
-        else
-            name = jsEmptyString(vm);
-    }
-
-    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
-    SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::bind(globalObject, callFrame, target, boundThis, boundArgs)));
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#isallowedreceiverfunctionforcallerandargumentsfunc-expectedrealm (except step 3)

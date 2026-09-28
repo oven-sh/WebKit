@@ -751,6 +751,17 @@ PYTHON_NATIVE(methodEq)
     return JSValue::encode(jsBoolean(isIdentical(asMethod(args[0])->function(), other->function()) && isIdentical(asMethod(args[0])->self(), other->self())));
 }
 
+PYTHON_NATIVE(methodHash)
+{
+    NATIVE_PROLOGUE();
+    JSValue self = asMethod(args[0])->self();
+    int64_t function = hash(globalObject, asMethod(args[0])->function());
+    RETURN_IF_EXCEPTION(scope, { });
+    // By which object it is, whatever the object's own __hash__ says, since that is how they are compared.
+    int64_t result = (self.isCell() ? hashOfPointer(self.asCell()) : static_cast<int64_t>(JSValue::encode(self))) ^ function;
+    return JSValue::encode(jsNumber(result == -1 ? -2 : result));
+}
+
 // What a bound method does not have itself, the function has.
 PYTHON_NATIVE(methodGetAttribute)
 {
@@ -1167,6 +1178,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "__repr__"_s, nativeRepr },
         { "__call__"_s, callableCall },
         { "__eq__"_s, methodEq },
+        { "__hash__"_s, methodHash },
         { "__getattribute__"_s, methodGetAttribute },
     });
     addMember(globalObject, method, "__func__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->function(); });

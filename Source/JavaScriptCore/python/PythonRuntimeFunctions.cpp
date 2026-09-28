@@ -977,7 +977,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
 {
     JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     auto add = [&] (ASCIILiteral name, NativeFunction function) {
-        object->putDirect(vm, Identifier::fromString(vm, name), JSFunction::create(vm, globalObject, 0, String(name), function, ImplementationVisibility::Private));
+        object->putDirect(vm, Identifier::fromString(vm, name), PyNativeFunction::create(vm, globalObject, 0, String(name), function, PyNativeFunction::Kind::Function, nullptr, 0, ImplementationVisibility::Private));
     };
     add("loadName"_s, loadName);
     add("loadFromNamespace"_s, loadFromNamespace);

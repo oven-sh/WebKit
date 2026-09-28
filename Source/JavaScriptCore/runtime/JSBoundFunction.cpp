@@ -31,6 +31,7 @@
 #include "FunctionPrototype.h"
 #include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
+#include "SourceTaintedOrigin.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 
@@ -207,6 +208,48 @@ JSBoundFunction* JSBoundFunction::create(VM& vm, JSGlobalObject* globalObject, J
 
     function->finishCreation(vm);
     return function;
+}
+
+JSBoundFunction* JSBoundFunction::bind(JSGlobalObject* globalObject, CallFrame* callFrame, JSObject* target, JSValue boundThis, ArgList boundArgs)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    size_t numBoundArgs = boundArgs.size();
+
+    double length = 0;
+    JSString* name = nullptr;
+    JSFunction* function = dynamicDowncast<JSFunction>(target);
+    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
+        // Do nothing! 'length' and 'name' computation are lazily done.
+        // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
+        // at the time of creation of JSBoundFunction.
+        length = PNaN; // Defer computation.
+    } else {
+        bool found = target->hasOwnProperty(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (found) {
+            JSValue lengthValue = target->get(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (lengthValue.isNumber()) {
+                length = lengthValue.toIntegerOrInfinity(globalObject);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                if (length > numBoundArgs)
+                    length -= numBoundArgs;
+                else
+                    length = 0;
+            }
+        }
+        JSValue nameValue = target->get(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (nameValue.isString())
+            name = asString(nameValue);
+        else
+            name = jsEmptyString(vm);
+    }
+
+    auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
+    SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
+    RELEASE_AND_RETURN(scope, create(vm, globalObject, target, boundThis, boundArgs, length, name, source));
 }
 
 JSBoundFunction* JSBoundFunction::createRaw(VM& vm, JSGlobalObject* globalObject, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode& source)

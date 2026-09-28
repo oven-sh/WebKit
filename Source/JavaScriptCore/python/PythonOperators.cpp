@@ -27,6 +27,7 @@
 #include "PythonOperations.h"
 
 #include "IteratorOperations.h"
+#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSGenerator.h"
 #include "PyDict.h"
@@ -842,7 +843,7 @@ int64_t hashOfString(const String& string)
     return string.isEmpty() ? 0 : static_cast<int64_t>(string.impl()->hash()) + 1;
 }
 
-static int64_t hashOfPointer(const void* pointer)
+int64_t hashOfPointer(const void* pointer)
 {
     // Cells are aligned to 16 bytes, so the low bits say nothing.
     uint64_t bits = std::bit_cast<uintptr_t>(pointer);
@@ -915,6 +916,10 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
     case HeapBigIntType:
         return hashOfNumber(globalObject, classify(value));
     case JSFunctionType:
+        // One that is bound to an object is equal to another that is: see JSFunction.__eq__.
+        if (cell->inherits<JSBoundFunction>())
+            break;
+        return hashOfPointer(cell);
     case SymbolType:
         return hashOfPointer(cell);
     default:

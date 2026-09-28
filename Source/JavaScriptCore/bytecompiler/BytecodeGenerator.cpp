@@ -580,38 +580,22 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     case ConstructorKind::None:
         break;
     case ConstructorKind::Naked:
-        if (!isConstructor()) {
-            String constructorName = functionNode->ident().string();
-            if (!constructorName || constructorName.isEmpty())
-                emitThrowTypeError("Cannot call a constructor without |new|"_s);
-            else {
-                auto errorMessageStr = tryMakeString("Cannot call a constructor "_s, constructorName, " without |new|"_s);
-                if (!errorMessageStr)
-                    emitThrowTypeError("Cannot call a constructor without |new|"_s);
-                else
-                    emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-            }
-            return;
-        }
-        break;
     case ConstructorKind::Base:
     case ConstructorKind::Extends:
         if (!isConstructor()) {
+            ASCIILiteral what = constructorKind() == ConstructorKind::Naked ? "a constructor"_s : "a class constructor"_s;
             String constructorName = functionNode->ident().string();
-            if (!constructorName || constructorName.isEmpty())
-                emitThrowTypeError("Cannot call a class constructor without |new|"_s);
-            else {
-                auto errorMessageStr = tryMakeString("Cannot call a class constructor "_s, constructorName, " without |new|"_s);
-                if (!errorMessageStr)
-                    emitThrowTypeError("Cannot call a class constructor without |new|"_s);
-                else
-                    emitThrowTypeError(Identifier::fromString(m_vm, errorMessageStr));
-            }
+            String message;
+            if (!constructorName.isEmpty())
+                message = tryMakeString("Cannot call "_s, what, ' ', constructorName, " without |new|"_s);
+            if (message.isNull())
+                message = makeString("Cannot call "_s, what, " without |new|"_s);
+            emitCallOfConstructorWithoutNew(Identifier::fromString(m_vm, message));
             return;
         }
         break;
     }
-    
+
     if (functionNameIsInScope(functionNode->ident(), functionNode->functionMode())) {
         ASSERT(parseMode != SourceParseMode::GeneratorBodyMode);
         ASSERT(!isAsyncFunctionBodyParseMode(parseMode));
@@ -4141,6 +4125,24 @@ void BytecodeGenerator::emitCallDefineProperty(RegisterID* newObj, RegisterID* p
     } else {
         OpDefineDataProperty::emit(this, newObj, propertyNameRegister, valueRegister, emitLoad(nullptr, jsNumber(attributes.rawRepresentation())));
     }
+}
+
+// All that there is to the code of a constructor for when it is called and not constructed with. That is a TypeError, unless it is Python that
+// called it, which has no `new`: see callConstructorWithoutNew().
+void BytecodeGenerator::emitCallOfConstructorWithoutNew(const Identifier& message)
+{
+    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::callConstructorWithoutNew);
+    RefPtr<RegisterID> arguments = newTemporary();
+    OpCreateRest::emit(this, arguments.get(), 0);
+    CallArguments call(*this, nullptr, 3);
+    emitLoad(call.thisRegister(), jsUndefined());
+    move(call.argumentRegister(0), &m_calleeRegister);
+    move(call.argumentRegister(1), arguments.get());
+    emitLoad(call.argumentRegister(2), message);
+    // The error is put down to where the constructor begins.
+    JSTextPosition position(m_scopeNode->source().startOffset());
+    RefPtr<RegisterID> result = emitCall(newTemporary(), function.get(), NoExpectedFunction, call, position, position, position, DebuggableCall::No);
+    OpRet::emit(this, result.get());
 }
 
 RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)

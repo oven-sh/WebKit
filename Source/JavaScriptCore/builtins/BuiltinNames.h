@@ -232,6 +232,7 @@ namespace JSC {
     macro(enqueueJob) \
     macro(pyBoundArgumentsMarker) \
     macro(pyRuntimeFunctions) \
+    macro(callConstructorWithoutNew) \
 
 
 namespace Symbols {

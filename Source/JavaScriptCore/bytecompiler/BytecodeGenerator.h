@@ -786,6 +786,7 @@ namespace JSC {
         RegisterID* emitAsyncIteratorNext(RegisterID* dst, RegisterID* next, RegisterID* iterator, RegisterID* value, const ThrowableExpressionData* node);
 
         RegisterID* moveLinkTimeConstant(RegisterID* dst, LinkTimeConstant);
+        void emitCallOfConstructorWithoutNew(const Identifier& message);
         RegisterID* moveEmptyValue(RegisterID* dst);
 
         RegisterID* emitToNumber(RegisterID* dst, RegisterID* src);

@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "IteratorOperations.h"
+#include "JSBoundFunction.h"
 #include "JSONObject.h"
 #include "ObjectConstructor.h"
 #include "ObjectPrototypeInlines.h"
@@ -235,6 +236,53 @@ static JSValue getFunctionName(JSGlobalObject* globalObject, JSValue self)
     return asObject(self)->get(globalObject, globalObject->vm().propertyNames->name);
 }
 
+// A function that has been bound to an object and nothing else is to Python what a bound method is.
+static JSBoundFunction* tryMethodOfObject(JSValue value)
+{
+    auto* function = dynamicDowncast<JSBoundFunction>(value);
+    return function && !function->boundArgsLength() ? function : nullptr;
+}
+
+PYTHON_NATIVE(functionEq)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    auto* self = tryMethodOfObject(args[0]);
+    auto* other = tryMethodOfObject(args.at(1));
+    if (!self || !other)
+        RETURN_NOT_IMPLEMENTED();
+    return JSValue::encode(jsBoolean(self->targetFunction() == other->targetFunction() && isIdentical(self->boundThis(), other->boundThis())));
+}
+
+PYTHON_NATIVE(functionHash)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    auto* self = tryMethodOfObject(args[0]);
+    if (!self || !self->boundThis().isCell())
+        return JSValue::encode(jsNumber(hashOfPointer(args[0].asCell())));
+    int64_t result = hashOfPointer(self->boundThis().asCell()) ^ hashOfPointer(self->targetFunction());
+    return JSValue::encode(jsNumber(result == -1 ? -2 : result));
+}
+
+static JSValue getFunctionSelf(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* method = tryMethodOfObject(self))
+        return method->boundThis();
+    return raise(globalObject, scope, BuiltinType::AttributeError, "'JSFunction' object has no attribute '__self__'"_s);
+}
+
+static JSValue getFunctionFunc(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* method = tryMethodOfObject(self))
+        return method->targetFunction();
+    return raise(globalObject, scope, BuiltinType::AttributeError, "'JSFunction' object has no attribute '__func__'"_s);
+}
+
 void initializeJavaScriptTypes(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
@@ -252,7 +300,13 @@ void initializeJavaScriptTypes(JSGlobalObject* globalObject)
         { "__dir__"_s, objectDir },
         { "new"_s, objectNew },
     });
+    addMethods(globalObject, realm->typeJSFunction(), {
+        { "__eq__"_s, functionEq },
+        { "__hash__"_s, functionHash },
+    });
     addGetSet(globalObject, realm->typeJSFunction(), "__name__"_s, getFunctionName);
+    addGetSet(globalObject, realm->typeJSFunction(), "__self__"_s, getFunctionSelf);
+    addGetSet(globalObject, realm->typeJSFunction(), "__func__"_s, getFunctionFunc);
 }
 
 // ---- What JavaScript sees of what is Python's
@@ -389,6 +443,19 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     if (name == vm.propertyNames->next && type->lookup(vm, names.dunder_next))
         return function("next"_s);
     return { };
+}
+
+bool isCalledByPython(VM& vm, CallFrame* callFrame)
+{
+    // What is written in C++ comes back into the engine to make a call, and that is passed over.
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    CallFrame* caller = callFrame->callerFrame(entryFrame);
+    if (!caller || caller->isNativeCalleeFrame())
+        return false;
+    if (CodeBlock* codeBlock = caller->codeBlock())
+        return codeBlock->source().provider()->isPython();
+    JSCell* callee = caller->jsCallee();
+    return callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType || callee->type() == PyInstanceType;
 }
 
 // Whether what JavaScript is working on is Python's: a class, or something whose prototype is one. Something of JavaScript's can have a class

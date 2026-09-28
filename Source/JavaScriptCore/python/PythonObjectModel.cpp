@@ -28,6 +28,8 @@
 
 #include "CodeBlock.h"
 #include "ErrorInstance.h"
+#include "JSBoundFunction.h"
+#include "JSGlobalProxy.h"
 #include "FunctionExecutable.h"
 #include "JSCInlines.h"
 #include "PyDict.h"
@@ -449,6 +451,37 @@ JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyNam
     return { };
 }
 
+// An attribute of a JavaScript object is a property of it, as JavaScript finds it. Empty if it has none.
+//
+// A function that is got from what an object inherits from remembers the object, as one that is got from a class does in Python: it is what
+// obj.method.bind(obj) would be. One that the object has of its own is as it is, as one in an instance's __dict__ is in Python. So js.Math.floor and
+// js.Array are themselves. Nor does it apply to a class, or to obj.constructor, which say what the object is and are not something that it does.
+enum class InheritedFunctions : uint8_t { Bind, LeaveAsFound };
+static JSValue getJavaScriptProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, InheritedFunctions inheritedFunctions)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    bool found = object->getPropertySlot(globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!found)
+        return { };
+    JSValue value = slot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (inheritedFunctions == InheritedFunctions::LeaveAsFound || !slot.isValue() || name == vm.propertyNames->constructor)
+        return value;
+    // What the global object has is what globalThis has, which stands for it.
+    JSObject* owner = object->type() == GlobalProxyType ? uncheckedDowncast<JSGlobalProxy>(object)->target() : object;
+    if (slot.slotBase() == owner)
+        return value;
+    auto* function = dynamicDowncast<JSFunction>(value);
+    if (!function || function->inherits<JSBoundFunction>() || function->inherits<PyNativeFunction>())
+        return value;
+    if (!function->isHostOrBuiltinFunction() && (function->jsExecutable()->isClassConstructorFunction() || isPythonFunction(function)))
+        return value;
+    RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, function, object, ArgList()));
+}
+
 // object.__getattribute__, likewise.
 JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* type, PropertyName name)
 {
@@ -465,12 +498,10 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
         if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
     } else if (isJavaScriptObject(globalObject, type) && value.isObject()) {
-        // An attribute of a JavaScript object is a property of it, as JavaScript finds it.
-        PropertySlot slot(value, PropertySlot::InternalMethodType::Get);
-        bool found = asObject(value)->getPropertySlot(globalObject, name, slot);
+        JSValue property = getJavaScriptProperty(globalObject, asObject(value), name, InheritedFunctions::Bind);
         RETURN_IF_EXCEPTION(scope, { });
-        if (found)
-            RELEASE_AND_RETURN(scope, slot.getValue(globalObject, name));
+        if (property)
+            return property;
     }
     if (attribute)
         RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
@@ -805,9 +836,20 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
             }
         }
     }
-    if (isType(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute) || isJavaScriptObject(globalObject, type))
+    if (isType(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute))
         return getAttribute(globalObject, base, name);
     JSValue attribute = type->lookup(vm, name);
+    if (isJavaScriptObject(globalObject, type) && base.isObject()) {
+        // What is about to be called is called with the object as `this` in any case, so there is nothing for it to remember.
+        if (!attribute || !classifyDescriptor(globalObject, attribute).isData) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSValue property = getJavaScriptProperty(globalObject, asObject(base), name, InheritedFunctions::LeaveAsFound);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (property)
+                return property;
+        }
+        return getAttribute(globalObject, base, name);
+    }
     if (!attribute || classifyDescriptor(globalObject, attribute).kind != DescriptorKind::Function)
         return getAttribute(globalObject, base, name);
     // What the instance itself has by that name comes first.

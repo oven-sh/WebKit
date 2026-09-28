@@ -56,7 +56,7 @@ public:
 
     // `owner` is the class that it is a method of, or the module that it is a function of.
     // `data` is for the function itself: one function in C++ can be many in Python that differ only by it, as __lt__ and __gt__ do.
-    JS_EXPORT_PRIVATE static PyNativeFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, Kind = Kind::Function, JSObject* owner = nullptr, unsigned data = 0);
+    JS_EXPORT_PRIVATE static PyNativeFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, Kind = Kind::Function, JSObject* owner = nullptr, unsigned data = 0, ImplementationVisibility = ImplementationVisibility::Public);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
