@@ -57,3 +57,9 @@ Guardedbytearray => own  computed [["guarded set","tag"],["guarded set","fresh"]
 Guardedfrozenset => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
 still an array => true 1 1 true
 still a Uint8Array => true 0 0
+index get => zero zero true false  true
+index set => two three two
+index delete => true absent  true
+index hot => 19999 19999
+index frozen !! AttributeError: cannot assign to field '0'
+index keys => [["2","two"],["3","three"],["5",19999],["x",1]]

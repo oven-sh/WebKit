@@ -462,6 +462,17 @@ bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isGetOrHas = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty;
     JSValue prototype = object->getPrototypeDirect();
+    // An attribute whose name is an index to JavaScript is no property, so there is nothing ordinary to find: see getStoredAttribute().
+    if (isIndexLike(name)) [[unlikely]] {
+        if (slot.isVMInquiry() || !isType(prototype))
+            return false;
+        JSValue value = isGetOrHas ? getAttributeIfPresent(globalObject, object, name) : getStoredAttribute(vm, object, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value)
+            return false;
+        slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
+        return true;
+    }
     if (!isGetOrHas || slot.thisValue() != JSValue(object) || !isType(prototype))
         RELEASE_AND_RETURN(scope, ordinary(object, globalObject, name, slot));
 

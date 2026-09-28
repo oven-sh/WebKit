@@ -650,7 +650,9 @@ int64_t hashOfDouble(double value)
     if (!std::isfinite(value)) {
         if (std::isinf(value))
             return value > 0 ? 314159 : -314159;
-        return 0; // FIXME: CPython hashes a NaN by its identity.
+        // CPython hashes a NaN by which object it is, since no two are equal and a great many in one set would otherwise all collide. Here a float is a
+        // value and not an object, so one NaN is another, `is` says so, and a set has room for one.
+        return 0;
     }
     int exponent;
     double mantissa = std::frexp(value, &exponent);

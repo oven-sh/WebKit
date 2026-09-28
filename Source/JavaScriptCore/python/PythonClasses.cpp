@@ -304,7 +304,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
             value = PyNativeObject::create(globalObject, BuiltinType::StaticMethod, value);
         else if (isPlainFunction && (property == names.dunder_init_subclass || property == names.dunder_class_getitem))
             value = PyNativeObject::create(globalObject, BuiltinType::ClassMethod, value);
-        type->putDirect(vm, property, value);
+        putStoredAttribute(vm, type, property, value);
         return true;
     });
     RETURN_IF_EXCEPTION(scope, { });

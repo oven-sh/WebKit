@@ -136,7 +136,7 @@ public:
     JSValue lookup(VM&, PropertyName) const;
     // The same, beginning after `after`, which is what super() does.
     JSValue lookupAfter(VM&, PyType* after, PropertyName) const;
-    JSValue lookupOwn(VM& vm, PropertyName name) const { return getDirect(vm, name); }
+    JSValue lookupOwn(VM&, PropertyName) const;
 
     bool isSubtypeOf(const PyType*) const;
 

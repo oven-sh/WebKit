@@ -78,3 +78,11 @@ const gl = m.guards[0]([]);
 show("still an array", () => { gl.push(1, 2); gl.length = 1; return [Array.isArray(gl), gl.length, gl[0], gl instanceof m.guards[0]].join(" "); });
 const gb = m.guards[8]();
 show("still a Uint8Array", () => [gb instanceof Uint8Array, gb.length, gb.byteLength].join(" "));
+
+const np = m.numbered();
+show("index get", () => [np[0], np["0"], 0 in np, 1 in np, np[1], Object.hasOwn(np, 0)].join(" "));
+show("index set", () => { np[2] = "two"; np["3"] = "three"; return [m.get(np, "2"), m.get(np, "3"), np[2]].join(" "); });
+show("index delete", () => [delete np[0], m.get(np, "0"), np[0], delete np[0]].join(" "));
+show("index hot", () => { let last; for (let i = 0; i < 20000; i++) { np[5] = i; last = np[5]; } return [last, m.get(np, "5")].join(" "); });
+show("index frozen", () => { fz[0] = 1; });
+show("index keys", () => s(m.attrs(np)));

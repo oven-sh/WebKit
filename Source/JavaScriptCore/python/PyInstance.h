@@ -37,6 +37,28 @@ namespace JSC {
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow); \
     static bool preventExtensions(JSObject*, JSGlobalObject*);
 
+// The same for obj[0], for those whose elements are not their own business: it is the attribute "0".
+#define PYTHON_DECLARE_EXOTIC_INDEX_METHODS \
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&); \
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow); \
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+
+#define PYTHON_DEFINE_EXOTIC_INDEX_METHODS(ClassName) \
+    bool ClassName::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot) \
+    { \
+        return getOwnPropertySlot(object, globalObject, Identifier::from(globalObject->vm(), index), slot); \
+    } \
+    bool ClassName::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow) \
+    { \
+        PutPropertySlot slot(cell, shouldThrow); \
+        return put(cell, globalObject, Identifier::from(globalObject->vm(), index), value, slot); \
+    } \
+    bool ClassName::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index) \
+    { \
+        DeletePropertySlot slot; \
+        return deleteProperty(cell, globalObject, Identifier::from(globalObject->vm(), index), slot); \
+    }
+
 // `isOrdinary(vm, name)` says which properties are the cell's own business and no attribute: the items of a tuple, the length of an array.
 #define PYTHON_DEFINE_EXOTIC_METHODS(ClassName, isOrdinary) \
     bool ClassName::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot) \
@@ -74,7 +96,7 @@ namespace JSC {
 class PyInstance final : public JSObjectWithButterfly {
 public:
     using Base = JSObjectWithButterfly;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesGetOwnPropertySlot | OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesGetOwnPropertySlot | OverridesPut | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
     static constexpr unsigned defaultInlineCapacity = 6;
 
     static size_t allocationSize(Checked<size_t> inlineCapacity)
@@ -98,6 +120,7 @@ public:
     static CallData getCallData(JSCell*);
 
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_DECLARE_EXOTIC_INDEX_METHODS
 
 private:
     PyInstance(VM& vm, Structure* structure, size_t inlineCapacity)

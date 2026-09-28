@@ -91,6 +91,7 @@ static bool indicesAreOrdinary(VM&, PropertyName name) { return !!parseIndex(nam
 static bool indicesAndLengthAreOrdinary(VM& vm, PropertyName name) { return name == vm.propertyNames->length || parseIndex(name); }
 
 PYTHON_DEFINE_EXOTIC_METHODS(PyInstance, nothingIsOrdinary)
+PYTHON_DEFINE_EXOTIC_INDEX_METHODS(PyInstance)
 PYTHON_DEFINE_EXOTIC_METHODS(PyBoxedValue, nothingIsOrdinary)
 PYTHON_DEFINE_EXOTIC_METHODS(PyDict, nothingIsOrdinary)
 PYTHON_DEFINE_EXOTIC_METHODS(PySet, nothingIsOrdinary)

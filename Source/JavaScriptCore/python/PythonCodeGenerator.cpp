@@ -433,8 +433,9 @@ private:
         case Where::Register:
             if (!location.isAlwaysBound)
                 emitCheckBound(location.local, name, node);
-            // An assignment expression further on could change it before it is used.
-            if (!dst && m_hasNamedExpressions)
+            // What it is now is what is wanted, and it could be changed before that is used: by an assignment expression further on, or by anything that is
+            // called and gets hold of the frame, whose f_locals writes through.
+            if (!dst)
                 return g.move(g.newTemporary(), location.local);
             return finish(dst, location.local);
         case Where::Closure:
@@ -1406,7 +1407,6 @@ private:
     void generateFunction(Arguments&, const EmitBody& emitBody)
     {
         Node& node = m_block.location;
-        m_hasNamedExpressions = true; // FIXME: Find out.
 
         if (m_info.isGeneratorBody)
             return generateGeneratorBody(emitBody);
@@ -2817,7 +2817,6 @@ private:
     // __class__ is a variable of, for the class to be put in once there is one, or None.
     void generateClassBody(ClassDef& node)
     {
-        m_hasNamedExpressions = true;
         m_namespace = parameterRegister(0);
         emitLoadGlobals();
 
@@ -2915,7 +2914,6 @@ private:
 
     void generateModule(Module& module)
     {
-        m_hasNamedExpressions = true;
         if (m_info.usesNamespace)
             m_namespace = parameterRegister(0);
         emitLoadGlobals();
@@ -2954,7 +2952,6 @@ private:
     Reg m_globals;
     Reg m_builtins;
     Reg m_namespace;
-    bool m_hasNamedExpressions { false };
 };
 
 // ---- ScopeNode

@@ -449,31 +449,87 @@ PYTHON_NATIVE(objectInitSubclass)
     RETURN_NONE();
 }
 
-static void collectAttributeNames(JSGlobalObject* globalObject, JSObject* object, PySet* into)
+// Adds the keys of the __dict__ of a class, and of those of its bases, and so on: merge_class_dict() of CPython's Objects/typeobject.c. It goes by
+// what the attributes say, so that something that only makes itself out to be a class will do.
+static bool mergeClassDict(JSGlobalObject* globalObject, PyDict* names, JSValue aClass)
 {
     VM& vm = globalObject->vm();
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-    for (auto& name : properties)
-        into->add(globalObject, jsString(vm, name.string()));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue classDict = getAttributeIfPresent(globalObject, aClass, vm.pythonNames().dunder_dict);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (classDict) {
+        forEach(globalObject, classDict, [&] (JSValue key) {
+            names->set(globalObject, key, jsUndefined());
+            return !scope.exception();
+        });
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    JSValue bases = getAttributeIfPresent(globalObject, aClass, vm.pythonNames().dunder_bases);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!bases)
+        return true;
+    MarkedArgumentBuffer each;
+    collect(globalObject, bases, each);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (unsigned i = 0; i < each.size(); ++i) {
+        if (!mergeClassDict(globalObject, names, each.at(i)))
+            return false;
+    }
+    return true;
 }
 
+static JSValue keysOf(JSGlobalObject* globalObject, PyDict* dict)
+{
+    MarkedArgumentBuffer keys;
+    dict->forEach(globalObject, [&] (JSValue key, JSValue) {
+        keys.append(key);
+        return true;
+    });
+    return newList(globalObject, keys);
+}
+
+// object.__dir__(): what is in its __dict__, and in that of its class and the classes that that is derived from.
 PYTHON_NATIVE(objectDir)
 {
     NATIVE_PROLOGUE();
-    JSValue self = args.at(0);
-    PySet* found = PySet::create(globalObject);
-    PyType* type = isType(self) ? uncheckedDowncast<PyType>(self.asCell()) : typeOf(globalObject, self);
-    if (JSObject* module = tryModule(globalObject, self))
-        collectAttributeNames(globalObject, module, found);
-    else {
-        if (self.isObject() && !isType(self) && (self.asCell()->type() == PyInstanceType || type->hasFlag(PyType::IsHeapType)))
-            collectAttributeNames(globalObject, asObject(self), found);
-        for (auto& entry : type->mro()->span())
-            collectAttributeNames(globalObject, asObject(entry.get()), found);
-    }
+    PyDict* found = PyDict::create(globalObject);
+    JSValue dict = getAttributeIfPresent(globalObject, args[0], names.dunder_dict);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(listFromIterable(globalObject, found)));
+    if (dict && isDict(dict)) {
+        asDict(dict)->forEach(globalObject, [&] (JSValue key, JSValue) {
+            found->set(globalObject, key, jsUndefined());
+            return !scope.exception();
+        });
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    JSValue itsClass = getAttributeIfPresent(globalObject, args[0], names.dunder_class);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (itsClass && !mergeClassDict(globalObject, found, itsClass))
+        return { };
+    RELEASE_AND_RETURN(scope, JSValue::encode(keysOf(globalObject, found)));
+}
+
+// type.__dir__()
+PYTHON_NATIVE(typeDir)
+{
+    NATIVE_PROLOGUE();
+    PyDict* found = PyDict::create(globalObject);
+    if (!mergeClassDict(globalObject, found, args[0]))
+        return { };
+    RELEASE_AND_RETURN(scope, JSValue::encode(keysOf(globalObject, found)));
+}
+
+// module.__dir__(): what its own __dir__() says, if it defines one (PEP 562), and otherwise what is in it.
+PYTHON_NATIVE(moduleDir)
+{
+    NATIVE_PROLOGUE();
+    JSValue dict = getAttribute(globalObject, args[0], names.dunder_dict);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isDict(dict))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "<module>.__dict__ is not a dictionary"_s));
+    if (JSValue function = asDict(dict)->getString(globalObject, "__dir__"_s))
+        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(keysOf(globalObject, asDict(dict))));
 }
 
 static JSValue getClass(JSGlobalObject* globalObject, JSValue self)
@@ -1251,7 +1307,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__setattr__"_s, objectSetAttr },
         { "__delattr__"_s, objectDelAttr },
         { "__repr__"_s, nativeRepr },
-        { "__dir__"_s, objectDir },
+        { "__dir__"_s, typeDir },
         { "mro"_s, typeMro },
         { "__subclasses__"_s, typeSubclasses },
         { "__prepare__"_s, typePrepare, Kind::ClassMethod, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
@@ -1446,7 +1502,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addMethods(globalObject, module, {
         { "__new__"_s, moduleNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, moduleRepr },
-        { "__dir__"_s, objectDir },
+        { "__dir__"_s, moduleDir },
     });
 
     addMethods(globalObject, realm->typeGenerator(), {

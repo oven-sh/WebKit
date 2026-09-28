@@ -1,0 +1,25 @@
+set and get => ('zero', 'ten', True, False)
+in the dict => ([('0', 'zero'), ('10', 'ten'), ('a', 1), ('b', 2)], 'zero', True, 4, ['0', '10', 'a', 'b'], ['0', '10'])
+through the dict => ('seven', 'seven', False)
+delete => (None, False, ['10', 'a', 'b'])
+delete missing !! AttributeError 'C' object has no attribute '0'
+odd names => ['00', '01', '-1', '1.5', '4294967295', '4294967294', '99999999999999999999', '', ' ', '1e3', '٣']
+class => ('five', 'five', True, 'five', None, False)
+type() => ('three', 'three', True)
+module => ('two', 'two', True, None, 'four', None, False)
+function => ('one', {'1': 'one'})
+exec => ('one', 1, ['1', 'x'])
+exception => (1, {'0': 1})
+set dict => ('z', 1, ['0', 'k'])
+keywords => [('0', 1), ('a', 2)]
+dir instance => ['b', 'd', 'i', 'm']
+__dir__ unsorted => ['i', 'd', 'b', 'm']
+dir class => (['b', 'd', 'm'], ['d', 'b', 'm'])
+dir with slots => ['y', 'z']
+own __dir__ => ['p', 'q']
+__class__ that lies => ['b', 'd', 'm']
+dir module => (['a', 'x'], ['x', 'a'])
+module __dir__ => ['only', 'these']
+dir of builtins => (['as_integer_ratio', 'bit_count', 'bit_length', 'conjugate'], ['append', 'clear', 'copy', 'count'], ['1'])
+dir no arguments => ['aa', 'zz']
+dir bad !! TypeError 'int' object is not iterable

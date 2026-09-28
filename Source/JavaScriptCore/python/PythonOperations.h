@@ -121,14 +121,30 @@ JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName
 JSObject* attributeStorage(JSGlobalObject*, JSValue, PyType*);
 // An attribute that something has of its own is a property of it that is enumerable. What is not enumerable is JavaScript's business: the name and
 // length of a function, the stack of an Error. Python does not see it. Empty if there is no such attribute.
+//
+// A name that JavaScript would take for an index, as "0", cannot be that of a property like the rest: to the engine that is an element of an array. It
+// can only come from getattr() and the like or by way of a __dict__, not being something that can be written after a dot. An attribute of such a name is
+// kept where a key of a __dict__ that is not a string is: in the dict, which is made if there was none.
+inline bool isIndexLike(PropertyName name)
+{
+    UniquedStringImpl* uid = name.uid();
+    return uid && uid->length() && isASCIIDigit((*uid)[0]) && !uid->isSymbol() && parseIndex(name);
+}
+JSValue getIndexLikeAttribute(VM&, JSObject*, PropertyName);
+void putIndexLikeAttribute(VM&, JSObject*, PropertyName, JSValue);
+
 inline JSValue getStoredAttribute(VM& vm, JSObject* object, PropertyName name)
 {
+    if (isIndexLike(name)) [[unlikely]]
+        return getIndexLikeAttribute(vm, object, name);
     unsigned attributes;
     JSValue value = object->getDirect(vm, name, attributes);
     return value && !(attributes & PropertyAttribute::DontEnum) ? value : JSValue();
 }
 inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
 {
+    if (isIndexLike(name)) [[unlikely]]
+        return putIndexLikeAttribute(vm, object, name, value);
     object->putDirect(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
 }
 // Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's

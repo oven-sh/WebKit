@@ -223,11 +223,25 @@ String PyType::nameString(JSGlobalObject* globalObject) const
 
 JSValue PyType::lookup(VM& vm, PropertyName name) const
 {
+    if (Python::isIndexLike(name)) [[unlikely]] {
+        for (auto& entry : m_mro->span()) {
+            if (JSValue value = Python::getIndexLikeAttribute(vm, asObject(entry.get()), name))
+                return value;
+        }
+        return { };
+    }
     for (auto& entry : m_mro->span()) {
         if (JSValue value = asObject(entry.get())->getDirect(vm, name))
             return value;
     }
     return { };
+}
+
+JSValue PyType::lookupOwn(VM& vm, PropertyName name) const
+{
+    if (Python::isIndexLike(name)) [[unlikely]]
+        return Python::getIndexLikeAttribute(vm, const_cast<PyType*>(this), name);
+    return getDirect(vm, name);
 }
 
 JSValue PyType::lookupAfter(VM& vm, PyType* after, PropertyName name) const
@@ -237,7 +251,7 @@ JSValue PyType::lookupAfter(VM& vm, PyType* after, PropertyName name) const
     while (i < order.size() && order[i].get().asCell() != after)
         ++i;
     for (++i; i < order.size(); ++i) {
-        if (JSValue value = asObject(order[i].get())->getDirect(vm, name))
+        if (JSValue value = asType(order[i].get())->lookupOwn(vm, name))
             return value;
     }
     return { };
@@ -282,7 +296,7 @@ void PyType::instanceAccessMayHaveChanged(VM& vm)
 void PyType::setAttribute(VM& vm, PropertyName name, JSValue value)
 {
     auto& names = vm.pythonNames();
-    putDirect(vm, name, value);
+    Python::putStoredAttribute(vm, this, name, value);
     ++names.typeEpoch;
     if (name == names.dunder_getattribute || name == names.dunder_setattr || name == names.dunder_delattr || Python::isDataDescriptor(globalObject(), value))
         instanceAccessMayHaveChanged(vm);
@@ -290,7 +304,7 @@ void PyType::setAttribute(VM& vm, PropertyName name, JSValue value)
 
 bool PyType::deleteAttribute(VM& vm, JSGlobalObject* globalObject, PropertyName name)
 {
-    if (!getDirect(vm, name))
+    if (!lookupOwn(vm, name))
         return false;
     ++vm.pythonNames().typeEpoch;
     return Python::deleteStoredAttribute(globalObject, this, name);

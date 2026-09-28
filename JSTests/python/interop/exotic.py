@@ -119,3 +119,11 @@ def guarded(base):
 guards = [guarded(b) for b in (list, dict, set, tuple, int, str, float, bytes, bytearray, frozenset)]
 def make_guards():
     return [g() for g in guards]
+
+# An attribute whose name JavaScript takes for an index.
+def numbered():
+    p = Plain(1)
+    setattr(p, "0", "zero")
+    return p
+def get(o, name, default="absent"):
+    return getattr(o, name, default)

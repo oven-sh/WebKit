@@ -632,8 +632,25 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     return raiseNoAttribute(globalObject, scope, value, name);
 }
 
+JSValue getIndexLikeAttribute(VM& vm, JSObject* object, PropertyName name)
+{
+    JSValue dict = object->getDirect(vm, vm.pythonNames().private_dict);
+    return dict ? uncheckedDowncast<PyDict>(dict.asCell())->get(object->globalObject(), nameAsString(vm, name)) : JSValue();
+}
+
+void putIndexLikeAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
+{
+    JSGlobalObject* globalObject = object->globalObject();
+    PyDict::backedBy(globalObject, object)->set(globalObject, nameAsString(vm, name), value);
+}
+
 bool deleteStoredAttribute(JSGlobalObject* globalObject, JSObject* object, PropertyName name)
 {
+    if (isIndexLike(name)) [[unlikely]] {
+        VM& vm = globalObject->vm();
+        JSValue dict = object->getDirect(vm, vm.pythonNames().private_dict);
+        return dict && uncheckedDowncast<PyDict>(dict.asCell())->remove(globalObject, nameAsString(vm, name));
+    }
     DeletePropertySlot slot;
     return JSObject::deleteProperty(object, globalObject, name, slot);
 }

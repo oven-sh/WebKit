@@ -346,7 +346,10 @@ void PyDict::becomeBackedBy(JSGlobalObject* globalObject, JSObject* object)
         JSValue key = Base::keyAt(entry);
         if (!key || !key.isString())
             continue;
-        object->putDirect(vm, asString(key)->toIdentifier(globalObject), Base::valueAt(entry));
+        auto name = asString(key)->toIdentifier(globalObject);
+        if (Python::isIndexLike(name))
+            continue;
+        object->putDirect(vm, name, Base::valueAt(entry));
         Base::removeEntry(vm, entry);
     }
     m_backing.set(vm, this, object);
@@ -403,7 +406,8 @@ bool PyDict::isInBacking(JSGlobalObject* globalObject, JSValue key, Identifier& 
     if (!key.isString())
         return false;
     name = asString(key)->toIdentifier(globalObject);
-    return true;
+    // See Python::getStoredAttribute().
+    return !Python::isIndexLike(name);
 }
 
 JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key)
@@ -492,8 +496,11 @@ void PyDict::copyFrom(JSGlobalObject* globalObject, PyDict& other)
 
 JSValue PyDict::getString(JSGlobalObject* globalObject, const String& key)
 {
-    if (m_backing) [[unlikely]]
-        return Python::getStoredAttribute(globalObject->vm(), m_backing.get(), Identifier::fromString(globalObject->vm(), key));
+    if (m_backing) [[unlikely]] {
+        auto name = Identifier::fromString(globalObject->vm(), key);
+        if (!Python::isIndexLike(name))
+            return Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
+    }
     return Base::getString(globalObject, key);
 }
 
