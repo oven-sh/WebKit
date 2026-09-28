@@ -269,6 +269,10 @@ struct Instance {
     Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
 };
 
+// TEMPORARY-SHAPE-STATS: structures whose layout the compiler could have known. 1: of an object literal. 2: what a constructor's stores end in.
+void noteKnownShape(Structure*, uint8_t kind);
+uint8_t kindOfKnownShape(Structure*);
+
 // A number for a function that is compiled in this process. The functions of an image have theirs already, from zero.
 uint32_t allocateFunctionIndex();
 bool reserveFunctionIndicesForImage(uint32_t count); // False: too late.

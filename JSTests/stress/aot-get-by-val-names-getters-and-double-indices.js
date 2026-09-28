@@ -124,3 +124,29 @@ function manyLocals(o) {
 noInline(manyLocals);
 for (let i = 0; i < 300; ++i)
     check(manyLocals(shapes[2 + 5 * (i % 5)]), Array(4).fill("params" + (2 + 5 * (i % 5)) + ",,0").join("|"), "several in a row");
+
+// ---- Characters of strings.
+{
+    let latin1 = "abc\xe9\xff", wide = "aĀ\xe9─b", rope = ["left ", "right"].map(String).reduce((a, b) => a + b + a.length);
+    for (let i = 0; i < 300; ++i) {
+        check(at(latin1, 0), "a", "first");
+        check(at(latin1, 3), "\xe9", "latin1");
+        check(at(latin1, 4), "\xff", "the last of the small ones");
+        check(at(latin1, 5), undefined, "past the end of a string");
+        check(at(latin1, -1), undefined, "before the start of a string");
+        check(at(wide, 0), "a", "small, in a wide string");
+        check(at(wide, 1), "Ā", "the first of the others");
+        check(at(wide, 2), "\xe9", "small, in a wide string");
+        check(at(wide, 3), "─", "wide");
+        check(at(wide, 2.0 + half - half), "\xe9", "a double index into a string");
+        check(at("", 0), undefined, "the empty string");
+        check(at("x" + i, 1), String(i)[0], "a rope");
+        check(at(rope, 5), "r", "a rope that has been read");
+        check(at(latin1, "length"), 5, "length of a string");
+        check(at(new String("boxed"), 1), "o", "a string object");
+    }
+    String.prototype[7] = "inherited";
+    check(at(latin1, 7), "inherited", "past the end, with something to inherit");
+    check(at(latin1, 1), "b", "and what is there is still there");
+    delete String.prototype[7];
+}

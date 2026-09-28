@@ -36,8 +36,14 @@ class MegamorphicCache {
     WTF_MAKE_TZONE_ALLOCATED(MegamorphicCache);
     WTF_MAKE_NONCOPYABLE(MegamorphicCache);
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // A component that takes sixty optional properties out of objects of a hundred shapes wants more than 2560 entries by itself.
+    static constexpr uint32_t loadCachePrimarySize = 8192;
+    static constexpr uint32_t loadCacheSecondarySize = 2048;
+#else
     static constexpr uint32_t loadCachePrimarySize = 2048;
     static constexpr uint32_t loadCacheSecondarySize = 512;
+#endif
     static_assert(hasOneBitSet(loadCachePrimarySize), "size should be a power of two.");
     static_assert(hasOneBitSet(loadCacheSecondarySize), "size should be a power of two.");
     static constexpr uint32_t loadCachePrimaryMask = loadCachePrimarySize - 1;

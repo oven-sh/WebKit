@@ -592,6 +592,28 @@ static void generateGetByVal(CCallHelpers& jit)
     boxDoubleAndReturn();
 
     noButterfly.link(&jit);
+    // A character of a string, of the kind that there is one string of for the whole VM.
+    Jump notString = jit.branchIfNotString(A0);
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), T11);
+    slow.append(jit.branchIfRopeStringImpl(T11));
+    jit.zeroExtend32ToWord(A1, T12);
+    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, T12, Address(T11, StringImpl::lengthMemoryOffset())));
+    jit.load32(Address(T11, StringImpl::flagsOffset()), T13);
+    jit.loadPtr(Address(T11, StringImpl::dataOffset()), T11);
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, T13, TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.load8(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesOne), T11);
+    Jump haveCharacter = jit.jump();
+    is16Bit.link(&jit);
+    jit.load16(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesTwo), T11);
+    slow.append(jit.branch32(CCallHelpers::Above, T11, TrustedImm32(maxSingleCharacterString)));
+    haveCharacter.link(&jit);
+    loadInstance(jit, T12);
+    jit.loadPtr(Address(T12, Instance::offsetOfVM()), T12);
+    jit.addPtr(TrustedImm32(OBJECT_OFFSETOF(VM, smallStrings) + SmallStrings::offsetOfSingleCharacterStrings()), T12);
+    jit.loadPtr(CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight), A0);
+    jit.ret();
+
+    notString.link(&jit);
     checkTypedArrayAccess(jit, slow);
     auto ofType = [&](JSType type, const auto& load) {
         Jump other = jit.branch32(CCallHelpers::NotEqual, T13, TrustedImm32(type));

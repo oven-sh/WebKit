@@ -38,6 +38,11 @@ ASCIILiteral cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* struc
 //     cache->offset: the location of the field, if this is about one.
 void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset>);
 
+// A slot that rests on what the objects on the prototype chain have, or do not have, is told when that changes by the structures
+// they have now. A structure can only tell if nothing has ever moved on from it, and an object that has next to nothing in it, as
+// many a prototype does, shares its structure with others that have. There is only one of a prototype: it gets a structure of its own.
+void makePrototypeChainWatchable(VM&, JSCell* base);
+
 // A site's slot is good for one structure. Behind it, for the sites that see many, is the VM's megamorphic cache, which the
 // thunks in front of the operations consult (AOTThunks.cpp) and which these fill.
 JSValue getByIdAndFillMegamorphicCache(JSGlobalObject*, JSValue base, const Identifier&, PropertySlot&); // base.get(), in effect.

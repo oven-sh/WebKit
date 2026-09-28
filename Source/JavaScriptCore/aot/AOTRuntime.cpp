@@ -528,6 +528,19 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
     }
 }
 
+// TEMPORARY-SHAPE-STATS
+static UncheckedKeyHashMap<Structure*, uint8_t>& knownShapes()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<Structure*, uint8_t>> shapes;
+    return shapes;
+}
+void noteKnownShape(Structure* structure, uint8_t kind)
+{
+    if (Options::aotReportSlowPaths()) [[unlikely]]
+        knownShapes().add(structure, kind);
+}
+uint8_t kindOfKnownShape(Structure* structure) { return knownShapes().get(structure); }
+
 Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const> names)
 {
     ASSERT(empty->storedPrototype() == globalObject->objectPrototype());
@@ -539,6 +552,7 @@ Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStrin
     if (auto it = collections->shapes.find(key); it != collections->shapes.end())
         return it->value;
     Structure* result = Structure::createWithProperties(*vm, empty, names);
+    noteKnownShape(result, 1);
     collections->shapes.add(WTF::move(key), result); // (The structure keeps the names.)
     return result;
 }

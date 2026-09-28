@@ -192,6 +192,49 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (JSGlobalObject* g
     OPERATION_RETURN(scope, JSValue::strictEqual(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)));
 }
 
+// TEMPORARY-SHAPE-STATS: with the caches off (aotDisableFastPaths=1025) every read comes by here.
+static void noteShapeOfRead(JSValue base, const PropertySlot& slot)
+{
+    ASCIILiteral kind = "SHAPE not a cell"_s;
+    if (base.isCell()) {
+        JSCell* cell = base.asCell();
+        Structure* structure = cell->structure();
+        switch (cell->type()) {
+        case StringType:
+            kind = "SHAPE string"_s;
+            break;
+        case ArrayType:
+        case DerivedArrayType:
+            kind = "SHAPE array"_s;
+            break;
+        case JSFunctionType:
+            kind = "SHAPE function"_s;
+            break;
+        case FinalObjectType: {
+            kind = structure->isDictionary() ? "SHAPE plain object, dictionary"_s : "SHAPE plain object, other"_s;
+            unsigned steps = 0;
+            for (Structure* current = structure; current && steps < 200; current = current->previousID(), ++steps) {
+                if (uint8_t known = kindOfKnownShape(current)) {
+                    if (known == 1)
+                        kind = !steps ? "SHAPE literal"_s : "SHAPE literal, changed since"_s;
+                    else
+                        kind = !steps ? "SHAPE constructed"_s : "SHAPE constructed, changed since"_s;
+                    break;
+                }
+            }
+            break;
+        }
+        default:
+            kind = cell->isObject() ? "SHAPE other object"_s : "SHAPE other cell"_s;
+            break;
+        }
+    }
+    ASCIILiteral result = slot.isUnset() ? "absent"_s
+        : slot.slotBase() == base ? (slot.isCacheableValue() ? "own value"_s : "own, not a plain value"_s)
+        : slot.isCacheableValue() ? "inherited value"_s : slot.isCacheableGetter() ? "inherited getter"_s : "inherited, something else"_s;
+    noteSlowPath(kind, JSValue(), nullptr, result);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -203,6 +246,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
+    if (Options::aotReportSlowPaths()) [[unlikely]]
+        noteShapeOfRead(base, slot);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
@@ -260,6 +305,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
             JSObject* object = asObject(base);
             if (JSValue result = object->tryGetIndexQuickly(i))
                 OPERATION_RETURN(scope, JSValue::encode(result));
+            // Past the end of an ordinary array, or in a hole in it, with nothing of the kind in what it inherits from.
+            Structure* structure = object->structure();
+            if (structure->realm() == globalObject && globalObject->isOriginalArrayStructure(structure) && !hasAnyArrayStorage(structure->indexingType()) && globalObject->arrayPrototypeChainIsSane())
+                OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
         OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, i)));
     }

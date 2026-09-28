@@ -173,10 +173,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     }
 
     Structure* last = object->structure();
+    // TEMPORARY-SLOT-STATS
+    noteSlowPath("create_this_with_properties"_s, object, nullptr, !constructor ? "not a function"_s : !constructor->canUseAllocationProfiles() ? "no allocation profile"_s : first->hasPolyProto() ? "poly proto"_s : !cacheable ? "a store was not a plain addition in order"_s : last->isDictionary() ? "dictionary"_s : count > last->inlineCapacity() ? "more than fits inline"_s : object->butterfly() ? "has a butterfly"_s : (first->mayBePrototype() || last->mayBePrototype()) ? "may be a prototype"_s : "goes on to try"_s);
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())
         OPERATION_RETURN(scope, object);
 
+    // What follows takes some doing. It works the first time or, as a rule, never.
+    if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
+        OPERATION_RETURN(scope, object);
+    cache->offset += 1u << Slot::attemptsShift;
+
     // A store that leaves it to the prototypes made a property because none of them had anything to say. That has to stay so.
+    makePrototypeChainWatchable(vm, object);
     ObjectPropertyConditionSet conditions;
     for (unsigned i = 0; i < count; ++i) {
         if (plan.properties[i].isDefined)
@@ -190,8 +198,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
             OPERATION_RETURN(scope, object);
         conditions = conditions.mergedWith(forThis);
     }
-    if (!watchConditions(vm, callerData(callFrame), cache, conditions))
+    if (!watchConditions(vm, callerData(callFrame), cache, conditions)) {
+        noteSlowPath("create_this_with_properties"_s, object, nullptr, "cannot watch"_s); // TEMPORARY-SLOT-STATS
         OPERATION_RETURN(scope, object);
+    }
+    noteSlowPath("create_this_with_properties"_s, object, nullptr, "filled"_s); // TEMPORARY-SLOT-STATS
     fillConstructionCache(vm, callerData(callFrame), cache, constructor, first, last, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(last->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, object);
 }

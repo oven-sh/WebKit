@@ -16,6 +16,7 @@
 #include "JSCInlines.h"
 #include "MegamorphicCache.h"
 #include "ObjectPropertyConditionSet.h"
+#include "StaticHeap.h"
 
 namespace JSC { namespace AOT {
 
@@ -52,6 +53,22 @@ static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t
     didFillSlot(vm, data);
     if (Options::aotVerbose()) [[unlikely]]
         dataLogLn("AOT: slot ", RawPointer(cache), " filled: structure ", RawPointer(structure), " id ", structure->id().bits(), " offset and flags ", RawHex(cache->offset), " pointer ", RawPointer(pointer));
+}
+
+void makePrototypeChainWatchable(VM& vm, JSCell* base)
+{
+    if (!base->isObject())
+        return;
+    for (JSValue next = asObject(base)->getPrototypeDirect(); next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+        JSObject* prototype = asObject(next);
+        Structure* structure = prototype->structure();
+        if (!structure->hasMonoProto())
+            return;
+        if (!structure->transitionWatchpointSetHasBeenInvalidated() || structure->isDictionary() || !structure->propertyAccessesAreCacheable() || StaticHeap::contains(prototype))
+            continue;
+        prototype->convertToDictionary(vm);
+        prototype->flattenDictionaryObject(vm);
+    }
 }
 
 // A slot is good for one structure. At a site that sees several, filling it again every time costs more than it saves (the collector
@@ -161,6 +178,7 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
     auto status = prepareChainForCaching(globalObject, cell, ident.impl(), slot);
     if (!status || status->flattenedDictionary || status->usesPolyProto)
         return "the chain cannot be prepared"_s;
+    makePrototypeChainWatchable(vm, cell);
 
     if (slot.isUnset()) {
         if (!watchConditions(vm, data, cache, generateConditionsForPropertyMiss(vm, globalObject, globalObject, structure, ident.impl())))
@@ -254,6 +272,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         auto status = prepareChainForCaching(globalObject, cell, ident.impl(), nullptr);
         if (!status || status->flattenedDictionary || status->usesPolyProto)
             return false;
+        makePrototypeChainWatchable(vm, cell);
         if (!watchConditions(vm, data, cache, generateConditionsForPropertySetterMiss(vm, globalObject, globalObject, newStructure, ident.impl())))
             return false;
     }
@@ -376,6 +395,7 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
 {
     if (!allocator || (Options::aotDisableFastPaths() & 2048))
         return;
+    noteKnownShape(last, 2);
     cache[0].clear();
     fill(vm, data, &cache[2], first, 0, nullptr);
     fillAllocationCache(vm, data, cache, last, allocator, last->inlineCapacity(), callee);
