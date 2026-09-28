@@ -1,0 +1,75 @@
+empty => (Template(strings=('',), interpolations=()), ('',), (), (), [])
+only text => (Template(strings=('hello',), interpolations=()), ('hello',), ['hello'])
+one => (Template(strings=('', ''), interpolations=(Interpolation('World', 'name', None, ''),)), ('', ''), ('World',), [Interpolation('World', 'name', None, '')])
+mixed => (Template(strings=('Hello ', '!'), interpolations=(Interpolation('World', 'name', None, ''),)), ('Hello ', '!'), ('World',))
+adjacent => (('', '', ''), ('World', 3.14159), [Interpolation('World', 'name', None, ''), Interpolation(3.14159, 'n', None, '')])
+edges => (('a', ''), ('', 'b'), ('a', 'b', 'c'))
+types => (<class 'string.templatelib.Template'>, <class 'string.templatelib.Interpolation'>, <class 'string.templatelib.TemplateIter'>, 'Template', 'Template', 'string.templatelib', 'string.templatelib')
+interpolation => (Interpolation('World', 'name', None, ''), 'World', 'name', None, '')
+conversions => [('r', ''), ('s', ''), ('a', ''), (None, ''), (None, '.2f'), ('r', '>10')]
+not applied => (3.14159,)
+expression text => ['name', ' name', "name + 'x'", 'n*2', '(1, 2)', '[1][0]', 'name', 'n', ' n']
+nested specification => [('>8', 3.14159), ('8.2f', 3.14159), ('ab', 3.14159)]
+debug => (('name=', ''), (Interpolation('World', 'name', 'r', ''),), ('name = ', ''), (Interpolation('World', 'name', 's', ''),), (Interpolation(3.14159, 'n', None, '.1f'),), ('aname=', 'b'))
+braces => (('{}',), ('{', '}'), ('{name}',))
+escapes => (('a\nb\t', 'A'), ('a\\nb', '\\d'), ('\\', ''), ('\\n',), ('World',), ('\\n',))
+quotes => (('World',), ('a\n', '\nb'), (Interpolation('World', 'name', 'r', ''),), ('ab',), 'x')
+multi line expression => (Interpolation('World', '\n    name', None, ''),)
+evaluated in order => [1, 2, 3, 4]
+evaluated eagerly !! NameError name 'undefined_name' is not defined
+lambda and others => ((5,), ([0, 1, 2],), (1,), (1,), (5,), ((1, 2),))
+nested templates => (('World',), ('World!',), 'World')
+implicit concatenation => (Template(strings=('ab',), interpolations=()), ('a', 'b', ''), ('', '', ''), ('ac',))
+await in template !! NameError name 'run' is not defined
+await in template => (1,)
+yield in template => (1, ('sent',))
+repr => ("Template(strings=('a', 'b'), interpolations=(Interpolation('World', 'name', 'r', '>5'),))", "Template(strings=('a',), interpolations=())", "Interpolation('World', 'name', None, '')")
+add => (Template(strings=('ab',), interpolations=()), ('a', '', 'b'), ('World', 3.14159), ('',), ('', 'xy', ''))
+add str !! TypeError can only concatenate string.templatelib.Template (not "str") to string.templatelib.Template
+radd str !! TypeError can only concatenate str (not "string.templatelib.Template") to str
+add other !! TypeError can only concatenate string.templatelib.Template (not "int") to string.templatelib.Template
+iadd !! NameError name 'iadd' is not defined
+iadd => ('a', '')
+no eq => (False, False, True, True)
+no len !! TypeError object of type 'string.templatelib.Template' has no len()
+no getitem !! TypeError 'string.templatelib.Template' object is not subscriptable
+no format !! TypeError unsupported format string passed to string.templatelib.Template.__format__
+bool => (True, True)
+no join !! TypeError sequence item 1: expected str instance, string.templatelib.Interpolation found
+iter => (True, 'a', Interpolation('World', 'name', None, ''), 'b', 'end', 'end')
+iter skips empty => ['Interpolation', 'Interpolation', 'str', 'Interpolation']
+read only !! AttributeError readonly attribute
+read only 2 !! AttributeError readonly attribute
+read only 3 !! AttributeError attribute 'values' of 'string.templatelib.Template' objects is not writable
+no attributes !! AttributeError 'string.templatelib.Template' object has no attribute 'x' and no __dict__ for setting new attributes
+delete !! AttributeError readonly attribute
+Template() => (Template(strings=('',), interpolations=()), Template(strings=('a',), interpolations=()), Template(strings=('ab',), interpolations=()), ('abc',), Template(strings=('', ''), interpolations=(Interpolation(1, '', None, ''),)), ('', '', ''), ('a', 'bc', ''), ('',))
+Template wrong !! TypeError Template.__new__ *args need to be of type 'str' or 'Interpolation', got int
+Template wrong 2 !! TypeError Template.__new__ *args need to be of type 'str' or 'Interpolation', got NoneType
+Template wrong 3 !! TypeError Template.__new__ *args need to be of type 'str' or 'Interpolation', got string.templatelib.Template
+Template keyword !! TypeError Template.__new__ only accepts *args arguments
+Template str subclass => (('a',), 'S', 'str')
+Template wrong 4 !! TypeError Template.__new__ *args need to be of type 'str' or 'Interpolation', got Mine
+str subclasses elsewhere => ([Interpolation(1, '', None, ''), 'x'], ('ab',), Interpolation(1, 'e', 'r', 'f'))
+Interpolation() => (Interpolation(1, '', None, ''), Interpolation(1, 'e', None, ''), Interpolation(1, 'e', 'r', ''), Interpolation(1, 'e', None, 'f'), Interpolation(1, 'e', 's', 'f'), Interpolation(1, '', None, 'x'))
+Interpolation wrong: none !! TypeError Interpolation() missing required argument 'value' (pos 1)
+Interpolation wrong: expression !! TypeError Interpolation() argument 'expression' must be str, not int
+Interpolation wrong: expression None !! TypeError Interpolation() argument 'expression' must be str, not None
+Interpolation wrong: conversion !! ValueError Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+Interpolation wrong: conversion type !! TypeError Interpolation() argument 'conversion' must be str, not int
+Interpolation wrong: conversion long !! ValueError Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+Interpolation wrong: conversion empty !! ValueError Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'
+Interpolation wrong: specification !! TypeError Interpolation() argument 'format_spec' must be str, not int
+Interpolation wrong: too many !! TypeError Interpolation() takes at most 4 arguments (5 given)
+Interpolation wrong: keyword !! TypeError Interpolation() got an unexpected keyword argument 'nope'
+Interpolation wrong: conversion mine !! TypeError Interpolation() argument 'conversion' must be str, not Mine
+cannot subclass !! NameError name 'cannot' is not defined
+cannot subclass => ["type 'string.templatelib.Template' is not an acceptable base type", "type 'string.templatelib.Interpolation' is not an acceptable base type", "type 'string.templatelib.TemplateIter' is not an acceptable base type"]
+cannot make an iterator !! TypeError cannot create 'string.templatelib.TemplateIter' instances
+reduce => (<class 'string.templatelib.Interpolation'>, ('World', 'name', 'r', 'x'))
+generic => (string.templatelib.Template[int], string.templatelib.Interpolation[str])
+match => (('World', 'name', 'r', '>5'), ('value', 'expression', 'conversion', 'format_spec'))
+own attributes => (['__add__', '__class_getitem__', '__doc__', '__iter__', '__new__', '__reduce__', '__repr__', 'interpolations', 'strings', 'values'], ['__class_getitem__', '__doc__', '__match_args__', '__new__', '__reduce__', '__repr__', 'conversion', 'expression', 'format_spec', 'value'], ['__doc__', '__iter__', '__next__'])
+rendered as an f-string would be => ("Hello    'World', 3.14 and      3.1!", "Hello    'World', 3.14 and      3.1!")
+errors => ["t-string: expecting '}'", "t-string: single '}' is not allowed", "t-string: valid expression required before '}'", 't-string: missing conversion character', "t-string: invalid conversion character 'x': expected 's', 'r', or 'a'", 'cannot mix t-string literals with string or bytes literals', 'cannot mix t-string literals with string or bytes literals', 'cannot mix t-string literals with string or bytes literals', 'cannot mix t-string literals with string or bytes literals', "'b' and 't' prefixes are incompatible", "'b' and 't' prefixes are incompatible", "'u' and 't' prefixes are incompatible", "'f' and 't' prefixes are incompatible", "'f' and 't' prefixes are incompatible", 'cannot mix t-string literals with string or bytes literals', 't-string: expressions nested too deeply', 'compiled', 't-string: missing conversion character', "t-string: expecting '}'", "t-string: valid expression required before ':'", "t-string: valid expression required before '!'", "t-string: valid expression required before '}'", "t-string: single '}' is not allowed", "(unicode error) 'unicodeescape' codec can't decode bytes in position 0-7: unknown Unicode character name"]
+written out again => {'a': "t'x{y!r:>{z}}w{{}}'"}

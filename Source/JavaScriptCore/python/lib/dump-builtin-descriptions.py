@@ -86,7 +86,7 @@ def examples():
         {}.keys(), {}.values(), {}.items(), iter([]), reversed([]), iter(()), iter(""), iter("ሴ"), iter(b""), iter(bytearray()), iter(range(1)), iter(range(1 << 100)), iter(set()),
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),
         (lambda x: lambda: x)(1).__closure__[0], list[int], iter(list[int]), int | str, generator.__code__.co_lines(), generator.__code__.co_positions(), sys.flags, sys.version_info, sys.float_info, sys.int_info, sys.hash_info,
-        sys.implementation, _typing.NoDefault, _typing.TypeVar("T", default=int).evaluate_default,
+        sys.implementation, t"{1}", iter(t""), t"{1}".interpolations[0], _typing.NoDefault, _typing.TypeVar("T", default=int).evaluate_default,
     ]
     yield from awaitables
     for awaitable in awaitables:

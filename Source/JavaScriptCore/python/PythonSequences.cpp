@@ -50,7 +50,23 @@ JSArray* newList(JSGlobalObject* globalObject, const ArgList& values)
     return constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values);
 }
 
+JSValue listGetSlow(JSGlobalObject* globalObject, JSArray* list, unsigned index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = list->getDirectIndex(globalObject, index);
+    RETURN_IF_EXCEPTION(scope, { });
+    return value ? value : jsUndefined();
+}
+
 void listSet(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
+{
+    if (list->trySetIndexQuickly(globalObject->vm(), index, value)) [[likely]]
+        return;
+    list->methodTable()->putByIndex(list, globalObject, index, value, true);
+}
+
+void listInitializeAt(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
 {
     list->putDirectIndex(globalObject, index, value);
 }
@@ -64,9 +80,15 @@ bool listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
 {
     // list += list: what there is to add is settled before any of it is added.
     if (iterable.isCell() && iterable.asCell() == list) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         unsigned length = list->length();
-        for (unsigned i = 0; i < length; ++i)
-            list->push(globalObject, listGet(list, i));
+        for (unsigned i = 0; i < length; ++i) {
+            JSValue value = listGet(globalObject, list, i);
+            RETURN_IF_EXCEPTION(scope, false);
+            list->push(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         return true;
     }
     return forEach(globalObject, iterable, [&] (JSValue value) {
@@ -106,6 +128,11 @@ void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned star
     count = std::min(count, length - start);
     unsigned added = values.size();
     unsigned tail = length - start - count;
+    auto move = [&] (unsigned from, unsigned to) {
+        JSValue value = listGet(globalObject, list, from);
+        RETURN_IF_EXCEPTION(scope, void());
+        listSet(globalObject, list, to, value);
+    };
 
     if (added > count) {
         // Make room, from the end.
@@ -114,16 +141,22 @@ void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned star
             list->push(globalObject, jsUndefined());
             RETURN_IF_EXCEPTION(scope, void());
         }
-        for (unsigned i = tail; i--;)
-            listSet(globalObject, list, start + added + i, listGet(list, start + count + i));
+        for (unsigned i = tail; i--;) {
+            move(start + count + i, start + added + i);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     } else if (added < count) {
-        for (unsigned i = 0; i < tail; ++i)
-            listSet(globalObject, list, start + added + i, listGet(list, start + count + i));
+        for (unsigned i = 0; i < tail; ++i) {
+            move(start + count + i, start + added + i);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         list->setLength(globalObject, length - (count - added), true);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    for (unsigned i = 0; i < added; ++i)
+    for (unsigned i = 0; i < added; ++i) {
         listSet(globalObject, list, start + i, values.at(i));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 void listInsert(JSGlobalObject* globalObject, JSArray* list, unsigned index, JSValue value)
@@ -151,8 +184,11 @@ JSArray* listRepeat(JSGlobalObject* globalObject, JSArray* list, int64_t count)
     }
     JSArray* result = newList(globalObject, total);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    for (unsigned i = 0; i < total; ++i)
-        listSet(globalObject, result, i, listGet(list, i % length));
+    for (unsigned i = 0; i < total; ++i) {
+        JSValue value = listGet(globalObject, list, i % length);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        listInitializeAt(globalObject, result, i, value);
+    }
     return result;
 }
 

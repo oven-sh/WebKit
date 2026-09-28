@@ -93,4 +93,6 @@ private:
 
 inline bool isTuple(JSValue value) { return value.isCell() && value.asCell()->type() == PyTupleType; }
 
+inline PyTuple* asTuple(JSValue value) { return uncheckedDowncast<PyTuple>(value.asCell()); }
+
 } // namespace JSC

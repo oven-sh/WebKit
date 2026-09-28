@@ -774,6 +774,7 @@ python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonSymbolTable.cpp
+python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
 python/PythonUnparse.cpp

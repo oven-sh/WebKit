@@ -41,15 +41,20 @@ JSArray* newList(JSGlobalObject*, const ArgList&);
 JSArray* listFromIterable(JSGlobalObject*, JSValue);
 PyTuple* tupleFromIterable(JSGlobalObject*, JSValue);
 
-// A hole, which only JavaScript can make, is None.
-ALWAYS_INLINE JSValue listGet(JSArray* list, unsigned index)
+// A hole, which only JavaScript can make, is None. So can only JavaScript make an array whose elements are not simply there to be read: one that is frozen, or
+// sealed, or has a getter for an element. Those are read as JavaScript reads them, which can run code and can throw.
+JSValue listGetSlow(JSGlobalObject*, JSArray*, unsigned index);
+ALWAYS_INLINE JSValue listGet(JSGlobalObject* globalObject, JSArray* list, unsigned index)
 {
     if (list->canGetIndexQuickly(index)) [[likely]]
         return list->getIndexQuickly(index);
-    return jsUndefined();
+    return listGetSlow(globalObject, list, index);
 }
 
+// As JavaScript does it in strict code: an array that is frozen says so.
 void listSet(JSGlobalObject*, JSArray*, unsigned index, JSValue);
+// For a list that has just been made here, and that nothing else has seen.
+void listInitializeAt(JSGlobalObject*, JSArray*, unsigned index, JSValue);
 void listAppend(JSGlobalObject*, JSArray*, JSValue);
 bool listExtend(JSGlobalObject*, JSArray*, JSValue iterable);
 void listInsert(JSGlobalObject*, JSArray*, unsigned index, JSValue);

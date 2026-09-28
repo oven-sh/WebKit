@@ -1067,6 +1067,9 @@ private:
         while (endQuoteSize != quoteSize) {
             if (isAtEnd() || (quoteSize == 1 && isNewline(current()))) {
                 unsigned detectedAt = lastLine();
+                // In f"{x" the second quote was meant to end the whole, and what is missing is the brace.
+                if (!m_strings.isEmpty() && m_strings.last().quote == quote && m_strings.last().quoteSize == quoteSize)
+                    return fail(makeString(m_strings.last().prefix(), "-string: expecting '}'"_s), line, quoteColumn, line, quoteColumn);
                 if (quoteSize == 3)
                     return fail(makeString("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, quoteColumn, line, quoteColumn);
                 if (hasEscapedQuote)

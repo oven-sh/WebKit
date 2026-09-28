@@ -1116,7 +1116,6 @@ PYTHON_NATIVE(methodGetAttribute)
 
 // ---- property, staticmethod, classmethod
 
-static PyNativeObject* asNativeObject(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
 
 static JSValue allocateNativeObject(JSGlobalObject* globalObject, ThrowScope& scope, JSValue type)
 {

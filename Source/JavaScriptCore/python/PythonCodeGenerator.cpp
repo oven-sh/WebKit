@@ -719,9 +719,9 @@ private:
         case Expression::Kind::Await:
             return emitAwait(dst, expression->as<Await>());
         case Expression::Kind::TemplateStr:
+            return emitTemplateString(dst, expression->as<TemplateStr>());
         case Expression::Kind::Interpolation:
-            fail("this is not supported yet"_s, *expression);
-            return g.emitLoad(dst, jsUndefined());
+            return emitInterpolation(dst, expression->as<Interpolation>());
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -895,6 +895,53 @@ private:
         emitElements(node.values, pieces);
         Reg result = destination(dst);
         return g.emitStrcat(result.get(), pieces[0].get(), pieces.size());
+    }
+
+    // {value!r:specification} in a t"..."
+    RegisterID* emitInterpolation(RegisterID* dst, Interpolation& node)
+    {
+        Reg value = emitToTemporary(node.value);
+        Reg formatSpecification = node.formatSpecification ? Reg(emitToTemporary(node.formatSpecification)) : Reg(g.emitLoad(g.newTemporary(), m_vm.propertyNames->emptyIdentifier));
+        RegisterID* conversion = none();
+        if (node.conversion >= 0) {
+            Latin1Character character = static_cast<Latin1Character>(node.conversion);
+            conversion = stringConstant(m_arena.identifiers().makeIdentifier(m_vm, std::span<const Latin1Character> { &character, 1 }));
+        }
+        return emitRuntimeCall(dst, "newInterpolation"_s, { value.get(), stringConstant(*node.source), conversion, formatSpecification.get() }, node);
+    }
+
+    // t"...". There is a string before, between and after the interpolations, if only an empty one.
+    RegisterID* emitTemplateString(RegisterID* dst, TemplateStr& node)
+    {
+        Vector<Reg, 8> strings;
+        auto addEmptyString = [&] {
+            strings.append(g.newTemporary());
+            g.emitLoad(strings.last().get(), m_vm.propertyNames->emptyIdentifier);
+        };
+        bool lastWasInterpolation = true;
+        for (Expression* value : node.values) {
+            if (value->is<Interpolation>()) {
+                if (lastWasInterpolation)
+                    addEmptyString();
+                lastWasInterpolation = true;
+                continue;
+            }
+            strings.append(emitToTemporary(value));
+            lastWasInterpolation = false;
+        }
+        if (lastWasInterpolation)
+            addEmptyString();
+        Reg stringsTuple = g.newTemporary();
+        emitNewTuple(stringsTuple.get(), strings);
+
+        Vector<Reg, 8> interpolations;
+        for (Expression* value : node.values) {
+            if (value->is<Interpolation>())
+                interpolations.append(emitToTemporary(value));
+        }
+        Reg interpolationsTuple = g.newTemporary();
+        emitNewTuple(interpolationsTuple.get(), interpolations);
+        return emitRuntimeCall(dst, "newTemplate"_s, { stringsTuple.get(), interpolationsTuple.get() }, node);
     }
 
     // ---- Calls

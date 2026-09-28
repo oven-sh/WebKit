@@ -249,6 +249,11 @@ would in JavaScript. `import js` is the global object.
 - **Calling a class makes an instance**, Python having no `new`. That is asked only where there was nothing left to do but throw
   (`callConstructorWithoutNew`), so no call that works pays for it. What can be both called and constructed with is called, and `.new()` constructs.
 - JavaScript's methods are not attributes of a `list` or a `str`. `hasattr(x, "keys")` is how Python tells a mapping.
+- **A `list` is any `Array`, and JavaScript can make some that Python cannot.** A hole is `None`. An element that is not simply there to be read or written
+  is read and written as JavaScript would in strict code: a getter is run, and an array that is frozen raises `TypeError` and stays as it was
+  (`listGet`, `listSet`). The strings that a tag function is given are such an array.
+- What a `t"..."` has, `strings` and `values`, is what a tag function is given, so `tag(t.strings, ...t.values)` needs nothing from either side. And a
+  function of Python's can be a tag.
 
 ### A class is a class, whichever language made it
 

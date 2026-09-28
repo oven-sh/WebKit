@@ -68,6 +68,8 @@ bool isList(JSValue);
 
 PyType* typeOf(JSGlobalObject*, JSValue);
 bool isInstance(JSGlobalObject*, JSValue, PyType*); // By its type alone: not what __instancecheck__ or __class__ say.
+bool isExactly(JSGlobalObject*, JSValue, PyType*); // And not of a class derived from it.
+bool isExactly(JSGlobalObject*, JSValue, BuiltinType);
 String typeName(JSGlobalObject*, JSValue);
 
 // ---- Exceptions
@@ -252,6 +254,10 @@ void setTypeParameterDefault(JSGlobalObject*, JSValue parameter, JSValue evaluat
 JSValue newTypeAlias(JSGlobalObject*, JSString* name, JSValue typeParameters, JSValue computeValue);
 JSValue subscriptGeneric(JSGlobalObject*, PyTuple* typeParameters);
 JSObject* createTypingModule(JSGlobalObject*); // _typing
+
+// t"..."
+JSValue newInterpolation(JSGlobalObject*, JSValue value, JSValue expression, JSValue conversion, JSValue formatSpecification);
+JSValue newTemplate(JSGlobalObject*, JSValue strings, JSValue interpolations);
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 // An attribute got through super().
 JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);

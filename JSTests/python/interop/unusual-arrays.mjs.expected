@@ -1,0 +1,228 @@
+plain
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append=None
+    setitem=None
+    pop=4
+    reverse=None
+    sort=None
+    del=None
+    clear=None
+    after=[]
+frozen
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append!!TypeError: Attempted to assign to readonly property.
+    setitem!!TypeError: Attempted to assign to readonly property.
+    pop!!TypeError: Attempted to assign to readonly property.
+    reverse!!TypeError: Attempted to assign to readonly property.
+    sort!!TypeError: Attempted to assign to readonly property.
+    del!!TypeError: Attempted to assign to readonly property.
+    clear!!TypeError: Attempted to assign to readonly property.
+    after=[1, 2, 3]
+sealed
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append!!TypeError: Attempted to assign to readonly property.
+    setitem=None
+    pop!!TypeError: Unable to delete property.
+    reverse=None
+    sort=None
+    del!!TypeError: Unable to delete property.
+    clear!!TypeError: Unable to delete property.
+    after=[3, 9, 9]
+not extensible
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append!!TypeError: Attempted to assign to readonly property.
+    setitem=None
+    pop=3
+    reverse=None
+    sort=None
+    del=None
+    clear=None
+    after=[]
+was sparse
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append=None
+    setitem=None
+    pop=4
+    reverse=None
+    sort=None
+    del=None
+    clear=None
+    after=[]
+has a getter
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append=None
+    setitem=None
+    pop=4
+    reverse=None
+    sort!!TypeError: Attempted to assign to readonly property.
+    del!!TypeError: Attempted to assign to readonly property.
+    clear=None
+    after=[]
+has a hole
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, None, 3]
+    iter=[1, None, 3]
+    repr='[1, None, 3]'
+    tuple=(1, None, 3)
+    slice=[None, 3]
+    in=False
+    index!!ValueError: list.index(x): x not in list
+    count=0
+    copy=[1, None, 3]
+    +=[1, None, 3, 9]
+    *=[1, None, 3, 1, None, 3]
+    ===False
+    reversed=[3, None, 1]
+    sorted!!TypeError: '<' not supported between instances of 'NoneType' and 'int'
+    unpack=(1, None, 3)
+    sum!!TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+    append=None
+    setitem=None
+    pop=4
+    reverse=None
+    sort!!TypeError: '<' not supported between instances of 'NoneType' and 'int'
+    del=None
+    clear=None
+    after=[]
+one element cannot be written
+    len=3
+    x[0]=1
+    x[-1]=3
+    list=[1, 2, 3]
+    iter=[1, 2, 3]
+    repr='[1, 2, 3]'
+    tuple=(1, 2, 3)
+    slice=[2, 3]
+    in=True
+    index=1
+    count=1
+    copy=[1, 2, 3]
+    +=[1, 2, 3, 9]
+    *=[1, 2, 3, 1, 2, 3]
+    ===True
+    reversed=[3, 2, 1]
+    sorted=[1, 2, 3]
+    unpack=(1, 2, 3)
+    sum=6
+    append=None
+    setitem!!TypeError: Attempted to assign to readonly property.
+    pop=4
+    reverse!!TypeError: Attempted to assign to readonly property.
+    sort!!TypeError: Attempted to assign to readonly property.
+    del!!TypeError: Attempted to assign to readonly property.
+    clear=None
+    after=[]
+RangeError: from the getter
+RangeError: from the getter
+got
+first

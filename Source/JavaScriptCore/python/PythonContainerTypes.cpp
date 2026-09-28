@@ -111,7 +111,8 @@ PYTHON_NATIVE(listPop)
         if (at < 0 || at >= length)
             return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop index out of range"_s));
     }
-    JSValue value = listGet(self, at);
+    JSValue value = listGet(globalObject, self, at);
+    RETURN_IF_EXCEPTION(scope, { });
     listRemoveRange(globalObject, self, at, 1);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(value);
@@ -121,7 +122,9 @@ PYTHON_NATIVE(listRemove)
 {
     LIST_PROLOGUE("remove");
     for (unsigned i = 0; i < self->length(); ++i) {
-        bool same = isEqual(globalObject, listGet(self, i), args[1]);
+        JSValue item = listGet(globalObject, self, i);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool same = isEqual(globalObject, item, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         if (same) {
             scope.release();
@@ -149,13 +152,16 @@ PYTHON_NATIVE(listCopy)
 PYTHON_NATIVE(listReverse)
 {
     LIST_PROLOGUE("reverse");
-    UNUSED_PARAM(scope);
     unsigned length = self->length();
     for (unsigned i = 0; i < length / 2; ++i) {
-        JSValue a = listGet(self, i);
-        JSValue b = listGet(self, length - 1 - i);
+        JSValue a = listGet(globalObject, self, i);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue b = listGet(globalObject, self, length - 1 - i);
+        RETURN_IF_EXCEPTION(scope, { });
         listSet(globalObject, self, i, b);
+        RETURN_IF_EXCEPTION(scope, { });
         listSet(globalObject, self, length - 1 - i, a);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     RETURN_NONE();
 }
@@ -178,7 +184,9 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
     int64_t stop = std::min(resolve(args.at(3), length), length);
     RETURN_IF_EXCEPTION(scope, { });
     for (int64_t i = start; i < stop; ++i) {
-        bool same = isEqual(globalObject, get(i), args[1]);
+        JSValue item = get(i);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool same = isEqual(globalObject, item, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         if (same)
             return JSValue::encode(jsNumber(static_cast<int32_t>(i)));
@@ -193,7 +201,9 @@ static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeAr
     auto scope = DECLARE_THROW_SCOPE(vm);
     int32_t count = 0;
     for (unsigned i = 0; i < length; ++i) {
-        bool same = isEqual(globalObject, get(i), args[1]);
+        JSValue item = get(i);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool same = isEqual(globalObject, item, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         count += same;
     }
@@ -203,13 +213,13 @@ static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeAr
 PYTHON_NATIVE(listIndex)
 {
     LIST_PROLOGUE("index");
-    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, self->length(), "list"_s, [&] (unsigned i) { return listGet(self, i); }));
+    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, self->length(), "list"_s, [&] (unsigned i) { return listGet(globalObject, self, i); }));
 }
 
 PYTHON_NATIVE(listCount)
 {
     LIST_PROLOGUE("count");
-    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, self->length(), [&] (unsigned i) { return listGet(self, i); }));
+    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, self->length(), [&] (unsigned i) { return listGet(globalObject, self, i); }));
 }
 
 // A stable merge sort of `values`, by `keys` if there are any. False if a comparison raised.
@@ -268,8 +278,10 @@ PYTHON_NATIVE(listSort)
     bool reverse = reverseValue && isTrue(globalObject, reverseValue);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer values;
-    for (unsigned i = 0; i < self->length(); ++i)
-        values.append(listGet(self, i));
+    for (unsigned i = 0; i < self->length(); ++i) {
+        values.append(listGet(globalObject, self, i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     MarkedArgumentBuffer sorted;
     sortValues(globalObject, values, args.keyword(globalObject, "key"_s), reverse, sorted);
     RETURN_IF_EXCEPTION(scope, { });

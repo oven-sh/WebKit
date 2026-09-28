@@ -35,8 +35,6 @@ namespace JSC { namespace Python {
 
 using Kind = PyNativeFunction::Kind;
 
-static PyNativeObject* asNativeObject(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
-static PyTuple* asTuple(JSValue value) { return uncheckedDowncast<PyTuple>(value.asCell()); }
 
 namespace AliasField {
 enum Field : unsigned { Origin, Arguments, Parameters, IsStarred };
@@ -436,7 +434,9 @@ PYTHON_NATIVE(genericAliasRepr)
             for (unsigned j = 0; j < asList(argument)->length(); ++j) {
                 if (j)
                     out.append(", "_s);
-                appendTypeRepr(globalObject, out, asList(argument)->getIndexQuickly(j));
+                JSValue item = listGet(globalObject, asList(argument), j);
+                RETURN_IF_EXCEPTION(scope, { });
+                appendTypeRepr(globalObject, out, item);
                 RETURN_IF_EXCEPTION(scope, { });
             }
             out.append(']');

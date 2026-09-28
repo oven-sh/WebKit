@@ -121,6 +121,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeAnnotations(globalObject);
+    Python::initializeTemplateStrings(globalObject);
     Python::initializeGenericAliasAndUnion(globalObject);
     Python::initializeTypeParameters(globalObject);
     m_noDefault.set(vm, this, PyNativeObject::create(globalObject, BuiltinType::NoDefaultType));

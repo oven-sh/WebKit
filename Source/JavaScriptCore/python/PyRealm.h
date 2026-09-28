@@ -87,6 +87,9 @@ namespace JSC {
     v(Generic, "typing.Generic", Object, Object, PyType::IsBaseType) \
     v(NoDefaultType, "NoDefaultType", Object, Native, 0) \
     v(ConstEvaluator, "_typing._ConstEvaluator", Object, Native, 0) \
+    v(Template, "string.templatelib.Template", Object, Native, 0) \
+    v(TemplateIter, "string.templatelib.TemplateIter", Object, Native, 0) \
+    v(Interpolation, "string.templatelib.Interpolation", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \

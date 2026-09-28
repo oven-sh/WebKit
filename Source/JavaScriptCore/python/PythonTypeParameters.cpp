@@ -37,9 +37,7 @@ namespace JSC { namespace Python {
 
 using Kind = PyNativeFunction::Kind;
 
-static PyNativeObject* asNativeObject(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
 static PyTypingObject* asTypingObject(JSValue value) { return uncheckedDowncast<PyTypingObject>(value.asCell()); }
-static PyTuple* asTuple(JSValue value) { return uncheckedDowncast<PyTuple>(value.asCell()); }
 
 // The fields of a TypeVar. A ParamSpec and a TypeVarTuple have some of them, in the same places.
 namespace VariableField {
@@ -49,11 +47,6 @@ enum Variance : int { IsCovariant = 1, IsContravariant = 2, IsInferred = 4 };
 
 namespace AliasTypeField {
 enum Field : unsigned { Name, TypeParameters, ComputeValue, Value, Module };
-}
-
-static bool isExactly(JSGlobalObject* globalObject, JSValue value, PyType* type)
-{
-    return value.isCell() && typeOf(globalObject, value) == type;
 }
 
 bool isTypeAlias(JSGlobalObject* globalObject, JSValue value)

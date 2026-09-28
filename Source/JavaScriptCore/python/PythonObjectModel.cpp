@@ -155,6 +155,16 @@ bool isInstance(JSGlobalObject* globalObject, JSValue value, PyType* type)
     return typeOf(globalObject, value)->isSubtypeOf(type);
 }
 
+bool isExactly(JSGlobalObject* globalObject, JSValue value, PyType* type)
+{
+    return typeOf(globalObject, value) == type;
+}
+
+bool isExactly(JSGlobalObject* globalObject, JSValue value, BuiltinType type)
+{
+    return typeOf(globalObject, value) == globalObject->pyRealm()->type(type);
+}
+
 String typeName(JSGlobalObject* globalObject, JSValue value)
 {
     return typeOf(globalObject, value)->nameString(globalObject);

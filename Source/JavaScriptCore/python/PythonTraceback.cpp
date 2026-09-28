@@ -503,7 +503,8 @@ static void appendException(JSGlobalObject* globalObject, StringBuilder& builder
     scope.clearException();
     if (notes && isList(notes)) {
         for (unsigned i = 0; i < asList(notes)->length(); ++i) {
-            String note = str(globalObject, listGet(asList(notes), i));
+            JSValue item = listGet(globalObject, asList(notes), i);
+            String note = scope.exception() ? String() : str(globalObject, item);
             if (scope.exception()) {
                 scope.clearException();
                 continue;

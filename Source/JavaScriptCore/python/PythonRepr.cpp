@@ -299,7 +299,9 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         for (unsigned i = 0; i < list->length(); ++i) {
             if (i)
                 builder.append(", "_s);
-            String item = repr(globalObject, listGet(list, i));
+            JSValue value = listGet(globalObject, list, i);
+            RETURN_IF_EXCEPTION(scope, { });
+            String item = repr(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });
             builder.append(item);
         }

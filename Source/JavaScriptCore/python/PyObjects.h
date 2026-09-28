@@ -447,5 +447,6 @@ inline PySlice* trySlice(JSValue value) { return tryCell<PySlice, PySliceType>(v
 inline PyIterator* tryIterator(JSValue value) { return tryCell<PyIterator, PyIteratorType>(value); }
 inline PyBoxedValue* tryBoxedValue(JSValue value) { return tryCell<PyBoxedValue, PyBoxedValueType>(value); }
 inline PyNativeObject* tryNativeObject(JSValue value) { return tryCell<PyNativeObject, PyNativeObjectType>(value); }
+inline PyNativeObject* asNativeObject(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
 
 } // namespace JSC

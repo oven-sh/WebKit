@@ -136,10 +136,11 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
             unsigned rightLength = other->length();
             JSArray* result = newList(globalObject, leftLength + rightLength);
             RETURN_IF_EXCEPTION(scope, { });
-            for (unsigned i = 0; i < leftLength; ++i)
-                listSet(globalObject, result, i, listGet(list, i));
-            for (unsigned i = 0; i < rightLength; ++i)
-                listSet(globalObject, result, leftLength + i, listGet(other, i));
+            for (unsigned i = 0; i < leftLength + rightLength; ++i) {
+                JSValue item = i < leftLength ? listGet(globalObject, list, i) : listGet(globalObject, other, i - leftLength);
+                RETURN_IF_EXCEPTION(scope, { });
+                listInitializeAt(globalObject, result, i, item);
+            }
             return result;
         }
         if (isTuple(left) && isTuple(right))
@@ -171,7 +172,7 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
             return result;
         MarkedArgumentBuffer values;
         for (unsigned i = 0; i < result->length(); ++i)
-            values.append(listGet(result, i));
+            values.append(listGet(globalObject, result, i));
         listReplaceRange(globalObject, asList(sequence), 0, asList(sequence)->length(), values);
         RETURN_IF_EXCEPTION(scope, { });
         return sequence;
@@ -540,6 +541,7 @@ static JSValue compareSequences(JSGlobalObject* globalObject, ComparisonOperator
     unsigned common = std::min(leftLength, rightLength);
     for (unsigned i = 0; i < common; ++i) {
         auto [a, b] = get(i);
+        RETURN_IF_EXCEPTION(scope, { });
         bool same = isEqual(globalObject, a, b);
         RETURN_IF_EXCEPTION(scope, { });
         if (same)
@@ -595,7 +597,7 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
     if (isList(left) && isList(right)) {
         JSArray* a = asList(left);
         JSArray* b = asList(right);
-        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, a->length(), b->length(), [&] (unsigned i) { return std::pair { listGet(a, i), listGet(b, i) }; }));
+        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, a->length(), b->length(), [&] (unsigned i) { return std::pair { listGet(globalObject, a, i), listGet(globalObject, b, i) }; }));
     }
     if (isDict(left) && isDict(right)) {
         if (!isEquality)
@@ -813,7 +815,9 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             if (isListCell(cell)) {
                 auto* list = uncheckedDowncast<JSArray>(cell);
                 for (unsigned i = 0; i < list->length(); ++i) {
-                    bool same = isEqual(globalObject, listGet(list, i), value);
+                    JSValue item = listGet(globalObject, list, i);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    bool same = isEqual(globalObject, item, value);
                     RETURN_IF_EXCEPTION(scope, false);
                     if (same)
                         return true;
@@ -1194,15 +1198,18 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
             JSArray* result = newList(globalObject, indices->length);
             RETURN_IF_EXCEPTION(scope, { });
             int64_t from = indices->start;
-            for (int64_t i = 0; i < indices->length; ++i, from += indices->step)
-                listSet(globalObject, result, i, listGet(list, from));
+            for (int64_t i = 0; i < indices->length; ++i, from += indices->step) {
+                JSValue item = listGet(globalObject, list, from);
+                RETURN_IF_EXCEPTION(scope, { });
+                listInitializeAt(globalObject, result, i, item);
+            }
             return result;
         }
         if (!isIndexLike(globalObject, key))
             return raiseTypeError(globalObject, scope, makeString("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
         auto index = normalizeIndex(globalObject, scope, key, list->length(), "list index"_s);
         RETURN_IF_EXCEPTION(scope, { });
-        return listGet(list, *index);
+        RELEASE_AND_RETURN(scope, listGet(globalObject, list, *index));
     }
 
     switch (cell->type()) {
@@ -1329,8 +1336,10 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
                 return true;
             }
             int64_t at = indices->start;
-            for (int64_t i = 0; i < indices->length; ++i, at += indices->step)
+            for (int64_t i = 0; i < indices->length; ++i, at += indices->step) {
                 listSet(globalObject, list, at, values.at(i));
+                RETURN_IF_EXCEPTION(scope, true);
+            }
             return true;
         }
         // From the top down, so that what has yet to go stays where it is.
@@ -1486,7 +1495,9 @@ bool forEach(JSGlobalObject* globalObject, JSValue iterable, const ScopedLambda<
     if (isExact(globalObject, iterable) && iterable.isCell()) {
         if (JSArray* list = tryList(iterable)) {
             for (unsigned i = 0; i < list->length(); ++i) {
-                bool more = function(listGet(list, i));
+                JSValue item = listGet(globalObject, list, i);
+                RETURN_IF_EXCEPTION(scope, false);
+                bool more = function(item);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (!more)
                     break;
@@ -1543,8 +1554,10 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
             }
         } else if (JSArray* list = tryList(iterable)) {
             if (list->length() == count) {
-                for (unsigned i = 0; i < count; ++i)
-                    target(i) = listGet(list, i);
+                for (unsigned i = 0; i < count; ++i) {
+                    target(i) = listGet(globalObject, list, i);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
                 return;
             }
         }
@@ -1608,7 +1621,7 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
     JSArray* list = newList(globalObject, starred);
     RETURN_IF_EXCEPTION(scope, void());
     for (unsigned i = 0; i < starred; ++i)
-        listSet(globalObject, list, i, rest.at(i));
+        listInitializeAt(globalObject, list, i, rest.at(i));
     for (unsigned i = 0; i < before; ++i)
         target(i) = values.at(i);
     target(before) = list;

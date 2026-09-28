@@ -1,0 +1,11 @@
+what it is => object,Template(strings=('Hello ', ', ', ' times'), interpolations=(Interpolation('World', 'name', None, ''), Interpolation(3, 'count', 'r', '>4')))
+its parts => ["Hello ",", "," times"],["World",3],3
+given to a tag function => [["Hello ",", "," times"],["World",3]]
+String.raw => Hello World, 3 times
+gone through => "Hello ",name=World!undefined:,", ",count=3!r:>4," times"
+an interpolation => World,name,,""
+a function of Python's as a tag => ('list', ['a', 'b', 'c'], (1, 'two'))
+made with a value of JavaScript's => true,,
+values of JavaScript's in Python => true,,true,.2f
++ => 4,Template(strings=('<', '><', '>'), interpolations=(Interpolation(1, 'value', None, ''), Interpolation(2, 'value', None, '')))
++ with a string => Template(strings=('Hello ', ', ', ' times'), interpolations=(Interpolation('World', 'name', None, ''), Interpolation(3, 'count', 'r', '>4')))x

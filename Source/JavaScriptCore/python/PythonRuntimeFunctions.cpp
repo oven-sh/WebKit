@@ -127,6 +127,23 @@ PYTHON_RUNTIME_FUNCTION(setUpAnnotations)
     return JSValue::encode(jsUndefined());
 }
 
+// ---- t"..."
+
+// newInterpolation(value, how it was written, 's', 'r', 'a' or None, format specification)
+PYTHON_RUNTIME_FUNCTION(runtimeNewInterpolation)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newInterpolation(globalObject, argument(0), argument(1), argument(2), argument(3)));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeNewTemplate)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newTemplate(globalObject, argument(0), argument(1)));
+}
+
 // ---- Type parameters
 
 // newTypeVar(name, what works out its bound or its constraints or None, which of the two)
@@ -246,7 +263,7 @@ PYTHON_RUNTIME_FUNCTION(listToTuple)
     JSArray* list = asList(argument(0));
     PyTuple* tuple = PyTuple::create(globalObject, list->length());
     for (unsigned i = 0; i < list->length(); ++i)
-        tuple->initializeAt(vm, i, listGet(list, i));
+        tuple->initializeAt(vm, i, list->getIndexQuickly(i));
     return JSValue::encode(tuple);
 }
 
@@ -394,7 +411,7 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
     JSArray* positional = asList(argument(1));
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < positional->length(); ++i)
-        arguments.append(listGet(positional, i));
+        arguments.append(positional->getIndexQuickly(i));
     if (isNone(argument(2)))
         RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, nullptr, callFrame->thisValue())));
 
@@ -965,7 +982,7 @@ PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
     JSArray* list = asList(argument(2));
     PyTuple* bases = PyTuple::create(globalObject, list->length());
     for (unsigned i = 0; i < list->length(); ++i)
-        bases->initializeAt(vm, i, listGet(list, i));
+        bases->initializeAt(vm, i, list->getIndexQuickly(i));
     PyDict* keywords = isNone(argument(3)) ? nullptr : uncheckedDowncast<PyDict>(argument(3).asCell());
     RELEASE_AND_RETURN(scope, JSValue::encode(buildClass(globalObject, argument(0), asString(argument(1)), bases, keywords)));
 }
@@ -1041,6 +1058,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     };
     add("loadName"_s, loadName);
     add("checkAnnotationFormat"_s, checkAnnotationFormat);
+    add("newInterpolation"_s, runtimeNewInterpolation);
+    add("newTemplate"_s, runtimeNewTemplate);
     add("newTypeVar"_s, runtimeNewTypeVar);
     add("newParamSpec"_s, runtimeNewParamSpec);
     add("newTypeVarTuple"_s, runtimeNewTypeVarTuple);
