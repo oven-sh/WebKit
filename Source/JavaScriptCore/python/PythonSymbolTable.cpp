@@ -831,6 +831,16 @@ private:
             return true;
         case Expression::Kind::Attribute: {
             auto& node = expression->as<Attribute>();
+            if (node.context == ExpressionContext::Store && node.value->kind == Expression::Kind::Name && *node.value->as<Name>().id == "self"_s) {
+                // Of the nearest class that this is inside of.
+                for (unsigned i = m_stack.size() - 1; i--;) {
+                    if (m_stack[i]->type != BlockType::Class)
+                        continue;
+                    if (!m_stack[i]->staticAttributes.contains(node.attribute))
+                        m_stack[i]->staticAttributes.append(node.attribute);
+                    break;
+                }
+            }
             return checkName(*node.attribute, node, node.context) && visit(node.value);
         }
         case Expression::Kind::Subscript: {

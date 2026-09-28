@@ -370,6 +370,12 @@ PYTHON_NATIVE(builtinLocals)
     return JSValue::encode(locals);
 }
 
+JSObject* globalsOfCaller(JSGlobalObject* globalObject)
+{
+    CallFrame* top = globalObject->vm().topCallFrame;
+    return top ? globalsOfFrame(globalObject, callerOf(top)) : nullptr;
+}
+
 PYTHON_NATIVE(builtinGlobals)
 {
     NATIVE_PROLOGUE();

@@ -577,16 +577,21 @@ PYTHON_NATIVE(strIsAscii)
     return JSValue::encode(jsBoolean(self.containsOnlyASCII()));
 }
 
+bool isIdentifier(StringView string)
+{
+    bool isFirst = true;
+    for (char32_t c : string.codePoints()) {
+        if (isFirst ? !(c == '_' || u_hasBinaryProperty(c, UCHAR_XID_START)) : !u_hasBinaryProperty(c, UCHAR_XID_CONTINUE))
+            return false;
+        isFirst = false;
+    }
+    return !isFirst;
+}
+
 PYTHON_NATIVE(strIsIdentifier)
 {
     STR_PROLOGUE("isidentifier");
-    bool isFirst = true;
-    for (char32_t c : StringView(self).codePoints()) {
-        if (isFirst ? !(c == '_' || u_hasBinaryProperty(c, UCHAR_XID_START)) : !u_hasBinaryProperty(c, UCHAR_XID_CONTINUE))
-            return JSValue::encode(jsBoolean(false));
-        isFirst = false;
-    }
-    return JSValue::encode(jsBoolean(!isFirst));
+    return JSValue::encode(jsBoolean(isIdentifier(self)));
 }
 
 PYTHON_NATIVE(strIsPrintable)

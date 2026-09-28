@@ -618,17 +618,20 @@ void PyGetSetDescriptor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_PYTHON_CELL(PyGetSetDescriptor, "getset_descriptor", ObjectType)
 
-PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyType* owner, const String& name, Getter getter, Setter setter, bool isMember)
+PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyType* owner, const String& name, Getter getter, Setter setter, bool isMember, ASCIILiteral doc)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     // Which of the two it is called is as CPython has it, if it has it.
-    const Python::BuiltinDescription* description = Python::findAttributeDescription(owner->nameString(globalObject), name);
-    if (description)
+    // A class that is written in Python may be called what a built-in one is.
+    const Python::BuiltinDescription* description = owner->hasFlag(PyType::IsHeapType) ? nullptr : Python::findAttributeDescription(owner->nameString(globalObject), name);
+    if (description) {
         isMember = description->kind == Python::BuiltinDescription::Kind::MemberDescriptor;
+        doc = description->doc;
+    }
     auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, isMember ? realm->builtinMemberDescriptorStructure() : realm->structureFor(BuiltinType::GetSetDescriptor), getter, setter);
     descriptor->finishCreation(vm);
-    descriptor->m_description = description;
+    descriptor->m_doc = doc;
     descriptor->m_isMember = isMember;
     descriptor->m_owner.set(vm, descriptor, owner);
     descriptor->m_name.set(vm, descriptor, jsString(vm, name));

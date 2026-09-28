@@ -1,0 +1,109 @@
+plain => [('__module__', 'str'), ('__firstlineno__', 'int'), ('__static_attributes__', 'tuple'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+derived => [('__module__', 'str'), ('__firstlineno__', 'int'), ('__static_attributes__', 'tuple'), ('__doc__', 'NoneType')]
+with things => [('__module__', 'str'), ('__firstlineno__', 'int'), ('__doc__', 'str'), ('x', 'int'), ('m', 'function'), ('__static_attributes__', 'tuple'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor')]
+from list => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from dict => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from set => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from frozenset => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from tuple => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from int => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from float => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from str => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from bytes => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from bytearray => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from complex => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from Exception => [('__module__', 'str'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from type => [('__module__', 'str'), ('__doc__', 'NoneType')]
+from object => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+from object => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+type() => [('y', 'int'), ('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+descriptors => ("<attribute '__dict__' of 'A' objects>", "<attribute '__weakref__' of 'A' objects>", '__dict__', <class '__main__.A'>, 'dictionary for instance variables', 'list of weak references to the object')
+through the descriptor => ({'v': 1}, None, {})
+wrong instance !! TypeError descriptor '__dict__' for 'A' objects doesn't apply to a 'int' object
+object has none => (True, False, False, False, False, True, True, True)
+no dict !! AttributeError 'object' object has no attribute '__dict__'
+int no dict !! AttributeError 'int' object has no attribute '__dict__'
+qualname => ('A', False, 'a.b', False)
+qualname type !! TypeError type __qualname__ must be a str, not int
+slots => [('__slots__', 'tuple'), ('__module__', 'str'), ('a', 'member_descriptor'), ('b', 'member_descriptor'), ('__doc__', 'NoneType')]
+slots none => [('__slots__', 'tuple'), ('__module__', 'str'), ('__doc__', 'NoneType')]
+slots str => [('__slots__', 'str'), ('__module__', 'str'), ('ab', 'member_descriptor'), ('__doc__', 'NoneType')]
+slots list => [('__slots__', 'list'), ('__module__', 'str'), ('x', 'member_descriptor'), ('y', 'member_descriptor'), ('__doc__', 'NoneType')]
+slots dict => ([('__slots__', 'dict'), ('__module__', 'str'), ('x', 'member_descriptor'), ('y', 'member_descriptor'), ('__doc__', 'NoneType')], None)
+slots with dict => [('__slots__', 'tuple'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+slots with weakref => [('__slots__', 'tuple'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+slots with both => [('__slots__', 'tuple'), ('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+slots dict works => ({'z': 1}, 2)
+slots no dict !! AttributeError 'S' object has no attribute 'z' and no __dict__ for setting new attributes
+slots no __dict__ !! AttributeError 'S' object has no attribute '__dict__'
+slots twice dict !! TypeError __dict__ slot disallowed: we already got one
+slots twice weakref !! TypeError __weakref__ slot disallowed: we already got one
+slots dict again !! TypeError __dict__ slot disallowed: we already got one
+slots weakref again !! TypeError __weakref__ slot disallowed: we already got one
+slots under dict => ([('__slots__', 'str'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__doc__', 'NoneType')], True)
+slots under slots => [('__slots__', 'str'), ('__module__', 'str'), ('b', 'member_descriptor'), ('__doc__', 'NoneType')]
+plain under slots => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+not identifier !! TypeError __slots__ must be identifiers
+not string !! TypeError __slots__ items must be strings, not 'int'
+empty name !! TypeError __slots__ must be identifiers
+conflict !! ValueError 'a' in __slots__ conflicts with class variable
+mangled => [('__slots__', 'tuple'), ('__module__', 'str'), ('_M__p', 'member_descriptor'), ('__q__', 'member_descriptor'), ('_r', 'member_descriptor'), ('__doc__', 'NoneType')]
+mangled underscore class => [('__slots__', 'tuple'), ('__module__', 'str'), ('_M__p', 'member_descriptor'), ('__doc__', 'NoneType')]
+duplicate => [('__slots__', 'tuple'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__doc__', 'NoneType')]
+int slots !! TypeError nonempty __slots__ not supported for subtype of 'int'
+int empty slots => [('__slots__', 'tuple'), ('__module__', 'str'), ('__doc__', 'NoneType')]
+tuple slots !! TypeError nonempty __slots__ not supported for subtype of 'tuple'
+bytes slots !! TypeError nonempty __slots__ not supported for subtype of 'bytes'
+list slots => [('__slots__', 'str'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__doc__', 'NoneType')]
+str slots => [('__slots__', 'str'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__doc__', 'NoneType')]
+exception slots => ([('__slots__', 'str'), ('__module__', 'str'), ('a', 'member_descriptor'), ('__doc__', 'NoneType')], True)
+two slotted bases !! TypeError multiple bases have instance lay-out conflict
+slotted and empty => [('__module__', 'str'), ('__dict__', 'getset_descriptor'), ('__weakref__', 'getset_descriptor'), ('__doc__', 'NoneType')]
+__slots__ kept => (('a', 'b'), 'ab', ['x'])
+iterator slots => [('__slots__', 'list_iterator'), ('__module__', 'str'), ('p', 'member_descriptor'), ('q', 'member_descriptor'), ('__doc__', 'NoneType')]
+member => ("<member 'a' of 'S' objects>", 'a', True, 'member_descriptor', None)
+unset !! AttributeError 'S' object has no attribute 'a'
+delete unset !! AttributeError a
+set get delete => (5, None, False)
+non-string key => ([1, 's'], 'one')
+module => ('__main__', 'mm', '__main__')
+set __dict__ => (1, {'k': 1})
+shared __dict__ => (2, True, True)
+set __dict__ wrong !! TypeError __dict__ must be set to a dictionary, not a 'int'
+delete __dict__ => ({},)
+class __dict__ read only !! AttributeError attribute '__dict__' of 'type' objects is not writable
+function __dict__ => ([], True, 'getset_descriptor', {})
+exception __dict__ => (True, False, 'getset_descriptor', {})
+module __dict__ => (True, 'member_descriptor')
+type __dict__ => ('getset_descriptor', 'mappingproxy')
+borg => (1, None, 2, [('x', 1), ('y', 2)], True, None, False, {'y': 2})
+borg parts => (1, False, 1, 1, None, 3, False)
+static attributes => (('a',), ())
+static attributes of all kinds => (('a', 'b', 'd', 'g', 'h', 'j', 'm', 'n', 't'), ('inner_one',))
+sizes => [('object', 16, 0, 0, 0), ('int', 24, 4, 0, 0), ('list', 40, 0, 0, 0), ('A', 16, 0, -1, -24), ('B', 16, 0, -1, -24), ('S', 32, 0, 0, 0), ('X', 40, 0, -1, -24), ('X', 24, 4, -1, 0), ('Exception', 72, 0, 16, 0), ('X', 72, 0, 16, -24), ('type', 936, 40, 264, 368)]
+object [1, 8, 10, 12]
+int [1, 8, 10, 12, 22, 24]
+list [1, 5, 8, 10, 12, 14, 22, 25]
+dict [1, 6, 8, 10, 12, 14, 22, 29]
+tuple [1, 5, 8, 10, 12, 14, 22, 26]
+str [1, 8, 10, 12, 22, 28]
+bytes [1, 8, 10, 12, 22, 27]
+type [1, 8, 10, 11, 12, 14, 23, 31]
+BaseException [1, 8, 10, 12, 14, 30]
+Exception [1, 8, 10, 12, 14, 30]
+A [2, 3, 4, 9, 10, 12, 14]
+B [2, 3, 4, 9, 10, 12, 14]
+S [9, 10, 12, 14]
+S0 [9, 10, 12, 14]
+SD [2, 4, 9, 10, 12, 14]
+SW [3, 9, 10, 12, 14]
+L [2, 3, 4, 5, 9, 10, 12, 14, 22, 25]
+I [4, 9, 10, 12, 14, 22, 24]
+D [2, 3, 4, 6, 9, 10, 12, 14, 22, 29]
+T [4, 5, 9, 10, 12, 14, 22, 26]
+St [2, 3, 4, 9, 10, 12, 14, 22, 28]
+By [4, 9, 10, 12, 14, 22, 27]
+E [3, 9, 10, 12, 14, 30]
+M [9, 10, 11, 12, 14, 23, 31]
+F [2, 3, 4, 9, 10, 12, 14, 22]
+Se [2, 4, 9, 10, 12, 14, 22]

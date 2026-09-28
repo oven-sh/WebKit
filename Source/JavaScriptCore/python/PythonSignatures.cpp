@@ -68,6 +68,15 @@ static const BuiltinDescription* find(StringView first, char separator, StringVi
     return nullptr;
 }
 
+const BuiltinTypeLayout* findTypeLayout(StringView type)
+{
+    for (auto& layout : s_builtinTypeLayouts) {
+        if (type == layout.name)
+            return &layout;
+    }
+    return nullptr;
+}
+
 const BuiltinDescription* findTypeDescription(StringView type) { return find(type, 0, { }); }
 const BuiltinDescription* findAttributeDescription(StringView type, StringView attribute) { return find(type, '.', attribute); }
 const BuiltinDescription* findModuleDescription(StringView module) { return find(module, ':', { }); }

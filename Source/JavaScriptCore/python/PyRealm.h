@@ -77,6 +77,7 @@ namespace JSC {
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \
+    v(StandardStream, "TextIOWrapper", Object, Object, 0) \
     v(Traceback, "traceback", Object, Native, 0) \
     v(MappingProxy, "mappingproxy", Object, Native, PyType::IsMapping) \
     v(ListIterator, "list_iterator", Object, Native, 0) \

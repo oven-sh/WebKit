@@ -34,6 +34,10 @@
 #
 # Each entry is [key, kind, signature or null, doc or null]. The key is "type" for a type, "type.name" for what is in the __dict__ of one, and
 # "module:name" for a function of a module. The kind is the name of the type that CPython has for it.
+#
+# The entry for a type has a fifth item: [__basicsize__, __itemsize__, __dictoffset__, __weakrefoffset__, __flags__]. The numbers mean nothing here,
+# where nothing is laid out as in CPython, but programs can see them. And whether they are zero decides what a class derived from it can have: whether
+# instances have a __dict__ already, whether there can be weak references to them already, and whether they can be given __slots__.
 
 import builtins
 import json
@@ -114,7 +118,8 @@ def text(value):
 
 
 for name, a_type in types.items():
-    entries.append([name, "type", text(a_type.__text_signature__), text(vars(a_type).get("__doc__"))])
+    layout = [a_type.__basicsize__, a_type.__itemsize__, a_type.__dictoffset__, a_type.__weakrefoffset__, a_type.__flags__]
+    entries.append([name, "type", text(a_type.__text_signature__), text(vars(a_type).get("__doc__")), layout])
     for attribute, value in vars(a_type).items():
         kind = type(value).__name__
         if kind == "staticmethod":

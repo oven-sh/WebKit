@@ -66,7 +66,19 @@ struct BuiltinDescription {
     ASCIILiteral doc; // Likewise.
 };
 
+// What CPython says of how instances of a built-in class are laid out. The numbers mean nothing here, but programs can see them, and whether they are
+// zero decides what a class derived from it can have.
+struct BuiltinTypeLayout {
+    ASCIILiteral name;
+    int basicSize; // type.__basicsize__
+    int itemSize; // type.__itemsize__: not zero if instances are not all of a size, and then they cannot be given __slots__.
+    int dictOffset; // type.__dictoffset__: not zero if instances have a __dict__.
+    int weakReferenceOffset; // type.__weakrefoffset__: not zero if there can be weak references to instances.
+    unsigned long flags; // type.__flags__
+};
+
 // Null if CPython has no such thing.
+const BuiltinTypeLayout* findTypeLayout(StringView type);
 const BuiltinDescription* findTypeDescription(StringView type);
 const BuiltinDescription* findAttributeDescription(StringView type, StringView attribute);
 const BuiltinDescription* findModuleDescription(StringView module);

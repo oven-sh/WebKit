@@ -2846,6 +2846,20 @@ private:
             store(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(node.body))));
 
         emit(node.body);
+        {
+            Vector<String> attributes;
+            for (const Identifier* name : m_block.staticAttributes)
+                attributes.append(name->string());
+            std::ranges::sort(attributes, [] (const String& a, const String& b) { return codePointCompareLessThan(a, b); });
+            Vector<Reg, 8> items;
+            for (auto& attribute : attributes) {
+                items.append(g.newTemporary());
+                g.move(items.last().get(), constant(jsString(m_vm, attribute)));
+            }
+            Reg tuple = g.newTemporary();
+            emitNewTuple(tuple.get(), items);
+            store(m_names.dunder_static_attributes, tuple.get());
+        }
         g.emitReturn(environment.get());
     }
 

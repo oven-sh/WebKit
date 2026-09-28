@@ -31,6 +31,7 @@
 #include "PyInstance.h"
 #include "PyObjects.h"
 #include "PythonOperations.h"
+#include "PythonSignatures.h"
 
 namespace JSC {
 
@@ -95,7 +96,62 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
     type->m_base.setMayBeNull(vm, type, base);
     type->m_layout = layout;
     type->m_flags = flags;
+    // One that is not CPython's is as its base is.
+    if (auto* cpython = Python::findTypeLayout(name)) {
+        type->m_basicSize = cpython->basicSize;
+        type->m_itemSize = cpython->itemSize;
+        type->m_dictOffset = cpython->dictOffset;
+        type->m_weakReferenceOffset = cpython->weakReferenceOffset;
+        type->m_flagsForPython = cpython->flags;
+    } else if (base) {
+        type->m_flagsForPython = base->m_flagsForPython;
+        type->m_basicSize = base->m_basicSize;
+        type->m_itemSize = base->m_itemSize;
+        type->m_dictOffset = base->m_dictOffset;
+        type->m_weakReferenceOffset = base->m_weakReferenceOffset;
+    }
+    type->m_flags |= (type->m_dictOffset ? HasInstanceDict : 0) | (type->m_weakReferenceOffset ? HasWeakReferences : 0);
     return type;
+}
+
+// The bits of type.__flags__: Py_TPFLAGS_* of CPython's Include/object.h
+static constexpr unsigned long cpythonInlineValues = 1ul << 2;
+static constexpr unsigned long cpythonManagedWeakReferences = 1ul << 3;
+static constexpr unsigned long cpythonManagedDict = 1ul << 4;
+static constexpr unsigned long cpythonSequence = 1ul << 5;
+static constexpr unsigned long cpythonMapping = 1ul << 6;
+static constexpr unsigned long cpythonHeapType = 1ul << 9;
+static constexpr unsigned long cpythonBaseType = 1ul << 10;
+static constexpr unsigned long cpythonHaveVectorcall = 1ul << 11;
+static constexpr unsigned long cpythonReady = 1ul << 12;
+static constexpr unsigned long cpythonHaveGC = 1ul << 14;
+static constexpr unsigned long cpythonIsAbstract = 1ul << 20;
+static constexpr unsigned long cpythonMatchSelf = 1ul << 22;
+static constexpr unsigned long cpythonItemsAtEnd = 1ul << 23;
+static constexpr unsigned long cpythonSubclassOfBuiltin = 0xFFul << 24; // One for each of int, list, tuple, bytes, str, dict, BaseException and type.
+
+void PyType::addToLayout(unsigned slots, bool addsDict, bool addsWeakReferences)
+{
+    m_basicSize += slots * sizeof(void*);
+    m_flagsForPython = cpythonHeapType | cpythonBaseType | cpythonReady | cpythonHaveGC
+        | (m_base->m_flagsForPython & (cpythonInlineValues | cpythonManagedWeakReferences | cpythonManagedDict | cpythonHaveVectorcall | cpythonMatchSelf | cpythonItemsAtEnd | cpythonSubclassOfBuiltin))
+        | (hasFlag(IsSequence) ? cpythonSequence : 0) | (hasFlag(IsMapping) ? cpythonMapping : 0);
+    // Where CPython keeps what it manages itself.
+    if (addsDict) {
+        m_dictOffset = -1;
+        m_flags |= HasInstanceDict;
+        m_flagsForPython |= cpythonManagedDict | (m_itemSize ? 0 : cpythonInlineValues);
+    }
+    if (addsWeakReferences) {
+        m_weakReferenceOffset = -24;
+        m_flags |= HasWeakReferences;
+        m_flagsForPython |= cpythonManagedWeakReferences;
+    }
+}
+
+unsigned long PyType::flagsForPython() const
+{
+    return m_flagsForPython | (hasFlag(IsAbstract) ? cpythonIsAbstract : 0);
 }
 
 void PyType::finishBuiltin(VM& vm, JSGlobalObject* globalObject, PyType* metatype)
@@ -128,7 +184,11 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     type->m_bases.set(vm, type, bases);
     type->m_layout = base->layout();
     type->m_errorType = base->m_errorType;
-    type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes));
+    type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes | HasInstanceDict | HasWeakReferences));
+    type->m_basicSize = base->m_basicSize;
+    type->m_itemSize = base->m_itemSize;
+    type->m_dictOffset = base->m_dictOffset;
+    type->m_weakReferenceOffset = base->m_weakReferenceOffset;
     // Whether it is a sequence or a mapping is for the first of its ancestors that is one or the other to say.
     for (auto& ancestor : mro->span()) {
         if (unsigned collectionFlags = asType(ancestor.get())->m_flags & (IsSequence | IsMapping)) {

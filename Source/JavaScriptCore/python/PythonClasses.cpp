@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "PythonOperations.h"
+#include "PythonBuiltins.h"
 
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
@@ -107,11 +107,22 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
     return order;
 }
 
-// The base whose instances are laid out as the new class's will be. All the others have to be content with that.
+// The nearest of a class and its bases whose instances are laid out differently from those of its own base: solid_base() of CPython's
+// Objects/typeobject.c. A class with __slots__ is one, and one without is not.
+static PyType* solidBase(PyType* type)
+{
+    if (!type->base())
+        return type;
+    PyType* base = solidBase(type->base());
+    return type->basicSize() != base->basicSize() || type->itemSize() != base->itemSize() ? type : base;
+}
+
+// The base whose instances are laid out as the new class's will be. All the others have to be content with that: best_base() of the same.
 static PyType* bestBase(JSGlobalObject* globalObject, PyTuple* bases)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* best = nullptr;
     PyType* winner = nullptr;
     for (auto& entry : bases->span()) {
         if (!isType(entry.get())) {
@@ -123,19 +134,37 @@ static PyType* bestBase(JSGlobalObject* globalObject, PyTuple* bases)
             raiseTypeError(globalObject, scope, makeString("type '"_s, base->nameString(globalObject), "' is not an acceptable base type"_s));
             return nullptr;
         }
-        if (!winner || (winner->layout() == PyType::Layout::Object && base->layout() != PyType::Layout::Object)) {
-            winner = base;
+        PyType* candidate = solidBase(base);
+        if (!winner) {
+            winner = candidate;
+            best = base;
+        } else if (winner->isSubtypeOf(candidate))
             continue;
-        }
-        if (base->layout() != PyType::Layout::Object && base->layout() != winner->layout()) {
+        else if (candidate->isSubtypeOf(winner)) {
+            winner = candidate;
+            best = base;
+        } else {
             raiseTypeError(globalObject, scope, "multiple bases have instance lay-out conflict"_s);
             return nullptr;
         }
     }
-    return winner;
+    return best;
 }
 
 // ---- type.__new__
+
+// What a name like __x is inside a class: _Py_Mangle()
+static String mangle(const String& className, const String& name)
+{
+    if (!name.startsWith("__"_s) || name.endsWith("__"_s) || name.contains('.'))
+        return name;
+    unsigned underscores = 0;
+    while (underscores < className.length() && className[underscores] == '_')
+        ++underscores;
+    if (underscores == className.length())
+        return name;
+    return makeString('_', StringView(className).substring(underscores), name);
+}
 
 static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* namespaceDict)
 {
@@ -184,15 +213,90 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     PyTuple* order = linearize(globalObject, bases);
     RETURN_IF_EXCEPTION(scope, { });
 
-    PyType* type = PyType::create(vm, globalObject, metatype, name, bases, base, order);
+    // What follows is type_new_impl() of CPython's Objects/typeobject.c and what that calls, in the same order, since the order is that of the __dict__.
 
-    bool hasSlots = false;
-    bool slotsIncludeDict = false;
+    // ---- __slots__: which attributes instances have room for, and whether they have a __dict__ and can be weakly referred to besides
+    bool mayAddDict = !base->hasFlag(PyType::HasInstanceDict);
+    bool mayAddWeakReferences = !base->hasFlag(PyType::HasWeakReferences) && !base->itemSize();
+    bool addsDict = false;
+    bool addsWeakReferences = false;
+    Vector<String> slots;
+    JSValue slotsValue = namespaceDict->getString(globalObject, "__slots__"_s);
+    if (!slotsValue) {
+        addsDict = mayAddDict;
+        addsWeakReferences = mayAddWeakReferences;
+    } else {
+        MarkedArgumentBuffer given;
+        if (slotsValue.isString())
+            given.append(slotsValue);
+        else {
+            collect(globalObject, slotsValue, given);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (given.size() && base->itemSize())
+            return raiseTypeError(globalObject, scope, makeString("nonempty __slots__ not supported for subtype of '"_s, base->nameString(globalObject), '\''));
+        for (unsigned i = 0; i < given.size(); ++i) {
+            if (!given.at(i).isString())
+                return raiseTypeError(globalObject, scope, makeString("__slots__ items must be strings, not '"_s, typeName(globalObject, given.at(i)), '\''));
+            String slot = asString(given.at(i))->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isIdentifier(slot))
+                return raiseTypeError(globalObject, scope, "__slots__ must be identifiers"_s);
+            if (slot == "__dict__"_s) {
+                if (!mayAddDict || addsDict)
+                    return raiseTypeError(globalObject, scope, "__dict__ slot disallowed: we already got one"_s);
+                addsDict = true;
+            }
+            if (slot == "__weakref__"_s) {
+                if (!mayAddWeakReferences || addsWeakReferences)
+                    return raiseTypeError(globalObject, scope, "__weakref__ slot disallowed: we already got one"_s);
+                addsWeakReferences = true;
+            }
+        }
+        String className = name->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        for (unsigned i = 0; i < given.size(); ++i) {
+            String slot = asString(given.at(i))->value(globalObject);
+            if (slot == "__dict__"_s || slot == "__weakref__"_s)
+                continue;
+            slot = mangle(className, slot);
+            // These three are put in the namespace for the sake of making the class, and taken out again below.
+            if (namespaceDict->getString(globalObject, slot) && slot != "__qualname__"_s && slot != "__classcell__"_s && slot != "__classdictcell__"_s)
+                return raiseValueError(globalObject, scope, makeString(reprOfString(slot), " in __slots__ conflicts with class variable"_s));
+            slots.append(slot);
+        }
+        std::ranges::sort(slots, [] (const String& a, const String& b) { return codePointCompareLessThan(a, b); });
+        // The other bases may provide what the first does not.
+        for (auto& entry : bases->span()) {
+            PyType* other = asType(entry.get());
+            if (other == base)
+                continue;
+            addsDict |= mayAddDict && other->hasFlag(PyType::HasInstanceDict);
+            addsWeakReferences |= mayAddWeakReferences && other->hasFlag(PyType::HasWeakReferences);
+        }
+    }
+
+    PyType* type = PyType::create(vm, globalObject, metatype, name, bases, base, order);
+    type->addToLayout(slots.size(), addsDict, addsWeakReferences);
+
+    // ---- What is in the namespace
+    type->putDirect(vm, names.private_qualname, name);
     namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue value) {
-        if (!key.isString())
-            return true; // FIXME: It should still be in __dict__.
+        if (!key.isString()) {
+            // No attribute, since there is no naming it, but it is in the __dict__.
+            PyDict::backedBy(globalObject, type)->set(globalObject, key, value);
+            return !scope.exception();
+        }
         auto property = asString(key)->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        if (property == names.dunder_qualname) {
+            if (!value.isString()) {
+                raiseTypeError(globalObject, scope, makeString("type __qualname__ must be a str, not "_s, typeName(globalObject, value)));
+                return false;
+            }
+            type->putDirect(vm, names.private_qualname, value);
+            return true;
+        }
 
         // These are what they are whether or not they are decorated as such.
         bool isPlainFunction = value.isCell() && value.asCell()->type() == JSFunctionType && !value.asCell()->inherits<PyNativeFunction>();
@@ -200,55 +304,32 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
             value = PyNativeObject::create(globalObject, BuiltinType::StaticMethod, value);
         else if (isPlainFunction && (property == names.dunder_init_subclass || property == names.dunder_class_getitem))
             value = PyNativeObject::create(globalObject, BuiltinType::ClassMethod, value);
-
-        if (property == names.dunder_slots) {
-            hasSlots = true;
-            MarkedArgumentBuffer slotNames;
-            if (value.isString())
-                slotNames.append(value);
-            else {
-                collect(globalObject, value, slotNames);
-                RETURN_IF_EXCEPTION(scope, false);
-            }
-            for (unsigned i = 0; i < slotNames.size(); ++i) {
-                if (!slotNames.at(i).isString()) {
-                    raiseTypeError(globalObject, scope, makeString("__slots__ items must be strings, not '"_s, typeName(globalObject, slotNames.at(i)), '\''));
-                    return false;
-                }
-                auto slot = asString(slotNames.at(i))->toIdentifier(globalObject);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (slot == names.dunder_dict) {
-                    slotsIncludeDict = true;
-                    continue;
-                }
-                if (slot == names.dunder_weakref)
-                    continue;
-                type->putDirect(vm, slot, createMemberDescriptor(globalObject, type, asString(slotNames.at(i))));
-            }
-        }
         type->putDirect(vm, property, value);
         return true;
     });
     RETURN_IF_EXCEPTION(scope, { });
 
-    // No attributes but the slots, if none of the bases' instances have any either.
-    if (hasSlots && !slotsIncludeDict) {
-        bool basesHaveDict = false;
-        for (auto& entry : order->span()) {
-            auto* ancestor = uncheckedDowncast<PyType>(entry.get().asCell());
-            basesHaveDict |= (ancestor->hasFlag(PyType::IsHeapType) || ancestor->isExceptionType()) && !ancestor->hasFlag(PyType::HasNoInstanceDict);
+    // The module is that of whoever is making the class, if the namespace does not say.
+    if (!type->lookupOwn(vm, names.dunder_module)) {
+        if (JSObject* globals = globalsOfCaller(globalObject)) {
+            if (JSValue moduleName = getStoredAttribute(vm, globals, names.dunder_name))
+                type->putDirect(vm, names.dunder_module, moduleName);
         }
-        if (!basesHaveDict)
-            type->setFlag(PyType::HasNoInstanceDict);
     }
 
+    // ---- What the class provides for its instances
+    for (auto& slot : slots)
+        type->putDirect(vm, Identifier::fromString(vm, slot), createMemberDescriptor(globalObject, type, jsString(vm, slot)));
+    if (addsDict)
+        type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
+    if (addsWeakReferences)
+        type->putDirect(vm, names.dunder_weakref, PyGetSetDescriptor::create(globalObject, type, "__weakref__"_s, getWeakReferences, nullptr, false, "list of weak references to the object"_s));
+
+    if (!type->lookupOwn(vm, names.dunder_doc))
+        type->putDirect(vm, names.dunder_doc, jsUndefined());
     // What says when two of them are equal, and not what their hash is, cannot be hashed.
     if (type->lookupOwn(vm, names.dunder_eq) && !type->lookupOwn(vm, names.dunder_hash))
         type->putDirect(vm, names.dunder_hash, jsUndefined());
-    if (!type->lookupOwn(vm, names.dunder_doc))
-        type->putDirect(vm, names.dunder_doc, jsUndefined());
-    if (!type->lookupOwn(vm, names.dunder_qualname))
-        type->putDirect(vm, names.dunder_qualname, name);
     ++names.typeEpoch;
 
     callSetNames(globalObject, type, namespaceDict);

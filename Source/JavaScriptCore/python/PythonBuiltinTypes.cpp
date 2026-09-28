@@ -498,38 +498,52 @@ static void setClass(JSGlobalObject* globalObject, JSValue self, JSValue value)
     asObject(self)->setPrototypeDirect(vm, newType);
 }
 
-static JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
+JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
-    bool hasDict = self.isObject() && !type->hasFlag(PyType::HasNoInstanceDict) && (type->hasFlag(PyType::IsHeapType) || type->isExceptionType() || type == globalObject->pyRealm()->typeModule() || (self.asCell()->type() == JSFunctionType && !self.asCell()->inherits<PyNativeFunction>()));
-    if (!hasDict)
+    JSObject* storage = attributeStorage(globalObject, self, type);
+    if (!storage)
         return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '__dict__'"_s));
-    return PyDict::backedBy(globalObject, asObject(self));
+    return PyDict::backedBy(globalObject, storage);
 }
 
-// obj.__dict__ = mapping: that dict is the attributes from now on, and the dict that was is a dict like any other.
-static void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
+// obj.__dict__ = mapping: that dict is the attributes from now on, and the dict that was is a dict like any other. del obj.__dict__ leaves it with none.
+void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!value || !isDict(value)) {
-        raiseTypeError(globalObject, scope, makeString("__dict__ must be set to a dictionary, not a '"_s, value ? typeName(globalObject, value) : "NULL"_str, '\''));
+    auto& names = vm.pythonNames();
+    if (value && !isDict(value)) {
+        raiseTypeError(globalObject, scope, makeString("__dict__ must be set to a dictionary, not a '"_s, typeName(globalObject, value), '\''));
         return;
     }
     JSValue current = getInstanceDict(globalObject, self);
     RETURN_IF_EXCEPTION(scope, void());
     if (current == value)
         return;
-    JSObject* object = asDict(current)->backing();
-    asDict(current)->detach(globalObject);
+    JSObject* object = asObject(self);
+    // It parts with the one that it has, which keeps what is in it.
+    if (object->getDirect(vm, names.private_foreignDict))
+        deleteStoredAttribute(globalObject, object, names.private_foreignDict);
+    else
+        asDict(current)->detach(globalObject);
+    if (!value)
+        return;
     if (!asDict(value)->backing()) {
         asDict(value)->becomeBackedBy(globalObject, object);
         return;
     }
-    // FIXME: Two objects cannot have the same dict, since it is one of them that holds what is in it. This one gets a copy.
-    PyDict::backedBy(globalObject, object)->copyFrom(globalObject, *asDict(value));
+    // It is some other object's already.
+    object->putDirect(vm, names.private_foreignDict, value);
+    typeOf(globalObject, self)->setFlag(PyType::MayHaveForeignDict);
+}
+
+// obj.__weakref__: the first of the weak references to it. There is no making one yet, so there is none.
+JSValue getWeakReferences(JSGlobalObject*, JSValue)
+{
+    return jsUndefined();
 }
 
 // ---- type
@@ -1216,7 +1230,6 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__subclasshook__"_s, returnNotImplemented, Kind::ClassMethod },
     });
     addGetSet(globalObject, object, "__class__"_s, getClass, setClass);
-    addGetSet(globalObject, object, "__dict__"_s, getInstanceDict, setInstanceDict);
     remember(object, names.dunder_new, Function::ObjectNew);
     remember(object, names.dunder_init, Function::ObjectInit);
     remember(object, names.dunder_getattribute, Function::ObjectGetAttribute);
@@ -1253,9 +1266,33 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         if (value && value.isString())
             asType(self)->setName(globalObject->vm(), asString(value));
     });
-    addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_qualname, asType(self)->name()); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
-        if (value)
-            asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_qualname, value);
+    addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), qualifiedNameWithoutModule(globalObject, asType(self))); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        PyType* type = asType(self);
+        if (!type->hasFlag(PyType::IsHeapType)) {
+            raiseTypeError(globalObject, scope, makeString("cannot set '__qualname__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+            return;
+        }
+        if (!value) {
+            raiseTypeError(globalObject, scope, makeString("cannot delete '__qualname__' attribute of type '"_s, type->nameString(globalObject), '\''));
+            return;
+        }
+        if (!value.isString()) {
+            raiseTypeError(globalObject, scope, makeString("can only assign string to "_s, type->nameString(globalObject), ".__qualname__, not '"_s, typeName(globalObject, value), '\''));
+            return;
+        }
+        type->putDirect(vm, vm.pythonNames().private_qualname, value);
+    });
+    addMember(globalObject, type, "__basicsize__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(asType(self)->basicSize()); });
+    addMember(globalObject, type, "__itemsize__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(asType(self)->itemSize()); });
+    addMember(globalObject, type, "__dictoffset__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(asType(self)->dictOffset()); });
+    addMember(globalObject, type, "__weakrefoffset__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(asType(self)->weakReferenceOffset()); });
+    addMember(globalObject, type, "__flags__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromInt64(globalObject, asType(self)->flagsForPython()); });
+    addGetSet(globalObject, type, "__text_signature__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        // Only a built-in class says how it is called in this way.
+        auto* description = asType(self)->hasFlag(PyType::IsHeapType) ? nullptr : findTypeDescription(asType(self)->nameString(globalObject));
+        return description && !description->signature.isNull() ? JSValue(jsString(globalObject->vm(), String(description->signature))) : jsUndefined();
     });
     addGetSet(globalObject, type, "__module__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, jsNontrivialString(globalObject->vm(), "builtins"_s)); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
         if (value)
@@ -1336,16 +1373,13 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         });
         addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
             auto* getSet = dynamicDowncast<PyGetSetDescriptor>(self);
-            auto* description = getSet ? getSet->description() : nullptr;
-            return description && !description->doc.isNull() ? JSValue(jsString(globalObject->vm(), String(description->doc))) : jsUndefined();
+            return getSet && !getSet->doc().isNull() ? JSValue(jsString(globalObject->vm(), String(getSet->doc()))) : jsUndefined();
         });
         addMember(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).second; });
         addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first; });
         addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
             auto [owner, name] = ownerAndNameOf(self);
-            JSValue qualifiedName = owner->lookupOwn(globalObject->vm(), globalObject->vm().pythonNames().dunder_qualname);
-            String prefix = qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject)) : owner->nameString(globalObject);
-            return jsString(globalObject->vm(), makeString(prefix, '.', name->value(globalObject).data));
+            return jsString(globalObject->vm(), makeString(qualifiedNameWithoutModule(globalObject, owner), '.', name->value(globalObject).data));
         });
     }
     PyType* function = realm->typeFunction();
@@ -1353,6 +1387,10 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, function, "__defaults__"_s, getFunctionDefaults, setFunctionDefaults);
     addGetSet(globalObject, function, "__kwdefaults__"_s, getFunctionKeywordDefaults, setFunctionKeywordDefaults);
     addGetSet(globalObject, function, "__module__"_s, getFunctionModule, setFunctionModule);
+
+    for (PyType* type : { realm->typeFunction(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeBaseException() })
+        addGetSet(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict);
+    addMember(globalObject, realm->typeModule(), "__dict__"_s, getInstanceDict);
 
     for (PyType* type : { realm->typeNoneType(), realm->typeNotImplementedType(), realm->typeEllipsis() })
         addMethods(globalObject, type, { { "__new__"_s, singletonNew, Kind::New } });

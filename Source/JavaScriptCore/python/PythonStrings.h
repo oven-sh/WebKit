@@ -29,6 +29,9 @@
 
 namespace JSC { namespace Python {
 
+// str.isidentifier()
+bool isIdentifier(StringView);
+
 JSValue stringGetItem(JSGlobalObject*, JSString*, JSValue key);
 JSValue stringRepeat(JSGlobalObject*, JSString*, int64_t count);
 // format % values

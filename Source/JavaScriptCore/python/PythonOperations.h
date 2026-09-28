@@ -117,6 +117,8 @@ JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name,
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
 JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+// Where an object's own attributes are, if it can have any: they are the properties of this. Null if it cannot.
+JSObject* attributeStorage(JSGlobalObject*, JSValue, PyType*);
 // An attribute that something has of its own is a property of it that is enumerable. What is not enumerable is JavaScript's business: the name and
 // length of a function, the stack of an Error. Python does not see it. Empty if there is no such attribute.
 inline JSValue getStoredAttribute(VM& vm, JSObject* object, PropertyName name)

@@ -301,14 +301,15 @@ public:
     using Setter = void (*)(JSGlobalObject*, JSValue self, JSValue value); // The value is empty to delete.
 
     // A member is what in CPython is a field of a C struct. It differs in what it is called and in what it says when it cannot be set.
-    static PyGetSetDescriptor* create(JSGlobalObject*, PyType* owner, const String& name, Getter, Setter, bool isMember = false);
+    // `doc` is for one that CPython has in no built-in class.
+    static PyGetSetDescriptor* create(JSGlobalObject*, PyType* owner, const String& name, Getter, Setter, bool isMember = false, ASCIILiteral doc = { });
     bool isMember() const { return m_isMember; }
     Getter getter() const { return m_getter; }
     Setter setter() const { return m_setter; }
     PyType* owner() const { return m_owner.get(); }
     JSString* name() const { return m_name.get(); }
-    // Null if CPython has no such attribute.
-    const Python::BuiltinDescription* description() const { return m_description; }
+    // descriptor.__doc__. Null if it has none.
+    ASCIILiteral doc() const { return m_doc; }
 
 private:
     PyGetSetDescriptor(VM& vm, Structure* structure, Getter getter, Setter setter)
@@ -321,7 +322,7 @@ private:
     Getter m_getter;
     Setter m_setter;
     bool m_isMember { false };
-    const Python::BuiltinDescription* m_description { nullptr };
+    ASCIILiteral m_doc;
     WriteBarrier<PyType> m_owner;
     WriteBarrier<JSString> m_name;
 };

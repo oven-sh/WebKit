@@ -78,7 +78,7 @@ static String addressOf(JSCell* cell)
 
 String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
 {
-    JSValue qualifiedName = type->lookupOwn(globalObject->vm(), globalObject->vm().pythonNames().dunder_qualname);
+    JSValue qualifiedName = type->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_qualname);
     return qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject).data) : type->nameString(globalObject);
 }
 

@@ -262,6 +262,27 @@ JSValue exceptionValue(JSGlobalObject*, JSValue thrown)
     return thrown;
 }
 
+// ---- Attributes
+
+// Where an object's own attributes are, if it can have any. They are the properties of this.
+//
+// It is the object itself, and its __dict__ is a dict that is backed by it. The exception is an object that has been given, for its __dict__, a dict that
+// is some other object's already: two objects with one dict, so that what is set on either is set on both. Then it is that other object.
+JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* type)
+{
+    if (!type->hasFlag(PyType::HasInstanceDict) || !value.isObject())
+        return nullptr;
+    JSObject* object = asObject(value);
+    // The attributes of a class are seen to separately.
+    if (object->type() == PyTypeType)
+        return nullptr;
+    if (type->hasFlag(PyType::MayHaveForeignDict)) [[unlikely]] {
+        if (JSValue foreign = object->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_foreignDict))
+            return uncheckedDowncast<PyDict>(foreign.asCell())->ensureBacking(globalObject);
+    }
+    return object;
+}
+
 // ---- Descriptors
 
 namespace {
@@ -396,33 +417,6 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         RELEASE_AND_RETURN(scope, call(globalObject, descriptor.getter, value, instance ? instance : jsUndefined(), type));
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-// Where an object's own attributes are, if it has any. They are the properties of this.
-JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* type)
-{
-    if (!value.isObject())
-        return nullptr;
-    JSObject* object = asObject(value);
-    switch (object->type()) {
-    case PyInstanceType:
-        return type->hasFlag(PyType::HasNoInstanceDict) ? nullptr : object;
-    case JSFunctionType:
-        // One of JavaScript's is a JavaScript object, whose attributes are its properties as JavaScript finds them.
-        return !object->inherits<PyNativeFunction>() && isPythonFunction(uncheckedDowncast<JSFunction>(object)) ? object : nullptr;
-    case PyTypeType:
-        return nullptr;
-    case ErrorInstanceType:
-        // Whichever language made it.
-        return type->hasFlag(PyType::HasNoInstanceDict) ? nullptr : object;
-    default:
-        break;
-    }
-    // An instance of a class that is written in Python and derived from a built-in one.
-    if (type->hasFlag(PyType::IsHeapType) && !type->hasFlag(PyType::HasNoInstanceDict))
-        return object;
-    UNUSED_PARAM(globalObject);
-    return nullptr;
 }
 
 bool isJavaScriptObject(JSGlobalObject* globalObject, PyType* type)
@@ -652,7 +646,9 @@ bool isDataDescriptor(JSGlobalObject* globalObject, JSValue value)
 bool classComesBeforeInstance(JSGlobalObject* globalObject, PyType* type, PropertyName name, AttributeAccess access)
 {
     unsigned hooks = type->hooks(globalObject);
-    if (access == AttributeAccess::Get ? hooks & PyType::HasCustomGetAttribute : (hooks & PyType::HasCustomSetAttr) || type->hasFlag(PyType::HasNoInstanceDict))
+    if (access == AttributeAccess::Get ? hooks & PyType::HasCustomGetAttribute : (hooks & PyType::HasCustomSetAttr) || !type->hasFlag(PyType::HasInstanceDict))
+        return true;
+    if (type->hasFlag(PyType::MayHaveForeignDict))
         return true;
     JSValue attribute = type->lookup(globalObject->vm(), name);
     return attribute && isDataDescriptor(globalObject, attribute);

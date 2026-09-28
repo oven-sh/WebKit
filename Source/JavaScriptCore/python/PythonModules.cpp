@@ -404,12 +404,13 @@ static JSValue findOrLoad(JSGlobalObject*, const String& fullName, JSValue paren
 // is up to the host, which has JavaScript's output to put it in order with.
 PYTHON_NATIVE(standardStreamWrite)
 {
-    int descriptor = unpack<int>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (!args.at(0) || !args[0].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("write() argument must be str, not "_s, typeName(globalObject, args.at(0) ? args[0] : jsUndefined()))));
+    int descriptor = asObject(args[0])->getDirect(vm, names.private_descriptor).asInt32();
+    JSValue text = args[1];
+    if (!text.isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("write() argument must be str, not "_s, typeName(globalObject, text))));
     // What cannot be written is an error, but not in the middle of reporting one.
-    auto bytes = encodeString(globalObject, args[0], "utf-8"_s, descriptor == 2 ? "backslashreplace"_s : "strict"_s);
+    auto bytes = encodeString(globalObject, text, "utf-8"_s, descriptor == 2 ? "backslashreplace"_s : "strict"_s);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue posix = findOrLoad(globalObject, "posix"_s, JSValue());
     RETURN_IF_EXCEPTION(scope, { });
@@ -421,16 +422,22 @@ PYTHON_NATIVE(standardStreamWrite)
         call(globalObject, write, jsNumber(descriptor), data);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(jsNumber(stringLength(globalObject, asString(args[0]))));
+    return JSValue::encode(jsNumber(stringLength(globalObject, asString(text))));
 }
 
 // FIXME: These should be io.TextIOWrapper objects.
 static JSObject* createStandardStream(JSGlobalObject* globalObject, int descriptor)
 {
-    PyRealm* realm = globalObject->pyRealm();
-    JSObject* stream = PyInstance::create(globalObject->vm(), realm->typeObject()->instanceStructure());
-    addFunction(globalObject, stream, "write"_s, standardStreamWrite, pack(descriptor), "(text, /)"_s);
-    addFunction(globalObject, stream, "flush"_s, returnNone, 0, "()"_s);
+    VM& vm = globalObject->vm();
+    PyType* type = globalObject->pyRealm()->typeStandardStream();
+    if (!type->getDirect(vm, Identifier::fromString(vm, "write"_s))) {
+        addMethods(globalObject, type, {
+            { "write"_s, standardStreamWrite, PyNativeFunction::Kind::Method, 0, "($self, text, /)"_s },
+            { "flush"_s, returnNone, PyNativeFunction::Kind::Method, 0, "($self, /)"_s },
+        });
+    }
+    JSObject* stream = PyInstance::create(vm, type->instanceStructure());
+    stream->putDirect(vm, vm.pythonNames().private_descriptor, jsNumber(descriptor));
     return stream;
 }
 

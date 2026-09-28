@@ -62,12 +62,14 @@ public:
         IsBaseType = 1 << 1, // It can be derived from.
         IsExceptionType = 1 << 2, // BaseException or derived from it.
         IsAbstract = 1 << 3,
-        HasNoInstanceDict = 1 << 4, // __slots__, or a built-in type whose instances have no attributes of their own.
+        HasInstanceDict = 1 << 4, // Its instances have a __dict__: attributes besides those that the class provides for.
         IsTypeSubclass = 1 << 5, // A metaclass.
         IsSequence = 1 << 6, // A sequence pattern can match it.
         IsMapping = 1 << 7, // A mapping pattern can match it.
         IsBytes = 1 << 12, // bytes or derived from it: a Uint8Array that is not to be changed.
         MatchesSelf = 1 << 11, // In a class pattern, int(x) binds x to the subject itself.
+        HasWeakReferences = 1 << 13, // There can be weak references to its instances.
+        MayHaveForeignDict = 1 << 14, // Some instance has been given a __dict__ that is another object's too. See attributeStorage().
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.
@@ -107,6 +109,18 @@ public:
     void setFlag(Flag flag) { m_flags |= flag; }
     void clearFlag(Flag flag) { m_flags &= ~flag; }
     bool isExceptionType() const { return hasFlag(IsExceptionType); }
+
+    // type.__basicsize__, __itemsize__, __dictoffset__ and __weakrefoffset__. Nothing here is laid out as in CPython, so as sizes they mean nothing. But
+    // they are what CPython goes by to tell whether two classes can both be derived from, which is if the instances of one are laid out as those of
+    // the other and then some, and whether instances can be given __slots__. So they are kept as CPython would have them, and gone by for the same.
+    int basicSize() const { return m_basicSize; }
+    int itemSize() const { return m_itemSize; }
+    int dictOffset() const { return m_dictOffset; }
+    int weakReferenceOffset() const { return m_weakReferenceOffset; }
+    // type.__flags__, as CPython would have it. What is gone by here is flags().
+    unsigned long flagsForPython() const;
+    // For a class that is being made: it has so many __slots__, and its instances have these where those of its base have not.
+    void addToLayout(unsigned slots, bool addsDict, bool addsWeakReferences);
     // A built-in class that is derived from object and nothing else, and has no __new__ of its own, does not have object's either, though that is what
     // looking it up finds. Instances of it are made by other means: an iterator is what iter() gives.
     bool cannotBeInstantiated(VM&) const;
@@ -177,6 +191,11 @@ private:
     Vector<Weak<PyType>> m_subclasses;
     const Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
+    int m_basicSize { 0 };
+    int m_itemSize { 0 };
+    int m_dictOffset { 0 };
+    int m_weakReferenceOffset { 0 };
+    unsigned long m_flagsForPython { 0 };
     ErrorType m_errorType { ErrorType::Error };
     unsigned m_flags { 0 };
     unsigned m_hooksEpoch { 0 }; // CommonNames::typeEpoch when hookFlags were worked out.

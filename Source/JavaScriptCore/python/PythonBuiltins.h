@@ -113,6 +113,10 @@ void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 
 void initializeRangeType(JSGlobalObject*);
+// What the __dict__ and __weakref__ of a class whose instances have such things get and set.
+JSValue getInstanceDict(JSGlobalObject*, JSValue self);
+void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
+JSValue getWeakReferences(JSGlobalObject*, JSValue self);
 JSC_DECLARE_HOST_FUNCTION(sliceIndices);
 
 inline JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
@@ -126,6 +130,8 @@ bool isFrameToPython(CallFrame*, BytecodeIndex);
 // The environment that has a variable of the name, going outward from the scope, and where in it. Null if there is none.
 JSLexicalEnvironment* findVariable(JSScope*, UniquedStringImpl* name, ScopeOffset&);
 JSObject* globalsOfScope(VM&, JSScope*);
+// The globals of the code in Python that is running: of whatever called the function written in C++ that asks. Null if there is none.
+JSObject* globalsOfCaller(JSGlobalObject*);
 JSObject* builtinsOfScope(VM&, JSScope*);
 // What is only known about code once it has been compiled, which it is now if it had not been.
 void ensureCodeDetails(VM&, FunctionExecutable*);

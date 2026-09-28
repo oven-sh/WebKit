@@ -131,6 +131,8 @@ struct Block {
     HashMap<UniquedStringImpl*, unsigned> index;
     Vector<const Identifier*> parameters;
     Vector<Block*> children;
+    // For a class: each x for which something inside it, though not the body itself, has `self.x = ...`. It is __static_attributes__.
+    Vector<const Identifier*> staticAttributes;
     Block* annotationBlock { nullptr };
 
     struct Directive {
