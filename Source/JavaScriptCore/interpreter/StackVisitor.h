@@ -49,7 +49,13 @@ class JSFunction;
 class ClonedArguments;
 class Register;
 class RegisterAtOffsetList;
+class ScriptExecutable;
 class StackVisitor;
+class UnlinkedCodeBlock;
+
+namespace AOT {
+struct Data;
+}
 
 template<typename T>
 concept StackVisitorFunctor = requires(const T t, StackVisitor& visitor) {
@@ -78,7 +84,19 @@ public:
         CallFrame* callerFrame() const { return m_callerFrame; }
         EntryFrame* entryFrame() const { return m_entryFrame; }
         CalleeBits callee() const { return m_callee; }
-        CodeBlock* codeBlock() const { return m_codeBlock; }
+        // A frame of code from the static compiler (aot/) has none until somebody asks, here: it is made then, which is not something to
+        // do in the middle of an allocation or a collection. Nothing else there is to ask of a Frame does that.
+        CodeBlock* codeBlock() const
+        {
+            if (m_aotData && !m_codeBlock) [[unlikely]]
+                return makeCodeBlock();
+            return m_codeBlock;
+        }
+        bool hasCode() const { return m_codeBlock || m_aotData; } // !!codeBlock()
+        AOT::Data* aotData() const { return m_aotData; }
+        // Of the code that the frame runs, if it is JavaScript.
+        JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
+        JS_EXPORT_PRIVATE UnlinkedCodeBlock* unlinkedCodeBlock() const;
         BytecodeIndex bytecodeIndex() const { return m_bytecodeIndex; }
         InlineCallFrame* inlineCallFrame() const {
 #if ENABLE(DFG_JIT)
@@ -89,7 +107,7 @@ public:
         }
         void* returnPC() const { return m_returnPC; }
 
-        bool isNativeFrame() const { return !codeBlock() && !isNativeCalleeFrame(); }
+        bool isNativeFrame() const { return !hasCode() && !isNativeCalleeFrame(); }
         bool isInlinedDFGFrame() const { return !isNativeCalleeFrame() && !!inlineCallFrame(); }
         bool isNativeCalleeFrame() const { return m_callee.isNativeCallee(); }
         Wasm::IndexOrName const wasmFunctionIndexOrName()
@@ -129,6 +147,7 @@ public:
         ~Frame() { }
 
         void NODELETE setToEnd();
+        JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
 
 #if ENABLE(DFG_JIT)
         InlineCallFrame* m_inlineDFGCallFrame { nullptr };
@@ -139,7 +158,8 @@ public:
         EntryFrame* m_callerEntryFrame { nullptr };
         CallFrame* m_callerFrame { nullptr };
         CalleeBits m_callee { };
-        CodeBlock* m_codeBlock { nullptr };
+        mutable CodeBlock* m_codeBlock { nullptr };
+        AOT::Data* m_aotData { nullptr };
         void* m_returnPC { nullptr };
         size_t m_index { 0 };
         size_t m_argumentCountIncludingThis { 0 };

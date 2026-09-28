@@ -1164,19 +1164,22 @@ static void generateHandleException(CCallHelpers& jit)
 
 static void generateThrowStackOverflowAtPrologue(CCallHelpers& jit)
 {
-    constexpr GPRReg keptInstance = GPRInfo::regCS0; // Nothing returns from here to anyone who minds.
     // The first call site of any function is its beginning.
     jit.store32(TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
     loadInstance(jit, T9);
     jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::ThrowStackOverflowError) * sizeof(void*)), T9);
     // The frame is not yet one of the function's (see compile()), and is about to be nobody's.
+    // The function has saved no register yet: what is in the ones a callee saves is its caller's, and is what the unwinding restores.
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), T10);
-    jit.move(T10, keptInstance);
+    jit.move(GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+    jit.subPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
+    jit.storePtr(T10, Address(CCallHelpers::stackPointerRegister));
     loadDataOf(jit, boxedHeaderGPR, T10, A0);
     jit.call(T9, OperationPtrTag);
 
-    jit.move(keptInstance, T9);
+    jit.loadPtr(Address(CCallHelpers::stackPointerRegister), T9);
+    jit.addPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T10);
     jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::LookupExceptionHandlerFromCallerFrame) * sizeof(void*)), T11);

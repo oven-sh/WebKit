@@ -7,6 +7,8 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "BytecodeIndex.h"
+#include "LineColumn.h"
 #include "AOTOperationsObjects.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
@@ -279,6 +281,7 @@ struct Data {
     // What the rest of the engine takes the function's frames to be running, for whoever asks: it is made then. Nothing that the
     // function itself does asks. Not while the collector is at work, and on no thread but the VM's.
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock();
+    JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const; // CodeBlock::lineColumnForBytecodeIndex()
     // For the functions that the function makes closures of: made when the first closure is.
     FunctionExecutable* functionDecl(unsigned);
     FunctionExecutable* functionExpr(unsigned);

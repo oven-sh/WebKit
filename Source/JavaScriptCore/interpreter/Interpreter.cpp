@@ -30,6 +30,8 @@
 #include "config.h"
 #include "Interpreter.h"
 
+#include "AOTRuntime.h"
+
 #include "AbortReason.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
@@ -678,7 +680,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
 #else
-            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+            } else if (visitor->hasCode() && !visitor->unlinkedCodeBlock()->isBuiltinFunction())
 #endif
                 results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
             else
@@ -755,7 +757,7 @@ public:
     {
         visitor.unwindToMachineCodeBlockFrame();
 
-        CodeBlock* codeBlock = visitor->codeBlock();
+        CodeBlock* codeBlock = visitor->codeBlock(); // (Only with a debugger.)
         if (!codeBlock)
             return IterationStatus::Continue;
 
@@ -791,6 +793,22 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
             m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
     }
 }
+
+#if ENABLE(FTL_JIT)
+CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, AOT::Data* data)
+{
+    m_valid = !!handler;
+    if (!m_valid)
+        return;
+    m_type = handler->type();
+    data->code->forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
+        if (bytecodeOffset == handler->target)
+            m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(data->code->executableAddressAtOffset(codeOffset)));
+    });
+    RELEASE_ASSERT(m_nativeCode);
+    m_catchPCForInterpreter = { data->unlinkedCodeBlock->instructions().at(handler->target).ptr() };
+}
+#endif
 
 #if ENABLE(WEBASSEMBLY)
 CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* callee)
@@ -856,9 +874,19 @@ public:
     {
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
-        m_codeBlock = visitor->codeBlock();
-
         m_handler.m_valid = false;
+#if ENABLE(FTL_JIT)
+        if (AOT::Data* data = visitor->aotData()) {
+            m_codeBlock = nullptr;
+            if (!m_isTermination) {
+                m_handler = { data->unlinkedCodeBlock->handlerForIndex(m_callFrame->bytecodeIndex().offset(), RequiredHandler::AnyHandler), data };
+                if (m_handler.m_valid)
+                    return IterationStatus::Done;
+            }
+        } else
+#endif
+            m_codeBlock = visitor->codeBlock();
+
         if (m_codeBlock) {
             if (!m_isTermination) {
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
@@ -985,7 +1013,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ASSERT(reinterpret_cast<void*>(callFrame) != vm.topEntryFrame);
-    CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
+    CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isAOTFrame() ? nullptr : callFrame->codeBlock();
 
     JSValue exceptionValue = exception->value();
     ASSERT(!exceptionValue.isEmpty());

@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "DeferTermination.h"
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "JSTemplateObjectDescriptor.h"
@@ -331,7 +332,8 @@ CodeBlock* Data::ensureCodeBlock()
     VM& vm = *instance->vm;
     RELEASE_ASSERT(unlinkedCodeBlock->codeType() == FunctionCode);
     DeferGCForAWhile deferGC(vm);
-    // Whoever asks may well be dealing with an exception.
+    // Whoever asks may well be dealing with an exception, and this is no place to find out that the VM has been told to stop.
+    DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
     FunctionCodeBlock* result = FunctionCodeBlock::create(vm, uncheckedDowncast<FunctionExecutable>(executable), uncheckedDowncast<UnlinkedFunctionCodeBlock>(unlinkedCodeBlock), instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
     RELEASE_ASSERT(result);
@@ -347,6 +349,15 @@ CodeBlock* Data::ensureCodeBlock()
     if (!hasBeenFilledSinceLastCollection)
         noteFilled();
     return result;
+}
+
+LineColumn Data::lineColumnFor(BytecodeIndex bytecodeIndex) const
+{
+    RELEASE_ASSERT(bytecodeIndex.offset() < unlinkedCodeBlock->instructions().size());
+    auto lineColumn = unlinkedCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+    lineColumn.column += lineColumn.line ? 1 : executable->startColumn();
+    lineColumn.line += executable->firstLine();
+    return lineColumn;
 }
 
 static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)

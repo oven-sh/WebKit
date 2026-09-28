@@ -126,10 +126,11 @@ protected:
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
 #if ENABLE(FTL_JIT)
         if (unsafeCallee.isNativeCallee() && AOT::isCodeHeader(unsafeCallee.asNativeCallee())) {
-            // See CallFrame::callee(). If nobody has asked for the CodeBlock of such a frame before there is none, and this is no
-            // place to make one: the callee says which function it is.
-            codeBlock = AOT::dataOf(m_callFrame)->codeBlock;
-            unsafeCallee = CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame)));
+            // See CallFrame::callee().
+            stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame))), m_callFrame->unsafeCallSiteIndex());
+            stackTrace[m_depth].aotData = AOT::dataOf(m_callFrame);
+            m_depth++;
+            return;
         }
 #endif
         if (unsafeCallee.isNativeCallee())
@@ -718,6 +719,20 @@ void SamplingProfiler::processUnverifiedStackTraces()
                     appendCodeBlockNoInlining();
 #else
                 appendCodeBlockNoInlining();
+#endif
+#if ENABLE(FTL_JIT)
+            } else if (AOT::Data* data = unprocessedStackFrame.aotData) {
+                assertIsHeld(m_lock);
+                stackTrace.frames.append(StackFrame(data->executable));
+                m_liveCellPointers.add(data->executable);
+                auto& location = stackTrace.frames.last().semanticLocation;
+                BytecodeIndex bytecodeIndex = unprocessedStackFrame.callSiteIndex.bytecodeIndex();
+                if (bytecodeIndex.offset() < data->unlinkedCodeBlock->instructions().size()) {
+                    location.lineColumn = data->lineColumnFor(bytecodeIndex);
+                    location.bytecodeIndex = bytecodeIndex;
+                }
+                location.codeBlockHash = CodeBlockHash(data->executable->source(), data->unlinkedCodeBlock->isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
+                location.jitType = JITType::AOTJIT;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
                 appendEmptyFrame();

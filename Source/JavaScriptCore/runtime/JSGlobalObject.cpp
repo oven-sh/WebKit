@@ -3806,10 +3806,10 @@ static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (visitor->isNativeCalleeFrame())
             return IterationStatus::Continue;
-        if (auto* codeBlock = visitor->codeBlock()) {
-            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(codeBlock->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
+        if (visitor->hasCode()) {
+            if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
                 return IterationStatus::Continue;
-            if (codeBlock->globalObject() == target) {
+            if (visitor->callFrame()->lexicalGlobalObject(vm) == target) {
                 result = true;
                 return IterationStatus::Done;
             }

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "StackVisitor.h"
 
+#include "AOTRuntime.h"
+
 #include "ClonedArguments.h"
 #include "DebuggerPrimitives.h"
 #include "ExecutableBaseInlines.h"
@@ -122,6 +124,11 @@ void StackVisitor::readFrame(CallFrame* callFrame)
         return;
     }
 
+    if (callFrame->isAOTFrame()) {
+        readNonInlinedFrame(callFrame);
+        return;
+    }
+
 #if !ENABLE(DFG_JIT)
     readNonInlinedFrame(callFrame);
 
@@ -185,8 +192,17 @@ void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOri
 #endif
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
 
-    m_frame.m_codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
-    m_frame.m_bytecodeIndex = !m_frame.codeBlock() ? BytecodeIndex(0)
+#if ENABLE(FTL_JIT)
+    if (callFrame->isAOTFrame()) {
+        m_frame.m_aotData = AOT::dataOf(callFrame);
+        m_frame.m_codeBlock = m_frame.m_aotData->codeBlock;
+    } else
+#endif
+    {
+        m_frame.m_aotData = nullptr;
+        m_frame.m_codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
+    }
+    m_frame.m_bytecodeIndex = !m_frame.hasCode() ? BytecodeIndex(0)
         : codeOrigin ? codeOrigin->bytecodeIndex()
         : callFrame->bytecodeIndex();
 
@@ -210,6 +226,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
         m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
         m_frame.m_callee = callFrame->callee();
+        m_frame.m_aotData = nullptr;
         m_frame.m_codeBlock = nullptr;
         m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
         m_frame.m_wasmCallSiteIndexBits = callFrame->callSiteIndex().bits();
@@ -260,6 +277,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
         m_frame.m_isWasmFrame = false;
         m_frame.m_callee = callFrame->callee();
+        m_frame.m_aotData = nullptr;
 #if ENABLE(DFG_JIT)
         m_frame.m_inlineDFGCallFrame = nullptr;
 #endif
@@ -299,6 +317,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
         else
             m_frame.m_argumentCountIncludingThis = inlineCallFrame->argumentCountIncludingThis;
         m_frame.m_codeBlock = inlineCallFrame->baselineCodeBlock.get();
+        m_frame.m_aotData = nullptr;
         m_frame.m_bytecodeIndex = codeOrigin->bytecodeIndex();
 
         JSFunction* callee = inlineCallFrame->calleeForCallFrame(callFrame);
@@ -317,6 +336,32 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 }
 #endif // ENABLE(DFG_JIT)
 
+CodeBlock* StackVisitor::Frame::makeCodeBlock() const
+{
+#if ENABLE(FTL_JIT)
+    m_codeBlock = m_aotData->ensureCodeBlock();
+#endif
+    return m_codeBlock;
+}
+
+ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
+{
+#if ENABLE(FTL_JIT)
+    if (m_aotData)
+        return m_aotData->executable;
+#endif
+    return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
+}
+
+UnlinkedCodeBlock* StackVisitor::Frame::unlinkedCodeBlock() const
+{
+#if ENABLE(FTL_JIT)
+    if (m_aotData)
+        return m_aotData->unlinkedCodeBlock;
+#endif
+    return m_codeBlock ? m_codeBlock->unlinkedCodeBlock() : nullptr;
+}
+
 StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
 {
     if (isNativeCalleeFrame()) {
@@ -330,10 +375,10 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
         return CodeType::Native;
     }
 
-    if (!codeBlock())
+    if (!hasCode())
         return CodeType::Native;
 
-    switch (codeBlock()->codeType()) {
+    switch (unlinkedCodeBlock()->codeType()) {
     case EvalCode:
         return CodeType::Eval;
     case ModuleCode:
@@ -374,6 +419,10 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
         return nullptr;
     }
 
+#if ENABLE(FTL_JIT)
+    if (m_aotData)
+        return m_aotData->code->calleeSaveRegisters();
+#endif
     if (CodeBlock* codeBlock = this->codeBlock())
         return codeBlock->jitCode()->calleeSaveRegisters();
 
@@ -420,7 +469,7 @@ String StackVisitor::Frame::sourceURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
-        String sourceURL = codeBlock()->ownerExecutable()->sourceURL();
+        String sourceURL = ownerExecutable()->sourceURL();
         if (!sourceURL.isEmpty())
             traceLine = sourceURL.impl();
         break;
@@ -444,7 +493,7 @@ String StackVisitor::Frame::preRedirectURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
-        String preRedirectURL = codeBlock()->ownerExecutable()->preRedirectURL();
+        String preRedirectURL = ownerExecutable()->preRedirectURL();
         if (!preRedirectURL.isEmpty())
             traceLine = preRedirectURL.impl();
         break;
@@ -472,8 +521,8 @@ String StackVisitor::Frame::toString() const
 
 SourceID StackVisitor::Frame::sourceID()
 {
-    if (CodeBlock* codeBlock = this->codeBlock())
-        return codeBlock->ownerExecutable()->sourceID();
+    if (ScriptExecutable* executable = ownerExecutable())
+        return executable->sourceID();
     return noSourceID;
 }
 
@@ -502,18 +551,22 @@ ClonedArguments* StackVisitor::Frame::createArguments(VM& vm)
 
 bool StackVisitor::Frame::hasLineAndColumnInfo() const
 {
-    return !!codeBlock();
+    return hasCode();
 }
 
 LineColumn StackVisitor::Frame::computeLineAndColumn() const
 {
-    CodeBlock* codeBlock = this->codeBlock();
-    if (!codeBlock)
+    if (!hasCode())
         return { };
 
-    auto lineColumn = codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+    ScriptExecutable* executable = ownerExecutable();
+#if ENABLE(FTL_JIT)
+    auto lineColumn = m_aotData ? m_aotData->lineColumnFor(bytecodeIndex()) : m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+#else
+    auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+#endif
 
-    if (std::optional<int> overrideLineNumber = codeBlock->ownerExecutable()->overrideLineNumber(codeBlock->vm()))
+    if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(executable->vm()))
         lineColumn.line = overrideLineNumber.value();
 
     return lineColumn;
@@ -531,8 +584,8 @@ void StackVisitor::Frame::setToEnd()
 bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
 {
     ImplementationVisibility implementationVisibility = [&] () -> ImplementationVisibility {
-        if (auto* codeBlock = this->codeBlock()) {
-            if (auto* executable = codeBlock->ownerExecutable())
+        if (hasCode()) {
+            if (auto* executable = ownerExecutable())
                 return executable->implementationVisibility();
             return ImplementationVisibility::Public;
         }

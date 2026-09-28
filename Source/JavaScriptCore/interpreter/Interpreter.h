@@ -50,6 +50,12 @@ using Opcode = OpcodeID;
 
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
+namespace AOT {
+struct Data;
+}
+
+struct UnlinkedHandlerInfo;
+
 namespace Wasm {
 class Callee;
 struct HandlerInfo;
@@ -117,6 +123,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
+#if ENABLE(FTL_JIT)
+        CatchInfo(const UnlinkedHandlerInfo*, AOT::Data*);
+#endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif

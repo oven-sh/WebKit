@@ -87,7 +87,7 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
 
 #if ENABLE(FTL_JIT)
-    if (handler.m_valid && !callFrame->isNativeCalleeFrame() && callFrame->codeBlock() && callFrame->codeBlock()->jitType() == JITType::AOTJIT) {
+    if (handler.m_valid && callFrame->isAOTFrame()) {
         // The handler has no way to find the VM before it has its frame: AOT::catchThunk() gives it that, and goes on to it.
         dispatchAndCatchRoutine = catchRoutine;
         catchRoutine = AOT::catchThunk();
