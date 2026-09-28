@@ -706,11 +706,19 @@ public:
     // table's is known to the code that uses it.)
     void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
     {
-        m_map.removeIf([&](auto& entry) {
-            return !names.contains(entry.key.get());
-        });
-        if (m_map.isEmpty())
-            m_map.clear();
+        Map kept;
+        unsigned count = 0;
+        for (auto& entry : m_map)
+            count += names.contains(entry.key.get());
+        if (count == m_map.size())
+            return;
+        if (count)
+            kept.reserveInitialCapacity(count);
+        for (auto& entry : m_map) {
+            if (names.contains(entry.key.get()))
+                kept.add(entry.key, WTF::move(entry.value));
+        }
+        m_map = WTF::move(kept);
     }
     bool isItsOwnClone() const { return StaticHeap::needsNoLocking(this); }
 

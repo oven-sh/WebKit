@@ -178,7 +178,7 @@ void StaticRegion::dumpMallocAudit()
 {
     if (!s_audit)
         return;
-    fprintf(stderr, "MALLOCAUDIT freed and not used again: %llu bytes in %llu allocations\n", static_cast<unsigned long long>(s_auditFreedBytes), static_cast<unsigned long long>(s_auditFreedCount));
+    fprintf(stderr, "MALLOCAUDIT freed, whether or not it was used again: %llu bytes in %llu allocations\n", static_cast<unsigned long long>(s_auditFreedBytes), static_cast<unsigned long long>(s_auditFreedCount));
     for (unsigned round = 0; round < 60; ++round) {
         AuditEntry* best = nullptr;
         for (size_t i = 0; i < auditCapacity; ++i) {
@@ -201,9 +201,52 @@ struct FreeBlock {
 };
 constexpr size_t numberOfFreeLists = 4096;
 FreeBlock* s_freeLists[2][numberOfFreeLists];
+uint64_t s_freeListsInUse[2][numberOfFreeLists / 64];
 }
 
 static size_t freeListFor(size_t size) { return (size + sizeOfHeader + 15) / 16; }
+
+static void pushFree(bool isMutable, size_t index, void* pointer)
+{
+    auto* block = static_cast<FreeBlock*>(pointer);
+    block->next = std::exchange(s_freeLists[isMutable][index], block);
+    s_freeListsInUse[isMutable][index / 64] |= 1ull << (index % 64);
+}
+
+static void* popFree(bool isMutable, size_t index)
+{
+    FreeBlock*& list = s_freeLists[isMutable][index];
+    FreeBlock* block = list;
+    list = std::exchange(block->next, nullptr);
+    if (!list)
+        s_freeListsInUse[isMutable][index / 64] &= ~(1ull << (index % 64));
+    return block;
+}
+
+// The first list, from that one on, that has something in it.
+static size_t firstFreeListInUse(bool isMutable, size_t index)
+{
+    for (size_t word = index / 64; word < numberOfFreeLists / 64; ++word) {
+        uint64_t bits = s_freeListsInUse[isMutable][word];
+        if (word == index / 64)
+            bits &= ~0ull << (index % 64);
+        if (bits)
+            return word * 64 + __builtin_ctzll(bits);
+    }
+    return numberOfFreeLists;
+}
+
+size_t StaticRegion::bytesThatAreFree()
+{
+    size_t bytes = 0;
+    for (auto& lists : s_freeLists) {
+        for (size_t index = 0; index < numberOfFreeLists; ++index) {
+            for (FreeBlock* block = lists[index]; block; block = block->next)
+                bytes += index * 16;
+        }
+    }
+    return bytes;
+}
 
 void StaticRegion::forgetWhatIsFree()
 {
@@ -213,6 +256,7 @@ void StaticRegion::forgetWhatIsFree()
                 list = std::exchange(list->next, nullptr);
         }
     }
+    memset(s_freeListsInUse, 0, sizeof(s_freeListsInUse));
 }
 
 void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
@@ -222,10 +266,16 @@ void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
     if (alignment < 16)
         alignment = 16;
     if (size_t index = freeListFor(size); alignment == 16 && index < numberOfFreeLists) {
-        if (FreeBlock*& list = s_freeLists[t_isAllocatingWhatIsMutable][index]) {
-            FreeBlock* block = list;
-            list = std::exchange(block->next, nullptr);
-            memcpy(reinterpret_cast<char*>(block) - sizeOfHeader, &size, sizeof(size));
+        // The smallest that will do. What is left over of it is for somebody else.
+        if (size_t found = firstFreeListInUse(t_isAllocatingWhatIsMutable, index); found < numberOfFreeLists) {
+            auto* block = static_cast<char*>(popFree(t_isAllocatingWhatIsMutable, found));
+            memcpy(block - sizeOfHeader, &size, sizeof(size));
+            if (found > index) {
+                char* rest = block + index * 16;
+                size_t sizeOfRest = (found - index) * 16 - sizeOfHeader;
+                memcpy(rest - sizeOfHeader, &sizeOfRest, sizeof(sizeOfRest));
+                pushFree(t_isAllocatingWhatIsMutable, found - index, rest);
+            }
             return block;
         }
     }
@@ -288,10 +338,8 @@ void StaticRegion::didFreeSlow(void* pointer)
             s_auditFreedBytes += (mallocSize(pointer) + sizeOfHeader + 15) & ~static_cast<size_t>(15);
             s_auditFreedCount++;
             memset(pointer, 0, mallocSize(pointer));
-            if (size_t index = freeListFor(mallocSize(pointer)); index < numberOfFreeLists && !(address & 15)) {
-                auto* block = static_cast<FreeBlock*>(pointer);
-                block->next = std::exchange(s_freeLists[arena == Arena::MutableMalloc][index], block);
-            }
+            if (size_t index = freeListFor(mallocSize(pointer)); index < numberOfFreeLists && !(address & 15))
+                pushFree(arena == Arena::MutableMalloc, index, pointer);
             return;
         }
     }
