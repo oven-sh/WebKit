@@ -27,7 +27,9 @@
 
 #include "Identifier.h"
 #include "PythonOperators.h"
+#include "PythonSignatures.h"
 #include "PythonToken.h"
+#include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -89,6 +91,9 @@ struct CommonNames {
     // What was wrong with the last piece of code that would not compile. JavaScriptCore's own way of saying so has no room for all of it.
     SyntaxError lastSyntaxError;
 
+    // The signature that is written so, taken apart. There is one, for as long as the VM lasts.
+    const NativeSignature* signatureFor(ASCIILiteral);
+
     // __add__, __radd__ and __iadd__ for Add.
     const Identifier& method(BinaryOperator op) const { return *m_binaryMethods[static_cast<unsigned>(op)]; }
     const Identifier& reflectedMethod(BinaryOperator op) const { return *m_reflectedMethods[static_cast<unsigned>(op)]; }
@@ -98,6 +103,7 @@ private:
     const Identifier* m_binaryMethods[numberOfBinaryOperators];
     const Identifier* m_reflectedMethods[numberOfBinaryOperators];
     const Identifier* m_inPlaceMethods[numberOfBinaryOperators];
+    UncheckedKeyHashMap<const void*, std::unique_ptr<NativeSignature>> m_signatures;
 };
 
 } } // namespace JSC::Python

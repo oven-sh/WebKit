@@ -133,16 +133,15 @@ PYTHON_NATIVE(strNew)
 {
     NATIVE_PROLOGUE();
     auto* type = uncheckedDowncast<PyType>(args.at(0).asCell());
+    // Without keywords it is called in a way of its own, which puts this differently.
+    if (args.size() > 4 && !args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str expected at most 3 arguments, got "_s, args.size() - 1)));
+    if (!checkArgumentsSlow(globalObject, callFrame))
+        return { };
     JSValue value = args.at(1);
-    if (!value)
-        value = args.keyword(globalObject, "object"_s);
     JSValue result = jsEmptyString(vm);
     JSValue encodingValue = args.at(2);
-    if (!encodingValue)
-        encodingValue = args.keyword(globalObject, "encoding"_s);
     JSValue errorsValue = args.at(3);
-    if (!errorsValue)
-        errorsValue = args.keyword(globalObject, "errors"_s);
     if (encodingValue || errorsValue) {
         for (JSValue option : { encodingValue, errorsValue }) {
             if (option && !option.isString())
@@ -217,11 +216,7 @@ PYTHON_NATIVE(strSplit)
     auto fromRight = unpack<bool>(callFrame, 0);
     STR_PROLOGUE("split");
     JSValue separatorValue = args.at(1);
-    if (!separatorValue)
-        separatorValue = args.keyword(globalObject, "sep"_s);
     JSValue limitValue = args.at(2);
-    if (!limitValue)
-        limitValue = args.keyword(globalObject, "maxsplit"_s);
     int64_t limit = -1;
     if (limitValue) {
         auto index = toIndex(globalObject, limitValue, true);
@@ -310,8 +305,6 @@ PYTHON_NATIVE(strSplitLines)
 {
     STR_PROLOGUE("splitlines");
     JSValue keepValue = args.at(1);
-    if (!keepValue)
-        keepValue = args.keyword(globalObject, "keepends"_s);
     bool keepEnds = keepValue && isTrue(globalObject, keepValue);
     RETURN_IF_EXCEPTION(scope, { });
     auto isLineBreak = [] (char16_t c) {
@@ -440,8 +433,6 @@ PYTHON_NATIVE(strExpandTabs)
 {
     STR_PROLOGUE("expandtabs");
     JSValue sizeValue = args.at(1);
-    if (!sizeValue)
-        sizeValue = args.keyword(globalObject, "tabsize"_s);
     int64_t tabSize = 8;
     if (sizeValue) {
         auto index = toIndex(globalObject, sizeValue);
@@ -723,8 +714,6 @@ PYTHON_NATIVE(strReplace)
     String to = stringArgument(globalObject, scope, args[2], "replace"_s, 2);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue countValue = args.at(3);
-    if (!countValue)
-        countValue = args.keyword(globalObject, "count"_s);
     int64_t limit = -1;
     if (countValue) {
         auto index = toIndex(globalObject, countValue, true);
@@ -1088,7 +1077,7 @@ void initializeStrType(JSGlobalObject* globalObject)
     PyType* type = realm->typeStr();
     using Kind = PyNativeFunction::Kind;
     addMethods(globalObject, type, {
-        { "__new__"_s, strNew, Kind::New },
+        { "__new__"_s, strNew, Kind::New, 0, "(object='', encoding='utf-8', errors='strict')"_s, PyNativeFunction::Arguments::AreThoseOfTheClassButNotChecked },
         { "__str__"_s, strStr },
         { "__repr__"_s, nativeRepr },
         { "__hash__"_s, nativeHash },
@@ -1142,7 +1131,7 @@ void initializeStrType(JSGlobalObject* globalObject)
         { "format"_s, strFormat },
         { "format_map"_s, strFormatMap },
     });
-    addComparisons(globalObject, type, true);
+    addComparisons(globalObject, type);
     addBinaryOperators(globalObject, type, { BinaryOperator::Add, BinaryOperator::Mod }, false, false);
     addBinaryOperators(globalObject, type, { BinaryOperator::Mult }, true, false);
 }

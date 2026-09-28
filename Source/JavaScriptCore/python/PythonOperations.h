@@ -199,6 +199,8 @@ JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);
 // A module is an instance of the class `module`, or of one derived from it, like any other instance. Its attributes, which are its properties, are
 // the global variables of the code in it.
 JS_EXPORT_PRIVATE JSObject* newModule(JSGlobalObject*, const String& name, PyType* = nullptr);
+// One that is written in C++. It has the __doc__ that CPython's has, if CPython has it.
+JS_EXPORT_PRIVATE JSObject* newBuiltinModule(JSGlobalObject*, ASCIILiteral name);
 // The value, if it is a module. Otherwise null.
 JSObject* tryModule(JSGlobalObject*, JSValue);
 
@@ -318,9 +320,21 @@ public:
     {
     }
 
+    // How many were given by position.
     unsigned size() const { return m_positionalCount; }
-    JSValue at(unsigned index) const { return index < m_positionalCount ? m_callFrame->uncheckedArgument(index) : JSValue(); }
-    JSValue operator[](unsigned index) const { return m_callFrame->uncheckedArgument(index); }
+    // The argument that is at a position in the signature, whether it was given by position or by name. Empty if it was not given.
+    JSValue at(unsigned index) const
+    {
+        if (index < m_positionalCount) [[likely]]
+            return m_callFrame->uncheckedArgument(index);
+        return m_keywordNames ? givenByName(index) : JSValue();
+    }
+    // One that is known to have been given by position.
+    JSValue operator[](unsigned index) const
+    {
+        ASSERT(index < m_positionalCount);
+        return m_callFrame->uncheckedArgument(index);
+    }
 
     unsigned keywordCount() const { return m_keywordNames ? m_keywordNames->length() : 0; }
     JSString* keywordName(unsigned index) const { return asString(m_keywordNames->get(index)); }
@@ -336,6 +350,8 @@ public:
     CallFrame* callFrame() const { return m_callFrame; }
 
 private:
+    JSValue givenByName(unsigned index) const;
+
     CallFrame* m_callFrame;
     KeywordNames* m_keywordNames;
     unsigned m_positionalCount;

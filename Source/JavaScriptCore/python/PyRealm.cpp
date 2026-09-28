@@ -57,6 +57,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_frameLocalsProxyType);
     visitor.append(thisObject->m_builtinsModule);
+    visitor.append(thisObject->m_builtinMemberDescriptorStructure);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_handledException);
     visitor.append(thisObject->m_outerHandledException);
@@ -111,7 +112,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeIteratorTypes(globalObject);
     Python::initializeExceptionTypes(globalObject);
 
-    JSObject* builtins = Python::newModule(globalObject, "builtins"_s);
+    JSObject* builtins = Python::newBuiltinModule(globalObject, "builtins"_s);
     m_builtinsModule.set(vm, this, builtins);
 
     Python::initializeBuiltinFunctions(globalObject, builtins);
@@ -152,6 +153,13 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
             if (m_types[i]->isSubtypeOf(type))
                 m_types[i]->setErrorType(errorType);
         }
+    }
+    // Every class has a __doc__, if only None.
+    for (auto& type : m_types) {
+        if (type->getDirect(vm, vm.pythonNames().dunder_doc))
+            continue;
+        auto* description = Python::findTypeDescription(type->nameString(globalObject));
+        type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
     }
     Python::initializeLibrary(globalObject);
 }

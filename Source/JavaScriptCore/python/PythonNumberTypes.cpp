@@ -291,12 +291,13 @@ PYTHON_NATIVE(intNew)
 {
     NATIVE_PROLOGUE();
     auto* type = uncheckedDowncast<PyType>(args.at(0).asCell());
+    // Without keywords it is called in a way of its own, which puts this differently.
+    if (args.size() > 3 && !args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int expected at most 2 arguments, got "_s, args.size() - 1)));
+    if (!checkArgumentsSlow(globalObject, callFrame))
+        return { };
     JSValue value = args.at(1);
     JSValue baseValue = args.at(2);
-    if (!baseValue)
-        baseValue = args.keyword(globalObject, "base"_s);
-    if (args.size() > 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int() takes at most 2 arguments ("_s, args.size() - 1, " given)"_s)));
 
     JSValue result;
     if (!value) {
@@ -751,7 +752,7 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
         { "__hash__"_s, nativeHash },
         { "conjugate"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::UAdd) },
     });
-    addComparisons(globalObject, target, true);
+    addComparisons(globalObject, target);
     addGetSet(globalObject, target, "real"_s, [] (JSGlobalObject* globalObject, JSValue self) { return numberUnaryOperation(globalObject, UnaryOperator::UAdd, self); });
     addGetSet(globalObject, target, "imag"_s, [] (JSGlobalObject*, JSValue self) { return classify(self).kind == Number::Kind::Float ? floatFromDouble(0) : jsNumber(0); });
 }
@@ -769,7 +770,7 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     addOperator(globalObject, intType, NumberType::Int, BinaryOperator::BitOr);
     addOperator(globalObject, intType, NumberType::Int, BinaryOperator::BitXor);
     addMethods(globalObject, intType, {
-        { "__new__"_s, intNew, Kind::New },
+        { "__new__"_s, intNew, Kind::New, 0, "(x=0, /, base=10)"_s, PyNativeFunction::Arguments::AreThoseOfTheClassButNotChecked },
         { "__index__"_s, numberInt },
         { "__invert__"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::Invert) },
         { "bit_length"_s, intBitLength },
@@ -784,7 +785,7 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     PyType* floatType = realm->typeFloat();
     addArithmetic(globalObject, floatType, NumberType::Float);
     addMethods(globalObject, floatType, {
-        { "__new__"_s, floatNew, Kind::New },
+        { "__new__"_s, floatNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "is_integer"_s, floatIsInteger },
         { "as_integer_ratio"_s, floatAsIntegerRatio },
         { "hex"_s, floatHex },
@@ -795,7 +796,7 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     });
 
     addMethods(globalObject, realm->typeBool(), {
-        { "__new__"_s, boolNew, Kind::New },
+        { "__new__"_s, boolNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
     });
 }

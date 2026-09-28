@@ -768,6 +768,7 @@ python/PythonRange.cpp
 python/PythonRepr.cpp
 python/PythonRuntimeFunctions.cpp
 python/PythonSequences.cpp
+python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonSymbolTable.cpp

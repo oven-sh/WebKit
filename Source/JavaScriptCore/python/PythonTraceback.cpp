@@ -337,7 +337,7 @@ PYTHON_NATIVE(frameExtraLocals)
 JSObject* createFrameModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    JSObject* module = newModule(globalObject, "_frame"_s);
+    JSObject* module = newBuiltinModule(globalObject, "_frame"_s);
     JSObject* ns = module;
     ns->putDirect(vm, Identifier::fromString(vm, "frame"_s), globalObject->pyRealm()->typeFrame());
     addFunction(globalObject, ns, "variable_names"_s, frameVariableNames);

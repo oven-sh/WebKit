@@ -76,12 +76,17 @@ static String addressOf(JSCell* cell)
     return makeString("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
 }
 
+String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
+{
+    JSValue qualifiedName = type->lookupOwn(globalObject->vm(), globalObject->vm().pythonNames().dunder_qualname);
+    return qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject).data) : type->nameString(globalObject);
+}
+
 String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
-    JSValue qualifiedName = type->lookupOwn(vm, names.dunder_qualname);
-    String name = qualifiedName && qualifiedName.isString() ? asString(qualifiedName)->value(globalObject).data : type->nameString(globalObject);
+    String name = qualifiedNameWithoutModule(globalObject, type);
     JSValue module = type->lookupOwn(vm, names.dunder_module);
     if (module && module.isString()) {
         String moduleName = asString(module)->value(globalObject);
@@ -254,17 +259,20 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
             if (native->kind() == PyNativeFunction::Kind::Function)
                 return makeString("<built-in function "_s, function->name(vm), '>');
-            String owner = native->owner() && isType(native->owner()) ? uncheckedDowncast<PyType>(native->owner())->nameString(globalObject) : "?"_str;
-            return makeString("<method '"_s, function->name(vm), "' of '"_s, owner, "' objects>"_s);
+            if (native->kind() == PyNativeFunction::Kind::New || native->kind() == PyNativeFunction::Kind::StaticMethod)
+                return makeString("<built-in method "_s, function->name(vm), " of type object at "_s, addressOf(native->owner()), '>');
+            return makeString(native->kind() == PyNativeFunction::Kind::Wrapper ? "<slot wrapper '"_s : "<method '"_s, function->name(vm), "' of '"_s, asType(native->owner())->nameString(globalObject), "' objects>"_s);
         }
         return makeString("<function "_s, nameOfFunction(globalObject, function, true), " at "_s, addressOf(cell), '>');
     }
     case PyBoundMethodType: {
         auto* method = uncheckedDowncast<PyBoundMethod>(cell);
+        if (auto* native = dynamicDowncast<PyNativeFunction>(method->function())) {
+            bool isWrapper = native->kind() == PyNativeFunction::Kind::Wrapper;
+            return makeString(isWrapper ? "<method-wrapper '"_s : "<built-in method "_s, native->name(vm), isWrapper ? "' of "_s : " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
+        }
         String self = repr(globalObject, method->self());
         RETURN_IF_EXCEPTION(scope, { });
-        if (auto* native = dynamicDowncast<PyNativeFunction>(method->function()))
-            return makeString("<built-in method "_s, native->name(vm), " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
         String name = "?"_s;
         if (auto* function = dynamicDowncast<JSFunction>(method->function()))
             name = nameOfFunction(globalObject, function, true);

@@ -38,8 +38,24 @@ namespace JSC { namespace Python {
 void addMethods(JSGlobalObject* globalObject, PyType* type, std::initializer_list<MethodDefinition> methods)
 {
     VM& vm = globalObject->vm();
-    for (auto& method : methods)
-        type->putDirect(vm, Identifier::fromString(vm, method.name), PyNativeFunction::create(vm, globalObject, 0, String(method.name), method.function, method.kind, type, method.data));
+    for (auto& method : methods) {
+        JSValue value = PyNativeFunction::create(vm, globalObject, 0, String(method.name), method.function, method.kind, type, method.data, ImplementationVisibility::Public, method.signature, method.arguments);
+        if (method.kind == PyNativeFunction::Kind::Function) {
+            auto* wrapper = PyNativeObject::create(globalObject, BuiltinType::StaticMethod);
+            wrapper->setField(vm, 0, value);
+            value = wrapper;
+        }
+        type->putDirect(vm, Identifier::fromString(vm, method.name), value);
+    }
+}
+
+void addMethodsThatCPythonHas(JSGlobalObject* globalObject, PyType* type, std::initializer_list<MethodDefinition> methods)
+{
+    String typeName = type->nameString(globalObject);
+    for (auto& method : methods) {
+        if (findAttributeDescription(typeName, method.name))
+            addMethods(globalObject, type, { method });
+    }
 }
 
 void addGetSet(JSGlobalObject* globalObject, PyType* type, ASCIILiteral name, PyGetSetDescriptor::Getter getter, PyGetSetDescriptor::Setter setter)
@@ -54,10 +70,10 @@ void addMember(JSGlobalObject* globalObject, PyType* type, ASCIILiteral name, Py
     type->putDirect(vm, Identifier::fromString(vm, name), PyGetSetDescriptor::create(globalObject, type, String(name), getter, setter, true));
 }
 
-PyNativeFunction* addFunction(JSGlobalObject* globalObject, JSObject* namespaceObject, ASCIILiteral name, NativeFunction function, unsigned data)
+PyNativeFunction* addFunction(JSGlobalObject* globalObject, JSObject* namespaceObject, ASCIILiteral name, NativeFunction function, unsigned data, ASCIILiteral signature, PyNativeFunction::Arguments arguments)
 {
     VM& vm = globalObject->vm();
-    auto* native = PyNativeFunction::create(vm, globalObject, 0, String(name), function, PyNativeFunction::Kind::Function, nullptr, data);
+    auto* native = PyNativeFunction::create(vm, globalObject, 0, String(name), function, PyNativeFunction::Kind::Function, namespaceObject, data, ImplementationVisibility::Public, signature, arguments);
     namespaceObject->putDirect(vm, Identifier::fromString(vm, name), native);
     return native;
 }
@@ -69,29 +85,42 @@ JSValue boxIfDerived(JSGlobalObject* globalObject, PyType* type, PyType* builtin
     return PyBoxedValue::create(globalObject->vm(), type->instanceStructure(), value);
 }
 
-bool checkFirstArgument(JSGlobalObject* globalObject, CallFrame* callFrame)
+bool checkArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    // How many there are is enough to go by, unless some were given by name.
+    auto checkAgainstSignature = [&] {
+        if (function->takes(callFrame->argumentCount()) && !isKeywordNames(callFrame->thisValue())) [[likely]]
+            return true;
+        return !function->checksArguments() || checkArgumentsSlow(globalObject, callFrame);
+    };
     PyNativeFunction::Kind kind = function->kind();
-    if (kind == PyNativeFunction::Kind::Function)
-        return true;
+    if (!function->hasImplicitFirst())
+        return checkAgainstSignature();
     auto* owner = uncheckedDowncast<PyType>(function->owner());
     NativeArguments args(callFrame);
-    JSValue first = args.at(0);
-    if (kind == PyNativeFunction::Kind::Method) {
+    JSValue first = args.size() ? args[0] : JSValue();
+    if (kind == PyNativeFunction::Kind::Method || kind == PyNativeFunction::Kind::Wrapper) {
         if (first) [[likely]] {
             PyType* type = typeOf(globalObject, first);
             if (type == owner || type->isSubtypeOf(owner)) [[likely]]
-                return true;
+                return checkAgainstSignature();
         }
     } else if (first && isType(first) && asType(first)->isSubtypeOf(owner))
-        return true;
+        return checkAgainstSignature();
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     String ownerName = owner->nameString(globalObject);
     String name = function->name(vm);
     switch (kind) {
+    case PyNativeFunction::Kind::Wrapper:
+        if (!first) {
+            raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name, "' of '"_s, ownerName, "' object needs an argument"_s));
+            break;
+        }
+        raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name, "' requires a '"_s, ownerName, "' object but received a '"_s, typeName(globalObject, first), '\''));
+        break;
     case PyNativeFunction::Kind::Method:
         if (!first)
             raiseTypeError(globalObject, scope, makeString("unbound method "_s, ownerName, '.', name, "() needs an argument"_s));
@@ -115,6 +144,7 @@ bool checkFirstArgument(JSGlobalObject* globalObject, CallFrame* callFrame)
             raiseTypeError(globalObject, scope, makeString(ownerName, ".__new__("_s, asType(first)->nameString(globalObject), "): "_s, asType(first)->nameString(globalObject), " is not a subtype of "_s, ownerName));
         break;
     case PyNativeFunction::Kind::Function:
+    case PyNativeFunction::Kind::StaticMethod:
         break;
     }
     return false;
@@ -211,8 +241,6 @@ PYTHON_NATIVE(nativeCompare)
 {
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (args.size() != 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expected 1 argument, got "_s, args.size() ? args.size() - 1 : 0)));
     JSValue result = builtinCompare(globalObject, op, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (!result)
@@ -220,15 +248,12 @@ PYTHON_NATIVE(nativeCompare)
     return JSValue::encode(result);
 }
 
-void addComparisons(JSGlobalObject* globalObject, PyType* type, bool ordering)
+void addComparisons(JSGlobalObject* globalObject, PyType* type)
 {
+    // A class that compares in any way has them all, as in CPython, where they are one function. Those that mean nothing to it say NotImplemented.
     addMethods(globalObject, type, {
         { "__eq__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Eq) },
         { "__ne__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::NotEq) },
-    });
-    if (!ordering)
-        return;
-    addMethods(globalObject, type, {
         { "__lt__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Lt) },
         { "__le__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::LtE) },
         { "__gt__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Gt) },
@@ -298,6 +323,18 @@ PYTHON_NATIVE(objectNew)
     return JSValue::encode(PyInstance::create(vm, type->instanceStructure()));
 }
 
+// NoneType(), type(NotImplemented)() and type(...)(): the one that there is.
+PYTHON_NATIVE(singletonNew)
+{
+    NATIVE_PROLOGUE();
+    PyType* type = asType(args[0]);
+    if (hasExcessArguments(args))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), " takes no arguments"_s)));
+    if (type == realm->typeNotImplementedType())
+        return JSValue::encode(realm->notImplemented());
+    return JSValue::encode(type == realm->typeEllipsis() ? JSValue(realm->ellipsis()) : jsUndefined());
+}
+
 PYTHON_NATIVE(objectInit)
 {
     NATIVE_PROLOGUE();
@@ -305,8 +342,8 @@ PYTHON_NATIVE(objectInit)
         PyType* type = typeOf(globalObject, args[0]);
         if (type->lookup(vm, names.dunder_init).asCell() != realm->function(PyRealm::WellKnownFunction::ObjectInit))
             return JSValue::encode(raiseTypeError(globalObject, scope, "object.__init__() takes exactly one argument (the instance to initialize)"_s));
-        if (type->lookup(vm, names.dunder_new).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectNew))
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() takes no arguments"_s)));
+        if (!type->cannotBeInstantiated(vm) && type->lookup(vm, names.dunder_new).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectNew))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), ".__init__() takes exactly one argument (the instance to initialize)"_s)));
     }
     RETURN_NONE();
 }
@@ -710,13 +747,22 @@ static void setFunctionModule(JSGlobalObject* globalObject, JSValue self, JSValu
     asFunction(self)->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
 }
 
+// descriptor.__get__(instance, owner=None) is to be told one or the other, whatever the descriptor.
+static bool checkDescriptorGet(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args)
+{
+    if (!isNone(args[1]) || (args.size() > 2 && !isNone(args[2])))
+        return true;
+    raiseTypeError(globalObject, scope, "__get__(None, None) is invalid"_s);
+    return false;
+}
+
 PYTHON_NATIVE(functionGet)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    // function.__get__(instance, owner)
-    if (isNone(args.at(1)))
-        return JSValue::encode(args.at(0));
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
+    if (isNone(args[1]))
+        return JSValue::encode(args[0]);
     return JSValue::encode(PyBoundMethod::create(globalObject, args[0], args[1]));
 }
 
@@ -732,6 +778,130 @@ PYTHON_NATIVE(callableCall)
 // ---- Bound methods
 
 static PyBoundMethod* asMethod(JSValue value) { return uncheckedDowncast<PyBoundMethod>(value.asCell()); }
+
+// ---- What is written in C++
+
+// The function, and what it is bound to: the instance or the class that it was got from, the class that a __new__ is of, or the module that a
+// function is of. Empty if it is bound to nothing.
+struct NativeCallable {
+    PyNativeFunction* function;
+    JSValue self;
+};
+
+static NativeCallable nativeCallableOf(JSValue value)
+{
+    if (auto* method = tryBoundMethod(value))
+        return { uncheckedDowncast<PyNativeFunction>(method->function().asCell()), method->self() };
+    auto* function = uncheckedDowncast<PyNativeFunction>(value.asCell());
+    bool isBound = function->kind() == PyNativeFunction::Kind::Function || function->kind() == PyNativeFunction::Kind::New || function->kind() == PyNativeFunction::Kind::StaticMethod;
+    return { function, isBound && function->owner() ? JSValue(function->owner()) : JSValue() };
+}
+
+static JSValue getNativeName(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    return jsString(vm, nativeCallableOf(self).function->name(vm));
+}
+
+static JSValue getNativeQualifiedName(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto [function, bound] = nativeCallableOf(self);
+    // A function of a module goes by its name alone.
+    if (!function->owner() || !isType(function->owner()))
+        return jsString(vm, function->name(vm));
+    // One that is bound goes by the class that it was got by way of, and one that is not by the class that it is in.
+    PyType* type = asType(function->owner());
+    if (bound && typeOf(globalObject, self) == globalObject->pyRealm()->typeBuiltinFunction())
+        type = isType(bound) ? asType(bound) : typeOf(globalObject, bound);
+    return jsString(vm, makeString(qualifiedNameWithoutModule(globalObject, type), '.', function->name(vm)));
+}
+
+static JSValue getNativeDoc(JSGlobalObject* globalObject, JSValue self)
+{
+    auto* description = nativeCallableOf(self).function->description();
+    return description && !description->doc.isNull() ? JSValue(jsString(globalObject->vm(), String(description->doc))) : jsUndefined();
+}
+
+static JSValue getNativeTextSignature(JSGlobalObject* globalObject, JSValue self)
+{
+    // What it says is not always what its arguments are checked against.
+    PyNativeFunction* function = nativeCallableOf(self).function;
+    ASCIILiteral text = function->description() ? function->description()->signature : function->signature() ? function->signature()->text() : ASCIILiteral();
+    return text.isNull() ? jsUndefined() : JSValue(jsString(globalObject->vm(), String(text)));
+}
+
+// The name of the module that a function is of. A method has none.
+static JSValue getNativeModule(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    if (tryBoundMethod(self))
+        return jsUndefined();
+    auto* function = uncheckedDowncast<PyNativeFunction>(self.asCell());
+    if (JSValue set = function->getDirect(vm, vm.pythonNames().private_module))
+        return set;
+    if (!function->owner() || isType(function->owner()))
+        return jsUndefined();
+    JSValue name = function->owner()->getDirect(vm, vm.pythonNames().dunder_name);
+    return name ? name : jsUndefined();
+}
+
+static void setNativeModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    if (auto* function = dynamicDowncast<PyNativeFunction>(self))
+        function->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
+}
+
+PYTHON_NATIVE(nativeCallableEq)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    if (typeOf(globalObject, args[1]) != typeOf(globalObject, args[0]))
+        RETURN_NOT_IMPLEMENTED();
+    auto a = nativeCallableOf(args[0]);
+    auto b = nativeCallableOf(args[1]);
+    return JSValue::encode(jsBoolean(a.function == b.function && (a.self ? b.self && isIdentical(a.self, b.self) : !b.self)));
+}
+
+PYTHON_NATIVE(nativeCallableHash)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    auto [function, bound] = nativeCallableOf(args[0]);
+    int64_t result = (bound && bound.isCell() ? hashOfPointer(bound.asCell()) : bound ? static_cast<int64_t>(JSValue::encode(bound)) : 0) ^ hashOfPointer(function);
+    return JSValue::encode(intFromInt64(globalObject, result == -1 ? -2 : result));
+}
+
+// How pickle is to find it again: by its name if it is a function of a module, and otherwise by getting it from what it was got from.
+PYTHON_NATIVE(nativeCallableReduce)
+{
+    NATIVE_PROLOGUE();
+    auto [function, bound] = nativeCallableOf(args[0]);
+    JSString* name = jsString(vm, function->name(vm));
+    if (function->kind() == PyNativeFunction::Kind::Function)
+        return JSValue::encode(name);
+    JSValue getattr = getStoredAttribute(vm, realm->builtinsModule(), Identifier::fromString(vm, "getattr"_s));
+    UNUSED_PARAM(scope);
+    return JSValue::encode(PyTuple::create(globalObject, { getattr, PyTuple::create(globalObject, { bound ? bound : JSValue(function->owner()), name }) }));
+}
+
+// classmethod_descriptor.__get__(instance, owner=None)
+PYTHON_NATIVE(classMethodDescriptorGet)
+{
+    NATIVE_PROLOGUE();
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
+    auto* function = uncheckedDowncast<PyNativeFunction>(args[0].asCell());
+    JSValue type = args.at(2);
+    if (!type || isNone(type))
+        type = typeOf(globalObject, args[1]);
+    if (!isType(type))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, function->name(vm), "' for type '"_s, asType(function->owner())->nameString(globalObject), "' needs a type, not a '"_s, typeName(globalObject, type), "' as arg 2"_s)));
+    if (!asType(type)->isSubtypeOf(asType(function->owner())))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, function->name(vm), "' requires a subtype of '"_s, asType(function->owner())->nameString(globalObject), "' but received '"_s, asType(type)->nameString(globalObject), '\'')));
+    return JSValue::encode(PyBoundMethod::create(globalObject, function, type));
+}
 
 PYTHON_NATIVE(methodNew)
 {
@@ -832,6 +1002,8 @@ PYTHON_NATIVE(descriptorGet)
 {
     NATIVE_PROLOGUE();
     // descriptor.__get__(instance, owner=None)
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
     JSValue instance = args.at(1);
     JSValue owner = args.at(2);
     PyType* type = owner && isType(owner) ? asType(owner) : typeOf(globalObject, instance ? instance : jsUndefined());
@@ -932,6 +1104,8 @@ PYTHON_NATIVE(superInit)
     NATIVE_PROLOGUE();
     if (!args.checkNoKeywords(globalObject, scope, "super"_s))
         return { };
+    if (args.size() > 3)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("super() expected at most 2 arguments, got "_s, args.size() - 1)));
     auto* object = asNativeObject(args[0]);
     if (args.size() == 1)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "super(): no arguments"_s));
@@ -1093,7 +1267,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__dir__"_s, objectDir },
         { "mro"_s, typeMro },
         { "__subclasses__"_s, typeSubclasses },
-        { "__prepare__"_s, typePrepare, Kind::ClassMethod },
+        { "__prepare__"_s, typePrepare, Kind::ClassMethod, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
         { "__instancecheck__"_s, typeInstanceCheck },
         { "__subclasscheck__"_s, typeSubclassCheck },
     });
@@ -1138,22 +1312,58 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     for (PyType* type : { realm->typeProperty(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeSuper(), realm->typeMemberDescriptor(), realm->typeNotImplementedType(), realm->typeEllipsis(), realm->typeDictKeys(), realm->typeDictValues(), realm->typeDictItems(), realm->typeMappingProxy() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
     realm->typeGetSetDescriptor()->setInstanceStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeGetSetDescriptor()));
+    realm->setBuiltinMemberDescriptorStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeMemberDescriptor()));
 
-    for (PyType* type : { realm->typeFunction(), realm->typeBuiltinFunction(), realm->typeMethodDescriptor(), realm->typeClassMethodDescriptor() }) {
+    addMethods(globalObject, realm->typeFunction(), {
+        { "__repr__"_s, nativeRepr },
+        { "__call__"_s, callableCall },
+    });
+    addGetSet(globalObject, realm->typeFunction(), "__name__"_s, getFunctionName<false>, setFunctionName<false>);
+    addGetSet(globalObject, realm->typeFunction(), "__qualname__"_s, getFunctionName<true>, setFunctionName<true>);
+    addGetSet(globalObject, realm->typeFunction(), "__doc__"_s, getFunctionDoc, setFunctionDoc);
+
+    // What is written in C++, as it is in a class, as it is got from an instance, and as it is when it is no method.
+    for (PyType* type : { realm->typeBuiltinFunction(), realm->typeMethodWrapper() })
+        type->setInstanceStructure(vm, PyBoundMethod::createStructure(vm, globalObject, type));
+    for (PyType* type : { realm->typeBuiltinFunction(), realm->typeMethodDescriptor(), realm->typeClassMethodDescriptor(), realm->typeWrapperDescriptor(), realm->typeMethodWrapper() }) {
         addMethods(globalObject, type, {
             { "__repr__"_s, nativeRepr },
             { "__call__"_s, callableCall },
         });
-        addGetSet(globalObject, type, "__name__"_s, getFunctionName<false>, setFunctionName<false>);
-        addGetSet(globalObject, type, "__qualname__"_s, getFunctionName<true>, setFunctionName<true>);
-        addGetSet(globalObject, type, "__doc__"_s, getFunctionDoc, setFunctionDoc);
+        addMethodsThatCPythonHas(globalObject, type, { { "__reduce__"_s, nativeCallableReduce } });
+        addGetSet(globalObject, type, "__name__"_s, getNativeName);
+        addGetSet(globalObject, type, "__qualname__"_s, getNativeQualifiedName);
+        addGetSet(globalObject, type, "__doc__"_s, getNativeDoc);
+        addGetSet(globalObject, type, "__text_signature__"_s, getNativeTextSignature);
     }
+    for (PyType* type : { realm->typeMethodDescriptor(), realm->typeClassMethodDescriptor(), realm->typeWrapperDescriptor(), realm->typeMethodWrapper() })
+        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return nativeCallableOf(self).function->owner(); });
+    for (PyType* type : { realm->typeBuiltinFunction(), realm->typeMethodWrapper() }) {
+        addMethods(globalObject, type, {
+            { "__eq__"_s, nativeCallableEq },
+            { "__hash__"_s, nativeCallableHash },
+        });
+        addGetSet(globalObject, type, "__self__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue {
+            // A static method is kept with its class and does not let on.
+            auto [function, bound] = nativeCallableOf(self);
+            return bound && function->kind() != PyNativeFunction::Kind::StaticMethod ? bound : jsUndefined();
+        });
+    }
+    addGetSet(globalObject, realm->typeBuiltinFunction(), "__module__"_s, getNativeModule, setNativeModule);
+    for (PyType* type : { realm->typeMethodDescriptor(), realm->typeWrapperDescriptor() })
+        addMethods(globalObject, type, { { "__get__"_s, functionGet } });
+    addMethods(globalObject, realm->typeClassMethodDescriptor(), { { "__get__"_s, classMethodDescriptorGet } });
     for (PyType* type : { realm->typeMemberDescriptor(), realm->typeGetSetDescriptor() }) {
         addMethods(globalObject, type, {
             { "__get__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Get) },
             { "__set__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Set) },
             { "__delete__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Delete) },
             { "__repr__"_s, nativeDescriptorRepr },
+        });
+        addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+            auto* getSet = dynamicDowncast<PyGetSetDescriptor>(self);
+            auto* description = getSet ? getSet->description() : nullptr;
+            return description && !description->doc.isNull() ? JSValue(jsString(globalObject->vm(), String(description->doc))) : jsUndefined();
         });
         addMember(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).second; });
         addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first; });
@@ -1166,28 +1376,31 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     }
     PyType* function = realm->typeFunction();
     addMethods(globalObject, function, { { "__get__"_s, functionGet } });
-    addMethods(globalObject, realm->typeMethodDescriptor(), { { "__get__"_s, functionGet } });
     addGetSet(globalObject, function, "__defaults__"_s, getFunctionDefaults, setFunctionDefaults);
     addGetSet(globalObject, function, "__kwdefaults__"_s, getFunctionKeywordDefaults, setFunctionKeywordDefaults);
     addGetSet(globalObject, function, "__module__"_s, getFunctionModule, setFunctionModule);
 
+    for (PyType* type : { realm->typeNoneType(), realm->typeNotImplementedType(), realm->typeEllipsis() })
+        addMethods(globalObject, type, { { "__new__"_s, singletonNew, Kind::New } });
+
     PyType* method = realm->typeMethod();
     method->setInstanceStructure(vm, PyBoundMethod::createStructure(vm, globalObject, method));
     addMethods(globalObject, method, {
-        { "__new__"_s, methodNew, Kind::New },
+        { "__new__"_s, methodNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
         { "__call__"_s, callableCall },
         { "__eq__"_s, methodEq },
         { "__hash__"_s, methodHash },
         { "__getattribute__"_s, methodGetAttribute },
     });
+    addGetSet(globalObject, method, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getAttribute(globalObject, asMethod(self)->function(), globalObject->vm().pythonNames().dunder_doc); });
     addMember(globalObject, method, "__func__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->function(); });
     addMember(globalObject, method, "__self__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->self(); });
 
     PyType* property = realm->typeProperty();
     addMethods(globalObject, property, {
         { "__new__"_s, nativeObjectNew, Kind::New },
-        { "__init__"_s, propertyInit },
+        { "__init__"_s, propertyInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__get__"_s, descriptorGet },
         { "__set__"_s, propertySet },
         { "__delete__"_s, propertyDelete },
@@ -1203,7 +1416,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     for (PyType* type : { realm->typeStaticMethod(), realm->typeClassMethod() }) {
         addMethods(globalObject, type, {
             { "__new__"_s, nativeObjectNew, Kind::New },
-            { "__init__"_s, wrapperInit },
+            { "__init__"_s, wrapperInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
             { "__get__"_s, descriptorGet },
         });
         addMember(globalObject, type, "__func__"_s, getField<0>);
@@ -1219,7 +1432,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
 
     PyType* module = realm->typeModule();
     addMethods(globalObject, module, {
-        { "__new__"_s, moduleNew, Kind::New },
+        { "__new__"_s, moduleNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, moduleRepr },
         { "__dir__"_s, objectDir },
     });

@@ -315,14 +315,8 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
         return false;
     }
     JSValue source = args.at(1);
-    if (!source)
-        source = args.keyword(globalObject, "source"_s);
     JSValue encodingValue = args.at(2);
-    if (!encodingValue)
-        encodingValue = args.keyword(globalObject, "encoding"_s);
     JSValue errorsValue = args.at(3);
-    if (!errorsValue)
-        errorsValue = args.keyword(globalObject, "errors"_s);
     auto textOf = [&] (JSValue value, ASCIILiteral name, unsigned position) -> String {
         if (!value)
             return { };
@@ -734,8 +728,6 @@ PYTHON_NATIVE(bytesReplace)
     auto to = bufferOf(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue countValue = args.at(3);
-    if (!countValue)
-        countValue = args.keyword(globalObject, "count"_s);
     int64_t limit = -1;
     if (countValue) {
         auto index = toIndex(globalObject, countValue, true);
@@ -805,11 +797,7 @@ PYTHON_NATIVE(bytesSplit)
     bool fromRight = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("split");
     JSValue separatorValue = args.at(1);
-    if (!separatorValue)
-        separatorValue = args.keyword(globalObject, "sep"_s);
     JSValue limitValue = args.at(2);
-    if (!limitValue)
-        limitValue = args.keyword(globalObject, "maxsplit"_s);
     int64_t limit = -1;
     if (limitValue) {
         auto index = toIndex(globalObject, limitValue, true);
@@ -897,8 +885,6 @@ PYTHON_NATIVE(bytesSplitLines)
 {
     BYTES_PROLOGUE("splitlines");
     JSValue keepValue = args.at(1);
-    if (!keepValue)
-        keepValue = args.keyword(globalObject, "keepends"_s);
     bool keepEnds = keepValue && isTrue(globalObject, keepValue);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer result;
@@ -1017,8 +1003,6 @@ PYTHON_NATIVE(bytesExpandTabs)
 {
     BYTES_PROLOGUE("expandtabs");
     JSValue sizeValue = args.at(1);
-    if (!sizeValue)
-        sizeValue = args.keyword(globalObject, "tabsize"_s);
     int64_t tabSize = 8;
     if (sizeValue) {
         auto index = toIndex(globalObject, sizeValue);
@@ -1171,11 +1155,7 @@ static String hexOf(std::span<const uint8_t> content, std::optional<char> separa
 static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, std::span<const uint8_t> content)
 {
     JSValue separatorValue = args.at(1);
-    if (!separatorValue)
-        separatorValue = args.keyword(globalObject, "sep"_s);
     JSValue groupValue = args.at(2);
-    if (!groupValue)
-        groupValue = args.keyword(globalObject, "bytes_per_sep"_s);
     std::optional<char> separator;
     if (separatorValue) {
         String text;
@@ -1281,8 +1261,6 @@ PYTHON_NATIVE(bytesTranslate)
             return JSValue::encode(raiseValueError(globalObject, scope, "translation table must be 256 characters long"_s));
     }
     JSValue deleteValue = args.at(2);
-    if (!deleteValue)
-        deleteValue = args.keyword(globalObject, "delete"_s);
     std::array<bool, 256> isDeleted { };
     if (deleteValue) {
         auto deleted = bufferOf(globalObject, deleteValue);
@@ -1573,11 +1551,7 @@ PYTHON_NATIVE(intToBytes)
     NATIVE_PROLOGUE();
     Number number = classify(args.at(0));
     JSValue lengthValue = args.at(1);
-    if (!lengthValue)
-        lengthValue = args.keyword(globalObject, "length"_s);
     JSValue orderValue = args.at(2);
-    if (!orderValue)
-        orderValue = args.keyword(globalObject, "byteorder"_s);
     JSValue signedValue = args.keyword(globalObject, "signed"_s);
     int64_t length = 1;
     if (lengthValue) {
@@ -1643,12 +1617,8 @@ PYTHON_NATIVE(intFromBytes)
     NATIVE_PROLOGUE();
     JSValue source = args.at(1);
     if (!source)
-        source = args.keyword(globalObject, "bytes"_s);
-    if (!source)
         return JSValue::encode(raiseTypeError(globalObject, scope, "from_bytes() missing required argument 'bytes' (pos 1)"_s));
     JSValue orderValue = args.at(2);
-    if (!orderValue)
-        orderValue = args.keyword(globalObject, "byteorder"_s);
     JSValue signedValue = args.keyword(globalObject, "signed"_s);
     auto isBigEndian = byteOrderFrom(globalObject, scope, orderValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1950,8 +1920,6 @@ PYTHON_NATIVE(memoryNew)
     NATIVE_PROLOGUE();
     JSValue object = args.at(1);
     if (!object)
-        object = args.keyword(globalObject, "object"_s);
-    if (!object)
         return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview() missing required argument 'object' (pos 1)"_s));
     if (auto* other = dynamicDowncast<PyMemoryView>(object)) {
         if (other->isReleased())
@@ -2092,8 +2060,6 @@ PYTHON_NATIVE(memoryCast)
 {
     MEMORY_PROLOGUE();
     JSValue formatValue = args.at(1);
-    if (!formatValue)
-        formatValue = args.keyword(globalObject, "format"_s);
     if (!formatValue || !formatValue.isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, "cast() argument 'format' must be str"_s));
     String text = asString(formatValue)->value(globalObject);
@@ -2252,13 +2218,13 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         });
     }
     addMethods(globalObject, bytes, {
-        { "__new__"_s, bytesNew, Kind::New },
+        { "__new__"_s, bytesNew, Kind::New, 0, "(source=b'', encoding='utf-8', errors='strict')"_s, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__hash__"_s, bytesHash },
         { "__bytes__"_s, bytesBytes },
     });
     addMethods(globalObject, byteArray, {
         { "__new__"_s, byteArrayNew, Kind::New },
-        { "__init__"_s, byteArrayInit },
+        { "__init__"_s, byteArrayInit, Kind::Method, 0, "(source=b'', encoding='utf-8', errors='strict')"_s, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__setitem__"_s, byteArraySetItem },
         { "__delitem__"_s, byteArraySetItem },
         { "__iadd__"_s, byteArrayInPlaceAdd },
@@ -2284,7 +2250,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
     PyType* memory = realm->typeMemoryView();
     memory->setInstanceStructure(vm, PyMemoryView::createStructure(vm, globalObject, memory));
     addMethods(globalObject, memory, {
-        { "__new__"_s, memoryNew, Kind::New },
+        { "__new__"_s, memoryNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__len__"_s, memoryLen },
         { "__getitem__"_s, memoryGetItem },
         { "__setitem__"_s, memorySetItem },

@@ -475,11 +475,7 @@ PYTHON_NATIVE(builtinExecOrEval)
     if (!args.size() || args.size() > 3)
         return JSValue::encode(raiseTypeError(globalObject, scope, args.size() ? makeString(function, "() takes at most 3 arguments ("_s, args.size(), " given)"_s) : makeString(function, "() takes at least 1 positional argument (0 given)"_s)));
     JSValue globalsValue = args.at(1);
-    if (!globalsValue)
-        globalsValue = args.keyword(globalObject, "globals"_s);
     JSValue localsValue = args.at(2);
-    if (!localsValue)
-        localsValue = args.keyword(globalObject, "locals"_s);
     bool hasGlobals = globalsValue && !isNone(globalsValue);
     bool hasLocals = localsValue && !isNone(localsValue);
 

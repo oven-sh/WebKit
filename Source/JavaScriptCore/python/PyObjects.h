@@ -31,6 +31,7 @@
 #include "JSTypedArrays.h"
 #include "PyInstance.h"
 #include "PyRealm.h"
+#include "PythonSignatures.h"
 
 namespace JSC {
 
@@ -46,7 +47,8 @@ class PyDict;
     DECLARE_VISIT_CHILDREN; \
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
-// instance.method, when it is not called at once.
+// instance.method, when it is not called at once. It is a `method` if that is a function written in Python. If it is written in C++ it is a
+// `builtin_function_or_method`, as a function that is no method is, or a `method-wrapper`.
 class PyBoundMethod final : public JSNonFinalObject {
 public:
     static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetCallData;
@@ -305,6 +307,8 @@ public:
     Setter setter() const { return m_setter; }
     PyType* owner() const { return m_owner.get(); }
     JSString* name() const { return m_name.get(); }
+    // Null if CPython has no such attribute.
+    const Python::BuiltinDescription* description() const { return m_description; }
 
 private:
     PyGetSetDescriptor(VM& vm, Structure* structure, Getter getter, Setter setter)
@@ -317,6 +321,7 @@ private:
     Getter m_getter;
     Setter m_setter;
     bool m_isMember { false };
+    const Python::BuiltinDescription* m_description { nullptr };
     WriteBarrier<PyType> m_owner;
     WriteBarrier<JSString> m_name;
 };

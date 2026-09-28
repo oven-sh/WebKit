@@ -53,4 +53,9 @@ CommonNames::CommonNames(VM& vm)
 {
 }
 
+const NativeSignature* CommonNames::signatureFor(ASCIILiteral text)
+{
+    return m_signatures.ensure(text.characters(), [&] { return makeUnique<NativeSignature>(text); }).iterator->value.get();
+}
+
 } } // namespace JSC::Python

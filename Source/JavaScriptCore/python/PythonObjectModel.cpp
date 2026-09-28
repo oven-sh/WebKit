@@ -92,9 +92,12 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
                 switch (native->kind()) {
                 case PyNativeFunction::Kind::Function:
                 case PyNativeFunction::Kind::New:
+                case PyNativeFunction::Kind::StaticMethod:
                     return realm->typeBuiltinFunction();
                 case PyNativeFunction::Kind::Method:
                     return realm->typeMethodDescriptor();
+                case PyNativeFunction::Kind::Wrapper:
+                    return realm->typeWrapperDescriptor();
                 case PyNativeFunction::Kind::ClassMethod:
                     return realm->typeClassMethodDescriptor();
                 }
@@ -295,8 +298,10 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
             switch (native->kind()) {
             case PyNativeFunction::Kind::Function:
             case PyNativeFunction::Kind::New:
+            case PyNativeFunction::Kind::StaticMethod:
                 return { };
             case PyNativeFunction::Kind::Method:
+            case PyNativeFunction::Kind::Wrapper:
                 return { DescriptorKind::Function, false, { } };
             case PyNativeFunction::Kind::ClassMethod:
                 return { DescriptorKind::NativeClassMethod, false, { } };
@@ -1164,9 +1169,14 @@ JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& a
     PyRealm* realm = globalObject->pyRealm();
 
     // type(x)
-    if (type == realm->typeType() && arguments.size() == 1 && !keywordNames)
+    if (type == realm->typeType() && arguments.size() - (keywordNames ? keywordNames->length() : 0) == 1) {
+        if (keywordNames)
+            return raiseTypeError(globalObject, scope, "type() takes no keyword arguments"_s);
         return typeOf(globalObject, arguments.at(0));
+    }
 
+    if (type->cannotBeInstantiated(vm))
+        return raiseTypeError(globalObject, scope, makeString("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
     JSValue constructor = type->lookup(vm, names.dunder_new);
     ASSERT(constructor);
     // It is a static method, whether or not it says so.
@@ -1226,7 +1236,7 @@ bool NativeArguments::check(JSGlobalObject* globalObject, ThrowScope& scope, ASC
 
     // The instance or the class that comes first is not something that whoever called it thinks of having given.
     auto* callee = dynamicDowncast<PyNativeFunction>(m_callFrame->jsCallee());
-    bool hasImplicitFirst = callee && callee->kind() != PyNativeFunction::Kind::Function && minimum;
+    bool hasImplicitFirst = callee && callee->hasImplicitFirst() && minimum;
     unsigned given = size() - (hasImplicitFirst && size());
     minimum -= hasImplicitFirst;
     maximum -= hasImplicitFirst;
@@ -1235,7 +1245,7 @@ bool NativeArguments::check(JSGlobalObject* globalObject, ThrowScope& scope, ASC
     StringView name { functionName };
     if (minimum == maximum && minimum <= 1) {
         String qualified = name.toString();
-        if (callee && callee->kind() != PyNativeFunction::Kind::Function && callee->kind() != PyNativeFunction::Kind::New && callee->owner() && isType(callee->owner()))
+        if (callee && callee->hasImplicitFirst() && callee->kind() != PyNativeFunction::Kind::New && callee->owner() && isType(callee->owner()))
             qualified = makeString(asType(callee->owner())->nameString(globalObject), '.', name.substring(name.reverseFind('.') + 1));
         raiseTypeError(globalObject, scope, makeString(qualified, minimum ? "() takes exactly one argument ("_s : "() takes no arguments ("_s, given, " given)"_s));
         return false;

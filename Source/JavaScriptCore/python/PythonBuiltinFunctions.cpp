@@ -967,8 +967,6 @@ PYTHON_NATIVE(builtinSum)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sum() takes at most 2 arguments ("_s, args.size(), " given)"_s)));
     JSValue total = args.at(1);
     if (!total)
-        total = args.keyword(globalObject, "start"_s);
-    if (!total)
         total = jsNumber(0);
     if (total.isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, "sum() can't sum strings [use ''.join(seq) instead]"_s));
@@ -988,6 +986,8 @@ PYTHON_NATIVE(builtinMinOrMax)
     ASCIILiteral name = isMax ? "max"_s : "min"_s;
     if (!args.size())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, " expected at least 1 argument, got 0"_s)));
+    if (!checkArgumentsSlow(globalObject, callFrame))
+        return { };
     JSValue keyFunction = args.keyword(globalObject, "key"_s);
     if (keyFunction && isNone(keyFunction))
         keyFunction = { };
@@ -1029,21 +1029,24 @@ PYTHON_NATIVE(builtinMinOrMax)
 }
 
 // sorted(iterable, /, *, key=None, reverse=False)
+// sorted(iterable, /, *, key=None, reverse=False): a list of what is in it, sorted as list.sort() does it, which is given the rest.
 PYTHON_NATIVE(builtinSorted)
 {
     NATIVE_PROLOGUE();
     if (args.size() != 1)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sorted expected 1 argument, got "_s, args.size())));
-    JSValue reverseValue = args.keyword(globalObject, "reverse"_s);
-    bool reverse = reverseValue && isTrue(globalObject, reverseValue);
-    RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer values;
     collect(globalObject, args[0], values);
     RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer sorted;
-    sortValues(globalObject, values, args.keyword(globalObject, "key"_s), reverse, sorted);
+    JSArray* list = newList(globalObject, values);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sorted)));
+    MarkedArgumentBuffer arguments;
+    arguments.append(list);
+    for (unsigned i = 0; i < args.keywordCount(); ++i)
+        arguments.append(args.keywordValue(i));
+    callWithKeywords(globalObject, realm->typeList()->lookup(vm, Identifier::fromString(vm, "sort"_s)), arguments, args.keywordNames());
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(list);
 }
 
 // ---- Numbers and characters
@@ -1065,16 +1068,13 @@ PYTHON_NATIVE(builtinAbs)
 PYTHON_NATIVE(builtinRound)
 {
     NATIVE_PROLOGUE();
-    if (!args.size() || args.size() > 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "round() missing required argument 'number' (pos 1)"_s));
+    JSValue number = args.at(0);
     JSValue digits = args.at(1);
-    if (!digits)
-        digits = args.keyword(globalObject, "ndigits"_s);
     JSValue self;
-    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_round, self);
+    JSValue method = lookupSpecial(globalObject, number, names.dunder_round, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("type "_s, typeName(globalObject, args[0]), " doesn't define __round__ method"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("type "_s, typeName(globalObject, number), " doesn't define __round__ method"_s)));
     if (!digits || isNone(digits))
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self, digits)));
@@ -1092,12 +1092,8 @@ PYTHON_NATIVE(builtinDivmod)
 PYTHON_NATIVE(builtinPow)
 {
     NATIVE_PROLOGUE();
-    if (args.size() < 2 || args.size() > 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "pow() missing required argument 'exp' (pos 2)"_s));
     JSValue modulus = args.at(2);
-    if (!modulus)
-        modulus = args.keyword(globalObject, "mod"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(power(globalObject, args[0], args[1], modulus ? modulus : jsUndefined())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(power(globalObject, args.at(0), args.at(1), modulus ? modulus : jsUndefined())));
 }
 
 PYTHON_NATIVE(builtinChr)
@@ -1183,11 +1179,7 @@ PYTHON_NATIVE(builtinImport)
     if (!args.size() || !args[0].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, "__import__() argument 1 must be str"_s));
     JSValue fromList = args.at(3);
-    if (!fromList)
-        fromList = args.keyword(globalObject, "fromlist"_s);
     JSValue levelValue = args.at(4);
-    if (!levelValue)
-        levelValue = args.keyword(globalObject, "level"_s);
     unsigned level = levelValue && levelValue.isInt32() ? levelValue.asInt32() : 0;
     JSObject* globals = globalsOfFrame(globalObject, callerOf(callFrame));
     RELEASE_AND_RETURN(scope, JSValue::encode(importModule(globalObject, globals, asString(args[0])->value(globalObject), fromList ? fromList : jsUndefined(), level, false)));
@@ -1217,9 +1209,10 @@ void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespac
     add("any"_s, builtinAnyOrAll, pack(true));
     add("all"_s, builtinAnyOrAll, pack(false));
     add("sum"_s, builtinSum);
-    add("min"_s, builtinMinOrMax, pack(false));
-    add("max"_s, builtinMinOrMax, pack(true));
-    add("sorted"_s, builtinSorted);
+    // These have something of their own to say before their keywords are looked at.
+    addFunction(globalObject, namespaceObject, "min"_s, builtinMinOrMax, pack(false), "(*args, key=None, default=None)"_s, PyNativeFunction::Arguments::AreNotChecked);
+    addFunction(globalObject, namespaceObject, "max"_s, builtinMinOrMax, pack(true), "(*args, key=None, default=None)"_s, PyNativeFunction::Arguments::AreNotChecked);
+    addFunction(globalObject, namespaceObject, "sorted"_s, builtinSorted, 0, { }, PyNativeFunction::Arguments::AreNotChecked);
     add("abs"_s, builtinAbs);
     add("round"_s, builtinRound);
     add("divmod"_s, builtinDivmod);

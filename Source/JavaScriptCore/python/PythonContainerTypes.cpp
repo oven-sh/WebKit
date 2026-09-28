@@ -280,8 +280,6 @@ bool sortValues(JSGlobalObject* globalObject, MarkedArgumentBuffer& values, JSVa
 PYTHON_NATIVE(listSort)
 {
     LIST_PROLOGUE("sort");
-    if (args.size() > 1)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "sort() takes no positional arguments"_s));
     JSValue reverseValue = args.keyword(globalObject, "reverse"_s);
     bool reverse = reverseValue && isTrue(globalObject, reverseValue);
     RETURN_IF_EXCEPTION(scope, { });
@@ -843,11 +841,21 @@ PYTHON_NATIVE(sliceNew)
 PYTHON_NATIVE(enumerateNew)
 {
     NATIVE_PROLOGUE();
-    if (args.size() < 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable' (pos 1)"_s));
+    // It puts things in its own way: enumerate_vectorcall() of CPython's Objects/enumobject.c.
+    unsigned given = args.size() - 1 + args.keywordCount();
+    if (!given || given > 2) {
+        if (args.size() == 1)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("enumerate() takes at most 2 arguments ("_s, given, " given)"_s)));
+    }
+    for (unsigned i = 0; i < args.keywordCount(); ++i) {
+        // Each is to be the name of what has not been given yet.
+        String keyword = args.keywordName(i)->value(globalObject);
+        bool isExpected = given == 1 ? keyword == "iterable"_s : args.keywordCount() == 1 ? keyword == "start"_s : keyword == "iterable"_s || keyword == "start"_s;
+        if (!isExpected || (i && keyword == String(args.keywordName(0)->value(globalObject))))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', keyword, "' is an invalid keyword argument for enumerate()"_s)));
+    }
     JSValue startValue = args.at(2);
-    if (!startValue)
-        startValue = args.keyword(globalObject, "start"_s);
     int64_t start = 0;
     JSValue bigStart;
     if (startValue) {
@@ -858,7 +866,7 @@ PYTHON_NATIVE(enumerateNew)
         else
             bigStart = integer;
     }
-    JSValue iterator = getIterator(globalObject, args[1]);
+    JSValue iterator = getIterator(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Enumerate, iterator, bigStart, start));
 }
@@ -968,7 +976,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     list->setPrototypeDirect(vm, globalObject->arrayPrototype());
     addMethods(globalObject, list, {
         { "__new__"_s, listNew, Kind::New },
-        { "__init__"_s, listInit },
+        { "__init__"_s, listInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
         { "__len__"_s, nativeLen },
         { "__getitem__"_s, nativeGetItem },
@@ -989,14 +997,14 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "count"_s, listCount },
         { "sort"_s, listSort },
     });
-    addComparisons(globalObject, list, true);
+    addComparisons(globalObject, list);
     addBinaryOperators(globalObject, list, { BinaryOperator::Add }, false, true);
     addBinaryOperators(globalObject, list, { BinaryOperator::Mult }, true, true);
     makeUnhashable(list);
 
     PyType* tuple = realm->typeTuple();
     addMethods(globalObject, tuple, {
-        { "__new__"_s, tupleNew, Kind::New },
+        { "__new__"_s, tupleNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
         { "__hash__"_s, nativeHash },
         { "__len__"_s, nativeLen },
@@ -1006,7 +1014,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "index"_s, tupleIndex },
         { "count"_s, tupleCount },
     });
-    addComparisons(globalObject, tuple, true);
+    addComparisons(globalObject, tuple);
     addBinaryOperators(globalObject, tuple, { BinaryOperator::Add }, false, false);
     addBinaryOperators(globalObject, tuple, { BinaryOperator::Mult }, true, false);
 
@@ -1034,7 +1042,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "items"_s, dictView, PyNativeFunction::Kind::Method, pack(BuiltinType::DictItems) },
         { "fromkeys"_s, dictFromKeys, Kind::ClassMethod },
     });
-    addComparisons(globalObject, dict, false);
+    addComparisons(globalObject, dict);
     addBinaryOperators(globalObject, dict, { BinaryOperator::BitOr }, true, true);
     makeUnhashable(dict);
 
@@ -1065,7 +1073,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     }
 
     addMethods(globalObject, realm->typeMappingProxy(), {
-        { "__new__"_s, proxyNew, Kind::New },
+        { "__new__"_s, proxyNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__getitem__"_s, proxyGetItem },
         { "__contains__"_s, proxyContains },
         { "__len__"_s, proxyLen },
@@ -1095,12 +1103,12 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
             { "issuperset"_s, setRelation, PyNativeFunction::Kind::Method, pack(ComparisonOperator::GtE) },
             { "isdisjoint"_s, setIsDisjoint },
         });
-        addComparisons(globalObject, set, true);
+        addComparisons(globalObject, set);
         addBinaryOperators(globalObject, set, { BinaryOperator::BitOr, BinaryOperator::BitAnd, BinaryOperator::Sub, BinaryOperator::BitXor }, true, set == realm->typeSet());
     }
     addMethods(globalObject, realm->typeSet(), {
         { "__new__"_s, setNew, Kind::New },
-        { "__init__"_s, setInit },
+        { "__init__"_s, setInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "add"_s, setAddMethod },
         { "remove"_s, setRemove, PyNativeFunction::Kind::Method, pack(true) },
         { "discard"_s, setRemove, PyNativeFunction::Kind::Method, pack(false) },
@@ -1113,7 +1121,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     });
     makeUnhashable(realm->typeSet());
     addMethods(globalObject, realm->typeFrozenSet(), {
-        { "__new__"_s, frozenSetNew, Kind::New },
+        { "__new__"_s, frozenSetNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__hash__"_s, nativeHash },
     });
 
@@ -1142,14 +1150,14 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
         addMethods(globalObject, type, {
             { "__iter__"_s, nativeSelf },
             { "__next__"_s, nativeNext },
-            { "__length_hint__"_s, iteratorLengthHint },
         });
+        addMethodsThatCPythonHas(globalObject, type, { { "__length_hint__"_s, iteratorLengthHint } });
     }
-    addMethods(globalObject, realm->typeEnumerate(), { { "__new__"_s, enumerateNew, Kind::New } });
-    addMethods(globalObject, realm->typeZip(), { { "__new__"_s, zipNew, Kind::New } });
-    addMethods(globalObject, realm->typeMap(), { { "__new__"_s, mapNew, Kind::New } });
-    addMethods(globalObject, realm->typeFilter(), { { "__new__"_s, filterNew, Kind::New } });
-    addMethods(globalObject, realm->typeReversed(), { { "__new__"_s, reversedNew, Kind::New } });
+    addMethods(globalObject, realm->typeEnumerate(), { { "__new__"_s, enumerateNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClassButNotChecked } });
+    addMethods(globalObject, realm->typeZip(), { { "__new__"_s, zipNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass } });
+    addMethods(globalObject, realm->typeMap(), { { "__new__"_s, mapNew, Kind::New, 0, "(*iterables, strict=False)"_s, PyNativeFunction::Arguments::AreThoseOfTheClass } });
+    addMethods(globalObject, realm->typeFilter(), { { "__new__"_s, filterNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass } });
+    addMethods(globalObject, realm->typeReversed(), { { "__new__"_s, reversedNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass } });
 }
 
 } } // namespace JSC::Python

@@ -4581,7 +4581,7 @@ PYTHON_NATIVE(posixClose)
 static JSObject* createPosixModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    JSObject* module = newModule(globalObject, "posix"_s);
+    JSObject* module = newBuiltinModule(globalObject, "posix"_s);
     JSObject* ns = module;
     addFunction(globalObject, ns, "open"_s, posixOpen);
     addFunction(globalObject, ns, "read"_s, posixRead);

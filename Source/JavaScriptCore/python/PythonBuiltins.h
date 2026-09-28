@@ -47,6 +47,8 @@ struct MethodDefinition {
     NativeFunction function;
     PyNativeFunction::Kind kind { PyNativeFunction::Kind::Method };
     unsigned data { 0 };
+    ASCIILiteral signature { }; // For what CPython does not have. See PyNativeFunction::create().
+    PyNativeFunction::Arguments arguments { PyNativeFunction::Arguments::AreChecked };
 };
 
 // Up to three small values, for PyNativeFunction::data().
@@ -64,20 +66,23 @@ inline T unpack(CallFrame* callFrame, unsigned position)
 }
 
 void addMethods(JSGlobalObject*, PyType*, std::initializer_list<MethodDefinition>);
+// For what is added to several classes at once, not all of which have all of it.
+void addMethodsThatCPythonHas(JSGlobalObject*, PyType*, std::initializer_list<MethodDefinition>);
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
-PyNativeFunction* addFunction(JSGlobalObject*, JSObject* namespaceObject, ASCIILiteral name, NativeFunction, unsigned data = 0);
+PyNativeFunction* addFunction(JSGlobalObject*, JSObject* module, ASCIILiteral name, NativeFunction, unsigned data = 0, ASCIILiteral signature = { }, PyNativeFunction::Arguments = PyNativeFunction::Arguments::AreChecked);
 
-// Whether a function written in C++ has been given a first argument that it can work on: for a method, an instance of the class that it is a
-// method of, and for __new__, a class derived from that one. If not, TypeError has been raised. What follows can then take it for what it is.
-bool checkFirstArgument(JSGlobalObject*, CallFrame*);
+// Whether a function written in C++ has been given arguments that it can work on. The first is, for a method, an instance of the class that it is a
+// method of, and for __new__, a class derived from that one. The rest are as its signature has them. If not, TypeError has been raised. What follows
+// can then take the first for what it is, and those that are required for being there.
+bool checkArguments(JSGlobalObject*, CallFrame*);
 
 #define PYTHON_NATIVE_WITH_LINKAGE(linkage, name) \
     static EncodedJSValue name##Checked(JSGlobalObject*, CallFrame*); \
     linkage JSC_DECLARE_HOST_FUNCTION(name); \
     JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject* globalObject, CallFrame* callFrame)) \
     { \
-        if (!checkFirstArgument(globalObject, callFrame)) [[unlikely]] \
+        if (!checkArguments(globalObject, callFrame)) [[unlikely]] \
             return { }; \
         return name##Checked(globalObject, callFrame); \
     } \
@@ -143,7 +148,8 @@ void initializeJavaScriptTypes(JSGlobalObject*);
 String builtinRepr(JSGlobalObject*, JSValue);
 JSValue builtinFormat(JSGlobalObject*, JSValue, const String& specification);
 String strOfException(JSGlobalObject*, JSValue);
-String qualifiedNameOfType(JSGlobalObject*, PyType*);
+String qualifiedNameOfType(JSGlobalObject*, PyType*); // module.__qualname__, or without the module if that is builtins.
+String qualifiedNameWithoutModule(JSGlobalObject*, PyType*); // type.__qualname__
 String nameOfFunction(JSGlobalObject*, JSFunction*, bool qualified);
 std::optional<bool> builtinContains(JSGlobalObject*, JSValue container, JSValue);
 int64_t builtinLength(JSGlobalObject*, JSValue); // -1 if it has none.
@@ -159,7 +165,7 @@ JSC_DECLARE_HOST_FUNCTION(nativeContains);
 JSC_DECLARE_HOST_FUNCTION(nativeIter);
 JSC_DECLARE_HOST_FUNCTION(nativeNext);
 JSC_DECLARE_HOST_FUNCTION(nativeSelf);
-void addComparisons(JSGlobalObject*, PyType*, bool ordering);
+void addComparisons(JSGlobalObject*, PyType*);
 // __add__ and __radd__ and so on for these operators, by builtinBinaryOperation().
 void addBinaryOperators(JSGlobalObject*, PyType*, std::initializer_list<BinaryOperator>, bool reflected, bool inPlace);
 

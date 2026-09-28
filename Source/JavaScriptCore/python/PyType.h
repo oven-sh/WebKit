@@ -107,6 +107,9 @@ public:
     void setFlag(Flag flag) { m_flags |= flag; }
     void clearFlag(Flag flag) { m_flags &= ~flag; }
     bool isExceptionType() const { return hasFlag(IsExceptionType); }
+    // A built-in class that is derived from object and nothing else, and has no __new__ of its own, does not have object's either, though that is what
+    // looking it up finds. Instances of it are made by other means: an iterator is what iter() gives.
+    bool cannotBeInstantiated(VM&) const;
     // For a class of exceptions: which of JavaScript's kinds of Error its instances are.
     ErrorType errorType() const { return m_errorType; }
     void setErrorType(ErrorType errorType) { m_errorType = errorType; }

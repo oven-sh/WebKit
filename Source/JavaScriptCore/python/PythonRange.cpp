@@ -449,7 +449,7 @@ void initializeRangeType(JSGlobalObject* globalObject)
         { "index"_s, rangeIndex },
         { "count"_s, rangeCount },
     });
-    addComparisons(globalObject, range, false);
+    addComparisons(globalObject, range);
     addMember(globalObject, range, "start"_s, [] (JSGlobalObject*, JSValue self) { return asRange(self)->start(); });
     addMember(globalObject, range, "stop"_s, [] (JSGlobalObject*, JSValue self) { return asRange(self)->stop(); });
     addMember(globalObject, range, "step"_s, [] (JSGlobalObject*, JSValue self) { return asRange(self)->step(); });

@@ -29,10 +29,17 @@
 
 namespace JSC {
 
+namespace Python {
+class NativeSignature;
+struct BuiltinDescription;
+}
+
 // A function of Python's that is written in C++.
 //
 // Its arguments are its Python arguments. If it was given keywords, their values come after the positional arguments and `this` is
 // their names, in a JSCellButterfly, which is nothing that Python or JavaScript code can get hold of. Python::NativeArguments reads them.
+//
+// It has a signature, which its arguments are checked against before it is called: see PythonSignatures.h.
 class PyNativeFunction final : public JSFunction {
 public:
     using Base = JSFunction;
@@ -41,8 +48,21 @@ public:
     enum class Kind : uint8_t {
         Function, // len. As an attribute of a class it is what it is.
         Method, // list.append. Got from an instance it is bound to it, and its first argument is the instance.
+        Wrapper, // list.__add__. The same, and one of those that an operator or a built-in function comes down to. It differs in what Python calls it.
         ClassMethod, // dict.fromkeys. It is bound to the class, and its first argument is the class.
         New, // list.__new__. Like Function, and its first argument is a class that is the owner or derived from it.
+        StaticMethod, // bytes.maketrans. Like Function, but for being in a class, where it is inside a staticmethod.
+    };
+
+    enum class Arguments : uint8_t {
+        AreChecked,
+        // A few of CPython's have a signature for the sake of saying something, and take whatever they are given.
+        AreNotChecked,
+        // A __new__ or an __init__ says that it takes anything. The one of the two that does something with what a class is called with takes what
+        // the class says that it is called with, and goes by the name of the class when that is not what it is given.
+        AreThoseOfTheClass,
+        // The same, for one that has something of its own to say first. It calls Python::checkArgumentsSlow() when it has.
+        AreThoseOfTheClassButNotChecked,
     };
 
     template<typename CellType, SubspaceAccess mode>
@@ -56,13 +76,26 @@ public:
 
     // `owner` is the class that it is a method of, or the module that it is a function of.
     // `data` is for the function itself: one function in C++ can be many in Python that differ only by it, as __lt__ and __gt__ do.
-    JS_EXPORT_PRIVATE static PyNativeFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, Kind = Kind::Function, JSObject* owner = nullptr, unsigned data = 0, ImplementationVisibility = ImplementationVisibility::Public);
+    // `signature` is for what CPython does not have. What it has is looked up by its owner and its name, and has CPython's. A Method that is a
+    // slot wrapper in CPython is made a Wrapper.
+    JS_EXPORT_PRIVATE static PyNativeFunction* create(VM&, JSGlobalObject*, unsigned length, const String& name, NativeFunction, Kind = Kind::Function, JSObject* owner = nullptr, unsigned data = 0, ImplementationVisibility = ImplementationVisibility::Public, ASCIILiteral signature = { }, Arguments = Arguments::AreChecked);
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     Kind kind() const { return m_kind; }
+    // Whether its first argument is an instance or a class that whoever calls it does not think of as an argument.
+    bool hasImplicitFirst() const { return m_kind != Kind::Function && m_kind != Kind::StaticMethod; }
     JSObject* owner() const { return m_owner.get(); }
     unsigned data() const { return m_data; }
+
+    // Null if it has none.
+    const Python::NativeSignature* signature() const { return m_signature; }
+    bool checksArguments() const { return m_checksArguments; }
+    bool takesArgumentsOfTheClass() const { return m_takesArgumentsOfTheClass; }
+    // Null if CPython has no such function.
+    const Python::BuiltinDescription* description() const { return m_description; }
+    // Whether so many arguments, none of them given by name, are as many as it takes. They include the instance or the class that comes first.
+    bool takes(unsigned count) const { return count >= m_minimumArguments && count <= m_maximumArguments; }
 
 private:
     PyNativeFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, Kind kind, JSObject* owner, unsigned data)
@@ -73,8 +106,16 @@ private:
     {
     }
 
+    void setSignature(const Python::NativeSignature*, Arguments);
+
     Kind m_kind;
+    bool m_checksArguments { false };
+    bool m_takesArgumentsOfTheClass { false };
     unsigned m_data;
+    unsigned m_minimumArguments { 0 };
+    unsigned m_maximumArguments { std::numeric_limits<unsigned>::max() };
+    const Python::NativeSignature* m_signature { nullptr };
+    const Python::BuiltinDescription* m_description { nullptr };
     WriteBarrier<JSObject> m_owner;
 };
 

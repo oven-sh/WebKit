@@ -1,0 +1,157 @@
+len => ('builtin_function_or_method', '<built-in function len>', 'len', 'len', '($module, obj, /)', 'Return the number of items in a containe')
+len self => builtins
+len objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+len module => builtins
+len reduce => 'len'
+[].append => ('builtin_function_or_method', '<built-in method append of list object>', 'append', 'list.append', '($self, object, /)', 'Append object to the end of the list.')
+[].append self => []
+[].append objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+[].append module => None
+[].append reduce => (<built-in function getattr>, ([], 'append'))
+list.append => ('method_descriptor', "<method 'append' of 'list' objects>", 'append', 'list.append', '($self, object, /)', 'Append object to the end of the list.')
+list.append self !! AttributeError 'method_descriptor' object has no attribute '__self__'
+list.append objclass => <class 'list'>
+list.append module !! AttributeError 'method_descriptor' object has no attribute '__module__'
+list.append reduce => (<built-in function getattr>, (<class 'list'>, 'append'))
+int.__add__ => ('wrapper_descriptor', "<slot wrapper '__add__' of 'int' objects>", '__add__', 'int.__add__', '($self, value, /)', 'Return self+value.')
+int.__add__ self !! AttributeError 'wrapper_descriptor' object has no attribute '__self__'
+int.__add__ objclass => <class 'int'>
+int.__add__ module !! AttributeError 'wrapper_descriptor' object has no attribute '__module__'
+int.__add__ reduce => (<built-in function getattr>, (<class 'int'>, '__add__'))
+(1).__add__ => ('method-wrapper', "<method-wrapper '__add__' of int object>", '__add__', 'int.__add__', '($self, value, /)', 'Return self+value.')
+(1).__add__ self => 1
+(1).__add__ objclass => <class 'int'>
+(1).__add__ module !! AttributeError 'method-wrapper' object has no attribute '__module__'
+(1).__add__ reduce => (<built-in function getattr>, (1, '__add__'))
+dict.fromkeys => ('builtin_function_or_method', '<built-in method fromkeys of type object>', 'fromkeys', 'dict.fromkeys', '($type, iterable, value=None, /)', 'Create a new dictionary with keys from i')
+dict.fromkeys self => <class 'dict'>
+dict.fromkeys objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+dict.fromkeys module => None
+dict.fromkeys reduce => (<built-in function getattr>, (<class 'dict'>, 'fromkeys'))
+dict.__dict__['fromkeys'] => ('classmethod_descriptor', "<method 'fromkeys' of 'dict' objects>", 'fromkeys', 'dict.fromkeys', '($type, iterable, value=None, /)', 'Create a new dictionary with keys from i')
+dict.__dict__['fromkeys'] self !! AttributeError 'classmethod_descriptor' object has no attribute '__self__'
+dict.__dict__['fromkeys'] objclass => <class 'dict'>
+dict.__dict__['fromkeys'] module !! AttributeError 'classmethod_descriptor' object has no attribute '__module__'
+int.__new__ => ('builtin_function_or_method', '<built-in method __new__ of type object>', '__new__', 'int.__new__', '($type, *args, **kwargs)', 'Create and return a new object.  See hel')
+int.__new__ self => <class 'int'>
+int.__new__ objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+int.__new__ module => None
+int.__new__ reduce => (<built-in function getattr>, (<class 'int'>, '__new__'))
+math.sqrt => ('builtin_function_or_method', '<built-in function sqrt>', 'sqrt', 'sqrt', '($module, x, /)', 'Return the square root of x.')
+math.sqrt self => math
+math.sqrt objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+math.sqrt module => math
+math.sqrt reduce => 'sqrt'
+str.maketrans => ('builtin_function_or_method', '<built-in method maketrans of type object>', 'maketrans', 'bytes.maketrans', '(frm, to, /)', 'Return a translation table usable for th')
+str.maketrans self => None
+str.maketrans objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+str.maketrans module => None
+str.maketrans reduce => (<built-in function getattr>, (<class 'bytes'>, 'maketrans'))
+True.__and__ => ('builtin_function_or_method', '<built-in method bit_length of bool object>', 'bit_length', 'bool.bit_length', '($self, /)', 'Number of bits necessary to represent se')
+True.__and__ self => True
+True.__and__ objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+True.__and__ module => None
+True.__and__ reduce => (<built-in function getattr>, (True, 'bit_length'))
+{}.__contains__ => ('builtin_function_or_method', '<built-in method __contains__ of dict object>', '__contains__', 'dict.__contains__', '($self, key, /)', 'True if the dictionary has the specified')
+{}.__contains__ self => {}
+{}.__contains__ objclass !! AttributeError 'builtin_function_or_method' object has no attribute '__objclass__'
+{}.__contains__ module => None
+{}.__contains__ reduce => (<built-in function getattr>, ({}, '__contains__'))
+list.__getitem__ => ('method_descriptor', "<method '__getitem__' of 'list' objects>", '__getitem__', 'list.__getitem__', '($self, index, /)', 'Return self[index].')
+list.__getitem__ self !! AttributeError 'method_descriptor' object has no attribute '__self__'
+list.__getitem__ objclass => <class 'list'>
+list.__getitem__ module !! AttributeError 'method_descriptor' object has no attribute '__module__'
+list.__getitem__ reduce => (<built-in function getattr>, (<class 'list'>, '__getitem__'))
+object.__init__ => ('wrapper_descriptor', "<slot wrapper '__init__' of 'object' objects>", '__init__', 'object.__init__', '($self, /, *args, **kwargs)', 'Initialize self.  See help(type(self)) f')
+object.__init__ self !! AttributeError 'wrapper_descriptor' object has no attribute '__self__'
+object.__init__ objclass => <class 'object'>
+object.__init__ module !! AttributeError 'wrapper_descriptor' object has no attribute '__module__'
+object.__init__ reduce => (<built-in function getattr>, (<class 'object'>, '__init__'))
+equal => (True, False, False, True, True, 1, True, False, True, True, False)
+ordering !! TypeError '<' not supported between instances of 'builtin_function_or_method' and 'builtin_function_or_method'
+read only !! AttributeError attribute '__name__' of 'builtin_function_or_method' objects is not writable
+no dict !! AttributeError 'builtin_function_or_method' object has no attribute 'x' and no __dict__ for setting new attributes
+__get__ => ('<built-in method append of list object>', True, "<method-wrapper '__add__' of int object>", '<built-in method fromkeys of type object>', '<built-in method fromkeys of type object>')
+__get__ nothing !! TypeError __get__(None, None) is invalid
+__get__ wrong !! TypeError descriptor 'fromkeys' requires a subtype of 'dict' but received 'int'
+__get__ not a type !! TypeError descriptor 'fromkeys' for type 'dict' needs a type, not a 'int' as arg 2
+no arguments !! TypeError list.clear() takes no arguments (1 given)
+one argument !! TypeError list.append() takes exactly one argument (0 given)
+one argument, two !! TypeError list.append() takes exactly one argument (2 given)
+positional few !! TypeError index expected at least 1 argument, got 0
+positional many !! TypeError index expected at most 3 arguments, got 4
+exactly two !! TypeError replace() takes at least 2 positional arguments (1 given)
+no keywords !! TypeError list.append() takes no keyword arguments
+no keywords 2 !! TypeError list.index() takes no keyword arguments
+no keywords 3 !! TypeError list.clear() takes no keyword arguments
+wrapper !! TypeError expected 1 argument, got 0
+wrapper many !! TypeError expected 1 argument, got 2
+wrapper keywords !! TypeError wrapper __add__() takes no keyword arguments
+wrapper none !! TypeError expected 0 arguments, got 1
+pow => 3
+setitem !! TypeError __setitem__ expected 2 arguments, got 1
+get !! TypeError __get__ expected at least 1 argument, got 0
+unbound !! TypeError unbound method list.append() needs an argument
+unbound wrapper !! TypeError descriptor '__add__' of 'int' object needs an argument
+wrong self !! TypeError descriptor 'append' for 'list' objects doesn't apply to a 'int' object
+wrong self wrapper !! TypeError descriptor '__add__' requires a 'int' object but received a 'str'
+inherited !! TypeError int.bit_length() takes no arguments (1 given)
+inherited bound !! TypeError bool.bit_length() takes no arguments (1 given)
+class method !! TypeError fromkeys expected at least 1 argument, got 0
+class method many !! TypeError fromkeys expected at most 2 arguments, got 3
+function !! TypeError len() takes exactly one argument (0 given)
+function many !! TypeError len() takes exactly one argument (2 given)
+function keywords !! TypeError len() takes no keyword arguments
+module function !! TypeError math.sqrt() takes exactly one argument (0 given)
+module function 2 !! TypeError math.sqrt() takes exactly one argument (2 given)
+sort positional !! TypeError sort() takes no positional arguments
+sort unknown !! TypeError sort() got an unexpected keyword argument 'keys'. Did you mean 'key'?
+sort unknown far !! TypeError sort() got an unexpected keyword argument 'zzz'
+sort fine => None
+sorted none !! TypeError sorted expected 1 argument, got 0
+sorted two !! TypeError sorted expected 1 argument, got 2
+sorted unknown !! TypeError sort() got an unexpected keyword argument 'revers'. Did you mean 'reverse'?
+sorted by name !! TypeError sorted expected 1 argument, got 0
+print unknown !! TypeError print() got an unexpected keyword argument 'sepp'. Did you mean 'sep'?
+print far !! TypeError print() got an unexpected keyword argument 'zzz'
+round !! TypeError round() missing required argument 'number' (pos 1)
+round by name => 2.0
+round twice !! TypeError argument for round() given by name ('number') and position (1)
+round many !! TypeError round() takes at most 2 arguments (3 given)
+round unknown !! TypeError round() got an unexpected keyword argument 'digits'. Did you mean 'ndigits'?
+int base => 3
+int many !! TypeError int expected at most 2 arguments, got 3
+int unknown !! TypeError int() got an unexpected keyword argument 'bas'. Did you mean 'base'?
+str.split => ['a', 'b']
+str.split many !! TypeError split() takes at most 2 arguments (3 given)
+str.split unknown !! TypeError split() got an unexpected keyword argument 'seps'. Did you mean 'sep'?
+str.split twice !! TypeError argument for split() given by name ('sep') and position (1)
+encode => b'a'
+encode unknown !! TypeError encode() got an unexpected keyword argument 'error'. Did you mean 'errors'?
+enumerate => [(1, 'a')]
+enumerate by name => [(0, 'a')]
+enumerate unknown !! TypeError 'strt' is an invalid keyword argument for enumerate()
+sum => 3
+sum unknown !! TypeError sum() got an unexpected keyword argument 'star'. Did you mean 'start'?
+pow names => 8
+pow missing !! TypeError pow() missing required argument 'exp' (pos 2)
+pow missing name !! TypeError pow() missing required argument 'base' (pos 1)
+divmod !! TypeError divmod expected 2 arguments, got 1
+isinstance !! TypeError isinstance expected 2 arguments, got 1
+getattr !! TypeError getattr expected at least 2 arguments, got 1
+max !! TypeError max expected at least 1 argument, got 0
+min unknown !! TypeError min() got an unexpected keyword argument 'ky'. Did you mean 'key'?
+expandtabs =>   
+splitlines => ['a\n']
+to_bytes => b'\x00\x01'
+to_bytes unknown !! TypeError to_bytes() got an unexpected keyword argument 'sign'. Did you mean 'signed'?
+from_bytes => 1
+bytes.hex => 61:62
+decode => a
+prepare => {}
+zip strict => [('a',)]
+zip unknown !! TypeError zip() got an unexpected keyword argument 'strct'. Did you mean 'strict'?
+type docs !! AttributeError 'getset_descriptor' object has no attribute 'split'
+descriptor docs => ('the real part of a complex number', 'getset_descriptor', 'the real part of a complex number', 'member_descriptor', None, 'member_descriptor', None, None)
+module docs => ('This module provides access to the mathematical functions\ndefined by the C standard.', 'This module provides access to some obje', 'Built-in functions, types, exceptions, a', None, None)
+class docs => (None, None, 'd')

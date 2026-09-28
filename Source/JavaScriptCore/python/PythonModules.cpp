@@ -54,6 +54,15 @@ JSObject* newModule(JSGlobalObject* globalObject, const String& name, PyType* ty
     return module;
 }
 
+JSObject* newBuiltinModule(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = globalObject->vm();
+    JSObject* module = newModule(globalObject, String(name));
+    if (auto* description = findModuleDescription(name); description && !description->doc.isNull())
+        module->putDirect(vm, vm.pythonNames().dunder_doc, jsString(vm, String(description->doc)));
+    return module;
+}
+
 JSObject* tryModule(JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isCell() || value.asCell()->type() != PyInstanceType)
@@ -302,7 +311,7 @@ PYTHON_NATIVE(mathIsqrt)
 static JSObject* createMathModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    JSObject* module = newModule(globalObject, "math"_s);
+    JSObject* module = newBuiltinModule(globalObject, "math"_s);
     JSObject* ns = module;
     auto add = [&] (ASCIILiteral name, NativeFunction function, unsigned data = 0) { addFunction(globalObject, ns, name, function, data); };
     auto constant = [&] (ASCIILiteral name, double value) { ns->putDirect(vm, Identifier::fromString(vm, name), floatFromDouble(value)); };
@@ -358,7 +367,7 @@ PYTHON_NATIVE(timeMonotonicNanoseconds)
 
 static JSObject* createTimeModule(JSGlobalObject* globalObject)
 {
-    JSObject* module = newModule(globalObject, "time"_s);
+    JSObject* module = newBuiltinModule(globalObject, "time"_s);
     JSObject* ns = module;
     addFunction(globalObject, ns, "time"_s, timeTime);
     addFunction(globalObject, ns, "monotonic"_s, timeMonotonic);
@@ -474,7 +483,7 @@ static JSObject* createSysModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
-    JSObject* module = newModule(globalObject, "sys"_s);
+    JSObject* module = newBuiltinModule(globalObject, "sys"_s);
     JSObject* ns = module;
     auto set = [&] (ASCIILiteral name, JSValue value) { ns->putDirect(vm, Identifier::fromString(vm, name), value); };
     set("modules"_s, realm->modules());

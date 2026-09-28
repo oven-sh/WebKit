@@ -260,6 +260,11 @@ unsigned PyType::hooks(JSGlobalObject* globalObject)
     return flags;
 }
 
+bool PyType::cannotBeInstantiated(VM& vm) const
+{
+    return !hasFlag(IsHeapType) && base() && !base()->base() && !getDirect(vm, vm.pythonNames().dunder_new);
+}
+
 static JSC_DECLARE_HOST_FUNCTION(callType);
 
 // C(...) is type(C).__call__(C, ...), which for nearly every class is type.__call__.

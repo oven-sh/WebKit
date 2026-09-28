@@ -703,11 +703,7 @@ PYTHON_NATIVE(complexNew)
     }
 
     JSValue realValue = args.at(1);
-    if (!realValue)
-        realValue = args.keyword(globalObject, "real"_s);
     JSValue imaginaryValue = args.at(2);
-    if (!imaginaryValue)
-        imaginaryValue = args.keyword(globalObject, "imag"_s);
     if (!realValue)
         realValue = jsNumber(0);
 
@@ -762,7 +758,7 @@ void initializeComplexType(JSGlobalObject* globalObject)
         type->putDirect(vm, names.reflectedMethod(op), PyNativeFunction::create(vm, globalObject, 1, names.reflectedMethod(op).string(), complexBinary, Kind::Method, type, pack(op, true)));
     }
     addMethods(globalObject, type, {
-        { "__new__"_s, complexNew, Kind::New },
+        { "__new__"_s, complexNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__eq__"_s, complexEquality, Kind::Method, pack(true) },
         { "__ne__"_s, complexEquality, Kind::Method, pack(false) },
         { "__neg__"_s, complexNegative },

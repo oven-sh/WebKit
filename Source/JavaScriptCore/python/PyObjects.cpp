@@ -32,6 +32,7 @@
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
 #include "PythonOperations.h"
+#include "PythonSignatures.h"
 
 namespace JSC {
 
@@ -240,12 +241,60 @@ void PyNativeFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyNativeFunction);
 
-PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, Kind kind, JSObject* owner, unsigned data, ImplementationVisibility visibility)
+PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, Kind kind, JSObject* owner, unsigned data, ImplementationVisibility visibility, ASCIILiteral signature, Arguments arguments)
 {
+    using Python::BuiltinDescription;
+    const BuiltinDescription* description = nullptr;
+    if (owner && isType(owner)) {
+        // It may be that CPython has it in a class that this one is derived from, and has no need of another.
+        for (auto& ancestor : asType(owner)->mro()->span()) {
+            description = Python::findAttributeDescription(asType(ancestor.get())->nameString(globalObject), name);
+            if (description)
+                break;
+        }
+        if (description && description->kind == BuiltinDescription::Kind::WrapperDescriptor && kind == Kind::Method)
+            kind = Kind::Wrapper;
+        if (kind == Kind::Function)
+            kind = Kind::StaticMethod;
+    } else if (owner) {
+        JSValue moduleName = owner->getDirect(vm, vm.pythonNames().dunder_name);
+        if (moduleName && moduleName.isString())
+            description = Python::findFunctionDescription(asString(moduleName)->value(globalObject).data, name);
+    }
+    if (arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked) {
+        auto* typeDescription = Python::findTypeDescription(asType(owner)->nameString(globalObject));
+        if (signature.isNull() && typeDescription)
+            signature = typeDescription->signature;
+        // One that does not say is left to see to them itself.
+        if (signature.isNull())
+            arguments = Arguments::AreNotChecked;
+    }
+    if (signature.isNull() && description)
+        signature = description->signature;
+
     NativeExecutable* executable = vm.getHostFunction(nativeFunction, visibility, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
     auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, executable, globalObject, globalObject->pyRealm()->nativeFunctionStructure(), kind, owner, data);
     function->finishCreation(vm);
+    function->m_description = description;
+    if (!signature.isNull())
+        function->setSignature(vm.pythonNames().signatureFor(signature), arguments);
     return function;
+}
+
+void PyNativeFunction::setSignature(const Python::NativeSignature* signature, Arguments arguments)
+{
+    m_signature = signature;
+    m_takesArgumentsOfTheClass = arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked;
+    // Any number will do for one that sees to them itself.
+    if (signature->family() == Python::NativeSignature::Family::Unchecked || arguments == Arguments::AreNotChecked || arguments == Arguments::AreThoseOfTheClassButNotChecked)
+        return;
+    m_checksArguments = true;
+    unsigned implicit = hasImplicitFirst();
+    m_minimumArguments = signature->requiredPositionalCount() + implicit;
+    m_maximumArguments = signature->hasVarPositional() ? std::numeric_limits<unsigned>::max() : signature->positionalCount() + implicit;
+    // There is no number of them that will do without any being given by name.
+    if (signature->requiredKeywordOnlyCount())
+        m_minimumArguments = std::numeric_limits<unsigned>::max();
 }
 
 Structure* PyNativeFunction::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -401,7 +450,11 @@ DEFINE_PYTHON_CELL(PyBoundMethod, "method", PyBoundMethodType)
 PyBoundMethod* PyBoundMethod::create(JSGlobalObject* globalObject, JSValue function, JSValue self)
 {
     VM& vm = globalObject->vm();
-    auto* method = new (NotNull, allocateCell<PyBoundMethod>(vm)) PyBoundMethod(vm, globalObject->pyRealm()->structureFor(BuiltinType::Method), function, self);
+    // What Python calls it depends on what it is a method from.
+    BuiltinType type = BuiltinType::Method;
+    if (auto* native = dynamicDowncast<PyNativeFunction>(function))
+        type = native->kind() == PyNativeFunction::Kind::Wrapper ? BuiltinType::MethodWrapper : BuiltinType::BuiltinFunction;
+    auto* method = new (NotNull, allocateCell<PyBoundMethod>(vm)) PyBoundMethod(vm, globalObject->pyRealm()->structureFor(type), function, self);
     method->finishCreation(vm);
     return method;
 }
@@ -566,8 +619,14 @@ DEFINE_PYTHON_CELL(PyGetSetDescriptor, "getset_descriptor", ObjectType)
 PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyType* owner, const String& name, Getter getter, Setter setter, bool isMember)
 {
     VM& vm = globalObject->vm();
-    auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, globalObject->pyRealm()->structureFor(BuiltinType::GetSetDescriptor), getter, setter);
+    PyRealm* realm = globalObject->pyRealm();
+    // Which of the two it is called is as CPython has it, if it has it.
+    const Python::BuiltinDescription* description = Python::findAttributeDescription(owner->nameString(globalObject), name);
+    if (description)
+        isMember = description->kind == Python::BuiltinDescription::Kind::MemberDescriptor;
+    auto* descriptor = new (NotNull, allocateCell<PyGetSetDescriptor>(vm)) PyGetSetDescriptor(vm, isMember ? realm->builtinMemberDescriptorStructure() : realm->structureFor(BuiltinType::GetSetDescriptor), getter, setter);
     descriptor->finishCreation(vm);
+    descriptor->m_description = description;
     descriptor->m_isMember = isMember;
     descriptor->m_owner.set(vm, descriptor, owner);
     descriptor->m_name.set(vm, descriptor, jsString(vm, name));
