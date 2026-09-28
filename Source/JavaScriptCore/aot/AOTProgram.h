@@ -32,6 +32,22 @@ struct KnownFunction {
     // The variable it was found in holds a closure of it from when it is initialized, and never anything else: see
     // ModuleHints::prove(). Then a call of what is read from that variable needs no check that this is the callee.
     bool isProven { false };
+    // If so: everything that a call of it can return. It is worked out for all of them together, from nothing up
+    // (inferReturnTypeForImage()), and means what it says once that has come to an end.
+    mutable std::atomic<uint32_t> returnType { 0 };
+
+    KnownFunction() = default;
+    KnownFunction(const KnownFunction& other) { *this = other; }
+    KnownFunction& operator=(const KnownFunction& other)
+    {
+        executable = other.executable;
+        forCall = other.forCall;
+        forConstruct = other.forConstruct;
+        key = other.key;
+        isProven = other.isProven;
+        returnType = other.returnType.load(std::memory_order_relaxed);
+        return *this;
+    }
 
     ImageKey keyFor(bool isConstruct) const
     {

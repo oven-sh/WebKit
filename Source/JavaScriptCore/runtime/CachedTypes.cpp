@@ -5940,6 +5940,95 @@ struct BytecodeLinkEncoder::Impl {
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that hold one or are stored to");
 
         auto linkages = linkModules(hints);
+        unsigned numberOfThreads = Options::aotThreads() ? Options::aotThreads() : WTF::numberOfProcessorCores();
+        // The compiler reads unlinked code and allocates nothing in the heap; this thread, which has the heap, waits.
+        DeferGC deferGC(vm);
+        auto inParallel = [&](size_t count, const auto& functor) {
+            std::atomic<size_t> nextIndex { 0 };
+            auto run = [&] {
+                for (size_t index = nextIndex++; index < count; index = nextIndex++)
+                    functor(index);
+            };
+            Vector<Ref<Thread>> threads;
+            for (unsigned i = 1; i < numberOfThreads; ++i)
+                threads.append(Thread::create("AOT compiler"_s, [&run] { run(); }));
+            run();
+            for (auto& thread : threads)
+                thread->waitForCompletion();
+        };
+
+        // What the functions that are called with no check return: each goes by what the ones it calls return, so all together,
+        // starting from nothing, until nothing changes.
+        {
+            struct Summary {
+                const AOT::KnownFunction* function;
+                unsigned module;
+                Vector<unsigned> dependents;
+                Vector<const AOT::KnownFunction*> callees;
+                bool changed { false };
+            };
+            Vector<Summary> summaries;
+            UncheckedKeyHashMap<const AOT::KnownFunction*, unsigned> indexOfSummary;
+            for (unsigned module = 0; module < hints.size(); ++module) {
+                if (!hints[module])
+                    continue;
+                hints[module]->forEachProven([&](const AOT::KnownFunction& function) {
+                    if (!function.forCall)
+                        return;
+                    indexOfSummary.add(&function, summaries.size());
+                    summaries.append({ &function, module, { }, { }, false });
+                });
+            }
+            Vector<unsigned> worklist;
+            for (unsigned i = 0; i < summaries.size(); ++i)
+                worklist.append(i);
+            MonotonicTime before = MonotonicTime::now();
+            unsigned rounds = 0;
+            size_t inferences = 0;
+            while (!worklist.isEmpty()) {
+                bool isFirst = !rounds++;
+                inferences += worklist.size();
+                inParallel(worklist.size(), [&](size_t at) {
+                    Summary& summary = summaries[worklist[at]];
+                    summary.callees.shrink(0);
+                    uint32_t type = AOT::inferReturnTypeForImage(vm, summary.function->forCall, hints[summary.module].get(), linkages[summary.module].get(), summary.callees);
+                    uint32_t old = summary.function->returnType.load(std::memory_order_relaxed);
+                    summary.changed = (type | old) != old;
+                    summary.function->returnType.store(type | old, std::memory_order_relaxed);
+                });
+                if (isFirst) {
+                    for (unsigned i = 0; i < summaries.size(); ++i) {
+                        for (auto* callee : summaries[i].callees) {
+                            if (auto it = indexOfSummary.find(callee); it != indexOfSummary.end())
+                                summaries[it->value].dependents.append(i);
+                        }
+                    }
+                }
+                UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> next;
+                for (unsigned index : worklist) {
+                    if (!std::exchange(summaries[index].changed, false))
+                        continue;
+                    for (unsigned dependent : summaries[index].dependents)
+                        next.add(dependent);
+                }
+                worklist = copyToVector(next);
+            }
+            if (Options::aotReportStats()) [[unlikely]] {
+                UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> byType;
+                for (auto& summary : summaries)
+                    byType.add(summary.function->returnType.load(), 0).iterator->value++;
+                dataLogLn("AOT: return types of ", summaries.size(), " functions in ", rounds, " rounds, ", inferences, " inferences, ", (MonotonicTime::now() - before).milliseconds(), " ms");
+                for (auto& entry : byType) {
+                    if (entry.value >= 100)
+                        dataLogLn("  RETURNS ", entry.value, " ", RawHex(entry.key));
+                }
+                if (summaries.size() < 200) {
+                    for (auto& summary : summaries)
+                        dataLogLn("  RETURNS ", summary.function->executable->name().string(), " ", RawHex(summary.function->returnType.load()), " callees ", summary.callees.size(), " dependents ", summary.dependents.size());
+                }
+            }
+        }
+
         AOT::ImageBuilder builder;
         std::atomic<size_t> next { 0 };
         // TEMPORARY-PROVABILITY-STATS: whose code each function is, by the comment the bundler puts in front of each file's.
@@ -5979,9 +6068,6 @@ struct BytecodeLinkEncoder::Impl {
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
             }
         };
-        // The compiler reads unlinked code and allocates nothing in the heap; this thread, which has the heap, waits.
-        DeferGC deferGC(vm);
-        unsigned numberOfThreads = Options::aotThreads() ? Options::aotThreads() : WTF::numberOfProcessorCores();
         Vector<Ref<Thread>> threads;
         for (unsigned i = 1; i < numberOfThreads; ++i)
             threads.append(Thread::create("AOT compiler"_s, [&work] { work(); }));

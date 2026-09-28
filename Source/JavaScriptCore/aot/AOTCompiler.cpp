@@ -688,6 +688,16 @@ static void recordStatistics(bool ok, size_t codeBytes, size_t bytecodeBytes, Se
     }
 }
 
+uint32_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, Vector<const KnownFunction*>& calleesConsulted)
+{
+    Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
+    graph.setCalleeHints(hints);
+    graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
+    if (!parseBytecode(graph))
+        return TTop;
+    return inferTypes(graph, &calleesConsulted) & TTop;
+}
+
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, bool hasDirectEntry)
 {
     MonotonicTime before = MonotonicTime::now();

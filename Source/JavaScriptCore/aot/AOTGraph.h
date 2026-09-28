@@ -422,7 +422,8 @@ void Graph::forEachLiteralProperty(const JSInstruction* instruction, unsigned co
 
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
 bool parseBytecode(Graph&);
-void inferTypes(Graph&);
+// What the function returns. calleesConsulted: the functions whose KnownFunction::returnType that went by.
+Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesConsulted = nullptr);
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);

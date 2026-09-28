@@ -307,6 +307,9 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
     case op_construct:
         calleeRegister = node->as<OpConstruct>().m_callee;
         break;
+    case op_tail_call:
+        calleeRegister = node->as<OpTailCall>().m_callee;
+        break;
     default:
         return nullptr;
     }
@@ -341,10 +344,12 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
             // The hint goes by the name and the offset. Is it the module's variable? Not one of the function's own, which is read from
             // a scope that the function has at hand, without looking for it; and not one of a scope in between.
             Node* scope = callee->use(bytecode.m_scope);
-            if (scope->isBytecode(op_resolve_scope) && scope->as<OpResolveScope>().m_var == bytecode.m_var) {
-                auto resolution = m_declaredNames->resolve(name);
-                *isProven = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset;
-            }
+            auto resolution = m_declaredNames->resolve(name);
+            bool isVariableOfModule = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset;
+            if (scope->isBytecode(op_resolve_scope))
+                *isProven = isVariableOfModule && scope->as<OpResolveScope>().m_var == bytecode.m_var;
+            else if (scope->isBytecode(op_get_scope)) // The scope the function was made in, which is then the module's.
+                *isProven = isVariableOfModule && !resolution.hops;
         }
         return known;
     }
@@ -1355,12 +1360,12 @@ private:
             m_graph.fail("reads a register outside the frame"_s);
             return m_graph.constant(jsUndefined());
         }
-        if (m_graph.isHomed(reg)) {
+        Node* value = block->valuesAtTail[m_graph.registerIndex(reg)];
+        if (!value && m_graph.isHomed(reg)) {
             Node* node = m_graph.addNode(NodeKind::GetStack);
             node->reg = reg;
             return append(block, node);
         }
-        Node* value = block->valuesAtTail[m_graph.registerIndex(reg)];
         if (!value) {
             // Bytecode liveness says nothing reads this, and yet: it is a register that is only read on a path where it was
             // never written, which is to say that op_enter's undefined is what it holds.
@@ -1380,7 +1385,8 @@ private:
             node->reg = reg;
             node->uses.append({ VirtualRegister(), value });
             append(block, node);
-            return;
+            // That is for whoever gets here by way of a handler, with nothing to go by but what is in memory. Everybody else knows
+            // what was put there.
         }
         block->valuesAtTail[m_graph.registerIndex(reg)] = value;
     }
@@ -1405,10 +1411,14 @@ private:
         }
 
         bool needsPhis = block->predecessors.size() != 1 || block->isLoopHeader || block->predecessors[0]->valuesAtTail.isEmpty();
-        if (!block->isCatchEntrypoint) {
+        if (block->isCatchEntrypoint) {
             for (unsigned index : block->liveIn) {
-                if (m_graph.m_homed.get(index))
-                    continue;
+                Node* node = m_graph.addNode(NodeKind::GetStack);
+                node->reg = m_graph.registerForIndex(index);
+                block->valuesAtTail[index] = append(block, node);
+            }
+        } else {
+            for (unsigned index : block->liveIn) {
                 if (!needsPhis) {
                     block->valuesAtTail[index] = valueLeaving(block->predecessors[0], block, index);
                     continue;
@@ -1573,9 +1583,10 @@ private:
                 // It leaves the register as it is, but from here on more is known about what is in it. That is what all of this
                 // is for: the check is a definition, of the same value with a smaller type.
                 VirtualRegister reg = instruction->as<OpCheckType>().m_value;
-                if (m_graph.isTracked(reg) && !m_graph.m_homed.get(m_graph.registerIndex(reg))) {
+                if (m_graph.isTracked(reg)) {
                     node->reg = reg;
-                    set(block, reg, node);
+                    // (What is in memory is the same value as before.)
+                    block->valuesAtTail[m_graph.registerIndex(reg)] = node;
                 }
             } else if (defs.size() == 1) {
                 node->reg = defs[0];

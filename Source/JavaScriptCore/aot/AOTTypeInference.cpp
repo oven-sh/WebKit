@@ -41,6 +41,25 @@ public:
             }
             changed |= std::exchange(m_elementTypesChanged, false);
         }
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->kind != NodeKind::Bytecode)
+                    continue;
+                switch (node->opcode) {
+                case op_ret:
+                    m_returnType |= node->use(node->as<OpRet>().m_value)->type;
+                    break;
+                case op_tail_call:
+                    m_returnType |= resultOfCall(node);
+                    break;
+                case op_tail_call_varargs:
+                    m_returnType |= TTop;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
         // What is still None is code that no execution reaches with a value. It gets compiled all the same.
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* phi : block->phis) {
@@ -54,7 +73,21 @@ public:
         }
     }
 
+    Type returnType() const { return m_returnType; }
+    Vector<const KnownFunction*>* calleesConsulted { nullptr };
+
 private:
+    Type resultOfCall(Node* node)
+    {
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+        if (!known || !isProven || !known->forCall)
+            return TTop;
+        if (calleesConsulted && !calleesConsulted->contains(known))
+            calleesConsulted->append(known);
+        return known->returnType.load(std::memory_order_relaxed);
+    }
+
     bool update(Node* node)
     {
         Type type = node->type | compute(node);
@@ -428,7 +461,9 @@ private:
                     return TNumber;
                 }
             }
-            return TAll;
+            return resultOfCall(node);
+        case op_tail_call:
+            return resultOfCall(node);
         case op_get_length: {
             Type base = typeOf(node->as<OpGetLength>().m_base);
             if (!base)
@@ -463,16 +498,19 @@ private:
     }
 
     Graph& m_graph;
+    Type m_returnType { TNone };
     UncheckedKeyHashMap<Node*, Type> m_elementTypes; // Of the arrays that the function makes: everything it puts in them.
     bool m_elementTypesChanged { false };
 };
 
 } // anonymous namespace
 
-void inferTypes(Graph& graph)
+Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesConsulted)
 {
     TypeInference inference(graph);
+    inference.calleesConsulted = calleesConsulted;
     inference.run();
+    return inference.returnType();
 }
 
 } } // namespace JSC::AOT
