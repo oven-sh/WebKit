@@ -230,6 +230,7 @@ private:
     WriteBarrier<JSObject> m_javaScriptConstructor;
     WriteBarrier<JSObject> m_javaScriptPrototype;
     Vector<Weak<PyType>> m_subclasses;
+    size_t m_subclassCountToSweepAt { 0 };
     const Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
     int m_basicSize { 0 };

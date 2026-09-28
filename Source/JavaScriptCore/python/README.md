@@ -418,6 +418,11 @@ bare object, so compiled code always finds its globals the same way.
   dict's own table.
 - Two objects can have one `__dict__`. The second finds its attributes in the first.
 
+How many attributes there are is `len(o.__dict__)`, and it is asked at each step of going through the dict, to say so if it changes. What Python counts is what `Object.keys()` would list: what is enumerable and is
+not keyed by a symbol, which leaves out what the engine keeps in the object for itself. An object with many properties has a table of its own that is changed where it is, so the count cannot be kept by
+`Structure`. `PropertyTable` keeps it, `enumerableStringKeyCount()`, and it changes where a property is added, removed or has its attributes changed, none of which is where an inline cache goes. It fits in what
+was padding.
+
 ### Modules, and what is up to the host
 
 `import` finds a module in `sys.modules`, among those that are written in C++, or in a file on `sys.path`. (The last is to be `importlib`, which
@@ -675,6 +680,11 @@ of it, so that what is kept to compare with is small, and given `everything` pri
 `special-methods.py` is the other way about: it is of what the language does with what a program's classes do. Each special method is given each of some eighty things to do, which are to return something, mostly
 not what is wanted of it, to raise something, to take the wrong number of arguments, and not to be a function at all. Then everything that would call it is tried: the operators, the statements, the built-in
 functions, and the methods of the built-in classes that take such a thing. That is ninety thousand things tried.
+
+`complexity.py` is of how long things take as what they are done to gets longer. Each of four hundred things is done about n times to something of about n elements, and timed at n and at four times n, so what
+it prints is the power of n that the time goes up by: 1 if each takes as long however many there are, and 2 if each takes as long as there are elements. `compare-complexity.py` puts what CPython printed beside
+what this engine printed, and picks out what goes up faster here and what takes many times as long. It goes by the clock, so it is something to run and read, and not a test. It was written after `len(s)` was
+found, by accident, to take as long as the string is, and the first time that it was run it found a dozen more of the kind.
 
 `run-large.sh` is apart from the rest. It makes things that there is no room for, or barely room for, each in a process of its own, and what is looked for is that the engine is still there afterwards. It takes
 gigabytes of memory and a quarter of an hour, so it is run when what it is about has been changed. `programs/no-room.py` and `interop/how-much-room-there-is.py` are of what is refused before anything is made,

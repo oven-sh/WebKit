@@ -79,6 +79,7 @@ PropertyTable::PropertyTable(VM& vm, const PropertyTable& other)
     , m_indexVector(allocateIndexVector(other.isCompact(), other.m_indexSize))
     , m_keyCount(other.m_keyCount)
     , m_deletedCount(other.m_deletedCount)
+    , m_enumerableStringKeyCount(other.m_enumerableStringKeyCount)
 {
     ASSERT(isPowerOfTwo(m_indexSize));
     ASSERT(isCompact() == other.isCompact());
@@ -102,6 +103,7 @@ PropertyTable::PropertyTable(VM& vm, unsigned initialCapacity, const PropertyTab
     , m_indexVector()
     , m_keyCount(0)
     , m_deletedCount(0)
+    , m_enumerableStringKeyCount(other.m_enumerableStringKeyCount)
 {
     ASSERT(isPowerOfTwo(m_indexSize));
     ASSERT(initialCapacity >= other.m_keyCount);

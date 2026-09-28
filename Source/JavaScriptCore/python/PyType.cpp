@@ -397,7 +397,11 @@ bool PyType::isSubtypeOf(const PyType* other) const
 
 void PyType::addSubclass(PyType* subclass)
 {
-    m_subclasses.removeAllMatching([] (auto& weak) { return !weak; });
+    // Those that are gone are taken out when there are twice as many as were left the last time, and not each time. Every class is derived from object, so making one would take as long as there are classes.
+    if (m_subclasses.size() >= m_subclassCountToSweepAt) {
+        m_subclasses.removeAllMatching([] (auto& weak) { return !weak; });
+        m_subclassCountToSweepAt = 2 * m_subclasses.size() + 1;
+    }
     m_subclasses.append(Weak<PyType>(subclass));
 }
 

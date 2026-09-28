@@ -935,6 +935,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             m_stop = -1; // It goes on saying so.
             return Python::raise(globalObject, scope, BuiltinType::RuntimeError, "Set changed size during iteration"_s);
         }
+        m_index = std::max<int64_t>(m_index, set->firstEntry());
         while (m_index < set->entryCount()) {
             if (JSValue key = set->keyAt(m_index++)) {
                 ++m_step;
@@ -960,6 +961,11 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         int64_t backingCount = backingKeys ? backingKeys->length() : 0;
         PyHashTable& table = dict->ownTable();
         bool isReverse = this->isReverse();
+        // There is nothing in the table before its first, nor after its last.
+        if (isReverse)
+            m_index = std::min<int64_t>(m_index, backingCount + table.entryCount());
+        else if (m_index >= backingCount)
+            m_index = std::max<int64_t>(m_index, backingCount + table.firstEntry());
         while (isReverse ? m_index > 0 : m_index < backingCount + table.entryCount()) {
             int64_t position = isReverse ? --m_index : m_index++;
             JSValue key;

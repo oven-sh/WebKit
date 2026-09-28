@@ -72,7 +72,7 @@ public:
         for (auto& name : m_info.parameterNames) {
             // The mapping that the names of a class body are looked up in is a parameter of ours, and not one of Python's.
             if (!m_info.usesNamespace)
-                m_details->variableNames.append(name);
+                noteVariableName(name);
         }
         generateKind(root);
         for (Symbol& symbol : m_block.symbols) {
@@ -414,14 +414,14 @@ private:
 
     RegisterID* emitGetAttribute(RegisterID* dst, RegisterID* base, const Identifier& name)
     {
-        addOnce(m_details->names, name);
+        noteName(name);
         OpPyGetAttr::emit(&g, dst, base, g.addConstant(name), g.nextValueProfileIndex());
         return dst;
     }
 
     void emitSetAttribute(RegisterID* base, const Identifier& name, RegisterID* value)
     {
-        addOnce(m_details->names, name);
+        noteName(name);
         OpPySetAttr::emit(&g, base, g.addConstant(name), value);
     }
 
@@ -543,6 +543,19 @@ private:
             names.append(name);
     }
 
+    // For co_names and co_varnames, which have each name once, in the order that they were first come to. There can be as many as there are lines, so whether one is there already is not found by looking through.
+    void noteName(const Identifier& name)
+    {
+        if (m_notedNames.add(name.impl()).isNewEntry)
+            m_details->names.append(name);
+    }
+
+    void noteVariableName(const Identifier& name)
+    {
+        if (m_notedVariableNames.add(name.impl()).isNewEntry)
+            m_details->variableNames.append(name);
+    }
+
     // Where the name is, noting that it has been used, for co_varnames and co_names.
     Location locateAndNote(const Identifier& name)
     {
@@ -550,14 +563,14 @@ private:
         switch (location.where) {
         case Where::Register:
             if (m_locals.contains(name.impl()))
-                addOnce(m_details->variableNames, name);
+                noteVariableName(name);
             break;
         case Where::Closure:
             break;
         case Where::Global:
         case Where::Namespace:
         case Where::NamespaceOrClosure:
-            addOnce(m_details->names, name);
+            noteName(name);
             break;
         }
         return location;
@@ -750,10 +763,33 @@ private:
     // ---- Constants
 
     // For co_consts.
+    static unsigned hashOf(const CodeDetails::Constant& constant)
+    {
+        unsigned hash = computeHash(static_cast<uint8_t>(constant.kind), constant.radix, constant.isNegative, constant.bits, constant.imaginaryBits, constant.text.isNull() ? 0u : constant.text.hash());
+        for (auto& element : constant.elements)
+            hash = pairIntHash(hash, hashOf(element));
+        return hash;
+    }
+
+    // As the key of a table, where nothing and all ones stand for a place that is empty and one that has been emptied.
+    static unsigned keyOf(const CodeDetails::Constant& constant)
+    {
+        unsigned hash = hashOf(constant);
+        return AlreadyHashed::avoidDeletedValue(hash ? hash : 1);
+    }
+
+    // Each once, in the order that they were first come to. As with the names, there can be as many as there are lines.
     void noteConstant(CodeDetails::Constant&& constant)
     {
-        if (!m_isNeverComeTo && !m_details->constants.contains(constant))
-            m_details->constants.append(WTF::move(constant));
+        if (m_isNeverComeTo)
+            return;
+        auto& alike = m_notedConstants.add(keyOf(constant), Vector<unsigned, 1>()).iterator->value;
+        for (unsigned index : alike) {
+            if (m_details->constants[index] == constant)
+                return;
+        }
+        alike.append(m_details->constants.size());
+        m_details->constants.append(WTF::move(constant));
     }
 
     // What running off the end comes to. If the last thing was to return or to raise, and nothing jumps to after it, the end is not come to.
@@ -1386,7 +1422,7 @@ private:
         CallArguments call(g, nullptr, count + 1);
         RegisterID* self = call.argumentRegister(0);
         mark(locationOf(*attribute));
-        addOnce(m_details->names, mangle(*attribute->attribute));
+        noteName(mangle(*attribute->attribute));
         OpPyLoadMethod::emit(&g, function.get(), self, base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
         g.emitLoad(call.thisRegister(), jsUndefined());
         for (unsigned i = 0; i < count; ++i)
@@ -1452,7 +1488,7 @@ private:
             if (attribute) {
                 emitInto(base.get(), attribute->value);
                 mark(locationOf(*attribute));
-                addOnce(m_details->names, mangle(*attribute->attribute));
+                noteName(mangle(*attribute->attribute));
                 OpPyLoadMethod::emit(&g, function.get(), call.argumentRegister(2), base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
             } else {
                 g.emitLoad(base.get(), jsUndefined());
@@ -3801,11 +3837,11 @@ private:
             g.emitLoad(environment.get(), jsUndefined());
 
         auto store = [&] (const Identifier& name, RegisterID* value) {
-            addOnce(m_details->names, name);
+            noteName(name);
             OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
         };
         {
-            addOnce(m_details->names, m_names.dunder_name);
+            noteName(m_names.dunder_name);
             Reg moduleName = g.newTemporary();
             mark(node);
             OpPyLoadGlobal::emit(&g, moduleName.get(), m_globals.get(), m_builtins.get(), g.addConstant(m_names.dunder_name), g.nextValueProfileIndex());
@@ -3843,9 +3879,9 @@ private:
         }
         // What type() is handed the cells by, which here is what this returns.
         if (m_block.needsClassDict)
-            addOnce(m_details->names, Identifier::fromString(m_vm, "__classdictcell__"_s));
+            noteName(Identifier::fromString(m_vm, "__classdictcell__"_s));
         if (m_block.needsClassClosure)
-            addOnce(m_details->names, Identifier::fromString(m_vm, "__classcell__"_s));
+            noteName(Identifier::fromString(m_vm, "__classcell__"_s));
         g.emitReturn(environment.get());
     }
 
@@ -4368,6 +4404,9 @@ private:
     BytecodeGenerator& g;
     VM& m_vm;
     std::unique_ptr<CodeDetails> m_details;
+    HashSet<UniquedStringImpl*> m_notedNames;
+    HashSet<UniquedStringImpl*> m_notedVariableNames;
+    HashMap<unsigned, Vector<unsigned, 1>, AlreadyHashed> m_notedConstants; // Which of m_details->constants have a hash.
     unsigned m_nestedBlocks { 0 };
     bool m_isInExceptStar { false };
     bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.

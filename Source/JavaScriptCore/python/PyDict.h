@@ -117,6 +117,8 @@ public:
     // To go through the entries: from 0 up to entryCount(), skipping those whose key is empty. Adding to the table while doing so may
     // move them, which version() tells.
     unsigned entryCount() const { return m_used; }
+    // There is nothing before this one. It has not been removed, and nor has the last, unless there are none at all.
+    unsigned firstEntry() const { return m_first; }
     JSValue keyAt(unsigned entry) const { return m_storage->key(entry).get(); }
     JSValue valueAt(unsigned entry) const { return m_storage->value(entry).get(); }
     void setValueAt(VM& vm, unsigned entry, JSValue value) { m_storage->value(entry).set(vm, m_storage.get(), value); }
@@ -135,10 +137,16 @@ protected:
 
 private:
     bool grow(VM&, JSGlobalObject*);
-    void insertIndex(PyHashStorage&, uint32_t hash, unsigned entry);
+    // Whether it took a place in the index that nothing had had.
+    bool insertIndex(PyHashStorage&, uint32_t hash, unsigned entry);
 
     WriteBarrier<PyHashStorage> m_storage;
-    unsigned m_used { 0 }; // Entries taken, of which some may have been removed.
+    // The entries are from m_first to m_used, of which some in between may have been removed. What is removed from either end is done with there and then, so that taking from an end does not go over what
+    // was taken before.
+    unsigned m_first { 0 };
+    unsigned m_used { 0 };
+    // Places in the index that have or have had something in them. Looking for what is not there ends at one that has not, so there are always to be some of those.
+    unsigned m_filled { 0 };
     unsigned m_size { 0 };
     unsigned m_version { 0 };
     unsigned m_stride;
@@ -264,7 +272,7 @@ void PyDict::forEach(JSGlobalObject* globalObject, const Function& function)
                 return;
         }
     }
-    for (unsigned entry = 0; entry < Base::entryCount(); ++entry) {
+    for (unsigned entry = Base::firstEntry(); entry < Base::entryCount(); ++entry) {
         JSValue key = Base::keyAt(entry);
         if (key && !function(key, Base::valueAt(entry)))
             return;

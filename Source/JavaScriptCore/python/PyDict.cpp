@@ -152,7 +152,7 @@ int PyHashTable::find(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
     }
 }
 
-void PyHashTable::insertIndex(PyHashStorage& storage, uint32_t hash, unsigned entry)
+bool PyHashTable::insertIndex(PyHashStorage& storage, uint32_t hash, unsigned entry)
 {
     unsigned mask = storage.indexMask();
     unsigned slot = hash & mask;
@@ -161,7 +161,9 @@ void PyHashTable::insertIndex(PyHashStorage& storage, uint32_t hash, unsigned en
         perturb >>= 5;
         slot = (slot * 5 + perturb + 1) & mask;
     }
+    bool wasEmpty = storage.index(slot) == PyHashStorage::emptyIndex;
     storage.index(slot) = entry;
+    return wasEmpty;
 }
 
 // Makes room for another entry. What has been removed is dropped, so the entries move. False, with MemoryError raised, if there is no room to be had.
@@ -180,7 +182,7 @@ bool PyHashTable::grow(VM& vm, JSGlobalObject* globalObject)
     }
     PyHashStorage* old = m_storage.get();
     unsigned used = 0;
-    for (unsigned entry = 0; entry < m_used; ++entry) {
+    for (unsigned entry = m_first; entry < m_used; ++entry) {
         JSValue key = old->key(entry).get();
         if (!key)
             continue;
@@ -192,7 +194,9 @@ bool PyHashTable::grow(VM& vm, JSGlobalObject* globalObject)
         ++used;
     }
     m_storage.set(vm, this, storage);
+    m_first = 0;
     m_used = used;
+    m_filled = used;
     return true;
 }
 
@@ -214,7 +218,7 @@ bool PyHashTable::add(JSGlobalObject* globalObject, JSValue key, JSValue value, 
         return true;
     }
 
-    if (!m_storage || m_used == m_storage->capacity()) {
+    if (!m_storage || m_used == m_storage->capacity() || m_filled >= m_storage->capacity()) {
         grow(vm, globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -223,7 +227,7 @@ bool PyHashTable::add(JSGlobalObject* globalObject, JSValue key, JSValue value, 
     if (m_stride == 2)
         storage->value(m_used).set(vm, storage, value);
     storage->hash(m_used) = hash;
-    insertIndex(*storage, hash, m_used);
+    m_filled += insertIndex(*storage, hash, m_used);
     ++m_used;
     ++m_size;
     ++m_version;
@@ -247,6 +251,14 @@ void PyHashTable::removeEntry(VM&, unsigned entry)
         storage->value(entry).clear();
     --m_size;
     ++m_version;
+    while (m_first < m_used && !storage->key(m_first))
+        ++m_first;
+    while (m_used > m_first && !storage->key(m_used - 1))
+        --m_used;
+    if (m_first == m_used) {
+        m_first = 0;
+        m_used = 0;
+    }
 }
 
 JSValue PyHashTable::remove(JSGlobalObject* globalObject, JSValue key)
@@ -265,7 +277,9 @@ JSValue PyHashTable::remove(JSGlobalObject* globalObject, JSValue key)
 void PyHashTable::clear(VM&)
 {
     m_storage.clear();
+    m_first = 0;
     m_used = 0;
+    m_filled = 0;
     m_size = 0;
     ++m_version;
 }
@@ -277,12 +291,15 @@ void PyHashTable::copyFrom(VM& vm, JSGlobalObject* globalObject, PyHashTable& ot
         return;
     // As growing does, from the other's storage.
     m_storage.set(vm, this, other.m_storage.get());
+    m_first = other.m_first;
     m_used = other.m_used;
     m_size = other.m_size;
     // If there is no room, it is not to be left with what is the other's.
     if (!grow(vm, globalObject)) [[unlikely]] {
         m_storage.clear();
+        m_first = 0;
         m_used = 0;
+        m_filled = 0;
         m_size = 0;
     }
     ++m_version;
@@ -389,13 +406,8 @@ void PyDict::detach(JSGlobalObject* globalObject)
 
 unsigned PyDict::backingSize() const
 {
-    unsigned size = 0;
-    m_backing->structure()->forEachProperty(m_backing->vm(), [&] (const PropertyTableEntry& entry) {
-        if (!(entry.attributes() & PropertyAttribute::DontEnum) && !entry.key()->isSymbol())
-            ++size;
-        return true;
-    });
-    return size;
+    // Which the table keeps count of, so that this does not take as long as there are attributes. It is asked at each step of going through the dict.
+    return m_backing->structure()->enumerableStringKeyCount(m_backing->vm());
 }
 
 JSObject* PyDict::ensureBacking(JSGlobalObject* globalObject)
@@ -473,12 +485,10 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
 bool PyDict::removeLast(JSGlobalObject* globalObject, JSValue& key, JSValue& value)
 {
     VM& vm = globalObject->vm();
-    for (unsigned entry = Base::entryCount(); entry--;) {
-        key = Base::keyAt(entry);
-        if (!key)
-            continue;
-        value = Base::valueAt(entry);
-        Base::removeEntry(vm, entry);
+    if (unsigned count = Base::entryCount()) {
+        key = Base::keyAt(count - 1);
+        value = Base::valueAt(count - 1);
+        Base::removeEntry(vm, count - 1);
         return true;
     }
     if (!m_backing)

@@ -610,11 +610,10 @@ PYTHON_NATIVE(setRemove)
 PYTHON_NATIVE(setPop)
 {
     SET_PROLOGUE("pop");
-    for (unsigned entry = 0; entry < self->entryCount(); ++entry) {
-        if (JSValue key = self->keyAt(entry)) {
-            self->removeEntry(vm, entry);
-            return JSValue::encode(key);
-        }
+    if (self->size()) {
+        JSValue key = self->keyAt(self->firstEntry());
+        self->removeEntry(vm, self->firstEntry());
+        return JSValue::encode(key);
     }
     return JSValue::encode(raise(globalObject, scope, BuiltinType::KeyError, jsNontrivialString(vm, "pop from an empty set"_s)));
 }

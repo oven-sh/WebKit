@@ -1,0 +1,9 @@
+828 checked, 0 wrong, 135 things that an object of Python's would not have done to it
+nothing is done => nothing said | nothing said
+one is added => dictionary changed size during iteration | dictionary changed size during iteration
+one is deleted => dictionary changed size during iteration | dictionary changed size during iteration
+one is written to => nothing said | nothing said
+a symbol is added => nothing said | nothing said
+one that is not listed is added => nothing said | nothing said
+one is made not to be listed => dictionary changed size during iteration | nothing said
+one for another => nothing said | nothing said

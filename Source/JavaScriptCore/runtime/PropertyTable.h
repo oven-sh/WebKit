@@ -139,6 +139,8 @@ public:
 
     // Returns the number of values in the hashtable.
     unsigned size() const;
+    // How many of them Object.keys() would list: those that are enumerable and are not keyed by a symbol.
+    unsigned enumerableStringKeyCount() const { return m_enumerableStringKeyCount; }
 
     // Checks if there are any values in the hashtable.
     bool isEmpty() const;
@@ -288,8 +290,11 @@ private:
     unsigned m_indexSize;
     unsigned m_indexMask;
     uintptr_t m_indexVector;
+    static bool isEnumerableStringKey(KeyType key, unsigned attributes) { return !(attributes & PropertyAttribute::DontEnum) && !key->isSymbol(); }
+
     unsigned m_keyCount;
     unsigned m_deletedCount;
+    unsigned m_enumerableStringKeyCount { 0 };
     std::unique_ptr<Vector<PropertyOffset>> m_deletedOffsets;
 
     static constexpr unsigned MinimumTableSize = 16;
@@ -392,6 +397,7 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
     });
 
     ++m_keyCount;
+    m_enumerableStringKeyCount += isEnumerableStringKey(entry.key(), entry.attributes());
 
     return std::tuple { entry.offset(), entry.attributes(), true };
 }
@@ -406,7 +412,9 @@ inline void PropertyTable::remove(VM& vm, KeyType key, unsigned entryIndex, unsi
     // the entry so we can iterate all the entries as needed.
     withIndexVector([&](auto* vector) {
         vector[index] = deletedEntryIndex();
-        tableFromIndexVector(vector)[entryIndex - 1].setKey(PROPERTY_MAP_DELETED_ENTRY_KEY);
+        auto& entry = tableFromIndexVector(vector)[entryIndex - 1];
+        m_enumerableStringKeyCount -= isEnumerableStringKey(key, entry.attributes());
+        entry.setKey(PROPERTY_MAP_DELETED_ENTRY_KEY);
     });
     key->deref();
 
@@ -433,6 +441,8 @@ inline PropertyOffset PropertyTable::updateAttributeIfExists(const KeyType& key,
         FindResult result = findImpl(vector, table, key);
         if (result.offset == invalidOffset)
             return invalidOffset;
+        m_enumerableStringKeyCount -= isEnumerableStringKey(key, result.attributes);
+        m_enumerableStringKeyCount += isEnumerableStringKey(key, attributes);
         table[result.entryIndex - 1].setAttributes(attributes);
         return result.offset;
     });

@@ -1329,6 +1329,12 @@ PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, uns
         });
 }
 
+unsigned Structure::enumerableStringKeyCount(VM& vm)
+{
+    PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
+    return table ? table->enumerableStringKeyCount() : 0;
+}
+
 void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
     PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
