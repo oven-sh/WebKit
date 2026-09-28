@@ -34,6 +34,7 @@
 #include "PyDict.h"
 #include "PyObjects.h"
 #include "PythonASTModule.h"
+#include "PythonASTOptimizer.h"
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"
@@ -610,64 +611,61 @@ bool isGeneratedLast(const FunctionInfo& info)
     return info.kind == CodeKind::Annotations && (info.owner == OwnerKind::Module || info.owner == OwnerKind::Interactive);
 }
 
-JSValue compileTree(JSGlobalObject* globalObject, JSValue tree, const String& filename, CodeKind kind, unsigned futureFeatures, bool wantsTree, unsigned optimizationLevel)
+// _PyCompile_AstPreprocess(), and then PyAST_mod2obj(). Nothing is warned of.
+static JSValue treeFor(JSGlobalObject* globalObject, Arena& arena, Module& module, const SourceCode& source, const TreeOptions& options)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SyntaxError error;
+    auto futureFeatures = SymbolTable::futureFeaturesOf(vm, arena, module, error);
+    if (!futureFeatures) {
+        raiseSyntaxError(globalObject, scope, error, source, FoundIn::WhatWasParsed);
+        return { };
+    }
+    if (!optimize(vm, arena, module, options.optimizationLevel, *futureFeatures | options.futureFeatures, !options.isOptimized))
+        return raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded during compilation"_s);
+    RELEASE_AND_RETURN(scope, objectFromAST(globalObject, module));
+}
+
+JSValue compileTree(JSGlobalObject* globalObject, JSValue tree, const String& filename, Module::Kind kind, const TreeOptions& options)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Arena arena;
-    Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
-    Module* module = astFromObject(globalObject, arena, tree, moduleKind);
+    Module* module = astFromObject(globalObject, arena, tree, kind);
     RETURN_IF_EXCEPTION(scope, { });
-    if (wantsTree) {
-        SourceCode nowhere = makeSource(String(), SourceOrigin(), filename);
-        SyntaxError error;
-        if (!SymbolTable::checkFutureStatements(vm, arena, *module, error)) {
-            raiseSyntaxError(globalObject, scope, error, nowhere, FoundIn::WhatWasParsed);
-            return { };
-        }
-        Vector<SyntaxWarning> warnings;
-        collectControlFlowWarnings(*module, warnings);
-        if (!issueWarnings(globalObject, warnings, nowhere))
-            return { };
-        RELEASE_AND_RETURN(scope, objectFromAST(globalObject, *module));
-    }
+    if (options.wantsTree)
+        RELEASE_AND_RETURN(scope, treeFor(globalObject, arena, *module, makeSource(String(), SourceOrigin(), filename), options));
     String text = writeSyntaxTree(vm, *module);
     if (text.isNull())
         return raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded during compilation"_s);
     SourceCode source(SyntaxTreeSourceProvider::create(text, SourceOrigin(), filename));
-    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, optimizationLevel);
+    CodeKind codeKind = kind == Module::Kind::Module ? CodeKind::Module : kind == Module::Kind::Expression ? CodeKind::Expression : CodeKind::Interactive;
+    FunctionExecutable* executable = compileSource(globalObject, source, codeKind, true, options.futureFeatures, ImplementationVisibility::Public, options.optimizationLevel);
     RETURN_IF_EXCEPTION(scope, { });
     return codeObjectFor(globalObject, executable);
 }
 
-JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, unsigned futureFeatures)
+JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, Module::Kind kind, const TreeOptions& options)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Arena arena;
     arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
-    arena.usesLessGreater = futureFeatures & FutureBarryAsFLUFL;
-    arena.impliesDedent = !(futureFeatures & DoNotImplyDedent);
-    arena.allowsIncompleteInput = futureFeatures & AllowIncompleteInput;
+    arena.usesLessGreater = options.futureFeatures & FutureBarryAsFLUFL;
+    arena.impliesDedent = !(options.futureFeatures & DoNotImplyDedent);
+    arena.allowsIncompleteInput = options.futureFeatures & AllowIncompleteInput;
+    arena.hasTypeComments = options.futureFeatures & TypeComments;
     Vector<SyntaxWarning> warnings;
     SyntaxError error;
-    Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
-    Module* module = parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
+    Module* module = parse(vm, arena, source.provider()->source(), kind, warnings, error);
     if (!issueWarnings(globalObject, warnings, source))
         return { };
     if (!module) {
         raiseSyntaxError(globalObject, scope, error, source, FoundIn::Parsing);
         return { };
     }
-    // _PyCompile_AstPreprocess(), where it is only to look for what is wrong
-    if (!SymbolTable::checkFutureStatements(vm, arena, *module, error)) {
-        raiseSyntaxError(globalObject, scope, error, source, FoundIn::WhatWasParsed);
-        return { };
-    }
-    collectControlFlowWarnings(*module, warnings);
-    if (!issueWarnings(globalObject, warnings, source))
-        return { };
-    RELEASE_AND_RETURN(scope, objectFromAST(globalObject, *module));
+    RELEASE_AND_RETURN(scope, treeFor(globalObject, arena, *module, source, options));
 }
 
 FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, unsigned optimizationLevel)
@@ -676,7 +674,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(source.provider()->isPython());
 
-    unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput);
+    unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput | TypeComments);
     inheritedFutureFeatures &= ~parsingFlags;
     unsigned futureFeatures = inheritedFutureFeatures;
     bool hasDocstring = false;
@@ -689,6 +687,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         arena.usesLessGreater = inheritedFutureFeatures & FutureBarryAsFLUFL;
         arena.impliesDedent = !(parsingFlags & DoNotImplyDedent);
         arena.allowsIncompleteInput = parsingFlags & AllowIncompleteInput;
+        arena.hasTypeComments = parsingFlags & TypeComments;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;

@@ -718,11 +718,13 @@ struct Module {
         Module, // A file.
         Interactive, // What is typed at a prompt.
         Expression, // What is given to eval().
+        FunctionType, // What a comment says that a function takes and returns: (int, str) -> bool. There is no compiling it.
     };
     Kind kind { Kind::Module };
     Sequence<Statement*> body;
-    Expression* expression { nullptr };
+    Expression* expression { nullptr }; // Of a FunctionType, what is returned.
     Sequence<TypeIgnore*> typeIgnores;
+    Sequence<Expression*> argumentTypes;
 };
 
 } } // namespace JSC::Python

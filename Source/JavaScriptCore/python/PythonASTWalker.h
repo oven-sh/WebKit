@@ -69,6 +69,11 @@ public:
             open(ASTClass::Expression);
             field("body"_s, module.expression);
             break;
+        case Module::Kind::FunctionType:
+            open(ASTClass::FunctionType);
+            field("argtypes"_s, module.argumentTypes);
+            field("returns"_s, module.expression);
+            break;
         }
         close();
     }

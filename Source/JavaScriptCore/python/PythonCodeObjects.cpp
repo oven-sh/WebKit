@@ -524,35 +524,36 @@ PYTHON_NATIVE(builtinCompile)
         return JSValue::encode(raiseValueError(globalObject, scope, "compile(): unrecognised flags"_s));
     if (optimize < -1 || optimize > 2)
         return JSValue::encode(raiseValueError(globalObject, scope, "compile(): invalid optimize value"_s));
-    CodeKind kind;
-    if (mode == "exec"_s)
-        kind = CodeKind::Module;
-    else if (mode == "eval"_s)
+    CodeKind kind = CodeKind::Module;
+    Module::Kind moduleKind = Module::Kind::Module;
+    if (mode == "eval"_s) {
         kind = CodeKind::Expression;
-    else if (mode == "single"_s)
+        moduleKind = Module::Kind::Expression;
+    } else if (mode == "single"_s) {
         kind = CodeKind::Interactive;
-    else if (mode == "func_type"_s && !(flags & onlyAST))
-        return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode 'func_type' requires flag PyCF_ONLY_AST"_s));
-    else if (mode != "func_type"_s)
+        moduleKind = Module::Kind::Interactive;
+    } else if (mode == "func_type"_s) {
+        if (!(flags & onlyAST))
+            return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode 'func_type' requires flag PyCF_ONLY_AST"_s));
+        moduleKind = Module::Kind::FunctionType;
+    } else if (mode != "exec"_s)
         return JSValue::encode(raiseValueError(globalObject, scope, flags & onlyAST ? "compile() mode must be 'exec', 'eval', 'single' or 'func_type'"_s : "compile() mode must be 'exec', 'eval' or 'single'"_s));
-    // FIXME: What a function is said to take and to return, in a comment: (int, str) -> bool.
-    if (mode == "func_type"_s)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "compile() cannot parse the type of a function yet"_s));
 
-    unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput);
+    unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput | TypeComments);
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
 
     bool isTree = isAST(globalObject, given);
     RETURN_IF_EXCEPTION(scope, { });
+    // What the interpreter was started with is no optimization.
+    TreeOptions options { futureFeatures, static_cast<unsigned>(std::max(optimize, 0)), !!(flags & onlyAST), (flags & optimizedAST) == optimizedAST };
     if (isTree)
-        RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, kind, futureFeatures, flags & onlyAST, std::max(optimize, 0))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, moduleKind, options)));
 
     SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
     if (flags & onlyAST)
-        RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, kind, futureFeatures)));
-    // What the interpreter was started with is no optimization.
+        RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, moduleKind, options)));
     FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, std::max(optimize, 0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(codeObjectFor(globalObject, executable));

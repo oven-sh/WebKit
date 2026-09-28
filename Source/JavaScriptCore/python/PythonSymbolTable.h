@@ -173,6 +173,7 @@ enum FutureFeature : unsigned {
     // These two are only for how the source is parsed, and code says nothing of them.
     DoNotImplyDedent = 0x200, // PyCF_DONT_IMPLY_DEDENT
     AllowIncompleteInput = 0x4000, // PyCF_ALLOW_INCOMPLETE_INPUT
+    TypeComments = 0x1000, // PyCF_TYPE_COMMENTS
     AllowTopLevelAwait = 0x2000, // PyCF_ALLOW_TOP_LEVEL_AWAIT
     FutureBarryAsFLUFL = 0x400000, // CO_FUTURE_BARRY_AS_BDFL
     FutureAnnotations = 0x1000000, // CO_FUTURE_ANNOTATIONS
@@ -190,8 +191,8 @@ class SymbolTable {
 public:
     // Null if some use of a name is against the rules, and then the error says which.
     static std::unique_ptr<SymbolTable> build(VM&, Arena&, Module&, unsigned futureFeatures, SyntaxError&);
-    // Whether each `from __future__ import x` at the top names something that there is. That is all of this that is done for a tree that is only to be looked at.
-    static bool checkFutureStatements(VM&, Arena&, Module&, SyntaxError&);
+    // What `from __future__ import x` at the top asks for. Nothing if it is something that there is none of. That is all of this that is done for a tree that is only to be looked at.
+    static std::optional<unsigned> futureFeaturesOf(VM&, Arena&, Module&, SyntaxError&);
 
     // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
     // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.

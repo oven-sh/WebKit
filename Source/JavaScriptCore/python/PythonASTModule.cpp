@@ -1102,7 +1102,7 @@ Module* astFromObject(JSGlobalObject* globalObject, Arena& arena, JSValue object
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // PyAst_CheckMode()
-    ASTClass required = kind == Module::Kind::Module ? ASTClass::Module : kind == Module::Kind::Expression ? ASTClass::Expression : ASTClass::Interactive;
+    ASTClass required = kind == Module::Kind::Module ? ASTClass::Module : kind == Module::Kind::Expression ? ASTClass::Expression : kind == Module::Kind::Interactive ? ASTClass::Interactive : ASTClass::FunctionType;
     bool isRequired = isInstanceOf(globalObject, object, state->classFor(required));
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!isRequired) {

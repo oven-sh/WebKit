@@ -27,6 +27,7 @@
 
 #include "CodeSpecializationKind.h"
 #include "ParserModes.h"
+#include "PythonAST.h"
 #include "PythonFunctionInfo.h"
 #include "SourceCode.h"
 #include <wtf/OptionSet.h>
@@ -65,10 +66,16 @@ JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, 
 
 // The two halves of that. The first makes the code, of a module, or of what eval() or a prompt is given. With `usesNamespace`, it takes
 // one argument: a mapping in which its names are looked up before the globals, and stored.
+struct TreeOptions {
+    unsigned futureFeatures { 0 };
+    unsigned optimizationLevel { 0 };
+    bool wantsTree { false }; // PyCF_ONLY_AST
+    bool isOptimized { false }; // PyCF_OPTIMIZED_AST
+};
 // compile(tree, ...): a code object, or the tree over again.
-JSValue compileTree(JSGlobalObject*, JSValue tree, const String& filename, CodeKind, unsigned futureFeatures, bool wantsTree, unsigned optimizationLevel);
+JSValue compileTree(JSGlobalObject*, JSValue tree, const String& filename, Module::Kind, const TreeOptions&);
 // compile(..., PyCF_ONLY_AST): the syntax tree, as objects of the module _ast.
-JSValue parseSource(JSGlobalObject*, const SourceCode&, CodeKind, unsigned futureFeatures);
+JSValue parseSource(JSGlobalObject*, const SourceCode&, Module::Kind, const TreeOptions&);
 FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, unsigned optimizationLevel = 0);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 // The outermost environment of everything in a module, which is what that gives the function.

@@ -335,7 +335,9 @@ that is how `pytest` rewrites `assert`.
 that: 1,200,000 in all. It is the same as in CPython for every one, but for what is left out because CPython falls over. It found more wrong with what has nothing to do with trees than with them, which is in
 `programs/what-auditing-syntax-trees-found.py`. And every one of `programs/` is run by way of its tree as well as from its source.
 
-Not yet: `PyCF_OPTIMIZED_AST`, `PyCF_TYPE_COMMENTS` and the mode `'func_type'`.
+With `PyCF_TYPE_COMMENTS`, `# type: int` is a token where the grammar has a place for it and a mistake anywhere else, and `# type: ignore` is kept for the module to list. The mode `'func_type'` is for what such
+a comment says of a function, `(int, str) -> bool`. `PyCF_OPTIMIZED_AST` shows the little that CPython does to a tree before it generates code (`PythonASTOptimizer.cpp`, which is `Python/ast_preprocess.c`). What
+generates code here does not go by that: it works the same things out for itself.
 
 ### Warnings
 

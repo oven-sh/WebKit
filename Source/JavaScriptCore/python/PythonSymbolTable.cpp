@@ -1454,10 +1454,12 @@ std::unique_ptr<SymbolTable> SymbolTable::build(VM& vm, Arena& arena, Module& mo
     return table;
 }
 
-bool SymbolTable::checkFutureStatements(VM& vm, Arena& arena, Module& module, SyntaxError& error)
+std::optional<unsigned> SymbolTable::futureFeaturesOf(VM& vm, Arena& arena, Module& module, SyntaxError& error)
 {
     SymbolTable table;
-    return SymbolTableBuilder(vm, arena, table, error).findFutureStatements(module);
+    if (!SymbolTableBuilder(vm, arena, table, error).findFutureStatements(module))
+        return std::nullopt;
+    return table.m_futureFeatures;
 }
 
 std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested, FragmentIs fragmentIs)

@@ -53,6 +53,8 @@ public:
             return validateStatements(module.body);
         case Module::Kind::Expression:
             return validateExpression(module.expression, ExpressionContext::Load);
+        case Module::Kind::FunctionType:
+            return validateExpressions(module.argumentTypes, ExpressionContext::Load, false) && validateExpression(module.expression, ExpressionContext::Load);
         }
         return fail(ASTError::Kind::SystemError, "impossible module node"_s);
     }

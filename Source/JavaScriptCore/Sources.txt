@@ -744,6 +744,7 @@ python/PyRealm.cpp
 python/PyType.cpp
 python/PythonASTDumper.cpp
 python/PythonASTModule.cpp
+python/PythonASTOptimizer.cpp
 python/PythonASTValidator.cpp
 python/PythonAnnotations.cpp
 python/PythonAsync.cpp

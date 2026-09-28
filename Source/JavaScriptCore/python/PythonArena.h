@@ -83,6 +83,7 @@ public:
     // enough of it is said to be that: PyCF_DONT_IMPLY_DEDENT and PyCF_ALLOW_INCOMPLETE_INPUT.
     bool impliesDedent { true };
     bool allowsIncompleteInput { false };
+    bool hasTypeComments { false }; // PyCF_TYPE_COMMENTS: `# type: int` is not a comment like any other.
 
 private:
     static constexpr size_t alignment = 8;

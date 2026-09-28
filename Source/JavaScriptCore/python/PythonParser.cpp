@@ -44,12 +44,13 @@ namespace {
 class Parser {
 public:
     // `error` is the scanner's, if it has one.
-    Parser(VM& vm, Arena& arena, const Vector<Token>& tokens, SyntaxError& error)
+    Parser(VM& vm, Arena& arena, const Vector<Token>& tokens, SyntaxError& error, Sequence<TypeIgnore*> typeIgnores = { })
         : m_vm(vm)
         , m_arena(arena)
         , m_tokens(tokens)
         , m_error(error)
         , m_scannerError(std::exchange(error, { }))
+        , m_typeIgnores(typeIgnores)
     {
     }
 
@@ -180,7 +181,7 @@ private:
             // bad_single_statement(): there is to be nothing after what the tokenizer has been asked for but white space and comments.
             for (unsigned i = m_furthest + 1; i < m_tokens.size(); ++i) {
                 TokenKind kind = m_tokens[i].kind;
-                if (kind == TokenKind::Newline || kind == TokenKind::Indent || kind == TokenKind::Dedent || kind == TokenKind::EndMarker)
+                if (kind == TokenKind::Newline || kind == TokenKind::Indent || kind == TokenKind::Dedent || kind == TokenKind::EndMarker || kind == TokenKind::TypeComment)
                     continue;
                 SetForScope scope(m_failsInEitherPass, true);
                 failAtLastToken("multiple statements found while compiling a single statement"_s);
@@ -198,8 +199,56 @@ private:
                 ok = at(TokenKind::EndMarker);
             }
             break;
+        case Module::Kind::FunctionType: {
+            // func_type
+            Vector<Expression*, 8> types;
+            if (!consume(TokenKind::LeftParenthesis) || !parseTypeExpressions(types) || !consume(TokenKind::RightParenthesis) || !consume(TokenKind::Arrow))
+                break;
+            module->argumentTypes = m_arena.copy(types);
+            module->expression = parseExpression();
+            if (module->expression) {
+                while (consume(TokenKind::Newline)) { }
+                ok = at(TokenKind::EndMarker);
+            }
+            break;
         }
+        }
+        module->typeIgnores = m_typeIgnores;
         return ok && !m_error ? module : nullptr;
+    }
+
+    // type_expressions, which there may be none of. The stars are allowed and make no difference.
+    bool parseTypeExpressions(Vector<Expression*, 8>& types)
+    {
+        bool sawStar = false;
+        while (!at(TokenKind::RightParenthesis)) {
+            bool isDoubleStar = consume(TokenKind::DoubleStar);
+            if (!isDoubleStar && consume(TokenKind::Star)) {
+                if (sawStar)
+                    return false;
+                sawStar = true;
+            } else if (!isDoubleStar && sawStar)
+                return false;
+            Expression* type = parseExpression();
+            if (!type)
+                return false;
+            types.append(type);
+            // Nothing comes after **, and there is no comma after the last.
+            if (isDoubleStar || !at(TokenKind::Comma))
+                return true;
+            next();
+            if (at(TokenKind::RightParenthesis))
+                return false;
+        }
+        return true;
+    }
+
+    // [TYPE_COMMENT]
+    Text parseTypeComment()
+    {
+        if (!at(TokenKind::TypeComment))
+            return { };
+        return { next().text, false };
     }
 
     // ---- Tokens
@@ -2789,6 +2838,8 @@ private:
         bool sawStar = false;
 
         while (!at(terminator)) {
+            // What a comment that comes next says the type of.
+            Argument* parameter = nullptr;
             if (at(TokenKind::Slash)) {
                 if (sawSlash)
                     return fail("/ may appear only once"_s);
@@ -2825,6 +2876,10 @@ private:
                 if (at(TokenKind::Comma)) {
                     if (atAhead(1, terminator) || atAhead(1, TokenKind::DoubleStar))
                         return failForBareStar();
+                    if (allowsAnnotations && atAhead(1, TokenKind::TypeComment)) {
+                        m_index += 2;
+                        return failAtLastToken("bare * has associated type comment"_s);
+                    }
                 } else {
                     if (at(terminator))
                         return failForBareStar();
@@ -2836,6 +2891,7 @@ private:
                             return nullptr;
                         return fail("var-positional argument cannot have default value"_s);
                     }
+                    parameter = arguments->variadic;
                 }
             } else if (at(TokenKind::DoubleStar)) {
                 next();
@@ -2844,7 +2900,10 @@ private:
                     return nullptr;
                 if (at(TokenKind::Equal))
                     return fail("var-keyword argument cannot have default value"_s);
-                if (consume(TokenKind::Comma) && !at(terminator)) {
+                bool hasComma = consume(TokenKind::Comma);
+                if (allowsAnnotations && at(TokenKind::TypeComment) && (hasComma || atAhead(1, terminator)))
+                    arguments->keywordVariadic->typeComment = parseTypeComment();
+                if (hasComma && !at(terminator)) {
                     if (at(TokenKind::Star) || at(TokenKind::DoubleStar) || at(TokenKind::Slash))
                         return fail("arguments cannot follow var-keyword argument"_s);
                     if (Argument* argument = parseParameter(allowsAnnotations))
@@ -2892,8 +2951,12 @@ private:
                     }
                     positional.append(argument);
                 }
+                parameter = argument;
             }
-            if (!consume(TokenKind::Comma))
+            bool hasComma = consume(TokenKind::Comma);
+            if (allowsAnnotations && parameter && at(TokenKind::TypeComment) && (hasComma || atAhead(1, terminator)))
+                parameter->typeComment = parseTypeComment();
+            if (!hasComma)
                 break;
         }
 
@@ -3337,12 +3400,13 @@ private:
     }
 
     // block. `after` and `line` are for saying what it should have been the block of.
-    bool parseBlock(Sequence<Statement*>& result, ASCIILiteral after, unsigned line)
+    // What it is after is said by a rule for each kind of statement, none of which reckons with a comment that says what type something is.
+    bool parseBlock(Sequence<Statement*>& result, ASCIILiteral after, unsigned line, bool isAfterTypeComment = false)
     {
         Vector<Statement*, 16> body;
         if (consume(TokenKind::Newline)) {
             if (!consume(TokenKind::Indent)) {
-                failAtLastToken(makeString("expected an indented block after "_s, after, " on line "_s, line), SyntaxError::Kind::IndentationError);
+                failAtLastToken(isAfterTypeComment ? "expected an indented block"_str : makeString("expected an indented block after "_s, after, " on line "_s, line), SyntaxError::Kind::IndentationError);
                 return false;
             }
             if (!parseStatementsUntil(TokenKind::Dedent, body))
@@ -3743,9 +3807,11 @@ private:
                 if (!value)
                     return nullptr;
             }
+            Text typeComment = parseTypeComment();
             auto* statement = make<Assign>(start);
             statement->targets = m_arena.copy(targets);
             statement->value = value;
+            statement->typeComment = typeComment;
             return statement;
         }
 
@@ -4027,11 +4093,13 @@ private:
         Expression* iterable = parseStarExpressions();
         if (!iterable || !expectColon())
             return nullptr;
+        Text typeComment = parseTypeComment();
         Sequence<Statement*> body;
         Sequence<Statement*> orElse;
-        if (!parseBlock(body, "'for' statement"_s, start.line) || !parseElse(orElse))
+        if (!parseBlock(body, "'for' statement"_s, start.line, !!typeComment) || !parseElse(orElse))
             return nullptr;
         auto* statement = make<For>(start);
+        statement->typeComment = typeComment;
         statement->isAsync = isAsync;
         statement->target = target;
         statement->iterable = iterable;
@@ -4135,10 +4203,12 @@ private:
                 return failAtLastToken("expected ':'"_s);
             return nullptr;
         }
+        Text typeComment = parseTypeComment();
         Sequence<Statement*> body;
-        if (!parseBlock(body, "'with' statement"_s, start.line))
+        if (!parseBlock(body, "'with' statement"_s, start.line, !!typeComment))
             return nullptr;
         auto* statement = make<With>(start);
+        statement->typeComment = typeComment;
         statement->isAsync = isAsync;
         statement->items = m_arena.copy(items);
         statement->body = body;
@@ -4415,10 +4485,24 @@ private:
         }
         if (!consume(TokenKind::Colon))
             return fail("expected ':'"_s, peek());
+        // func_type_comment: on the same line, or on a line of its own before the block. When it is what is wrong that is looked for, what is looked for first is a line that ends and no block, and a comment
+        // on a line of its own is taken for that: whatever is wrong further on, that is what is said.
+        Text typeComment;
+        if (m_arena.hasTypeComments && !m_callsInvalidRules && at(TokenKind::Newline) && atAhead(1, TokenKind::TypeComment) && atAhead(2, TokenKind::Newline) && atAhead(3, TokenKind::Indent)) {
+            next();
+            typeComment = parseTypeComment();
+        } else if (at(TokenKind::TypeComment)) {
+            if (m_callsInvalidRules && atAhead(1, TokenKind::Newline) && atAhead(2, TokenKind::TypeComment) && atAhead(3, TokenKind::Newline) && atAhead(4, TokenKind::Indent)) {
+                m_index += 5;
+                return failAtLastToken("Cannot have two type comments on def"_s);
+            }
+            typeComment = parseTypeComment();
+        }
         Sequence<Statement*> body;
-        if (!parseBlock(body, "function definition"_s, start.line))
+        if (!parseBlock(body, "function definition"_s, start.line, !!typeComment))
             return nullptr;
         auto* statement = make<FunctionDef>(start);
+        statement->typeComment = typeComment;
         statement->isAsync = isAsync;
         statement->name = name;
         statement->arguments = arguments;
@@ -4434,6 +4518,7 @@ private:
     const Vector<Token>& m_tokens;
     SyntaxError& m_error;
     SyntaxError m_scannerError;
+    Sequence<TypeIgnore*> m_typeIgnores;
     unsigned m_index { 0 };
     // The last token that has been looked at, which is how far CPython's tokenizer would have got, being asked for one token at a time.
     unsigned m_furthest { 0 };
@@ -4470,9 +4555,22 @@ Module* parse(VM& vm, Arena& arena, StringView source, Module::Kind kind, Vector
 {
     Vector<Token> tokens;
     ScanRange range;
-    range.lastLine = kind == Module::Kind::Module ? ScanRange::LastLine::IsEnded : kind == Module::Kind::Expression ? ScanRange::LastLine::IsLeft : ScanRange::LastLine::IsEndedByTheEnd;
+    range.lastLine = kind == Module::Kind::Module ? ScanRange::LastLine::IsEnded : kind == Module::Kind::Interactive ? ScanRange::LastLine::IsEndedByTheEnd : ScanRange::LastLine::IsLeft;
     tokenize(vm, arena, source, range, tokens, warnings, error);
-    return Parser(vm, arena, tokens, error).parseModule(kind);
+    // _PyPegen_fill_token()
+    Vector<TypeIgnore*, 4> typeIgnores;
+    if (arena.hasTypeComments) {
+        tokens.removeAllMatching([&] (const Token& token) {
+            if (token.kind != TokenKind::TypeIgnore)
+                return false;
+            auto* typeIgnore = arena.create<TypeIgnore>();
+            typeIgnore->line = token.line;
+            typeIgnore->tag = { token.text, false };
+            typeIgnores.append(typeIgnore);
+            return true;
+        });
+    }
+    return Parser(vm, arena, tokens, error, arena.copy(typeIgnores)).parseModule(kind);
 }
 
 static ScanRange rangeFor(StringView source, unsigned start, unsigned end, unsigned line, bool isInsideBrackets)

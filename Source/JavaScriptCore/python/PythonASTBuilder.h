@@ -297,6 +297,13 @@ private:
             module->expression = expressionOf(f[0]);
             return module;
         }
+        case ASTClass::FunctionType: {
+            auto* module = m_arena.create<Module>();
+            module->kind = Module::Kind::FunctionType;
+            module->argumentTypes = expressionsOf(f[0]);
+            module->expression = expressionOf(f[1]);
+            return module;
+        }
 
         // ---- stmt
         case ASTClass::FunctionDef:

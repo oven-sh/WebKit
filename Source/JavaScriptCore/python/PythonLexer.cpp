@@ -71,6 +71,10 @@ ASCIILiteral tokenKindName(TokenKind kind)
         return "TSTRING_MIDDLE"_s;
     case TokenKind::TStringEnd:
         return "TSTRING_END"_s;
+    case TokenKind::TypeComment:
+        return "TYPE_COMMENT"_s;
+    case TokenKind::TypeIgnore:
+        return "TYPE_IGNORE"_s;
 #define CASE(name, text) \
     case TokenKind::name: \
         return text ""_s;
@@ -534,9 +538,11 @@ private:
             }
         };
         // What has been begun is only found to have ended at the beginning of a line, and the end of the source is one only if there is nothing at all on the last line.
-        if (lastLineIsEnded || m_position == m_lineStart)
+        if (lastLineIsEnded || m_position == m_lineStart || m_endIsBeginningOfLine)
             addDedents();
-        if (m_lastLine == ScanRange::LastLine::IsEndedByTheEnd && !m_tokens.isEmpty()) {
+        // The parser has not begun if all that there has been is what it is not shown.
+        bool hasBegun = std::ranges::any_of(m_tokens, [] (const Token& token) { return token.kind != TokenKind::TypeIgnore; });
+        if (m_lastLine == ScanRange::LastLine::IsEndedByTheEnd && hasBegun) {
             auto addNewline = [&] {
                 addAtEnd(TokenKind::Newline);
                 m_tokens.last().isMadeOfTheEnd = true;
@@ -558,6 +564,64 @@ private:
     static bool isIdentifierStart(unsigned c) { return isASCIIAlpha(c) || c == '_' || c >= 0x80; }
     static bool isIdentifierPart(unsigned c) { return isASCIIAlphanumeric(c) || c == '_' || c >= 0x80; }
 
+    // A comment, which has been gone past, if it says what type something is. Where there is a space in `# type: ` there can be any number of spaces and tabs, or none.
+    bool scanTypeComment(unsigned start)
+    {
+        unsigned position = start;
+        // CPython goes on for as long as there is something to look at, which what ends the line is. So `# type:` will not do if the source ends there.
+        unsigned limit = m_position + (isAtEnd() && m_lastLine != ScanRange::LastLine::IsEnded ? 0 : 1);
+        for (char expected : "# type: "_span) {
+            if (position >= limit)
+                return false;
+            if (expected == ' ') {
+                while (at(position) == ' ' || at(position) == '\t')
+                    ++position;
+            } else if (at(position) == static_cast<unsigned>(expected))
+                ++position;
+            else
+                return false;
+        }
+        // `ignore`, and then the end or anything that could not go on a word.
+        unsigned afterIgnore = position + 6;
+        bool isIgnore = m_position >= afterIgnore;
+        for (unsigned i = 0; isIgnore && i < 6; ++i)
+            isIgnore = at(position + i) == static_cast<unsigned>("ignore"[i]);
+        if (isIgnore && m_position > afterIgnore && (at(afterIgnore) >= 128 || isASCIIAlphanumeric(at(afterIgnore))))
+            isIgnore = false;
+        unsigned textStart = isIgnore ? afterIgnore : position;
+        bool lineHadTokens = m_lineHasTokens;
+        Token& token = add(isIgnore ? TokenKind::TypeIgnore : TokenKind::TypeComment, textStart);
+        auto text = m_source.subspan(textStart, m_position - textStart);
+        token.text = makeText(text);
+        if (!isIgnore) {
+            // A line with nothing else on it has no say in the indentation, as with any comment, but it does end.
+            m_isBlankLine = false;
+            return true;
+        }
+        if (!m_isBlankLine)
+            return true;
+        // That is all that there is on the line, so the line is no line, and the end of it goes with this. CPython works out how long this is once it has gone past that.
+        m_lineHasTokens = lineHadTokens;
+        if (isAtEnd() && m_lastLine != ScanRange::LastLine::IsEnded) {
+            m_endIsBeginningOfLine = true;
+            return true;
+        }
+        Vector<char16_t, 64> withEndOfLine;
+        char16_t allCharacters = 0;
+        for (auto character : text) {
+            withEndOfLine.append(character);
+            allCharacters |= character;
+        }
+        withEndOfLine.append('\n');
+        token.text = makeText(withEndOfLine, allCharacters);
+        if (!isAtEnd()) {
+            consumeNewline();
+            m_bufferStart = m_position;
+            m_isAtBeginningOfLine = true;
+        }
+        return true;
+    }
+
     bool scanToken()
     {
         while (true) {
@@ -578,6 +642,8 @@ private:
             if (c == '#') {
                 while (!isAtEnd() && !isNewline(current()))
                     ++m_position;
+                if (m_arena.hasTypeComments && scanTypeComment(endOfLineStart))
+                    return true;
                 c = current();
             }
 
@@ -1708,6 +1774,7 @@ private:
     bool m_isAtBeginningOfLine { true };
     bool m_isBlankLine { false };
     bool m_lineHasTokens { false };
+    bool m_endIsBeginningOfLine { false }; // The last line is nothing but `# type: ignore`, which takes what ends the line with it, though here there is nothing that does.
     bool m_hasEnclosingBracket { false };
     bool m_isDone { false };
 

@@ -135,6 +135,9 @@ enum class TokenKind : uint8_t {
     TStringStart,
     TStringMiddle,
     TStringEnd,
+    // Only if they are asked for: PyCF_TYPE_COMMENTS.
+    TypeComment, // # type: int
+    TypeIgnore, // # type: ignore. The parser does not see these: they are taken out and kept for the whole to have.
 #define DECLARE(name, text) name,
     FOR_EACH_PYTHON_OPERATOR_TOKEN(DECLARE)
 #undef DECLARE
