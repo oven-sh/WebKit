@@ -594,7 +594,14 @@ void SignalHandlers::finalize()
             RELEASE_ASSERT(g_wtfConfig.isThreadSuspendResumeSignalConfigured);
             result = sigdelset(&action.sa_mask, g_wtfConfig.sigThreadSuspendResume);
             RELEASE_ASSERT(!result);
+#if USE(BUN_JSC_ADDITIONS)
+            // On a thread that has an alternate signal stack, the handler runs on that stack. After a
+            // stack overflow the thread's own stack has no room for the signal frame: without this flag
+            // the kernel ends the process before this handler, or the one it chains to, can run.
+            action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+#else
             action.sa_flags = SA_SIGINFO;
+#endif
             auto systemSignals = toSystemSignal(signal);
             result = sigaction(std::get<0>(systemSignals), &action, &handlers.oldActions[offsetForSystemSignal(std::get<0>(systemSignals))]);
             if (std::get<1>(systemSignals))
