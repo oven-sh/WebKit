@@ -441,6 +441,10 @@ public:
     // early collections find nothing to free. Only widens the budget of the cycle in progress; once a collection has run,
     // sizing is back to the usual rules and minimums.
     JS_EXPORT_PRIVATE void setInitialAllocationBudget(size_t bytes);
+    // With such a budget, and nothing collected yet: whether more has been allocated than a collection would have been started at
+    // without it. The budget is for not collecting in the middle of what the program starts with, and an embedder that knows of a
+    // pause in that may as well collect then.
+    JS_EXPORT_PRIVATE bool isPastUsualFirstCollection();
 #endif
     
     JS_EXPORT_PRIVATE void collect(Synchronousness, GCRequest = GCRequest());

@@ -1242,6 +1242,67 @@ TypeCountSet Heap::objectTypeCounts()
         }
         for (unsigned i = 0; i < 5; ++i)
             dataLogLn("STRUCTSIZE bucket=", i, " used=", byProperties[i][0], " intermediate=", byProperties[i][1], " unusedLeaf=", byProperties[i][2]);
+        // Which functions there are the most closures of, and which shapes the most objects.
+        {
+            UncheckedKeyHashMap<ExecutableBase*, uint64_t> closures;
+            UncheckedKeyHashMap<Structure*, std::pair<uint64_t, uint64_t>> objects;
+            UncheckedKeyHashMap<SymbolTable*, std::pair<uint64_t, uint64_t>> environments;
+            m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                auto* cell = static_cast<JSCell*>(heapCell);
+                if (auto* function = dynamicDowncast<JSFunction>(cell))
+                    closures.add(function->executable(), 0).iterator->value++;
+                else if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(cell)) {
+                    auto& entry = environments.add(environment->symbolTable(), std::pair<uint64_t, uint64_t> { }).iterator->value;
+                    entry.first++;
+                    entry.second += heapCell->cellSize();
+                } else if (cell->type() == FinalObjectType) {
+                    auto& entry = objects.add(cell->structure(), std::pair<uint64_t, uint64_t> { }).iterator->value;
+                    entry.first++;
+                    entry.second += heapCell->cellSize() + cell->structure()->outOfLineCapacity() * sizeof(JSValue);
+                }
+                return IterationStatus::Continue;
+            });
+            Vector<std::pair<uint64_t, ExecutableBase*>> topClosures;
+            for (auto& entry : closures)
+                topClosures.append({ entry.value, entry.key });
+            std::ranges::sort(topClosures, [](auto& a, auto& b) { return a.first > b.first; });
+            uint64_t cumulative = 0;
+            for (unsigned i = 0; i < topClosures.size(); ++i) {
+                cumulative += topClosures[i].first;
+                if (i >= 70)
+                    continue;
+                if (auto* executable = dynamicDowncast<FunctionExecutable>(topClosures[i].second))
+                    dataLogLn("CLOSURES ", topClosures[i].first, " ", executable->ecmaName().string(), " ", executable->sourceURL(), ":", executable->firstLine(), " mode=", static_cast<unsigned>(executable->parseMode()));
+                else
+                    dataLogLn("CLOSURES ", topClosures[i].first, " (host function)");
+            }
+            unsigned atLeast[5] = { };
+            uint64_t inThose[5] = { };
+            for (auto& entry : topClosures) {
+                unsigned bucket = entry.first >= 1000 ? 0 : entry.first >= 100 ? 1 : entry.first >= 10 ? 2 : entry.first >= 2 ? 3 : 4;
+                atLeast[bucket]++;
+                inThose[bucket] += entry.first;
+            }
+            dataLogLn("CLOSURESUM total=", cumulative, " distinct=", topClosures.size(), " >=1000: ", atLeast[0], "/", inThose[0], " >=100: ", atLeast[1], "/", inThose[1], " >=10: ", atLeast[2], "/", inThose[2], " >=2: ", atLeast[3], "/", inThose[3], " 1: ", atLeast[4], "/", inThose[4]);
+            Vector<std::pair<uint64_t, Structure*>> topObjects;
+            for (auto& entry : objects)
+                topObjects.append({ entry.value.second, entry.key });
+            std::ranges::sort(topObjects, [](auto& a, auto& b) { return a.first > b.first; });
+            for (unsigned i = 0; i < topObjects.size() && i < 50; ++i) {
+                Structure* structure = topObjects[i].second;
+                StringPrintStream names;
+                unsigned total = 0;
+                structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+                    if (total < 9)
+                        names.print(total ? "," : "", entry.key());
+                    total++;
+                    return true;
+                });
+                dataLogLn("OBJECTS bytes=", topObjects[i].first, " count=", objects.get(structure).first, " properties=", total, " names=", names.toString());
+            }
+        }
         // The chains: from each structure that is in use, back over the steps that are not, each counted for the first to get there.
         UncheckedKeyHashSet<Structure*> counted;
         Vector<std::pair<unsigned, Structure*>> chains;
@@ -3501,6 +3562,13 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         m_fullActivityCallback->setEnabled(false);
         m_reenableFullActivityCallback = true;
     }
+}
+
+bool Heap::isPastUsualFirstCollection()
+{
+    if (m_sizeAfterLastCollect || m_lastCollectionScope || m_collectionScope || m_maxEdenSize <= m_minBytesPerCycle)
+        return false;
+    return totalBytesAllocatedThisCycle() > m_minBytesPerCycle;
 }
 #endif
 
