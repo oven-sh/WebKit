@@ -81,6 +81,7 @@ namespace JSC {
     v(ListReverseIterator, "list_reverseiterator", Object, Native, 0) \
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \
     v(RangeIterator, "range_iterator", Object, Native, 0) \
+    v(LongRangeIterator, "longrange_iterator", Object, Native, 0) \
     v(StrIterator, "str_ascii_iterator", Object, Native, 0) \
     v(BytesIterator, "bytes_iterator", Object, Native, 0) \
     v(DictKeyIterator, "dict_keyiterator", Object, Native, 0) \

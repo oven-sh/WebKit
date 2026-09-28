@@ -432,30 +432,15 @@ CallData PyBoundMethod::getCallData(JSCell*)
 template<typename Visitor>
 void PyRange::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Base::visitChildren(cell, visitor);
+    auto* thisObject = uncheckedDowncast<PyRange>(cell);
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_start);
+    visitor.append(thisObject->m_stop);
+    visitor.append(thisObject->m_step);
+    visitor.append(thisObject->m_length);
 }
 
 DEFINE_PYTHON_CELL(PyRange, "range", PyRangeType)
-
-PyRange::PyRange(VM& vm, Structure* structure, int64_t start, int64_t stop, int64_t step)
-    : Base(vm, structure)
-    , m_start(start)
-    , m_stop(stop)
-    , m_step(step)
-{
-    if (step > 0)
-        m_length = start < stop ? static_cast<int64_t>((static_cast<uint64_t>(stop) - static_cast<uint64_t>(start) - 1) / static_cast<uint64_t>(step)) + 1 : 0;
-    else
-        m_length = start > stop ? static_cast<int64_t>((static_cast<uint64_t>(start) - static_cast<uint64_t>(stop) - 1) / (0 - static_cast<uint64_t>(step))) + 1 : 0;
-}
-
-PyRange* PyRange::create(JSGlobalObject* globalObject, int64_t start, int64_t stop, int64_t step)
-{
-    VM& vm = globalObject->vm();
-    auto* range = new (NotNull, allocateCell<PyRange>(vm)) PyRange(vm, globalObject->pyRealm()->structureFor(BuiltinType::Range), start, stop, step);
-    range->finishCreation(vm);
-    return range;
-}
 
 template<typename Visitor>
 void PySlice::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -635,6 +620,8 @@ BuiltinType PyIterator::typeFor(Kind kind)
         return BuiltinType::TupleIterator;
     case Kind::Range:
         return BuiltinType::RangeIterator;
+    case Kind::LongRange:
+        return BuiltinType::LongRangeIterator;
     case Kind::Str:
         return BuiltinType::StrIterator;
     case Kind::Bytes:
@@ -717,6 +704,17 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         int64_t value = m_index;
         m_index = static_cast<int64_t>(static_cast<uint64_t>(m_index) + static_cast<uint64_t>(m_step));
         RELEASE_AND_RETURN(scope, Python::intFromInt64(globalObject, value));
+    }
+    case Kind::LongRange: {
+        auto* range = uncheckedDowncast<PyRange>(m_a.get().asCell());
+        JSValue value = Python::nextOfLongRange(globalObject, range, m_b.get());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value)
+            return { };
+        JSValue following = Python::numberBinaryOperation(globalObject, Python::BinaryOperator::Add, m_b.get(), jsNumber(1));
+        RETURN_IF_EXCEPTION(scope, { });
+        m_b.set(vm, this, following);
+        return value;
     }
     case Kind::Str: {
         JSString* string = asString(m_a.get());
@@ -827,7 +825,14 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, { });
         if (!value)
             return { };
-        JSValue index = Python::intFromInt64(globalObject, m_index++);
+        JSValue index = m_b ? m_b.get() : Python::intFromInt64(globalObject, m_index);
+        if (!m_b && m_index < std::numeric_limits<int64_t>::max())
+            ++m_index;
+        else {
+            JSValue following = Python::numberBinaryOperation(globalObject, Python::BinaryOperator::Add, index, jsNumber(1));
+            RETURN_IF_EXCEPTION(scope, { });
+            m_b.set(vm, this, following);
+        }
         return PyTuple::create(globalObject, { index, value });
     }
     case Kind::Zip: {

@@ -60,6 +60,7 @@ std::optional<int> numberCompare(const Number&, const Number&, bool& isUnordered
 
 JSValue normalizeBigInt(JSValue);
 JSBigInt* toBigInt(JSGlobalObject*, const Number&);
+int64_t bitLengthOfInt(const Number&); // int.bit_length()
 double toDouble(JSGlobalObject*, ThrowScope&, const Number&); // Raises OverflowError if it is an int too large.
 int64_t hashOfNumber(JSGlobalObject*, const Number&);
 int64_t hashOfDouble(double);

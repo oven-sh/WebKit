@@ -1223,19 +1223,31 @@ bool NativeArguments::check(JSGlobalObject* globalObject, ThrowScope& scope, ASC
         return false;
     if (size() >= minimum && size() <= maximum)
         return true;
-    if (minimum == maximum) {
-        if (!minimum)
-            raiseTypeError(globalObject, scope, makeString(functionName, "() takes no arguments ("_s, size(), " given)"_s));
-        else if (minimum == 1)
-            raiseTypeError(globalObject, scope, makeString(functionName, "() takes exactly one argument ("_s, size(), " given)"_s));
-        else
-            raiseTypeError(globalObject, scope, makeString(functionName, " expected "_s, minimum, " arguments, got "_s, size()));
+
+    // The instance or the class that comes first is not something that whoever called it thinks of having given.
+    auto* callee = dynamicDowncast<PyNativeFunction>(m_callFrame->jsCallee());
+    bool hasImplicitFirst = callee && callee->kind() != PyNativeFunction::Kind::Function && minimum;
+    unsigned given = size() - (hasImplicitFirst && size());
+    minimum -= hasImplicitFirst;
+    maximum -= hasImplicitFirst;
+
+    // What takes none or one says so under its full name, and the rest under its own, as in CPython, where they are called in different ways.
+    StringView name { functionName };
+    if (minimum == maximum && minimum <= 1) {
+        String qualified = name.toString();
+        if (callee && callee->kind() != PyNativeFunction::Kind::Function && callee->kind() != PyNativeFunction::Kind::New && callee->owner() && isType(callee->owner()))
+            qualified = makeString(asType(callee->owner())->nameString(globalObject), '.', name.substring(name.reverseFind('.') + 1));
+        raiseTypeError(globalObject, scope, makeString(qualified, minimum ? "() takes exactly one argument ("_s : "() takes no arguments ("_s, given, " given)"_s));
         return false;
     }
-    if (size() < minimum)
-        raiseTypeError(globalObject, scope, makeString(functionName, " expected at least "_s, minimum, " argument"_s, minimum == 1 ? ""_s : "s"_s, ", got "_s, size()));
+    if (hasImplicitFirst)
+        name = name.substring(name.reverseFind('.') + 1);
+    if (minimum == maximum)
+        raiseTypeError(globalObject, scope, makeString(name, " expected "_s, minimum, " arguments, got "_s, given));
+    else if (given < minimum)
+        raiseTypeError(globalObject, scope, makeString(name, " expected at least "_s, minimum, " argument"_s, minimum == 1 ? ""_s : "s"_s, ", got "_s, given));
     else
-        raiseTypeError(globalObject, scope, makeString(functionName, " expected at most "_s, maximum, " argument"_s, maximum == 1 ? ""_s : "s"_s, ", got "_s, size()));
+        raiseTypeError(globalObject, scope, makeString(name, " expected at most "_s, maximum, " argument"_s, maximum == 1 ? ""_s : "s"_s, ", got "_s, given));
     return false;
 }
 

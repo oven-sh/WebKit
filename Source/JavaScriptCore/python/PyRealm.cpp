@@ -106,6 +106,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeComplexType(globalObject);
     Python::initializeStrType(globalObject);
     Python::initializeContainerTypes(globalObject);
+    Python::initializeRangeType(globalObject);
     Python::initializeBytesTypes(globalObject);
     Python::initializeIteratorTypes(globalObject);
     Python::initializeExceptionTypes(globalObject);

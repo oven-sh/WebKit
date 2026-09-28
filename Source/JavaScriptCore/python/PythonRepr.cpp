@@ -232,9 +232,11 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyRangeType: {
         auto* range = uncheckedDowncast<PyRange>(cell);
-        if (range->step() == 1)
-            return makeString("range("_s, range->start(), ", "_s, range->stop(), ')');
-        return makeString("range("_s, range->start(), ", "_s, range->stop(), ", "_s, range->step(), ')');
+        builder.append("range("_s, reprOfInt(globalObject, classify(range->start()), 10), ", "_s, reprOfInt(globalObject, classify(range->stop()), 10));
+        if (!range->step().isInt32() || range->step().asInt32() != 1)
+            builder.append(", "_s, reprOfInt(globalObject, classify(range->step()), 10));
+        builder.append(')');
+        return builder.toString();
     }
     case PySliceType: {
         auto* slice = uncheckedDowncast<PySlice>(cell);

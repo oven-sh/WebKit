@@ -349,13 +349,7 @@ PYTHON_NATIVE(intBitLength)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    Number number = classify(args.at(0));
-    if (number.kind == Number::Kind::Small) {
-        uint32_t magnitude = number.small < 0 ? 0u - static_cast<uint32_t>(number.small) : number.small;
-        return JSValue::encode(jsNumber(32 - std::countl_zero(magnitude)));
-    }
-    unsigned length = number.big->length();
-    return JSValue::encode(jsNumber(static_cast<int32_t>((length - 1) * 64 + (64 - std::countl_zero(static_cast<uint64_t>(number.big->digit(length - 1)))))));
+    return JSValue::encode(intFromInt64(globalObject, bitLengthOfInt(classify(args.at(0)))));
 }
 
 PYTHON_NATIVE(intBitCount)
@@ -462,6 +456,229 @@ PYTHON_NATIVE(floatNew)
     return JSValue::encode(boxIfDerived(globalObject, type, realm->typeFloat(), floatFromDouble(result)));
 }
 
+// What a class method of float that makes a float returns: one of the class that it was called on.
+static JSValue floatOfClass(JSGlobalObject* globalObject, JSValue type, double value)
+{
+    if (type == JSValue(globalObject->pyRealm()->typeFloat()))
+        return floatFromDouble(value);
+    return call(globalObject, type, floatFromDouble(value));
+}
+
+// float.hex(): float_hex_impl() of CPython's Objects/floatobject.c.
+PYTHON_NATIVE(floatHex)
+{
+    NATIVE_PROLOGUE();
+    double value = classify(args.at(0)).real;
+    if (!std::isfinite(value))
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, builtinRepr(globalObject, floatFromDouble(value)))));
+    if (!value)
+        return JSValue::encode(jsNontrivialString(vm, std::signbit(value) ? "-0x0.0p+0"_s : "0x0.0p+0"_s));
+
+    int exponent;
+    double mantissa = std::frexp(std::fabs(value), &exponent);
+    int shift = 1 - std::max(std::numeric_limits<double>::min_exponent - exponent, 0);
+    mantissa = std::ldexp(mantissa, shift);
+    exponent -= shift;
+
+    StringBuilder builder;
+    if (value < 0)
+        builder.append('-');
+    builder.append("0x"_s, static_cast<char>('0' + static_cast<int>(mantissa)), '.');
+    mantissa -= static_cast<int>(mantissa);
+    // As many digits as hold the bits of a float after the first, rounded up to a whole number of them.
+    constexpr int digits = (std::numeric_limits<double>::digits + 2) / 4;
+    for (int i = 0; i < digits; ++i) {
+        mantissa *= 16;
+        builder.append(lowerNibbleToLowercaseASCIIHexDigit(static_cast<int>(mantissa)));
+        mantissa -= static_cast<int>(mantissa);
+    }
+    builder.append('p', exponent < 0 ? '-' : '+', std::abs(exponent));
+    return JSValue::encode(jsString(vm, builder.toString()));
+}
+
+// float.fromhex(string): float_fromhex_impl() of the same, where the limits are accounted for.
+PYTHON_NATIVE(floatFromHex)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "fromhex"_s, 2, 2))
+        return { };
+    JSValue argument = unbox(args[1]);
+    if (!argument.isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "bad argument type for built-in operation"_s));
+    String string = asString(argument)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    auto parseError = [&] { return JSValue::encode(raiseValueError(globalObject, scope, "invalid hexadecimal floating-point string"_s)); };
+    auto overflowError = [&] { return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "hexadecimal value too large to represent as a float"_s)); };
+    unsigned length = string.length();
+    // Beyond the end there is what nothing here takes for part of a number.
+    auto at = [&] (unsigned index) -> char16_t { return index < length ? string[index] : 0; };
+    auto isSpace = [] (char16_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); };
+    auto hexValue = [] (char16_t c) { return isASCIIHexDigit(c) ? static_cast<int>(toASCIIHexValue(c)) : -1; };
+    auto matches = [&] (unsigned index, ASCIILiteral word) {
+        for (unsigned i = 0; i < word.length(); ++i) {
+            if (toASCIILower(at(index + i)) != word[i])
+                return false;
+        }
+        return true;
+    };
+
+    unsigned s = 0;
+    double x = 0;
+    bool isNegative = false;
+    auto finish = [&] () -> EncodedJSValue {
+        while (isSpace(at(s)))
+            ++s;
+        if (s != length)
+            return parseError();
+        RELEASE_AND_RETURN(scope, JSValue::encode(floatOfClass(globalObject, args[0], isNegative ? -x : x)));
+    };
+
+    while (isSpace(at(s)))
+        ++s;
+    if (at(s) == '-') {
+        isNegative = true;
+        ++s;
+    } else if (at(s) == '+')
+        ++s;
+    if (matches(s, "inf"_s)) {
+        s += matches(s + 3, "inity"_s) ? 8 : 3;
+        x = std::numeric_limits<double>::infinity();
+        return finish();
+    }
+    if (matches(s, "nan"_s)) {
+        s += 3;
+        x = std::numeric_limits<double>::quiet_NaN();
+        return finish();
+    }
+    if (at(s) == '0' && (at(s + 1) == 'x' || at(s + 1) == 'X'))
+        s += 2;
+
+    // The coefficient: digits, and perhaps a point and more digits.
+    unsigned coefficientStart = s;
+    while (hexValue(at(s)) >= 0)
+        ++s;
+    unsigned point = s;
+    unsigned coefficientEnd;
+    if (at(s) == '.') {
+        ++s;
+        while (hexValue(at(s)) >= 0)
+            ++s;
+        coefficientEnd = s - 1;
+    } else
+        coefficientEnd = s;
+    int64_t digitCount = coefficientEnd - coefficientStart;
+    int64_t fractionDigits = coefficientEnd - point;
+    if (!digitCount)
+        return parseError();
+    constexpr int64_t minExponent = std::numeric_limits<double>::min_exponent;
+    constexpr int64_t maxExponent = std::numeric_limits<double>::max_exponent;
+    constexpr int64_t mantissaBits = std::numeric_limits<double>::digits;
+    constexpr int64_t longMax = std::numeric_limits<int64_t>::max();
+    constexpr int64_t longMin = std::numeric_limits<int64_t>::min();
+    if (digitCount > std::min(minExponent - mantissaBits - longMin / 2, longMax / 2 + 1 - maxExponent) / 4)
+        return JSValue::encode(raiseValueError(globalObject, scope, "hexadecimal string too long to convert"_s));
+
+    int64_t exponent = 0;
+    if (at(s) == 'p' || at(s) == 'P') {
+        ++s;
+        bool exponentIsNegative = at(s) == '-';
+        if (at(s) == '-' || at(s) == '+')
+            ++s;
+        if (!isASCIIDigit(at(s)))
+            return parseError();
+        // As strtol() has it, what does not fit is the most that does.
+        CheckedInt64 magnitude = 0;
+        for (; isASCIIDigit(at(s)); ++s)
+            magnitude = magnitude * 10 + (at(s) - '0');
+        exponent = magnitude.hasOverflowed() ? (exponentIsNegative ? longMin : longMax) : (exponentIsNegative ? -magnitude.value() : magnitude.value());
+    }
+
+    // The digit that is `j` places from the least significant one.
+    auto digitAt = [&] (int64_t j) { return hexValue(at(j < fractionDigits ? coefficientEnd - j : coefficientEnd - 1 - j)); };
+
+    while (digitCount > 0 && !digitAt(digitCount - 1))
+        --digitCount;
+    if (!digitCount || exponent < longMin / 2)
+        return finish();
+    if (exponent > longMax / 2)
+        return overflowError();
+    exponent -= 4 * fractionDigits;
+
+    // One more than the exponent of the most significant bit.
+    int64_t topExponent = exponent + 4 * (digitCount - 1);
+    for (int digit = digitAt(digitCount - 1); digit; digit /= 2)
+        ++topExponent;
+    if (topExponent < minExponent - mantissaBits)
+        return finish();
+    if (topExponent > maxExponent)
+        return overflowError();
+
+    // The exponent of the least significant bit of the result.
+    int64_t lowestBit = std::max(topExponent, minExponent) - mantissaBits;
+    if (exponent >= lowestBit) {
+        for (int64_t i = digitCount - 1; i >= 0; --i)
+            x = 16 * x + digitAt(i);
+        x = std::ldexp(x, static_cast<int>(exponent));
+        return finish();
+    }
+
+    // It has to be rounded: to the nearest, and to an even one from half way. `keyDigit` is the digit with the first bit that is to go.
+    int halfEpsilon = 1 << static_cast<int>((lowestBit - exponent - 1) % 4);
+    int64_t keyDigit = (lowestBit - exponent - 1) / 4;
+    for (int64_t i = digitCount - 1; i > keyDigit; --i)
+        x = 16 * x + digitAt(i);
+    int digit = digitAt(keyDigit);
+    x = 16 * x + static_cast<double>(digit & (16 - 2 * halfEpsilon));
+    if (digit & halfEpsilon) {
+        bool roundUp = (digit & (3 * halfEpsilon - 1)) || (halfEpsilon == 8 && keyDigit + 1 < digitCount && (digitAt(keyDigit + 1) & 1));
+        for (int64_t i = keyDigit - 1; !roundUp && i >= 0; --i)
+            roundUp = digitAt(i);
+        if (roundUp) {
+            x += 2 * halfEpsilon;
+            if (topExponent == maxExponent && x == std::ldexp(static_cast<double>(2 * halfEpsilon), mantissaBits))
+                return overflowError();
+        }
+    }
+    x = std::ldexp(x, static_cast<int>(exponent + 4 * keyDigit));
+    return finish();
+}
+
+// float.from_number(number)
+PYTHON_NATIVE(floatFromNumber)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "from_number"_s, 2, 2))
+        return { };
+    auto converted = toDouble(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(floatOfClass(globalObject, args[0], *converted)));
+}
+
+// float.__getformat__(typestr)
+PYTHON_NATIVE(floatGetFormat)
+{
+    NATIVE_PROLOGUE();
+    if (!args.check(globalObject, scope, "__getformat__"_s, 2, 2))
+        return { };
+    if (!args[1].isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__getformat__() argument must be str, not "_s, typeName(globalObject, args[1]))));
+    String kind = asString(args[1])->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (kind != "double"_s && kind != "float"_s)
+        return JSValue::encode(raiseValueError(globalObject, scope, "__getformat__() argument 1 must be 'double' or 'float'"_s));
+    return JSValue::encode(jsNontrivialString(vm, std::endian::native == std::endian::little ? "IEEE, little-endian"_s : "IEEE, big-endian"_s));
+}
+
+// What __new__ is to be given to make another like it, for pickle and copy.
+PYTHON_NATIVE(numberGetNewArguments)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    // The number itself, and not the bool or the instance of a derived class that it may be.
+    return JSValue::encode(PyTuple::create(globalObject, { numberUnaryOperation(globalObject, UnaryOperator::UAdd, args[0]) }));
+}
+
 PYTHON_NATIVE(floatIsInteger)
 {
     NATIVE_PROLOGUE();
@@ -559,6 +776,7 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
         { "bit_count"_s, intBitCount },
         { "as_integer_ratio"_s, intAsIntegerRatio },
         { "is_integer"_s, returnTrue },
+        { "__getnewargs__"_s, numberGetNewArguments },
     });
     addGetSet(globalObject, intType, "numerator"_s, [] (JSGlobalObject* globalObject, JSValue self) { return numberUnaryOperation(globalObject, UnaryOperator::UAdd, self); });
     addGetSet(globalObject, intType, "denominator"_s, [] (JSGlobalObject*, JSValue) -> JSValue { return jsNumber(1); });
@@ -569,6 +787,11 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
         { "__new__"_s, floatNew, Kind::New },
         { "is_integer"_s, floatIsInteger },
         { "as_integer_ratio"_s, floatAsIntegerRatio },
+        { "hex"_s, floatHex },
+        { "fromhex"_s, floatFromHex, Kind::ClassMethod },
+        { "from_number"_s, floatFromNumber, Kind::ClassMethod },
+        { "__getformat__"_s, floatGetFormat, Kind::ClassMethod },
+        { "__getnewargs__"_s, numberGetNewArguments },
     });
 
     addMethods(globalObject, realm->typeBool(), {

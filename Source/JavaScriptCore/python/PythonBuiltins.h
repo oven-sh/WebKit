@@ -107,6 +107,9 @@ void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 
+void initializeRangeType(JSGlobalObject*);
+JSC_DECLARE_HOST_FUNCTION(sliceIndices);
+
 inline JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
 
 // ---- Looking into what is running

@@ -42,6 +42,7 @@ namespace JSC {
 class BytecodeIndex;
 class CodeBlock;
 class PyDict;
+class PyRange;
 class PyFrame;
 class SourceCode;
 
@@ -281,6 +282,25 @@ int64_t hashOfPointer(const void*);
 JSValue intFromInt64(JSGlobalObject*, int64_t);
 JSValue intFromDouble(JSGlobalObject*, double); // Truncated.
 JSValue floatFromDouble(double);
+// ---- range
+
+// len(range). It raises OverflowError, and this is -1, if that is more than fits.
+int64_t rangeLength(JSGlobalObject*, PyRange*);
+// range[key]
+JSValue rangeGetItem(JSGlobalObject*, PyRange*, JSValue key);
+// value in range
+bool rangeContains(JSGlobalObject*, PyRange*, JSValue);
+bool rangesAreEqual(PyRange*, PyRange*);
+JSValue rangeIterator(JSGlobalObject*, PyRange*);
+// The item of a range that is at an index, which is an int that is not negative. Empty if that is past the end.
+JSValue nextOfLongRange(JSGlobalObject*, PyRange*, JSValue index);
+
+// ---- Numbers, from anything
+
+// operator.index(value): an int and nothing else, from an int, a bool, an instance of a class derived from int, or what has __index__.
+JSValue toInt(JSGlobalObject*, JSValue);
+// The value of an int, if it fits.
+std::optional<int64_t> tryInt64(JSValue);
 // What __index__ gives, as something to index with: clamped to the range of an int64 if `clamp`, or else it raises IndexError.
 std::optional<int64_t> toIndex(JSGlobalObject*, JSValue, bool clamp = false);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.

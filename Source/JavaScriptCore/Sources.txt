@@ -764,6 +764,7 @@ python/PythonNumbers.cpp
 python/PythonObjectModel.cpp
 python/PythonOperators.cpp
 python/PythonParser.cpp
+python/PythonRange.cpp
 python/PythonRepr.cpp
 python/PythonRuntimeFunctions.cpp
 python/PythonSequences.cpp

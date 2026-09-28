@@ -825,57 +825,7 @@ PYTHON_NATIVE(setIsDisjoint)
     return JSValue::encode(jsBoolean(isDisjoint));
 }
 
-// ---- range and slice
-
-PYTHON_NATIVE(rangeNew)
-{
-    NATIVE_PROLOGUE();
-    if (!args.checkNoKeywords(globalObject, scope, "range"_s))
-        return { };
-    if (args.size() < 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "range expected at least 1 argument, got 0"_s));
-    if (args.size() > 4)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("range expected at most 3 arguments, got "_s, args.size() - 1)));
-    int64_t values[3] = { 0, 0, 1 };
-    for (unsigned i = 1; i < args.size(); ++i) {
-        auto index = toIndex(globalObject, args[i], true);
-        RETURN_IF_EXCEPTION(scope, { });
-        values[args.size() == 2 ? 1 : i - 1] = *index;
-    }
-    if (!values[2])
-        return JSValue::encode(raiseValueError(globalObject, scope, "range() arg 3 must not be zero"_s));
-    return JSValue::encode(PyRange::create(globalObject, values[0], values[1], values[2]));
-}
-
-static PyRange* asRange(JSValue value) { return uncheckedDowncast<PyRange>(value.asCell()); }
-
-PYTHON_NATIVE(rangeReversed)
-{
-    PyRange* range = asRange(callFrame->argument(0));
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Range, JSValue(), JSValue(), range->start() + (range->length() - 1) * range->step(), range->length(), -range->step()));
-}
-
-PYTHON_NATIVE(rangeIndex)
-{
-    NATIVE_PROLOGUE();
-    PyRange* range = asRange(args.at(0));
-    auto found = builtinContains(globalObject, range, args.at(1));
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!found.value_or(false)) {
-        String text = repr(globalObject, args.at(1));
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(raiseValueError(globalObject, scope, makeString(text, " is not in range"_s)));
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, (classify(args[1]).small - range->start()) / range->step())));
-}
-
-PYTHON_NATIVE(rangeCount)
-{
-    NATIVE_PROLOGUE();
-    auto found = builtinContains(globalObject, args.at(0), args.at(1));
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsNumber(found.value_or(false) ? 1 : 0));
-}
+// ---- slice
 
 PYTHON_NATIVE(sliceNew)
 {
@@ -885,18 +835,6 @@ PYTHON_NATIVE(sliceNew)
     if (args.size() == 2)
         return JSValue::encode(PySlice::create(globalObject, jsUndefined(), args[1], jsUndefined()));
     return JSValue::encode(PySlice::create(globalObject, args[1], args[2], args.size() > 3 ? args[3] : jsUndefined()));
-}
-
-PYTHON_NATIVE(sliceIndices)
-{
-    NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "indices"_s, 2, 2))
-        return { };
-    auto length = toIndex(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto indices = uncheckedDowncast<PySlice>(args[0].asCell())->indices(globalObject, *length);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyTuple::create(globalObject, { intFromInt64(globalObject, indices->start), intFromInt64(globalObject, indices->stop), intFromInt64(globalObject, indices->step) }));
 }
 
 // ---- enumerate, zip, map, filter, reversed
@@ -911,14 +849,18 @@ PYTHON_NATIVE(enumerateNew)
     if (!startValue)
         startValue = args.keyword(globalObject, "start"_s);
     int64_t start = 0;
+    JSValue bigStart;
     if (startValue) {
-        auto index = toIndex(globalObject, startValue);
+        JSValue integer = toInt(globalObject, startValue);
         RETURN_IF_EXCEPTION(scope, { });
-        start = *index;
+        if (auto small = tryInt64(integer))
+            start = *small;
+        else
+            bigStart = integer;
     }
     JSValue iterator = getIterator(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Enumerate, iterator, JSValue(), start));
+    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Enumerate, iterator, bigStart, start));
 }
 
 static PyTuple* iteratorsOf(JSGlobalObject* globalObject, const NativeArguments& args, unsigned first, ASCIILiteral function)
@@ -996,10 +938,12 @@ PYTHON_NATIVE(iteratorLengthHint)
     auto* iterator = tryIterator(args.at(0));
     if (!iterator || !iterator->a()) {
         if (iterator && iterator->kind() == PyIterator::Kind::Range)
-            return JSValue::encode(jsNumber(static_cast<double>(iterator->remaining())));
+            return JSValue::encode(intFromInt64(globalObject, iterator->remaining()));
         return JSValue::encode(jsNumber(0));
     }
     switch (iterator->kind()) {
+    case PyIterator::Kind::LongRange:
+        return JSValue::encode(numberBinaryOperation(globalObject, BinaryOperator::Sub, uncheckedDowncast<PyRange>(iterator->a().asCell())->length(), iterator->b()));
     case PyIterator::Kind::List:
         return JSValue::encode(jsNumber(std::max<int64_t>(static_cast<int64_t>(asList(iterator->a())->length()) - iterator->index(), 0)));
     case PyIterator::Kind::Tuple:
@@ -1173,25 +1117,6 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "__hash__"_s, nativeHash },
     });
 
-    PyType* range = realm->typeRange();
-    range->setInstanceStructure(vm, PyRange::createStructure(vm, globalObject, range));
-    addMethods(globalObject, range, {
-        { "__new__"_s, rangeNew, Kind::New },
-        { "__repr__"_s, nativeRepr },
-        { "__hash__"_s, nativeHash },
-        { "__len__"_s, nativeLen },
-        { "__getitem__"_s, nativeGetItem },
-        { "__contains__"_s, nativeContains },
-        { "__iter__"_s, nativeIter },
-        { "__reversed__"_s, rangeReversed },
-        { "index"_s, rangeIndex },
-        { "count"_s, rangeCount },
-    });
-    addComparisons(globalObject, range, false);
-    addMember(globalObject, range, "start"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->start()); });
-    addMember(globalObject, range, "stop"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->stop()); });
-    addMember(globalObject, range, "step"_s, [] (JSGlobalObject* globalObject, JSValue self) { return intFromInt64(globalObject, asRange(self)->step()); });
-
     PyType* slice = realm->typeSlice();
     slice->setInstanceStructure(vm, PySlice::createStructure(vm, globalObject, slice));
     addMethods(globalObject, slice, {
@@ -1209,7 +1134,7 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
-    for (BuiltinType builtin : { BuiltinType::ListIterator, BuiltinType::ListReverseIterator, BuiltinType::TupleIterator, BuiltinType::RangeIterator, BuiltinType::StrIterator, BuiltinType::BytesIterator,
+    for (BuiltinType builtin : { BuiltinType::ListIterator, BuiltinType::ListReverseIterator, BuiltinType::TupleIterator, BuiltinType::RangeIterator, BuiltinType::LongRangeIterator, BuiltinType::StrIterator, BuiltinType::BytesIterator,
         BuiltinType::DictKeyIterator, BuiltinType::DictValueIterator, BuiltinType::DictItemIterator, BuiltinType::DictReverseKeyIterator, BuiltinType::SetIterator, BuiltinType::SequenceIterator,
         BuiltinType::CallableIterator, BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed }) {
         PyType* type = realm->type(builtin);

@@ -217,18 +217,95 @@ static JSValue powerOfInts(JSGlobalObject* globalObject, ThrowScope& scope, cons
     return finishBigInt(globalObject, scope, result);
 }
 
+static JSValue intBinaryOperation(JSGlobalObject*, ThrowScope&, BinaryOperator, const Number&, const Number&);
+
+static bool isNegativeInt(const Number& number)
+{
+    return number.kind == Number::Kind::Small ? number.small < 0 : number.big->sign();
+}
+
+int64_t bitLengthOfInt(const Number& number)
+{
+    if (number.kind == Number::Kind::Small) {
+        uint32_t magnitude = number.small < 0 ? 0u - static_cast<uint32_t>(number.small) : number.small;
+        return 32 - std::countl_zero(magnitude);
+    }
+    unsigned length = number.big->length();
+    return static_cast<int64_t>(length - 1) * 64 + (64 - std::countl_zero(static_cast<uint64_t>(number.big->digit(length - 1))));
+}
+
+// The float that is nearest to the quotient, which is not what dividing the nearest floats gives: that rounds three times, and overflows where the
+// quotient would not. This is long_true_divide() of CPython's Objects/longobject.c, where why it is right is gone into at length.
 static JSValue trueDivideInts(JSGlobalObject* globalObject, ThrowScope& scope, const Number& left, const Number& right)
 {
     if (right.kind == Number::Kind::Small && !right.small)
         return raiseZeroDivision(globalObject, scope);
+    // Both are floats exactly, so there is one rounding.
     if (left.kind == Number::Kind::Small && right.kind == Number::Kind::Small)
         return floatFromDouble(static_cast<double>(left.small) / static_cast<double>(right.small));
-    // FIXME: This rounds twice, and overflows where the quotient would not.
-    double leftValue = toDouble(globalObject, scope, left);
+
+    bool isNegative = isNegativeInt(left) != isNegativeInt(right);
+    auto signedResult = [&] (double magnitude) { return floatFromDouble(isNegative ? -magnitude : magnitude); };
+    auto overflow = [&] { return raise(globalObject, scope, BuiltinType::OverflowError, "integer division result too large for a float"_s); };
+    if (left.kind == Number::Kind::Small && !left.small)
+        return signedResult(0);
+
+    Number zero = classify(jsNumber(0));
+    auto magnitudeOf = [&] (const Number& number) -> Number {
+        return isNegativeInt(number) ? classify(intBinaryOperation(globalObject, scope, BinaryOperator::Sub, zero, number)) : number;
+    };
+    Number dividend = magnitudeOf(left);
     RETURN_IF_EXCEPTION(scope, { });
-    double rightValue = toDouble(globalObject, scope, right);
+    Number divisor = magnitudeOf(right);
     RETURN_IF_EXCEPTION(scope, { });
-    return floatFromDouble(leftValue / rightValue);
+
+    int64_t difference = bitLengthOfInt(dividend) - bitLengthOfInt(divisor);
+    if (difference > std::numeric_limits<double>::max_exponent)
+        return overflow();
+    if (difference < std::numeric_limits<double>::min_exponent - std::numeric_limits<double>::digits - 1)
+        return signedResult(0);
+
+    // The dividend is scaled by a power of two so that the whole part of the quotient has two or three bits more than a float holds. Whether anything
+    // is lost on the way is kept track of, since that decides which way a tie goes.
+    int64_t shift = std::max<int64_t>(difference, std::numeric_limits<double>::min_exponent) - std::numeric_limits<double>::digits - 2;
+    bool isInexact = false;
+    Number scaled;
+    if (shift <= 0)
+        scaled = classify(intBinaryOperation(globalObject, scope, BinaryOperator::LShift, dividend, classify(jsNumber(static_cast<int32_t>(-shift)))));
+    else {
+        Number amount = classify(jsNumber(static_cast<int32_t>(shift)));
+        scaled = classify(intBinaryOperation(globalObject, scope, BinaryOperator::RShift, dividend, amount));
+        RETURN_IF_EXCEPTION(scope, { });
+        Number restored = classify(intBinaryOperation(globalObject, scope, BinaryOperator::LShift, scaled, amount));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isUnordered = false;
+        isInexact = *numberCompare(restored, dividend, isUnordered);
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+    Number quotient = classify(intBinaryOperation(globalObject, scope, BinaryOperator::FloorDiv, scaled, divisor));
+    RETURN_IF_EXCEPTION(scope, { });
+    Number remainder = classify(intBinaryOperation(globalObject, scope, BinaryOperator::Mod, scaled, divisor));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (remainder.kind != Number::Kind::Small || remainder.small)
+        isInexact = true;
+
+    int64_t quotientBits = bitLengthOfInt(quotient);
+    ASSERT(quotientBits <= 64);
+    uint64_t bits = quotient.kind == Number::Kind::Small ? static_cast<uint64_t>(quotient.small) : static_cast<uint64_t>(quotient.big->digit(0));
+
+    // To the nearest, and to an even one from half way.
+    int64_t extraBits = std::max<int64_t>(quotientBits, std::numeric_limits<double>::min_exponent - shift) - std::numeric_limits<double>::digits;
+    ASSERT(extraBits == 2 || extraBits == 3);
+    uint64_t mask = 1ull << (extraBits - 1);
+    bits |= isInexact;
+    if ((bits & mask) && (bits & (3 * mask - 1)))
+        bits += mask;
+    bits &= ~(2 * mask - 1);
+    double rounded = static_cast<double>(bits);
+
+    if (shift + quotientBits >= std::numeric_limits<double>::max_exponent && (shift + quotientBits > std::numeric_limits<double>::max_exponent || rounded == std::ldexp(1.0, static_cast<int>(quotientBits))))
+        return overflow();
+    return signedResult(std::ldexp(rounded, static_cast<int>(shift)));
 }
 
 static JSValue intBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scope, BinaryOperator op, const Number& left, const Number& right)

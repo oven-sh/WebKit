@@ -69,24 +69,38 @@ private:
     WriteBarrier<Unknown> m_self;
 };
 
+// Its ends and its step are ints of any size, and what it does is defined by arithmetic on those: see PythonRange.cpp. When they and its length all fit
+// an int64, which is nearly always, they are here as that too, for what is done a great deal.
 class PyRange final : public JSNonFinalObject {
 public:
     PYTHON_CELL_BOILERPLATE(PyRange)
 
-    // FIXME: A range whose ends do not fit an int64.
-    static PyRange* create(JSGlobalObject*, int64_t start, int64_t stop, int64_t step);
-    int64_t start() const { return m_start; }
-    int64_t stop() const { return m_stop; }
-    int64_t step() const { return m_step; }
-    int64_t length() const { return m_length; }
+    // They are ints and nothing else, and the step is not zero. Null if it raised.
+    static PyRange* create(JSGlobalObject*, JSValue start, JSValue stop, JSValue step);
+    JSValue start() const { return m_start.get(); }
+    JSValue stop() const { return m_stop.get(); }
+    JSValue step() const { return m_step.get(); }
+    JSValue length() const { return m_length.get(); }
+    bool isEmpty() const { return m_length.get().isInt32() && !m_length.get().asInt32(); }
+
+    bool isSmall() const { return m_isSmall; }
+    int64_t smallStart() const { ASSERT(m_isSmall); return m_smallStart; }
+    int64_t smallStop() const { ASSERT(m_isSmall); return m_smallStop; }
+    int64_t smallStep() const { ASSERT(m_isSmall); return m_smallStep; }
+    int64_t smallLength() const { ASSERT(m_isSmall); return m_smallLength; }
 
 private:
-    PyRange(VM& vm, Structure* structure, int64_t start, int64_t stop, int64_t step);
+    PyRange(VM&, Structure*, JSValue start, JSValue stop, JSValue step, JSValue length);
 
-    int64_t m_start;
-    int64_t m_stop;
-    int64_t m_step;
-    int64_t m_length;
+    WriteBarrier<Unknown> m_start;
+    WriteBarrier<Unknown> m_stop;
+    WriteBarrier<Unknown> m_step;
+    WriteBarrier<Unknown> m_length;
+    int64_t m_smallStart { 0 };
+    int64_t m_smallStop { 0 };
+    int64_t m_smallStep { 0 };
+    int64_t m_smallLength { 0 };
+    bool m_isSmall { false };
 };
 
 class PyComplex final : public JSNonFinalObject {
@@ -173,6 +187,8 @@ public:
     };
     // What it selects of a sequence of the length. Nothing if it raised.
     std::optional<Indices> indices(JSGlobalObject*, int64_t length) const;
+    // The same, of something whose length is an int of any size, as ints of any size. False if it raised.
+    bool indices(JSGlobalObject*, JSValue length, JSValue& start, JSValue& stop, JSValue& step) const;
 
 private:
     PySlice(VM& vm, Structure* structure, JSValue start, JSValue stop, JSValue step)
@@ -198,6 +214,7 @@ public:
         ListReverse,
         Tuple,
         Range, // index: the next value. stop: how many are left. step
+        LongRange, // a: the range, which is not a small one. b: which of its items is next, an int
         Str, // a: the string. index, in code units
         Bytes,
         DictKeys, // a: the dict. index: the entry. stop: its size when this began
@@ -207,7 +224,7 @@ public:
         Set,
         Sequence, // a: what has __getitem__. index
         Callable, // a: the callable. b: the sentinel
-        Enumerate, // a: an iterator. index
+        Enumerate, // a: an iterator. index: the count, or b if it is one that does not fit
         Zip, // a: a tuple of iterators. index: whether it is strict
         Map, // a: the function. b: a tuple of iterators
         Filter, // a: the function or None. b: an iterator

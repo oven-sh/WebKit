@@ -278,6 +278,37 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
     return raiseUnsupportedOperands(globalObject, scope, op, inPlace, left, right);
 }
 
+// What times `value` is one more than a multiple of `modulus`, which is positive. By Euclid's algorithm, as long_invmod() of CPython's
+// Objects/longobject.c does it.
+static JSValue inverseModulo(JSGlobalObject* globalObject, JSValue value, JSValue modulus)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue b = jsNumber(1);
+    JSValue c = jsNumber(0);
+    while (true) {
+        bool isDone = !isTrue(globalObject, modulus);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isDone)
+            break;
+        JSValue quotient = binaryOperation(globalObject, BinaryOperator::FloorDiv, false, value, modulus);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue remainder = binaryOperation(globalObject, BinaryOperator::Mod, false, value, modulus);
+        RETURN_IF_EXCEPTION(scope, { });
+        value = modulus;
+        modulus = remainder;
+        JSValue product = binaryOperation(globalObject, BinaryOperator::Mult, false, quotient, c);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue next = binaryOperation(globalObject, BinaryOperator::Sub, false, b, product);
+        RETURN_IF_EXCEPTION(scope, { });
+        b = c;
+        c = next;
+    }
+    if (!value.isInt32() || value.asInt32() != 1)
+        return raiseValueError(globalObject, scope, "base is not invertible for the given modulus"_s);
+    return b;
+}
+
 JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
 {
     VM& vm = globalObject->vm();
@@ -292,15 +323,25 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
         return raiseTypeError(globalObject, scope, "pow() 3rd argument not allowed unless all arguments are integers"_s);
     if (m.kind == Number::Kind::Small && !m.small)
         return raiseValueError(globalObject, scope, "pow() 3rd argument cannot be 0"_s);
+    JSValue remaining = exponent.isBoolean() ? jsNumber(exponent.asBoolean()) : exponent;
     if (e.kind == Number::Kind::Small ? e.small < 0 : e.big->sign()) {
-        // FIXME: The inverse of the base, if it has one.
-        return raiseValueError(globalObject, scope, "base is not invertible for the given modulus"_s);
+        // The inverse of the base, to the power without its sign.
+        JSValue magnitude = modulus;
+        if (m.kind == Number::Kind::Small ? m.small < 0 : m.big->sign()) {
+            magnitude = unaryOperation(globalObject, UnaryOperator::USub, modulus);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (magnitude.isInt32() && magnitude.asInt32() == 1)
+            return jsNumber(0);
+        base = inverseModulo(globalObject, base.isBoolean() ? jsNumber(base.asBoolean()) : base, magnitude);
+        RETURN_IF_EXCEPTION(scope, { });
+        remaining = unaryOperation(globalObject, UnaryOperator::USub, remaining);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     // By squaring, reducing as it goes.
     JSValue result = jsNumber(1);
     JSValue factor = binaryOperation(globalObject, BinaryOperator::Mod, false, base, modulus);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue remaining = exponent.isBoolean() ? jsNumber(exponent.asBoolean()) : exponent;
     while (true) {
         bool isZero = !isTrue(globalObject, remaining);
         RETURN_IF_EXCEPTION(scope, { });
@@ -416,7 +457,7 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
         case PySetType:
             return uncheckedDowncast<PySet>(cell)->size();
         case PyRangeType:
-            return uncheckedDowncast<PyRange>(cell)->length();
+            return !uncheckedDowncast<PyRange>(cell)->isEmpty();
         default:
             if (isListCell(cell))
                 return uncheckedDowncast<JSArray>(cell)->length();
@@ -578,8 +619,7 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
         auto* b = tryRange(right);
         if (!b || !isEquality)
             return { };
-        bool same = a->length() == b->length() && (!a->length() || (a->start() == b->start() && (a->length() == 1 || a->step() == b->step())));
-        return jsBoolean(same == (op == ComparisonOperator::Eq));
+        return jsBoolean(rangesAreEqual(a, b) == (op == ComparisonOperator::Eq));
     }
     return { };
 }
@@ -767,16 +807,7 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             return false;
         }
         case PyRangeType: {
-            auto* range = uncheckedDowncast<PyRange>(cell);
-            Number number = classify(value);
-            if (number.kind == Number::Kind::Big)
-                return false;
-            if (number.kind == Number::Kind::Small) {
-                int64_t n = number.small;
-                bool isInside = range->step() > 0 ? n >= range->start() && n < range->stop() : n <= range->start() && n > range->stop();
-                return isInside && !((n - range->start()) % range->step());
-            }
-            break;
+            RELEASE_AND_RETURN(scope, rangeContains(globalObject, uncheckedDowncast<PyRange>(cell), value));
         }
         default:
             if (isListCell(cell)) {
@@ -945,6 +976,9 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
         raiseTypeError(globalObject, scope, "__hash__ method should return an integer"_s);
         return -1;
     }
+    // It is the hash, if it fits. Otherwise its own hash is.
+    if (auto small = tryInt64(result))
+        return *small == -1 ? -2 : *small;
     return hashOfNumber(globalObject, number);
 }
 
@@ -957,13 +991,12 @@ int64_t builtinHash(JSGlobalObject* globalObject, JSValue value)
     if (auto* boxed = tryBoxedValue(value))
         return hash(globalObject, boxed->value());
     if (auto* range = tryRange(value)) {
-        JSValue length = intFromInt64(globalObject, range->length());
-        if (!range->length())
-            return hashOfTuple(globalObject, PyTuple::create(globalObject, { length, jsUndefined(), jsUndefined() }));
-        JSValue start = intFromInt64(globalObject, range->start());
-        if (range->length() == 1)
-            return hashOfTuple(globalObject, PyTuple::create(globalObject, { length, start, jsUndefined() }));
-        return hashOfTuple(globalObject, PyTuple::create(globalObject, { length, start, intFromInt64(globalObject, range->step()) }));
+        // Of what decides whether two are equal.
+        if (range->isEmpty())
+            return hashOfTuple(globalObject, PyTuple::create(globalObject, { range->length(), jsUndefined(), jsUndefined() }));
+        if (range->length().isInt32() && range->length().asInt32() == 1)
+            return hashOfTuple(globalObject, PyTuple::create(globalObject, { range->length(), range->start(), jsUndefined() }));
+        return hashOfTuple(globalObject, PyTuple::create(globalObject, { range->length(), range->start(), range->step() }));
     }
     if (value.isCell() && value.isObject())
         return hashOfPointer(value.asCell());
@@ -972,7 +1005,7 @@ int64_t builtinHash(JSGlobalObject* globalObject, JSValue value)
 
 // ---- Numbers, from anything
 
-std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool clamp)
+JSValue toInt(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -980,19 +1013,41 @@ std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool
     if (!number.isInt()) {
         JSValue self;
         JSValue method = number ? JSValue() : lookupSpecial(globalObject, value, vm.pythonNames().dunder_index, self);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!method) {
-            raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, value), "' object cannot be interpreted as an integer"_s));
-            return std::nullopt;
-        }
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method)
+            return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, value), "' object cannot be interpreted as an integer"_s));
         JSValue result = callMethod(globalObject, method, self);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        RETURN_IF_EXCEPTION(scope, { });
         number = classify(result);
-        if (!number.isInt()) {
-            raiseTypeError(globalObject, scope, makeString("__index__ returned non-int (type "_s, typeName(globalObject, result), ')'));
-            return std::nullopt;
-        }
+        if (!number.isInt())
+            return raiseTypeError(globalObject, scope, makeString("__index__ returned non-int (type "_s, typeName(globalObject, result), ')'));
     }
+    return number.kind == Number::Kind::Small ? jsNumber(number.small) : JSValue(number.big);
+}
+
+std::optional<int64_t> tryInt64(JSValue value)
+{
+    Number number = classify(value);
+    ASSERT(number.isInt());
+    if (number.kind == Number::Kind::Small)
+        return number.small;
+    if (number.big->length() > 1)
+        return std::nullopt;
+    uint64_t magnitude = number.big->digit(0);
+    if (magnitude <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return number.big->sign() ? -static_cast<int64_t>(magnitude) : static_cast<int64_t>(magnitude);
+    if (number.big->sign() && magnitude == static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1)
+        return std::numeric_limits<int64_t>::min();
+    return std::nullopt;
+}
+
+std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool clamp)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue integer = toInt(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    Number number = classify(integer);
     if (number.kind == Number::Kind::Small)
         return number.small;
     if (number.big->length() <= 1) {
@@ -1065,7 +1120,7 @@ int64_t builtinLength(JSGlobalObject* globalObject, JSValue value)
     case PySetType:
         return uncheckedDowncast<PySet>(cell)->size();
     case PyRangeType:
-        return uncheckedDowncast<PyRange>(cell)->length();
+        return rangeLength(globalObject, uncheckedDowncast<PyRange>(cell));
     default:
         return isListCell(cell) ? static_cast<int64_t>(uncheckedDowncast<JSArray>(cell)->length()) : -1;
     }
@@ -1185,17 +1240,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         return raise(globalObject, scope, BuiltinType::KeyError, key);
     }
     case PyRangeType: {
-        auto* range = uncheckedDowncast<PyRange>(cell);
-        if (auto* slice = trySlice(key)) {
-            auto indices = slice->indices(globalObject, range->length());
-            RETURN_IF_EXCEPTION(scope, { });
-            return PyRange::create(globalObject, range->start() + indices->start * range->step(), range->start() + indices->stop * range->step(), range->step() * indices->step);
-        }
-        if (!isIndexLike(globalObject, key))
-            return raiseTypeError(globalObject, scope, makeString("range indices must be integers or slices, not "_s, typeName(globalObject, key)));
-        auto index = normalizeIndex(globalObject, scope, key, range->length(), "range object index"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, intFromInt64(globalObject, range->start() + static_cast<int64_t>(*index) * range->step()));
+        RELEASE_AND_RETURN(scope, rangeGetItem(globalObject, uncheckedDowncast<PyRange>(cell), key));
     }
     default:
         return { };
@@ -1363,8 +1408,7 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
     case PySetType:
         return PyIterator::create(globalObject, Kind::Set, value, JSValue(), 0, uncheckedDowncast<PySet>(cell)->size());
     case PyRangeType: {
-        auto* range = uncheckedDowncast<PyRange>(cell);
-        return PyIterator::create(globalObject, Kind::Range, JSValue(), JSValue(), range->start(), range->length(), range->step());
+        return rangeIterator(globalObject, uncheckedDowncast<PyRange>(cell));
     }
     case PyIteratorType:
         return value;
