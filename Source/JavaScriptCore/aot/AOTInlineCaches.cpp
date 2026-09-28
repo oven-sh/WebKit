@@ -137,6 +137,13 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
     uint32_t attempts = (cache->offset & Slot::attemptsMask) >> Slot::attemptsShift;
     if (attempts == Slot::maxAttempts)
         return "gave up"_s;
+    // A site that sees one structure needs two. One that is still at it after a few sees several, and each time costs a good deal
+    // more than looking in the megamorphic cache ever will.
+    constexpr uint32_t maxAttemptsAtThis = 4;
+    if (attempts >= maxAttemptsAtThis) {
+        cache->offset |= Slot::attemptsMask;
+        return "gave up"_s;
+    }
     cache->offset += 1u << Slot::attemptsShift;
     if (!attempts)
         return "first time"_s;
@@ -258,7 +265,8 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
 
 static bool canUseMegamorphicCacheForGet(VM& vm, UniquedStringImpl* uid)
 {
-    return !(Options::aotDisableFastPaths() & 1024) && canUseMegamorphicGetById(vm, uid);
+    // (The other tiers leave out three more names, which getByIdAndFillMegamorphicCache() has another way of being careful about.)
+    return !(Options::aotDisableFastPaths() & 1024) && !parseIndex(*uid) && uid != vm.propertyNames->underscoreProto;
 }
 
 static bool canUseMegamorphicCacheForPut(VM& vm, UniquedStringImpl* uid)
@@ -280,8 +288,11 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
     JSObject* baseObject = asObject(base);
     JSObject* object = baseObject;
     bool cacheable = true;
+    bool isNameThoseHaveASayAbout = uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype;
+    noteSlowPath("mega"_s, JSValue(), nullptr, cache.whyLoadIsNotFound(baseObject->structureID(), uid)); // TEMPORARY-SLOT-STATS
     while (true) {
-        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object->type() != DerivedStringObjectType && object != globalObject->arrayPrototype()) [[unlikely]] {
+        // Some kinds of object only have a say of their own about a few names.
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && (isNameThoseHaveASayAbout || (object->type() != ArrayType && object->type() != JSFunctionType && object->type() != DerivedStringObjectType && object != globalObject->arrayPrototype()))) [[unlikely]] {
             bool hasProperty = object->getNonIndexPropertySlot(globalObject, uid, slot);
             RETURN_IF_EXCEPTION(scope, { });
             if (hasProperty)
@@ -292,17 +303,27 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
         Structure* structure = object->structure();
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reifying a static property changes it.
+        if (cacheable && !structure->propertyAccessesAreCacheable())
+            noteSlowPath("mega-broken-by"_s, object, nullptr, object == baseObject ? "the base"_s : "an object on the chain"_s); // TEMPORARY-SLOT-STATS
         cacheable &= structure->propertyAccessesAreCacheable();
         if (hasProperty) {
-            if (cacheable && slot.isCacheableValue() && slot.cachedOffset() <= MegamorphicCache::maxOffset && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary()))
-                cache.initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+            noteSlowPath("mega-present"_s, baseObject, nullptr, !cacheable ? "not cacheable"_s : !slot.isCacheableValue() ? "not a plain value"_s : slot.slotBase() == baseObject ? "own"_s : baseObject->structure()->isDictionary() ? "inherited, base is a dictionary"_s : "inherited"_s); // TEMPORARY-SLOT-STATS
+            if (cacheable && slot.cachedOffset() <= MegamorphicCache::maxOffset && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())) {
+                if (slot.isCacheableValue())
+                    cache.initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+                else if (usesStubs && slot.isCacheableGetter())
+                    cache.initAsGetterHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
+            }
             RELEASE_AND_RETURN(scope, slot.getValue(globalObject, uid));
         }
 
+        if (cacheable && (!structure->propertyAccessesAreCacheableForAbsence() || !structure->hasMonoProto()))
+            noteSlowPath("mega-broken-by"_s, object, nullptr, !structure->hasMonoProto() ? "poly proto"_s : "not cacheable for absence"_s); // TEMPORARY-SLOT-STATS
         cacheable &= structure->propertyAccessesAreCacheableForAbsence();
         cacheable &= structure->hasMonoProto();
         JSValue prototype = object->getPrototypeDirect();
         if (!prototype.isObject()) {
+            noteSlowPath("mega-absent"_s, baseObject, nullptr, !cacheable ? "not cacheable"_s : baseObject->structure()->isDictionary() ? "base is a dictionary"_s : "cached as a miss"_s); // TEMPORARY-SLOT-STATS
             if (cacheable && !baseObject->structure()->isDictionary())
                 cache.initAsMiss(baseObject->structureID(), uid);
             return jsUndefined();

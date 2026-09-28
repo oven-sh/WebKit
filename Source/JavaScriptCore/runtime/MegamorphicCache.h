@@ -296,6 +296,20 @@ public:
 
     uint16_t epoch() const { return m_epoch; }
 
+    // TEMPORARY-SLOT-STATS
+    ASCIILiteral whyLoadIsNotFound(StructureID structureID, UniquedStringImpl* uid) const
+    {
+        auto& primary = m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask];
+        auto& secondary = m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask];
+        for (auto* entry : { &primary, &secondary }) {
+            if (entry->m_structureID == structureID && entry->m_uid.get() == uid)
+                return entry->m_epoch == m_epoch ? "MEGA it is there"_s : "MEGA stale epoch"_s;
+        }
+        if (primary.m_epoch != m_epoch)
+            return primary.m_epoch == invalidEpoch ? "MEGA empty"_s : "MEGA something else, stale"_s;
+        return "MEGA evicted or never there"_s;
+    }
+
     void bumpEpoch()
     {
         ++m_epoch;

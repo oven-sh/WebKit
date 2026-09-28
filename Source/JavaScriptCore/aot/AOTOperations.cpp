@@ -47,15 +47,41 @@ void noteSlowPathSlow(ASCIILiteral operation, JSValue base, UniquedStringImpl* n
     if (name)
         key.print(" .", String(name));
     key.print(" ", detail);
+    // TEMPORARY-SLOT-STATS: what kind of structure, and who asks.
+    static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> callers;
+    if (base && base.isCell()) {
+        Structure* structure = base.asCell()->structure();
+        key.print(structure->isUncacheableDictionary() ? " [uncacheable dictionary]" : structure->isDictionary() ? " [dictionary]" : "", structure->propertyAccessesAreCacheable() ? "" : " [not cacheable]", " ", structure->classInfoForCells()->className);
+        VM& vm = base.asCell()->vm();
+        if (CallFrame* frame = vm.topCallFrame; frame && frame->isAOTFrame()) {
+            if (auto* executable = dataOf(frame)->executable) {
+                StringPrintStream caller;
+                caller.print(operation, " ", detail, " IN ");
+                if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
+                    caller.print(function->ecmaNameWithoutGC());
+                caller.print(" ", executable->sourceURL(), ":", executable->firstLine());
+                callers.get().add(caller.toString(), 0).iterator->value++;
+            }
+        }
+    }
     counts.get().add(key.toString(), 0).iterator->value++;
     if (++total % Options::aotReportSlowPaths())
         return;
+    {
+        Vector<std::pair<String, unsigned>> sorted;
+        for (auto& entry : callers.get())
+            sorted.append({ entry.key, entry.value });
+        std::ranges::sort(sorted, [](auto& a, auto& b) { return a.second > b.second; });
+        dataLogLn("AOT slow path callers, of ", total, ":");
+        for (unsigned i = 0; i < std::min<size_t>(sorted.size(), 60); ++i)
+            dataLogLn("    ", sorted[i].second, " ", sorted[i].first);
+    }
     Vector<std::pair<String, unsigned>> sorted;
     for (auto& entry : counts.get())
         sorted.append({ entry.key, entry.value });
     std::ranges::sort(sorted, [](auto& a, auto& b) { return a.second > b.second; });
     dataLogLn("AOT slow paths, of ", total, ":");
-    for (unsigned i = 0; i < std::min<size_t>(sorted.size(), 45); ++i)
+    for (unsigned i = 0; i < std::min<size_t>(sorted.size(), 90); ++i)
         dataLogLn("    ", sorted[i].second, " ", sorted[i].first);
 }
 
@@ -207,7 +233,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
-    noteSlowPath("get_by_val"_s, base, nullptr, property.isInt32() ? "int32"_s : property.isNumber() ? "double"_s : property.isString() ? "string"_s : property.isSymbol() ? "symbol"_s : "other"_s);
+    noteSlowPath("get_by_val"_s, base, property.isString() && !asString(property)->isRope() && asString(property)->tryGetValueImpl() && asString(property)->tryGetValueImpl()->isAtom() ? static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(asString(property)->tryGetValueImpl())) : nullptr, property.isInt32() ? "int32"_s : property.isNumber() ? "double"_s : property.isString() ? "string"_s : property.isSymbol() ? "symbol"_s : "other"_s);
 
     if (base.isObject() && property.isString()) [[likely]] {
         // A name nobody has made an atom of is not the name of any ordinary property. One that is gets to be found faster
@@ -218,6 +244,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* 
             PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
             OPERATION_RETURN(scope, JSValue::encode(getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, existingAtomString.data), slot)));
         }
+    }
+
+    if (base.isObject() && property.isSymbol()) {
+        PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
+        OPERATION_RETURN(scope, JSValue::encode(getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(asSymbol(property)->privateName()), slot)));
     }
 
     if (std::optional<uint32_t> index = property.tryGetAsUint32Index()) {

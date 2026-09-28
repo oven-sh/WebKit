@@ -547,12 +547,15 @@ static void checkTypedArrayAccess(CCallHelpers& jit, CCallHelpers::JumpList& slo
     jit.loadPtr(Address(A0, JSArrayBufferView::offsetOfVector()), T11);
 }
 
+template<typename StoreCallSite> static void getFromMegamorphicCache(CCallHelpers&, GPRReg uid, CCallHelpers::JumpList& notFound, const StoreCallSite&);
+
 static void generateGetByVal(CCallHelpers& jit)
 {
     constexpr FPRReg number = FPRInfo::fpRegT0;
     CCallHelpers::JumpList slow;
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
-    slow.append(jit.branch64(CCallHelpers::Below, A1, T9));
+    Jump notInt32 = jit.branch64(CCallHelpers::Below, A1, T9);
+    CCallHelpers::Label haveIndex = jit.label();
     slow.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
     jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T13);
     jit.and32(TrustedImm32(IndexingShapeMask), T13);
@@ -638,6 +641,31 @@ static void generateGetByVal(CCallHelpers& jit)
         jit.purifyNaN(number, number);
         boxDoubleAndReturn();
     });
+
+    // A double that is an integer names the same property as the integer. (So does minus zero.)
+    notInt32.link(&jit);
+    Jump notNumber = jit.branchTest64(CCallHelpers::Zero, A1, T9);
+    jit.add64(T9, A1, T11);
+    jit.move64ToDouble(T11, number);
+    jit.branchConvertDoubleToInt32(number, T11, slow, FPRInfo::fpRegT1, false);
+    jit.or64(T9, T11, A1);
+    jit.jump().linkTo(haveIndex, &jit);
+
+    // A name: a string that is an atom, or a symbol.
+    notNumber.link(&jit);
+    slow.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    slow.append(jit.branchIfNotObject(A0));
+    slow.append(jit.branchIfNotCell(A1, DoNotHaveTagRegisters));
+    Jump isSymbol = jit.branchIfSymbol(A1);
+    slow.append(jit.branchIfNotString(A1));
+    jit.loadPtr(Address(A1, JSString::offsetOfValue()), A2);
+    slow.append(jit.branchIfRopeStringImpl(A2));
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    Jump haveName = jit.jump();
+    isSymbol.link(&jit);
+    jit.loadPtr(Address(A1, Symbol::offsetOfSymbolImpl()), A2);
+    haveName.link(&jit);
+    getFromMegamorphicCache(jit, A2, slow, [&] { storeCallSite(jit, T10); });
 
     slow.link(&jit);
     callBinaryOperation(jit, Entry::operationAOTGetByVal);
@@ -800,6 +828,52 @@ static Address slotOfFrameBeingMade(CallFrameSlot slot, ptrdiff_t offset = 0)
     return Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
 }
 
+// A0 = the base, T12 = a GetterSetter. If its getter is a function that has code it is called from here, and returns to whoever
+// called the stub, which has room for its frame and puts the stack pointer back afterwards. Leaves A0 and A1 alone if not.
+template<typename StoreCallSite>
+static void callGetter(CCallHelpers& jit, CCallHelpers::JumpList& cannot, const StoreCallSite& storeCallSite)
+{
+    jit.loadPtr(Address(T12, GetterSetter::offsetOfGetter()), T12);
+    cannot.append(jit.branchIfNotType(T12, JSFunctionType));
+    jit.loadPtr(Address(T12, JSFunction::offsetOfExecutableOrRareData()), T11);
+    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
+    jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
+    hasExecutable.link(&jit);
+    jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), T13);
+    cannot.append(jit.branchTestPtr(CCallHelpers::Zero, T13));
+    Jump isNative = jit.branchIfNotType(T11, FunctionExecutableType);
+    jit.loadPtr(Address(T11, FunctionExecutable::offsetOfCodeBlockFor(CodeSpecializationKind::CodeForCall)), T11);
+    jit.storePtr(T11, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
+    isNative.link(&jit);
+    jit.store64(A0, slotOfFrameBeingMade(CallFrameSlot::thisArgument));
+    jit.store64(T12, slotOfFrameBeingMade(CallFrameSlot::callee));
+    jit.store32(TrustedImm32(1), slotOfFrameBeingMade(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
+    storeCallSite(); // May use T9 to T11.
+    jit.move(T12, BaselineJITRegisters::Call::calleeGPR);
+    jit.farJump(T13, JSEntryPtrTag);
+}
+
+// A0 = the base, an object. uid: the name, an atom or the name of a symbol. What the VM's megamorphic cache has for that is what the
+// stub returns; if it is a getter, what that returns (see callGetter()). Leaves A0, A1, T10 and uid alone if it has nothing.
+template<typename StoreCallSite>
+static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers::JumpList& notFound, const StoreCallSite& storeCallSite)
+{
+    constexpr GPRReg cache = GPRInfo::argumentGPR7;
+    constexpr GPRReg result = GPRInfo::argumentGPR6;
+    ASSERT(uid != cache && uid != result && uid != A0 && uid != A1);
+    loadInstance(jit, cache);
+    jit.loadPtr(Address(cache, Instance::offsetOfRuntimeTable()), cache);
+    jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
+    notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
+    CCallHelpers::JumpList notValue = jit.loadMegamorphicProperty(CCallHelpers::MegamorphicCacheLocation(cache), A0, uid, nullptr, result, T11, T12, T13);
+    jit.move(result, A0);
+    jit.ret();
+    notValue.link(&jit);
+    notFound.append(jit.loadMegamorphicGetterSetter(CCallHelpers::MegamorphicCacheLocation(cache), A0, uid, nullptr, result, T11, T12, T13));
+    jit.move(result, T12);
+    callGetter(jit, notFound, storeCallSite);
+}
+
 static void generateGetByIdWith(CCallHelpers&, Entry);
 static void generateGetById(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetById); }
 static void generateGetByIdWellKnown(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetByIdWellKnown); }
@@ -819,35 +893,38 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesEight), A0);
     jit.ret();
 
-    // What is there is a GetterSetter. If its getter is a function that has code it is called from here, and returns to whoever
-    // called the stub, which has room for its frame and puts the stack pointer back afterwards.
+    auto storeCallSiteOfSlot = [&] {
+        loadInstanceAndData(jit, T11, T9);
+        siteOfSlot(jit, T9, A1, T10);
+        jit.loadPtr(Address(T9, Data::offsetOfSites()), T11);
+        jit.load32(CCallHelpers::BaseIndex(T11, T10, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Site, callSiteBits)), T11);
+        storeCallSite(jit, T11);
+    };
     isGetter.link(&jit);
     locateCachedProperty(jit, T12, T11, T13);
     jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesEight), T12);
-    jit.loadPtr(Address(T12, GetterSetter::offsetOfGetter()), T12);
-    miss.append(jit.branchIfNotType(T12, JSFunctionType));
-    jit.loadPtr(Address(T12, JSFunction::offsetOfExecutableOrRareData()), T11);
-    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
-    jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
-    hasExecutable.link(&jit);
-    jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), T13);
-    miss.append(jit.branchTestPtr(CCallHelpers::Zero, T13));
-    Jump isNative = jit.branchIfNotType(T11, FunctionExecutableType);
-    jit.loadPtr(Address(T11, FunctionExecutable::offsetOfCodeBlockFor(CodeSpecializationKind::CodeForCall)), T11);
-    jit.storePtr(T11, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
-    isNative.link(&jit);
-    jit.store64(A0, slotOfFrameBeingMade(CallFrameSlot::thisArgument));
-    jit.store64(T12, slotOfFrameBeingMade(CallFrameSlot::callee));
-    jit.store32(TrustedImm32(1), slotOfFrameBeingMade(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
-    loadInstanceAndData(jit, T11, T9);
-    siteOfSlot(jit, T9, A1, T10);
-    jit.loadPtr(Address(T9, Data::offsetOfSites()), T11);
-    jit.load32(CCallHelpers::BaseIndex(T11, T10, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Site, callSiteBits)), T11);
-    storeCallSite(jit, T11);
-    jit.move(T12, BaselineJITRegisters::Call::calleeGPR);
-    jit.farJump(T13, JSEntryPtrTag);
+    callGetter(jit, miss, storeCallSiteOfSlot);
 
     miss.link(&jit);
+    if (operation == Entry::operationAOTGetById) {
+        // A site that has found that its slot is of no use to it, because it sees many structures. (Any other has to get to its
+        // operation, which fills the slot: what another site has left in the megamorphic cache would keep it from ever having one.)
+        CCallHelpers::JumpList notFound;
+        notFound.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notFound.append(jit.branchIfNotObject(A0));
+        jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), T11);
+        jit.and32(TrustedImm32(Slot::attemptsMask), T11);
+        notFound.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(Slot::attemptsMask)));
+        loadInstanceAndData(jit, T9, T10);
+        siteOfSlot(jit, T10, A1, T13);
+        jit.loadPtr(Address(T10, Data::offsetOfSites()), T11);
+        jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Site, identifierAndExtra)), T12);
+        jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12);
+        jit.loadPtr(Address(T10, Data::offsetOfIdentifiers()), T11);
+        jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A2);
+        getFromMegamorphicCache(jit, A2, notFound, storeCallSiteOfSlot);
+        notFound.link(&jit);
+    }
     missAtSite(jit, operation, 1, Returns::Value);
 }
 

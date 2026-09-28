@@ -282,7 +282,7 @@ LType Lowering::operationTuple(LType type)
 
 PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers)
 {
-    bool callsJS = stub == Stub::GetById || stub == Stub::GetByIdWellKnown || stub == Stub::GetLength;
+    bool callsJS = stub == Stub::GetById || stub == Stub::GetByIdWellKnown || stub == Stub::GetLength || stub == Stub::GetByVal;
     if (callsJS) {
         // These call getters, from the frame of whoever called them.
         m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((CallFrame::headerSizeInRegisters + 1) * sizeof(EncodedJSValue)));
