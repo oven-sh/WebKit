@@ -72,7 +72,9 @@ Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValu
 
 PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)
 {
-    auto* realm = new (NotNull, allocateCell<PyRealm>(vm)) PyRealm(vm, createStructure(vm, globalObject, jsNull()));
+    // Before there is a cell for it: making a Structure can set off a collection, which is not to come upon a cell that nothing has been put in.
+    Structure* structure = createStructure(vm, globalObject, jsNull());
+    auto* realm = new (NotNull, allocateCell<PyRealm>(vm)) PyRealm(vm, structure);
     realm->finishCreation(vm);
     return realm;
 }
@@ -117,6 +119,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeBuiltinFunctions(globalObject, builtins);
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
+    Python::initializeAnnotations(globalObject);
     Python::initializeTracebackTypes(globalObject);
     Python::initializeJavaScriptTypes(globalObject);
     static constexpr BuiltinType publicTypes[] = {

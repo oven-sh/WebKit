@@ -93,7 +93,9 @@ Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject,
 PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, PyType* base, Layout layout, unsigned flags)
 {
     JSValue prototype = base ? JSValue(base) : JSValue(globalObject->objectPrototype());
-    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, prototype));
+    // Before there is a cell for it: making a Structure can set off a collection, which is not to come upon a cell that nothing has been put in.
+    Structure* structure = createStructure(vm, globalObject, prototype);
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
     type->m_name.set(vm, type, jsString(vm, String(name)));
     type->m_base.setMayBeNull(vm, type, base);
@@ -194,7 +196,9 @@ Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject,
 
 PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyType* base, PyTuple* mro)
 {
-    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, (bases->length() ? asType(bases->at(0)) : base)->prototypeObject()));
+    // Before there is a cell for it: making a Structure can set off a collection, which is not to come upon a cell that nothing has been put in.
+    Structure* structure = createStructure(vm, globalObject, (bases->length() ? asType(bases->at(0)) : base)->prototypeObject());
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
     type->m_metatype.set(vm, type, metatype);
     type->m_name.set(vm, type, name);
@@ -242,7 +246,9 @@ void PyType::setJavaScriptClass(VM& vm, JSObject* constructor, JSObject* prototy
 
 PyType* PyType::createForJavaScript(VM& vm, JSGlobalObject* globalObject, JSObject* constructor, JSObject* prototype, PyType* base)
 {
-    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, jsNull()));
+    // Before there is a cell for it: making a Structure can set off a collection, which is not to come upon a cell that nothing has been put in.
+    Structure* structure = createStructure(vm, globalObject, jsNull());
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
     type->m_javaScriptConstructor.set(vm, type, constructor);
     type->m_javaScriptPrototype.set(vm, type, prototype);
