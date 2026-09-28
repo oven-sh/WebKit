@@ -636,6 +636,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     while (info.sites.size() < info.numSlots)
         info.sites.append(Site { });
     info.knownCallees = WTF::move(graph.knownCallees);
+    info.siteConstants = WTF::move(graph.siteConstants);
+    while (info.siteConstants.size() < info.numSlots)
+        info.siteConstants.append(0);
+    info.selectors = WTF::move(graph.selectors);
+    info.shapes = WTF::move(graph.shapes);
     info.bytecodeHash = hashOfBytecode(unlinkedCodeBlock);
     info.usesStaticImports = graph.usesStaticImports;
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();

@@ -105,6 +105,7 @@ struct Slot;
     v(operationAOTPrepareTailCall) \
     v(operationAOTLinkCall) \
     v(operationAOTLinkFunction) \
+    v(operationAOTNoteFilled) \
     v(operationAOTCallDirectEval) \
 
 // Property names that instructions imply rather than name, so that they are not among the function's identifiers.
@@ -219,6 +220,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTSetupVarargsFrame, CallFrame*, (JSGlobalOb
 JSC_DECLARE_JIT_OPERATION(operationAOTPrepareTailCall, size_t, (JSGlobalObject*, EncodedJSValue callee));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject*, EncodedJSValue callee, uint32_t knownCallee, Slot*, uint32_t isConstruct));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* calleeFrame, uint32_t index, uint32_t distanceOfEnvironment));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame* calleeFrame, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 
 } } // namespace JSC::AOT

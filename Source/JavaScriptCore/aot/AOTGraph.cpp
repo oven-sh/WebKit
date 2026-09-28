@@ -566,6 +566,51 @@ void Graph::elideReadsOfCalleesNotPassed()
     }
 }
 
+void Graph::noteSelectorOfSite(unsigned slot, UniquedStringImpl* name)
+{
+    size_t index = selectors.find(name);
+    if (index == notFound) {
+        index = selectors.size();
+        selectors.append(name);
+    }
+    while (siteConstants.size() <= slot)
+        siteConstants.append(0);
+    siteConstants[slot] = index + 1;
+}
+
+void Graph::noteShapeOfSite(unsigned slot, KnownShape&& shape)
+{
+    while (siteConstants.size() <= slot)
+        siteConstants.append(0);
+    shapes.append(WTF::move(shape));
+    siteConstants[slot] = shapes.size() | CompiledFunctionInfo::siteConstantIsShape;
+}
+
+std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
+{
+    unsigned count = node->numberOfLiteralProperties;
+    if (count < 2 || count > KnownShape::maxProperties)
+        return std::nullopt;
+    KnownShape shape;
+    shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
+    // As operationAOTNewObjectLiteral() finds them.
+    auto& instructions = m_codeBlock->instructions();
+    VirtualRegister object = node->as<OpNewObject>().m_dst;
+    for (unsigned offset = node->bytecodeIndex.offset() + node->instruction->size(); shape.names.size() < count; offset += instructions.at(offset)->size()) {
+        auto next = instructions.at(offset);
+        if (next->opcodeID() != op_put_by_id)
+            continue;
+        auto bytecode = next->as<OpPutById>();
+        if (bytecode.m_base != object)
+            continue;
+        UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_property).impl();
+        if (shape.names.contains(name) || name->isSymbol())
+            return std::nullopt;
+        shape.names.append(name);
+    }
+    return shape;
+}
+
 unsigned Graph::indexOfKnownCallee(const ImageKey& key)
 {
     for (unsigned i = 0; i < knownCallees.size(); ++i) {

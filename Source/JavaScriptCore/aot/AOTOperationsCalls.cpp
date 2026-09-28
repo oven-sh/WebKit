@@ -325,6 +325,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* c
     return instance->data[index]->code->directEntry();
 }
 
+// For a stub that is about to fill a slot: didFillSlot(), but for the epoch.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
+{
+    if (!data->hasBeenFilledSinceLastCollection)
+        data->noteFilled();
+}
+
 // The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Data* data))
 {

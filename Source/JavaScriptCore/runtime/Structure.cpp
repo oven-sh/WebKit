@@ -1155,6 +1155,12 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     Structure* structure = this;
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    if (result.isNewEntry && m_knownShape) {
+        result.iterator->value = WatchpointSet::create(IsInvalidated);
+        return result.iterator->value.get();
+    }
+#endif
     if (result.isNewEntry) {
         result.iterator->value = WatchpointSet::create(IsWatched);
         rareData->incrementActiveReplacementWatchpointSet();
@@ -1162,6 +1168,26 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     }
     return result.iterator->value.get();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Structure::setKnownShape(VM& vm, uint16_t shape)
+{
+    if (m_knownShape == shape)
+        return;
+    RELEASE_ASSERT(!m_knownShape);
+    m_knownShape = shape;
+    if (!isWatchingReplacement())
+        return;
+    Vector<PropertyOffset, 8> offsets;
+    {
+        ConcurrentJSLocker locker(m_lock);
+        for (auto& entry : rareData()->m_replacementWatchpointSets)
+            offsets.append(entry.key);
+    }
+    for (PropertyOffset offset : offsets)
+        firePropertyReplacementWatchpointSet(vm, offset, "Code stores to it without asking");
+}
+#endif
 
 WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyOffset offset, const char* reason)
 {

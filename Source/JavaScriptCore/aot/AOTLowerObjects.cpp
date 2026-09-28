@@ -109,6 +109,8 @@ bool Lowering::tryLowerAllocation(Node* node)
             for (unsigned i = 0; i < count; ++i)
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
             unsigned slot = allocateSlots(2);
+            if (auto shape = m_graph.shapeOfLiteral(node))
+                m_graph.noteShapeOfSite(slot, WTF::move(*shape));
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
@@ -137,6 +139,15 @@ bool Lowering::tryLowerAllocation(Node* node)
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
             LValue callee = lowCell(node->use(bytecode.m_callee));
             unsigned slot = allocateSlots(3);
+            {
+                NewObjectPlan plan = NewObjectPlan::forCreateThis(m_graph.codeBlock()->instructions(), node->bytecodeIndex.offset());
+                RELEASE_ASSERT(plan.properties.size() == count);
+                KnownShape shape;
+                for (auto& property : plan.properties)
+                    shape.names.append(m_graph.codeBlock()->identifier(property.identifier).impl());
+                if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
+                    m_graph.noteShapeOfSite(slot, WTF::move(shape));
+            }
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             auto orElse = [&](LValue condition) {

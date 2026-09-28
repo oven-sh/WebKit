@@ -1157,6 +1157,8 @@ TypeCountSet Heap::objectTypeCounts()
         });
     // TEMPORARY-FUNCTION-STATS
     if (Options::aotReportStats()) {
+        for (auto* instance : vm().m_aotInstances)
+            instance->dumpSlotStatistics();
         uint64_t functions[32][3][2] = { }, executables[32][2] = { }, bytesBySize[64] = { }, structures[4] = { };
         UncheckedKeyHashMap<const ClassInfo*, std::pair<uint64_t, uint64_t>> byClass;
         m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {

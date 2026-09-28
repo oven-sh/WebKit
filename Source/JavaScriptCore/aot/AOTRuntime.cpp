@@ -156,6 +156,7 @@ struct Instance::Collections {
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
+    UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
 };
@@ -188,6 +189,13 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections = new Collections;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
+    instance->structureIDBase = JSC::structureIDBase();
+    if (Image* image = Image::withShapes()) {
+        instance->dispatch = image->at<uint32_t>(image->header().dispatchOffset);
+        instance->rowsOfSelectors = image->at<uint32_t>(image->header().rowsOfSelectorsOffset);
+        instance->objectPrototype = globalObject->objectPrototype();
+        instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
+    }
     globalObject->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
     if (environmentsSize) {
@@ -207,6 +215,7 @@ void Instance::destroy(Instance* instance)
     size_t environmentsSize = instance->collections->environmentsSize;
     size_t size = instance->collections->sizeFromInstance;
     delete instance->collections;
+    fastFree(instance->selectorsOnObjectPrototype);
     if (environmentsSize)
         StaticHeap::freeBlock(reinterpret_cast<char*>(instance) - environmentsSize, environmentsSize + size);
     else
@@ -334,6 +343,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->code = &code;
     data->identifiers = unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
+    data->hasSiteConstants = code.isFromImage();
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
@@ -526,6 +536,44 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
         if (structure)
             visitor.appendUnbarriered(structure);
     }
+    for (Structure* structure : collections->knownShapes.values())
+        visitor.appendUnbarriered(structure);
+}
+
+// TEMPORARY-SLOT-STATS
+void Instance::dumpSlotStatistics()
+{
+    uint64_t total[numOpcodeIDs] = { }, filled[numOpcodeIDs] = { }, withKnownShape[numOpcodeIDs] = { }, withPointer[numOpcodeIDs] = { };
+    uint64_t functions = 0, functionsWithNothingFilled = 0, slots = 0;
+    for (Data* data : collections->all) {
+        functions++;
+        slots += data->numSlots;
+        bool any = false;
+        OpcodeID last = op_nop;
+        auto& instructions = data->unlinkedCodeBlock->instructions();
+        for (unsigned i = 0; i < data->numSlots; ++i) {
+            uint32_t bits = data->sites[i].callSiteBits;
+            OpcodeID opcode = bits || !i ? instructions.at(CallSiteIndex(bits).bytecodeIndex().offset())->opcodeID() : last;
+            last = opcode;
+            total[opcode]++;
+            Slot& slot = data->slots[i];
+            auto* words = reinterpret_cast<uint64_t*>(&slot);
+            if (!words[0] && !words[1])
+                continue;
+            any = true;
+            filled[opcode]++;
+            if ((opcode == op_get_by_id || opcode == op_put_by_id) && slot.structureID && slot.structureID.decode()->knownShape())
+                withKnownShape[opcode]++;
+            if (slot.hasPointer())
+                withPointer[opcode]++;
+        }
+        functionsWithNothingFilled += !any;
+    }
+    dataLogLn("SLOTS functions=", functions, " ofWhichNothingFilled=", functionsWithNothingFilled, " slots=", slots, " bytes=", slots * sizeof(Slot), " knownShapesMade=", collections->knownShapes.size(), " otherLiteralShapes=", collections->shapes.size());
+    for (unsigned i = 0; i < numOpcodeIDs; ++i) {
+        if (total[i])
+            dataLogLn("SLOTS ", opcodeNames[i], " total=", total[i], " filled=", filled[i], " knownShape=", withKnownShape[i], " withPointer=", withPointer[i]);
+    }
 }
 
 // TEMPORARY-SHAPE-STATS
@@ -540,6 +588,48 @@ void noteKnownShape(Structure* structure, uint8_t kind)
         knownShapes().add(structure, kind);
 }
 uint8_t kindOfKnownShape(Structure* structure) { return knownShapes().get(structure); }
+
+Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names)
+{
+    if (auto it = collections->knownShapes.find(shape); it != collections->knownShapes.end())
+        return it->value;
+    Image* image = Image::withShapes();
+    RELEASE_ASSERT(shape && shape < image->header().numberOfShapes);
+    const ImageShape& description = image->at<ImageShape>(image->header().shapesOffset)[shape];
+    RELEASE_ASSERT(names.size() == description.numberOfProperties);
+    DeferGC deferGC(*vm);
+    Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), description.inlineCapacity);
+    RELEASE_ASSERT(empty->inlineCapacity() == description.inlineCapacity);
+    Structure* result = Structure::createWithProperties(*vm, empty, names);
+    RELEASE_ASSERT(result);
+    result->setKnownShape(*vm, safeCast<uint16_t>(shape));
+    collections->knownShapes.add(shape, result);
+    noteKnownShape(result, 1);
+    return result;
+}
+
+void Instance::lookAtObjectPrototype()
+{
+    if (!objectPrototype)
+        return;
+    Structure* structure = objectPrototype->structure();
+    if (structure->id().bits() == structureIDOfObjectPrototype)
+        return;
+    structureIDOfObjectPrototype = 0;
+    // (One that is a dictionary gets more properties and stays the same Structure.)
+    if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->typeInfo().overridesGetOwnPropertySlot()
+        || structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence() || !structure->storedPrototype().isNull()
+        || (structure->typeInfo().hasStaticPropertyTable() && !structure->staticPropertiesReified()))
+        return;
+    Image* image = Image::withShapes();
+    memset(selectorsOnObjectPrototype, 0, image->header().numberOfSelectors / 8 + 1);
+    structure->forEachProperty(*vm, [&](const PropertyTableEntry& entry) {
+        if (uint32_t selector = image->selectorNamed(*entry.key()))
+            selectorsOnObjectPrototype[selector / 8] |= 1 << (selector % 8);
+        return true;
+    });
+    structureIDOfObjectPrototype = structure->id().bits();
+}
 
 Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const> names)
 {

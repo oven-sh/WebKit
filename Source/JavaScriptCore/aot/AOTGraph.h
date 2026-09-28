@@ -412,6 +412,14 @@ public:
     Vector<Type> homedTypes; // Indexed by registerIndex(): everything that is ever stored to a homed register.
     unsigned numICSlots { 0 };
     Vector<Site> sites; // Of the slots that have one; the rest are past the end, or blank.
+    // CompiledFunctionInfo's.
+    Vector<uint32_t> siteConstants;
+    Vector<UniquedStringImpl*> selectors;
+    Vector<KnownShape> shapes;
+    void noteSelectorOfSite(unsigned slot, UniquedStringImpl*);
+    void noteShapeOfSite(unsigned slot, KnownShape&&);
+    // An op_new_object that is made whole (Node::numberOfLiteralProperties): what with. Nothing, if it is not a shape to be known by.
+    std::optional<KnownShape> shapeOfLiteral(const Node*) const;
     StubCalls stubCalls;
     HeaderReferences headerReferences;
     B3::Air::StackSlot* calleeSlot { nullptr }; // Where the object the function was called as is kept: see CodeHeader::calleeSlot.

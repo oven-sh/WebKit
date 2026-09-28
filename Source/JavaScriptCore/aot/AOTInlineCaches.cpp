@@ -395,7 +395,6 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
 {
     if (!allocator || (Options::aotDisableFastPaths() & 2048))
         return;
-    noteKnownShape(last, 2);
     cache[0].clear();
     fill(vm, data, &cache[2], first, 0, nullptr);
     fillAllocationCache(vm, data, cache, last, allocator, last->inlineCapacity(), callee);

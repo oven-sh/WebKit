@@ -73,6 +73,8 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
             stub = Stub::GetByIdWellKnown;
     }
     unsigned slot = stub ? sharedSite(node, identifier) : allocateSlot();
+    if (stub == Stub::GetById)
+        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(identifier).impl());
     auto throughStub = [&]() -> LValue {
         return callStub(*stub, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
@@ -121,7 +123,9 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     if (isCompact() && Site::fits(bytecode.m_property, flags)) {
-        callStub(Stub::PutById, Void, { { base, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(sharedSite(node, bytecode.m_property, flags)), GPRInfo::argumentGPR2 } }, { });
+        unsigned slot = sharedSite(node, bytecode.m_property, flags);
+        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(bytecode.m_property).impl());
+        callStub(Stub::PutById, Void, { { base, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
         return;
     }
     unsigned slot = allocateSlot();

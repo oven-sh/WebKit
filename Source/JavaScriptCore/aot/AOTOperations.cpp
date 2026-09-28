@@ -244,6 +244,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (slot.isUnset() && structureBefore && structureBefore->knownShape())
+        callerData(callFrame)->instance->lookAtObjectPrototype();
     ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
     if (Options::aotReportSlowPaths()) [[unlikely]]

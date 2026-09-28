@@ -47,7 +47,39 @@ struct ImageHeader {
     uint32_t environmentsSize; // See Instance: how much there is below it.
     uint32_t environmentsOffset; // ImageEnvironment, by which module of the graph of modules that the program was linked as.
     uint32_t numberOfEnvironments;
+    // Shapes and selectors are numbered from one.
+    uint32_t shapesOffset; // ImageShape, by number.
+    uint32_t numberOfShapes; // One more than the last.
+    uint32_t namesOfShapesOffset; // uint32_t: selectors.
+    uint32_t selectorsOffset; // ImageSelector, by number.
+    uint32_t numberOfSelectors;
+    uint32_t rowsOfSelectorsOffset; // uint32_t, by number: the entry of the dispatch table for a shape is at this plus the number of the shape.
+    uint32_t textOfSelectorsOffset;
+    uint32_t selectorsInOrderOffset; // uint32_t, numberOfSelectors - 1 of them: by length, and then by what they say. The 8 bit ones first.
+    uint32_t dispatchOffset; // uint32_t: ImageDispatchEntry.
+    uint32_t dispatchSize; // In entries.
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
+};
+
+struct ImageShape {
+    uint32_t names; // Where its names start, among the names of shapes.
+    uint16_t numberOfProperties;
+    uint16_t inlineCapacity;
+};
+
+// A name that properties are read by.
+struct ImageSelector {
+    uint32_t text; // Where it is, in bytes, in the text of selectors.
+    uint32_t length : 31; // In characters.
+    uint32_t is8Bit : 1;
+};
+
+// One table for the whole program says where every property of every shape is. The rows, one for each selector, are laid over one
+// another wherever the shapes that have the one do not have the other, so an entry says whose it is. If it is somebody else's, an
+// object of that shape has no property of that name of its own.
+struct ImageDispatchEntry {
+    static constexpr unsigned locationBits = 12; // As AOT::locationOfProperty(): in words, from the object or, if negative, its butterfly.
+    static uint32_t encode(uint32_t selector, int32_t location) { return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1)); }
 };
 
 // Where a module's JSModuleEnvironment is, in every realm that runs the module's code from the image.
@@ -108,6 +140,11 @@ public:
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
     static const void* addressOfStub(Stub); // In any image. Null if there is none.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
+
+    static Image* withShapes(); // The image, if it has any.
+    template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
+    AtomString nameOfSelector(uint32_t) const;
+    uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + function.codeOffset; }
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_data.data()); }

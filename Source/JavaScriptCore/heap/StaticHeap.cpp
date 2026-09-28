@@ -35,7 +35,6 @@ bool StaticHeap::s_isBuilding = false;
 VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
-
 static constexpr size_t pageSizeOfImage = 16 * KB;
 
 struct StaticHeapModule {

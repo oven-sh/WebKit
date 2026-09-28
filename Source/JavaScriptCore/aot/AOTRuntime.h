@@ -261,11 +261,32 @@ struct Instance {
     // the same names. They stay.
     Structure* structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const>);
 
+    // The Structure of a shape that the image numbers (ImageShape), which says so (Structure::knownShape()). It is made when it is
+    // first asked for, and stays. names: its properties', which whoever asks has at hand.
+    Structure* structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names);
+    static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
+    // What an object of a known shape does not have itself, it does not have at all if it inherits from Object.prototype alone and
+    // that does not have it either. This looks at what that has now, if it is not what it had when this last looked.
+    void lookAtObjectPrototype();
+    static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
+    static constexpr ptrdiff_t offsetOfStructureIDOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, structureIDOfObjectPrototype); }
+    static constexpr ptrdiff_t offsetOfSelectorsOnObjectPrototype() { return OBJECT_OFFSETOF(Instance, selectorsOnObjectPrototype); }
+    static constexpr ptrdiff_t offsetOfDispatch() { return OBJECT_OFFSETOF(Instance, dispatch); }
+    static constexpr ptrdiff_t offsetOfRowsOfSelectors() { return OBJECT_OFFSETOF(Instance, rowsOfSelectors); }
+
+    JS_EXPORT_PRIVATE void dumpSlotStatistics(); // TEMPORARY-SLOT-STATS
+
     void** runtimeTable;
     JSGlobalObject* globalObject;
     VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.
     struct Collections;
     Collections* collections; // Of what there is in data.
+    uintptr_t structureIDBase; // What a StructureID is added to.
+    const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
+    const uint32_t* rowsOfSelectors;
+    JSObject* objectPrototype; // The realm's, which keeps it.
+    uint8_t* selectorsOnObjectPrototype; // A bit for each selector, as of when its Structure was the one below.
+    uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
     Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
 };
 
@@ -312,6 +333,10 @@ struct Data {
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(Data, sites); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
+    static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(Data, numSlots); }
+    static constexpr ptrdiff_t offsetOfHasSiteConstants() { return OBJECT_OFFSETOF(Data, hasSiteConstants); }
+    static constexpr ptrdiff_t offsetOfHasBeenFilledSinceLastCollection() { return OBJECT_OFFSETOF(Data, hasBeenFilledSinceLastCollection); }
+    uint32_t siteConstantOf(const Slot* slot) const { return hasSiteConstants ? reinterpret_cast<const uint32_t*>(sites + numSlots)[slot - slots] : 0; }
 
     CodeBlock* codeBlock; // See ensureCodeBlock().
     Instance* instance;
@@ -326,6 +351,7 @@ struct Data {
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
     bool ownsConstants; // Some are of the realm: this is a copy of the unlinked code's with those filled in.
+    bool hasSiteConstants; // After the last of the sites: ImageFunction::siteConstants().
     unsigned indexAmongAll; // Where it is in the Instance's lists.
     unsigned indexAmongFilled; // If hasBeenFilledSinceLastCollection.
     // Another number whenever the cache of a property access has become one for something else, or for nothing. What code has found
@@ -351,6 +377,12 @@ struct CompiledFunctionInfo {
     Vector<StubCall> stubCalls; // For whoever moves the code.
     Vector<Site> sites; // numSlots of them.
     Vector<ImageKey> knownCallees; // The functions that calls were compiled for.
+    // For each slot, or for none: a number that whoever puts the program together replaces with one that means the same thing all
+    // over the program. Here it is one more than an index into selectors (at a property access) or shapes (where an object is made).
+    static constexpr uint32_t siteConstantIsShape = 1u << 31;
+    Vector<uint32_t> siteConstants;
+    Vector<UniquedStringImpl*> selectors;
+    Vector<KnownShape> shapes;
 };
 
 struct ImageCalleeSave {
@@ -363,7 +395,7 @@ struct ImageCatchEntrypoint {
 };
 
 // Followed by numberOfCalleeSaves ImageCalleeSave, then numberOfCatchEntrypoints ImageCatchEntrypoint, then numSlots Site, then
-// numberOfKnownCallees ImageKey.
+// numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero for none), then numberOfKnownCallees ImageKey.
 struct ImageFunction {
     uint64_t codeOffset; // In the code.
     uint32_t codeSize;
@@ -381,7 +413,8 @@ struct ImageFunction {
     const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }
     const Site* sites() const { return reinterpret_cast<const Site*>(catchEntrypoints() + numberOfCatchEntrypoints); }
-    const ImageKey* knownCallees() const { return reinterpret_cast<const ImageKey*>(sites() + numSlots); }
+    const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
+    const ImageKey* knownCallees() const { return reinterpret_cast<const ImageKey*>(siteConstants() + numSlots); }
 };
 
 class JITCode final : public JSC::JITCode {

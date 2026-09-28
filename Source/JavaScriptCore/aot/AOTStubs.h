@@ -197,6 +197,16 @@ struct Site {
     uint32_t callSiteBits { 0 };
 };
 
+// What an object is made with, where all of that is plain from the code that makes it: the names of its properties, in the order
+// they are added in. All objects made with the same are of one Structure, whose layout is known when the program is compiled.
+struct KnownShape {
+    unsigned inlineCapacity { 0 }; // Zero: whatever it is, it is enough for all of them.
+    Vector<UniquedStringImpl*, 8> names;
+
+    static constexpr unsigned maxProperties = 1000; // See ImageDispatchEntry.
+    static unsigned inlineCapacityFor(unsigned numberOfProperties);
+};
+
 // Which function: the module it is in (whatever the embedder numbers its modules by), where it starts in the module's source
 // and what it is there (OrderFunctionKey), and which of its two code blocks.
 struct ImageKey {

@@ -95,10 +95,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
     if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
         // All of it is known, so there is no call for a structure for every property on the way.
+        Data* data = callerData(callFrame);
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
             names.append(identifierOf(i).impl());
-        if (Structure* structure = callerData(callFrame)->instance->structureOfLiteral(profile.structure(), names.span())) {
+        uint32_t shape = data->siteConstantOf(cache);
+        if (Structure* structure = shape ? data->instance->structureOfKnownShape(shape, names.span()) : data->instance->structureOfLiteral(profile.structure(), names.span())) {
             DeferGC deferGC(vm);
             unsigned inlineCapacity = structure->inlineCapacity();
             Butterfly* butterfly = nullptr;
@@ -161,6 +163,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     }
 
     Structure* first = object->structure();
+    bool isLaidOutAsPlanned = true;
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& ident = codeBlock->identifier(plan.properties[i].identifier);
         PutPropertySlot slot(object, plan.properties[i].isStrict, putByIdContextOf(callFrame));
@@ -169,10 +172,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
         else
             object->methodTable()->put(object, globalObject, ident, JSValue::decode(values[i]), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
-        cacheable &= slot.isCacheablePut() && slot.base() == object && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(i);
+        isLaidOutAsPlanned &= slot.isCacheablePut() && slot.base() == object && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(i);
     }
+    cacheable &= isLaidOutAsPlanned;
 
     Structure* last = object->structure();
+    if (isLaidOutAsPlanned && !last->isDictionary() && count <= last->inlineCapacity()) {
+        if (uint32_t shape = callerData(callFrame)->siteConstantOf(cache)) {
+            last->setKnownShape(vm, safeCast<uint16_t>(shape));
+            noteKnownShape(last, 2);
+        }
+    }
     // TEMPORARY-SLOT-STATS
     noteSlowPath("create_this_with_properties"_s, object, nullptr, !constructor ? "not a function"_s : !constructor->canUseAllocationProfiles() ? "no allocation profile"_s : first->hasPolyProto() ? "poly proto"_s : !cacheable ? "a store was not a plain addition in order"_s : last->isDictionary() ? "dictionary"_s : count > last->inlineCapacity() ? "more than fits inline"_s : object->butterfly() ? "has a butterfly"_s : (first->mayBePrototype() || last->mayBePrototype()) ? "may be a prototype"_s : "goes on to try"_s);
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())

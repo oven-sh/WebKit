@@ -146,6 +146,7 @@ public:
             // The block after the one that is not used is for whoever asks first (StaticHeap::offsetOfFirstStructureBlock).
             void* memory = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(g_jscConfig.startOfStructureHeap) + 2 * MarkedBlock::blockSize);
             size_t size = g_jscConfig.sizeOfStructureHeap - 2 * MarkedBlock::blockSize;
+
             // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
             // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
             // for the 4 GB default is about 40 KB of pages touched before the first Structure exists.

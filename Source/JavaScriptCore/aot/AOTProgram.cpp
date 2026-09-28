@@ -214,6 +214,15 @@ void ModuleHints::prove()
     }
 }
 
+unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
+{
+    unsigned capacity = std::min(std::max(numberOfProperties, 1u), JSFinalObject::maxInlineCapacity);
+    // With whatever else there is room for in a cell of the size it takes.
+    size_t size = JSFinalObject::allocationSize(capacity);
+    capacity += (MarkedSpace::optimalSizeFor(size) - size) / sizeof(WriteBarrier<Unknown>);
+    return std::min(capacity, JSFinalObject::maxInlineCapacity);
+}
+
 bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
 {
     if (codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())

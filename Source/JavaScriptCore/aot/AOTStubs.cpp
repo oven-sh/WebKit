@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AOTThunks.h"
 #include "BaselineJITRegisters.h"
@@ -850,6 +851,77 @@ static Address slotOfFrameBeingMade(CallFrameSlot slot, ptrdiff_t offset = 0)
     return Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
 }
 
+// A0 = a cell. slot: that of a property access. If the cell is of a shape that the compiler knew of (Structure::knownShape()), what the
+// program's dispatch table has for that and the site's selector: where the property is, in words, from the start of the object or, if
+// negative, from its butterfly, in T12. Leaves the Instance in T9, the Data in T10, the selector where it is told to. Clobbers T11, T13.
+static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector, CCallHelpers::JumpList& notOfKnownShape, CCallHelpers::JumpList& notOwn)
+{
+    loadInstanceAndData(jit, T9, T10);
+    jit.load32(Address(A0, JSCell::structureIDOffset()), T11);
+    jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T12);
+    jit.addPtr(T12, T11);
+    jit.load16(Address(T11, Structure::offsetOfKnownShape()), T11);
+    notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, T11));
+    notOfKnownShape.append(jit.branchTest8(CCallHelpers::Zero, Address(T10, Data::offsetOfHasSiteConstants())));
+    siteOfSlot(jit, T10, slot, T13);
+    jit.loadPtr(Address(T10, Data::offsetOfSites()), T12);
+    jit.load32(Address(T10, Data::offsetOfNumSlots()), selector);
+    static_assert(sizeof(Site) == 8);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(T12, selector, CCallHelpers::TimesEight), T12);
+    jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), selector);
+    notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, selector));
+    jit.loadPtr(Address(T9, Instance::offsetOfRowsOfSelectors()), T12);
+    jit.load32(CCallHelpers::BaseIndex(T12, selector, CCallHelpers::TimesFour), T12);
+    jit.add32(T11, T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfDispatch()), T13);
+    jit.load32(CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesFour), T12);
+    jit.urshift32(T12, TrustedImm32(ImageDispatchEntry::locationBits), T13);
+    notOwn.append(jit.branch32(CCallHelpers::NotEqual, T13, selector));
+    jit.lshift64(TrustedImm32(64 - ImageDispatchEntry::locationBits), T12);
+    jit.rshift64(TrustedImm32(64 - ImageDispatchEntry::locationBits), T12);
+}
+
+// After that, for a property that is in the object itself. The site's slot may as well have it, if it has nothing: code that is in a
+// hurry looks there without coming to a stub. Leaves A0 to A2, T9, T10 and T12 as they are.
+static void fillEmptySlotFromDispatchTable(CCallHelpers& jit, GPRReg slot)
+{
+    constexpr GPRReg word = A4;
+    constexpr GPRReg scratch = A5;
+    jit.load64(slotWord(slot, 0), word);
+    Jump slotIsTaken = jit.branchTest32(CCallHelpers::NonZero, word);
+    Jump slotHasMore = jit.branchTestPtr(CCallHelpers::NonZero, slotWord(slot, 1));
+    // The collector wants to know which functions to look at.
+    Jump collectorKnows = jit.branchTest8(CCallHelpers::NonZero, Address(T10, Data::offsetOfHasBeenFilledSinceLastCollection()));
+    jit.subPtr(TrustedImm32(80), CCallHelpers::stackPointerRegister);
+    jit.storePair64(A0, A1, CCallHelpers::stackPointerRegister, TrustedImm32(0));
+    jit.storePair64(A2, A3, CCallHelpers::stackPointerRegister, TrustedImm32(16));
+    jit.storePair64(T9, T10, CCallHelpers::stackPointerRegister, TrustedImm32(32));
+    jit.storePair64(T12, word, CCallHelpers::stackPointerRegister, TrustedImm32(48));
+    jit.storePtr(CCallHelpers::linkRegister, Address(CCallHelpers::stackPointerRegister, 64));
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTNoteFilled) * sizeof(void*)), T9);
+    jit.move(T10, A0);
+    jit.call(T9, OperationPtrTag);
+    jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(0), A0, A1);
+    jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(16), A2, A3);
+    jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(32), T9, T10);
+    jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(48), T12, word);
+    jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 64), CCallHelpers::linkRegister);
+    jit.addPtr(TrustedImm32(80), CCallHelpers::stackPointerRegister);
+    collectorKnows.link(&jit);
+    jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(Slot::attemptsMask) << 32)), word);
+    jit.lshift64(T12, TrustedImm32(32), scratch);
+    jit.or64(scratch, word);
+    jit.load32(Address(A0, JSCell::structureIDOffset()), scratch);
+    jit.or64(scratch, word);
+    jit.store64(word, slotWord(slot, 0));
+    jit.load64(Address(T10, Data::offsetOfSlotEpoch()), word);
+    jit.add64(TrustedImm32(1), word);
+    jit.store64(word, Address(T10, Data::offsetOfSlotEpoch()));
+    slotIsTaken.link(&jit);
+    slotHasMore.link(&jit);
+}
+
 // A0 = the base, T12 = a GetterSetter. If its getter is a function that has code it is called from here, and returns to whoever
 // called the stub, which has room for its frame and puts the stack pointer back afterwards. Leaves A0 and A1 alone if not.
 template<typename StoreCallSite>
@@ -929,6 +1001,41 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 
     miss.link(&jit);
     if (operation == Entry::operationAOTGetById) {
+        // An object of a shape that the compiler knew of: where its properties are is in the program's dispatch table.
+        CCallHelpers::JumpList notInTable;
+        CCallHelpers::JumpList notOwn;
+        notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        findInDispatchTable(jit, A1, A2, notInTable, notOwn);
+        Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
+        fillEmptySlotFromDispatchTable(jit, A1);
+        jit.load64(CCallHelpers::BaseIndex(A0, T12, CCallHelpers::TimesEight), A0);
+        jit.ret();
+
+        isOutOfLine.link(&jit);
+        jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T13);
+        jit.load64(CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesEight), A0);
+        jit.ret();
+
+        // It has no such property of its own. See Instance::lookAtObjectPrototype().
+        notOwn.link(&jit);
+        jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
+        jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T13);
+        jit.addPtr(T13, T12);
+        jit.loadPtr(Address(T12, Structure::prototypeOffset()), T12);
+        jit.loadPtr(Address(T9, Instance::offsetOfObjectPrototype()), T13);
+        notInTable.append(jit.branchPtr(CCallHelpers::NotEqual, T12, T13));
+        jit.load32(Address(T13, JSCell::structureIDOffset()), T12);
+        notInTable.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(T9, Instance::offsetOfStructureIDOfObjectPrototype())));
+        jit.loadPtr(Address(T9, Instance::offsetOfSelectorsOnObjectPrototype()), T12);
+        jit.urshift32(A2, TrustedImm32(3), T13);
+        jit.load8(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesOne), T12);
+        jit.and32(TrustedImm32(7), A2, T13);
+        jit.urshift32(T13, T12);
+        notInTable.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1)));
+        jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), A0);
+        jit.ret();
+        notInTable.link(&jit);
+
         // A site that has found that its slot is of no use to it, because it sees many structures. (Any other has to get to its
         // operation, which fills the slot: what another site has left in the megamorphic cache would keep it from ever having one.)
         CCallHelpers::JumpList notFound;
@@ -964,6 +1071,7 @@ static void generatePutById(CCallHelpers& jit)
     jit.store32(T11, Address(A0, JSCell::structureIDOffset()));
     sameStructure.link(&jit);
 
+    CCallHelpers::Label stored = jit.label();
     Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
@@ -980,7 +1088,21 @@ static void generatePutById(CCallHelpers& jit)
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
 
+    // A property that an object of a shape the compiler knew of has, all of which are plain ones that can be stored to.
     miss.link(&jit);
+    CCallHelpers::JumpList notInTable;
+    notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    findInDispatchTable(jit, A2, A3, notInTable, notInTable);
+    Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
+    fillEmptySlotFromDispatchTable(jit, A2);
+    jit.store64(A1, CCallHelpers::BaseIndex(A0, T12, CCallHelpers::TimesEight));
+    jit.jump().linkTo(stored, &jit);
+    isOutOfLine.link(&jit);
+    jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T13);
+    jit.store64(A1, CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesEight));
+    jit.jump().linkTo(stored, &jit);
+
+    notInTable.link(&jit);
     missAtSite(jit, Entry::operationAOTPutById, 2, Returns::Void);
 }
 

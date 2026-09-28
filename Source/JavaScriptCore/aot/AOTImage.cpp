@@ -60,6 +60,19 @@ uint64_t imageStamp()
     return stamp;
 }
 
+// The order of ImageHeader::selectorsInOrderOffset.
+static int compareSelectors(bool is8BitA, std::span<const uint8_t> a, bool is8BitB, std::span<const uint8_t> b)
+{
+    if (is8BitA != is8BitB)
+        return is8BitA ? -1 : 1;
+    if (a.size() != b.size())
+        return a.size() < b.size() ? -1 : 1;
+    return memcmp(a.data(), b.data(), a.size());
+}
+
+static std::span<const uint8_t> bytesOf(const StringImpl& string) { return string.is8Bit() ? asBytes(string.span8()) : asBytes(string.span16()); }
+static int compareSelectors(const StringImpl& a, const StringImpl& b) { return compareSelectors(a.is8Bit(), bytesOf(a), b.is8Bit(), bytesOf(b)); }
+
 // ---- Building
 
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
@@ -83,6 +96,143 @@ Vector<uint8_t> ImageBuilder::finish()
     unsigned capacity = 16;
     while (capacity < m_functions.size() * 2)
         capacity *= 2;
+
+    // The shapes that objects are made with and the names that properties are read by, numbered for the whole program in the order
+    // they turn up in.
+    Vector<UniquedStringImpl*> selectors { nullptr };
+    UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> numberOfSelector;
+    auto selectorFor = [&](UniquedStringImpl* name) {
+        return numberOfSelector.ensure(name, [&] {
+            selectors.append(name);
+            return static_cast<uint32_t>(selectors.size() - 1);
+        }).iterator->value;
+    };
+    struct Shape {
+        unsigned inlineCapacity { 0 };
+        Vector<uint32_t, 8> names;
+    };
+    Vector<Shape> shapes(1);
+    UncheckedKeyHashMap<String, uint32_t> numberOfShape;
+    BitVector selectorIsRead;
+    for (auto& function : m_functions) {
+        auto& info = function.code.info;
+        RELEASE_ASSERT(info.siteConstants.size() == info.numSlots);
+        for (uint32_t& constant : info.siteConstants) {
+            if (!constant)
+                continue;
+            if (!(constant & CompiledFunctionInfo::siteConstantIsShape)) {
+                constant = selectorFor(info.selectors[constant - 1]);
+                selectorIsRead.set(constant);
+                continue;
+            }
+            const KnownShape& known = info.shapes[(constant & ~CompiledFunctionInfo::siteConstantIsShape) - 1];
+            Shape shape;
+            shape.inlineCapacity = known.inlineCapacity;
+            for (UniquedStringImpl* name : known.names)
+                shape.names.append(selectorFor(name));
+            Vector<uint32_t, 16> words { known.inlineCapacity };
+            words.appendVector(shape.names);
+            String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
+            // (A Structure has sixteen bits to say which in. The rest are made the way they would be if nobody had noticed.)
+            if (auto it = numberOfShape.find(key); it != numberOfShape.end())
+                constant = it->value;
+            else if (shapes.size() > std::numeric_limits<uint16_t>::max())
+                constant = 0;
+            else {
+                shapes.append(WTF::move(shape));
+                constant = shapes.size() - 1;
+                numberOfShape.add(key, constant);
+            }
+        }
+    }
+    RELEASE_ASSERT(selectors.size() < (1u << (32 - ImageDispatchEntry::locationBits)));
+
+    // The dispatch table. The longest rows first, each as near the start as it fits.
+    Vector<uint32_t> rowOfSelector;
+    rowOfSelector.fill(0, selectors.size());
+    Vector<uint32_t> dispatch;
+    {
+        Vector<Vector<std::pair<uint32_t, int32_t>, 0>> rows(selectors.size());
+        for (uint32_t number = 1; number < shapes.size(); ++number) {
+            auto& shape = shapes[number];
+            for (unsigned i = 0; i < shape.names.size(); ++i) {
+                if (!selectorIsRead.get(shape.names[i]))
+                    continue;
+                int32_t location = i < shape.inlineCapacity || !shape.inlineCapacity
+                    ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + i)
+                    : -static_cast<int32_t>(i - shape.inlineCapacity) - 2;
+                rows[shape.names[i]].append({ number, location });
+            }
+        }
+        Vector<uint32_t> order;
+        for (uint32_t selector = 1; selector < selectors.size(); ++selector) {
+            if (!rows[selector].isEmpty())
+                order.append(selector);
+        }
+        // (Of those with one entry, in the order of the shapes: then finding each a place goes on from where the last one was found.)
+        std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
+            if (rows[a].size() != rows[b].size())
+                return rows[a].size() > rows[b].size();
+            return rows[a][0].first < rows[b][0].first;
+        });
+        size_t firstFree = 0;
+        size_t lastForOne = 0;
+        auto isFree = [&](size_t index) { return index >= dispatch.size() || !dispatch[index]; };
+        auto growWithZeros = [&](size_t size) {
+            if (size > dispatch.size())
+                dispatch.insertFill(dispatch.size(), 0, size - dispatch.size());
+        };
+        for (uint32_t selector : order) {
+            auto& row = rows[selector];
+            uint32_t first = row[0].first;
+            while (!isFree(firstFree))
+                ++firstFree;
+            size_t at = std::max<size_t>(row.size() == 1 ? std::max(firstFree, lastForOne) : firstFree, first);
+            for (;; ++at) {
+                if (std::ranges::all_of(row, [&](auto& entry) { return isFree(at - first + entry.first); }))
+                    break;
+            }
+            if (row.size() == 1)
+                lastForOne = at;
+            size_t start = at - first;
+            growWithZeros(start + row.last().first + 1);
+            for (auto& [shape, location] : row)
+                dispatch[start + shape] = ImageDispatchEntry::encode(selector, location);
+            rowOfSelector[selector] = safeCast<uint32_t>(start);
+        }
+        // Any row can be asked about any shape.
+        size_t furthest = 0;
+        for (uint32_t row : rowOfSelector)
+            furthest = std::max<size_t>(furthest, row);
+        growWithZeros(furthest + shapes.size());
+    }
+    Vector<ImageShape> imageShapes;
+    Vector<uint32_t> namesOfShapes;
+    for (auto& shape : shapes) {
+        imageShapes.append({ static_cast<uint32_t>(namesOfShapes.size()), safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity) });
+        namesOfShapes.appendVector(shape.names);
+    }
+    Vector<ImageSelector> imageSelectors;
+    Vector<uint8_t> textOfSelectors;
+    for (uint32_t selector = 0; selector < selectors.size(); ++selector) {
+        UniquedStringImpl* name = selectors[selector];
+        if (!name) {
+            imageSelectors.append({ 0, 0, 1 });
+            continue;
+        }
+        if (!name->is8Bit() && textOfSelectors.size() % 2)
+            textOfSelectors.append(0);
+        imageSelectors.append({ safeCast<uint32_t>(textOfSelectors.size()), name->length(), name->is8Bit() });
+        textOfSelectors.append(name->is8Bit() ? asBytes(name->span8()) : asBytes(name->span16()));
+    }
+    Vector<uint32_t> selectorsInOrder;
+    for (uint32_t selector = 1; selector < selectors.size(); ++selector)
+        selectorsInOrder.append(selector);
+    std::ranges::sort(selectorsInOrder, [&](uint32_t a, uint32_t b) {
+        return compareSelectors(*selectors[a], *selectors[b]) < 0;
+    });
+    if (Options::aotReportStats()) [[unlikely]]
+        dataLogLn("AOT: ", shapes.size() - 1, " shapes with ", namesOfShapes.size(), " properties, ", selectors.size() - 1, " selectors of which ", selectorIsRead.bitCount(), " are read by, ", dispatch.size(), " entries in the dispatch table");
 
     // Which function a call is to: the first that has the key.
     Vector<uint32_t> functionWithKey;
@@ -153,7 +303,7 @@ Vector<uint8_t> ImageBuilder::finish()
     size_t codeSize = 0;
     for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
         auto& function = m_functions[indexOfFunction];
-        recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * sizeof(Site) + function.code.info.knownCallees.size() * sizeof(ImageKey);
+        recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey);
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
         if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
@@ -175,7 +325,24 @@ Vector<uint8_t> ImageBuilder::finish()
     header.environmentsSize = m_environmentsSize;
     header.environmentsOffset = WTF::roundUpToMultipleOf<8>(static_cast<size_t>(header.recordsOffset) + recordsSize);
     header.numberOfEnvironments = m_environments.size();
-    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(static_cast<size_t>(header.environmentsOffset) + m_environments.size() * sizeof(ImageEnvironment));
+    size_t endOfTables = static_cast<size_t>(header.environmentsOffset) + m_environments.size() * sizeof(ImageEnvironment);
+    auto place = [&](size_t size) {
+        endOfTables = WTF::roundUpToMultipleOf<8>(endOfTables);
+        uint32_t result = safeCast<uint32_t>(endOfTables);
+        endOfTables += size;
+        return result;
+    };
+    header.shapesOffset = place(imageShapes.sizeInBytes());
+    header.numberOfShapes = imageShapes.size();
+    header.namesOfShapesOffset = place(namesOfShapes.sizeInBytes());
+    header.selectorsOffset = place(imageSelectors.sizeInBytes());
+    header.numberOfSelectors = imageSelectors.size();
+    header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
+    header.textOfSelectorsOffset = place(textOfSelectors.size());
+    header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
+    header.dispatchOffset = place(dispatch.sizeInBytes());
+    header.dispatchSize = safeCast<uint32_t>(dispatch.size());
+    header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
     header.codeSize = codeSize;
     header.size = WTF::roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
     header.numberOfFunctions = m_functions.size();
@@ -191,6 +358,13 @@ Vector<uint8_t> ImageBuilder::finish()
     uint8_t* code = base + header.codeOffset;
 
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
+    memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
+    memcpy(base + header.namesOfShapesOffset, namesOfShapes.span().data(), namesOfShapes.sizeInBytes());
+    memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
+    memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
+    memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
+    memcpy(base + header.selectorsInOrderOffset, selectorsInOrder.span().data(), selectorsInOrder.sizeInBytes());
+    memcpy(base + header.dispatchOffset, dispatch.span().data(), dispatch.sizeInBytes());
     for (size_t at : stubsAt)
         memcpy(code + at, stubs.bytes.span().data(), stubs.bytes.size());
 
@@ -254,6 +428,8 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         memcpy(records + recordAt, info.sites.span().data(), info.sites.size() * sizeof(Site));
         recordAt += info.sites.size() * sizeof(Site);
+        memcpy(records + recordAt, info.siteConstants.span().data(), info.siteConstants.sizeInBytes());
+        recordAt += info.siteConstants.sizeInBytes();
         memcpy(records + recordAt, info.knownCallees.span().data(), info.knownCallees.size() * sizeof(ImageKey));
         recordAt += info.knownCallees.size() * sizeof(ImageKey);
 
@@ -359,6 +535,49 @@ static Image* imageWithEnvironments()
             return all.images[i];
     }
     return nullptr;
+}
+
+Image* Image::withShapes()
+{
+    auto& all = registry();
+    if (!all.hasAny.load(std::memory_order_acquire))
+        return nullptr;
+    for (unsigned i = 0; i < all.images.size(); ++i) {
+        if (all.images[i]->header().numberOfShapes > 1)
+            return all.images[i];
+    }
+    return nullptr;
+}
+
+AtomString Image::nameOfSelector(uint32_t selector) const
+{
+    RELEASE_ASSERT(selector && selector < header().numberOfSelectors);
+    const ImageSelector& entry = at<ImageSelector>(header().selectorsOffset)[selector];
+    const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset) + entry.text;
+    if (entry.is8Bit)
+        return AtomString(std::span { reinterpret_cast<const Latin1Character*>(text), entry.length });
+    return AtomString(std::span { reinterpret_cast<const char16_t*>(text), entry.length });
+}
+
+uint32_t Image::selectorNamed(const StringImpl& name) const
+{
+    const uint32_t* inOrder = at<uint32_t>(header().selectorsInOrderOffset);
+    const ImageSelector* all = at<ImageSelector>(header().selectorsOffset);
+    const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset);
+    size_t low = 0;
+    size_t high = header().numberOfSelectors - 1;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        const ImageSelector& entry = all[inOrder[middle]];
+        int order = compareSelectors(entry.is8Bit, { text + entry.text, static_cast<size_t>(entry.length) * (entry.is8Bit ? 1 : 2) }, name.is8Bit(), bytesOf(name));
+        if (!order)
+            return inOrder[middle];
+        if (order < 0)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    return 0;
 }
 
 uint32_t Image::environmentsSize()

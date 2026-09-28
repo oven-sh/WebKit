@@ -320,6 +320,12 @@ public:
     // no structure for each of the steps in between. It is not a transition of anything, so it is for whoever asks to see to it
     // that whoever else wants the same gets the same. Null if a name is there twice.
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    // The number that a program compiled ahead of time knows the layout by (AOT::KnownShape): what is where in an object of this
+    // Structure was settled then. Zero: none. No Structure that another turns into has one.
+    // Code stores to the properties of such objects without asking, so nobody gets to watch for that.
+    uint16_t knownShape() const { return m_knownShape; }
+    JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
+    static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -1023,6 +1029,9 @@ private:
 
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_knownShape { 0 }; // See knownShape(). (There was nothing here.)
+#endif
 
     uint32_t m_propertyHash;
     SeenProperties m_seenProperties;
