@@ -50,8 +50,11 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 const SANITIZERS = "address,undefined";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
+// Linux builds `bun`, a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
+// The others still build the release itself, by unicode-org's tarball.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
+const BUN_ICU = { ICU_VERSION: icu.version, ICU_COMMIT: icu.bun.commit, ICU_SHA256: icu.bun.sha256 };
 
 // The code generation floor. There is one per architecture: WebKit used to ship a haswell x64 build next to a nehalem
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
@@ -100,7 +103,7 @@ const platforms = [
     },
     image: () => "linux-glibc",
     args: (arch, v) => ({
-      ...ICU,
+      ...BUN_ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
@@ -121,7 +124,7 @@ const platforms = [
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
     image: () => "linux-musl",
     args: arch => ({
-      ...ICU,
+      ...BUN_ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
     }),

@@ -29,7 +29,7 @@ if (ENABLE_FUZZILLI)
   list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
 endif ()
 
-# The ICU data the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and the ICU they
+# The ICU data that lanes not for Linux bundle is repacked with a zstd frame per item (icu/compress-data.ts), and the ICU they
 # build calls the weak hook bun_icu_maybe_decompress on each item it loads (icu/udata-decompress-hook.patch). Bun
 # defines the hook. So does the shell (jsc.cpp), so that it reads the data Bun reads, when it is given zstd's lib/
 # directory to build the decoder from.

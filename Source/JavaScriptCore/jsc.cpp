@@ -209,7 +209,7 @@ struct MemoryFootprint {
 #endif
 
 #if defined(BUN_ICU_ZSTD)
-// The ICU data the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and their ICU
+// The ICU data that lanes not for Linux bundle is repacked with a zstd frame per item (icu/compress-data.ts), and their ICU
 // calls this hook, which it declares weak, on every item it loads (icu/udata-decompress-hook.patch). Bun defines it
 // (src/jsc/bindings/bun_icu_decompress.cpp); this is the same thing for the shell. The items of icu/keep-raw.txt keep
 // their ICU header and pass through after one compare; a decompressed item is kept for the life of the process.

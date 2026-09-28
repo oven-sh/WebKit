@@ -50,19 +50,7 @@ RUN ( apt-get update || \
     lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
-# Install zstd (for icu/compress-data.ts). Pinned: focal's apt has 1.4.4 which
-# compresses meaningfully worse than 1.5.x; this matches Bun's vendored decoder.
-# Its lib/ sources stay, at /zstd/lib: the jsc shell builds the decoder from them to read that data
-# (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
-ARG ZSTD_VERSION=1.5.7
-RUN curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp \
-    && make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) \
-    && cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ \
-    && mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h \
-    && rm -rf /tmp/zstd-${ZSTD_VERSION} \
-    && zstd --version
-
-# Install Node (for icu/compress-data.ts; needs >=23.6 for default type stripping)
+# Install Node (for ICU's data, bun/data/icu-data.ts there; needs >=23.6 for default type stripping)
 ARG NODE_VERSION=24.16.0
 RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
     | tar -xJ -C /usr/local --strip-components=1 \
@@ -245,17 +233,23 @@ RUN set -eu; \
     done; \
     rm /tmp/t.cpp /tmp/t
 
-# ICU's sources (/icu.tgz, which the lanes build from) and its tools for this container. ICU runs those while it
-# builds (pkgdata, genrb, ...), and the lanes filter and repack its data with icupkg: a lane that builds ICU for
-# aarch64 cannot run the ones it builds. LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own
-# ICU step: that is where the distribution's ICU is, and the tools would be linked against it instead of this one.
+# ICU: its sources (/icu.tgz, which the lanes build the libraries from) and what of it is the same for every lane.
+# That is its data (/icudt.dat), which ICU's own compilers make of its text sources, as bun/data/icu-data.ts there has
+# them do, and so those compilers, built for this container. Nothing else of ICU is built here. config/icucross.* is
+# what ICU's configure asks of a build for the machine it runs on before it configures one for aarch64.
+# LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own ICU step: that is where the
+# distribution's ICU is, and the tools would be linked against it instead of this one.
 # Which ICU: icu/source.json, by way of lanes.mjs.
-ARG ICU_VERSION
+ARG ICU_COMMIT
 ARG ICU_SHA256
-ADD --checksum=sha256:${ICU_SHA256} https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz /icu.tgz
-RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd source && \
-    CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests && \
-    make -j$(nproc) && test -x bin/icupkg && test -f config/icucross.mk
+ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
+RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd icu4c/source && \
+    CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests --disable-extras --disable-icuio --disable-layoutex && \
+    mkdir -p lib bin && \
+    for dir in stubdata common i18n tools/toolutil tools/gencnval tools/genbrk tools/gendict tools/genrb; do make -j$(nproc) -C $dir || exit 1; done && \
+    make config/icucross.mk config/icucross.inc && \
+    node /icu-host/bun/data/icu-data.ts --tools /icu-host/icu4c/source/bin --work /tmp/icu-data --out /icudt.dat && \
+    rm -rf /tmp/icu-data lib/*.a stubdata/*.a && find . \( -name '*.o' -o -name '*.ao' -o -name '*.d' \) -delete
 
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
 FROM base as lane-x86_64
@@ -296,74 +290,38 @@ ARG ICU_VERSION
 
 ENV LTO_FLAG="${LTO_FLAG}"
 
-# Download and build ICU.
+# ICU's libraries, with the lane's flags, and its data, which `base` made, as the third.
 #
-# For aarch64 this is a cross build: ICU uses the container's tools (/icu-host) where it would run its own, and so do
-# the data filtering and repacking; "$@" is what tells compress-data.ts to assemble for aarch64.
+# For aarch64 this is a cross build. ICU's configure then wants a build for this container to take its tools from,
+# though none of them is run to build these two libraries.
 #
-# After tar, patch udata.cpp with a per-item decompression hook (a weak extern
-# Bun defines; null in ICU's own tools).
-#
-# After the first `make` (which produces bin/icupkg), filter data/in/icudt<major>l.dat
-# to drop converters/translit/stringprep/confusables/unames — Bun has zero
-# ucnv_/utrans_/usprep_/uspoof_ consumers — then rebuild.
-#
-# Most of rbnf/ goes too, but NOT all of it. Nothing in bun calls the
-# RuleBasedNumberFormat API, yet ICU reaches rbnf/ on its own: numberingSystems.res
-# declares 19 algorithmic numbering systems whose rules live there, and
-# SimpleDateFormat applies them via the number overrides CLDR attaches to calendar
-# patterns. ja + the japanese calendar forces "y=jpanyear" (smpdtfmt.cpp hardcodes
-# it), so dropping rbnf/ja.res makes
-# Intl.DateTimeFormat("ja", { calendar: "japanese", year: "numeric" }) throw
-# U_MISSING_RESOURCE_ERROR, and zh + chinese carries "d=hanidays".
-#
-# Only the locales those rulesets name are reachable: root (for the bare
-# "%ruleset" descs), ja, zh, zh_Hant. Keeping those five items costs 35 KB raw
-# (~8 KB after per-item zstd) instead of the 621 KB the whole tree costs. The
-# guard below re-derives that list from the data and fails the build if a CLDR
-# bump ever adds a locale we are not keeping.
-#
-# Finally, repack the filtered .dat with per-item zstd (icu/compress-data.ts).
-# Items matching icu/keep-raw.txt stay uncompressed (too expensive to decode lazily).
-# The repacked libicudata.a also embeds the trained zstd dictionary.
+# The UCONFIG switches leave out what nothing that JavaScriptCore and Bun call can reach but virtual functions keep
+# linked. They change no declaration of the C API, which is all that is used of ICU.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CPPFLAGS="-DUCONFIG_NO_LEGACY_CONVERSION=1 -DUCONFIG_NO_SERVICE=1 -DUCONFIG_NO_FILTERED_BREAK_ITERATION=1 -DUCONFIG_NO_PARSING=1 -DUCONFIG_NO_UNIT_CONVERSION=1" && \
     export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="$CXXFLAGS $G -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CXXFLAGS="$CXXFLAGS $G -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
-        ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host/source"; \
-        ICUPKG=/icu-host/source/bin/icupkg; \
-        set -- --cc "$CC --target=aarch64-unknown-linux-gnu" --ar llvm-ar; \
+        ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host/icu4c/source"; \
     else \
         ICU_CROSS=""; \
-        ICUPKG=bin/icupkg; \
-        set --; \
     fi && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
-    patch -p1 < /icu-bun/udata-decompress-hook.patch && \
-    cd source && \
-    ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
-    make -j$(nproc) && \
-    mkdir -p /tmp/ns && $ICUPKG -x numberingSystems.res data/in/icudt${ICU_VERSION%%.*}l.dat -d /tmp/ns && \
-    stale=$(strings -el /tmp/ns/numberingSystems.res | sed -n 's|^\([A-Za-z_][A-Za-z_]*\)/.*|\1|p' | sort -u | grep -vxE 'ja|zh|zh_Hant' | tr '\n' ' ') && \
-    { [ -z "$stale" ] || { echo "rbnf keep-list is stale, also reachable: $stale" >&2; exit 1; }; } && \
-    $ICUPKG -l data/in/icudt${ICU_VERSION%%.*}l.dat | grep -E '\.(cnv|spp|cfu)$|^cnvalias\.icu$|^translit/|^rbnf/|^unames\.icu$' | grep -vE '^rbnf/(root|res_index|ja|zh|zh_Hant)\.res$' > data/in/rm.lst && \
-    $ICUPKG --auto_toc_prefix -r data/in/rm.lst data/in/icudt${ICU_VERSION%%.*}l.dat data/in/icudt${ICU_VERSION%%.*}l_filtered.dat && \
-    mv -f data/in/icudt${ICU_VERSION%%.*}l_filtered.dat data/in/icudt${ICU_VERSION%%.*}l.dat && \
-    rm -rf data/out lib/libicudata.a && make -j$(nproc) && \
-    make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode && \
-    node --experimental-strip-types /icu-bun/compress-data.ts data/in/icudt${ICU_VERSION%%.*}l.dat /output/lib/libicudata.a --skip /icu-bun/keep-raw.txt --icupkg $ICUPKG "$@"
+    cd icu4c/source && \
+    ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
+    mkdir -p lib && \
+    make -j$(nproc) -C common && make -j$(nproc) -C i18n && \
+    cp lib/libicuuc.a lib/libicui18n.a /output/lib && cp -r i18n/unicode/* common/unicode/* /output/include/unicode && \
+    /icu-bun/embed-data.sh ${ICU_VERSION%%.*} /icudt.dat /output/lib/libicudata.a $CC $MARCH_FLAG
 
 # Copy WebKit source and build.
 #
-# ICU_ROOT is /output, where the ICU stage put the libraries Bun gets: jsc links the same ones, the repacked
-# libicudata.a included, and reads it with the hook in jsc.cpp (BUN_ICU_ZSTD_SOURCE_DIR). That hook names the zstd
-# dictionary in the repacked data, so the link fails if CMake finds another ICU (`make install` also left one in
-# /usr/local).
+# ICU_ROOT is /output, where the ICU stage put the libraries Bun gets: jsc links the same ones.
 COPY . /webkit
 WORKDIR /webkit
 
@@ -412,7 +370,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_C_FLAGS_RELEASE="$RELEASE_FLAGS" \
     -DCMAKE_CXX_FLAGS_RELEASE="$RELEASE_FLAGS" \
     -DICU_ROOT=/output \
-    -DBUN_ICU_ZSTD_SOURCE_DIR=/zstd/lib \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
