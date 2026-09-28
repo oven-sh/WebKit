@@ -26,10 +26,12 @@
 #include "JSGlobalObjectFunctions.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
+#include "PythonCharacters.h"
 #include "StringObject.h"
 #include "StrongInlines.h"
 #include "StructureCreateInlines.h"
 #include <unicode/utf16.h>
+#include <wtf/PageBlock.h>
 #include <wtf/text/ExtensibleStringImpl.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -212,19 +214,42 @@ RefPtr<StringImpl> JSRopeString::tryResolveRopeIntoExtensibleBuffer(uint8_t* sta
         resolveToBuffer(rope->fiber1(), rope->fiber2(), nullptr, characters.subspan(start - base, rope->length() - start), stackLimit);
     }
 
-    Ref result = buffer->createPrefix(length);
-    if constexpr (sizeof(CharacterType) == 2) {
-        // Only what asks whether a string has surrogate pairs sets this, so a program that never asks does not pay for looking.
-        if (firstImpl->hasNoSurrogatePairs()) {
-            auto added = result->span16().subspan(firstLength - 1);
-            bool hasPair = false;
-            for (size_t i = 0; i + 1 < added.size(); ++i)
-                hasPair |= U16_IS_LEAD(added[i]) && U16_IS_TRAIL(added[i + 1]);
-            if (!hasPair)
-                result->setHasNoSurrogatePairs();
-        }
+    return buffer->createPrefix(length);
+}
+
+// The string that a rope begins with, if it is one that has been resolved.
+StringImpl* JSRopeString::firstResolvedStringImpl() const
+{
+    JSString* first = fiber0();
+    while (first->isRope()) {
+        auto* rope = static_cast<const JSRopeString*>(first);
+        if (rope->isSubstring())
+            return nullptr;
+        first = rope->fiber0();
     }
-    return result;
+    return first->valueInternal().impl();
+}
+
+// `result` is what a rope of 16-bit characters came to, and `first` is the string that it began with. Python counts in code points, so it finds
+// out where the surrogate pairs of a string are, or that there are none: see PythonCharacters.h. What it has found out about `first` holds
+// for the beginning of `result`, so that only what was appended has to be looked through. There is something to hand on only if Python has
+// asked about `first`, so a program that has no Python in it does nothing here.
+static void handOnWhatIsKnownOfSurrogatePairs(VM& vm, StringImpl& first, StringImpl& result)
+{
+    if (first.is8Bit() || !first.length() || &first == &result)
+        return;
+    if (first.hasNoSurrogatePairs()) {
+        // From the last of `first`, which may be the first half of a pair now.
+        auto added = result.span16().subspan(first.length() - 1);
+        bool hasPair = false;
+        for (size_t i = 0; i + 1 < added.size(); ++i)
+            hasPair |= U16_IS_LEAD(added[i]) && U16_IS_TRAIL(added[i + 1]);
+        if (!hasPair)
+            result.setHasNoSurrogatePairs();
+        return;
+    }
+    if (auto* cache = vm.pythonSurrogatePairCache())
+        cache->didAppend(first, result);
 }
 
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobalObject* globalObject) const
@@ -322,12 +347,24 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
     }
 
     uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
-    if (RefPtr extended = is8Bit() ? tryResolveRopeIntoExtensibleBuffer<Latin1Character>(stackLimit) : tryResolveRopeIntoExtensibleBuffer<char16_t>(stackLimit)) {
-        size_t sizeToReport = extended->cost();
-        convertToNonRope(function(extended.releaseNonNull()));
-        if constexpr (reportAllocation)
-            vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
-        return valueInternal();
+    // Which is not to be had once this is no longer a rope. The JSString that holds it may not be reachable after that, but nothing here lets
+    // the collector run before it has been used.
+    SUPPRESS_UNCOUNTED_LOCAL StringImpl* first = is8Bit() ? nullptr : firstResolvedStringImpl();
+
+    // Sharing a buffer takes one more allocation than not sharing one. That is more than it costs to copy a short string, and appending to a
+    // short string once is among the commonest things that a program does: with 10 characters it took 23ns in place of 14ns. With 10,000 it
+    // made no difference that could be measured. So it is for a first string that is longer than a page. What that leaves is little:
+    // building a string up to that length by copying it each time comes to a millisecond or so, once.
+    if (fiber0()->length() >= CeilingOnPageSize) [[unlikely]] {
+        if (RefPtr extended = is8Bit() ? tryResolveRopeIntoExtensibleBuffer<Latin1Character>(stackLimit) : tryResolveRopeIntoExtensibleBuffer<char16_t>(stackLimit)) {
+            size_t sizeToReport = extended->cost();
+            convertToNonRope(function(extended.releaseNonNull()));
+            if (first)
+                handOnWhatIsKnownOfSurrogatePairs(vm, *first, *valueInternal().impl());
+            if constexpr (reportAllocation)
+                vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+            return valueInternal();
+        }
     }
 
     if (is8Bit()) {
@@ -356,6 +393,8 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
     size_t sizeToReport = newImpl->cost();
     resolveRopeInternalNoSubstring(buffer, stackLimit);
     convertToNonRope(function(newImpl.releaseNonNull()));
+    if (first)
+        handOnWhatIsKnownOfSurrogatePairs(vm, *first, *valueInternal().impl());
     if constexpr (reportAllocation)
         vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
     return valueInternal();

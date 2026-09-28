@@ -103,7 +103,9 @@ t("two at once", lambda: (lambda a, b: sum(a[i] == b[i] for i in range(N)))(A * 
 t("many of them", lambda: (lambda strings: sum(len(x) + ord(x[i % 5]) for i in range(20) for x in strings))([A * 2 + str(i) + A * 2 for i in range(5000)]))
 
 print("---- added to and looked at")
-# What is added to over and over is kept in one place, of which each string on the way is the beginning, and what is known of where the pairs are is added to as well. Each is still to be what it was.
+# What is added to over and over, once it is long, is kept in one place, of which each string on the way is the beginning, and what is known of where the pairs are is added to as well. Each is still to be what it was.
+# Long is more than a page of memory, of which the largest that there are have 64K bytes.
+LONG = 70000
 
 
 class Random:
@@ -115,43 +117,52 @@ class Random:
         return (self.state >> 33) % n
 
 
-def agrees(s, model, r):
-    if len(s) != len(model):
+def agrees(s, start, model, r):
+    # `start` is the characters that it begins with, which all of them have in common, and `model` the rest.
+    n = len(start)
+    if len(s) != n + len(model):
         return False
+    if start:
+        i = r.below(n)
+        if s[i] != start[i] or s[i - len(s)] != start[i] or list(s[i:i + 3]) != (start + model[:3])[i:i + 3]:
+            return False
     for attempt in range(6):
         i = r.below(len(model))
         j = i + r.below(len(model) - i + 1)
-        if s[i] != model[i] or s[i - len(model)] != model[i] or list(s[i:j]) != model[i:j] or s.find(model[i], i) != i or s[-1] != model[-1]:
+        if s[n + i] != model[i] or s[i - len(model)] != model[i] or list(s[n + i:n + j]) != model[i:j] or s.find(model[i], n + i) != n + i or s[-1] != model[-1]:
             return False
     return True
 
 
 for name, alphabet in (("pairs", [A, C, D]), ("pairs and others", [A, "a", B, C, "b", E]), ("few pairs", ["a"] * 20 + [B] * 5 + [A]), ("first halves and pairs", [HIGH, A, "a", HIGH, C]), ("second halves and pairs", [LOW, A, "a", LOW, D]), ("none", ["a", B, E])):
-    r = Random(len(name))
-    live = [("", [])]
-    wrong = 0
-    for step in range(6000):
-        s, model = live[r.below(len(live))]
-        added = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
-        kind = r.below(8)
-        if kind == 0:
-            # The same one added to twice, of which only one can go after it where it is kept.
-            other = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
-            second = (s + "".join(other), model + other)
-            wrong += not agrees(*second, r)
-            live.append(second)
-        if kind == 1:
-            for c in added:
-                s += c
-        else:
-            s += "".join(added)
-        model = model + added
-        wrong += not agrees(s, model, r)
-        live.append((s, model))
-        if len(live) > 30:
-            live = live[r.below(20):]
-        if len(model) > 2500:
-            live = [("", [])]
-    for s, model in live:
-        wrong += list(s) != model or len(s) != len(model) or [s[i] for i in range(len(s))] != model
-    print(name, "wrong:", wrong, "of the last:", len(live[-1][1]), checksum(live[-1][0]))
+    for length in (0, LONG):
+        r = Random(len(name))
+        start = [alphabet[r.below(len(alphabet))] for i in range(length)]
+        root = ("".join(start), [])
+        live = [root]
+        wrong = 0
+        for step in range(1200):
+            s, model = live[r.below(len(live))]
+            added = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
+            kind = r.below(8)
+            if kind == 0:
+                # The same one added to twice, of which only one can go after it where it is kept.
+                other = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
+                second = (s + "".join(other), model + other)
+                wrong += not agrees(second[0], start, second[1], r)
+                live.append(second)
+            if kind == 1:
+                for c in added:
+                    s += c
+            else:
+                s += "".join(added)
+            model = model + added
+            wrong += not agrees(s, start, model, r)
+            live.append((s, model))
+            if len(live) > 30:
+                live = live[r.below(20):]
+            if len(model) > 2500:
+                live = [root]
+        for s, model in live[-5:]:
+            wrong += list(s) != start + model or len(s) != len(start) + len(model)
+        print(name, "after", length, "wrong:", wrong, "of the last:", len(live[-1][1]), checksum(live[-1][0][-50:]))

@@ -47,8 +47,9 @@ namespace Python {
 
 // Where the surrogate pairs are in some code units, from the first of them as far as has been looked.
 //
-// That is a string, or a buffer that several strings are the beginning of: see ExtensibleStringImpl.h. A string that is added to over and over is a longer piece of the same buffer each time, so what has been found
-// out about a shorter piece holds for a longer one, and only what has been added is looked through. So this can have more in it than is in the string that is being asked about. `limit` is how many of the pairs are.
+// A string that is added to over and over begins each time with what it was before, so what has been found out about the shorter one holds for the longer, and only what has been added is looked through. So several
+// strings have one of these between them, each of which begins as the others do as far as it goes, and there can be more in it than is in the string that is being asked about. `limit` is how many of the pairs are.
+// It is only ever added to. If two strings that begin alike go on differently, the second to be looked through has a copy of what they have in common: tryCopy().
 class SurrogatePairs final : public RefCounted<SurrogatePairs> {
     WTF_MAKE_TZONE_ALLOCATED(SurrogatePairs);
 public:
@@ -57,6 +58,8 @@ public:
 
     // Looks through what has not been looked through. False if there is no room to write down what is there, and then it is as it was.
     bool tryLookThrough(std::span<const char16_t>);
+    // What is known of the first `length` code units, which have been looked through. Null if there is no room.
+    RefPtr<SurrogatePairs> tryCopy(size_t length) const;
     size_t lengthLookedThrough() const { return m_lengthLookedThrough; }
 
     unsigned count() const { return m_count; }
@@ -91,14 +94,21 @@ public:
     };
     // Of a string of 16 bit characters that is not known to have no pairs. If it turns out to have none, it is known from then on.
     Found find(StringImpl&, RefPtr<SurrogatePairs>&);
+    // `longer` is a new string that begins with all of `shorter`. What is known of the one is a start on the other.
+    void didAppend(StringImpl& shorter, StringImpl& longer);
 
     void clear() { m_entries.fill(Entry { }); }
 
 private:
     struct Entry {
-        RefPtr<StringImpl> string; // Or the buffer that it is the beginning of.
+        RefPtr<StringImpl> string; // Or the buffer that it is the beginning of: see ExtensibleStringImpl.h.
         RefPtr<SurrogatePairs> pairs;
+        // How far the string is known to be the same as what `pairs` is about. Past that, `pairs` may have been added to from another string that began the same.
+        size_t lengthInCommon { 0 };
     };
+
+    static StringImpl* keyFor(StringImpl&);
+    Entry& entryFor(StringImpl* key) { return m_entries[PtrHash<StringImpl*>::hash(key) & (size - 1)]; }
 
     // As many as StringSplitCache has of strings. It is a guess that as many strings are gone through by index at a time as are split: what matters is that it is more than the two or three that a loop has in hand.
     static constexpr unsigned size = 64;

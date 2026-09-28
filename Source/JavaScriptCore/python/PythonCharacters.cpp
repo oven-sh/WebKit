@@ -84,6 +84,23 @@ bool SurrogatePairs::tryLookThrough(std::span<const char16_t> codeUnits)
     return true;
 }
 
+RefPtr<SurrogatePairs> SurrogatePairs::tryCopy(size_t length) const
+{
+    ASSERT(length <= m_lengthLookedThrough);
+    Ref copy = create();
+    // Those that are wholly in it. One that begins with the last code unit is found again when what comes after is looked through.
+    size_t count = length ? countBeforeCodeUnit(length - 1) : 0;
+    if (count) {
+        if (!tryFastMalloc(count * sizeof(unsigned)).getValue(copy->m_characters))
+            return nullptr;
+        memcpy(copy->m_characters, m_characters, count * sizeof(unsigned));
+    }
+    copy->m_count = count;
+    copy->m_capacity = count;
+    copy->m_lengthLookedThrough = length;
+    return copy;
+}
+
 unsigned SurrogatePairs::countBeforeCharacter(unsigned index, unsigned limit) const
 {
     auto characters = this->characters().first(limit);
@@ -106,18 +123,39 @@ unsigned SurrogatePairs::countBeforeCodeUnit(unsigned offset) const
     return low;
 }
 
+StringImpl* SurrogatePairCache::keyFor(StringImpl& string)
+{
+    return string.isPrefixOfExtensibleBuffer() ? &ExtensibleStringImpl::bufferOf(string) : &string;
+}
+
+void SurrogatePairCache::didAppend(StringImpl& shorter, StringImpl& longer)
+{
+    StringImpl* key = keyFor(shorter);
+    Entry& known = entryFor(key);
+    if (known.string != key)
+        return;
+    // They may be in the same place.
+    Entry entry { keyFor(longer), known.pairs, std::min<size_t>(known.lengthInCommon, shorter.length()) };
+    entryFor(entry.string.get()) = WTF::move(entry);
+}
+
 auto SurrogatePairCache::find(StringImpl& string, RefPtr<SurrogatePairs>& pairs) -> Found
 {
     ASSERT(!string.is8Bit());
-    StringImpl* key = string.isPrefixOfExtensibleBuffer() ? &ExtensibleStringImpl::bufferOf(string) : &string;
-    Entry& entry = m_entries[PtrHash<StringImpl*>::hash(key) & (size - 1)];
+    StringImpl* key = keyFor(string);
+    Entry& entry = entryFor(key);
+    // Every string that is the beginning of a buffer is the same as every other, as far as it goes.
     if (entry.string != key)
-        entry = { key, SurrogatePairs::create() };
-    pairs = entry.pairs;
-    if (!pairs->tryLookThrough(string.span16())) {
+        entry = { key, SurrogatePairs::create(), key == &string ? string.length() : std::numeric_limits<size_t>::max() };
+    // What is wanted is what is known of the string so far, and to add to that from the string. Neither will do if it has been added to from another.
+    if (std::min<size_t>(entry.pairs->lengthLookedThrough(), string.length()) > entry.lengthInCommon)
+        entry.pairs = entry.pairs->tryCopy(entry.lengthInCommon);
+    if (!entry.pairs || !entry.pairs->tryLookThrough(string.span16())) {
         entry = { };
         return Found::TooMany;
     }
+    entry.lengthInCommon = std::max<size_t>(entry.lengthInCommon, string.length());
+    pairs = entry.pairs;
     // Those that begin before its last code unit, so that both halves are in it.
     if (!pairs->countBeforeCodeUnit(string.length() - 1)) {
         string.setHasNoSurrogatePairs();

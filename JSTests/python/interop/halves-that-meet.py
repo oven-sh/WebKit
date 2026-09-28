@@ -8,7 +8,8 @@ def show(label, *values):
     print(label, "=>", *[ascii(v) for v in values])
 
 
-for prefix in ("", "a", "中", PAIR, "ab" * 40, ("a" + PAIR) * 30):
+# It is what is long that is kept that way: more than a page of memory, of which the largest that there are have 64K bytes.
+for prefix in ("", "a", "中", PAIR, "ab" * 40, ("a" + PAIR) * 30, "ab" * 40000, "\u4e2d" * 70000, ("a" + PAIR) * 30000, PAIR * 70000):
     n = len(prefix)
     # Long enough, and added to often enough, to be kept with room after it.
     s = prefix

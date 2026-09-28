@@ -649,9 +649,15 @@ one pair at the start => (100000, 526321645, 781315236, 100000, 560632888, 60985
 two at once => 50000
 many of them => 5200899960
 ---- added to and looked at
-pairs wrong: 0 of the last: 1071 819748575
-pairs and others wrong: 0 of the last: 1014 261670193
-few pairs wrong: 0 of the last: 1101 818186724
-first halves and pairs wrong: 0 of the last: 1063 114086559
-second halves and pairs wrong: 0 of the last: 1021 284701333
-none wrong: 0 of the last: 1062 554158881
+pairs after 0 wrong: 0 of the last: 206 744386731
+pairs after 70000 wrong: 0 of the last: 224 7335402
+pairs and others after 0 wrong: 0 of the last: 228 718313406
+pairs and others after 70000 wrong: 0 of the last: 205 325874736
+few pairs after 0 wrong: 0 of the last: 240 210550120
+few pairs after 70000 wrong: 0 of the last: 224 519447845
+first halves and pairs after 0 wrong: 0 of the last: 214 109802492
+first halves and pairs after 70000 wrong: 0 of the last: 223 747861343
+second halves and pairs after 0 wrong: 0 of the last: 195 705072297
+second halves and pairs after 70000 wrong: 0 of the last: 248 415824263
+none after 0 wrong: 0 of the last: 236 553402078
+none after 70000 wrong: 0 of the last: 209 751903594

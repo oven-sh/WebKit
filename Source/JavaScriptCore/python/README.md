@@ -396,17 +396,26 @@ of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for 
 has hold of it, so that takes as long as there is to add. In JavaScriptCore `s + x` is a rope, which is made in no time, and looking at it makes one string of it, which copies all of it. So doing both in turn took
 the square of the length, in JavaScript as well.
 
-Now a rope that is mostly its first string is made into a string in a buffer that it shares with that first string: `ExtensibleStringImpl`, in WTF, and `JSRopeString::tryResolveRopeIntoExtensibleBuffer()`. The
+Now a rope that is mostly its first string, if that is a long one, is made into a string in a buffer that it shares with that first string: `ExtensibleStringImpl`, in WTF, and `JSRopeString::tryResolveRopeIntoExtensibleBuffer()`. The
 buffer has room to spare. Each string is an ordinary `StringImpl` that is the first so many characters of it, and does not change. If the first string ends where what has been used of the buffer ends, then what is
 added is written after it, where no string that there is can see it, and the result is a longer piece of the same buffer. If something has been written there already, because the same string was added to twice, it
 is copied as it always was.
 
 - It is for a rope whose first string is at least half of it. If more is added than was there, copying what was there does not change how the time goes up.
+- It is for a first string that is longer than a page. Sharing a buffer takes one more allocation than not sharing one, which is more than it costs to copy a short string, and adding to a short string once is among
+  the commonest things that JavaScript does. Done for every rope, that took 23ns in place of 14ns with 10 characters, and made no difference that could be measured with 10,000. What is left by leaving short strings
+  out is little: putting together a string of that length by copying it each time comes to a millisecond or so, once. As it is, a rope with a short first string is put to one comparison, which cannot be measured.
 - The first time, the buffer has no room to spare, so adding to a string once costs no memory. It is when what comes of that is added to in its turn that the buffer is made twice as large.
 - A string says that it is such a piece in the low bit of the pointer that it has to the buffer, so it takes none of `StringImpl`'s flags.
-- That there are no surrogate pairs is handed on, by looking through only what was added, and only if the first string was known to have none, so a program that never asks does not pay for looking.
-- Where the pairs are is written down for the buffer, and not for each string, and is added to in the same way. A string may end between the halves of what is a pair to a longer one, so each counts those that are
-  wholly in it.
+
+What Python has found out about the surrogate pairs of the first string is a start on the whole, whether or not they share a buffer, so it is handed on whenever a rope of 16 bit characters is made into a string:
+`handOnWhatIsKnownOfSurrogatePairs()`. Otherwise each string on the way would be gone through from the beginning, which is the square of the length again. There is something to hand on only if Python has asked
+about the first string, so JavaScript by itself does no more than find what the first string is.
+
+- That there are no pairs is handed on by looking through only what was added.
+- Where the pairs are is one `SurrogatePairs` between all the strings that begin alike, which is only ever added to. A string may end between the halves of what is a pair to a longer one, so each counts those that
+  are wholly in it. And two strings that begin alike may go on differently, so the cache keeps, for each, how far it is known to be the same as what has been written down. The second of the two to be looked through
+  finds that it has been added to from the other, and takes a copy of what they have in common.
 
 ### What there is no room for
 
