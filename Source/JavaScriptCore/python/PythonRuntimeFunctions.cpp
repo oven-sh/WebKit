@@ -438,7 +438,7 @@ static JSValue stopIterationValue(JSGlobalObject* globalObject, JSValue exceptio
 }
 
 // If StopIteration has been raised, it is caught and what it carries is given. Otherwise the result is empty.
-static JSValue catchStopIteration(JSGlobalObject* globalObject)
+JSValue catchStopIteration(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     Exception* exception = vm.exceptionForInspection();
@@ -458,7 +458,6 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
     JSValue iterator = argument(0);
     JSValue received = argument(1);
     bool wasThrown = argument(2).asBoolean();
-    auto* generator = iterator.isCell() && iterator.asCell()->type() == JSGeneratorType ? uncheckedDowncast<JSGenerator>(iterator.asCell()) : nullptr;
     // So that gi_yieldfrom can say what this generator is waiting on.
     asObject(argument(3))->putDirect(vm, vm.pythonNames().private_yieldFrom, iterator);
 
@@ -467,62 +466,10 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
         realm->setReturnValue(vm, returned);
         return JSValue::encode(realm->boundArgumentsMarker());
     };
-    auto finishCall = [&] (JSValue yielded) -> EncodedJSValue {
-        if (!scope.exception())
-            return JSValue::encode(yielded);
-        JSValue returned = catchStopIteration(globalObject);
-        if (!returned)
-            return { };
-        return finish(returned);
-    };
-
-    if (wasThrown && isInstance(globalObject, received, realm->typeGeneratorExit())) {
-        // This generator is being closed, so that one is too.
-        if (generator)
-            generatorClose(globalObject, generator);
-        else {
-            JSValue close = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "close"_s));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (close)
-                call(globalObject, close);
-        }
-        RETURN_IF_EXCEPTION(scope, { });
-        throwException(globalObject, scope, received);
-        return { };
-    }
-
-    if (generator) {
-        JSValue returned;
-        JSValue yielded = resumeGenerator(globalObject, generator, received, wasThrown ? JSGenerator::ResumeMode::ThrowMode : JSGenerator::ResumeMode::NormalMode, returned);
-        RETURN_IF_EXCEPTION(scope, { });
-        return yielded ? JSValue::encode(yielded) : finish(returned);
-    }
-
-    if (wasThrown) {
-        JSValue method = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "throw"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!method) {
-            throwException(globalObject, scope, received);
-            return { };
-        }
-        return finishCall(call(globalObject, method, received));
-    }
-    if (isNone(received)) {
-        if (auto* native = tryIterator(iterator)) {
-            JSValue yielded = native->next(globalObject);
-            RETURN_IF_EXCEPTION(scope, { });
-            return yielded ? JSValue::encode(yielded) : finish(jsUndefined());
-        }
-        JSValue self;
-        JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_next, self);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!method)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s)));
-        return finishCall(callMethod(globalObject, method, self));
-    }
-    JSValue send = getAttribute(globalObject, iterator, Identifier::fromString(vm, "send"_s));
+    JSValue returned;
+    JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
     RETURN_IF_EXCEPTION(scope, { });
-    return finishCall(call(globalObject, send, received));
+    return yielded ? JSValue::encode(yielded) : finish(returned);
 }
 
 PYTHON_RUNTIME_FUNCTION(takeReturnValue)
@@ -696,11 +643,40 @@ static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, 
     return self ? JSValue(PyBoundMethod::create(globalObject, method, self)) : method;
 }
 
+// What `using` would call when it is done with something of JavaScript's: its [Symbol.dispose], or for `await using` its [Symbol.asyncDispose] or failing
+// that its [Symbol.dispose]. It is found as the engine finds it. Empty if it is not JavaScript's, or has none.
+static JSValue loadDisposeMethod(JSGlobalObject* globalObject, JSValue manager, bool isAsync)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!manager.isObject() || !typeOf(globalObject, manager)->hasFlag(PyType::IsJavaScript))
+        return { };
+    JSValue method = isAsync ? asObject(manager)->get(globalObject, vm.propertyNames->asyncDisposeSymbol) : jsUndefined();
+    RETURN_IF_EXCEPTION(scope, { });
+    if (method.isUndefinedOrNull()) {
+        method = asObject(manager)->get(globalObject, vm.propertyNames->disposeSymbol);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (method.isUndefinedOrNull())
+        return { };
+    JSValue find = globalObject->linkTimeConstant(isAsync ? LinkTimeConstant::getAsyncDisposeMethod : LinkTimeConstant::getDisposeMethod);
+    method = call(globalObject, find, manager);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isAsync)
+        RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, asObject(method), manager, ArgList()));
+    // JavaScript waits for whatever it gives, and Python for what can be awaited.
+    MarkedArgumentBuffer bound;
+    bound.append(method);
+    RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, globalObject->pyRealm()->javaScriptFunction("disposeAndWait"_s), manager, bound));
+}
+
 PYTHON_RUNTIME_FUNCTION(loadExit)
 {
     PROLOGUE();
     auto& names = vm.pythonNames();
     bool isAsync = argument(1).asBoolean();
+    if (JSValue dispose = loadDisposeMethod(globalObject, argument(0), isAsync); dispose || scope.exception())
+        return JSValue::encode(dispose);
     JSValue exit = loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aexit : names.dunder_exit, isAsync ? "__aexit__"_s : "__exit__"_s, isAsync);
     RETURN_IF_EXCEPTION(scope, { });
     loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aenter : names.dunder_enter, isAsync ? "__aenter__"_s : "__enter__"_s, isAsync);
@@ -711,6 +687,9 @@ PYTHON_RUNTIME_FUNCTION(loadExit)
 PYTHON_RUNTIME_FUNCTION(callEnter)
 {
     PROLOGUE();
+    // There is nothing to entering what `using` can be used with: it is what it is from the start.
+    if (typeOf(globalObject, argument(0))->hasFlag(PyType::IsJavaScript))
+        return JSValue::encode(argument(1).asBoolean() ? awaitableFor(globalObject, argument(0)) : argument(0));
     JSValue self;
     JSValue method = lookupSpecial(globalObject, argument(0), argument(1).asBoolean() ? vm.pythonNames().dunder_aenter : vm.pythonNames().dunder_enter, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -725,7 +704,7 @@ PYTHON_RUNTIME_FUNCTION(callExit)
     if (isNone(exception))
         RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), jsUndefined(), jsUndefined(), jsUndefined())));
     JSValue traceback = exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), typeOf(globalObject, exception), exception, traceback ? traceback : jsUndefined())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), typeOf(globalObject, exception)->object(), exception, traceback ? traceback : jsUndefined())));
 }
 
 // ---- match

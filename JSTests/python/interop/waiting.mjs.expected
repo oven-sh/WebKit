@@ -1,0 +1,52 @@
+await => 42
+then, catch, finally => 2,ValueError,fin
+it stays a coroutine => <coroutine object,false,function,function
+one promise however often => 10,10,11
+all, race, allSettled, any => [2,4,3],14,["fulfilled","rejected"],8
+rejection => ValueError,from coroutine,true,true,true
+an async function returns one => 16
+a coroutine returns one => 8
+deep => 500
+Python awaits: promise, later, thenable, async function => ('got', 1) ('got', 'late') ('got', 'thenable') ('got', 'af')
+Python awaits what is no promise => ('TypeError', "'Object' object can't be awaited")
+Python awaits a number => ('TypeError', "'int' object can't be awaited")
+rejected with an Error => ('TypeError', 't')
+rejected with one of Python's => ('ValueError', 'from coroutine')
+rejected with a string => went through except: just a string
+and a bare except => bare except caught it
+finally => finally ran
+a thenable that throws => ('ValueError', 'thrown in then')
+interleaving => a,b,js | js0,js1,a0,b0,a1,b1,a2
+begun at once by then, not by the call => 0,["w0"]
+order with JavaScript's => js1,py,js2,js3,js4
+a bare yield gives a turn => x before,y before,x after,y after
+__await__ of one's own => ('custom', 9)
+and awaited by Python => ('custom', 9)
+bad yield => Task got bad yield: 5
+__await__ gives no iterator !! TypeError: __await__() returned non-iterator of type 'int'
+gather from Python => 2,4,p
+a timer => slept
+Promise.resolve from Python => true,12
+the class of a promise => ('Promise', True, True, True, False)
+run by hand => (True, ('got', 'sent by hand'))
+what __await__ gives => promise_awaiter,true,true,1,cannot reuse already awaited promise
+closed before it is awaited !! RuntimeError: cannot reuse already awaited coroutine
+awaited while it runs => ('got', None),same promise
+SystemExit !! SystemExit: 3
+for await => 0,1,2 | agen closed
+break closes it => agen closed
+next(value), return(), throw() => {"value":0,"done":false},{"value":1,"done":false},{"value":"bye","done":true},{"done":true} [["sent","hello"],"agen closed"]
+throw() into it => KeyError,agen closed
+it raises => 1,KeyError
+it awaits => 0,10
+__aiter__ and __anext__ of one's own => item1,item2
+it is its own iterator => true,function,function,function,
+Array.fromAsync => 0,1,2
+async for over an async generator => a,b
+over an object with Symbol.asyncIterator => 0,1
+over what is only iterable => p,q
+over what is neither !! TypeError: 'async for' requires an object with __aiter__ method, got Object
+break => b
+it throws => 1,ValueError: in JS
+aiter() and anext() => 1,2,default
+round trip => 0,100

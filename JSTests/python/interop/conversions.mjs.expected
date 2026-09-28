@@ -1,0 +1,10 @@
+Number() => 7.5,3,1.1805916207174113e+21,9,NaN,5,2.5,12
+unary plus => 7.5,3,5
+unary plus of a big one !! TypeError: Conversion from 'BigInt' to 'number' is not allowed.
+String() and templates => numstr,numstr,plain,5,(1, 2),(1+2j)
+Math => 7,3,3
+as an index and a key => ,1,d,4,5
+isNaN, parseInt, BigInt, >>> => false,true,42,3,3
+new Date, new Array, repeat => 3,ababab,1
+bad !! TypeError: Bad.__float__ returned non-float (type str)
+JSON.stringify => [5,2.5,"s",[1,2]]

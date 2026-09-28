@@ -62,6 +62,7 @@
 #include "ModuleLoadingContext.h"
 #include "ModuleRegistryEntry.h"
 #include "ObjectConstructor.h"
+#include "PythonGenerators.h"
 #include "ScriptFetcher.h"
 #include "ThrowScope.h"
 #include "TopExceptionScope.h"
@@ -2102,6 +2103,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
         asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload));
+        return;
+    }
+
+    case InternalMicrotask::PythonAwaitResume: {
+        // What something of Python's that JavaScript is waiting for was itself waiting for has been settled.
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+#endif
+        JSObject* iterator = asObject(arguments[2]);
+        scope.release();
+        Python::resumeAwaitable(iterator->realm(), iterator, arguments[1], static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
         return;
     }
 

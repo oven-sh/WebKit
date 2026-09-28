@@ -85,6 +85,7 @@ function disposeAsync()
     var stack = @getAsyncDisposableStackInternalField(this, @asyncDisposableStackFieldCapability);
     @assert(@isArray(stack));
 
+    var self = this;
     var i = stack.length;
     var thrown = false;
     var suppressed;
@@ -92,6 +93,7 @@ function disposeAsync()
     var hasAwaited = false;
 
     var handleError = (result) => {
+        told = @undefined;
         if (thrown)
             suppressed = new @SuppressedError(result, suppressed);
         else {
@@ -108,7 +110,19 @@ function disposeAsync()
             @resolvePromiseWithFirstResolvingFunctionCallCheck(promise, @undefined);
     };
 
+    var told;
     var loop = () => {
+        if (told !== @undefined) {
+            var stillThrown = @isDisposableStack(told) ? @getDisposableStackInternalField(told, @disposableStackFieldWasThrown) : @getAsyncDisposableStackInternalField(told, @asyncDisposableStackFieldWasThrown);
+            told = @undefined;
+            if (!stillThrown) {
+                if (thrown) {
+                    thrown = false;
+                    suppressed = @undefined;
+                } else
+                    @putAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldWasThrown, false);
+            }
+        }
         while (i) {
             var resource = stack[--i];
             if (resource.method === @undefined) {
@@ -117,8 +131,32 @@ function disposeAsync()
             }
             var result;
             try {
-                result = resource.method.@call(resource.value);
+                if (resource.method === @pythonExitContext) {
+                    // It is told what has been thrown: here, or failing that by the block that is using this.
+                    if (thrown) {
+                        if (resource.method.@call(resource.value, true, suppressed)) {
+                            thrown = false;
+                            suppressed = @undefined;
+                        }
+                    } else if (resource.method.@call(resource.value, @getAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldWasThrown), @getAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldThrown)))
+                        @putAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldWasThrown, false);
+                } else {
+                    // There may be such a one in a stack that is in this one, so that is told the same. Whether it was dealt with is seen when it is done.
+                    var wasThrown = thrown || @getAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldWasThrown);
+                    var what = thrown ? suppressed : @getAsyncDisposableStackInternalField(self, @asyncDisposableStackFieldThrown);
+                    if (@isDisposableStack(resource.value)) {
+                        @putDisposableStackInternalField(resource.value, @disposableStackFieldWasThrown, wasThrown);
+                        @putDisposableStackInternalField(resource.value, @disposableStackFieldThrown, what);
+                        told = wasThrown ? resource.value : @undefined;
+                    } else if (@isAsyncDisposableStack(resource.value)) {
+                        @putAsyncDisposableStackInternalField(resource.value, @asyncDisposableStackFieldWasThrown, wasThrown);
+                        @putAsyncDisposableStackInternalField(resource.value, @asyncDisposableStackFieldThrown, what);
+                        told = wasThrown ? resource.value : @undefined;
+                    }
+                    result = resource.method.@call(resource.value);
+                }
             } catch (error) {
+                told = @undefined;
                 if (thrown)
                     suppressed = new @SuppressedError(error, suppressed);
                 else {
@@ -175,7 +213,5 @@ function use(value)
     if (@getAsyncDisposableStackInternalField(this, @asyncDisposableStackFieldState) === @AsyncDisposableStackStateDisposed)
         throw new @ReferenceError("AsyncDisposableStack.prototype.use requires that |this| be a pending AsyncDisposableStack object");
 
-    @addDisposableResource(@getAsyncDisposableStackInternalField(this, @asyncDisposableStackFieldCapability), value, /* isAsync */ true);
-
-    return value;
+    return @addDisposableResource(@getAsyncDisposableStackInternalField(this, @asyncDisposableStackFieldCapability), value, /* isAsync */ true);
 }

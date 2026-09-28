@@ -40,6 +40,11 @@ function createDisposableResource(value, isAsync /* , method */)
                 method = @getAsyncDisposeMethod(value);
             else
                 method = @getDisposeMethod(value);
+            // A context manager of Python's is entered, and what that gives is what use() gives.
+            if (method === @pythonExitContext)
+                return { value, method, entered: @pythonEnterContext(value, false) };
+            if (method === @pythonAsyncExitContext)
+                @throwTypeError("An asynchronous context manager has to be waited for to be entered, which use() cannot do. Use `await using`");
         }
     } else {
         method = @argument(2);
@@ -47,7 +52,7 @@ function createDisposableResource(value, isAsync /* , method */)
             @throwTypeError("Callback that is called on dispose must be callable");
     }
 
-    return { value, method };
+    return { value, method, entered: value };
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-getdisposemethod
@@ -86,6 +91,8 @@ function getAsyncDisposeMethod(value)
             @throwTypeError("@@asyncDispose and @@dispose must not be undefined or null");
         if (!@isCallable(method))
             @throwTypeError("@@dispose must be callable");
+        if (method === @pythonExitContext)
+            return method;
         var syncMethod = method;
         var receiver = value;
         return function () {
@@ -113,7 +120,7 @@ function addDisposableResource(disposeCapability, value, isAsync /* , method */)
     var resource;
     if (@argumentCount() < 4) {
         if (@isUndefinedOrNull(value) && !isAsync)
-            return;
+            return value;
         resource = @createDisposableResource(value, isAsync);
     } else {
         @assert(value === @undefined);
@@ -121,6 +128,7 @@ function addDisposableResource(disposeCapability, value, isAsync /* , method */)
     }
 
     @arrayPush(disposeCapability, resource);
+    return resource.entered;
 }
 
 // https://tc39.es/proposal-explicit-resource-management/#sec-disposablestack.prototype.adopt
@@ -186,7 +194,31 @@ function dispose()
     while (i) {
         var resource = stack[--i];
         try {
-            resource.method.@call(resource.value);
+            if (resource.method === @pythonExitContext) {
+                // It is told what has been thrown: here, or failing that by the block that is using this.
+                if (thrown) {
+                    if (resource.method.@call(resource.value, true, suppressed)) {
+                        thrown = false;
+                        suppressed = @undefined;
+                    }
+                } else if (resource.method.@call(resource.value, @getDisposableStackInternalField(this, @disposableStackFieldWasThrown), @getDisposableStackInternalField(this, @disposableStackFieldThrown)))
+                    @putDisposableStackInternalField(this, @disposableStackFieldWasThrown, false);
+            } else if (@isDisposableStack(resource.value)) {
+                // There may be such a one in that, so it is told the same.
+                var inner = resource.value;
+                var wasThrown = thrown || @getDisposableStackInternalField(this, @disposableStackFieldWasThrown);
+                @putDisposableStackInternalField(inner, @disposableStackFieldWasThrown, wasThrown);
+                @putDisposableStackInternalField(inner, @disposableStackFieldThrown, thrown ? suppressed : @getDisposableStackInternalField(this, @disposableStackFieldThrown));
+                resource.method.@call(inner);
+                if (wasThrown && !@getDisposableStackInternalField(inner, @disposableStackFieldWasThrown)) {
+                    if (thrown) {
+                        thrown = false;
+                        suppressed = @undefined;
+                    } else
+                        @putDisposableStackInternalField(this, @disposableStackFieldWasThrown, false);
+                }
+            } else
+                resource.method.@call(resource.value);
         } catch (e) {
             if (thrown)
                 suppressed = new @SuppressedError(e, suppressed);
@@ -233,7 +265,5 @@ function use(value)
     if (@getDisposableStackInternalField(this, @disposableStackFieldState) === @DisposableStackStateDisposed)
         throw new @ReferenceError("DisposableStack.prototype.use requires that |this| be a pending DisposableStack object");
 
-    @addDisposableResource(@getDisposableStackInternalField(this, @disposableStackFieldCapability), value, /* isAsync */ false);
-
-    return value;
+    return @addDisposableResource(@getDisposableStackInternalField(this, @disposableStackFieldCapability), value, /* isAsync */ false);
 }

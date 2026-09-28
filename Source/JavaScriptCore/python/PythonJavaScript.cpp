@@ -31,9 +31,13 @@
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSONObject.h"
+#include "JSPromise.h"
+#include "JSPromiseConstructor.h"
+#include "JSPromisePrototype.h"
 #include "ObjectConstructor.h"
 #include "ObjectPrototypeInlines.h"
 #include "PyDict.h"
+#include "PythonGenerators.h"
 
 // What each language sees of what is the other's. "The two languages" in README.md says why it is as it is.
 
@@ -301,6 +305,7 @@ void initializeJavaScriptTypes(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     realm->typeJSObject()->setJavaScriptClass(vm, globalObject->objectConstructor(), globalObject->objectPrototype());
     realm->typeJSFunction()->setJavaScriptClass(vm, globalObject->functionConstructor(), globalObject->functionPrototype());
+    realm->typeJSPromise()->setJavaScriptClass(vm, globalObject->promiseConstructor(), globalObject->promisePrototype());
     addGetSet(globalObject, realm->typeJSObject(), "__dict__"_s, getInstanceDict, setInstanceDict);
     addGetSet(globalObject, realm->typeJSFunction(), "__name__"_s, getFunctionName);
     addGetSet(globalObject, realm->typeJSFunction(), "__self__"_s, getFunctionSelf);
@@ -345,6 +350,8 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptToJSON, (JSGlobalObject* globalObject, CallFr
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue self = callFrame->thisValue();
+    if (auto* boxed = dynamicDowncast<PyBoxedValue>(self))
+        return JSValue::encode(boxed->value());
     if (isDict(self)) {
         JSObject* result = constructEmptyObject(globalObject);
         uncheckedDowncast<PyDict>(self.asCell())->forEach(globalObject, [&] (JSValue key, JSValue value) {
@@ -371,6 +378,152 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptToJSON, (JSGlobalObject* globalObject, CallFr
     RELEASE_AND_RETURN(scope, JSValue::encode(listFromIterable(globalObject, self)));
 }
 
+// awaitable.then(), .catch() and .finally(): those of the promise for what awaiting it comes to. It is `then` that makes JavaScript wait for something.
+template<typename GetName>
+static EncodedJSValue callMethodOfPromise(JSGlobalObject* globalObject, CallFrame* callFrame, const GetName& getName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSPromise* promise = toPromise(globalObject, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue method = promise->get(globalObject, getName(vm));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, method, JSC::getCallData(method), promise, ArgList(callFrame))));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptThen);
+JSC_DEFINE_HOST_FUNCTION(javaScriptThen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return callMethodOfPromise(globalObject, callFrame, [] (VM& vm) -> const Identifier& { return vm.propertyNames->then; });
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptCatch);
+JSC_DEFINE_HOST_FUNCTION(javaScriptCatch, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return callMethodOfPromise(globalObject, callFrame, [] (VM& vm) -> const Identifier& { return vm.propertyNames->catchKeyword; });
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptFinally);
+JSC_DEFINE_HOST_FUNCTION(javaScriptFinally, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return callMethodOfPromise(globalObject, callFrame, [] (VM& vm) -> const Identifier& { return vm.propertyNames->finallyKeyword; });
+}
+
+// obj[Symbol.asyncIterator](): aiter(obj)
+static JSC_DECLARE_HOST_FUNCTION(javaScriptAsyncIterator);
+JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncIterator, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(getAsyncIterator(globalObject, callFrame->thisValue()));
+}
+
+// The next(), return() and throw() of an asynchronous iterator, each of which gives a promise for { value, done }.
+enum class AsyncStep : uint8_t { Next, Return, Throw };
+static EncodedJSValue stepAsyncIterator(JSGlobalObject* globalObject, CallFrame* callFrame, AsyncStep step)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue self = callFrame->thisValue();
+    JSValue given = callFrame->argument(0);
+    JSValue awaitable;
+    JSValue settlement = jsBoolean(true);
+    switch (step) {
+    case AsyncStep::Next:
+        if (given.isUndefined()) {
+            JSValue instance;
+            JSValue method = lookupSpecial(globalObject, self, vm.pythonNames().dunder_anext, instance);
+            if (method)
+                awaitable = callMethod(globalObject, method, instance);
+        } else {
+            JSValue send = getAttribute(globalObject, self, Identifier::fromString(vm, "asend"_s));
+            if (send)
+                awaitable = call(globalObject, send, given);
+        }
+        break;
+    case AsyncStep::Return: {
+        settlement = createIteratorResultObject(globalObject, given, true);
+        JSValue close = getAttributeIfPresent(globalObject, self, Identifier::fromString(vm, "aclose"_s));
+        if (!scope.exception() && !close)
+            return JSValue::encode(JSPromise::resolvedPromise(globalObject, settlement));
+        if (close)
+            awaitable = call(globalObject, close);
+        break;
+    }
+    case AsyncStep::Throw: {
+        JSValue method = getAttribute(globalObject, self, Identifier::fromString(vm, "athrow"_s));
+        if (method)
+            awaitable = call(globalObject, method, given);
+        break;
+    }
+    }
+    // What goes wrong is what the promise is rejected with, whenever it goes wrong.
+    if (scope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+    RELEASE_AND_RETURN(scope, JSValue::encode(toPromise(globalObject, awaitable, settlement)));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptAsyncNext);
+JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return stepAsyncIterator(globalObject, callFrame, AsyncStep::Next);
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptAsyncReturn);
+JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return stepAsyncIterator(globalObject, callFrame, AsyncStep::Return);
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptAsyncThrow);
+JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncThrow, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return stepAsyncIterator(globalObject, callFrame, AsyncStep::Throw);
+}
+
+// For `async with` over something of JavaScript's: calls the method that it is given first, and gives a promise for what comes of it.
+static JSC_DECLARE_HOST_FUNCTION(javaScriptDisposeAndWait);
+JSC_DEFINE_HOST_FUNCTION(javaScriptDisposeAndWait, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue method = callFrame->argument(0);
+    JSValue result = JSC::call(globalObject, method, JSC::getCallData(method), callFrame->thisValue(), ArgList());
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, result)));
+}
+
+// obj[Symbol.toPrimitive](hint): what stands for it where JavaScript wants a number or a string. Number(obj) is float(obj), or failing that what it
+// is as an index, and String(obj) is str(obj).
+static JSC_DECLARE_HOST_FUNCTION(javaScriptToPrimitive);
+JSC_DEFINE_HOST_FUNCTION(javaScriptToPrimitive, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSValue self = callFrame->thisValue();
+    JSValue hint = callFrame->argument(0);
+    bool wantsString = hint.isString() && asString(hint)->value(globalObject).data == "string"_s;
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!wantsString) {
+        for (const Identifier* name : { &names.dunder_float, &names.dunder_index, &names.dunder_int }) {
+            JSValue instance;
+            JSValue method = lookupSpecial(globalObject, self, *name, instance);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!method)
+                continue;
+            JSValue result = callMethod(globalObject, method, instance);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!result.isNumber() && !result.isHeapBigInt())
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, self), '.', name->string(), " returned non-"_s, name == &names.dunder_float ? "float"_s : "int"_s, " (type "_s, typeName(globalObject, result), ')')));
+            return JSValue::encode(result);
+        }
+    }
+    String text = str(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, text));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(javaScriptIsTrue);
+
 JSObject* createJavaScriptFunctions(VM& vm, JSGlobalObject* globalObject)
 {
     JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
@@ -381,6 +534,16 @@ JSObject* createJavaScriptFunctions(VM& vm, JSGlobalObject* globalObject)
     add("iterator"_s, javaScriptIterator);
     add("next"_s, javaScriptNext);
     add("toJSON"_s, javaScriptToJSON);
+    add("then"_s, javaScriptThen);
+    add("catch"_s, javaScriptCatch);
+    add("finally"_s, javaScriptFinally);
+    add("asyncIterator"_s, javaScriptAsyncIterator);
+    add("asyncNext"_s, javaScriptAsyncNext);
+    add("asyncReturn"_s, javaScriptAsyncReturn);
+    add("asyncThrow"_s, javaScriptAsyncThrow);
+    add("disposeAndWait"_s, javaScriptDisposeAndWait);
+    add("toPrimitive"_s, javaScriptToPrimitive);
+    add("isTrue"_s, javaScriptIsTrue);
     return object;
 }
 
@@ -411,6 +574,16 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     if (name.isSymbol()) {
         if (name == vm.propertyNames->iteratorSymbol && !isClass(receiver) && (type->lookup(vm, names.dunder_iter) || type->lookup(vm, names.dunder_getitem)))
             return function("iterator"_s);
+        if (name == vm.propertyNames->asyncIteratorSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_aiter))
+            return function("asyncIterator"_s);
+        // An exception is left to Error.prototype, as it is for toString().
+        if (name == vm.propertyNames->toPrimitiveSymbol && !isClass(receiver) && !type->isExceptionType())
+            return function("toPrimitive"_s);
+        // A context manager is what `using` can be used with.
+        if (name == vm.propertyNames->disposeSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_exit))
+            return globalObject->linkTimeConstant(LinkTimeConstant::pythonExitContext);
+        if (name == vm.propertyNames->asyncDisposeSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_aexit))
+            return globalObject->linkTimeConstant(LinkTimeConstant::pythonAsyncExitContext);
         return { };
     }
 
@@ -445,7 +618,7 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
         return function("toString"_s);
     bool isMapping = type->hasFlag(PyType::IsMapping);
     bool isSet = type->isSubtypeOf(realm->typeSet()) || type->isSubtypeOf(realm->typeFrozenSet());
-    if (name == vm.propertyNames->toJSON && (isMapping || isSet || type->hasFlag(PyType::IsSequence)))
+    if (name == vm.propertyNames->toJSON && (isMapping || isSet || type->hasFlag(PyType::IsSequence) || type->layout() == PyType::Layout::Boxed))
         return function("toJSON"_s);
     // How many: an array has a length, and a Map and a Set have a size.
     if (name == ((isMapping || isSet) ? vm.propertyNames->size : vm.propertyNames->length) && type->lookup(vm, names.dunder_len)) {
@@ -455,6 +628,23 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     }
     if (name == vm.propertyNames->next && type->lookup(vm, names.dunder_next))
         return function("next"_s);
+    // What can be awaited is what JavaScript calls a thenable, so that it waits for it: `await`, Promise.all() and the rest go by `then`.
+    if (type->lookup(vm, names.dunder_await)) {
+        if (name == vm.propertyNames->then)
+            return function("then"_s);
+        if (name == vm.propertyNames->catchKeyword)
+            return function("catch"_s);
+        if (name == vm.propertyNames->finallyKeyword)
+            return function("finally"_s);
+    }
+    if (type->lookup(vm, names.dunder_anext)) {
+        if (name == vm.propertyNames->next)
+            return function("asyncNext"_s);
+        if (name == vm.propertyNames->returnKeyword)
+            return function("asyncReturn"_s);
+        if (name == vm.propertyNames->throwKeyword)
+            return function("asyncThrow"_s);
+    }
     return { };
 }
 
@@ -741,4 +931,75 @@ bool definePropertyFromJavaScript(JSGlobalObject* globalObject, JSObject* receiv
     return true;
 }
 
-} } // namespace JSC::Python
+// __exit__ or __aexit__, called with what was thrown, or with nothing.
+static JSValue callExitMethod(JSGlobalObject* globalObject, CallFrame* callFrame, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue manager = callFrame->thisValue();
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, manager, name, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), "' object has no "_s, name.string()));
+    MarkedArgumentBuffer arguments;
+    if (callFrame->argument(0).toBoolean(globalObject)) {
+        JSValue thrown = callFrame->argument(1);
+        JSValue traceback = thrown.isObject() ? asObject(thrown)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
+        arguments.append(typeOf(globalObject, thrown)->object());
+        arguments.append(thrown);
+        arguments.append(traceback ? traceback : jsUndefined());
+    } else {
+        for (unsigned i = 0; i < 3; ++i)
+            arguments.append(jsUndefined());
+    }
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self, arguments));
+}
+
+// bool(value), for what a promise comes to.
+JSC_DEFINE_HOST_FUNCTION(javaScriptIsTrue, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(isTrue(globalObject, callFrame->argument(0))));
+}
+
+} // namespace Python
+
+JSC_DEFINE_HOST_FUNCTION(pythonEnterContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue manager = callFrame->argument(0);
+    const Identifier& name = callFrame->argument(1).toBoolean(globalObject) ? vm.pythonNames().dunder_aenter : vm.pythonNames().dunder_enter;
+    JSValue self;
+    JSValue method = Python::lookupSpecial(globalObject, manager, name, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return JSValue::encode(Python::raiseTypeError(globalObject, scope, makeString('\'', Python::typeName(globalObject, manager), "' object does not support the context manager protocol (missed "_s, name.string(), " method)"_s)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Python::callMethod(globalObject, method, self)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(pythonExitContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = Python::callExitMethod(globalObject, callFrame, vm.pythonNames().dunder_exit);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(Python::isTrue(globalObject, result))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(pythonAsyncExitContext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue awaitable = Python::callExitMethod(globalObject, callFrame, vm.pythonNames().dunder_aexit);
+    if (scope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+    JSPromise* promise = Python::toPromise(globalObject, awaitable);
+    JSValue then = promise->get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer arguments;
+    arguments.append(globalObject->pyRealm()->javaScriptFunction("isTrue"_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, then, JSC::getCallData(then), promise, arguments)));
+}
+
+} // namespace JSC

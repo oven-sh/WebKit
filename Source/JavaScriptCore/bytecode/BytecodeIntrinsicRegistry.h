@@ -145,10 +145,14 @@ enum class LinkTimeConstant : int32_t;
     macro(wrapForValidIteratorFieldIteratedNextMethod) \
     macro(disposableStackFieldState) \
     macro(disposableStackFieldCapability) \
+    macro(disposableStackFieldWasThrown) \
+    macro(disposableStackFieldThrown) \
     macro(DisposableStackStatePending) \
     macro(DisposableStackStateDisposed) \
     macro(asyncDisposableStackFieldState) \
     macro(asyncDisposableStackFieldCapability) \
+    macro(asyncDisposableStackFieldWasThrown) \
+    macro(asyncDisposableStackFieldThrown) \
     macro(AsyncDisposableStackStatePending) \
     macro(AsyncDisposableStackStateDisposed) \
     macro(InternalMicrotaskAsyncFromSyncIteratorContinue) \

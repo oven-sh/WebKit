@@ -40,10 +40,12 @@
 #include "BytecodeUseDef.h"
 #include "DefinePropertyAttributes.h"
 #include "Interpreter.h"
+#include "JSAsyncDisposableStack.h"
 #include "JSAsyncGenerator.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSDisposableStack.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
 #include "PythonCodeGenerator.h"
@@ -4907,11 +4909,34 @@ void BytecodeGenerator::emitPrepareDisposable(RegisterID* value, const JSTextPos
     slot.isAsync = isAsync;
     move(slot.value.get(), value);
 
+    RefPtr<RegisterID> method = newTemporary();
     RefPtr<RegisterID> getDisposeMethodFunc = moveLinkTimeConstant(nullptr, isAsync ? LinkTimeConstant::getAsyncDisposeMethod : LinkTimeConstant::getDisposeMethod);
-    CallArguments args(*this, nullptr, 1);
-    emitLoad(args.thisRegister(), jsUndefined());
-    move(args.argumentRegister(0), value);
-    emitCall(slot.method.get(), getDisposeMethodFunc.get(), NoExpectedFunction, args, divot, divot, divot, DebuggableCall::No);
+    {
+        CallArguments args(*this, nullptr, 1);
+        emitLoad(args.thisRegister(), jsUndefined());
+        move(args.argumentRegister(0), value);
+        emitCall(method.get(), getDisposeMethodFunc.get(), NoExpectedFunction, args, divot, divot, divot, DebuggableCall::No);
+    }
+
+    // For a context manager of Python's, `using x = manager` is `with manager as x`: it is entered, and x is what entering it gives. If it cannot be
+    // entered it is not left either, so the slot has no method until it has been.
+    auto emitEnterIfMethodIs = [&](LinkTimeConstant exit, bool entersAsync) {
+        Ref<Label> isNot = newLabel();
+        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), method.get(), moveLinkTimeConstant(nullptr, exit)), isNot.get());
+        RefPtr<RegisterID> enter = moveLinkTimeConstant(nullptr, LinkTimeConstant::pythonEnterContext);
+        CallArguments args(*this, nullptr, 2);
+        emitLoad(args.thisRegister(), jsUndefined());
+        move(args.argumentRegister(0), slot.value.get());
+        emitLoad(args.argumentRegister(1), jsBoolean(entersAsync));
+        emitCall(value, enter.get(), NoExpectedFunction, args, divot, divot, divot, DebuggableCall::No);
+        if (entersAsync)
+            emitAwait(value, value, divot);
+        emitLabel(isNot.get());
+    };
+    emitEnterIfMethodIs(LinkTimeConstant::pythonExitContext, false);
+    if (isAsync)
+        emitEnterIfMethodIs(LinkTimeConstant::pythonAsyncExitContext, true);
+    move(slot.method.get(), method.get());
 
     // Mark reached only after method lookup succeeds; if the above call threw, reached stays
     // false so the finally block skips this slot entirely (spec: no resource record is added).
@@ -5022,6 +5047,71 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
             emitLoad(disposeThrew.get(), jsBoolean(true));
         };
 
+        // What leaves a context manager of Python's is told what was thrown, if anything was, and may say that it has dealt with it. Then it is as if
+        // nothing had been thrown.
+        auto emitCallDispose = [&](RegisterID* result, RegisterID* value, RegisterID* method, bool isAsync) {
+            Ref<Label> isPythons = newLabel();
+            Ref<Label> dealtWith = newLabel();
+            Ref<Label> called = newLabel();
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), method, moveLinkTimeConstant(nullptr, LinkTimeConstant::pythonExitContext)), isPythons.get());
+            if (isAsync)
+                emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), method, moveLinkTimeConstant(nullptr, LinkTimeConstant::pythonAsyncExitContext)), isPythons.get());
+            {
+                // There may be such a one in a DisposableStack. So that is told too, by way of fields of its own and not by arguments, which its
+                // dispose() has none of and which whatever overrides that would have to pass on.
+                static_assert(static_cast<unsigned>(JSDisposableStack::Field::WasThrown) == static_cast<unsigned>(JSAsyncDisposableStack::Field::WasThrown));
+                static_assert(static_cast<unsigned>(JSDisposableStack::Field::Thrown) == static_cast<unsigned>(JSAsyncDisposableStack::Field::Thrown));
+                RefPtr<RegisterID> isStack = emitIsDisposableStack(newTemporary(), value);
+                if (isAsync) {
+                    Ref<Label> known = newLabel();
+                    emitJumpIfTrue(isStack.get(), known.get());
+                    emitIsAsyncDisposableStack(isStack.get(), value);
+                    emitLabel(known.get());
+                }
+                Ref<Label> told = newLabel();
+                emitJumpIfFalse(isStack.get(), told.get());
+                emitPutInternalField(value, static_cast<unsigned>(JSDisposableStack::Field::WasThrown), hasError.get());
+                emitPutInternalField(value, static_cast<unsigned>(JSDisposableStack::Field::Thrown), pendingError.get());
+                emitLabel(told.get());
+
+                CallArguments disposeArgs(*this, nullptr, 0);
+                move(disposeArgs.thisRegister(), value);
+                emitCall(result, method, NoExpectedFunction, disposeArgs, divot, divot, divot, DebuggableCall::No);
+                if (isAsync) {
+                    // Set hasAwaited before Await: emitAwait throws on rejection, but a rejected
+                    // Await still implies a microtask boundary has occurred.
+                    emitLoad(hasAwaited.get(), jsBoolean(true));
+                    emitAwait(result, result, divot);
+                }
+                emitJumpIfFalse(isStack.get(), called.get());
+                emitJumpIfFalse(hasError.get(), called.get());
+                emitJumpIfTrue(emitGetInternalField(newTemporary(), value, static_cast<unsigned>(JSDisposableStack::Field::WasThrown)), called.get());
+                emitJump(dealtWith.get());
+            }
+            emitLabel(isPythons.get());
+            {
+                CallArguments disposeArgs(*this, nullptr, 2);
+                move(disposeArgs.thisRegister(), value);
+                move(disposeArgs.argumentRegister(0), hasError.get());
+                move(disposeArgs.argumentRegister(1), pendingError.get());
+                emitCall(result, method, NoExpectedFunction, disposeArgs, divot, divot, divot, DebuggableCall::No);
+                if (isAsync) {
+                    emitLoad(hasAwaited.get(), jsBoolean(true));
+                    emitAwait(result, result, divot);
+                }
+                emitJumpIfFalse(result, called.get());
+                emitJumpIfFalse(hasError.get(), called.get());
+                emitLabel(dealtWith.get());
+                emitLoad(hasError.get(), jsBoolean(false));
+                emitLoad(pendingError.get(), jsUndefined());
+                emitLoad(disposeThrew.get(), jsBoolean(false));
+                // If it was the body that threw, it now comes to its end. If it was leaving by other means, it goes on doing so.
+                emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), finallyContext.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), called.get());
+                emitLoad(finallyContext.completionTypeRegister(), CompletionType::Normal);
+            }
+            emitLabel(called.get());
+        };
+
         auto emitAwaitUndefined = [&]() {
             RefPtr<RegisterID> tmp = newTemporary();
             emitLoad(tmp.get(), jsUndefined());
@@ -5058,14 +5148,7 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
                 TryData* trySlotData = pushTry(trySlotStart.get(), catchLabel.get(), HandlerType::SynthesizedCatch);
 
                 RefPtr<RegisterID> result = newTemporary();
-                CallArguments disposeArgs(*this, nullptr, 0);
-                move(disposeArgs.thisRegister(), slot.value.get());
-                emitCall(result.get(), slot.method.get(), NoExpectedFunction, disposeArgs, divot, divot, divot, DebuggableCall::No);
-
-                // Set hasAwaited before Await: emitAwait throws on rejection, but a rejected
-                // Await still implies a microtask boundary has occurred.
-                emitLoad(hasAwaited.get(), jsBoolean(true));
-                emitAwait(result.get(), result.get(), divot);
+                emitCallDispose(result.get(), slot.value.get(), slot.method.get(), true);
 
                 emitJump(skipSlot.get());
                 Ref<Label> trySlotEnd = newEmittedLabel();
@@ -5091,9 +5174,8 @@ void BytecodeGenerator::emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsi
                 Ref<Label> trySlotStart = newEmittedLabel();
                 TryData* trySlotData = pushTry(trySlotStart.get(), catchLabel.get(), HandlerType::SynthesizedCatch);
 
-                CallArguments disposeArgs(*this, nullptr, 0);
-                move(disposeArgs.thisRegister(), slot.value.get());
-                emitCallIgnoreResult(newTemporary(), slot.method.get(), NoExpectedFunction, disposeArgs, divot, divot, divot, DebuggableCall::No);
+                RefPtr<RegisterID> result = newTemporary();
+                emitCallDispose(result.get(), slot.value.get(), slot.method.get(), false);
 
                 emitJump(skipSlot.get());
                 Ref<Label> trySlotEnd = newEmittedLabel();

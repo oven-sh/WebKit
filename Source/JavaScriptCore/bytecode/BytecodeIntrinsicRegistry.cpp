@@ -101,10 +101,14 @@ BytecodeIntrinsicRegistry::BytecodeIntrinsicRegistry(VM& vm)
     m_iteratorHelperFieldUnderlyingIterator.set(m_vm, jsNumber(static_cast<int32_t>(JSIteratorHelper::Field::UnderlyingIterator)));
     m_disposableStackFieldState.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::Field::State)));
     m_disposableStackFieldCapability.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::Field::Capability)));
+    m_disposableStackFieldWasThrown.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::Field::WasThrown)));
+    m_disposableStackFieldThrown.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::Field::Thrown)));
     m_DisposableStackStatePending.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::State::Pending)));
     m_DisposableStackStateDisposed.set(m_vm, jsNumber(static_cast<int32_t>(JSDisposableStack::State::Disposed)));
     m_asyncDisposableStackFieldState.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::Field::State)));
     m_asyncDisposableStackFieldCapability.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::Field::Capability)));
+    m_asyncDisposableStackFieldWasThrown.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::Field::WasThrown)));
+    m_asyncDisposableStackFieldThrown.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::Field::Thrown)));
     m_AsyncDisposableStackStatePending.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::State::Pending)));
     m_AsyncDisposableStackStateDisposed.set(m_vm, jsNumber(static_cast<int32_t>(JSAsyncDisposableStack::State::Disposed)));
     m_InternalMicrotaskAsyncFromSyncIteratorContinue.set(m_vm, jsNumber(static_cast<int32_t>(InternalMicrotask::AsyncFromSyncIteratorContinue)));

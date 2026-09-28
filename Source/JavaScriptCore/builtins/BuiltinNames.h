@@ -234,6 +234,9 @@ namespace JSC {
     macro(pyRuntimeFunctions) \
     macro(callConstructorWithoutNew) \
     macro(pythonClassWasDefined) \
+    macro(pythonEnterContext) \
+    macro(pythonExitContext) \
+    macro(pythonAsyncExitContext) \
 
 
 namespace Symbols {

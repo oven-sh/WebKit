@@ -74,6 +74,7 @@ namespace JSC {
     v(AsyncGeneratorAThrow, "async_generator_athrow", Object, Native, 0) \
     v(AsyncGeneratorWrappedValue, "async_generator_wrapped_value", Object, Native, 0) \
     v(ANextAwaitable, "anext_awaitable", Object, Native, 0) \
+    v(PromiseAwaiter, "promise_awaiter", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \
@@ -104,6 +105,7 @@ namespace JSC {
     v(Reversed, "reversed", Object, Native, PyType::IsBaseType) \
     v(JSObject, "Object", Object, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict) \
     v(JSFunction, "Function", JSObject, Native, PyType::IsJavaScript) \
+    v(JSPromise, "Promise", JSObject, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict) \
     v(JSSymbol, "JSSymbol", Object, Native, 0) \
     FOR_EACH_PYTHON_EXCEPTION_TYPE(v)
 
@@ -253,6 +255,7 @@ public:
     void setFrameLocalsProxyType(VM& vm, PyType* type) { m_frameLocalsProxyType.set(vm, this, type); }
     // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
     JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
+    JSObject* javaScriptFunction(ASCIILiteral name) const { return asObject(m_javaScriptFunctions->getDirect(vm(), Identifier::fromString(vm(), name))); }
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
     // The module builtins.
     JSObject* builtinsModule() const { return m_builtinsModule.get(); }

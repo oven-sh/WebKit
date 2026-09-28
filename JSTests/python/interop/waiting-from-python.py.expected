@@ -1,0 +1,11 @@
+the program comes to its end
+main begins
+a 0
+b 0
+a 1
+b 1
+b 2
+both done: ['a', 'b']
+after a timer
+caught TypeError rejected
+then: main is done

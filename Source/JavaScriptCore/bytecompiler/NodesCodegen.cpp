@@ -1663,6 +1663,10 @@ static JSDisposableStack::Field NODELETE disposableStackInternalFieldIndex(Bytec
         return JSDisposableStack::Field::State;
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldCapability)
         return JSDisposableStack::Field::Capability;
+    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldWasThrown)
+        return JSDisposableStack::Field::WasThrown;
+    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldThrown)
+        return JSDisposableStack::Field::Thrown;
     RELEASE_ASSERT_NOT_REACHED();
     return JSDisposableStack::Field::State;
 }
@@ -1674,6 +1678,10 @@ static JSAsyncDisposableStack::Field NODELETE asyncDisposableStackInternalFieldI
         return JSAsyncDisposableStack::Field::State;
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldCapability)
         return JSAsyncDisposableStack::Field::Capability;
+    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldWasThrown)
+        return JSAsyncDisposableStack::Field::WasThrown;
+    if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldThrown)
+        return JSAsyncDisposableStack::Field::Thrown;
     RELEASE_ASSERT_NOT_REACHED();
     return JSAsyncDisposableStack::Field::State;
 }
@@ -4008,6 +4016,8 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
     if (dst == generator.ignoredResult())
         dst = nullptr;
     RefPtr<RegisterID> result = generator.emitNode(dst, m_right); // Execute side effects first.
+    if (isUsingOrAwaitUsingAssignmentContext(m_assignmentContext))
+        generator.emitPrepareDisposable(result.get(), divotStart(), m_assignmentContext == AssignmentContext::AwaitUsingDeclarationStatement);
     generator.emitExpressionInfo(newDivot, divotStart(), newDivot);
     if (isReadOnly) {
         bool threwException = generator.emitReadOnlyExceptionIfNeeded(var);
@@ -4019,9 +4029,6 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
         returnResult = generator.emitPutToScope(scope.get(), var, result.get(), generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, initializationModeForAssignmentContext(m_assignmentContext));
         generator.emitProfileType(result.get(), var, divotStart(), divotEnd());
     }
-
-    if (isUsingOrAwaitUsingAssignmentContext(m_assignmentContext))
-        generator.emitPrepareDisposable(result.get(), divotStart(), m_assignmentContext == AssignmentContext::AwaitUsingDeclarationStatement);
 
     if (m_assignmentContext != AssignmentContext::AssignmentExpression)
         generator.liftTDZCheckIfPossible(var);

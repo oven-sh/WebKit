@@ -206,7 +206,7 @@ frozen. `[[GetOwnProperty]]` and `[[OwnPropertyKeys]]` are ordinary: `Object.key
   to keep that.
 - `x instanceof C` is `isinstance(x, C)`. `C.prototype` is `C`, without being an attribute. `new C()` is `C()`.
 - What a class defines is not enumerable, as in JavaScript.
-- Names that JavaScript expects and Python has no use for are provided: `toString`, `Symbol.iterator`, `next`, `toJSON`, `length` or `size`.
+- Names that JavaScript expects and Python has no use for are provided: `toString`, `Symbol.iterator`, `next`, `toJSON`, `length` or `size`, `constructor`, and those of the sections below.
 
 **Reading an attribute that the class has nothing to say about is cached inline as for any object.** A class has a watchpoint set,
 `instanceAccessIsAsFound()`, which is named in the `PropertySlot`. It stops holding when the class, or one that it is derived from, is given a data
@@ -277,6 +277,41 @@ depends on the types of its operands and on nothing else. Two objects are compar
 check has failed there before: 0.03 to 0.06ns for each `==` of two objects, and nothing that could be measured for anything else. That an operator is
 that of a compound assignment is said in the instruction, and read only when an object that overloads it has turned up.
 
+### Waiting
+
+**There is one event loop, and each language waits for what is the other's.** A coroutine stays a coroutine and a promise a promise.
+
+- **To JavaScript, what can be awaited is a thenable.** It has `then`, which is what `await`, `Promise.all()` and the rest go by, and `catch` and `finally`. `then` gives it a
+  promise and begins on it at once (`toPromise`). A coroutine can be awaited once, so it has the one promise however often it is asked for.
+- **To Python, a promise can be awaited, and so can anything that JavaScript would wait for.** `await promise` yields the promise, once, to whatever is running the
+  coroutine, as a `Future` of asyncio's yields itself. What is sent back is what it came to. A rejection is thrown in.
+- **What runs a coroutine for JavaScript is what runs an async function of JavaScript's**: it is resumed until it yields, what it yielded is awaited by
+  `JSPromise::resolveWithInternalMicrotaskForAsyncAwait`, and a microtask of a kind of its own, `InternalMicrotask::PythonAwaitResume`, goes on with it. There are no closures, and
+  nothing besides the coroutine: it has its promise under a private name. So a coroutine takes as many turns of the loop as an async function that does
+  the same. One coroutine awaiting another takes none, as in CPython.
+- A bare `yield` in an `__await__` gives everything else a turn. Anything else that is yielded and cannot be waited for is `RuntimeError: Task got bad yield`.
+- An asynchronous generator, or anything with `__aiter__`, has `[Symbol.asyncIterator]`, and what has `__anext__` has `next()`, `return()` and `throw()` that give promises. So `for await`
+  goes through it, and closes it on the way out. `async for` goes through what `for await` would: what has `[Symbol.asyncIterator]`, or failing that `[Symbol.iterator]`.
+- A program in Python sets a coroutine going with `js.Promise.resolve(main())`. `asyncio` is the library's business.
+
+### `using` and `with`
+
+**`using x = manager` is `with manager as x`.** For a context manager of Python's, `using` calls `__enter__`, `x` is what that gives, and `__exit__` is told what the block threw, if it
+threw, and may deal with it. All three matter. What `contextlib.contextmanager` makes does nothing until it is entered. What it is entered for is often not the
+manager. And a transaction that is not told that something was thrown commits.
+
+JavaScript has no step for entering, so this is in the engine: `emitPrepareDisposable` and `emitUsingBodyScope` know the function that is the `[Symbol.dispose]` of every context
+manager, by comparing with it. It costs `using` with something of JavaScript's nothing that could be measured. `await using` is `async with`. `DisposableStack.use()` enters too, and
+gives what entering gave. A stack that `using` disposes of is told what was thrown, in two fields of its own, so that what is in it can be.
+
+**`with obj` is `using`**, for what has `[Symbol.dispose]`: there is nothing to entering it, and leaving it disposes of it. `async with` goes by `[Symbol.asyncDispose]`, or failing that
+`[Symbol.dispose]`, as `await using` does. Such an object does not pretend to have `__enter__` and `__exit__`.
+
+### Where JavaScript wants a number or a string
+
+`obj[Symbol.toPrimitive]` is there for anything of Python's but an exception. `Number(obj)`, `+obj` and `Math.floor(obj)` are `float(obj)`, or failing that what it is as an index. `String(obj)` and
+`` `${obj}` `` are `str(obj)`. Whether something is true is not asked of it: to JavaScript every object is.
+
 ### Errors
 
 An exception is an `ErrorInstance`, in the way that is provided for errors that have their message by other means. So `Error.isError()` is true
@@ -311,7 +346,7 @@ is. So far: another language is a `SourceProviderSourceType`, as WebAssembly is.
 be in a stack trace has `ImplementationVisibility::Private`. What a cached property depends on is a watchpoint set in the `PropertySlot`. An error
 with its own idea of a message uses `finishCreationForEmbedderError`. A class of cell that is all of a size has an `IsoSubspace`. An object that is
 some values and nothing else is a `JSInternalFieldObjectImpl`. What is known about a constructor hangs off the constructor. What speculation turned out
-wrong somewhere is an exit site. A cell has no vtable, so an `Array` that behaves a little differently is an `Array`
+wrong somewhere is an exit site. What goes on after an `await` is an `InternalMicrotask`. A cell has no vtable, so an `Array` that behaves a little differently is an `Array`
 whose `Structure` has another `ClassInfo`.
 
 There is nothing that is per process, nothing that is set after something is made, and nothing that only the shell can do.

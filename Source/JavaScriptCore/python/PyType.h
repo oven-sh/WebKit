@@ -235,6 +235,13 @@ private:
 
 // What a class of JavaScript's calls when it has been defined, if it may be derived from one of Python's.
 JSC_DECLARE_HOST_FUNCTION(pythonClassWasDefined);
+// `using x = manager` is `with manager as x`, for a context manager of Python's. See BytecodeGenerator::emitPrepareDisposable().
+// pythonEnterContext(manager, isAsync): manager.__enter__(), or manager.__aenter__() to be awaited.
+JSC_DECLARE_HOST_FUNCTION(pythonEnterContext);
+// manager[Symbol.dispose](wasThrown, thrown): manager.__exit__(...), and whether that dealt with what was thrown. With no arguments, nothing was.
+JSC_DECLARE_HOST_FUNCTION(pythonExitContext);
+// manager[Symbol.asyncDispose](wasThrown, thrown): a promise for the same of manager.__aexit__(...).
+JSC_DECLARE_HOST_FUNCTION(pythonAsyncExitContext);
 
 namespace Python {
 JS_EXPORT_PRIVATE bool isJavaScriptClass(JSCell*);

@@ -29,7 +29,7 @@
 
 namespace JSC {
 
-const static uint8_t JSAsyncDisposableStackNumberOfInternalFields = 2;
+const static uint8_t JSAsyncDisposableStackNumberOfInternalFields = 4;
 
 class JSAsyncDisposableStack final : public JSInternalFieldObjectImpl<JSAsyncDisposableStackNumberOfInternalFields> {
 
@@ -47,6 +47,10 @@ public:
     enum class Field : uint8_t {
         State = 0,
         Capability,
+        // For when it is `using` that disposes of it: whether the block threw, and what. A resource may want to know, and may deal with it, and then the first
+        // of these is made false. See BytecodeGenerator::emitUsingBodyScope().
+        WasThrown,
+        Thrown,
     };
     static_assert(numberOfInternalFields == JSAsyncDisposableStackNumberOfInternalFields);
 
@@ -55,6 +59,8 @@ public:
         return { {
             jsNumber(static_cast<int32_t>(State::Pending)),
             jsNull(),
+            jsBoolean(false),
+            jsUndefined(),
         } };
     }
 

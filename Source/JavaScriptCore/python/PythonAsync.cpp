@@ -26,7 +26,11 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "IteratorOperations.h"
+#include "JSAsyncFromSyncIterator.h"
+#include "JSPromise.h"
 #include "PythonGenerators.h"
+#include "TopExceptionScope.h"
 
 // Coroutines, asynchronous generators, and what is awaited to drive them. The state machines are CPython's, Objects/genobject.c.
 
@@ -85,6 +89,189 @@ JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValu
     return exception;
 }
 
+// ---- Waiting for what is JavaScript's
+
+bool isThenable(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value.isObject())
+        return false;
+    if (value.inherits<JSPromise>())
+        return true;
+    JSValue then = asObject(value)->get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, false);
+    return then.isCallable();
+}
+
+// What `await promise` iterates. It yields the promise, once, to whatever is running the coroutine, as a Future of asyncio's yields itself. What is sent
+// back is what the promise came to. Fields: the promise, how far it has got, and whether what it comes to is what the next() of an iterator of
+// JavaScript's gives.
+enum PromiseAwaiterState { AwaiterNotBegun, AwaiterWaiting, AwaiterDone };
+
+static JSValue newPromiseAwaiter(JSGlobalObject* globalObject, JSValue promise, bool isIteratorResult)
+{
+    return PyNativeObject::create(globalObject, BuiltinType::PromiseAwaiter, promise, jsNumber(AwaiterNotBegun), jsBoolean(isIteratorResult));
+}
+
+JSValue awaitableFor(JSGlobalObject* globalObject, JSValue value)
+{
+    return newPromiseAwaiter(globalObject, value, false);
+}
+
+static JSValue finishPromiseAwaiter(JSGlobalObject* globalObject, PyNativeObject* self, JSValue settled)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    self->setField(vm, 1, jsNumber(AwaiterDone));
+    if (self->field(2).isTrue()) {
+        if (!settled.isObject())
+            return raiseTypeError(globalObject, scope, makeString("iterator result "_s, repr(globalObject, settled), " is not an object"_s));
+        JSValue done = asObject(settled)->get(globalObject, vm.propertyNames->done);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isDone = done.toBoolean(globalObject);
+        if (isDone)
+            return raise(globalObject, scope, BuiltinType::StopAsyncIteration, JSValue());
+        settled = asObject(settled)->get(globalObject, vm.propertyNames->value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return raise(globalObject, scope, BuiltinType::StopIteration, isNone(settled) ? JSValue() : settled);
+}
+
+PYTHON_NATIVE(promiseAwaiterSend)
+{
+    NATIVE_PROLOGUE();
+    auto* self = asNative(args[0]);
+    JSValue sent = args.size() > 1 ? args[1] : jsUndefined();
+    switch (self->field(1).asInt32()) {
+    case AwaiterNotBegun: {
+        if (!isNone(sent))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "can't send non-None value to a just-started promise_awaiter"_s));
+        // What there is no waiting for is what it is already.
+        bool waits = isThenable(globalObject, self->field(0));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!waits)
+            RELEASE_AND_RETURN(scope, JSValue::encode(finishPromiseAwaiter(globalObject, self, self->field(0))));
+        self->setField(vm, 1, jsNumber(AwaiterWaiting));
+        return JSValue::encode(self->field(0));
+    }
+    case AwaiterWaiting:
+        RELEASE_AND_RETURN(scope, JSValue::encode(finishPromiseAwaiter(globalObject, self, sent)));
+    default:
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "cannot reuse already awaited promise"_s));
+    }
+}
+
+PYTHON_NATIVE(promiseAwaiterThrow)
+{
+    NATIVE_PROLOGUE();
+    asNative(args[0])->setField(vm, 1, jsNumber(AwaiterDone));
+    // A promise can be rejected with anything at all.
+    JSValue exception = args[1];
+    if (isClass(exception) || args.size() > 2) {
+        exception = exceptionToThrow(globalObject, args[1], args.size() > 2 ? args[2] : JSValue());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    throwException(globalObject, scope, exception);
+    return { };
+}
+
+PYTHON_NATIVE(promiseAwaiterClose)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    asNative(args[0])->setField(vm, 1, jsNumber(AwaiterDone));
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(promiseAwait)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(newPromiseAwaiter(globalObject, args[0], false));
+}
+
+// ---- JavaScript waiting for what is Python's
+
+JSPromise* promiseOfAwaitable(VM& vm, JSCell* iterator)
+{
+    if (!iterator->isObject())
+        return nullptr;
+    JSValue promise = asObject(iterator)->getDirect(vm, vm.pythonNames().private_promise);
+    return promise ? uncheckedDowncast<JSPromise>(promise.asCell()) : nullptr;
+}
+
+// Runs what is being awaited until it has to wait for something, and arranges to go on when that is settled. This is what a Task of asyncio's does, and
+// what the engine does for an async function of JavaScript's.
+void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue received, bool wasThrown)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSPromise* promise = promiseOfAwaitable(vm, iterator);
+    // Empty: it comes to what it comes to. True: to { value, done }. An object: to that.
+    JSValue settlement = iterator->getDirect(vm, names.private_settlement);
+
+    while (true) {
+        JSValue returned;
+        JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
+        bool waits = false;
+        if (!scope.exception() && yielded) {
+            // A bare `yield` gives everything else a turn.
+            waits = isNone(yielded) || isThenable(globalObject, yielded);
+        }
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            if (settlement && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration()))
+                promise->resolve(globalObject, vm, createIteratorResultObject(globalObject, jsUndefined(), true));
+            else
+                promise->reject(vm, exception);
+            return;
+        }
+        if (!yielded) {
+            if (settlement)
+                returned = settlement.isObject() ? settlement : JSValue(createIteratorResultObject(globalObject, returned, false));
+            promise->resolve(globalObject, vm, returned);
+            return;
+        }
+        if (waits) {
+            JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, yielded, InternalMicrotask::PythonAwaitResume, iterator);
+            return;
+        }
+        String shown = repr(globalObject, yielded);
+        if (scope.exception() && !scope.clearExceptionExceptTermination())
+            return;
+        received = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), makeString("Task got bad yield: "_s, shown));
+        wasThrown = true;
+    }
+}
+
+JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue settlement)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    if (awaitable.isCell()) {
+        if (JSPromise* known = promiseOfAwaitable(vm, awaitable.asCell()))
+            return known;
+    }
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    JSValue iterator = getAwaitable(globalObject, awaitable, 0);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (scope.clearExceptionExceptTermination())
+            promise->reject(vm, exception);
+        return promise;
+    }
+    if (JSPromise* known = promiseOfAwaitable(vm, iterator.asCell()))
+        return known;
+    asObject(iterator)->putDirect(vm, names.private_promise, promise);
+    if (settlement)
+        asObject(iterator)->putDirect(vm, names.private_settlement, settlement);
+    resumeAwaitable(globalObject, asObject(iterator), jsUndefined(), false);
+    return promise;
+}
+
 // ---- await
 
 JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned context)
@@ -93,6 +280,13 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned conte
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = typeOf(globalObject, value);
+    if (type->hasFlag(PyType::IsJavaScript)) {
+        // What JavaScript would wait for, Python waits for.
+        bool waits = isThenable(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (waits)
+            return newPromiseAwaiter(globalObject, value, false);
+    }
     if (type == realm->typeCoroutine()) {
         JSValue awaited = asGenerator(value)->getDirect(vm, vm.pythonNames().private_yieldFrom);
         if (awaited && !isNone(awaited) && stateOf(asGenerator(value)) > 0)
@@ -117,10 +311,53 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned conte
     return result;
 }
 
+// What `for await` would go through, for something of JavaScript's: what its [Symbol.asyncIterator]() gives, or failing that what its [Symbol.iterator]()
+// gives, made asynchronous as the engine makes it. Empty if it is not JavaScript's, or has neither.
+static JSValue getJavaScriptAsyncIterator(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value.isObject() || !typeOf(globalObject, value)->hasFlag(PyType::IsJavaScript))
+        return { };
+    JSValue method = asObject(value)->get(globalObject, vm.propertyNames->asyncIteratorSymbol);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (method.isCallable())
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, method, JSC::getCallData(method), value, ArgList()));
+    method = asObject(value)->get(globalObject, vm.propertyNames->iteratorSymbol);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method.isCallable())
+        return { };
+    JSValue iterator = JSC::call(globalObject, method, JSC::getCallData(method), value, ArgList());
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!iterator.isObject())
+        return raiseTypeError(globalObject, scope, "Iterator result interface is not an object"_s);
+    JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSAsyncFromSyncIterator::create(vm, globalObject->asyncFromSyncIteratorStructure(), asObject(iterator), next, IterationMode::Generic);
+}
+
+// One step of such an iterator, to be awaited. Empty if it is not JavaScript's.
+static JSValue getJavaScriptAsyncNext(JSGlobalObject* globalObject, JSValue iterator)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!iterator.isObject() || !typeOf(globalObject, iterator)->hasFlag(PyType::IsJavaScript))
+        return { };
+    JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!next.isCallable())
+        return { };
+    JSValue result = JSC::call(globalObject, next, JSC::getCallData(next), iterator, ArgList());
+    RETURN_IF_EXCEPTION(scope, { });
+    return newPromiseAwaiter(globalObject, result, true);
+}
+
 JSValue getAsyncIterator(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue iterator = getJavaScriptAsyncIterator(globalObject, value); iterator || scope.exception())
+        return iterator;
     JSValue self;
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_aiter, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -128,7 +365,7 @@ JSValue getAsyncIterator(JSGlobalObject* globalObject, JSValue value)
         return raiseTypeError(globalObject, scope, makeString("'async for' requires an object with __aiter__ method, got "_s, typeName(globalObject, value)));
     JSValue iterator = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!typeOf(globalObject, iterator)->lookup(vm, vm.pythonNames().dunder_anext))
+    if (!typeOf(globalObject, iterator)->lookup(vm, vm.pythonNames().dunder_anext) && !typeOf(globalObject, iterator)->hasFlag(PyType::IsJavaScript))
         return raiseTypeError(globalObject, scope, makeString("'async for' received an object from __aiter__ that does not implement __anext__: "_s, typeName(globalObject, iterator)));
     return iterator;
 }
@@ -137,6 +374,8 @@ JSValue getAsyncNext(JSGlobalObject* globalObject, JSValue iterator)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue awaitable = getJavaScriptAsyncNext(globalObject, iterator); awaitable || scope.exception())
+        return awaitable;
     JSValue self;
     JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_anext, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -503,6 +742,8 @@ PYTHON_NATIVE(asyncGeneratorAClose)
 PYTHON_NATIVE(builtinAIter)
 {
     NATIVE_PROLOGUE();
+    if (JSValue iterator = getJavaScriptAsyncIterator(globalObject, args[0]); iterator || scope.exception())
+        return JSValue::encode(iterator);
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_aiter, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -519,13 +760,17 @@ PYTHON_NATIVE(builtinAIter)
 PYTHON_NATIVE(builtinANext)
 {
     NATIVE_PROLOGUE();
-    JSValue self;
-    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_anext, self);
+    JSValue awaitable = getJavaScriptAsyncNext(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterator"_s)));
-    JSValue awaitable = callMethod(globalObject, method, self);
-    RETURN_IF_EXCEPTION(scope, { });
+    if (!awaitable) {
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, args[0], names.dunder_anext, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object is not an async iterator"_s)));
+        awaitable = callMethod(globalObject, method, self);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (args.size() == 1)
         return JSValue::encode(awaitable);
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::ANextAwaitable, awaitable, args[1]));
@@ -575,7 +820,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
     using Kind = PyNativeFunction::Kind;
     for (PyType* type : { realm->typeCoroutine(), realm->typeAsyncGenerator() })
         type->setInstanceStructure(vm, JSGenerator::createStructure(vm, globalObject, type));
-    for (PyType* type : { realm->typeCoroutineWrapper(), realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow(), realm->typeAsyncGeneratorWrappedValue(), realm->typeANextAwaitable() })
+    for (PyType* type : { realm->typeCoroutineWrapper(), realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow(), realm->typePromiseAwaiter(), realm->typeAsyncGeneratorWrappedValue(), realm->typeANextAwaitable() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
 
     addMethods(globalObject, realm->typeCoroutine(), {
@@ -623,6 +868,17 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "send"_s, anextProxy, Kind::Method, 1 },
         { "throw"_s, anextProxy, Kind::Method, 2, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, anextProxy, Kind::Method, 3 },
+    });
+    addMethods(globalObject, realm->typePromiseAwaiter(), {
+        { "__await__"_s, nativeSelf, Kind::Wrapper, 0, "($self, /)"_s },
+        { "__iter__"_s, nativeSelf, Kind::Wrapper, 0, "($self, /)"_s },
+        { "__next__"_s, promiseAwaiterSend, Kind::Wrapper, 0, "($self, /)"_s },
+        { "send"_s, promiseAwaiterSend, Kind::Method, 0, "($self, value, /)"_s },
+        { "throw"_s, promiseAwaiterThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
+        { "close"_s, promiseAwaiterClose, Kind::Method, 0, "($self, /)"_s },
+    });
+    addMethods(globalObject, realm->typeJSPromise(), {
+        { "__await__"_s, promiseAwait, Kind::Wrapper, 0, "($self, /)"_s },
     });
     addFunction(globalObject, builtins, "aiter"_s, builtinAIter);
     addFunction(globalObject, builtins, "anext"_s, builtinANext);

@@ -47,6 +47,8 @@ void JSAsyncDisposableStack::finishCreation(VM& vm)
     ASSERT(values.size() == numberOfInternalFields);
     internalField(Field::State).set(vm, this, values[0]);
     internalField(Field::Capability).set(vm, this, values[1]);
+    internalField(Field::WasThrown).set(vm, this, values[2]);
+    internalField(Field::Thrown).set(vm, this, values[3]);
 }
 
 template<typename Visitor>

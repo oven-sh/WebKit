@@ -45,6 +45,7 @@
 #include "JSPromiseReaction.h"
 #endif
 #include "ObjectConstructor.h"
+#include "PythonGenerators.h"
 #include "SyntheticModuleRecord.h"
 #include "VMTrapsInlines.h"
 #include "WebAssemblyModuleRecord.h"
@@ -1647,6 +1648,8 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
             work.append(promise);
         else if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(cell))
             follow(generator->context());
+        else if (JSPromise* promise = Python::promiseOfAwaitable(cell->vm(), cell))
+            work.append(promise);
         else if (auto* module = dynamicDowncast<AbstractModuleRecord>(cell))
             found = resumesDependency(module);
     };
@@ -1656,6 +1659,7 @@ static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicMo
         case InternalMicrotask::AsyncFunctionResume:
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:
+        case InternalMicrotask::PythonAwaitResume:
             followPromiseOrDriver(unwrapContext(context));
             break;
         case InternalMicrotask::AsyncFromSyncIteratorContinue:

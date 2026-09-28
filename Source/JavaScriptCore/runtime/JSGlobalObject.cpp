@@ -2075,6 +2075,15 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pyRuntimeFunctions)].initLater([] (const Initializer<JSCell>& init) {
             init.set(init.owner->pyRealm()->runtimeFunctions());
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pythonEnterContext)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, "pythonEnterContext"_s, pythonEnterContext, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pythonExitContext)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 0, "[Symbol.dispose]"_s, pythonExitContext, ImplementationVisibility::Public));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pythonAsyncExitContext)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 0, "[Symbol.asyncDispose]"_s, pythonAsyncExitContext, ImplementationVisibility::Public));
+        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pythonClassWasDefined)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "pythonClassWasDefined"_s, pythonClassWasDefined, ImplementationVisibility::Private));
         });

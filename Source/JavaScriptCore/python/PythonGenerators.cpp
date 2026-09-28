@@ -114,6 +114,67 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     return value;
 }
 
+JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue received, bool wasThrown, JSValue& returned)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    returned = { };
+    auto* generator = iterator.isCell() && iterator.asCell()->type() == JSGeneratorType ? uncheckedDowncast<JSGenerator>(iterator.asCell()) : nullptr;
+    auto finishCall = [&] (JSValue yielded) -> JSValue {
+        if (!scope.exception())
+            return yielded;
+        returned = catchStopIteration(globalObject);
+        return { };
+    };
+
+    if (wasThrown && isInstance(globalObject, received, realm->typeGeneratorExit())) {
+        // Whatever is iterating it is being closed, so it is too.
+        if (generator)
+            generatorClose(globalObject, generator);
+        else {
+            JSValue close = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "close"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (close)
+                call(globalObject, close);
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(globalObject, scope, received);
+        return { };
+    }
+
+    if (generator)
+        RELEASE_AND_RETURN(scope, resumeGenerator(globalObject, generator, received, wasThrown ? JSGenerator::ResumeMode::ThrowMode : JSGenerator::ResumeMode::NormalMode, returned));
+
+    if (wasThrown) {
+        JSValue method = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "throw"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method) {
+            throwException(globalObject, scope, received);
+            return { };
+        }
+        return finishCall(call(globalObject, method, received));
+    }
+    if (isNone(received)) {
+        if (auto* native = tryIterator(iterator)) {
+            JSValue yielded = native->next(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!yielded)
+                returned = jsUndefined();
+            return yielded;
+        }
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_next, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method)
+            return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
+        return finishCall(callMethod(globalObject, method, self));
+    }
+    JSValue send = getAttribute(globalObject, iterator, Identifier::fromString(vm, "send"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    return finishCall(call(globalObject, send, received));
+}
+
 static JSValue raiseStopIteration(JSGlobalObject* globalObject, ThrowScope& scope, JSValue returned)
 {
     return raise(globalObject, scope, BuiltinType::StopIteration, isNone(returned) ? JSValue() : returned);

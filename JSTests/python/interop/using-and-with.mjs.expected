@@ -1,0 +1,56 @@
+using enters and leaves => enter a,body,exit a
+what is bound is what entering gives => given
+or the manager, if that is what it gives => true
+captured by a closure => given
+what a generator makes => the connection | open,body,close
+in reverse order => enter a,enter b,enter c,exit c,exit b,exit a
+mixed with JavaScript's => enter a,enter b,exit b,dispose js,exit a
+commit => begin,commit
+rollback when JavaScript throws => failed | begin,rollback
+it is told what was thrown => TypeError | enter a,exit a TypeError:boom
+and something that is no Error => a string | enter a,exit a str:a string
+it deals with it => not reached
+and what follows the block runs => true | enter a,exit a JSError:dealt with,enter a,exit a JSError:dealt with
+the generator swallows it => open,saw ValueError,close
+the generator lets it go => RangeError | open,saw ValueError,close
+an outer one deals with what an inner one saw => enter outer,enter inner,exit inner JSError:e,exit outer JSError:e
+return goes on returning => returned | enter a,exit a
+break and continue => enter 0,exit 0,enter 1,exit 1
+cannot be entered => ValueError | cannot enter | enter a,exit a ValueError:cannot enter
+leaving raises => KeyError,'in exit'
+leaving raises while something is thrown => SuppressedError,KeyError,first
+an outer one deals with what leaving raised => enter outer,exit outer KeyError:'in exit'
+__exit__ and no __enter__ !! TypeError: 'OnlyExit' object does not support the context manager protocol (missed __enter__ method)
+null and undefined => fine
+for (using x of ...) => enter a,body A,exit a,enter b,body B,exit b
+the method by hand => function | [Symbol.dispose] | false | true | exit a
+what is no context manager !! TypeError: @@dispose must not be undefined or null
+DisposableStack => A,the connection | enter a,open,deferred,close,exit a
+using a DisposableStack => begin,rollback
+and it commits if nothing is thrown => begin,commit
+one in a stack deals with it => true | enter a,exit a JSError:x
+then those before it in the stack see nothing => enter first,enter second,exit second JSError:x,exit first
+a stack whose dispose is overridden => begin,mine,rollback
+a stack in a stack => begin,rollback
+disposed of by hand, nothing was thrown => begin,commit
+JavaScript's chain of errors is as it was => SuppressedError,SuppressedError,d1,d2,body
+await using an AsyncDisposableStack => begin,rollback
+await using a DisposableStack => begin,rollback
+await using => entered a | aenter a,body,aexit a
+await using, thrown => RangeError | aenter a,aexit a ValueError
+await using, dealt with => aenter a,aexit a ValueError
+what is falsy to Python does not deal with it => still thrown
+await using one that is not asynchronous => A | enter a,exit a
+both kinds => aenter a,enter b,aenter c,aexit c,exit b,aexit a
+AsyncDisposableStack => A | enter a,exit a
+AsyncDisposableStack with an asynchronous one !! TypeError: An asynchronous context manager has to be waited for to be entered, which use() cannot do. Use `await using`
+with => true | body,dispose d
+with, raising => got out: in body | dispose d
+with two => body,dispose b,dispose a
+with a DisposableStack => true | body,deferred
+with what cannot be disposed of !! TypeError: 'Object' object does not support the context manager protocol (missed __exit__ method)
+dispose throws !! RangeError: in dispose
+async with => true | body,async dispose
+async with, and it gives nothing to wait for => true | body,no promise
+async with one that is not asynchronous => true | body,dispose sync
+it does not pretend to have the methods => (False, False)
