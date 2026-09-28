@@ -40,6 +40,7 @@
 #include "LLIntData.h"
 #include "NativeCalleeRegistry.h"
 #include "Options.h"
+#include "StaticHeap.h"
 #include "StructureAlignedMemoryAllocator.h"
 #include "SuperSampler.h"
 #include "VMManager.h"
@@ -116,6 +117,7 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
         }
         Options::finalize();
+        StaticHeap::initializeVTables();
 
 #if BUSE(LIBPAS)
         if (Options::libpasScavengeContinuously())

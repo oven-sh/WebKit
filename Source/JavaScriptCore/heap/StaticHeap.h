@@ -83,14 +83,30 @@ public:
         }
     }
 
-    // While the region is being built, on a thread that has a bmalloc::StaticRegion::AllocationScope. Null otherwise.
+    // While the region is being built, on a thread that has a bmalloc::StaticRegion::AllocationScope; or the place that
+    // placeNextCell() said. Null otherwise.
     static ALWAYS_INLINE void* tryAllocateCell(size_t size)
     {
-        if (s_isBuilding) [[unlikely]]
+        if (s_interceptsAllocation) [[unlikely]]
             return tryAllocateCellSlow(size);
         return nullptr;
     }
-    static void setIsBuilding(bool isBuilding) { s_isBuilding = isBuilding; }
+
+    // ---- What is made when the program runs, at an address that what is made when it is built can refer to it by.
+
+    static VM* addressOfVM() { return reinterpret_cast<VM*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVMInBss); }
+    static void* addressOfGlobalObject() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfGlobalObjectInBss + sizeOfCellHeader); }
+    static bool isMapped() { return !!s_header; }
+    // The next cell that the thread allocates is there. It is not collected, nor destroyed; didPlaceCell(), once it is made, has
+    // every collection look at it.
+    JS_EXPORT_PRIVATE static void placeNextCell(void* address);
+    JS_EXPORT_PRIVATE static void didPlaceCell(VM&, JSCell*);
+
+    // An object of a class that has virtual functions starts with the address of a table that is in the executable, which is not
+    // where it was when the program was built. There is a copy of the table at an address that does not change.
+    enum class VTable : unsigned { AOTJITCode, Count };
+    static void* addressOfVTable(VTable which) { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVTablesInBss + static_cast<unsigned>(which) * bytesForVTable + 2 * sizeof(void*)); }
+    static void initializeVTables(); // JSC::initialize().
 
 private:
     JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(size_t);
@@ -98,7 +114,11 @@ private:
     struct Header;
     static void makeContainer(VM&);
 
+    static constexpr size_t bytesForVTable = 512;
+
     JS_EXPORT_PRIVATE static bool s_isBuilding;
+    JS_EXPORT_PRIVATE static bool s_interceptsAllocation;
+    static void* s_placeOfNextCell;
     JS_EXPORT_PRIVATE static VM* s_vm;
     JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;
     static const Header* s_header; // Of what is mapped.

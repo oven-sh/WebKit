@@ -7,6 +7,7 @@
 #include "StaticHeap.h"
 
 #include "AOTImage.h"
+#include "AOTRuntime.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "BuiltinNames.h"
 #include "CachedTypes.h"
@@ -29,6 +30,8 @@ namespace JSC {
 using Region = bmalloc::StaticRegion;
 
 bool StaticHeap::s_isBuilding = false;
+bool StaticHeap::s_interceptsAllocation = false;
+void* StaticHeap::s_placeOfNextCell = nullptr;
 VM* StaticHeap::s_vm = nullptr;
 bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
@@ -105,8 +108,44 @@ void StaticHeap::makeContainer(VM& vm)
     PreciseAllocation::setContainerOfStaticCells(PreciseAllocation::createForStaticCells(vm.heap, &vm.heap.cellSpace));
 }
 
+void StaticHeap::placeNextCell(void* address)
+{
+    RELEASE_ASSERT(!s_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
+    s_placeOfNextCell = address;
+    s_interceptsAllocation = true;
+}
+
+void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
+{
+    RELEASE_ASSERT(contains(cell) && !s_placeOfNextCell);
+    // As after a collection that found it. What has been stored in it since it was allocated is found by the next one.
+    cell->setCellState(CellState::PossiblyBlack);
+    vm.writeBarrier(cell);
+}
+
+void StaticHeap::initializeVTables()
+{
+    auto copy = [](VTable which, const void* object) {
+        auto* table = *static_cast<void* const* const*>(object);
+        // What comes before the first function is two words. How many functions there are is not written anywhere.
+        memcpy(static_cast<void**>(addressOfVTable(which)) - 2, table - 2, bytesForVTable);
+    };
+#if ENABLE(FTL_JIT)
+    {
+        AOT::ImageFunction function { };
+        AOT::JITCode code(nullptr, function);
+        copy(VTable::AOTJITCode, &code);
+    }
+#endif
+}
+
 void* StaticHeap::tryAllocateCellSlow(size_t size)
 {
+    if (void* place = std::exchange(s_placeOfNextCell, nullptr)) {
+        s_interceptsAllocation = s_isBuilding;
+        *reinterpret_cast<size_t*>(static_cast<char*>(place) - sizeOfCellHeader) = size;
+        return place;
+    }
     if (!Region::isAllocatingOnThisThread())
         return nullptr;
     auto arena = Region::isAllocatingWhatIsMutable() ? Region::Arena::MutableCells : Region::Arena::Cells;
@@ -296,6 +335,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         {
             Region::AllocationScope allocationScope;
             s_isBuilding = true;
+            s_interceptsAllocation = true;
             atoms->table().reserveInitialCapacity(count);
             for (uint32_t ordinal = 0; ordinal < count; ++ordinal) {
                 table.atomFor(vm, ordinal);
@@ -353,6 +393,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             if (Options::aotReportStats()) [[unlikely]]
                 dataLogLn("StaticHeap: ", atoms->table().size() - numberOfAtomsOfStrings, " atoms that are not in the table of strings");
             s_isBuilding = false;
+            s_interceptsAllocation = false;
         }
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
         for (auto& atom : atoms->table())
@@ -472,7 +513,7 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
 
 void StaticHeap::install(VM& vm)
 {
-    if (!s_header || s_vm)
+    if (!s_header || s_vm || &vm != addressOfVM())
         return;
     // Otherwise the strings are still good, as strings; the cells are not looked at again.
     auto structures = structuresOf(vm);

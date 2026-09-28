@@ -31,8 +31,10 @@ public:
         // Not in the file. Zero when the process starts, in every process, whether or not the program has anything in the others:
         // for what has to be made when the program runs, but is referred to by what is made when it is built.
         Bss,
+        // The program's machine code and what goes with it (JSC::AOT::Image), from the file as well, but not built here.
+        Image,
     };
-    static constexpr unsigned numberOfArenas = 6;
+    static constexpr unsigned numberOfArenas = 7;
     static constexpr unsigned numberOfArenasInFile = 5;
 
     static constexpr uintptr_t base = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.
@@ -79,9 +81,14 @@ public:
     // What is where in Arena::Bss.
     static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
-    static constexpr size_t offsetOfDecodersInBss = 256 * 1024; // JSC::StaticHeap
+    // The rest is JSC::StaticHeap's. Addresses cost nothing: only what is touched is there.
+    static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
+    static constexpr size_t offsetOfVMInBss = 1 << 20;
+    static constexpr size_t offsetOfGlobalObjectInBss = 2 << 20;
+    static constexpr size_t offsetOfDecodersInBss = 16 << 20; // One for each module, as of the next few.
 
-    BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t); // False if the addresses are taken.
+    // False if the addresses are taken. `offsetInArena` and the rest are multiples of the size of a page.
+    BEXPORT static bool map(Arena, int fileDescriptor, off_t offsetInFile, size_t, size_t offsetInArena = 0, bool isCode = false);
 
     // ---- For malloc.
 

@@ -104,12 +104,22 @@ void StaticRegion::mapBss()
     RELEASE_BASSERT(result == wanted);
 }
 
-bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size_t size)
+bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size_t size, size_t offsetInArena, bool isCode)
 {
-    RELEASE_BASSERT(size <= arenaReservation);
+    RELEASE_BASSERT(offsetInArena <= arenaReservation && size <= arenaReservation - offsetInArena);
     if (!size)
         return true;
-    void* wanted = reinterpret_cast<void*>(startOf(arena));
+    void* wanted = reinterpret_cast<void*>(startOf(arena) + offsetInArena);
+    if (arena == Arena::Image) {
+        void* result = mmap(wanted, size, isCode ? PROT_READ | PROT_EXEC : PROT_READ, MAP_PRIVATE, fileDescriptor, offsetInFile);
+        if (result == MAP_FAILED)
+            return false;
+        if (result != wanted) {
+            munmap(result, size);
+            return false;
+        }
+        return true;
+    }
     // For finding out who writes to it, which is allowed, and costs a page each time.
     static const bool findWriters = !!getenv("BUN_STATIC_HEAP_READONLY");
     bool isReadOnly = findWriters && arena != Arena::MutableCells && arena != Arena::MutableMalloc;
