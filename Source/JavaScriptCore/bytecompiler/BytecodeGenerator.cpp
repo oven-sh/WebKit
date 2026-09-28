@@ -4145,6 +4145,24 @@ void BytecodeGenerator::emitCallOfConstructorWithoutNew(const Identifier& messag
     OpRet::emit(this, result.get());
 }
 
+// A class of Python's is told when a class is derived from it, and it may be JavaScript that derives one. Whether it is derived from one of Python's
+// is to be seen from what it extends: that is such a class, or it is a constructor that, having been through here itself, is known to Python.
+void BytecodeGenerator::emitTellPythonOfDerivedClass(RegisterID* constructor, RegisterID* superclass, const JSTextPosition& position)
+{
+    Ref<Label> tell = newLabel();
+    Ref<Label> done = newLabel();
+    emitJumpIfTrue(emitIsCellWithType(newTemporary(), superclass, PyTypeType), tell.get());
+    emitJumpIfTrue(emitIsNull(newTemporary(), superclass), done.get());
+    emitJumpIfFalse(emitInById(newTemporary(), superclass, m_vm.pythonNames().private_class), done.get());
+    emitLabel(tell.get());
+    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::pythonClassWasDefined);
+    CallArguments call(*this, nullptr, 1);
+    emitLoad(call.thisRegister(), jsUndefined());
+    move(call.argumentRegister(0), constructor);
+    emitCall(newTemporary(), function.get(), NoExpectedFunction, call, position, position, position, DebuggableCall::No);
+    emitLabel(done.get());
+}
+
 RegisterID* BytecodeGenerator::emitReturn(RegisterID* src)
 {
     if (m_pythonFrameObjectRegister) {

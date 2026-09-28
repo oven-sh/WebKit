@@ -163,6 +163,7 @@ class JSGlobalObject;
     v(pyBoundArgumentsMarker, nullptr) \
     v(pyRuntimeFunctions, nullptr) \
     v(callConstructorWithoutNew, nullptr) \
+    v(pythonClassWasDefined, nullptr) \
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {

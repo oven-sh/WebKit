@@ -1,13 +1,13 @@
 class => (3, 4, 5, 7, True)
 derived class => (7, True, True)
 star arguments => 10
-static => (0, 'JSObject')
+static => (0, 'Inner')
 builtin constructors => (0, 2, 3, True)
-promise => JSObject
+promise => Promise
 callable both ways is called => ('called', 1, 0, 'str', 3)
 new still works => 3
 through map() => [4, 6]
-as a key function => ['JSObject']
+as a key function => ['Map']
 constructor raises !! ValueError in constructor
 hot => 4501500
 JavaScript still cannot => ('TypeError: Cannot call a class constructor Point without |new|', 'TypeError: calling Map constructor without new is invalid')

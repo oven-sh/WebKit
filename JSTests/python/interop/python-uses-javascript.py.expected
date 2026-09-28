@@ -3,7 +3,7 @@ Math.PI type => ('float', 3.141592653589793)
 JSON.parse => [1, 2.5, 'x', None, True]
 attr of object => 7
 item of object => 1
-missing attr !! AttributeError 'JSObject' object has no attribute 'nope'
+missing attr !! AttributeError 'Object' object has no attribute 'nope'
 set attr => {"k":5}
 set item => {"k":[1,2]}
 stringify python list => [1,"a",null,true,2]
@@ -32,7 +32,7 @@ in operator => True
 dir => ['__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__']
 keywords to js => 1
 typed array => b'hi'
-promise type => JSObject
+promise type => Promise
 symbol => JSSymbol
 bigint => 1180591620717411303424
 undefined vs null => (True, True)

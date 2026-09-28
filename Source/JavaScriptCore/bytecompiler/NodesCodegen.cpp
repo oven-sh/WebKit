@@ -5847,6 +5847,9 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         generator.emitCallIgnoreResult(generator.newTemporary(), staticFieldInitializer.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
     }
 
+    if (superclass)
+        generator.emitTellPythonOfDerivedClass(constructor.get(), superclass.get(), m_position);
+
     if (hasPrivateNames)
         generator.popPrivateAccessNames();
 

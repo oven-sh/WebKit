@@ -26,6 +26,8 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "FunctionConstructor.h"
+#include "FunctionPrototype.h"
 #include "IteratorOperations.h"
 #include "JSBoundFunction.h"
 #include "JSONObject.h"
@@ -289,12 +291,17 @@ void initializeJavaScriptTypes(JSGlobalObject* globalObject)
         { "__str__"_s, objectStr },
         { "__repr__"_s, objectRepr },
         { "__dir__"_s, objectDir },
-        { "new"_s, objectNew, Kind::Method, 0, "($self, /, *args)"_s },
     });
     addMethods(globalObject, realm->typeJSFunction(), {
+        { "new"_s, objectNew, Kind::Method, 0, "($self, /, *args)"_s },
         { "__eq__"_s, functionEq },
         { "__hash__"_s, functionHash },
     });
+    // These are Object and Function.
+    VM& vm = globalObject->vm();
+    realm->typeJSObject()->setJavaScriptClass(vm, globalObject->objectConstructor(), globalObject->objectPrototype());
+    realm->typeJSFunction()->setJavaScriptClass(vm, globalObject->functionConstructor(), globalObject->functionPrototype());
+    addGetSet(globalObject, realm->typeJSObject(), "__dict__"_s, getInstanceDict, setInstanceDict);
     addGetSet(globalObject, realm->typeJSFunction(), "__name__"_s, getFunctionName);
     addGetSet(globalObject, realm->typeJSFunction(), "__self__"_s, getFunctionSelf);
     addGetSet(globalObject, realm->typeJSFunction(), "__func__"_s, getFunctionFunc);
@@ -392,7 +399,7 @@ static bool asksClassFirst(JSCell* cell)
     }
 }
 
-JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver, PropertyName name)
+JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver, PropertyName name, PyType* from)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -402,21 +409,34 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     auto function = [&] (ASCIILiteral which) { return realm->javaScriptFunctions()->getDirect(vm, Identifier::fromString(vm, which)); };
 
     if (name.isSymbol()) {
-        if (name == vm.propertyNames->iteratorSymbol && !isType(receiver) && (type->lookup(vm, names.dunder_iter) || type->lookup(vm, names.dunder_getitem)))
+        if (name == vm.propertyNames->iteratorSymbol && !isClass(receiver) && (type->lookup(vm, names.dunder_iter) || type->lookup(vm, names.dunder_getitem)))
             return function("iterator"_s);
         return { };
     }
 
     // If the class comes before the instance, it was asked before what the instance has was looked at, and is not asked twice.
     bool wasAsked = asksClassFirst(receiver.asCell()) && classComesBeforeInstance(globalObject, type, name, AttributeAccess::Get);
-    if (!wasAsked) {
+    if (isClass(receiver) && asType(receiver)->javaScriptConstructor()) {
+        // What the constructor has as a function is for JavaScript to find, which is in the middle of looking.
+        RELEASE_AND_RETURN(scope, getTypeAttribute(globalObject, asType(receiver), name, ClassIsFunctionToo::No, from));
+    }
+    // What comes before `from` in the order are classes of JavaScript's. Either they have been looked at on the way here, or this is `super.name` in one
+    // of them and they are not wanted.
+    if (type != from && !isClass(receiver) && !(type->hooks(globalObject) & (PyType::HasCustomGetAttribute | PyType::HasGetAttr))) {
+        if (JSValue attribute = type->lookupFrom(vm, from, name))
+            RELEASE_AND_RETURN(scope, bindDescriptor(globalObject, attribute, receiver, type));
+    } else if (!wasAsked) {
         JSValue value = getAttributeIfPresent(globalObject, receiver, name);
         RETURN_IF_EXCEPTION(scope, { });
         if (value)
             return value;
     }
-    if (isType(receiver))
+    if (isClass(receiver)) {
+        // A class of JavaScript's has a name.
+        if (name == vm.propertyNames->name)
+            return asType(receiver)->name();
         return { };
+    }
 
     // Names that Python has no use for, and that JavaScript expects. An exception is left to Error.prototype, which makes "name: message".
     if (name == vm.propertyNames->toString && !type->isExceptionType())
@@ -447,6 +467,134 @@ bool isCalledByPython(VM& vm, CallFrame* callFrame)
         return codeBlock->source().provider()->isPython();
     JSCell* callee = caller->jsCallee();
     return callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType || callee->type() == PyInstanceType;
+}
+
+// ---- Classes that JavaScript made
+
+bool isJavaScriptClass(JSCell* cell)
+{
+    if (cell->type() == JSFunctionType) {
+        auto* function = uncheckedDowncast<JSFunction>(cell);
+        // What a bound function makes is what the function that it is bound to makes.
+        if (function->inherits<PyNativeFunction>() || function->inherits<JSBoundFunction>() || isPythonFunction(function))
+            return false;
+        return function->isConstructor();
+    }
+    return cell->type() == InternalFunctionType && asObject(cell)->isConstructor();
+}
+
+// F.prototype. It is a property with a value, of a function, so nothing of the program's is run to get it. A function may have none until it is asked for.
+static JSObject* prototypeOfConstructor(JSGlobalObject* globalObject, JSObject* constructor)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(constructor, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool found = constructor->methodTable()->getOwnPropertySlot(constructor, globalObject, vm.propertyNames->prototype, slot);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return nullptr;
+    }
+    if (!found || !slot.isValue())
+        return nullptr;
+    return slot.getPureResult().getObject();
+}
+
+// C.__new__(cls, ...) for a class of JavaScript's is Reflect.construct(C, [...], cls).
+PYTHON_NATIVE(javaScriptClassNew)
+{
+    NATIVE_PROLOGUE();
+    JSObject* constructor = asType(uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->owner())->javaScriptConstructor();
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 1; i < args.size(); ++i)
+        arguments.append(args[i]);
+    if (args.keywordCount()) {
+        // As for calling a function of JavaScript's.
+        JSObject* options = constructEmptyObject(globalObject);
+        for (unsigned i = 0; i < args.keywordCount(); ++i) {
+            auto name = args.keywordName(i)->toIdentifier(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            options->putDirect(vm, name, args.keywordValue(i));
+        }
+        arguments.append(options);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, constructor, JSC::getConstructData(constructor), arguments, args[0])));
+}
+
+PYTHON_NATIVE(javaScriptClassInit)
+{
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsUndefined());
+}
+
+PyType* classFor(JSObject* constructor)
+{
+    JSGlobalObject* globalObject = constructor->globalObject();
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    ASSERT(isJavaScriptClass(constructor));
+    if (JSValue known = constructor->getDirect(vm, names.private_class))
+        return uncheckedDowncast<PyType>(known.asCell());
+    // If it has none, what it makes has Object.prototype.
+    JSObject* prototype = prototypeOfConstructor(globalObject, constructor);
+    if (!prototype)
+        prototype = globalObject->objectPrototype();
+    // It is derived from what its instances inherit from, and not from what the constructor does, where those are not the same.
+    PyType* type = PyType::createForJavaScript(vm, globalObject, constructor, prototype, classForPrototype(globalObject, prototype->getPrototypeDirect()));
+    constructor->putDirect(vm, names.private_class, type, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    addInstanceDescriptors(globalObject, type, !type->base()->hasFlag(PyType::HasInstanceDict), !type->base()->hasFlag(PyType::HasWeakReferences));
+    // In JavaScript there is one step to making an instance where in Python there are two. So it is all in the first.
+    using Kind = PyNativeFunction::Kind;
+    addMethods(globalObject, type, {
+        { "__new__"_s, javaScriptClassNew, Kind::New, 0, "($type, /, *args, **kwargs)"_s, PyNativeFunction::Arguments::AreNotChecked },
+        { "__init__"_s, javaScriptClassInit, Kind::Wrapper, 0, "($self, /, *args, **kwargs)"_s, PyNativeFunction::Arguments::AreNotChecked },
+    });
+    return type;
+}
+
+PyType* classForPrototype(JSGlobalObject* globalObject, JSValue prototype)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    for (; prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        if (isType(prototype))
+            return asType(prototype);
+        JSObject* object = asObject(prototype);
+        if (object == globalObject->objectPrototype())
+            break;
+        JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
+        if (!constructor || !constructor.isCell() || !isJavaScriptClass(constructor.asCell()))
+            continue;
+        if (JSValue known = asObject(constructor)->getDirect(vm, vm.pythonNames().private_class)) {
+            if (asType(known)->javaScriptPrototype() == object)
+                return asType(known);
+            continue;
+        }
+        if (prototypeOfConstructor(globalObject, asObject(constructor)) != object)
+            continue;
+        return classFor(asObject(constructor));
+    }
+    return realm->typeJSObject();
+}
+
+PyType* metatypeOfJavaScriptClass(JSGlobalObject* globalObject, JSObject* constructor)
+{
+    // It is that of the first class of Python's that it is derived from.
+    for (JSValue parent = constructor->getPrototypeDirect(); parent.isObject(); parent = asObject(parent)->getPrototypeDirect()) {
+        if (isType(parent))
+            return asType(parent)->metatype();
+    }
+    return globalObject->pyRealm()->typeType();
+}
+
+PyType* tryClass(JSGlobalObject* globalObject, JSValue value)
+{
+    if (isType(value))
+        return asType(value);
+    UNUSED_PARAM(globalObject);
+    if (value.isCell() && isJavaScriptClass(value.asCell()))
+        return classFor(asObject(value));
+    return nullptr;
 }
 
 JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
@@ -503,10 +651,7 @@ JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator
 
 bool isPythonObject(JSGlobalObject* globalObject, JSValue value)
 {
-    if (isType(value))
-        return true;
-    JSValue prototype = asObject(value)->getPrototypeDirect();
-    return isType(prototype) && typeOf(globalObject, value) == asType(prototype);
+    return isType(value) || !typeOf(globalObject, value)->hasFlag(PyType::IsJavaScript);
 }
 
 bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot, bool (*ordinary)(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&))
@@ -514,10 +659,9 @@ bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isGetOrHas = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty;
-    JSValue prototype = object->getPrototypeDirect();
     // An attribute whose name is an index to JavaScript is no property, so there is nothing ordinary to find: see getStoredAttribute().
     if (isIndexLike(name)) [[unlikely]] {
-        if (slot.isVMInquiry() || !isType(prototype))
+        if (slot.isVMInquiry())
             return false;
         JSValue value = isGetOrHas ? getAttributeIfPresent(globalObject, object, name) : getStoredAttribute(vm, object, name);
         RETURN_IF_EXCEPTION(scope, false);
@@ -526,11 +670,11 @@ bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalOb
         slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
         return true;
     }
-    if (!isGetOrHas || slot.thisValue() != JSValue(object) || !isType(prototype))
+    if (!isGetOrHas || slot.thisValue() != JSValue(object))
         RELEASE_AND_RETURN(scope, ordinary(object, globalObject, name, slot));
 
     // If the class has something to say about the attribute, it is asked here, before what the instance has is looked at.
-    PyType* type = asType(prototype);
+    PyType* type = typeOf(globalObject, object);
     if (classComesBeforeInstance(globalObject, type, name, AttributeAccess::Get)) {
         JSValue value = getAttributeIfPresent(globalObject, object, name);
         RETURN_IF_EXCEPTION(scope, false);

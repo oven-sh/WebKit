@@ -37,6 +37,10 @@ namespace JSC {
 //
 // To JavaScript it is an exotic object, and so are its instances: getting, setting and deleting a property, and asking whether there is one,
 // are getattr(), setattr(), delattr() and hasattr(). "The two languages" in README.md says why.
+//
+// A class that JavaScript made is a class to Python as it is: a constructor, and the object that is the prototype of what it makes. Nothing is made of it
+// that a program can see. But there is as much to know about it as about any class, and that is kept in one of these, which the constructor has under a
+// private name, as a function has its FunctionRareData. What a program is given for such a class is the constructor: object().
 class PyType final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -55,6 +59,7 @@ public:
         Exception, // A PyException, which is an ErrorInstance.
         Boxed, // A PyBoxedValue: an instance of a class derived from int, float, str or bool's like, whose own instances are not cells.
         Native, // Some cell of its own. It cannot be derived from.
+        JavaScript, // Whatever a constructor of JavaScript's makes, the class being derived from one and from nothing of Python's but object.
     };
 
     enum Flag : unsigned {
@@ -70,6 +75,7 @@ public:
         MatchesSelf = 1 << 11, // In a class pattern, int(x) binds x to the subject itself.
         HasWeakReferences = 1 << 13, // There can be weak references to its instances.
         MayHaveForeignDict = 1 << 14, // Some instance has been given a __dict__ that is another object's too. See attributeStorage().
+        IsJavaScript = 1 << 15, // JavaScript made it, and everything that it is derived from. So the attributes of an instance are its properties, as JavaScript finds them.
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.
@@ -94,7 +100,21 @@ public:
     // What a class statement makes. The order of resolution has been worked out, and `bases` found to go together.
     static PyType* create(VM&, JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* bases, PyType* base, PyTuple* mro);
 
+    // What there is to know about a class that JavaScript made. See Python::classFor().
+    static PyType* createForJavaScript(VM&, JSGlobalObject*, JSObject* constructor, JSObject* prototype, PyType* base);
+
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+
+    // For a built-in one that stands for a built-in class of JavaScript's, as the class of all objects does for Object.
+    void setJavaScriptClass(VM&, JSObject* constructor, JSObject* prototype);
+
+    // Null unless JavaScript made it.
+    JSObject* javaScriptConstructor() const { return m_javaScriptConstructor.get(); }
+    JSObject* javaScriptPrototype() const { return m_javaScriptPrototype.get(); }
+    // The class, as a program has it. Nothing else is to be given to one.
+    JSObject* object() { return m_javaScriptConstructor ? m_javaScriptConstructor.get() : this; }
+    // What its instances have for a prototype.
+    JSObject* prototypeObject() { return m_javaScriptPrototype ? m_javaScriptPrototype.get() : this; }
 
     PyType* metatype() const { return m_metatype.get(); }
     void setMetatype(VM& vm, PyType* metatype) { m_metatype.set(vm, this, metatype); }
@@ -137,7 +157,12 @@ public:
     JSValue lookup(VM&, PropertyName) const;
     // The same, beginning after `after`, which is what super() does.
     JSValue lookupAfter(VM&, PyType* after, PropertyName) const;
+    // The same, beginning with `from`.
+    JSValue lookupFrom(VM&, PyType* from, PropertyName) const;
     JSValue lookupOwn(VM&, PropertyName) const;
+    // The same as lookup(), for an attribute of the class itself. That takes in what is `static` in a class of JavaScript's, which is a property of the
+    // constructor.
+    JSValue lookupOnClass(VM&, PropertyName, bool& isStatic, PyType* from = nullptr) const;
 
     bool isSubtypeOf(const PyType*) const;
 
@@ -158,7 +183,9 @@ public:
     WatchpointSet& instanceAccessIsAsFound() { return m_instanceAccessIsAsFound.get(); }
 
     // The structure that instances of a class with this layout and this class for a prototype have.
-    static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, PyType* prototype);
+    static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, JSObject* prototype);
+    // The same, for a class that is derived from `base`.
+    static Structure* createInstanceStructure(VM&, JSGlobalObject*, PyType* base, JSObject* prototype);
 
     static CallData getCallData(JSCell*);
     // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
@@ -191,6 +218,8 @@ private:
     WriteBarrier<PyTuple> m_mro;
     WriteBarrier<JSString> m_name;
     WriteBarrier<Structure> m_instanceStructure;
+    WriteBarrier<JSObject> m_javaScriptConstructor;
+    WriteBarrier<JSObject> m_javaScriptPrototype;
     Vector<Weak<PyType>> m_subclasses;
     const Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
@@ -204,7 +233,25 @@ private:
     bool m_knowsHooks { false }; // Whether hookFlags are as they would be worked out to be.
 };
 
+// What a class of JavaScript's calls when it has been defined, if it may be derived from one of Python's.
+JSC_DECLARE_HOST_FUNCTION(pythonClassWasDefined);
+
+namespace Python {
+JS_EXPORT_PRIVATE bool isJavaScriptClass(JSCell*);
+JS_EXPORT_PRIVATE PyType* classFor(JSObject* constructor);
+}
+
+// Whether it is one of these cells. What a program has for a class need not be.
 inline bool isType(JSValue value) { return value.isCell() && value.asCell()->type() == PyTypeType; }
-inline PyType* asType(JSValue value) { return uncheckedDowncast<PyType>(value.asCell()); }
+// Whether it is a class, of either language's making.
+inline bool isClass(JSValue value) { return value.isCell() && (value.asCell()->type() == PyTypeType || Python::isJavaScriptClass(value.asCell())); }
+// What there is to know about a class.
+inline PyType* asType(JSValue value)
+{
+    JSCell* cell = value.asCell();
+    if (cell->type() == PyTypeType) [[likely]]
+        return uncheckedDowncast<PyType>(cell);
+    return Python::classFor(asObject(cell));
+}
 
 } // namespace JSC

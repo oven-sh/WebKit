@@ -211,7 +211,7 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
         CallFrame* caller = callFrame->callerFrame(entryFrame);
         if (caller && !caller->isNativeCalleeFrame() && !caller->codeBlock()) {
             if (auto* method = tryBoundMethod(caller->jsCallee()); method && method->function() == JSValue(function))
-                type = isType(method->self()) ? asType(method->self()) : typeOf(globalObject, method->self());
+                type = isClass(method->self()) ? asType(method->self()) : typeOf(globalObject, method->self());
         }
         return makeString(qualifiedNameWithoutModule(globalObject, type), '.', name, "()"_s);
     }

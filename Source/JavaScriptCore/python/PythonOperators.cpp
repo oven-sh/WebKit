@@ -664,7 +664,7 @@ static bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JS
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto isExceptionClass = [] (JSValue value) { return isType(value) && asType(value)->isExceptionType(); };
+    auto isExceptionClass = [] (JSValue value) { return isClass(value) && asType(value)->isExceptionType(); };
     auto complain = [&] {
         raiseTypeError(globalObject, scope, "catching classes that do not inherit from BaseException is not allowed"_s);
         return false;
@@ -1266,13 +1266,13 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     if (method)
         RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self, key));
 
-    if (isType(base)) {
+    if (isClass(base)) {
         // list[int]
         JSValue classGetItem = getAttributeIfPresent(globalObject, base, names.dunder_class_getitem);
         RETURN_IF_EXCEPTION(scope, { });
         if (classGetItem)
             RELEASE_AND_RETURN(scope, call(globalObject, classGetItem, key));
-        return raiseTypeError(globalObject, scope, makeString("type '"_s, uncheckedDowncast<PyType>(base.asCell())->nameString(globalObject), "' is not subscriptable"_s));
+        return raiseTypeError(globalObject, scope, makeString("type '"_s, asType(base)->nameString(globalObject), "' is not subscriptable"_s));
     }
     return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object is not subscriptable"_s));
 }

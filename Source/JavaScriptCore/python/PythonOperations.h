@@ -116,7 +116,7 @@ JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name,
 
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
-JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName, PyType* from);
 // Where an object's own attributes are, if it can have any: they are the properties of this. Null if it cannot.
 JSObject* attributeStorage(JSGlobalObject*, JSValue, PyType*);
 // An attribute that something has of its own is a property of it that is enumerable. What is not enumerable is JavaScript's business: the name and
@@ -150,6 +150,24 @@ inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSVa
 // Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's
 // `delete` does to something of Python's, which is delattr().
 bool deleteStoredAttribute(JSGlobalObject*, JSObject*, PropertyName);
+// Whether its code is Python.
+bool isPythonFunction(JSFunction*);
+// isJavaScriptClass(): whether it is a class that JavaScript made, which is to say a constructor: what `new` can be used with.
+// classFor(): what there is to know about one. Both are declared in PyType.h.
+// The class of what has this for its prototype: that of the constructor that it is the prototype of, or failing that of the next one along that is
+// some constructor's.
+PyType* classForPrototype(JSGlobalObject*, JSValue prototype);
+// The class of a class that JavaScript made. This does not take finding out all about it.
+PyType* metatypeOfJavaScriptClass(JSGlobalObject*, JSObject* constructor);
+// An attribute of a class. Empty if it has none. A class of JavaScript's is a function besides, and has what a function has.
+enum class ClassIsFunctionToo : bool { No, Yes };
+// If `from` is given, what the class itself defines is looked for beginning with that one in the order of resolution.
+JSValue getTypeAttribute(JSGlobalObject*, PyType*, PropertyName, ClassIsFunctionToo = ClassIsFunctionToo::Yes, PyType* from = nullptr);
+// For a class whose instances are the first to have a __dict__, or to be weakly referred to: the descriptors for those.
+void addInstanceDescriptors(JSGlobalObject*, PyType*, bool addsDict, bool addsWeakReferences);
+// The class that a value is, whichever language made it. Null if it is not one.
+PyType* tryClass(JSGlobalObject*, JSValue);
+
 // Whether an object that JavaScript is working on is Python's: a class, or an instance of the class that is its prototype. Something of JavaScript's can
 // have a class for a prototype, or further up, if it was made to.
 bool isPythonObject(JSGlobalObject*, JSValue);
@@ -202,6 +220,8 @@ JSValue callMethod(JSGlobalObject*, JSValue function, JSValue self, JSValue, JSV
 bool isCallable(JSGlobalObject*, JSValue);
 // type(...): __new__, and then __init__. The first argument is not the type.
 JSValue instantiate(JSGlobalObject*, PyType*, const ArgList&, KeywordNames* keywordNames);
+// The part that `from`, and what comes after it in the order of resolution, have in making an instance of the class.
+JSValue instantiateFrom(JSGlobalObject*, PyType*, PyType* from, const ArgList&, KeywordNames* keywordNames);
 
 // ---- Classes
 

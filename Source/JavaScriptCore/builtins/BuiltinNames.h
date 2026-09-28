@@ -233,6 +233,7 @@ namespace JSC {
     macro(pyBoundArgumentsMarker) \
     macro(pyRuntimeFunctions) \
     macro(callConstructorWithoutNew) \
+    macro(pythonClassWasDefined) \
 
 
 namespace Symbols {

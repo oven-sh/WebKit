@@ -787,6 +787,7 @@ namespace JSC {
 
         RegisterID* moveLinkTimeConstant(RegisterID* dst, LinkTimeConstant);
         void emitCallOfConstructorWithoutNew(const Identifier& message);
+        void emitTellPythonOfDerivedClass(RegisterID* constructor, RegisterID* superclass, const JSTextPosition&);
         RegisterID* moveEmptyValue(RegisterID* dst);
 
         RegisterID* emitToNumber(RegisterID* dst, RegisterID* src);

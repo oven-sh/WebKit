@@ -142,12 +142,9 @@ bool PyException::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         slot.setValue(object, attributes, set);
         return true;
     }
-    JSValue prototype = object->getPrototypeDirect();
-    if (!isType(prototype))
-        return false;
     JSValue value;
     if (name == vm.propertyNames->name)
-        value = asType(prototype)->name();
+        value = Python::typeOf(globalObject, object)->name();
     else if (slot.isVMInquiry())
         return false; // The rest may run something.
     else if (name == vm.propertyNames->message) {
@@ -217,9 +214,8 @@ CallData PyInstance::getCallData(JSCell* cell)
     // It can be called if its class has __call__.
     CallData callData;
     JSObject* object = asObject(cell);
-    JSValue prototype = object->getPrototypeDirect();
     VM& vm = cell->vm();
-    if (isType(prototype) && asType(prototype)->lookup(vm, vm.pythonNames().dunder_call)) {
+    if (Python::typeOf(object->globalObject(), object)->lookup(vm, vm.pythonNames().dunder_call)) {
         callData.type = CallData::Type::Native;
         callData.native.function = callInstance;
         callData.native.isBoundFunction = false;

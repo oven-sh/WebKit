@@ -43,9 +43,12 @@ BytesKind bytesKindOf(JSValue value)
         return BytesKind::None;
     JSObject* object = asObject(value);
     JSValue prototype = object->structure()->storedPrototype(object);
-    if (!isType(prototype))
+    if (isType(prototype))
+        return asType(prototype)->hasFlag(PyType::IsBytes) ? BytesKind::Bytes : BytesKind::ByteArray;
+    // One of JavaScript's, unless it is an instance of a class of JavaScript's that is derived from one of Python's.
+    if (!object->structure()->typeInfo().overloadsOperators()) [[likely]]
         return BytesKind::ByteArray;
-    return asType(prototype)->hasFlag(PyType::IsBytes) ? BytesKind::Bytes : BytesKind::ByteArray;
+    return typeOf(object->globalObject(), value)->hasFlag(PyType::IsBytes) ? BytesKind::Bytes : BytesKind::ByteArray;
 }
 
 static JSUint8Array* asView(JSValue value) { return uncheckedDowncast<JSUint8Array>(value.asCell()); }

@@ -18,11 +18,11 @@ describe(null) => NoneType: None
 describe(undefined) => NoneType: None
 describe(true) => bool: True
 describe([1,'a']) => list: [1, 'a']
-describe({a:1}) => JSObject: {"a":1}
-describe(x=>x) => JSFunction: <JSFunction (anonymous)>
+describe({a:1}) => Object: {"a":1}
+describe(x=>x) => Function: <JSFunction (anonymous)>
 describe(10n**30n) => int: 1000000000000000000000000000000
 describe(new Uint8Array(2)) => bytearray: bytearray(b'\x00\x00')
-describe(new Map) => JSObject: [object Map]
+describe(new Map) => Map: [object Map]
 python calls JS fn => 5
 python exception in JS !! threw ValueError: from python | instanceof Error: true
 JS exception through python !! threw RangeError: from js | instanceof Error: true

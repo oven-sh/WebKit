@@ -291,8 +291,8 @@ static String describeCallable(JSGlobalObject* globalObject, JSValue callable)
         }
         return makeString(function->name(vm), "()"_s);
     }
-    if (isType(callable))
-        return makeString(uncheckedDowncast<PyType>(callable.asCell())->nameString(globalObject), "()"_s);
+    if (isClass(callable))
+        return makeString(asType(callable)->nameString(globalObject), "()"_s);
     return makeString(typeName(globalObject, callable), " object"_s);
 }
 
@@ -591,7 +591,7 @@ static JSValue normalizeException(JSGlobalObject* globalObject, JSValue value, A
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isType(value) && uncheckedDowncast<PyType>(value.asCell())->isExceptionType()) {
+    if (isClass(value) && asType(value)->isExceptionType()) {
         JSValue instance = call(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
         if (!typeOf(globalObject, instance)->isExceptionType()) {
@@ -811,7 +811,7 @@ PYTHON_RUNTIME_FUNCTION(matchClass)
     PROLOGUE();
     auto& names = vm.pythonNames();
     JSValue subject = argument(0);
-    if (!isType(argument(1)))
+    if (!isClass(argument(1)))
         return JSValue::encode(raiseTypeError(globalObject, scope, "called match pattern must be a class"_s));
     PyType* type = asType(argument(1));
     unsigned positional = argument(2).asInt32();

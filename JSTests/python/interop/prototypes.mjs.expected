@@ -1,33 +1,33 @@
-Object.create => JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject
-setPrototypeOf => JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject
-of a function => JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction JSFunction
+Object.create => Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object
+setPrototypeOf => Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object
+of a function => type type type type type type type type type type type type type type type type type type type type type type type type type type type type
 of an array => list list list list list list list list list list list list list list list list list list list list list list list list list list list list
-of a Map => JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject JSObject
-dict.get(fake) !! TypeError: descriptor 'get' for 'dict' objects doesn't apply to a 'JSObject' object
-dict.keys(fake) !! TypeError: descriptor 'keys' for 'dict' objects doesn't apply to a 'JSObject' object
-dict.__len__(fake) !! TypeError: descriptor '__len__' requires a 'dict' object but received a 'JSObject'
-set.add(fake) !! TypeError: descriptor 'add' for 'set' objects doesn't apply to a 'JSObject' object
-tuple.index(fake) !! TypeError: descriptor 'index' for 'tuple' objects doesn't apply to a 'JSObject' object
-range.count(fake) !! TypeError: descriptor 'count' for 'range' objects doesn't apply to a 'JSObject' object
-slice.indices(fake) !! TypeError: descriptor 'indices' for 'slice' objects doesn't apply to a 'JSObject' object
-complex.conjugate(fake) !! TypeError: descriptor 'conjugate' for 'complex' objects doesn't apply to a 'JSObject' object
-property.getter(fake) !! TypeError: descriptor 'getter' for 'property' objects doesn't apply to a 'JSObject' object
-list_iterator.__next__(fake) !! TypeError: descriptor '__next__' requires a 'list_iterator' object but received a 'JSObject'
+of a Map => Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object Object
+dict.get(fake) !! TypeError: descriptor 'get' for 'dict' objects doesn't apply to a 'Object' object
+dict.keys(fake) !! TypeError: descriptor 'keys' for 'dict' objects doesn't apply to a 'Object' object
+dict.__len__(fake) !! TypeError: descriptor '__len__' requires a 'dict' object but received a 'Object'
+set.add(fake) !! TypeError: descriptor 'add' for 'set' objects doesn't apply to a 'Object' object
+tuple.index(fake) !! TypeError: descriptor 'index' for 'tuple' objects doesn't apply to a 'Object' object
+range.count(fake) !! TypeError: descriptor 'count' for 'range' objects doesn't apply to a 'Object' object
+slice.indices(fake) !! TypeError: descriptor 'indices' for 'slice' objects doesn't apply to a 'Object' object
+complex.conjugate(fake) !! TypeError: descriptor 'conjugate' for 'complex' objects doesn't apply to a 'Object' object
+property.getter(fake) !! TypeError: descriptor 'getter' for 'property' objects doesn't apply to a 'Object' object
+list_iterator.__next__(fake) !! TypeError: descriptor '__next__' requires a 'list_iterator' object but received a 'Object'
 dict_keys.isdisjoint(fake) !! TypeError: m[type][method] is not a function. (In 'm[type][method](Object.create(m[type]), ...rest)', 'm[type][
-memoryview.tobytes(fake) !! TypeError: descriptor 'tobytes' for 'memoryview' objects doesn't apply to a 'JSObject' object
-ValueError.with_traceback(fake) !! TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'JSObject' object
-list.append(fake) !! TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'JSObject' object
-MyList.append(fake) !! TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'JSObject' object
-bytes.hex(fake) !! TypeError: descriptor 'hex' for 'bytes' objects doesn't apply to a 'JSObject' object
-str.upper(fake) !! TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'JSObject' object
-int.bit_length(fake) !! TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'JSObject' object
+memoryview.tobytes(fake) !! TypeError: descriptor 'tobytes' for 'memoryview' objects doesn't apply to a 'Object' object
+ValueError.with_traceback(fake) !! TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'Object' object
+list.append(fake) !! TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Object' object
+MyList.append(fake) !! TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Object' object
+bytes.hex(fake) !! TypeError: descriptor 'hex' for 'bytes' objects doesn't apply to a 'Object' object
+str.upper(fake) !! TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'Object' object
+int.bit_length(fake) !! TypeError: descriptor 'bit_length' for 'int' objects doesn't apply to a 'Object' object
 Plain.hello(fake) => hello
-type.mro(fake) !! TypeError: descriptor 'mro' for 'type' objects doesn't apply to a 'JSObject' object
-generator.send(fake) !! TypeError: descriptor 'send' for 'generator' objects doesn't apply to a 'JSObject' object
-function.__call__(fake) !! TypeError: descriptor '__call__' requires a 'function' object but received a 'JSObject'
+type.mro(fake) !! TypeError: descriptor 'mro' for 'type' objects doesn't apply to a 'Object' object
+generator.send(fake) !! TypeError: descriptor 'send' for 'generator' objects doesn't apply to a 'Object' object
+function.__call__(fake) !! TypeError: descriptor '__call__' requires a 'function' object but received a 'Object'
 what it inherits is the class's => plain function Plain true  0
 and it is its own to change => mine plain 1 kind,fresh true plain
-further down => plain Plain JSObject
+further down => plain Plain Object
 swap dict => dict
 swap MyDict => MyDict
 swap set => set
@@ -58,16 +58,16 @@ __class__ => Other other true true false
 __class__ that will not do !! TypeError: __class__ assignment: 'Slotted' object layout differs from 'Plain'
 __class__ of a dict !! TypeError: __class__ assignment: 'Plain' object layout differs from 'MyDict'
 __class__ built in !! TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
-Object/Plain => JSObject {}
-Map/dict => JSObject [object Object]
-Set/set => JSObject [object Object]
+Object/Plain => Object {}
+Map/dict => Object [object Object]
+Set/set => Object [object Object]
 Array/list => list []
 Array/MyList => list []
 Uint8Array/bytes => bytes b'\x00\x00'
 Uint8Array/bytearray => bytearray bytearray(b'\x00\x00')
 Error/ValueError => JSError JSError('x')
-Function/function => JSFunction <JSFunction anonymous>
-Promise/Plain => JSObject [object Object]
-Date/int => JSObject [object Date]
-String/str => JSObject [object String]
-Number/float => JSObject [object Number]
+Function/function => type <class 'anonymous'>
+Promise/Plain => Object [object Object]
+Date/int => Object [object Date]
+String/str => Object [object String]
+Number/float => Object [object Number]

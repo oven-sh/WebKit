@@ -254,7 +254,13 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyTypeType:
         return makeString("<class '"_s, qualifiedNameOfType(globalObject, uncheckedDowncast<PyType>(cell)), "'>"_s);
+    case InternalFunctionType:
+        if (isJavaScriptClass(cell))
+            return makeString("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
+        break;
     case JSFunctionType: {
+        if (isJavaScriptClass(cell))
+            return makeString("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
         auto* function = uncheckedDowncast<JSFunction>(cell);
         if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
             if (native->kind() == PyNativeFunction::Kind::Function)

@@ -288,7 +288,7 @@ static JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned 
 PYTHON_NATIVE(intNew)
 {
     NATIVE_PROLOGUE();
-    auto* type = uncheckedDowncast<PyType>(args.at(0).asCell());
+    auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
     if (args.size() > 3 && !args.keywordCount())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int expected at most 2 arguments, got "_s, args.size() - 1)));
@@ -430,7 +430,7 @@ static std::optional<double> parseFloat(StringView text)
 PYTHON_NATIVE(floatNew)
 {
     NATIVE_PROLOGUE();
-    auto* type = uncheckedDowncast<PyType>(args[0].asCell());
+    auto* type = asType(args[0]);
     JSValue value = args.at(1);
     double result = 0;
     if (value) {

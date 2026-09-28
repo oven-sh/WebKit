@@ -28,6 +28,7 @@
 
 #include "CodeBlock.h"
 #include "ErrorInstance.h"
+#include "GetterSetter.h"
 #include "JSBoundFunction.h"
 #include "JSGlobalProxy.h"
 #include "FunctionExecutable.h"
@@ -68,7 +69,7 @@ static PyType* typeOfError(PyRealm* realm, ErrorInstance* error)
     }
 }
 
-static bool isPythonFunction(JSFunction* function)
+bool isPythonFunction(JSFunction* function)
 {
     return !function->isHostOrBuiltinFunction() && function->jsExecutable()->unlinkedExecutable()->pythonInfo();
 }
@@ -102,7 +103,11 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
                     return realm->typeClassMethodDescriptor();
                 }
             }
-            return isPythonFunction(uncheckedDowncast<JSFunction>(cell)) ? realm->typeFunction() : realm->typeJSFunction();
+            if (isPythonFunction(uncheckedDowncast<JSFunction>(cell)))
+                return realm->typeFunction();
+            return isJavaScriptClass(cell) ? metatypeOfJavaScriptClass(globalObject, asObject(cell)) : realm->typeJSFunction();
+        case InternalFunctionType:
+            return isJavaScriptClass(cell) ? metatypeOfJavaScriptClass(globalObject, asObject(cell)) : realm->typeJSFunction();
         default:
             break;
         }
@@ -112,8 +117,17 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
         // prototype, with Object.create() or Reflect.construct(), and what is written in C++ takes an instance of dict for a PyDict.
         JSValue prototype = cell->structure()->storedPrototype(asObject(cell));
         if (isType(prototype)) {
-            auto* type = uncheckedDowncast<PyType>(prototype.asCell());
+            auto* type = asType(prototype);
             if (Structure* structure = type->instanceStructure(); structure && structure->classInfoForCells() == cell->classInfo()) [[likely]]
+                return type;
+            // It is JavaScript that makes the instances, and nothing written in C++ takes them for more than objects.
+            if (type->layout() == PyType::Layout::JavaScript)
+                return type;
+        }
+        // A cell of Python's, so an instance of a class of JavaScript's that is derived from one of Python's.
+        if (cell->structure()->typeInfo().overloadsOperators()) [[unlikely]] {
+            PyType* type = classForPrototype(globalObject, prototype);
+            if (Structure* structure = type->instanceStructure(); structure && structure->classInfoForCells() == cell->classInfo())
                 return type;
         }
         if (isListCell(cell))
@@ -124,7 +138,9 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             return realm->typeGenerator();
         if (cell->type() == ErrorInstanceType)
             return typeOfError(realm, uncheckedDowncast<ErrorInstance>(cell));
-        return realm->typeJSObject();
+        // What a class of JavaScript's made.
+        PyType* type = classForPrototype(globalObject, prototype);
+        return type->layout() == PyType::Layout::JavaScript ? type : realm->typeJSObject();
     }
     if (value.isNumber())
         return taggedInteger(value) ? realm->typeInt() : realm->typeFloat();
@@ -295,6 +311,8 @@ enum class DescriptorKind : uint8_t {
     StaticMethod,
     ClassMethod,
     Member, // One of __slots__.
+    JavaScriptFunction, // Becomes a function bound to the instance: where Python would pass `self`, a function of JavaScript's gets `this`.
+    JavaScriptAccessor, // What `get x() {}` and `set x(v) {}` in a class of JavaScript's make. It is no value, and no program is given it.
     General, // Its own class has __get__.
 };
 
@@ -326,10 +344,15 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
                 return { DescriptorKind::NativeClassMethod, false, { } };
             }
         }
-        // One of JavaScript's is not bound to the instance, like one that is built in. It gets the instance as `this`.
-        if (!isPythonFunction(uncheckedDowncast<JSFunction>(cell)))
-            return { };
+        if (auto* function = uncheckedDowncast<JSFunction>(cell); !isPythonFunction(function)) {
+            // A class says what something is, and is not something that it does. What is bound is bound.
+            if (function->inherits<JSBoundFunction>() || (!function->isHostOrBuiltinFunction() && function->jsExecutable()->isClassConstructorFunction()))
+                return { };
+            return { DescriptorKind::JavaScriptFunction, false, { } };
+        }
         return { DescriptorKind::Function, false, { } };
+    case GetterSetterType:
+        return { DescriptorKind::JavaScriptAccessor, true, { } };
     case StringType:
     case HeapBigIntType:
     case SymbolType:
@@ -377,7 +400,17 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
             return value;
         return PyBoundMethod::create(globalObject, value, instance);
     case DescriptorKind::NativeClassMethod:
-        return PyBoundMethod::create(globalObject, value, type);
+        return PyBoundMethod::create(globalObject, value, type->object());
+    case DescriptorKind::JavaScriptFunction:
+        if (!instance)
+            return value;
+        RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, asObject(value), instance, ArgList()));
+    case DescriptorKind::JavaScriptAccessor: {
+        auto* accessor = uncheckedDowncast<GetterSetter>(value.asCell());
+        if (!instance)
+            return accessor->isGetterNull() ? jsUndefined() : JSValue(accessor->getter());
+        RELEASE_AND_RETURN(scope, accessor->callGetter(globalObject, instance));
+    }
     case DescriptorKind::GetSet:
         if (!instance)
             return value;
@@ -394,7 +427,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         return uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
     case DescriptorKind::ClassMethod: {
         JSValue function = uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
-        return PyBoundMethod::create(globalObject, function, type);
+        return PyBoundMethod::create(globalObject, function, type->object());
     }
     case DescriptorKind::Member: {
         if (!instance)
@@ -417,8 +450,8 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
 
 bool isJavaScriptObject(JSGlobalObject* globalObject, PyType* type)
 {
-    PyRealm* realm = globalObject->pyRealm();
-    return type == realm->typeJSObject() || type == realm->typeJSFunction() || type == realm->typeJSError();
+    UNUSED_PARAM(globalObject);
+    return type->hasFlag(PyType::IsJavaScript);
 }
 
 JSValue nameAsString(VM& vm, PropertyName name)
@@ -427,7 +460,12 @@ JSValue nameAsString(VM& vm, PropertyName name)
 }
 
 // type.__getattribute__. Empty, with nothing raised, if there is no such attribute.
-JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyName name)
+enum class InheritedFunctions : uint8_t { Bind, LeaveAsFound };
+static JSValue getJavaScriptProperty(JSGlobalObject*, JSObject*, PropertyName, InheritedFunctions);
+
+} // namespace
+
+JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyName name, ClassIsFunctionToo classIsFunctionToo, PyType* from)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -437,21 +475,37 @@ JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyNam
     if (metaAttribute) {
         metaDescriptor = classifyDescriptor(globalObject, metaAttribute);
         if (metaDescriptor.isData)
-            RELEASE_AND_RETURN(scope, bind(globalObject, metaDescriptor, metaAttribute, type, metatype));
+            RELEASE_AND_RETURN(scope, bind(globalObject, metaDescriptor, metaAttribute, type->object(), metatype));
     }
-    if (JSValue attribute = type->lookup(vm, name))
-        RELEASE_AND_RETURN(scope, bind(globalObject, classifyDescriptor(globalObject, attribute), attribute, JSValue(), type));
+    bool isStatic = false;
+    if (JSValue attribute = type->lookupOnClass(vm, name, isStatic, from)) {
+        // What is `static` in a class of JavaScript's is the class's and not its instances', so it is the class that an accessor is for.
+        Descriptor descriptor = classifyDescriptor(globalObject, attribute);
+        bool isForClass = isStatic && descriptor.kind == DescriptorKind::JavaScriptAccessor;
+        RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, isForClass ? JSValue(type->object()) : JSValue(), type));
+    }
     if (metaAttribute)
-        RELEASE_AND_RETURN(scope, bind(globalObject, metaDescriptor, metaAttribute, type, metatype));
+        RELEASE_AND_RETURN(scope, bind(globalObject, metaDescriptor, metaAttribute, type->object(), metatype));
+    // A class of JavaScript's is a function of JavaScript's besides.
+    if (JSObject* constructor = type->javaScriptConstructor(); constructor && classIsFunctionToo == ClassIsFunctionToo::Yes) {
+        JSValue property = getJavaScriptProperty(globalObject, constructor, name, InheritedFunctions::Bind);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (property)
+            return property;
+        PyType* functionType = globalObject->pyRealm()->typeJSFunction();
+        if (JSValue attribute = functionType->lookup(vm, name))
+            RELEASE_AND_RETURN(scope, bind(globalObject, classifyDescriptor(globalObject, attribute), attribute, constructor, functionType));
+    }
     return { };
 }
+
+namespace {
 
 // An attribute of a JavaScript object is a property of it, as JavaScript finds it. Empty if it has none.
 //
 // A function that is got from what an object inherits from remembers the object, as one that is got from a class does in Python: it is what
 // obj.method.bind(obj) would be. One that the object has of its own is as it is, as one in an instance's __dict__ is in Python. So js.Math.floor and
 // js.Array are themselves. Nor does it apply to a class, or to obj.constructor, which say what the object is and are not something that it does.
-enum class InheritedFunctions : uint8_t { Bind, LeaveAsFound };
 static JSValue getJavaScriptProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, InheritedFunctions inheritedFunctions)
 {
     VM& vm = globalObject->vm();
@@ -489,14 +543,14 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
         if (descriptor.isData)
             RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
     }
-    if (JSObject* storage = attributeStorage(globalObject, value, type)) {
-        if (JSValue own = getStoredAttribute(vm, storage, name))
-            return own;
-    } else if (isJavaScriptObject(globalObject, type) && value.isObject()) {
+    if (isJavaScriptObject(globalObject, type) && value.isObject()) {
         JSValue property = getJavaScriptProperty(globalObject, asObject(value), name, InheritedFunctions::Bind);
         RETURN_IF_EXCEPTION(scope, { });
         if (property)
             return property;
+    } else if (JSObject* storage = attributeStorage(globalObject, value, type)) {
+        if (JSValue own = getStoredAttribute(vm, storage, name))
+            return own;
     }
     if (attribute)
         RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
@@ -508,8 +562,8 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     VM& vm = globalObject->vm();
     StringView attribute { name.uid() };
     String message;
-    if (isType(value))
-        message = makeString("type object '"_s, uncheckedDowncast<PyType>(value.asCell())->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
+    if (isClass(value))
+        message = makeString("type object '"_s, asType(value)->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
     else if (JSObject* module = tryModule(globalObject, value)) {
         JSValue moduleName = module->getDirect(vm, vm.pythonNames().dunder_name);
         if (moduleName && moduleName.isString())
@@ -536,8 +590,8 @@ JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue
 
 JSValue genericGetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
-    if (isType(value))
-        return getTypeAttribute(globalObject, uncheckedDowncast<PyType>(value.asCell()), name);
+    if (isClass(value))
+        return getTypeAttribute(globalObject, asType(value), name);
     return getObjectAttribute(globalObject, value, typeOf(globalObject, value), name);
 }
 
@@ -701,6 +755,14 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
             call(globalObject, function, value);
         return true;
     }
+    case DescriptorKind::JavaScriptAccessor:
+        if (!newValue) {
+            raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no deleter"_s));
+            return true;
+        }
+        scope.release();
+        uncheckedDowncast<GetterSetter>(found.asCell())->callSetter(globalObject, value, newValue, true);
+        return true;
     case DescriptorKind::Member: {
         PropertyName storage = uncheckedDowncast<PyGetSetDescriptor>(found.asCell())->storage()->privateName();
         if (newValue) {
@@ -758,10 +820,28 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             return;
     }
 
-    if (isType(value)) {
-        auto* target = uncheckedDowncast<PyType>(value.asCell());
+    if (isClass(value)) {
+        auto* target = asType(value);
         if (!target->hasFlag(PyType::IsHeapType)) {
             raiseTypeError(globalObject, scope, makeString("cannot set '"_s, attribute, "' attribute of immutable type '"_s, target->nameString(globalObject), '\''));
+            return;
+        }
+        if (JSObject* constructor = target->javaScriptConstructor()) {
+            // An attribute of a class is there for its instances too, and in JavaScript that is a property of their prototype. What is `static` is
+            // not, and stays where it is.
+            JSObject* holder = constructor->getDirect(vm, name) ? constructor : target->javaScriptPrototype();
+            if (newValue) {
+                scope.release();
+                PutPropertySlot slot(holder, true);
+                holder->methodTable()->put(holder, globalObject, name, newValue, slot);
+                return;
+            }
+            if (!holder->getDirect(vm, name)) {
+                raise(globalObject, scope, BuiltinType::AttributeError, makeString("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
+                return;
+            }
+            scope.release();
+            JSCell::deleteProperty(holder, globalObject, name);
             return;
         }
         if (newValue) {
@@ -850,7 +930,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
             }
         }
     }
-    if (isType(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute))
+    if (isClass(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute))
         return getAttribute(globalObject, base, name);
     JSValue attribute = type->lookup(vm, name);
     if (isJavaScriptObject(globalObject, type) && base.isObject()) {
@@ -864,14 +944,17 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
         }
         return getAttribute(globalObject, base, name);
     }
-    if (!attribute || classifyDescriptor(globalObject, attribute).kind != DescriptorKind::Function)
+    DescriptorKind kind = attribute ? classifyDescriptor(globalObject, attribute).kind : DescriptorKind::Plain;
+    if (kind != DescriptorKind::Function && kind != DescriptorKind::JavaScriptFunction)
         return getAttribute(globalObject, base, name);
     // What the instance itself has by that name comes first.
     if (JSObject* storage = attributeStorage(globalObject, base, type)) {
         if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
     }
-    self = base;
+    // What is called without `self` is called with what it was got from as `this`, which is what one of JavaScript's wants.
+    if (kind == DescriptorKind::Function)
+        self = base;
     return attribute;
 }
 
@@ -1181,12 +1264,24 @@ JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& a
     if (type == realm->typeType() && arguments.size() - (keywordNames ? keywordNames->length() : 0) == 1) {
         if (keywordNames)
             return raiseTypeError(globalObject, scope, "type() takes no keyword arguments"_s);
-        return typeOf(globalObject, arguments.at(0));
+        return typeOf(globalObject, arguments.at(0))->object();
     }
+
+    RELEASE_AND_RETURN(scope, instantiateFrom(globalObject, type, type, arguments, keywordNames));
+}
+
+JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from, const ArgList& arguments, KeywordNames* keywordNames)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    PyRealm* realm = globalObject->pyRealm();
+    // Whether a constructor of JavaScript's is in the middle of making it, and has come to super(...).
+    bool isContinuing = type != from;
 
     if (type->cannotBeInstantiated(vm))
         return raiseTypeError(globalObject, scope, makeString("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
-    JSValue constructor = type->lookup(vm, names.dunder_new);
+    JSValue constructor = type->lookupFrom(vm, from, names.dunder_new);
     ASSERT(constructor);
     // It is a static method, whether or not it says so.
     if (auto* wrapper = tryNativeObject(constructor); wrapper && typeOf(globalObject, constructor) == realm->typeStaticMethod())
@@ -1197,16 +1292,23 @@ JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& a
         for (unsigned i = 0; i < arguments.size(); ++i)
             buffer.append(arguments.at(i));
     };
+    // What object.__new__ and object.__init__ make of arguments goes by whether the class has its own of the one and the other, to tell whose they are.
+    // Here they are for whoever wants them, as arguments are in JavaScript.
     MarkedArgumentBuffer withType;
-    prepend(withType, type);
-    JSValue instance = callWithKeywords(globalObject, constructor, withType, keywordNames);
+    JSValue instance;
+    if (isContinuing && constructor.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectNew))
+        instance = call(globalObject, constructor, type->object());
+    else {
+        prepend(withType, type->object());
+        instance = callWithKeywords(globalObject, constructor, withType, keywordNames);
+    }
     RETURN_IF_EXCEPTION(scope, { });
 
     PyType* instanceType = typeOf(globalObject, instance);
     if (!instanceType->isSubtypeOf(type))
         return instance;
-    JSValue initializer = instanceType->lookup(vm, names.dunder_init);
-    if (!initializer)
+    JSValue initializer = isContinuing ? instanceType->lookupFrom(vm, from, names.dunder_init) : instanceType->lookup(vm, names.dunder_init);
+    if (!initializer || (isContinuing && initializer.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit)))
         return instance;
     MarkedArgumentBuffer withInstance;
     prepend(withInstance, instance);

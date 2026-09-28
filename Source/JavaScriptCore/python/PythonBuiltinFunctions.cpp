@@ -53,7 +53,7 @@ static PyTuple* argumentsAfterFirst(JSGlobalObject* globalObject, const NativeAr
 PYTHON_NATIVE(exceptionNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.size() || !isType(args[0]))
+    if (!args.size() || !isClass(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, "BaseException.__new__(X): X is not a type object"_s));
     PyException* exception = PyException::create(vm, asType(args[0]));
     exception->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));

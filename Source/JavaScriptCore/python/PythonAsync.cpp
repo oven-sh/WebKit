@@ -73,7 +73,7 @@ JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValu
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isType(exception) && asType(exception)->isExceptionType()) {
+    if (isClass(exception) && asType(exception)->isExceptionType()) {
         if (value && typeOf(globalObject, value)->isExceptionType())
             return value;
         RELEASE_AND_RETURN(scope, value && !isNone(value) ? call(globalObject, exception, value) : call(globalObject, exception));

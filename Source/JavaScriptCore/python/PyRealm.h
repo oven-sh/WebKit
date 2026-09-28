@@ -102,8 +102,8 @@ namespace JSC {
     v(Map, "map", Object, Native, PyType::IsBaseType) \
     v(Filter, "filter", Object, Native, PyType::IsBaseType) \
     v(Reversed, "reversed", Object, Native, PyType::IsBaseType) \
-    v(JSObject, "JSObject", Object, Native, 0) \
-    v(JSFunction, "JSFunction", JSObject, Native, 0) \
+    v(JSObject, "Object", Object, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict) \
+    v(JSFunction, "Function", JSObject, Native, PyType::IsJavaScript) \
     v(JSSymbol, "JSSymbol", Object, Native, 0) \
     FOR_EACH_PYTHON_EXCEPTION_TYPE(v)
 
@@ -177,7 +177,7 @@ namespace JSC {
     v(SyntaxWarning, "SyntaxWarning", Warning, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(UnicodeWarning, "UnicodeWarning", Warning, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(UserWarning, "UserWarning", Warning, Exception, PYTHON_EXCEPTION_FLAGS) \
-    v(JSError, "JSError", Exception, Native, PyType::IsExceptionType)
+    v(JSError, "JSError", Exception, Native, PyType::IsExceptionType | PyType::IsJavaScript)
 
 enum class BuiltinType : uint8_t {
 #define DECLARE(name, pythonName, base, layout, flags) name,

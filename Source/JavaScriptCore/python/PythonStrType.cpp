@@ -132,7 +132,7 @@ static bool sliceArguments(JSGlobalObject* globalObject, ThrowScope& scope, Stri
 PYTHON_NATIVE(strNew)
 {
     NATIVE_PROLOGUE();
-    auto* type = uncheckedDowncast<PyType>(args.at(0).asCell());
+    auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
     if (args.size() > 4 && !args.keywordCount())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str expected at most 3 arguments, got "_s, args.size() - 1)));

@@ -49,13 +49,13 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
     Vector<Vector<PyType*, 8>, 4> sequences;
     for (auto& base : bases->span()) {
         Vector<PyType*, 8> order;
-        for (auto& entry : uncheckedDowncast<PyType>(base.get().asCell())->mro()->span())
-            order.append(uncheckedDowncast<PyType>(entry.get().asCell()));
+        for (auto& entry : asType(base.get())->mro()->span())
+            order.append(asType(entry.get()));
         sequences.append(WTF::move(order));
     }
     Vector<PyType*, 8> given;
     for (auto& base : bases->span())
-        given.append(uncheckedDowncast<PyType>(base.get().asCell()));
+        given.append(asType(base.get()));
     sequences.append(WTF::move(given));
 
     Vector<size_t, 4> positions(sequences.size(), [] (size_t) -> size_t { return 0; });
@@ -125,11 +125,11 @@ static PyType* bestBase(JSGlobalObject* globalObject, PyTuple* bases)
     PyType* best = nullptr;
     PyType* winner = nullptr;
     for (auto& entry : bases->span()) {
-        if (!isType(entry.get())) {
+        if (!isClass(entry.get())) {
             raiseTypeError(globalObject, scope, "bases must be types"_s);
             return nullptr;
         }
-        auto* base = uncheckedDowncast<PyType>(entry.get().asCell());
+        auto* base = asType(entry.get());
         if (!base->hasFlag(PyType::IsBaseType)) {
             raiseTypeError(globalObject, scope, makeString("type '"_s, base->nameString(globalObject), "' is not an acceptable base type"_s));
             return nullptr;
@@ -164,6 +164,16 @@ static String mangle(const String& className, const String& name)
     if (underscores == className.length())
         return name;
     return makeString('_', StringView(className).substring(underscores), name);
+}
+
+void addInstanceDescriptors(JSGlobalObject* globalObject, PyType* type, bool addsDict, bool addsWeakReferences)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    if (addsDict)
+        type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
+    if (addsWeakReferences)
+        type->putDirect(vm, names.dunder_weakref, PyGetSetDescriptor::create(globalObject, type, "__weakref__"_s, getWeakReferences, nullptr, false, "list of weak references to the object"_s));
 }
 
 static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* namespaceDict)
@@ -330,10 +340,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         type->putDirect(vm, Identifier::fromString(vm, slot), createMemberDescriptor(globalObject, type, jsString(vm, slot), &names.slotStorage(slotOffset)));
         slotOffset += sizeof(void*);
     }
-    if (addsDict)
-        type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
-    if (addsWeakReferences)
-        type->putDirect(vm, names.dunder_weakref, PyGetSetDescriptor::create(globalObject, type, "__weakref__"_s, getWeakReferences, nullptr, false, "list of weak references to the object"_s));
+    addInstanceDescriptors(globalObject, type, addsDict, addsWeakReferences);
 
     if (!type->lookupOwn(vm, names.dunder_doc))
         type->putDirect(vm, names.dunder_doc, jsUndefined());
@@ -355,6 +362,35 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     return type;
 }
 
+// The end of newType(), for a class that JavaScript made.
+static void javaScriptClassWasDefined(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* prototype = type->javaScriptPrototype();
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    prototype->methodTable()->getOwnPropertyNames(prototype, globalObject, properties, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (auto& property : properties) {
+        JSValue value = prototype->getDirect(vm, property);
+        if (!value || !value.isObject())
+            continue;
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_set_name, self);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!method)
+            continue;
+        callMethod(globalObject, method, self, type->object(), jsString(vm, property.string()));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (JSValue hook = type->lookupAfter(vm, type, vm.pythonNames().dunder_init_subclass)) {
+        JSValue bound = bindDescriptor(globalObject, hook, JSValue(), type);
+        RETURN_IF_EXCEPTION(scope, void());
+        scope.release();
+        call(globalObject, bound);
+    }
+}
+
 // ---- The class statement
 
 // A base that is not a class may say which classes to derive from in its place: Generic[T] does.
@@ -366,7 +402,7 @@ static PyTuple* resolveBases(JSGlobalObject* globalObject, PyTuple* bases)
     MarkedArgumentBuffer resolved;
     for (auto& entry : bases->span()) {
         JSValue base = entry.get();
-        if (isType(base)) {
+        if (isClass(base)) {
             resolved.append(base);
             continue;
         }
@@ -426,8 +462,8 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
     }
     if (!metaclass)
         metaclass = bases->length() ? typeOf(globalObject, bases->at(0)) : realm->typeType();
-    if (isType(metaclass)) {
-        metaclass = calculateMetaclass(globalObject, uncheckedDowncast<PyType>(metaclass.asCell()), bases);
+    if (isClass(metaclass)) {
+        metaclass = calculateMetaclass(globalObject, asType(metaclass), bases);
         RETURN_IF_EXCEPTION(scope, { });
     }
 
@@ -480,10 +516,10 @@ JSValue getSuperAttribute(JSGlobalObject* globalObject, JSValue superObject, Pro
     JSValue instance = object->field(1);
     JSValue startType = object->field(2);
     // super().__class__ is super.
-    if (!startType || !isType(startType) || name == vm.pythonNames().dunder_class)
+    if (!startType || !isClass(startType) || name == vm.pythonNames().dunder_class)
         return { };
-    auto* start = uncheckedDowncast<PyType>(startType.asCell());
-    JSValue attribute = start->lookupAfter(vm, uncheckedDowncast<PyType>(after.asCell()), name);
+    auto* start = asType(startType);
+    JSValue attribute = start->lookupAfter(vm, asType(after), name);
     if (!attribute)
         return { };
     // super(C, D) where D is a class: what is found is got from the class, and not from an instance.
@@ -510,19 +546,19 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
         return false;
     }
 
-    if (isType(classInfo)) {
-        auto* type = uncheckedDowncast<PyType>(classInfo.asCell());
+    if (isClass(classInfo)) {
+        auto* type = asType(classInfo);
         if (isInstanceCheck && typeOf(globalObject, value) == type)
             return true;
         // Nearly every class leaves it to type.
         if (type->metatype() == realm->typeType()) {
             if (isInstanceCheck)
                 return isInstance(globalObject, value, type);
-            if (!isType(value)) {
+            if (!isClass(value)) {
                 raiseTypeError(globalObject, scope, "issubclass() arg 1 must be a class"_s);
                 return false;
             }
-            return uncheckedDowncast<PyType>(value.asCell())->isSubtypeOf(type);
+            return asType(value)->isSubtypeOf(type);
         }
     }
 
@@ -548,4 +584,18 @@ bool isSubclassOf(JSGlobalObject* globalObject, JSValue value, JSValue classInfo
     return checkClassInfo(globalObject, value, classInfo, false);
 }
 
-} } // namespace JSC::Python
+} // namespace Python
+
+JSC_DEFINE_HOST_FUNCTION(pythonClassWasDefined, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    JSValue constructor = callFrame->argument(0);
+    if (!constructor.isCell() || !Python::isJavaScriptClass(constructor.asCell()))
+        return JSValue::encode(jsUndefined());
+    // From now on it is known to Python, which is how a class that extends it will be seen to be derived from one of Python's.
+    PyType* type = Python::classFor(asObject(constructor));
+    if (!type->hasFlag(PyType::IsJavaScript))
+        Python::javaScriptClassWasDefined(globalObject, type);
+    return JSValue::encode(jsUndefined());
+}
+
+} // namespace JSC

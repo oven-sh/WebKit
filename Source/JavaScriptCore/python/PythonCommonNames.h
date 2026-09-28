@@ -55,7 +55,7 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(dict) v(foreignDict) v(slots) v(capacity) v(descriptor) v(code) v(yieldFrom) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.

@@ -54,6 +54,8 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_mro);
     visitor.append(thisObject->m_name);
     visitor.append(thisObject->m_instanceStructure);
+    visitor.append(thisObject->m_javaScriptConstructor);
+    visitor.append(thisObject->m_javaScriptPrototype);
 }
 
 DEFINE_VISIT_CHILDREN(PyType);
@@ -63,7 +65,7 @@ Structure* PyType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue
     return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | pythonCellFlags), info());
 }
 
-Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, PyType* prototype)
+Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, JSObject* prototype)
 {
     switch (layout) {
     case Layout::Object:
@@ -82,6 +84,7 @@ Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject,
         return PyBoxedValue::createStructure(vm, globalObject, prototype);
     case Layout::Type:
     case Layout::Native:
+    case Layout::JavaScript:
         return nullptr;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -110,6 +113,9 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
         type->m_dictOffset = base->m_dictOffset;
         type->m_weakReferenceOffset = base->m_weakReferenceOffset;
     }
+    // What JavaScript makes is laid out in a way of its own, so that a class cannot be derived from it and from dict, say.
+    if (layout == Layout::JavaScript)
+        type->m_basicSize += sizeof(void*);
     type->m_flags |= (type->m_dictOffset ? HasInstanceDict : 0) | (type->m_weakReferenceOffset ? HasWeakReferences : 0);
     return type;
 }
@@ -174,9 +180,21 @@ void PyType::finishBuiltin(VM& vm, JSGlobalObject* globalObject, PyType* metatyp
         base->addSubclass(this);
 }
 
+Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, PyType* base, JSObject* prototype)
+{
+    if (Structure* structure = createInstanceStructure(vm, globalObject, base->layout(), prototype))
+        return structure;
+    // The same kind of cell as the base's instances, whatever that is.
+    if (base->layout() != Layout::Native || !base->instanceStructure())
+        return nullptr;
+    if (base->instanceStructure()->typeInfo().type() == Uint8ArrayType)
+        return PyDerivedBytes::createStructure(vm, globalObject, prototype);
+    return Structure::create(vm, globalObject, prototype, base->instanceStructure()->typeInfo(), base->instanceStructure()->classInfoForCells());
+}
+
 PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyType* base, PyTuple* mro)
 {
-    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, bases->length() ? bases->at(0) : JSValue(base)));
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, (bases->length() ? asType(bases->at(0)) : base)->prototypeObject()));
     type->finishCreation(vm);
     type->m_metatype.set(vm, type, metatype);
     type->m_name.set(vm, type, name);
@@ -202,17 +220,56 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     for (unsigned i = 0; i < mro->length(); ++i)
         fullOrder->initializeAt(vm, i + 1, mro->at(i));
     type->m_mro.set(vm, type, fullOrder);
-    Structure* instanceStructure = createInstanceStructure(vm, globalObject, type->m_layout, type);
-    // The same kind of cell as the base's instances, whatever that is.
-    if (!instanceStructure && type->m_layout == Layout::Native && base->instanceStructure()) {
-        if (base->instanceStructure()->typeInfo().type() == Uint8ArrayType)
-            instanceStructure = PyDerivedBytes::createStructure(vm, globalObject, type);
-        else
-            instanceStructure = Structure::create(vm, globalObject, type, base->instanceStructure()->typeInfo(), base->instanceStructure()->classInfoForCells());
-    }
-    type->m_instanceStructure.setMayBeNull(vm, type, instanceStructure);
+    type->m_instanceStructure.setMayBeNull(vm, type, createInstanceStructure(vm, globalObject, base, type));
     for (auto& direct : bases->span())
         asType(direct.get())->addSubclass(type);
+    // What a built-in class of JavaScript's defines may not be there until it is asked for by name, and lookup() does not ask.
+    for (auto& ancestor : mro->span()) {
+        for (JSObject* object : { asType(ancestor.get())->javaScriptPrototype(), asType(ancestor.get())->javaScriptConstructor() }) {
+            if (object && !object->staticPropertiesReified())
+                object->reifyAllStaticProperties(globalObject);
+        }
+    }
+    return type;
+}
+
+void PyType::setJavaScriptClass(VM& vm, JSObject* constructor, JSObject* prototype)
+{
+    m_javaScriptConstructor.set(vm, this, constructor);
+    m_javaScriptPrototype.set(vm, this, prototype);
+    constructor->putDirect(vm, vm.pythonNames().private_class, this, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+}
+
+PyType* PyType::createForJavaScript(VM& vm, JSGlobalObject* globalObject, JSObject* constructor, JSObject* prototype, PyType* base)
+{
+    auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, jsNull()));
+    type->finishCreation(vm);
+    type->m_javaScriptConstructor.set(vm, type, constructor);
+    type->m_javaScriptPrototype.set(vm, type, prototype);
+    type->m_metatype.set(vm, type, base->metatype());
+    type->m_name.set(vm, type, jsString(vm, getCalculatedDisplayName(vm, constructor)));
+    type->m_base.set(vm, type, base);
+    type->m_bases.set(vm, type, PyTuple::create(globalObject, { base->object() }));
+    type->m_layout = base->layout();
+    type->m_errorType = base->m_errorType;
+    type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes | HasInstanceDict | HasWeakReferences | IsSequence | IsMapping | IsJavaScript));
+    type->m_basicSize = base->m_basicSize;
+    type->m_itemSize = base->m_itemSize;
+    type->m_dictOffset = base->m_dictOffset;
+    type->m_weakReferenceOffset = base->m_weakReferenceOffset;
+    // A constructor that is not written in JavaScript makes a kind of cell of its own: a Map is not a Set. So a class cannot be derived from both.
+    auto* function = dynamicDowncast<JSFunction>(constructor);
+    if (type->m_layout == Layout::JavaScript && (!function || function->isHostOrBuiltinFunction()))
+        type->m_basicSize += sizeof(void*);
+    // There are no __slots__ in JavaScript.
+    type->addToLayout(0, !type->hasFlag(HasInstanceDict), !type->hasFlag(HasWeakReferences));
+    PyTuple* order = PyTuple::create(globalObject, base->mro()->length() + 1);
+    order->initializeAt(vm, 0, type);
+    for (unsigned i = 0; i < base->mro()->length(); ++i)
+        order->initializeAt(vm, i + 1, base->mro()->at(i));
+    type->m_mro.set(vm, type, order);
+    type->m_instanceStructure.setMayBeNull(vm, type, createInstanceStructure(vm, globalObject, base, prototype));
+    base->addSubclass(type);
     return type;
 }
 
@@ -233,6 +290,34 @@ JSValue PyType::lookup(VM& vm, PropertyName name) const
     for (auto& entry : m_mro->span()) {
         if (JSValue value = asObject(entry.get())->getDirect(vm, name))
             return value;
+        // What a class of JavaScript's defines for its instances are properties of their prototype.
+        if (JSObject* prototype = asType(entry.get())->javaScriptPrototype()) [[unlikely]] {
+            if (JSValue value = prototype->getDirect(vm, name))
+                return value;
+        }
+    }
+    return { };
+}
+
+JSValue PyType::lookupOnClass(VM& vm, PropertyName name, bool& isStatic, PyType* from) const
+{
+    isStatic = false;
+    for (auto& entry : m_mro->span()) {
+        PyType* type = asType(entry.get());
+        if (from) {
+            if (type != from)
+                continue;
+            from = nullptr;
+        }
+        // These say what kind of function the constructor is, and are nothing that the class defines.
+        if (JSObject* constructor = type->javaScriptConstructor(); constructor && name != vm.propertyNames->prototype && name != vm.propertyNames->name && name != vm.propertyNames->length) [[unlikely]] {
+            if (JSValue value = constructor->getDirect(vm, name)) {
+                isStatic = true;
+                return value;
+            }
+        }
+        if (JSValue value = type->lookupOwn(vm, name))
+            return value;
     }
     return { };
 }
@@ -241,7 +326,11 @@ JSValue PyType::lookupOwn(VM& vm, PropertyName name) const
 {
     if (Python::isIndexLike(name)) [[unlikely]]
         return Python::getIndexLikeAttribute(vm, const_cast<PyType*>(this), name);
-    return getDirect(vm, name);
+    if (JSValue value = getDirect(vm, name))
+        return value;
+    if (m_javaScriptPrototype) [[unlikely]]
+        return m_javaScriptPrototype->getDirect(vm, name);
+    return { };
 }
 
 JSValue PyType::lookupAfter(VM& vm, PyType* after, PropertyName name) const
@@ -251,6 +340,19 @@ JSValue PyType::lookupAfter(VM& vm, PyType* after, PropertyName name) const
     while (i < order.size() && order[i].get().asCell() != after)
         ++i;
     for (++i; i < order.size(); ++i) {
+        if (JSValue value = asType(order[i].get())->lookupOwn(vm, name))
+            return value;
+    }
+    return { };
+}
+
+JSValue PyType::lookupFrom(VM& vm, PyType* from, PropertyName name) const
+{
+    auto order = m_mro->span();
+    size_t i = 0;
+    while (i < order.size() && order[i].get().asCell() != from)
+        ++i;
+    for (; i < order.size(); ++i) {
         if (JSValue value = asType(order[i].get())->lookupOwn(vm, name))
             return value;
     }
@@ -383,6 +485,25 @@ JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* cal
     RELEASE_AND_RETURN(scope, JSValue::encode(Python::instantiate(globalObject, type, arguments, given.keywordNames())));
 }
 
+static JSC_DECLARE_HOST_FUNCTION(constructType);
+
+// new C(...) is C(...). But it may be for a class derived from C that an instance is wanted: that is so of super(...) in the constructor of a class of
+// JavaScript's, and can be asked for with Reflect.construct(). Then this is the part that C and what it is derived from have in making one.
+JSC_DEFINE_HOST_FUNCTION(constructType, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* type = uncheckedDowncast<PyType>(callFrame->jsCallee());
+    JSValue newTarget = callFrame->newTarget();
+    if (newTarget == JSValue(type) || !isClass(newTarget))
+        return callType(globalObject, callFrame);
+    PyType* wanted = asType(newTarget);
+    if (!wanted->isSubtypeOf(type))
+        return callType(globalObject, callFrame);
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
+        arguments.append(callFrame->uncheckedArgument(i));
+    return JSValue::encode(Python::instantiateFrom(globalObject, wanted, type, arguments, nullptr));
+}
+
 bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -412,15 +533,41 @@ bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, 
     //
     // Something of JavaScript's can inherit from a class too, as what Object.create(C) makes does. It is no instance, so what it inherits is what the class
     // itself has: C.name.
-    bool isForClass = receiver == JSValue(type);
-    if (!isForClass && asObject(receiver)->getPrototypeDirect() != JSValue(type) && Python::isPythonObject(globalObject, receiver))
-        return false;
-    if (!isForClass && Python::typeOf(globalObject, receiver) != type)
-        receiver = type;
-    JSValue value = Python::getPropertyForJavaScript(globalObject, receiver, name);
+    //
+    // And a class of JavaScript's can be derived from it. Its instances are instances of this one, and its constructor inherits from this one as a
+    // class does from its base.
+    if (receiver != JSValue(type)) {
+        // The first class that is come to answers for all of them. If another is come to, either that one found nothing, and neither will this, or
+        // this is where looking began: super.name, in a class of JavaScript's that is derived from this one. Then it is what this one and those
+        // after it define that is wanted, and nothing else.
+        JSValue first = asObject(receiver)->getPrototypeDirect();
+        while (first.isObject() && !isType(first))
+            first = asObject(first)->getPrototypeDirect();
+        if (first != JSValue(type)) {
+            PyType* receiverType = isClass(receiver) ? nullptr : Python::typeOf(globalObject, receiver);
+            if (!receiverType || !receiverType->isSubtypeOf(type))
+                return false;
+            JSValue attribute = receiverType->lookupFrom(vm, type, name);
+            if (!attribute)
+                return false;
+            JSValue value = Python::bindDescriptor(globalObject, attribute, receiver, receiverType);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), value);
+            return true;
+        }
+        bool inherits = isClass(receiver) ? asType(receiver)->isSubtypeOf(type) : Python::typeOf(globalObject, receiver)->isSubtypeOf(type);
+        if (!inherits)
+            receiver = type;
+    }
+    JSValue value = Python::getPropertyForJavaScript(globalObject, receiver, name, type);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!value)
+    if (!value) {
+        // To JavaScript a class is a function, and has what functions have. It cannot inherit that, having only the one prototype, which is for
+        // its instances to inherit from.
+        if (isClass(receiver))
+            RELEASE_AND_RETURN(scope, globalObject->functionPrototype()->getOwnPropertySlot(globalObject->functionPrototype(), globalObject, name, slot));
         return false;
+    }
     slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), value);
     return true;
 }
@@ -476,7 +623,9 @@ CallData PyType::getCallData(JSCell*)
 // new C(...) in JavaScript is C(...).
 CallData PyType::getConstructData(JSCell* cell)
 {
-    return getCallData(cell);
+    CallData constructData = getCallData(cell);
+    constructData.native.function = constructType;
+    return constructData;
 }
 
 } // namespace JSC

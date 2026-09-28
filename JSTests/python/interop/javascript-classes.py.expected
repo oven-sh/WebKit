@@ -1,0 +1,22 @@
+type of things => ['Map', 'Set', 'Date', 'Object', 'RegExp', 'Promise']
+type is the class => (True, True, True, True, True, True)
+mro => (['Map', 'Object', 'object'], 'Map', (<class 'Object'>,), <class 'Object'>, "<class 'Map'>")
+arrow is no class => ('Function', False, 'Function')
+derive from Map => ('Counter', ['Counter', 'Map', 'Object', 'object'], True, True)
+use it => (2, 2, 3, ['a', 'b'], {'bumps': 3})
+JS sees it => true 2 2 3 [object Map] 1
+with arguments => (1, 2)
+mixin => (['Both', 'Mixin', 'Set', 'Object', 'object'], 'hello from Both', 2)
+conflict !! TypeError multiple bases have instance lay-out conflict
+two of JavaScript's !! TypeError multiple bases have instance lay-out conflict
+Date => (1970, '1970-01-01T00:00:00.000Z', True)
+object.__new__ !! TypeError object.__new__(Map) is not safe, use Object.__new__()
+__new__ directly => ('Map', 'Counter')
+__new__ of the wrong class !! TypeError Map.__new__(Set): Set is not a subtype of Map
+subclasses => ['Counter', 'K']
+set attribute of a class => ('function', 'undefined', None, 'undefined')
+old style => (['New', 'Old', 'Object', 'object'], 8, 12, True)
+__init_subclass__ => (['JSPlugin'], 'JSPlugin', ['JSPlugin'])
+and below that => ['JSPlugin', 'JSPlugin2']
+and Python below that => (['JSPlugin', 'JSPlugin2', 'PyPlugin'], ['PyPlugin', 'JSPlugin2', 'JSPlugin', 'Plugin', 'object'])
+refusing !! TypeError no subclasses of Refuses

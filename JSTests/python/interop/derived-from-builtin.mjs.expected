@@ -1,0 +1,23 @@
+dict => MyDict | ["MyDict","dict","object"] | 3 | 2 | {'a': 1, 'b': 2} | true | true | 2
+list => MyList | true | 5 | 5 | [1, 2, 3, 4, 5] | 15 | true
+tuple => MyTuple | 7 | 2 | (7, 8) | true
+set => MySet | 2 | {1, 2, 9}
+int => MyInt | 42 | 22 | 21 | true
+str => MyStr | HI! | 2 | 'hi'
+bytes => MyBytes | b'AB' | true | 2
+exception => true | true | true | x not found | NotFound | 404 | x | NotFound[404]: x not found | true | string
+thrown by JS, caught by Python => ["caught","NotFound","page not found",["NotFound","AppError","Exception","BaseException","object"]]
+by its own class => ["caught","Deeper","deep not found",["Deeper","NotFound","AppError","Exception","BaseException","object"]]
+not by another !! NotFound: page not found
+raised by Python, caught by JS => true true file 404
+ValueError => true | true | JSValueError | ["caught","JSValueError","bad",["JSValueError","ValueError","Exception","BaseException","object"]]
+match => matched matched no matched no
+slots => 3 | 9 | 1 | ["extra"] | ["extra"]
+Object.create of its prototype => Object Object Object
+a method on a fake !! TypeError: descriptor 'get' for 'dict' objects doesn't apply to a 'Object' object
+Reflect.construct across => dict
+Reflect.construct Object => Object
+prototype is fixed !! TypeError: Cannot set prototype of immutable prototype object
+changing the class's prototype chain => A 0
+no super() !! ReferenceError: 'super()' must be called in derived constructor before accessing |this| or returning non-object.
+returns another => {"other":1}
