@@ -114,6 +114,13 @@ static constexpr unsigned bitWidthForMaxBytecodeStructLength = WTF::getMSBSet(ma
     macro(OpGetPrivateName) \
     macro(OpNewArrayWithSpecies) \
     macro(OpAsyncIteratorNext) \
+    macro(OpPyBinaryOp) \
+    macro(OpPyUnaryOp) \
+    macro(OpPyCompareOp) \
+    macro(OpPyGetAttr) \
+    macro(OpPyLoadMethod) \
+    macro(OpPyGetItem) \
+    macro(OpPyIterNext) \
 
 #define FOR_EACH_OPCODE_WITH_CALL_LINK_INFO(macro) \
     macro(OpCall) \

@@ -1,0 +1,14 @@
+[1, 2, 3, 'x'] [1, 2, 3, 'x'] True
+[1, 2, 3, 'x', 1, 2, 3, 'x'] True
+(1, 2) (1,) False
+[2, 9] [2, 9] True
+{'a': 1, 'b': 2} {'a': 1, 'b': 2} True
+25
+2.0
+abab
+[1, 2] True
+6 1 False
+[0, 1] [0, 1] True 1
+[[0, 5], 2] [0, 5] True
+[1, 9] [1, 9]
+'int' object is not iterable

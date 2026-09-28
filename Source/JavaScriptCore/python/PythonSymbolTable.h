@@ -176,6 +176,10 @@ public:
     // Null if some use of a name is against the rules, and then the error says which.
     static std::unique_ptr<SymbolTable> build(VM&, Arena&, Module&, unsigned futureFeatures, SyntaxError&);
 
+    // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
+    // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.
+    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures);
+
     Block& top() { return *m_top; }
     unsigned futureFeatures() const { return m_futureFeatures; }
 

@@ -27,6 +27,7 @@
 #include "PythonSymbolTable.h"
 
 #include "VM.h"
+#include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -124,6 +125,29 @@ public:
         NameSet global;
         NameSet typeParameters;
         return analyzeBlock(*m_table.m_top, nullptr, free, global, typeParameters, nullptr);
+    }
+
+    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName)
+    {
+        // As if it were in a function whose only variables are those.
+        if (!enterBlock(m_top, BlockType::Function, &m_table, { }))
+            return false;
+        Block& top = *m_current;
+        m_table.m_top = &top;
+        m_private = privateName;
+        if (statement ? !visit(statement) : !visit(expression))
+            return false;
+        exitBlock();
+
+        top.symbols.clear();
+        top.index.clear();
+        for (auto& name : freeVariables)
+            top.add(name.impl()->is8Bit() ? m_arena.identifiers().makeIdentifier(m_vm, name.impl()->span8()) : m_arena.identifiers().makeIdentifier(m_vm, name.impl()->span16())).flags = DefLocal;
+
+        NameSet free;
+        NameSet global;
+        NameSet typeParameters;
+        return analyzeBlock(top, nullptr, free, global, typeParameters, nullptr);
     }
 
 private:
@@ -1376,6 +1400,16 @@ std::unique_ptr<SymbolTable> SymbolTable::build(VM& vm, Arena& arena, Module& mo
     std::unique_ptr<SymbolTable> table { new SymbolTable };
     table->m_futureFeatures = futureFeatures;
     if (!SymbolTableBuilder(vm, arena, *table, error).build(module))
+        return nullptr;
+    return table;
+}
+
+std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures)
+{
+    std::unique_ptr<SymbolTable> table { new SymbolTable };
+    table->m_futureFeatures = futureFeatures;
+    SyntaxError error;
+    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName))
         return nullptr;
     return table;
 }

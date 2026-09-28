@@ -1,0 +1,19 @@
+HELLO, WORLD hello, world H d ell dlroW ,olleH Hlo ol World 12 Hello, WorldHello, World Hello, World! True True
+['Hello', 'World'] ['Hell', ', W', 'rld'] ['a', 'b', 'c'] ['', 'a', 'b', ''] ['a', 'b,c'] ['a,b', 'c'] ['l1', 'l2']
+HeLLo, WorLd HeLLo, World 4 -1 8 7 3 True True
+pad pad |   pad| hi a-b-c 01234
+Abc Hello World AbC True True True True True 00042 -0042
+**ab** ab   |    ab ('a', '=', 'b=c') x x
+"it's" 'say "hi"' 'both \' and "' 'tab\tnl\n' '\\' '' None True [1, 'a', None] ('x',)
+1 two 3.0 aba 1-2     a|b    |  c   {} 'q'
+True False True True True True True o e ['e', 'h', 'l', 'l', 'o']
+97 a 233 é ['a', 'b', 'c'] ('a', 'b') ['h', 'i'] b x and y
+3 😀 b b😀a ['a', '😀', 'b'] 😀b 128512 A😀B 3 True skip True True True
+hi world! 43 3.14 'world'    world 0042 {literal} nested [0, 1, 2] n=42
+IndexError string index out of range
+ValueError substring not found
+TypeError can only concatenate str (not "int") to str
+TypeError can't multiply sequence by non-int of type 'str'
+TypeError sequence item 0: expected str instance, int found
+TypeError string indices must be integers, not 'str'
+TypeError 'in <string>' requires string as left operand, not int

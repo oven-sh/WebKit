@@ -872,6 +872,8 @@ public:
 
     // Visits the butterfly unless there is a race. Returns the structure if there was no race.
     template<typename Visitor> Structure* visitButterfly(Visitor&);
+    // All there is to visit in an object that has inline storage and no fields of its own.
+    template<typename Visitor> void visitButterflyAndInlineStorage(Visitor&);
     template<typename Visitor> Structure* visitButterflyImpl(Visitor&);
     template<typename Visitor> void markAuxiliaryAndVisitOutOfLineProperties(Visitor&, Butterfly*, Structure*, PropertyOffset maxOffset);
 

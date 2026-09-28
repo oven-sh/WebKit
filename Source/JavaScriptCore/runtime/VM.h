@@ -186,6 +186,9 @@ namespace FTL {
 class Thunks;
 }
 #endif // ENABLE(FTL_JIT)
+namespace Python {
+struct CommonNames;
+}
 namespace Profiler {
 class Database;
 }
@@ -1059,6 +1062,12 @@ public:
     CallSiteData* executedOnceCallSiteData() { return m_executedOnceCallSiteData; }
     CallSiteData* notExecutedTailCallSiteData() { return m_notExecutedTailCallSiteData; }
     IntlCache& intlCache() { return *m_intlCache; }
+    Python::CommonNames& pythonNames()
+    {
+        if (!m_pythonNames) [[unlikely]]
+            createPythonNames();
+        return *m_pythonNames;
+    }
 #if USE(BUN_JSC_ADDITIONS)
     // Clears both dateCache and intlCache; callable without including IntlCache.h
     // (which transitively includes ICU headers that Bun's C++ cannot see on macOS).
@@ -1419,6 +1428,8 @@ private:
     std::unique_ptr<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>> m_cachedBytecodeTwoCharacterAtoms;
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
+    JS_EXPORT_PRIVATE void createPythonNames();
+    std::unique_ptr<Python::CommonNames> m_pythonNames;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
     UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
     std::unique_ptr<TypeProfiler> m_typeProfiler;

@@ -69,6 +69,7 @@
 #include "ObjectConstructor.h"
 #include "ObjectPropertyConditionSet.h"
 #include "ProtoCallFrameInlines.h"
+#include "PythonOperations.h"
 #include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
@@ -2179,6 +2180,8 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         slowPathLog("Call callee is not a function: ", callee, "\n");
 
         ASSERT(callData.type == CallData::Type::None);
+        if (callerCodeBlock->source().provider()->language() == SourceLanguage::Python)
+            LLINT_CALL_THROW(globalObject, Python::createNotCallableError(globalObject, callee));
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));
     }
 

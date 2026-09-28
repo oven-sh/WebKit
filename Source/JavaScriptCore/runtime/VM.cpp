@@ -119,6 +119,7 @@
 #include "ProgramExecutableInlines.h"
 #include "PropertyInlineCache.h"
 #include "PropertyTableInlines.h"
+#include "PythonCommonNames.h"
 #include "RandomizingFuzzerAgent.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -1121,6 +1122,11 @@ void VM::deleteAllRegExpCode()
     // compiler threads that interpret take this lock.
     Locker locker { m_regExpAllocatorLock };
     m_regExpAllocator.releaseRetainedPools();
+}
+
+void VM::createPythonNames()
+{
+    m_pythonNames = makeUnique<Python::CommonNames>(*this);
 }
 
 void VM::deleteAllCode(DeleteAllCodeEffort effort)

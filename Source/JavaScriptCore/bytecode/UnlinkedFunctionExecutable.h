@@ -37,6 +37,7 @@
 #include "JSCast.h"
 #include "ParserModes.h"
 #include "ParserTokens.h"
+#include "PythonFunctionInfo.h"
 #include "RegExp.h"
 #include "SourceCode.h"
 #include "VariableEnvironment.h"
@@ -240,6 +241,13 @@ public:
         materializeDeferredMembersIfNeeded();
         return m_members.live().parentScopeTDZVariables;
     }
+    const Python::FunctionInfo* pythonInfo() const
+    {
+        materializeDeferredMembersIfNeeded();
+        return m_members.live().rareData ? m_members.live().rareData->m_pythonInfo.get() : nullptr;
+    }
+    void setPythonInfo(Ref<const Python::FunctionInfo>&& info) { materializeDeferredMembersIfNeeded(); ensureRareData().m_pythonInfo = WTF::move(info); }
+
     void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
     // Taken by the first code block generated for this executable (call or construct); a second specialization of
     // the same function is generated without static scope information.
@@ -333,9 +341,13 @@ public:
         // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
         // enclosing scopes at the creation site. Never encoded into a bytecode cache.
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+        // Of a function whose source is Python.
+        RefPtr<const Python::FunctionInfo> m_pythonInfo;
 
         bool isEmpty() const
         {
+            if (m_pythonInfo)
+                return false;
             return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
                 && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
                 && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;

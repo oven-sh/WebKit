@@ -1,0 +1,28 @@
+(0, 1, None) (0, 2, None) (0, None, 3) (0, 1, 5) (1, 1, None) (1, 2, None) (9, 1, 8) (1, 2, 3)
+[1, 2] [1, 2] [3]
+((), []) ((1, 2), []) ((), [('x', 1)]) (('a', 'b'), [('y', 2)]) ((0, 1, 2), [])
+(1, 2, 3) (1, 0, 4)
+1 6 1 7
+2
+[10, 11, 12] [0, 1, 2]
+[2, 2, 2]
+('wrapped', 3) ('wrapped', 3) wrapper
+['hi a', 'hi a']
+2432902008176640000 265252859812191058636308480000000 120
+None True True False noreturn <lambda>
+[3, 2, 1] [(1, 1, None), (2, 1, None)] 3 (1, 2) {'z': 1}
+3 -1 [6, 8]
+3 [1, 2]
+10 5 10
+TypeError defaults() missing 1 required positional argument: 'a'
+TypeError defaults() takes from 1 to 3 positional arguments but 4 were given
+TypeError defaults() got multiple values for argument 'a'
+TypeError defaults() got an unexpected keyword argument 'z'
+TypeError kwonly() missing 1 required keyword-only argument: 'b'
+TypeError kwonly() takes 1 positional argument but 2 were given
+TypeError noreturn() takes 0 positional arguments but 1 was given
+TypeError 'int' object is not callable
+NameError name 'undefined_name' is not defined
+AttributeError 'NoneType' object has no attribute 'x'
+TypeError unsupported operand type(s) for -: 'str' and 'int'
+RecursionError

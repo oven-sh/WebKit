@@ -245,6 +245,7 @@
 #include "ProxyConstructorInlines.h"
 #include "ProxyObjectInlines.h"
 #include "ProxyRevokeInlines.h"
+#include "PyRealm.h"
 #include "ReflectObjectInlines.h"
 #include "RegExpConstructorInlines.h"
 #include "RegExpGlobalDataInlines.h"
@@ -1145,6 +1146,13 @@ void JSGlobalObject::init(VM& vm)
     m_customSetterFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
             init.set(JSCustomSetterFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
+        });
+    m_pyRealm.initLater(
+        [] (const Initializer<PyRealm>& init) {
+            // What it is made of asks for it while being made.
+            PyRealm* realm = PyRealm::create(init.vm, init.owner);
+            init.set(realm);
+            realm->initialize(init.vm, init.owner);
         });
     m_nativeStdFunctionStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -2058,6 +2066,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::resolveWithInternalMicrotaskForAsyncAwait)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 3, "resolveWithInternalMicrotaskForAsyncAwait"_s, resolveWithInternalMicrotaskForAsyncAwait, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pyBoundArgumentsMarker)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->pyRealm()->boundArgumentsMarker());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::pyRuntimeFunctions)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->pyRealm()->runtimeFunctions());
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncFunctionDrive)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "asyncFunctionDrive"_s, asyncFunctionDrive, ImplementationVisibility::Private));
@@ -3175,6 +3189,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_customGetterFunctionStructure.visit(visitor);
     thisObject->m_customSetterFunctionStructure.visit(visitor);
     thisObject->m_nativeStdFunctionStructure.visit(visitor);
+    thisObject->m_pyRealm.visit(visitor);
     thisObject->m_remoteFunctionStructure.visit(visitor);
     visitor.append(thisObject->m_shadowRealmObjectStructure);
     visitor.append(thisObject->m_regExpStructure);

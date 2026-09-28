@@ -493,15 +493,24 @@ void JSFinalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     typename Visitor::DefaultMarkingViolationAssertionScope assertionScope(visitor);
     
-    JSCell::visitChildren(thisObject, visitor);
-
-    if (Structure* structure = thisObject->visitButterfly(visitor)) {
-        if (unsigned storageSize = structure->inlineSize())
-            visitor.appendValuesHidden(thisObject->inlineStorage(), storageSize);
-    }
+    thisObject->visitButterflyAndInlineStorage(visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSFinalObject);
+
+template<typename Visitor>
+void JSObjectWithButterfly::visitButterflyAndInlineStorage(Visitor& visitor)
+{
+    JSCell::visitChildren(this, visitor);
+
+    if (Structure* structure = visitButterfly(visitor)) {
+        if (unsigned storageSize = structure->inlineSize())
+            visitor.appendValuesHidden(inlineStorage(), storageSize);
+    }
+}
+
+template void JSObjectWithButterfly::visitButterflyAndInlineStorage(AbstractSlotVisitor&);
+template void JSObjectWithButterfly::visitButterflyAndInlineStorage(SlotVisitor&);
 
 String JSObject::calculatedClassName(JSObject* object)
 {

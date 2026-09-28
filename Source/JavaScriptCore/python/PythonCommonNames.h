@@ -1,0 +1,86 @@
+/*
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#pragma once
+
+#include "Identifier.h"
+#include "PythonOperators.h"
+#include <wtf/TZoneMalloc.h>
+
+namespace JSC {
+
+class VM;
+
+namespace Python {
+
+// name is __name__.
+#define FOR_EACH_PYTHON_DUNDER_NAME(v) \
+    v(abs) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotations) v(await) v(base) v(bases) v(bool) \
+    v(build_class) v(builtins) v(bytes) v(call) v(cause) v(ceil) v(class) v(class_getitem) v(classcell) v(classdict) v(closure) \
+    v(code) v(complex) v(contains) v(context) v(debug) v(defaults) v(del) v(delattr) v(delete) v(delitem) v(dict) v(dir) v(divmod) v(doc) \
+    v(enter) v(eq) v(exit) v(file) v(firstlineno) v(float) v(floor) v(floordiv) v(format) v(func) v(ge) v(get) v(getattr) v(getattribute) \
+    v(getitem) v(globals) v(gt) v(hash) v(iadd) v(iand) v(ifloordiv) v(ilshift) v(imatmul) v(imod) v(import) v(imul) v(index) v(init) \
+    v(init_subclass) v(instancecheck) v(int) v(invert) v(ior) v(ipow) v(irshift) v(isub) v(iter) v(itruediv) v(ixor) v(kwdefaults) \
+    v(le) v(len) v(length_hint) v(loader) v(lshift) v(lt) v(main) v(match_args) v(matmul) v(missing) v(mod) v(module) v(mro) \
+    v(mro_entries) v(mul) v(name) v(ne) v(neg) v(new) v(next) v(notes) v(objclass) v(or) v(orig_bases) v(package) v(path) v(pos) v(pow) \
+    v(prepare) v(qualname) v(radd) v(rand) v(rdivmod) v(reduce) v(reduce_ex) v(repr) v(reversed) v(rfloordiv) v(rlshift) v(rmatmul) \
+    v(rmod) v(rmul) v(ror) v(round) v(rpow) v(rrshift) v(rshift) v(rsub) v(rtruediv) v(rxor) v(self) v(set) v(set_name) v(setattr) \
+    v(setitem) v(sizeof) v(slots) v(spec) v(static_attributes) v(str) v(sub) v(subclasscheck) v(subclasses) v(subclasshook) \
+    v(suppress_context) v(traceback) v(truediv) v(trunc) v(type_params) v(weakref) v(wrapped) v(xor)
+
+// Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
+#define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
+    v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
+
+struct CommonNames {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CommonNames);
+
+    explicit CommonNames(VM&);
+
+#define DECLARE(name) const Identifier dunder_##name;
+    FOR_EACH_PYTHON_DUNDER_NAME(DECLARE)
+#undef DECLARE
+#define DECLARE(name) const Identifier private_##name;
+    FOR_EACH_PYTHON_PRIVATE_NAME(DECLARE)
+#undef DECLARE
+
+    const Identifier globals; // ".globals": the variable that a function finds its module's namespace in.
+
+    // Goes up whenever an attribute of any class is set or deleted. What is remembered about a class is good for as long as it stays.
+    unsigned typeEpoch { 1 };
+
+    // __add__, __radd__ and __iadd__ for Add.
+    const Identifier& method(BinaryOperator op) const { return *m_binaryMethods[static_cast<unsigned>(op)]; }
+    const Identifier& reflectedMethod(BinaryOperator op) const { return *m_reflectedMethods[static_cast<unsigned>(op)]; }
+    const Identifier& inPlaceMethod(BinaryOperator op) const { return *m_inPlaceMethods[static_cast<unsigned>(op)]; }
+
+private:
+    const Identifier* m_binaryMethods[numberOfBinaryOperators];
+    const Identifier* m_reflectedMethods[numberOfBinaryOperators];
+    const Identifier* m_inPlaceMethods[numberOfBinaryOperators];
+};
+
+} } // namespace JSC::Python

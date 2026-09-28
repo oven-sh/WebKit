@@ -2063,6 +2063,9 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/BunV8HeapSnapshotBuilder.h
     heap/HeapProfiler.h
 
+    python/PyNativeFunction.h
+    python/PythonFunctionInfo.h
+
     ffi/BunFFI.h
     ffi/FFICallHost.h
     ffi/FFICallbackThunk.h

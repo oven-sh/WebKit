@@ -113,6 +113,7 @@ class MicrotaskQueue;
 class ModuleProgramExecutable;
 class NullGetterFunction;
 class NullSetterFunction;
+class PyRealm;
 class ObjectAdaptiveStructureWatchpoint;
 class ObjectConstructor;
 class ObjectPropertyCondition;
@@ -447,6 +448,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_customGetterFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_customSetterFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_nativeStdFunctionStructure;
+    LazyProperty<JSGlobalObject, PyRealm> m_pyRealm;
     LazyProperty<JSGlobalObject, Structure> m_remoteFunctionStructure;
     WriteBarrier<AsyncFunctionPrototype> m_asyncFunctionPrototype;
     WriteBarrier<AsyncGeneratorFunctionPrototype> m_asyncGeneratorFunctionPrototype;
@@ -1041,6 +1043,8 @@ public:
     Structure* customGetterFunctionStructure() const { return m_customGetterFunctionStructure.get(this); }
     Structure* customSetterFunctionStructure() const { return m_customSetterFunctionStructure.get(this); }
     Structure* nativeStdFunctionStructure() const { return m_nativeStdFunctionStructure.get(this); }
+    // Python's built-in types and modules. See python/README.md.
+    PyRealm* pyRealm() const { return m_pyRealm.get(this); }
     Structure* numberObjectStructure() const { return m_numberObjectStructure.get(this); }
     Structure* regExpStructure() const { return m_regExpStructure.get(); }
     Structure* shadowRealmStructure() const { return m_shadowRealmObjectStructure.get(); }

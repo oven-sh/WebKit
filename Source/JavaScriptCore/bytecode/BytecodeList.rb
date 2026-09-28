@@ -1291,6 +1291,122 @@ op :new_reg_exp,
         regexp: VirtualRegister,
     }
 
+# Python's. See python/README.md. `operation` is a Python::BinaryOperator and so on.
+
+op :py_binary_op,
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operation: unsigned,
+        valueProfile: unsigned,
+    }
+
+op :py_unary_op,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+        operation: unsigned,
+        valueProfile: unsigned,
+    }
+
+op :py_compare_op,
+    args: {
+        dst: VirtualRegister,
+        lhs: VirtualRegister,
+        rhs: VirtualRegister,
+        operation: unsigned,
+        valueProfile: unsigned,
+    }
+
+op :py_to_bool,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+    }
+
+op :py_get_attr,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+        valueProfile: unsigned,
+    }
+
+op :py_set_attr,
+    args: {
+        base: VirtualRegister,
+        property: unsigned,
+        value: VirtualRegister,
+    }
+
+op :py_del_attr,
+    args: {
+        base: VirtualRegister,
+        property: unsigned,
+    }
+
+# base.property, to be called at once. If it is a method, dst is the function and self is base. Otherwise self is empty.
+op :py_load_method,
+    args: {
+        dst: VirtualRegister,
+        self: VirtualRegister,
+        base: VirtualRegister,
+        property: unsigned,
+        valueProfile: unsigned,
+    }
+
+op :py_get_item,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: VirtualRegister,
+        valueProfile: unsigned,
+    }
+
+op :py_set_item,
+    args: {
+        base: VirtualRegister,
+        property: VirtualRegister,
+        value: VirtualRegister,
+    }
+
+op :py_del_item,
+    args: {
+        base: VirtualRegister,
+        property: VirtualRegister,
+    }
+
+op :py_get_iter,
+    args: {
+        dst: VirtualRegister,
+        iterable: VirtualRegister,
+    }
+
+# dst is empty when there is no more.
+op :py_iter_next,
+    args: {
+        dst: VirtualRegister,
+        iterator: VirtualRegister,
+        valueProfile: unsigned,
+    }
+
+# a, b, *c, d = iterable. The targets are argc registers from argv down. starIndex is which of them is starred, or -1.
+op :py_unpack_sequence,
+    args: {
+        argv: VirtualRegister,
+        argc: unsigned,
+        starIndex: unsigned, # argc if there is none
+        iterable: VirtualRegister,
+    }
+
+op :py_new_tuple,
+    args: {
+        dst: VirtualRegister,
+        argv: VirtualRegister,
+        argc: unsigned,
+    }
+
 op :mov,
     args: {
         dst: VirtualRegister,

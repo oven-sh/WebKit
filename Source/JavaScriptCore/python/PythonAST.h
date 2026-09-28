@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Identifier.h"
+#include "PythonOperators.h"
 #include <span>
 
 namespace JSC { namespace Python {
@@ -53,9 +54,6 @@ struct Pattern;
 
 enum class ExpressionContext : uint8_t { Load, Store, Del };
 enum class BooleanOperator : uint8_t { And, Or };
-enum class BinaryOperator : uint8_t { Add, Sub, Mult, MatMult, Div, Mod, Pow, LShift, RShift, BitOr, BitXor, BitAnd, FloorDiv };
-enum class UnaryOperator : uint8_t { Invert, Not, UAdd, USub };
-enum class ComparisonOperator : uint8_t { Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn };
 
 // ---- What is neither a statement nor an expression
 

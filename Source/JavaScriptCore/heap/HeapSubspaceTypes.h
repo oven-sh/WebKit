@@ -107,6 +107,7 @@
 #include "ProgramExecutable.h"
 #include "PropertyTable.h"
 #include "ProxyRevoke.h"
+#include "PyNativeFunction.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ShadowRealmObject.h"

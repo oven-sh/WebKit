@@ -1,0 +1,39 @@
+0 value/zero ValueError zero ('zero',)
+0 finally
+1 app NotFound gone 404 ('gone',) True
+1 finally
+2 value/zero ZeroDivisionError division by zero ('division by zero',)
+2 finally
+3 lookup IndexError IndexError('list index out of range') list index out of range
+3 finally
+4 lookup KeyError KeyError() 
+4 finally
+5 else ok
+5 finally
+try
+cleanup
+from try
+2
+caught inner
+then outer ValueError('inner')
+again
+outer got 'k'
+body 0
+fin 0
+fin 1
+fin 2
+AppError('m') m 1 Exception
+('a', 2) ('a', 2) Exception('a', 2)
+Exception() True ()
+assert math
+assert AssertionError()
+(5,)
+True True True True False Exception
+['start', 'handled', 'done']
+kept
+finally runs
+after first
+exceptions must derive from BaseException
+builtin raised
+1
+from gen in gen

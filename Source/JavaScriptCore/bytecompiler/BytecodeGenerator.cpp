@@ -46,6 +46,7 @@
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
+#include "PythonCodeGenerator.h"
 #include "PrivateFieldPutKind.h"
 #include "StrongInlines.h"
 #include "SuperSampler.h"
@@ -1006,6 +1007,31 @@ IGNORE_GCC_WARNINGS_END
 
     bool shouldInitializeBlockScopedFunctions = false; // We generate top-level function declarations in ::generate().
     pushLexicalScope(m_scopeNode, ScopeType::LetConstScope, TDZCheckOptimization::Optimize, NestedScopeType::IsNotNested, nullptr, shouldInitializeBlockScopedFunctions);
+}
+
+// What is set up here is what any code has. The rest is up to Python::CodeGenerator, which the node's emitBytecode() runs.
+BytecodeGenerator::BytecodeGenerator(VM& vm, Python::ScopeNode* scopeNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&&)
+    : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
+    , m_codeGenerationMode(codeGenerationMode)
+    , m_optimizeBytecode(false)
+    , m_scopeNode(scopeNode)
+    , m_codeType(FunctionCode)
+    , m_vm(vm)
+    , m_usesExceptions(false)
+    , m_expressionTooDeep(false)
+    , m_isBuiltinFunction(false)
+    , m_usesSloppyEval(false)
+    , m_allowTailCallOptimization(false)
+    , m_allowCallIgnoreResultOptimization(m_defaultAllowCallIgnoreResultOptimization)
+    , m_needsToUpdateArrowFunctionContext(false)
+    , m_ecmaMode(ECMAMode::strict())
+{
+    m_thisRegister.setIndex(VirtualRegister(initializeNextParameter()->index()));
+    for (unsigned i = 0; i < scopeNode->parameterCount(); ++i)
+        initializeNextParameter();
+    emitEnter();
+    allocateScope();
+    m_calleeRegister.setIndex(CallFrameSlot::callee);
 }
 
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)

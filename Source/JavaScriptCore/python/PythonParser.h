@@ -39,4 +39,9 @@ namespace Python {
 // Null if the source is not Python, and then the error says why not. The tree lives as long as the arena.
 Module* parse(VM&, Arena&, StringView source, Module::Kind, Vector<SyntaxWarning>&, SyntaxError&);
 
+// One definition (def or class), or one expression (a lambda or a generator expression), out of the middle of a source that has been
+// parsed before, and so is known to be Python. `start` and `end` are what the node had for them then, and `line` for its line.
+Statement* parseDefinition(VM&, Arena&, StringView source, unsigned start, unsigned end, unsigned line);
+Expression* parseExpression(VM&, Arena&, StringView source, unsigned start, unsigned end, unsigned line);
+
 } } // namespace JSC::Python

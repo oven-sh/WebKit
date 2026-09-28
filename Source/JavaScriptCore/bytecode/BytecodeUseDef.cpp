@@ -169,6 +169,20 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpDefineAccessorProperty, base, property, getter, setter, attributes)
 
     USES(OpSpread, argument)
+    USES(OpPyBinaryOp, lhs, rhs)
+    USES(OpPyUnaryOp, operand)
+    USES(OpPyCompareOp, lhs, rhs)
+    USES(OpPyToBool, operand)
+    USES(OpPyGetAttr, base)
+    USES(OpPySetAttr, base, value)
+    USES(OpPyDelAttr, base)
+    USES(OpPyLoadMethod, base)
+    USES(OpPyGetItem, base, property)
+    USES(OpPySetItem, base, property, value)
+    USES(OpPyDelItem, base, property)
+    USES(OpPyGetIter, iterable)
+    USES(OpPyIterNext, iterator)
+    USES(OpPyUnpackSequence, iterable)
     USES(OpGetPropertyEnumerator, base)
     USES(OpNewFuncExp, scope)
     USES(OpNewGeneratorFuncExp, scope)
@@ -337,6 +351,9 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_new_array_with_spread:
         handleNewArrayLike(instruction->as<OpNewArrayWithSpread>());
         return;
+    case op_py_new_tuple:
+        handleNewArrayLike(instruction->as<OpPyNewTuple>());
+        return;
     case op_new_array:
         handleNewArrayLike(instruction->as<OpNewArray>());
         return;
@@ -489,6 +506,22 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpNewArray, dst)
     DEFS(OpNewArrayWithSpread, dst)
     DEFS(OpSpread, dst)
+    DEFS(OpPyBinaryOp, dst)
+    DEFS(OpPyUnaryOp, dst)
+    DEFS(OpPyCompareOp, dst)
+    DEFS(OpPyToBool, dst)
+    DEFS(OpPyGetAttr, dst)
+    DEFS(OpPyLoadMethod, dst, self)
+    DEFS(OpPyGetItem, dst)
+    DEFS(OpPyGetIter, dst)
+    DEFS(OpPyIterNext, dst)
+    DEFS(OpPyNewTuple, dst)
+    case op_py_unpack_sequence: {
+        auto bytecode = instruction->as<OpPyUnpackSequence>();
+        for (unsigned i = 0; i < bytecode.m_argc; ++i)
+            functor(VirtualRegister { bytecode.m_argv.offset() - static_cast<int>(i) });
+        return;
+    }
     DEFS(OpNewArrayBuffer, dst)
     DEFS(OpNewArrayWithSize, dst)
     DEFS(OpNewArrayWithSpecies, dst)

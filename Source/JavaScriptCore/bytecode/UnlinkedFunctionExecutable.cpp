@@ -37,6 +37,7 @@
 #include "FunctionOverrides.h"
 #include "IsoCellSetInlines.h"
 #include "Parser.h"
+#include "PythonCompiler.h"
 #include "SourceProfiler.h"
 #include "Structure.h"
 #include "UnlinkedFunctionCodeBlock.h"
@@ -56,6 +57,9 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     CodeSpecializationKind kind, OptionSet<CodeGenerationMode> codeGenerationMode,
     UnlinkedFunctionKind functionKind, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
+    if (source.provider()->language() == SourceLanguage::Python)
+        return Python::generateFunctionCodeBlock(vm, executable, source, kind, codeGenerationMode, error, parseMode);
+
     JSParserBuiltinMode builtinMode = executable->isBuiltinFunction() ? JSParserBuiltinMode::Builtin : JSParserBuiltinMode::NotBuiltin;
     JSParserScriptMode scriptMode = executable->scriptMode();
     ASSERT(isFunctionParseMode(executable->parseMode()));
@@ -219,6 +223,11 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
         SourceProfiler::profile(SourceProfiler::Type::Function, source);
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
+    // FIXME: The DFG does not know Python's opcodes yet.
+    if (source.provider()->language() == SourceLanguage::Python) {
+        result->setNeverOptimize(true);
+        result->setNeverInline(true);
+    }
     if (m_singletonHasBeenInvalidated)
         result->singleton().invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
     if (overrideLineNumber)

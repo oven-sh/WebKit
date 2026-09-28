@@ -33,6 +33,7 @@
 #include "FunctionCodeBlock.h"
 #include "JSObjectInlines.h"
 #include "LLIntEntrypoint.h"
+#include "PythonOperations.h"
 #include "Repatch.h"
 #include "VMTrapsInlines.h"
 
@@ -42,6 +43,16 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Call IC will throw these errors after throwing away the caller's frame when it is a tail-call.
+    // But we would like to have error information for them from the thrown frame.
+    // This frame information can be reconstructed easily since we have CodeOrigin and owner CodeBlock for CallLinkInfo.
+    auto [codeBlock, bytecodeIndex] = callLinkInfo->retrieveCaller(owner);
+    if (codeBlock && codeBlock->source().provider()->language() == SourceLanguage::Python) {
+        throwException(globalObject, scope, Python::createNotCallableError(globalObject, callee));
+        return nullptr;
+    }
+
     auto errorMessage = constructErrorMessage(globalObject, callee, "is not a function"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!errorMessage) [[unlikely]] {
@@ -49,10 +60,6 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
         return nullptr;
     }
 
-    // Call IC will throw these errors after throwing away the caller's frame when it is a tail-call.
-    // But we would like to have error information for them from the thrown frame.
-    // This frame information can be reconstructed easily since we have CodeOrigin and owner CodeBlock for CallLinkInfo.
-    auto [codeBlock, bytecodeIndex] = callLinkInfo->retrieveCaller(owner);
     if (codeBlock)
         errorMessage = appendSourceToErrorMessage(codeBlock, bytecodeIndex, errorMessage, runtimeTypeForValue(callee), notAFunctionSourceAppender);
     auto* error = ErrorInstance::create(vm, globalObject->errorStructure(ErrorType::TypeError), errorMessage, JSValue(), ErrorType::TypeError, owner, callLinkInfo);

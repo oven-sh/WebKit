@@ -1,0 +1,763 @@
+/*
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "PythonRuntimeFunctions.h"
+
+#include "FunctionExecutable.h"
+#include "JSCInlines.h"
+#include "ObjectConstructor.h"
+#include "PyDict.h"
+#include "PyInstance.h"
+#include "PyObjects.h"
+#include "PythonGenerators.h"
+#include "PythonOperations.h"
+#include "PythonSequences.h"
+#include "UnlinkedFunctionExecutable.h"
+
+namespace JSC { namespace Python {
+
+#define PYTHON_RUNTIME_FUNCTION(name) \
+    static JSC_DECLARE_HOST_FUNCTION(name); \
+    JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject* globalObject, CallFrame* callFrame))
+
+#define PROLOGUE() \
+    VM& vm = globalObject->vm(); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    [[maybe_unused]] PyRealm* realm = globalObject->pyRealm(); \
+    [[maybe_unused]] auto argument = [&] (unsigned i) { return callFrame->uncheckedArgument(i); };
+
+static bool isMarker(PyRealm* realm, JSValue value) { return value.isCell() && value.asCell() == realm->boundArgumentsMarker(); }
+
+// ---- Names
+
+static JSValue lookUpInNamespace(JSGlobalObject* globalObject, JSValue namespaceValue, JSString* name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isDict(namespaceValue))
+        RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(namespaceValue.asCell())->get(globalObject, name));
+    // What __prepare__ gave can be any mapping.
+    JSValue value = getItem(globalObject, namespaceValue, name);
+    if (scope.exception()) {
+        catchException(globalObject, BuiltinType::KeyError);
+        return { };
+    }
+    return value;
+}
+
+PYTHON_RUNTIME_FUNCTION(loadName)
+{
+    PROLOGUE();
+    JSString* name = asString(argument(2));
+    JSValue value = lookUpInNamespace(globalObject, argument(0), name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (value)
+        return JSValue::encode(value);
+    auto identifier = name->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(asObject(argument(1))->get(globalObject, identifier)));
+}
+
+PYTHON_RUNTIME_FUNCTION(loadFromNamespace)
+{
+    PROLOGUE();
+    JSValue value = lookUpInNamespace(globalObject, argument(0), asString(argument(1)));
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(value ? value : JSValue(realm->boundArgumentsMarker()));
+}
+
+static JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, JSString* name)
+{
+    return raise(globalObject, scope, BuiltinType::NameError, makeString("name '"_s, name->value(globalObject).data, "' is not defined"_s));
+}
+
+PYTHON_RUNTIME_FUNCTION(deleteGlobal)
+{
+    PROLOGUE();
+    JSObject* globals = asObject(argument(0));
+    auto identifier = asString(argument(1))->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!globals->getDirect(vm, identifier))
+        return JSValue::encode(raiseNameError(globalObject, scope, asString(argument(1))));
+    globals->deleteProperty(globalObject, identifier);
+    return JSValue::encode(jsUndefined());
+}
+
+PYTHON_RUNTIME_FUNCTION(deleteName)
+{
+    PROLOGUE();
+    deleteItem(globalObject, argument(0), argument(1));
+    if (scope.exception() && catchException(globalObject, BuiltinType::KeyError))
+        return JSValue::encode(raiseNameError(globalObject, scope, asString(argument(1))));
+    return JSValue::encode(jsUndefined());
+}
+
+// ---- Making things
+
+PYTHON_RUNTIME_FUNCTION(newBytes)
+{
+    PROLOGUE();
+    return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "bytes are not supported yet"_s));
+}
+
+PYTHON_RUNTIME_FUNCTION(newSlice)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(PySlice::create(globalObject, argument(0), argument(1), argument(2)));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeListExtend)
+{
+    PROLOGUE();
+    listExtend(globalObject, asList(argument(0)), argument(1));
+    if (scope.exception() && !typeOf(globalObject, argument(1))->lookup(vm, vm.pythonNames().dunder_iter) && catchException(globalObject, BuiltinType::TypeError))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+    return JSValue::encode(jsUndefined());
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeListAppend)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    listAppend(globalObject, asList(argument(0)), argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+PYTHON_RUNTIME_FUNCTION(listToTuple)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    JSArray* list = asList(argument(0));
+    PyTuple* tuple = PyTuple::create(globalObject, list->length());
+    for (unsigned i = 0; i < list->length(); ++i)
+        tuple->initializeAt(vm, i, listGet(list, i));
+    return JSValue::encode(tuple);
+}
+
+PYTHON_RUNTIME_FUNCTION(listToSet)
+{
+    PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), argument(0))));
+}
+
+PYTHON_RUNTIME_FUNCTION(newSet)
+{
+    PROLOGUE();
+    PySet* set = PySet::create(globalObject);
+    for (unsigned i = 0; i < callFrame->argumentCount(); ++i) {
+        set->add(globalObject, argument(i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(set);
+}
+
+PYTHON_RUNTIME_FUNCTION(setAdd)
+{
+    PROLOGUE();
+    scope.release();
+    uncheckedDowncast<PySet>(argument(0).asCell())->add(globalObject, argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+PYTHON_RUNTIME_FUNCTION(newDict)
+{
+    PROLOGUE();
+    PyDict* dict = PyDict::create(globalObject);
+    for (unsigned i = 0; i + 1 < callFrame->argumentCount(); i += 2) {
+        dict->set(globalObject, argument(i), argument(i + 1));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(dict);
+}
+
+// Calls the function with each key and value of a mapping. False if it raised, or if it is not one, and then nothing is raised.
+template<typename Function>
+static bool forEachItem(JSGlobalObject* globalObject, JSValue mapping, const Function& function)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isDict(mapping) && !typeOf(globalObject, mapping)->hasFlag(PyType::IsHeapType)) {
+        auto* dict = uncheckedDowncast<PyDict>(mapping.asCell());
+        for (unsigned entry = 0; entry < dict->entryCount(); ++entry) {
+            if (JSValue key = dict->keyAt(entry)) {
+                function(key, dict->valueAt(entry));
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+        }
+        return true;
+    }
+    JSValue keysMethod = getAttributeIfPresent(globalObject, mapping, Identifier::fromString(vm, "keys"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!keysMethod)
+        return false;
+    JSValue keys = call(globalObject, keysMethod);
+    RETURN_IF_EXCEPTION(scope, false);
+    MarkedArgumentBuffer collected;
+    collect(globalObject, keys, collected);
+    RETURN_IF_EXCEPTION(scope, false);
+    for (unsigned i = 0; i < collected.size(); ++i) {
+        JSValue value = getItem(globalObject, mapping, collected.at(i));
+        RETURN_IF_EXCEPTION(scope, false);
+        function(collected.at(i), value);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
+// {**mapping}
+PYTHON_RUNTIME_FUNCTION(dictUpdate)
+{
+    PROLOGUE();
+    auto* dict = uncheckedDowncast<PyDict>(argument(0).asCell());
+    bool isMapping = forEachItem(globalObject, argument(1), [&] (JSValue key, JSValue value) {
+        dict->set(globalObject, key, value);
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isMapping)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, argument(1)), "' object is not a mapping"_s)));
+    return JSValue::encode(jsUndefined());
+}
+
+// f"{value!r:specification}"
+PYTHON_RUNTIME_FUNCTION(formatValue)
+{
+    PROLOGUE();
+    JSValue value = argument(0);
+    switch (argument(1).asInt32()) {
+    case 's': {
+        String text = str(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        value = jsString(vm, text);
+        break;
+    }
+    case 'r':
+    case 'a': { // FIXME: ascii()
+        String text = repr(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        value = jsString(vm, text);
+        break;
+    }
+    default:
+        break;
+    }
+    if (isNone(argument(2)) && value.isString())
+        return JSValue::encode(value);
+    String specification = isNone(argument(2)) ? emptyString() : asString(argument(2))->value(globalObject).data;
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, value, specification)));
+}
+
+// ---- Calls
+
+static String describeCallable(JSGlobalObject* globalObject, JSValue callable)
+{
+    VM& vm = globalObject->vm();
+    if (auto* function = dynamicDowncast<JSFunction>(callable)) {
+        if (!function->isHostOrBuiltinFunction()) {
+            if (auto* info = function->jsExecutable()->unlinkedExecutable()->pythonInfo())
+                return makeString(info->qualifiedName, "()"_s);
+        }
+        return makeString(function->name(vm), "()"_s);
+    }
+    if (isType(callable))
+        return makeString(uncheckedDowncast<PyType>(callable.asCell())->nameString(globalObject), "()"_s);
+    return makeString(typeName(globalObject, callable), " object"_s);
+}
+
+// callKeywords(function, names, positional arguments..., values of the keywords...)
+PYTHON_RUNTIME_FUNCTION(callKeywords)
+{
+    PROLOGUE();
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 2; i < callFrame->argumentCount(); ++i)
+        arguments.append(argument(i));
+    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, uncheckedDowncast<KeywordNames>(argument(1).asCell()))));
+}
+
+// callSpread(function, a list of the positional arguments, a dict of the keywords or None)
+PYTHON_RUNTIME_FUNCTION(callSpread)
+{
+    PROLOGUE();
+    JSArray* positional = asList(argument(1));
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < positional->length(); ++i)
+        arguments.append(listGet(positional, i));
+    if (isNone(argument(2)))
+        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, argument(0), arguments)));
+
+    auto* keywords = uncheckedDowncast<PyDict>(argument(2).asCell());
+    KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
+    unsigned i = 0;
+    for (unsigned entry = 0; entry < keywords->entryCount(); ++entry) {
+        if (JSValue key = keywords->keyAt(entry)) {
+            names->setIndex(vm, i++, key);
+            arguments.append(keywords->valueAt(entry));
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, names)));
+}
+
+static bool addKeywordArgument(JSGlobalObject* globalObject, PyDict* keywords, JSValue name, JSValue value, JSValue callable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!name.isString()) {
+        raiseTypeError(globalObject, scope, "keywords must be strings"_s);
+        return false;
+    }
+    bool wasAdded;
+    keywords->add(globalObject, name, value, &wasAdded, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!wasAdded) {
+        raiseTypeError(globalObject, scope, makeString(describeCallable(globalObject, callable), " got multiple values for keyword argument '"_s, asString(name)->value(globalObject).data, '\''));
+        return false;
+    }
+    return true;
+}
+
+PYTHON_RUNTIME_FUNCTION(addKeyword)
+{
+    PROLOGUE();
+    scope.release();
+    addKeywordArgument(globalObject, uncheckedDowncast<PyDict>(argument(0).asCell()), argument(1), argument(2), argument(3));
+    return JSValue::encode(jsUndefined());
+}
+
+// f(**mapping)
+PYTHON_RUNTIME_FUNCTION(addKeywords)
+{
+    PROLOGUE();
+    auto* keywords = uncheckedDowncast<PyDict>(argument(0).asCell());
+    bool isMapping = forEachItem(globalObject, argument(1), [&] (JSValue key, JSValue value) {
+        addKeywordArgument(globalObject, keywords, key, value, argument(2));
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isMapping)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(describeCallable(globalObject, argument(2)), " argument after ** must be a mapping, not "_s, typeName(globalObject, argument(1)))));
+    return JSValue::encode(jsUndefined());
+}
+
+static const FunctionInfo& infoOf(JSFunction* function)
+{
+    return *function->jsExecutable()->unlinkedExecutable()->pythonInfo();
+}
+
+// Says what is wrong with a call that gave so many arguments by position and no keywords.
+static void raiseForArgumentCount(JSGlobalObject* globalObject, JSFunction* function, unsigned given)
+{
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < given; ++i)
+        arguments.append(jsUndefined());
+    MarkedArgumentBuffer bound;
+    bindArguments(globalObject, function, infoOf(function), arguments, nullptr, bound);
+}
+
+// A function was given fewer arguments by position than it has such parameters, or too many. A tuple with the default of each
+// parameter in that parameter's place, if that will do.
+PYTHON_RUNTIME_FUNCTION(defaultsFor)
+{
+    PROLOGUE();
+    auto& names = vm.pythonNames();
+    auto* function = uncheckedDowncast<JSFunction>(argument(0).asCell());
+    const FunctionInfo& info = infoOf(function);
+    unsigned given = argument(1).asInt32();
+
+    JSValue defaultsValue = function->getDirect(vm, names.private_defaults);
+    PyTuple* defaults = defaultsValue ? uncheckedDowncast<PyTuple>(defaultsValue.asCell()) : nullptr;
+    unsigned defaultCount = defaults ? std::min(defaults->length(), info.positionalCount) : 0;
+    if (given > info.positionalCount || given + defaultCount < info.positionalCount) {
+        raiseForArgumentCount(globalObject, function, given);
+        ASSERT(scope.exception());
+        return { };
+    }
+    if (JSValue aligned = function->getDirect(vm, names.private_alignedDefaults))
+        return JSValue::encode(aligned);
+    PyTuple* aligned = PyTuple::create(globalObject, info.positionalCount);
+    for (unsigned i = 0; i < defaultCount; ++i)
+        aligned->initializeAt(vm, info.positionalCount - defaultCount + i, defaults->at(defaults->length() - defaultCount + i));
+    function->putDirect(vm, names.private_alignedDefaults, aligned);
+    return JSValue::encode(aligned);
+}
+
+// The default of a parameter that can only be given by keyword, in a call with no keywords.
+PYTHON_RUNTIME_FUNCTION(keywordDefault)
+{
+    PROLOGUE();
+    auto* function = uncheckedDowncast<JSFunction>(argument(0).asCell());
+    const FunctionInfo& info = infoOf(function);
+    JSValue defaults = function->getDirect(vm, vm.pythonNames().private_kwdefaults);
+    if (defaults) {
+        if (JSValue value = uncheckedDowncast<PyDict>(defaults.asCell())->getString(globalObject, info.parameterNames[argument(1).asInt32()].string()))
+            return JSValue::encode(value);
+    }
+    raiseForArgumentCount(globalObject, function, info.positionalCount);
+    ASSERT(scope.exception());
+    return { };
+}
+
+// ---- yield from
+
+static JSValue stopIterationValue(JSGlobalObject* globalObject, JSValue exception)
+{
+    VM& vm = globalObject->vm();
+    JSValue arguments = exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_args) : JSValue();
+    if (!arguments || !isTuple(arguments) || !uncheckedDowncast<PyTuple>(arguments.asCell())->length())
+        return jsUndefined();
+    return uncheckedDowncast<PyTuple>(arguments.asCell())->at(0);
+}
+
+// If StopIteration has been raised, it is caught and what it carries is given. Otherwise the result is empty.
+static JSValue catchStopIteration(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    Exception* exception = vm.exceptionForInspection();
+    if (!exception)
+        return { };
+    JSValue value = exception->value();
+    if (!catchException(globalObject, BuiltinType::StopIteration))
+        return { };
+    return stopIterationValue(globalObject, value);
+}
+
+// One turn of `yield from iterator`: passes on what was sent to or thrown into this generator, and gives what to yield next. Gives
+// the marker when the iterator is done, and then takeReturnValue() has what it returned.
+PYTHON_RUNTIME_FUNCTION(yieldFromStep)
+{
+    PROLOGUE();
+    JSValue iterator = argument(0);
+    JSValue received = argument(1);
+    bool wasThrown = argument(2).asBoolean();
+    auto* generator = iterator.isCell() && iterator.asCell()->type() == JSGeneratorType ? uncheckedDowncast<JSGenerator>(iterator.asCell()) : nullptr;
+
+    auto finish = [&] (JSValue returned) {
+        realm->setReturnValue(vm, returned);
+        return JSValue::encode(realm->boundArgumentsMarker());
+    };
+    auto finishCall = [&] (JSValue yielded) -> EncodedJSValue {
+        if (!scope.exception())
+            return JSValue::encode(yielded);
+        JSValue returned = catchStopIteration(globalObject);
+        if (!returned)
+            return { };
+        return finish(returned);
+    };
+
+    if (wasThrown && isInstance(globalObject, received, realm->typeGeneratorExit())) {
+        // This generator is being closed, so that one is too.
+        if (generator)
+            generatorClose(globalObject, generator);
+        else {
+            JSValue close = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "close"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (close)
+                call(globalObject, close);
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(globalObject, scope, received);
+        return { };
+    }
+
+    if (generator) {
+        JSValue returned;
+        JSValue yielded = resumeGenerator(globalObject, generator, received, wasThrown ? JSGenerator::ResumeMode::ThrowMode : JSGenerator::ResumeMode::NormalMode, returned);
+        RETURN_IF_EXCEPTION(scope, { });
+        return yielded ? JSValue::encode(yielded) : finish(returned);
+    }
+
+    if (wasThrown) {
+        JSValue method = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "throw"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method) {
+            throwException(globalObject, scope, received);
+            return { };
+        }
+        return finishCall(call(globalObject, method, received));
+    }
+    if (isNone(received)) {
+        if (auto* native = tryIterator(iterator)) {
+            JSValue yielded = native->next(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            return yielded ? JSValue::encode(yielded) : finish(jsUndefined());
+        }
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, iterator, vm.pythonNames().dunder_next, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!method)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s)));
+        return finishCall(callMethod(globalObject, method, self));
+    }
+    JSValue send = getAttribute(globalObject, iterator, Identifier::fromString(vm, "send"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    return finishCall(call(globalObject, send, received));
+}
+
+PYTHON_RUNTIME_FUNCTION(takeReturnValue)
+{
+    UNUSED_PARAM(callFrame);
+    JSValue value = globalObject->pyRealm()->takeReturnValue();
+    return JSValue::encode(value ? value : jsUndefined());
+}
+
+// ---- Exceptions
+
+PYTHON_RUNTIME_FUNCTION(raiseAssertionError)
+{
+    PROLOGUE();
+    return JSValue::encode(raise(globalObject, scope, BuiltinType::AssertionError, isMarker(realm, argument(0)) ? JSValue() : argument(0)));
+}
+
+PYTHON_RUNTIME_FUNCTION(reraise)
+{
+    PROLOGUE();
+    JSValue handled = realm->handledException();
+    if (!handled)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "No active exception to reraise"_s));
+    throwException(globalObject, scope, handled);
+    return { };
+}
+
+// An exception, from what may be the class of one.
+static JSValue normalizeException(JSGlobalObject* globalObject, JSValue value, ASCIILiteral complaint)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isType(value) && uncheckedDowncast<PyType>(value.asCell())->isExceptionType())
+        RELEASE_AND_RETURN(scope, call(globalObject, value));
+    if (!typeOf(globalObject, value)->isExceptionType())
+        return raiseTypeError(globalObject, scope, complaint);
+    return value;
+}
+
+// raise exception from cause. The cause is the marker if there is no `from`.
+PYTHON_RUNTIME_FUNCTION(runtimeRaise)
+{
+    PROLOGUE();
+    auto& names = vm.pythonNames();
+    JSValue exception = normalizeException(globalObject, argument(0), "exceptions must derive from BaseException"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* object = asObject(exception);
+
+    if (!isMarker(realm, argument(1))) {
+        JSValue cause = argument(1);
+        if (!isNone(cause)) {
+            cause = normalizeException(globalObject, cause, "exception causes must derive from BaseException"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        object->putDirect(vm, names.private_cause, cause);
+        object->putDirect(vm, names.private_suppressContext, jsBoolean(true));
+    }
+    if (JSValue handled = realm->handledException(); handled && handled != exception)
+        object->putDirect(vm, names.private_context, handled);
+    throwException(globalObject, scope, exception);
+    return { };
+}
+
+PYTHON_RUNTIME_FUNCTION(pushHandledException)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    JSValue previous = realm->handledException();
+    realm->setHandledException(vm, argument(0));
+    return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
+}
+
+PYTHON_RUNTIME_FUNCTION(popHandledException)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    realm->setHandledException(vm, isMarker(realm, argument(0)) ? JSValue() : argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+// ---- with
+
+static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, const Identifier& name, ASCIILiteral spelled)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, manager, name, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, manager), "' object does not support the context manager protocol (missed "_s, spelled, " method)"_s));
+    return self ? JSValue(PyBoundMethod::create(globalObject, method, self)) : method;
+}
+
+PYTHON_RUNTIME_FUNCTION(loadExit)
+{
+    PROLOGUE();
+    auto& names = vm.pythonNames();
+    loadContextMethod(globalObject, argument(0), names.dunder_enter, "__enter__"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(loadContextMethod(globalObject, argument(0), names.dunder_exit, "__exit__"_s)));
+}
+
+PYTHON_RUNTIME_FUNCTION(callEnter)
+{
+    PROLOGUE();
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, argument(0), vm.pythonNames().dunder_enter, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
+}
+
+// callExit(__exit__, the exception or None): whether the exception has been dealt with.
+PYTHON_RUNTIME_FUNCTION(callExit)
+{
+    PROLOGUE();
+    JSValue exception = argument(1);
+    if (isNone(exception)) {
+        call(globalObject, argument(0), jsUndefined(), jsUndefined(), jsUndefined());
+        return JSValue::encode(jsBoolean(false));
+    }
+    JSValue result = call(globalObject, argument(0), typeOf(globalObject, exception), exception, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isTrue(globalObject, result))));
+}
+
+// ---- Classes and modules
+
+PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
+{
+    PROLOGUE();
+    JSArray* list = asList(argument(2));
+    PyTuple* bases = PyTuple::create(globalObject, list->length());
+    for (unsigned i = 0; i < list->length(); ++i)
+        bases->initializeAt(vm, i, listGet(list, i));
+    PyDict* keywords = isNone(argument(3)) ? nullptr : uncheckedDowncast<PyDict>(argument(3).asCell());
+    RELEASE_AND_RETURN(scope, JSValue::encode(buildClass(globalObject, argument(0), asString(argument(1)), bases, keywords)));
+}
+
+PYTHON_RUNTIME_FUNCTION(importName)
+{
+    PROLOGUE();
+    String name = asString(argument(1))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(importModule(globalObject, asObject(argument(0)), name, argument(2), argument(3).asInt32(), argument(4).asBoolean())));
+}
+
+PYTHON_RUNTIME_FUNCTION(importFrom)
+{
+    PROLOGUE();
+    auto name = asString(argument(1))->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue value = getAttributeIfPresent(globalObject, argument(0), name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (value)
+        return JSValue::encode(value);
+    // A module of the package that has not been made an attribute of it yet, as when packages import each other.
+    JSValue packageName = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_name);
+    RETURN_IF_EXCEPTION(scope, { });
+    String package = packageName && packageName.isString() ? asString(packageName)->value(globalObject).data : "<unknown module name>"_str;
+    if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, makeString(package, '.', name.string())))
+        return JSValue::encode(module);
+    return JSValue::encode(raise(globalObject, scope, BuiltinType::ImportError, makeString("cannot import name '"_s, name.string(), "' from '"_s, package, "' (unknown location)"_s)));
+}
+
+// from module import *
+PYTHON_RUNTIME_FUNCTION(importStar)
+{
+    PROLOGUE();
+    JSObject* globals = asObject(argument(1));
+    JSValue all = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_all);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (all) {
+        MarkedArgumentBuffer names;
+        collect(globalObject, all, names);
+        RETURN_IF_EXCEPTION(scope, { });
+        for (unsigned i = 0; i < names.size(); ++i) {
+            if (!names.at(i).isString())
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Item in __all__ must be str, not "_s, typeName(globalObject, names.at(i)))));
+            auto name = asString(names.at(i))->toIdentifier(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            JSValue value = getAttribute(globalObject, argument(0), name);
+            RETURN_IF_EXCEPTION(scope, { });
+            globals->putDirect(vm, name, value);
+        }
+        return JSValue::encode(jsUndefined());
+    }
+    auto* module = tryModule(argument(0));
+    if (!module)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::ImportError, "from-import-* object has no __dict__ and no __all__"_s));
+    // Everything whose name does not begin with an underscore.
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    module->namespaceObject()->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& name : properties) {
+        if (name.string().startsWith('_'))
+            continue;
+        globals->putDirect(vm, name, module->namespaceObject()->getDirect(vm, name));
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
+{
+    JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    auto add = [&] (ASCIILiteral name, NativeFunction function) {
+        object->putDirect(vm, Identifier::fromString(vm, name), JSFunction::create(vm, globalObject, 0, String(name), function, ImplementationVisibility::Private));
+    };
+    add("loadName"_s, loadName);
+    add("loadFromNamespace"_s, loadFromNamespace);
+    add("deleteGlobal"_s, deleteGlobal);
+    add("deleteName"_s, deleteName);
+    add("newBytes"_s, newBytes);
+    add("newSlice"_s, newSlice);
+    add("listExtend"_s, runtimeListExtend);
+    add("listAppend"_s, runtimeListAppend);
+    add("listToTuple"_s, listToTuple);
+    add("listToSet"_s, listToSet);
+    add("newSet"_s, newSet);
+    add("setAdd"_s, setAdd);
+    add("newDict"_s, newDict);
+    add("dictUpdate"_s, dictUpdate);
+    add("formatValue"_s, formatValue);
+    add("callKeywords"_s, callKeywords);
+    add("callSpread"_s, callSpread);
+    add("addKeyword"_s, addKeyword);
+    add("addKeywords"_s, addKeywords);
+    add("defaultsFor"_s, defaultsFor);
+    add("keywordDefault"_s, keywordDefault);
+    add("yieldFromStep"_s, yieldFromStep);
+    add("takeReturnValue"_s, takeReturnValue);
+    add("raiseAssertionError"_s, raiseAssertionError);
+    add("reraise"_s, reraise);
+    add("raise"_s, runtimeRaise);
+    add("pushHandledException"_s, pushHandledException);
+    add("popHandledException"_s, popHandledException);
+    add("loadExit"_s, loadExit);
+    add("callEnter"_s, callEnter);
+    add("callExit"_s, callExit);
+    add("buildClass"_s, runtimeBuildClass);
+    add("importName"_s, importName);
+    add("importFrom"_s, importFrom);
+    add("importStar"_s, importStar);
+    object->putDirect(vm, Identifier::fromString(vm, "Ellipsis"_s), globalObject->pyRealm()->ellipsis());
+    return object;
+}
+
+} } // namespace JSC::Python

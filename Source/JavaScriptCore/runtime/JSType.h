@@ -167,6 +167,22 @@ namespace JSC {
     /* We do not want to accept String.prototype in StringObjectUse, so that we do not include it as SpecStringObject. */ \
     macro(DerivedStringObjectType, SpecObjectOther) \
     /* End StringObjectType types. */ \
+    /* What Python has and JavaScript does not. See python/README.md. */ \
+    macro(PyTypeType, SpecObjectOther) \
+    macro(PyInstanceType, SpecObjectOther) \
+    macro(PyTupleType, SpecObjectOther) \
+    macro(PyDictType, SpecObjectOther) \
+    macro(PySetType, SpecObjectOther) \
+    macro(PyBytesType, SpecObjectOther) \
+    macro(PyRangeType, SpecObjectOther) \
+    macro(PySliceType, SpecObjectOther) \
+    macro(PyBoundMethodType, SpecObjectOther) \
+    macro(PyModuleType, SpecObjectOther) \
+    macro(PyNamespaceType, SpecObjectOther) \
+    macro(PyIteratorType, SpecObjectOther) \
+    macro(PyGeneratorType, SpecObjectOther) \
+    macro(PyBoxedValueType, SpecObjectOther) \
+    macro(PyNativeObjectType, SpecObjectOther) \
     macro(InternalFieldTupleType, SpecCellOther) \
 
 enum JSType : uint8_t {

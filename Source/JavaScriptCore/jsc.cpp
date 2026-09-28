@@ -74,6 +74,8 @@
 #include "ObjectConstructor.h"
 #include "ParserError.h"
 #include "ProfilerDatabase.h"
+#include "PythonCompiler.h"
+#include "PythonOperations.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
 #include "SideDataRepository.h"
@@ -625,7 +627,8 @@ struct Script {
 
     enum class ScriptType {
         Script,
-        Module
+        Module,
+        Python,
     };
 
     enum class CodeSource {
@@ -4449,6 +4452,42 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
         jscExit(EXIT_EXCEPTION);
 }
 
+static bool readPythonSource(const String& path, String& source)
+{
+    Vector<char> buffer;
+    FILE* file = fopen(path.utf8().legacyCStringPointer(), "r");
+    if (!file)
+        return false;
+    fclose(file);
+    if (!fillBufferWithContentsOfFile(path, buffer))
+        return false;
+    source = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(buffer.span()));
+    return true;
+}
+
+// jsc file.py, as `python file.py` would run it.
+static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
+{
+    VM& vm = globalObject->vm();
+    String text;
+    if (!readPythonSource(fileName, text)) {
+        fprintf(stderr, "Could not open file: %s\n", fileName.utf8().legacyCStringPointer());
+        return false;
+    }
+    Python::setSourceReader(readPythonSource);
+
+    // The directory of the script is where its imports are looked for first.
+    JSValue sys = Python::importModule(globalObject, nullptr, "sys"_s, jsUndefined(), 0, false);
+    size_t slash = fileName.reverseFind('/');
+    JSValue directory = jsString(vm, slash == notFound ? emptyString() : fileName.left(slash));
+    uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "path"_s)).asCell())->push(globalObject, directory);
+    uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "argv"_s)).asCell())->push(globalObject, jsString(vm, fileName));
+
+    auto provider = StringSourceProvider::create(text, SourceOrigin { absoluteFileURL(fileName) }, String(fileName), SourceTaintedOrigin::Untainted);
+    provider->setLanguage(SourceLanguage::Python);
+    return !Python::runMain(globalObject, SourceCode(WTF::move(provider)));
+}
+
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)
 {
     Vector<Script>& scripts = options.m_scripts;
@@ -4463,6 +4502,12 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
 #endif
 
     for (size_t i = 0; i < scripts.size(); i++) {
+        if (scripts[i].scriptType == Script::ScriptType::Python) {
+            if (!runPythonFile(globalObject, scripts[i].argument))
+                success = false;
+            continue;
+        }
+
         JSPromise* promise = nullptr;
         bool isModule = options.m_module || scripts[i].scriptType == Script::ScriptType::Module;
 
@@ -4671,6 +4716,12 @@ static void runInteractive(GlobalObject* globalObject)
     fprintf(stderr, "\n");
 
     jscExit(help ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+static bool isPythonFile(char* filename)
+{
+    filename = strrchr(filename, '.');
+    return filename && !strcmp(filename, ".py");
 }
 
 static bool isMJSFile(char *filename)
@@ -4990,7 +5041,7 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
 
         // This arg is not recognized by the VM nor by jsc. Pass it on to the
         // script.
-        Script::ScriptType scriptType = isMJSFile(argv[i]) ? Script::ScriptType::Module : Script::ScriptType::Script;
+        Script::ScriptType scriptType = isMJSFile(argv[i]) ? Script::ScriptType::Module : isPythonFile(argv[i]) ? Script::ScriptType::Python : Script::ScriptType::Script;
         m_scripts.append(Script(Script::StrictMode::Sloppy, Script::CodeSource::File, scriptType, argv[i]));
     }
 

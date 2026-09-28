@@ -62,6 +62,7 @@
 #include "LLIntExceptions.h"
 #include "MathCommon.h"
 #include "ObjectConstructor.h"
+#include "PythonOperations.h"
 #include "ScopedArguments.h"
 #include "TypeProfilerLog.h"
 #include "runtime/Error.h"
@@ -316,6 +317,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
 {
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
+    if (codeBlock->source().provider()->language() == SourceLanguage::Python) {
+        Python::throwUnboundVariable(globalObject, codeBlock, asString(GET_C(bytecode.m_identifier).jsValue()));
+        CHECK_EXCEPTION();
+    }
     if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())  {
         THROW(createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
     } else {
@@ -1732,6 +1737,130 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_array_buffer)
     JSArray* result = CommonSlowPaths::allocateNewArrayBuffer(vm, structure, immutableButterfly);
     ASSERT(isCopyOnWrite(result->indexingMode()) || globalObject->isHavingABadTime());
     ArrayAllocationProfile::updateLastAllocationFor(&profile, result);
+    RETURN(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_binary_op)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyBinaryOp>();
+    JSValue result = Python::binaryOperation(globalObject, static_cast<Python::BinaryOperator>(bytecode.m_operation & ~Python::inPlaceOperatorFlag), bytecode.m_operation & Python::inPlaceOperatorFlag, GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue());
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_unary_op)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyUnaryOp>();
+    JSValue result = Python::unaryOperation(globalObject, static_cast<Python::UnaryOperator>(bytecode.m_operation), GET_C(bytecode.m_operand).jsValue());
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare_op)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyCompareOp>();
+    JSValue result = Python::compare(globalObject, static_cast<Python::ComparisonOperator>(bytecode.m_operation), GET_C(bytecode.m_lhs).jsValue(), GET_C(bytecode.m_rhs).jsValue());
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_to_bool)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyToBool>();
+    bool result = Python::isTrue(globalObject, GET_C(bytecode.m_operand).jsValue());
+    RETURN(jsBoolean(result));
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_attr)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyGetAttr>();
+    JSValue result = Python::getAttribute(globalObject, GET_C(bytecode.m_base).jsValue(), codeBlock->identifier(bytecode.m_property));
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_attr)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPySetAttr>();
+    Python::setAttribute(globalObject, GET_C(bytecode.m_base).jsValue(), codeBlock->identifier(bytecode.m_property), GET_C(bytecode.m_value).jsValue());
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_del_attr)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyDelAttr>();
+    Python::deleteAttribute(globalObject, GET_C(bytecode.m_base).jsValue(), codeBlock->identifier(bytecode.m_property));
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_method)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyLoadMethod>();
+    JSValue self;
+    JSValue result = Python::loadMethod(globalObject, GET_C(bytecode.m_base).jsValue(), codeBlock->identifier(bytecode.m_property), self);
+    CHECK_EXCEPTION();
+    GET(bytecode.m_self) = self;
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_item)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyGetItem>();
+    JSValue result = Python::getItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_property).jsValue());
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_item)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPySetItem>();
+    Python::setItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_property).jsValue(), GET_C(bytecode.m_value).jsValue());
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_del_item)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyDelItem>();
+    Python::deleteItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_property).jsValue());
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_iter)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyGetIter>();
+    JSValue result = Python::getIterator(globalObject, GET_C(bytecode.m_iterable).jsValue());
+    RETURN(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_iter_next)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyIterNext>();
+    JSValue result = Python::iteratorNext(globalObject, GET_C(bytecode.m_iterator).jsValue());
+    RETURN_PROFILED(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_unpack_sequence)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyUnpackSequence>();
+    // The first of them has the highest address.
+    Python::unpackSequence(globalObject, GET_C(bytecode.m_iterable).jsValue(), bytecode.m_argc, bytecode.m_starIndex == bytecode.m_argc ? -1 : static_cast<int>(bytecode.m_starIndex), &GET(bytecode.m_argv));
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_new_tuple)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyNewTuple>();
+    JSValue result = Python::newTuple(globalObject, bytecode.m_argc ? &GET(bytecode.m_argv) : nullptr, bytecode.m_argc);
     RETURN(result);
 }
 

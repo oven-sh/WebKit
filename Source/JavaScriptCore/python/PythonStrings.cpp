@@ -1,0 +1,1014 @@
+/*
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "PythonStrings.h"
+
+#include "JSCInlines.h"
+#include "PyDict.h"
+#include "PyObjects.h"
+#include "PythonNumbers.h"
+#include "PythonSequences.h"
+#include <unicode/uchar.h>
+#include <wtf/dtoa.h>
+#include <wtf/dtoa/double-conversion.h>
+#include <wtf/text/StringBuilder.h>
+
+namespace JSC { namespace Python {
+
+// ---- Characters and code units
+
+bool stringHasSurrogatePairs(StringView view)
+{
+    if (view.is8Bit())
+        return false;
+    for (char16_t c : view.span16()) {
+        if (U16_IS_LEAD(c))
+            return true; // A lone one is a character by itself, but then counting finds that out.
+    }
+    return false;
+}
+
+static unsigned countCharacters(StringView view)
+{
+    unsigned count = 0;
+    auto span = view.span16();
+    for (size_t i = 0; i < span.size(); ++i, ++count) {
+        if (U16_IS_LEAD(span[i]) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1]))
+            ++i;
+    }
+    return count;
+}
+
+unsigned stringLength(JSGlobalObject* globalObject, JSString* string)
+{
+    if (string->is8Bit())
+        return string->length();
+    auto view = string->view(globalObject);
+    if (!stringHasSurrogatePairs(view))
+        return string->length();
+    return countCharacters(view);
+}
+
+unsigned stringOffsetOfCharacter(StringView view, unsigned character)
+{
+    auto span = view.span16();
+    size_t i = 0;
+    for (; character && i < span.size(); ++i, --character) {
+        if (U16_IS_LEAD(span[i]) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1]))
+            ++i;
+    }
+    return i;
+}
+
+JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue key)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool hasPairs = stringHasSurrogatePairs(view);
+    int64_t length = hasPairs ? countCharacters(view) : view->length();
+
+    if (auto* slice = trySlice(key)) {
+        auto indices = slice->indices(globalObject, length);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!indices->length)
+            return jsEmptyString(vm);
+        if (indices->step == 1) {
+            unsigned start = hasPairs ? stringOffsetOfCharacter(view, indices->start) : indices->start;
+            unsigned end = hasPairs ? stringOffsetOfCharacter(view, indices->stop) : indices->stop;
+            RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, start, end - start));
+        }
+        StringBuilder builder;
+        int64_t at = indices->start;
+        for (int64_t i = 0; i < indices->length; ++i, at += indices->step) {
+            if (!hasPairs) {
+                builder.append(view[at]);
+                continue;
+            }
+            unsigned offset = stringOffsetOfCharacter(view, at);
+            builder.append(view[offset]);
+            if (U16_IS_LEAD(view[offset]) && offset + 1 < view->length() && U16_IS_TRAIL(view[offset + 1]))
+                builder.append(view[offset + 1]);
+        }
+        return jsString(vm, builder.toString());
+    }
+
+    if (!classify(key).isInt() && !(key.isObject() && typeOf(globalObject, key)->lookup(vm, vm.pythonNames().dunder_index)))
+        return raiseTypeError(globalObject, scope, makeString("string indices must be integers, not '"_s, typeName(globalObject, key), '\''));
+    auto index = toIndex(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    int64_t i = *index < 0 ? *index + length : *index;
+    if (i < 0 || i >= length)
+        return raise(globalObject, scope, BuiltinType::IndexError, "string index out of range"_s);
+    if (!hasPairs)
+        return jsSingleCharacterString(vm, view[i]);
+    unsigned offset = stringOffsetOfCharacter(view, i);
+    unsigned size = U16_IS_LEAD(view[offset]) && offset + 1 < view->length() && U16_IS_TRAIL(view[offset + 1]) ? 2 : 1;
+    RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, offset, size));
+}
+
+JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t count)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (count <= 0 || !string->length())
+        return jsEmptyString(vm);
+    if (count == 1)
+        return string;
+    if (static_cast<uint64_t>(string->length()) * count > String::MaxLength)
+        return raise(globalObject, scope, BuiltinType::OverflowError, "repeated string is too long"_s);
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    StringBuilder builder;
+    builder.reserveCapacity(view->length() * count);
+    for (int64_t i = 0; i < count; ++i)
+        builder.append(view.data);
+    return jsString(vm, builder.toString());
+}
+
+// ---- repr
+
+static bool isPrintable(char32_t c)
+{
+    if (c == ' ')
+        return true;
+    switch (u_charType(c)) {
+    case U_CONTROL_CHAR:
+    case U_FORMAT_CHAR:
+    case U_SURROGATE:
+    case U_PRIVATE_USE_CHAR:
+    case U_UNASSIGNED:
+    case U_LINE_SEPARATOR:
+    case U_PARAGRAPH_SEPARATOR:
+    case U_SPACE_SEPARATOR:
+        return false;
+    default:
+        return true;
+    }
+}
+
+int compareStrings(StringView a, StringView b)
+{
+    unsigned common = std::min(a.length(), b.length());
+    for (unsigned i = 0; i < common; ++i) {
+        char16_t x = a[i];
+        char16_t y = b[i];
+        if (x == y)
+            continue;
+        // The halves of a pair are numbered below U+E000, and stand for what is above U+FFFF.
+        auto rank = [] (char16_t c) -> unsigned { return U16_IS_SURROGATE(c) ? c + 0x10000 : c; };
+        return rank(x) < rank(y) ? -1 : 1;
+    }
+    return a.length() == b.length() ? 0 : a.length() < b.length() ? -1 : 1;
+}
+
+String reprOfString(StringView view)
+{
+    // In single quotes, unless that would take escaping and double quotes would not.
+    bool hasSingle = view.contains('\'');
+    bool hasDouble = view.contains('"');
+    char quote = hasSingle && !hasDouble ? '"' : '\'';
+    StringBuilder builder;
+    builder.append(quote);
+    for (char32_t c : view.codePoints()) {
+        switch (c) {
+        case '\\':
+            builder.append("\\\\"_s);
+            continue;
+        case '\n':
+            builder.append("\\n"_s);
+            continue;
+        case '\r':
+            builder.append("\\r"_s);
+            continue;
+        case '\t':
+            builder.append("\\t"_s);
+            continue;
+        default:
+            break;
+        }
+        if (c == static_cast<char32_t>(quote)) {
+            builder.append('\\', quote);
+            continue;
+        }
+        if (c >= ' ' && c < 0x7F) {
+            builder.append(static_cast<Latin1Character>(c));
+            continue;
+        }
+        if (c >= 0x7F && isPrintable(c)) {
+            builder.append(c);
+            continue;
+        }
+        if (c <= 0xFF)
+            builder.append("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
+        else if (c <= 0xFFFF)
+            builder.append("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
+        else
+            builder.append("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
+    }
+    builder.append(quote);
+    return builder.toString();
+}
+
+// ---- Digits of floats
+
+using Converter = WTF::double_conversion::DoubleToStringConverter;
+
+struct Digits {
+    Vector<char, 64> digits; // Without a point, and with no zeros at the end.
+    int point { 0 }; // How many of them are before the point. It can be negative, or more than there are.
+    bool isNegative { false };
+};
+
+// How many digits the exact decimal expansion of a float has after the point. It has that many because it is an odd number over a
+// power of two, and then the last of them is a 5.
+static int exactFractionDigits(double value)
+{
+    if (!value)
+        return 0;
+    int exponent;
+    double mantissa = std::frexp(std::abs(value), &exponent);
+    uint64_t bits = static_cast<uint64_t>(std::ldexp(mantissa, 53));
+    exponent -= 53;
+    int trailing = std::countr_zero(bits);
+    exponent += trailing;
+    return exponent < 0 ? -exponent : 0;
+}
+
+// double-conversion rounds a tie away from zero. Python rounds it to the even digit. `last` is the index of the digit that was rounded to.
+static void roundTieToEven(Digits& result, int last)
+{
+    // It was rounded up from an exact ...5, so what is there is one more than what was before it, and there was no carry into it if it is odd.
+    if (last < 0 || last >= static_cast<int>(result.digits.size()))
+        return; // It is a zero, from a carry, which is even.
+    if ((result.digits[last] - '0') & 1) {
+        --result.digits[last];
+        while (!result.digits.isEmpty() && result.digits.last() == '0')
+            result.digits.removeLast();
+    }
+}
+
+static Digits toDigits(double value, Converter::DtoaMode mode, int requested)
+{
+    Digits result;
+    Vector<char, 512> buffer(std::max(requested, 0) + 400);
+    int length;
+    Converter::DoubleToAscii(value, mode, requested, buffer.mutableSpan(), result.isNegative, length, result.point);
+    result.digits.append(buffer.span().first(length));
+    while (!result.digits.isEmpty() && result.digits.last() == '0')
+        result.digits.removeLast();
+    return result;
+}
+
+// Rounded to `precision` places after the point.
+static Digits fixedPointDigits(double value, int precision)
+{
+    Digits result = toDigits(value, Converter::FIXED, precision);
+    if (exactFractionDigits(value) == precision + 1)
+        roundTieToEven(result, result.point + precision - 1);
+    return result;
+}
+
+// Rounded to `count` significant digits.
+static Digits significantDigits(double value, int count)
+{
+    Digits result = toDigits(value, Converter::PRECISION, count);
+    if (!value)
+        return result;
+    // A tie if the exact expansion has just one digit more.
+    Digits shortest = toDigits(value, Converter::SHORTEST, 0);
+    int fraction = exactFractionDigits(value);
+    int exactCount = fraction ? shortest.point + fraction : static_cast<int>(shortest.digits.size());
+    if (exactCount == count + 1 && (fraction || (shortest.digits.last() == '5' && std::abs(value) < 9007199254740992.0)))
+        roundTieToEven(result, count - 1);
+    return result;
+}
+
+static void appendFixed(StringBuilder& builder, const Digits& digits, int precision, bool alwaysPoint)
+{
+    int size = digits.digits.size();
+    if (digits.point <= 0)
+        builder.append('0');
+    for (int i = 0; i < digits.point; ++i)
+        builder.append(i < size ? digits.digits[i] : '0');
+    if (precision > 0 || alwaysPoint)
+        builder.append('.');
+    for (int i = 0; i < precision; ++i) {
+        int index = digits.point + i;
+        builder.append(index >= 0 && index < size ? digits.digits[index] : '0');
+    }
+}
+
+static void appendExponential(StringBuilder& builder, const Digits& digits, int precision, bool alwaysPoint, char exponentCharacter, bool isZero)
+{
+    int size = digits.digits.size();
+    builder.append(size ? digits.digits[0] : '0');
+    if (precision > 0 || alwaysPoint)
+        builder.append('.');
+    for (int i = 1; i <= precision; ++i)
+        builder.append(i < size ? digits.digits[i] : '0');
+    int exponent = isZero ? 0 : digits.point - 1;
+    builder.append(exponentCharacter, exponent < 0 ? '-' : '+');
+    exponent = std::abs(exponent);
+    if (exponent < 10)
+        builder.append('0');
+    builder.append(exponent);
+}
+
+String fixedDigits(double value, int precision)
+{
+    StringBuilder builder;
+    Digits digits = fixedPointDigits(value, precision);
+    if (digits.isNegative)
+        builder.append('-');
+    appendFixed(builder, digits, precision, false);
+    return builder.toString();
+}
+
+double roundToDigits(double value, int digits)
+{
+    if (!std::isfinite(value) || !value)
+        return value;
+    // Beyond these it changes nothing, or leaves nothing.
+    if (digits > 323)
+        return value;
+    if (digits < -308)
+        return std::copysign(0.0, value);
+    if (digits >= 0) {
+        String text = fixedDigits(value, digits);
+        size_t parsed;
+        return parseDouble(text, parsed);
+    }
+    // To tens, hundreds and so on.
+    Digits shortest = toDigits(value, Converter::SHORTEST, 0);
+    int keep = shortest.point + digits;
+    if (keep < 0)
+        return std::copysign(0.0, value);
+    StringBuilder builder;
+    if (value < 0)
+        builder.append('-');
+    if (!keep) {
+        // Whether it is more than half way to the first place.
+        double unit = std::pow(10.0, -digits);
+        return std::abs(value) > unit / 2 ? std::copysign(unit, value) : std::copysign(0.0, value);
+    }
+    Digits rounded = significantDigits(value, keep);
+    for (int i = 0; i < rounded.point; ++i)
+        builder.append(i < static_cast<int>(rounded.digits.size()) ? rounded.digits[i] : '0');
+    size_t parsed;
+    return parseDouble(builder.toString(), parsed);
+}
+
+// ---- The format specification
+
+std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* globalObject, StringView text, const String& typeName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    FormatSpecification result;
+    Vector<char32_t, 32> characters;
+    for (char32_t c : text.codePoints())
+        characters.append(c);
+    size_t i = 0;
+    size_t end = characters.size();
+    auto isAlign = [] (char32_t c) { return c == '<' || c == '>' || c == '=' || c == '^'; };
+    auto invalid = [&] () -> std::optional<FormatSpecification> {
+        raiseValueError(globalObject, scope, makeString("Invalid format specifier '"_s, text, "' for object of type '"_s, typeName, '\''));
+        return std::nullopt;
+    };
+
+    bool hasFill = false;
+    if (end >= 2 && isAlign(characters[1])) {
+        result.fill = characters[0];
+        result.align = characters[1];
+        hasFill = true;
+        i = 2;
+    } else if (end >= 1 && isAlign(characters[0])) {
+        result.align = characters[0];
+        i = 1;
+    }
+    if (i < end && (characters[i] == '+' || characters[i] == '-' || characters[i] == ' '))
+        result.sign = characters[i++];
+    if (i < end && characters[i] == 'z') {
+        result.noNegativeZero = true;
+        ++i;
+    }
+    if (i < end && characters[i] == '#') {
+        result.alternate = true;
+        ++i;
+    }
+    if (i < end && characters[i] == '0' && !hasFill) {
+        result.fill = '0';
+        if (!result.align)
+            result.align = '=';
+        ++i;
+    }
+    while (i < end && isASCIIDigit(characters[i])) {
+        result.hasWidth = true;
+        if (result.width > 100000000) {
+            raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
+            return std::nullopt;
+        }
+        result.width = result.width * 10 + (characters[i++] - '0');
+    }
+    if (i < end && (characters[i] == ',' || characters[i] == '_')) {
+        result.grouping = characters[i++];
+        if (i < end && (characters[i] == ',' || characters[i] == '_')) {
+            raiseValueError(globalObject, scope, characters[i] == static_cast<char32_t>(result.grouping) ? makeString("Cannot specify '"_s, result.grouping, "' with '"_s, result.grouping, "'."_s) : "Cannot specify both ',' and '_'."_s);
+            return std::nullopt;
+        }
+    }
+    if (i < end && characters[i] == '.') {
+        ++i;
+        if (i >= end || !isASCIIDigit(characters[i])) {
+            raiseValueError(globalObject, scope, "Format specifier missing precision"_s);
+            return std::nullopt;
+        }
+        result.precision = 0;
+        while (i < end && isASCIIDigit(characters[i])) {
+            if (result.precision > 100000000) {
+                raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
+                return std::nullopt;
+            }
+            result.precision = result.precision * 10 + (characters[i++] - '0');
+        }
+    }
+    if (end - i > 1)
+        return invalid();
+    if (i < end)
+        result.type = characters[i];
+    return result;
+}
+
+static String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& scope, char32_t code, ASCIILiteral typeName)
+{
+    StringBuilder builder;
+    builder.append("Unknown format code '"_s);
+    builder.append(code);
+    builder.append("' for object of type '"_s, typeName, '\'');
+    raiseValueError(globalObject, scope, builder.toString());
+    return { };
+}
+
+static unsigned lengthInCharacters(const String& string)
+{
+    return stringHasSurrogatePairs(string) ? countCharacters(string) : string.length();
+}
+
+// `prefixLength` is how much at the front is a sign and 0x and the like, which '=' puts the padding after.
+static String pad(const String& text, unsigned prefixLength, const FormatSpecification& specification, char defaultAlign)
+{
+    unsigned length = lengthInCharacters(text);
+    if (length >= specification.width)
+        return text;
+    unsigned padding = specification.width - length;
+    char align = specification.align ? specification.align : defaultAlign;
+    StringBuilder builder;
+    auto fill = [&] (unsigned count) {
+        for (unsigned i = 0; i < count; ++i)
+            builder.append(specification.fill);
+    };
+    switch (align) {
+    case '<':
+        builder.append(text);
+        fill(padding);
+        break;
+    case '>':
+        fill(padding);
+        builder.append(text);
+        break;
+    case '^':
+        fill(padding / 2);
+        builder.append(text);
+        fill(padding - padding / 2);
+        break;
+    case '=':
+        builder.append(StringView(text).left(prefixLength));
+        fill(padding);
+        builder.append(StringView(text).substring(prefixLength));
+        break;
+    }
+    return builder.toString();
+}
+
+// 1234567 to 1,234,567. With zeros for padding, they are grouped too, so that is done here: `minimumWidth` is what the digits and
+// separators should come to.
+static String groupDigits(StringView digits, char separator, unsigned groupSize, unsigned minimumWidth)
+{
+    Vector<char16_t, 64> reversed;
+    unsigned count = 0;
+    auto push = [&] (char16_t digit) {
+        if (count && !(count % groupSize))
+            reversed.append(separator);
+        reversed.append(digit);
+        ++count;
+    };
+    for (unsigned i = digits.length(); i--;)
+        push(digits[i]);
+    while (reversed.size() < minimumWidth) {
+        // Not a separator at the front.
+        if (!(count % groupSize) && reversed.size() + 1 == minimumWidth) {
+            push('0');
+            break;
+        }
+        push('0');
+    }
+    reversed.reverse();
+    return String(reversed.span());
+}
+
+String formatString(JSGlobalObject* globalObject, const String& value, const FormatSpecification& specification)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (specification.type && specification.type != 's')
+        return raiseUnknownFormatCode(globalObject, scope, specification.type, "str"_s);
+    if (specification.sign != '-') {
+        raiseValueError(globalObject, scope, specification.sign == ' ' ? "Space not allowed in string format specifier"_s : "Sign not allowed in string format specifier"_s);
+        return { };
+    }
+    if (specification.alternate) {
+        raiseValueError(globalObject, scope, "Alternate form (#) not allowed in string format specifier"_s);
+        return { };
+    }
+    if (specification.align == '=') {
+        raiseValueError(globalObject, scope, "'=' alignment not allowed in string format specifier"_s);
+        return { };
+    }
+    if (specification.grouping) {
+        raiseValueError(globalObject, scope, makeString("Cannot specify '"_s, specification.grouping, "' with 's'."_s));
+        return { };
+    }
+    String text = value;
+    if (specification.precision >= 0 && static_cast<unsigned>(specification.precision) < lengthInCharacters(text))
+        text = StringView(text).left(stringHasSurrogatePairs(text) ? stringOffsetOfCharacter(text, specification.precision) : specification.precision).toString();
+    return pad(text, 0, specification, '<');
+}
+
+static void appendSign(StringBuilder& builder, bool isNegative, char sign)
+{
+    if (isNegative)
+        builder.append('-');
+    else if (sign != '-')
+        builder.append(sign);
+}
+
+String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecification& specification)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Number number = classify(value);
+    ASSERT(number.isInt());
+
+    unsigned radix = 10;
+    ASCIILiteral prefix = ""_s;
+    switch (specification.type) {
+    case 0:
+    case 'd':
+    case 'n':
+        break;
+    case 'b':
+        radix = 2;
+        prefix = "0b"_s;
+        break;
+    case 'o':
+        radix = 8;
+        prefix = "0o"_s;
+        break;
+    case 'x':
+        radix = 16;
+        prefix = "0x"_s;
+        break;
+    case 'X':
+        radix = 16;
+        prefix = "0X"_s;
+        break;
+    case 'c': {
+        if (specification.sign != '-') {
+            raiseValueError(globalObject, scope, "Sign not allowed with integer format specifier 'c'"_s);
+            return { };
+        }
+        if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
+            raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
+            return { };
+        }
+        StringBuilder builder;
+        builder.append(static_cast<char32_t>(number.small));
+        return pad(builder.toString(), 0, specification, '<');
+    }
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'F':
+    case 'g':
+    case 'G':
+    case '%': {
+        double real = toDouble(globalObject, scope, number);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, formatFloat(globalObject, real, specification));
+    }
+    default:
+        return raiseUnknownFormatCode(globalObject, scope, specification.type, "int"_s);
+    }
+    if (specification.precision >= 0) {
+        raiseValueError(globalObject, scope, "Precision not allowed in integer format specifier"_s);
+        return { };
+    }
+    if (specification.grouping == ',' && radix != 10) {
+        StringBuilder message;
+        message.append("Cannot specify ',' with '"_s);
+        message.append(specification.type);
+        message.append("'."_s);
+        raiseValueError(globalObject, scope, message.toString());
+        return { };
+    }
+
+    String digits = reprOfInt(globalObject, number, radix);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool isNegative = digits.startsWith('-');
+    if (isNegative)
+        digits = digits.substring(1);
+    if (specification.type == 'X')
+        digits = digits.convertToASCIIUppercase();
+
+    StringBuilder builder;
+    appendSign(builder, isNegative, specification.sign);
+    if (specification.alternate)
+        builder.append(prefix);
+    unsigned prefixLength = builder.length();
+    if (specification.grouping) {
+        bool padsWithZeros = specification.fill == '0' && specification.align == '=';
+        unsigned minimum = padsWithZeros && specification.width > prefixLength ? specification.width - prefixLength : 0;
+        digits = groupDigits(digits, specification.grouping, radix == 10 ? 3 : 4, minimum);
+    }
+    builder.append(digits);
+    return pad(builder.toString(), prefixLength, specification, '>');
+}
+
+String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpecification& specification)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    char32_t type = specification.type;
+    int precision = specification.precision;
+
+    switch (type) {
+    case 0:
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'F':
+    case 'g':
+    case 'G':
+    case 'n':
+    case '%':
+        break;
+    default:
+        return raiseUnknownFormatCode(globalObject, scope, type, "float"_s);
+    }
+
+    bool isUpper = type == 'E' || type == 'F' || type == 'G';
+    bool isPercent = type == '%';
+    if (isPercent) {
+        value *= 100;
+        type = 'f';
+    }
+    bool isNegative = std::signbit(value);
+
+    StringBuilder body;
+    if (!std::isfinite(value)) {
+        if (std::isnan(value)) {
+            body.append(isUpper ? "NAN"_s : "nan"_s);
+            isNegative = false;
+        } else
+            body.append(isUpper ? "INF"_s : "inf"_s);
+    } else if (!type && precision < 0) {
+        // As repr() has it.
+        String text = reprOfDouble(std::abs(value));
+        body.append(text);
+    } else {
+        bool addPointZero = false;
+        if (!type) {
+            // Like 'g', but with something after the point, and it takes to exponents one digit later.
+            type = 'g';
+            addPointZero = true;
+        }
+        if (precision < 0)
+            precision = 6;
+        double magnitude = std::abs(value);
+        char exponentCharacter = isUpper ? 'E' : 'e';
+        switch (type) {
+        case 'f':
+        case 'F':
+            appendFixed(body, fixedPointDigits(magnitude, precision), precision, specification.alternate);
+            break;
+        case 'e':
+        case 'E':
+            appendExponential(body, significantDigits(magnitude, precision + 1), precision, specification.alternate, exponentCharacter, !magnitude);
+            break;
+        default: {
+            int significant = precision ? precision : 1;
+            Digits digits = significantDigits(magnitude, significant);
+            int exponent = magnitude ? digits.point - 1 : 0;
+            bool usesExponent = exponent < -4 || exponent >= (addPointZero && specification.precision >= 0 ? significant : significant);
+            // Zeros at the end are dropped, unless '#' says otherwise.
+            int kept = specification.alternate ? significant : std::max<int>(digits.digits.size(), 1);
+            if (usesExponent)
+                appendExponential(body, digits, kept - 1, specification.alternate, exponentCharacter, !magnitude);
+            else {
+                int places = std::max(kept - (exponent + 1), 0);
+                appendFixed(body, digits, places, specification.alternate);
+                if (addPointZero && !places)
+                    body.append(".0"_s);
+            }
+            break;
+        }
+        }
+    }
+
+    String text = body.toString();
+    if (specification.noNegativeZero && isNegative) {
+        bool isAllZeros = true;
+        for (unsigned i = 0; i < text.length() && text[i] != 'e' && text[i] != 'E'; ++i)
+            isAllZeros &= text[i] == '0' || text[i] == '.';
+        if (isAllZeros)
+            isNegative = false;
+    }
+
+    StringBuilder builder;
+    appendSign(builder, isNegative, specification.sign);
+    unsigned prefixLength = builder.length();
+    if (specification.grouping && std::isfinite(value)) {
+        // Only what is before the point.
+        unsigned whole = 0;
+        while (whole < text.length() && isASCIIDigit(text[whole]))
+            ++whole;
+        unsigned restLength = text.length() - whole + isPercent;
+        bool padsWithZeros = specification.fill == '0' && specification.align == '=';
+        unsigned minimum = padsWithZeros && specification.width > prefixLength + restLength ? specification.width - prefixLength - restLength : 0;
+        builder.append(groupDigits(StringView(text).left(whole), specification.grouping, 3, minimum), StringView(text).substring(whole));
+    } else
+        builder.append(text);
+    if (isPercent)
+        builder.append('%');
+    return pad(builder.toString(), prefixLength, specification, '>');
+}
+
+// ---- format % values
+
+JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* formatString_, JSValue values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String format = formatString_->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    // A tuple is the arguments. Anything else is the one argument, and a mapping is where %(name)s looks.
+    PyTuple* tuple = isTuple(values) ? uncheckedDowncast<PyTuple>(values.asCell()) : nullptr;
+    unsigned argumentCount = tuple ? tuple->length() : 1;
+    unsigned nextArgument = 0;
+    bool usedMapping = false;
+    auto takeArgument = [&] () -> JSValue {
+        if (nextArgument >= argumentCount) {
+            raiseTypeError(globalObject, scope, "not enough arguments for format string"_s);
+            return { };
+        }
+        JSValue result = tuple ? tuple->at(nextArgument) : values;
+        ++nextArgument;
+        return result;
+    };
+
+    StringBuilder result;
+    unsigned length = format.length();
+    for (unsigned i = 0; i < length;) {
+        char16_t c = format[i++];
+        if (c != '%') {
+            result.append(c);
+            continue;
+        }
+        if (i >= length)
+            return raiseValueError(globalObject, scope, "incomplete format"_s);
+
+        JSValue argument;
+        if (format[i] == '(') {
+            unsigned depth = 1;
+            unsigned start = ++i;
+            while (i < length && depth) {
+                if (format[i] == '(')
+                    ++depth;
+                else if (format[i] == ')')
+                    --depth;
+                ++i;
+            }
+            if (depth)
+                return raiseValueError(globalObject, scope, "incomplete format key"_s);
+            if (tuple || values.isString() || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem))
+                return raiseTypeError(globalObject, scope, "format requires a mapping"_s);
+            argument = getItem(globalObject, values, jsString(vm, format.substring(start, i - 1 - start)));
+            RETURN_IF_EXCEPTION(scope, { });
+            usedMapping = true;
+        }
+
+        FormatSpecification specification;
+        bool leftAlign = false;
+        bool zeroPad = false;
+        for (; i < length; ++i) {
+            char16_t flag = format[i];
+            if (flag == '-')
+                leftAlign = true;
+            else if (flag == '+')
+                specification.sign = '+';
+            else if (flag == ' ') {
+                if (specification.sign != '+')
+                    specification.sign = ' ';
+            } else if (flag == '#')
+                specification.alternate = true;
+            else if (flag == '0')
+                zeroPad = true;
+            else
+                break;
+        }
+        auto readNumber = [&] (int& target) -> bool {
+            if (i < length && format[i] == '*') {
+                ++i;
+                JSValue star = takeArgument();
+                RETURN_IF_EXCEPTION(scope, false);
+                Number number = classify(star);
+                if (number.kind != Number::Kind::Small) {
+                    raiseTypeError(globalObject, scope, "* wants int"_s);
+                    return false;
+                }
+                target = number.small;
+                return true;
+            }
+            if (i < length && isASCIIDigit(format[i])) {
+                target = 0;
+                while (i < length && isASCIIDigit(format[i]))
+                    target = target * 10 + (format[i++] - '0');
+            }
+            return true;
+        };
+        int width = -1;
+        readNumber(width);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (width < -1) {
+            leftAlign = true;
+            width = -width;
+        }
+        if (i < length && format[i] == '.') {
+            ++i;
+            specification.precision = 0;
+            readNumber(specification.precision);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        while (i < length && (format[i] == 'l' || format[i] == 'h' || format[i] == 'L'))
+            ++i;
+        if (i >= length)
+            return raiseValueError(globalObject, scope, "incomplete format"_s);
+        char16_t conversion = format[i++];
+        if (conversion == '%') {
+            result.append('%');
+            continue;
+        }
+        if (!argument) {
+            argument = takeArgument();
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (width > 0) {
+            specification.hasWidth = true;
+            specification.width = width;
+        }
+        specification.align = leftAlign ? '<' : '>';
+
+        String piece;
+        switch (conversion) {
+        case 's':
+        case 'r':
+        case 'a': {
+            String text = conversion == 's' ? str(globalObject, argument) : repr(globalObject, argument);
+            RETURN_IF_EXCEPTION(scope, { });
+            specification.sign = '-';
+            specification.alternate = false;
+            piece = formatString(globalObject, text, specification);
+            break;
+        }
+        case 'c': {
+            String text;
+            if (argument.isString()) {
+                text = asString(argument)->value(globalObject);
+                if (lengthInCharacters(text) != 1)
+                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
+            } else {
+                Number number = classify(argument);
+                if (!number.isInt())
+                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, argument)));
+                if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF)
+                    return raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
+                StringBuilder builder;
+                builder.append(static_cast<char32_t>(number.small));
+                text = builder.toString();
+            }
+            specification.sign = '-';
+            specification.precision = -1;
+            piece = formatString(globalObject, text, specification);
+            break;
+        }
+        case 'd':
+        case 'i':
+        case 'u':
+        case 'o':
+        case 'x':
+        case 'X': {
+            Number number = classify(argument);
+            if (number.kind == Number::Kind::Float && (conversion == 'd' || conversion == 'i' || conversion == 'u')) {
+                argument = intFromDouble(globalObject, number.real);
+                number = classify(argument);
+            }
+            if (!number.isInt()) {
+                if (conversion == 'd' || conversion == 'i' || conversion == 'u')
+                    return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: a real number is required, not "_s, typeName(globalObject, argument)));
+                return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: an integer is required, not "_s, typeName(globalObject, argument)));
+            }
+            specification.type = conversion == 'i' || conversion == 'u' ? 'd' : conversion;
+            // The precision is the least number of digits.
+            int minimumDigits = std::exchange(specification.precision, -1);
+            FormatSpecification bare = specification;
+            bare.width = 0;
+            bare.hasWidth = false;
+            String text = formatInt(globalObject, argument, bare);
+            RETURN_IF_EXCEPTION(scope, { });
+            unsigned prefixLength = 0;
+            while (prefixLength < text.length() && !isASCIIAlphanumeric(text[prefixLength]))
+                ++prefixLength;
+            if (specification.alternate && conversion != 'd' && conversion != 'i' && conversion != 'u')
+                prefixLength += 2;
+            if (minimumDigits > 0 && text.length() - prefixLength < static_cast<unsigned>(minimumDigits)) {
+                StringBuilder builder;
+                builder.append(StringView(text).left(prefixLength));
+                for (unsigned k = text.length() - prefixLength; k < static_cast<unsigned>(minimumDigits); ++k)
+                    builder.append('0');
+                builder.append(StringView(text).substring(prefixLength));
+                text = builder.toString();
+            }
+            if (zeroPad && !leftAlign) {
+                specification.fill = '0';
+                specification.align = '=';
+            }
+            piece = pad(text, prefixLength, specification, '>');
+            break;
+        }
+        case 'e':
+        case 'E':
+        case 'f':
+        case 'F':
+        case 'g':
+        case 'G': {
+            if (!classify(argument))
+                return raiseTypeError(globalObject, scope, makeString("must be real number, not "_s, typeName(globalObject, argument)));
+            auto real = toDouble(globalObject, argument);
+            RETURN_IF_EXCEPTION(scope, { });
+            specification.type = conversion;
+            if (zeroPad && !leftAlign) {
+                specification.fill = '0';
+                specification.align = '=';
+            }
+            piece = formatFloat(globalObject, *real, specification);
+            break;
+        }
+        default:
+            return raiseValueError(globalObject, scope, makeString("unsupported format character '"_s, conversion, "' (0x"_s, hex(static_cast<unsigned>(conversion), Lowercase), ") at index "_s, i - 1));
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+        result.append(piece);
+    }
+
+    if (nextArgument < argumentCount && !usedMapping && (tuple || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem) || values.isString()))
+        return raiseTypeError(globalObject, scope, "not all arguments converted during string formatting"_s);
+    return jsString(vm, result.toString());
+}
+
+} } // namespace JSC::Python

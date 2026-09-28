@@ -1,0 +1,24 @@
+[0, 1, 2] 10 [0, 2, 4] 3 (0, 1) True [(0, 'a'), (1, 'b')] {0: 0, 1: 1}
+0 1 done None
+StopIteration ()
+None 1 x
+returned bye
+inner got sent
+outer got inner result
+1 2 [10, 20, 'a', 'b', 0, 1]
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34] [0, 1, 1] [0, 1] 1779979416004714189
+1
+closed
+[]
+caught thrown
+ready ready
+[1, 2, 3, 4, 5, 6]
+made
+evaluated 0
+evaluated 1
+[0, 1]
+[0, 1, 2] [] 6 0,1,2 True [0, 0, 1, 1, 2]
+120 generator True
+[1]
+[1, 2, 'y', 'z']
+[1, 2, 3, 4] 3

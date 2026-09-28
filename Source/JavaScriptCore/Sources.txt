@@ -737,9 +737,31 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/PyDict.cpp
+python/PyObjects.cpp
+python/PyRealm.cpp
+python/PyType.cpp
 python/PythonASTDumper.cpp
+python/PythonBuiltinFunctions.cpp
+python/PythonBuiltinTypes.cpp
+python/PythonClasses.cpp
+python/PythonCodeGenerator.cpp
+python/PythonCommonNames.cpp
+python/PythonCompiler.cpp
+python/PythonContainerTypes.cpp
+python/PythonGenerators.cpp
 python/PythonLexer.cpp
+python/PythonModules.cpp
+python/PythonNumberTypes.cpp
+python/PythonNumbers.cpp
+python/PythonObjectModel.cpp
+python/PythonOperators.cpp
 python/PythonParser.cpp
+python/PythonRepr.cpp
+python/PythonRuntimeFunctions.cpp
+python/PythonSequences.cpp
+python/PythonStrType.cpp
+python/PythonStrings.cpp
 python/PythonSymbolTable.cpp
 
 runtime/AbstractModuleRecord.cpp

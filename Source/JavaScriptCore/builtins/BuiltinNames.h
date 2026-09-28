@@ -230,6 +230,8 @@ namespace JSC {
     macro(DisposableStack) \
     macro(AsyncDisposableStack) \
     macro(enqueueJob) \
+    macro(pyBoundArgumentsMarker) \
+    macro(pyRuntimeFunctions) \
 
 
 namespace Symbols {

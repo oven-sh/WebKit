@@ -61,6 +61,11 @@
 
 namespace JSC {
 
+    namespace Python {
+    class CodeGenerator;
+    class ScopeNode;
+    }
+
     class JSCellButterfly;
     class Identifier;
     class ForInContext;
@@ -361,6 +366,7 @@ namespace JSC {
         friend class BytecodeOptimizerAccess;
         friend class ForInContext;
         friend class StrictModeScope;
+        friend class Python::CodeGenerator;
 
         template <typename OldOpType, typename NewOpType, typename TupleType>
         friend void rewriteOp(BytecodeGenerator&, TupleType&);
@@ -372,6 +378,7 @@ namespace JSC {
         BytecodeGenerator(VM&, FunctionNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
         BytecodeGenerator(VM&, EvalNode*, UnlinkedEvalCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
         BytecodeGenerator(VM&, ModuleProgramNode*, UnlinkedModuleProgramCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
+        BytecodeGenerator(VM&, Python::ScopeNode*, UnlinkedFunctionCodeBlock*, OptionSet<CodeGenerationMode>, const RefPtr<TDZEnvironmentLink>&, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode, RefPtr<DeclaredNamesLink>&& parentDeclaredNames);
 
         ~BytecodeGenerator();
         

@@ -1,0 +1,434 @@
+/*
+ * Copyright (C) 2026 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "config.h"
+#include "PythonOperations.h"
+
+#include "ErrorInstance.h"
+#include "FunctionExecutable.h"
+#include "JSCInlines.h"
+#include "JSGenerator.h"
+#include "PyDict.h"
+#include "PyInstance.h"
+#include "PyNativeFunction.h"
+#include "PyObjects.h"
+#include "PythonBuiltins.h"
+#include "PythonNumbers.h"
+#include "PythonSequences.h"
+#include "PythonStrings.h"
+#include "UnlinkedFunctionExecutable.h"
+#include <wtf/text/StringBuilder.h>
+
+// repr(), str() and format().
+
+namespace JSC { namespace Python {
+
+// What is in the middle of being written out, so that a list that contains itself comes out as [[...]].
+static Vector<JSCell*, 16>& reprStack()
+{
+    static thread_local Vector<JSCell*, 16> stack;
+    return stack;
+}
+
+class ReprGuard {
+public:
+    explicit ReprGuard(JSCell* cell)
+        : m_isRecursive(reprStack().contains(cell))
+    {
+        if (!m_isRecursive)
+            reprStack().append(cell);
+    }
+    ~ReprGuard()
+    {
+        if (!m_isRecursive)
+            reprStack().removeLast();
+    }
+    bool isRecursive() const { return m_isRecursive; }
+
+private:
+    bool m_isRecursive;
+};
+
+static String addressOf(JSCell* cell)
+{
+    return makeString("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
+}
+
+String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    JSValue qualifiedName = type->lookupOwn(vm, names.dunder_qualname);
+    String name = qualifiedName && qualifiedName.isString() ? asString(qualifiedName)->value(globalObject).data : type->nameString(globalObject);
+    JSValue module = type->lookupOwn(vm, names.dunder_module);
+    if (module && module.isString()) {
+        String moduleName = asString(module)->value(globalObject);
+        if (moduleName != "builtins"_s)
+            return makeString(moduleName, '.', name);
+    }
+    return name;
+}
+
+String nameOfFunction(JSGlobalObject* globalObject, JSFunction* function, bool qualified)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    if (JSValue set = function->getDirect(vm, qualified ? names.private_qualname : names.private_name); set && set.isString())
+        return asString(set)->value(globalObject);
+    if (!function->isHostOrBuiltinFunction()) {
+        if (auto* info = function->jsExecutable()->unlinkedExecutable()->pythonInfo())
+            return qualified ? info->qualifiedName : info->name.string();
+    }
+    return function->name(vm);
+}
+
+template<typename Get>
+static bool appendItems(JSGlobalObject* globalObject, StringBuilder& builder, unsigned count, const Get& get)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (unsigned i = 0; i < count; ++i) {
+        if (i)
+            builder.append(", "_s);
+        String item = repr(globalObject, get(i));
+        RETURN_IF_EXCEPTION(scope, false);
+        builder.append(item);
+    }
+    return true;
+}
+
+static PyTuple* exceptionArguments(JSGlobalObject* globalObject, JSValue exception)
+{
+    VM& vm = globalObject->vm();
+    if (!exception.isObject())
+        return nullptr;
+    JSValue arguments = asObject(exception)->getDirect(vm, vm.pythonNames().private_args);
+    return arguments && isTuple(arguments) ? uncheckedDowncast<PyTuple>(arguments.asCell()) : nullptr;
+}
+
+// What the built-in types' __repr__ are, by the kind of cell.
+String builtinRepr(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+
+    if (value.isUndefinedOrNull())
+        return "None"_s;
+    if (value.isBoolean())
+        return value.asBoolean() ? "True"_s : "False"_s;
+    if (Number number = classify(value)) {
+        if (number.kind == Number::Kind::Float)
+            return reprOfDouble(number.real);
+        RELEASE_AND_RETURN(scope, reprOfInt(globalObject, number));
+    }
+
+    JSCell* cell = value.asCell();
+    PyType* type = typeOf(globalObject, value);
+    StringBuilder builder;
+
+    switch (cell->type()) {
+    case StringType: {
+        auto view = uncheckedDowncast<JSString>(cell)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        return reprOfString(view);
+    }
+    case PyBoxedValueType:
+        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, uncheckedDowncast<PyBoxedValue>(cell)->value()));
+    case PyTupleType: {
+        auto* tuple = uncheckedDowncast<PyTuple>(cell);
+        ReprGuard guard(cell);
+        if (guard.isRecursive())
+            return "(...)"_s;
+        builder.append('(');
+        appendItems(globalObject, builder, tuple->length(), [&] (unsigned i) { return tuple->at(i); });
+        RETURN_IF_EXCEPTION(scope, { });
+        builder.append(tuple->length() == 1 ? ",)"_s : ")"_s);
+        return builder.toString();
+    }
+    case PyDictType: {
+        auto* dict = uncheckedDowncast<PyDict>(cell);
+        ReprGuard guard(cell);
+        if (guard.isRecursive())
+            return "{...}"_s;
+        builder.append('{');
+        bool isFirst = true;
+        for (unsigned entry = 0; entry < dict->entryCount(); ++entry) {
+            JSValue key = dict->keyAt(entry);
+            if (!key)
+                continue;
+            JSValue item = dict->valueAt(entry);
+            if (!isFirst)
+                builder.append(", "_s);
+            isFirst = false;
+            String keyText = repr(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, { });
+            String itemText = repr(globalObject, item);
+            RETURN_IF_EXCEPTION(scope, { });
+            builder.append(keyText, ": "_s, itemText);
+        }
+        builder.append('}');
+        return builder.toString();
+    }
+    case PySetType: {
+        auto* set = uncheckedDowncast<PySet>(cell);
+        String name = type->nameString(globalObject);
+        bool isPlainSet = type == realm->typeSet();
+        ReprGuard guard(cell);
+        if (guard.isRecursive())
+            return makeString(name, "(...)"_s);
+        if (!set->size())
+            return makeString(name, "()"_s);
+        if (!isPlainSet)
+            builder.append(name, '(');
+        builder.append('{');
+        bool isFirst = true;
+        for (unsigned entry = 0; entry < set->entryCount(); ++entry) {
+            JSValue key = set->keyAt(entry);
+            if (!key)
+                continue;
+            if (!isFirst)
+                builder.append(", "_s);
+            isFirst = false;
+            String text = repr(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, { });
+            builder.append(text);
+        }
+        builder.append('}');
+        if (!isPlainSet)
+            builder.append(')');
+        return builder.toString();
+    }
+    case PyRangeType: {
+        auto* range = uncheckedDowncast<PyRange>(cell);
+        if (range->step() == 1)
+            return makeString("range("_s, range->start(), ", "_s, range->stop(), ')');
+        return makeString("range("_s, range->start(), ", "_s, range->stop(), ", "_s, range->step(), ')');
+    }
+    case PySliceType: {
+        auto* slice = uncheckedDowncast<PySlice>(cell);
+        builder.append("slice("_s);
+        JSValue parts[] = { slice->start(), slice->stop(), slice->step() };
+        appendItems(globalObject, builder, 3, [&] (unsigned i) { return parts[i]; });
+        RETURN_IF_EXCEPTION(scope, { });
+        builder.append(')');
+        return builder.toString();
+    }
+    case PyTypeType:
+        return makeString("<class '"_s, qualifiedNameOfType(globalObject, uncheckedDowncast<PyType>(cell)), "'>"_s);
+    case JSFunctionType: {
+        auto* function = uncheckedDowncast<JSFunction>(cell);
+        if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
+            if (native->kind() == PyNativeFunction::Kind::Function)
+                return makeString("<built-in function "_s, function->name(vm), '>');
+            String owner = native->owner() && isType(native->owner()) ? uncheckedDowncast<PyType>(native->owner())->nameString(globalObject) : "?"_str;
+            return makeString("<method '"_s, function->name(vm), "' of '"_s, owner, "' objects>"_s);
+        }
+        return makeString("<function "_s, nameOfFunction(globalObject, function, true), " at "_s, addressOf(cell), '>');
+    }
+    case PyBoundMethodType: {
+        auto* method = uncheckedDowncast<PyBoundMethod>(cell);
+        String self = repr(globalObject, method->self());
+        RETURN_IF_EXCEPTION(scope, { });
+        if (auto* native = dynamicDowncast<PyNativeFunction>(method->function()))
+            return makeString("<built-in method "_s, native->name(vm), " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
+        String name = "?"_s;
+        if (auto* function = dynamicDowncast<JSFunction>(method->function()))
+            name = nameOfFunction(globalObject, function, true);
+        return makeString("<bound method "_s, name, " of "_s, self, '>');
+    }
+    case PyModuleType: {
+        JSValue name = uncheckedDowncast<PyModule>(cell)->namespaceObject()->getDirect(vm, vm.pythonNames().dunder_name);
+        String text = repr(globalObject, name ? name : jsUndefined());
+        RETURN_IF_EXCEPTION(scope, { });
+        return makeString("<module "_s, text, '>');
+    }
+    case JSGeneratorType:
+        return makeString("<generator object at "_s, addressOf(cell), '>');
+    default:
+        break;
+    }
+
+    if (isJSArray(cell)) {
+        auto* list = uncheckedDowncast<JSArray>(cell);
+        ReprGuard guard(cell);
+        if (guard.isRecursive())
+            return "[...]"_s;
+        builder.append('[');
+        for (unsigned i = 0; i < list->length(); ++i) {
+            if (i)
+                builder.append(", "_s);
+            String item = repr(globalObject, listGet(list, i));
+            RETURN_IF_EXCEPTION(scope, { });
+            builder.append(item);
+        }
+        builder.append(']');
+        return builder.toString();
+    }
+    if (cell == realm->notImplemented())
+        return "NotImplemented"_s;
+    if (cell == realm->ellipsis())
+        return "Ellipsis"_s;
+
+    if (type->isExceptionType()) {
+        // ValueError('message')
+        if (auto* error = dynamicDowncast<ErrorInstance>(cell)) {
+            String message = error->sanitizedMessageString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            return makeString(type->nameString(globalObject), '(', reprOfString(message), ')');
+        }
+        PyTuple* arguments = exceptionArguments(globalObject, value);
+        builder.append(type->nameString(globalObject), '(');
+        if (arguments) {
+            appendItems(globalObject, builder, arguments->length(), [&] (unsigned i) { return arguments->at(i); });
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        builder.append(')');
+        return builder.toString();
+    }
+
+    return makeString('<', qualifiedNameOfType(globalObject, type), " object at "_s, addressOf(cell), '>');
+}
+
+String repr(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded while getting the repr of an object"_s);
+        return { };
+    }
+    if (!value.isObject())
+        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
+
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_repr, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* native = dynamicDowncast<PyNativeFunction>(method); native && native->nativeFunction() == nativeRepr)
+        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
+    JSValue result = callMethod(globalObject, method, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* boxed = tryBoxedValue(result))
+        result = boxed->value();
+    if (!result.isString()) {
+        raiseTypeError(globalObject, scope, makeString("__repr__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, asString(result)->value(globalObject));
+}
+
+// BaseException.__str__
+String strOfException(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* error = dynamicDowncast<ErrorInstance>(value))
+        RELEASE_AND_RETURN(scope, error->sanitizedMessageString(globalObject));
+    PyTuple* arguments = exceptionArguments(globalObject, value);
+    if (!arguments || !arguments->length())
+        return emptyString();
+    if (arguments->length() == 1) {
+        // A key that was not found is shown as it would be written, so that '' and ' ' can be told apart.
+        if (isInstance(globalObject, value, globalObject->pyRealm()->typeKeyError()))
+            RELEASE_AND_RETURN(scope, repr(globalObject, arguments->at(0)));
+        RELEASE_AND_RETURN(scope, str(globalObject, arguments->at(0)));
+    }
+    RELEASE_AND_RETURN(scope, repr(globalObject, arguments));
+}
+
+String str(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isString())
+        RELEASE_AND_RETURN(scope, asString(value)->value(globalObject));
+    if (!value.isObject())
+        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
+
+    PyType* type = typeOf(globalObject, value);
+    JSValue method = type->lookup(vm, vm.pythonNames().dunder_str);
+    if (!method || method.asCell() == globalObject->pyRealm()->function(PyRealm::WellKnownFunction::ObjectStr))
+        RELEASE_AND_RETURN(scope, repr(globalObject, value));
+    JSValue result = call(globalObject, method, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* boxed = tryBoxedValue(result))
+        result = boxed->value();
+    if (!result.isString()) {
+        raiseTypeError(globalObject, scope, makeString("__str__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, asString(result)->value(globalObject));
+}
+
+// What int, float, str and bool do with a format specification. Empty if it is none of them.
+JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String& specificationText)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* boxed = tryBoxedValue(value))
+        value = boxed->value();
+    bool isString = value.isString();
+    Number number = classify(value);
+    if (!isString && !number)
+        return { };
+    if (specificationText.isEmpty()) {
+        String text = str(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsString(vm, text);
+    }
+    auto specification = parseFormatSpecification(globalObject, specificationText, typeName(globalObject, value));
+    RETURN_IF_EXCEPTION(scope, { });
+    String result;
+    if (isString)
+        result = formatString(globalObject, asString(value)->value(globalObject), *specification);
+    else if (number.kind == Number::Kind::Float)
+        result = formatFloat(globalObject, number.real, *specification);
+    else
+        result = formatInt(globalObject, value, *specification);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsString(vm, result);
+}
+
+JSValue format(JSGlobalObject* globalObject, JSValue value, const String& specification)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value.isObject()) {
+        JSValue result = builtinFormat(globalObject, value, specification);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return result;
+    }
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_format, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue result = callMethod(globalObject, method, self, jsString(vm, specification));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!result.isString())
+        return raiseTypeError(globalObject, scope, makeString("__format__ must return a str, not "_s, typeName(globalObject, result)));
+    return result;
+}
+
+} } // namespace JSC::Python

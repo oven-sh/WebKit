@@ -1,0 +1,29 @@
+1 1.0 6.0 2.0 3.5 6 1.0 1.0 1.0 1.0 1.5 1.4142135623730951 2.0 8.0
+<class 'int'> <class 'float'> <class 'float'> <class 'int'> <class 'bool'> <class 'int'> <class 'float'> <class 'int'>
+True True True {1: 'c'} {1.0}
+-0.0 -0.0 0 True 0.0 0.3333333333333333 1e+100 1e-07 123456789.12345679 1000000000000000.0 1e+16 inf
+9007199254740991 9007199254740992 9007199254740993 9007199254740994 81129638414606681695789005144064 1 9007199254740992 -9007199254740993 3
+9007199254740992 9007199254740991 9223372037000250000 9223372036854775808 10000000000000000000 9999999999800000000001
+15511210043330985984000000 155112 913534 26 True True 1e+20 100000000000000000000 100.0
+3 -4 -4 3 1 2 -2 -1 (-4, 1) (3.0, 1.5) -4.0 0.5
+1024 1099511627776 1267650600228229401496703205376 1024 -1 1 7 6 -6 0 0 False True
+42 -17 3 -3 255 1.5 2.0 inf -inf nan 1
+2 4 -2 2.67 0.12 1.1 1200 7 100000000000000000000 2.0
+False False True True True True True False
+True False True True True False False True
+1.5 2.0 6 1.0 3.0 3 3.5 1024 24 5050
+ZeroDivisionError division by zero
+ZeroDivisionError division by zero
+ZeroDivisionError division by zero
+ZeroDivisionError division by zero
+ZeroDivisionError zero to a negative power
+ValueError invalid literal for int() with base 10: 'x'
+ValueError could not convert string to float: 'x'
+TypeError unsupported operand type(s) for +: 'int' and 'str'
+TypeError can only concatenate str (not "int") to str
+TypeError bad operand type for unary -: 'str'
+TypeError '<' not supported between instances of 'int' and 'str'
+ValueError cannot convert float NaN to integer
+3.14    42|42   | 42  |00042 1,234,567 50.000000% ff 0xff 101 1.000e+10 1.0 2.0 0.333 100 -1.5 12,345.68
+42 s  3.14 ff 00042 42   | 'q' % 1.0 2.000 3     a|b    |
+4.0 1.4142135623730951 2 3 -3 3.141592653589793 6 2432902008176640000 15511210043330985984000000 True 1.0 5.0

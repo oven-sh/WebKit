@@ -90,6 +90,9 @@ public:
         return nullptr;
     }
 
+    Statement* parseDefinitionAlone() { return parseDefinition(); }
+    Expression* parseExpressionAlone() { return parseExpression(); }
+
 private:
     // ---- Tokens
 
@@ -3121,6 +3124,33 @@ Module* parse(VM& vm, Arena& arena, StringView source, Module::Kind kind, Vector
     Vector<Token> tokens;
     tokenize(vm, arena, source, { }, tokens, warnings, error);
     return Parser(vm, arena, tokens, error).parseModule(kind);
+}
+
+static ScanRange rangeFor(StringView source, unsigned start, unsigned end, unsigned line, bool isInsideBrackets)
+{
+    unsigned lineStart = start;
+    while (lineStart && source[lineStart - 1] != '\n' && source[lineStart - 1] != '\r')
+        --lineStart;
+    return { start, end, line, lineStart, isInsideBrackets };
+}
+
+Statement* parseDefinition(VM& vm, Arena& arena, StringView source, unsigned start, unsigned end, unsigned line)
+{
+    Vector<Token> tokens;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    tokenize(vm, arena, source, rangeFor(source, start, end, line, false), tokens, warnings, error);
+    return Parser(vm, arena, tokens, error).parseDefinitionAlone();
+}
+
+Expression* parseExpression(VM& vm, Arena& arena, StringView source, unsigned start, unsigned end, unsigned line)
+{
+    Vector<Token> tokens;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    // If it goes over more than one line it is inside brackets, and if it does not it makes no difference.
+    tokenize(vm, arena, source, rangeFor(source, start, end, line, true), tokens, warnings, error);
+    return Parser(vm, arena, tokens, error).parseExpressionAlone();
 }
 
 } } // namespace JSC::Python
