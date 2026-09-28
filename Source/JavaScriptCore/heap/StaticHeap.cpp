@@ -11,6 +11,7 @@
 #include "AbstractSlotVisitorInlines.h"
 #include "AOTProgram.h"
 #include "BuiltinNames.h"
+#include "JSBigInt.h"
 #include "BytecodeStructs.h"
 #include "CachedTypes.h"
 #include "FunctionExecutable.h"
@@ -1429,6 +1430,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 reportWhatPointsInto(start, end, { std::bit_cast<const uint32_t*>(header.factsOfFunctions), static_cast<size_t>(header.numberOfFunctions) });
         }
     }
+
+    // What a cell works out when it is first asked, and keeps: it is asked now. Nobody is going to store to it.
+    forEachCell(Region::Arena::Cells, Region::used(Region::Arena::Cells), [&](void* pointer, size_t) {
+        if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
+            bigInt->hash();
+    });
 
     if (Options::aotReportStats()) [[unlikely]] {
         dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");

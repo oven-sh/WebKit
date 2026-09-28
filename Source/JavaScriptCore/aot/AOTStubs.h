@@ -40,10 +40,47 @@ namespace AOT {
     v(CompareStrictEq) \
     v(CompareEq) \
 
+// A call of something that was found under one of these names, with as many arguments as the function of that name takes. If the
+// callee turns out to be that function, and `this` and the arguments what it has a quick way with, a stub does what the function
+// would have done. Anything else is called as anything is. For a name that more than one kind of object has a function of, which
+// of them it is goes by what `this` is.
+// The last says which calls it is for: all, those whose result is wanted, or those whose result is not.
+#define FOR_EACH_AOT_STUB_INTRINSIC(v) \
+    v(CharCodeAt, "charCodeAt", 1, Any) \
+    v(CodePointAt, "codePointAt", 1, Any) \
+    v(CharAt, "charAt", 1, Any) \
+    v(Push, "push", 1, Any) \
+    v(Pop, "pop", 0, Any) \
+    v(IsArray, "isArray", 1, Any) \
+    /* Of a Map, or a Set. What it takes to put something in that is not there is more than a stub does, and it is the */ \
+    /* function's unless nobody wants what the function returns. */ \
+    v(Get, "get", 1, Any) \
+    v(Has, "has", 1, Any) \
+    v(Set, "set", 2, Wanted) \
+    v(SetAndForget, "set", 2, NotWanted) \
+    v(Add, "add", 1, Wanted) \
+    v(AddAndForget, "add", 1, NotWanted) \
+
+enum class StubIntrinsic : uint8_t {
+    None,
+#define AOT_DEFINE_STUB_INTRINSIC(name, text, argumentCount, result) name,
+    FOR_EACH_AOT_STUB_INTRINSIC(AOT_DEFINE_STUB_INTRINSIC)
+#undef AOT_DEFINE_STUB_INTRINSIC
+    NumberOfStubIntrinsics
+};
+static constexpr unsigned numberOfStubIntrinsics = static_cast<unsigned>(StubIntrinsic::NumberOfStubIntrinsics) - 1;
+StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool resultIsWanted);
+
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
     /* pointer. Clobbers only T0-T3. */ \
     v(Prologue) \
+    /* A call, as Call is, of what may be the function that a StubIntrinsic is for: T9 = which. There is one for each, and */ \
+    /* no other way of getting here. */ \
+    v(CallIntrinsic) \
+    /* The same, but for the call itself: if it is not that function after all, nothing has been done, and this comes back */ \
+    /* two instructions further on than it was called from. */ \
+    v(TryCallIntrinsic) \
     /* See generateEnter(). */ \
     v(Enter) \
     v(EnterFunctionForCall) \

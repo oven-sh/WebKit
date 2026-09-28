@@ -56,5 +56,6 @@ JSArray* tryConcatOneArgFast(JSGlobalObject*, VM&, JSArray* firstArray, JSValue 
 inline constexpr ASCIILiteral unshiftArrayLengthExceeded { "unshift cannot produce an array of length larger than (2 ** 53) - 1"_s };
 
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPush);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
 
 } // namespace JSC

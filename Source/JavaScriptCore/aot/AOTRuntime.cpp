@@ -6,6 +6,12 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "ArrayConstructor.h"
+#include "ArrayPrototype.h"
+#include "MapPrototype.h"
+#include "SetPrototype.h"
+#include "StringPrototype.h"
+
 #include "DeferTermination.h"
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
@@ -25,9 +31,7 @@
 #include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSCInlines.h"
-#include "ArrayPrototype.h"
 #include "MathObject.h"
-#include "StringPrototype.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntSlowPaths.h"
 #include "LLIntThunks.h"
@@ -144,6 +148,16 @@ RuntimeTable::RuntimeTable(VM& vm)
     setHostFunction(Entry::HostMathIMul, mathProtoFuncIMul);
     setHostFunction(Entry::HostStringCharCodeAt, stringProtoFuncCharCodeAt);
     setHostFunction(Entry::HostArrayPush, arrayProtoFuncPush);
+    setHostFunction(Entry::HostStringCodePointAt, stringProtoFuncCodePointAt);
+    setHostFunction(Entry::HostStringCharAt, stringProtoFuncCharAt);
+    setHostFunction(Entry::HostArrayPop, arrayProtoFuncPop);
+    setHostFunction(Entry::HostArrayIsArray, arrayConstructorIsArray);
+    setHostFunction(Entry::HostMapGet, mapProtoFuncGet);
+    setHostFunction(Entry::HostMapHas, mapProtoFuncHas);
+    setHostFunction(Entry::HostMapSet, mapProtoFuncSet);
+    setHostFunction(Entry::HostSetHas, setProtoFuncHas);
+    setHostFunction(Entry::HostSetAdd, setProtoFuncAdd);
+
     installOperationFrontEnds(vm, m_entries);
 }
 

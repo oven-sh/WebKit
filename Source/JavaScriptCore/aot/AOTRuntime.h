@@ -125,6 +125,16 @@ namespace AOT {
     v(HostMathIMul) \
     v(HostStringCharCodeAt) \
     v(HostArrayPush) \
+    /* And those that a stub knows when a call gets to it (StubIntrinsic). */ \
+    v(HostStringCodePointAt) \
+    v(HostStringCharAt) \
+    v(HostArrayPop) \
+    v(HostArrayIsArray) \
+    v(HostMapGet) \
+    v(HostMapHas) \
+    v(HostMapSet) \
+    v(HostSetHas) \
+    v(HostSetAdd) \
     /* The operations that have something in front of them (AOTThunks.h). */ \
     v(RawGetById) \
     v(RawGetByVal) \

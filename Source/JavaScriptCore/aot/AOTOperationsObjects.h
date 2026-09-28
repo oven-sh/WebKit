@@ -73,6 +73,8 @@ struct Slot;
     v(operationAOTPutByValWithThis) \
     v(operationAOTPutByValDirect) \
     v(operationAOTInById) \
+    v(operationAOTMapSet) \
+    v(operationAOTSetAdd) \
     v(operationAOTInByVal) \
     v(operationAOTDelById) \
     v(operationAOTDelByVal) \
@@ -182,7 +184,11 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGetByValWithThis, EncodedJSValue, (JSGloba
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByIdWithThis, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue value, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValWithThis, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue thisValue, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByValDirect, void, (JSGlobalObject*, JSObject* base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
-JSC_DECLARE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject*, EncodedJSValue base, uint32_t identifierIndex));
+JSC_DECLARE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject*, EncodedJSValue base, uint32_t identifierIndex))
+// Map.prototype.set and Set.prototype.add of a key that is not there, for a stub that has found that out (StubIntrinsic). The key
+// is one that is its own normal form, and the hash is its hash.
+JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, void, (JSGlobalObject*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
+JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, void, (JSGlobalObject*, JSCell* set, EncodedJSValue key, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTInByVal, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelById, size_t, (JSGlobalObject*, EncodedJSValue base, uint32_t identifierIndex, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTDelByVal, size_t, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property, uint32_t isStrict));

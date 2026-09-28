@@ -20,6 +20,8 @@
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "GetterSetter.h"
+#include "JSMapInlines.h"
+#include "JSSetInlines.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
@@ -847,6 +849,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByValDirect, void, (JSGlobalObject* glob
         PutPropertySlot slot(base, isStrict);
         CommonSlowPaths::putDirectWithReify(vm, globalObject, base, key, value, slot);
     }
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTMapSet, void, (JSGlobalObject* globalObject, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    uncheckedDowncast<JSMap>(map)->addNormalized(globalObject, JSValue::decode(key), JSValue::decode(value), hash);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, void, (JSGlobalObject* globalObject, JSCell* set, EncodedJSValue key, int32_t hash))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    uncheckedDowncast<JSSet>(set)->addNormalized(globalObject, JSValue::decode(key), JSValue(), hash);
     OPERATION_RETURN(scope);
 }
 

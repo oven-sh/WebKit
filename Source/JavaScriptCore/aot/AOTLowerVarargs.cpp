@@ -194,6 +194,40 @@ void Lowering::lowerTailCall(Node* node)
     Arguments arguments = lowerArguments(node, bytecode.m_argc, bytecode.m_argv);
 
     if (usesStubs && !(Options::aotDisableFastPaths() & 128)) {
+        // What the callee was found as says what it may well be, and if it is that, there is nothing to call. If it is not, it is
+        // called as if this had not been tried: it may be counting on its caller's frame being gone.
+        LBasicBlock continuation = nullptr;
+        ValueFromBlock resultOfStub;
+        StubIntrinsic intrinsic = StubIntrinsic::None;
+        if (calleeNode->isBytecode(op_get_by_id))
+            intrinsic = stubIntrinsicFor(m_graph.codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), arguments.size(), true);
+        if (intrinsic != StubIntrinsic::None) {
+            PatchpointValue* attempt = m_out.patchpoint(m_proc.addTuple({ Int64, Int32 }));
+            attempt->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
+            appendArgumentsOfCalleeFrame(m_proc, attempt, arguments);
+            attempt->clobber(RegisterSet::macroClobberedGPRs());
+            attempt->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+            attempt->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR), ValueRep::reg(GPRInfo::regT12) };
+            attempt->setGenerator([stubCalls = &m_graph.stubCalls, intrinsic, callSiteBits = callSiteBitsOf(node)](CCallHelpers& jit, const StackmapGenerationParams&) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
+                stubCalls->call(jit, Stub::TryCallIntrinsic, static_cast<uint32_t>(intrinsic));
+                // (Each of the two is one instruction.)
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::regT12);
+                CCallHelpers::Jump done = jit.jump();
+                jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::regT12);
+                done.link(&jit);
+            });
+            LBasicBlock wasThat = m_out.newBlock();
+            LBasicBlock wasNotThat = m_out.newBlock();
+            continuation = m_out.newBlock();
+            m_out.branch(m_out.notZero32(m_out.extract(attempt, 1)), usually(wasThat), rarely(wasNotThat));
+            m_out.appendTo(wasThat, wasNotThat);
+            resultOfStub = m_out.anchor(m_out.extract(attempt, 0));
+            m_out.jump(continuation);
+            m_out.appendTo(wasNotThat);
+        }
+
         // The frame is made as for any call. If the callee turns out to be something that can be jumped to, the way out is the same
         // for every tail call of the function: put back what it saved, and let the stub move the frame.
         PatchpointValue* prepare = m_out.patchpoint(Int64);
@@ -221,7 +255,14 @@ void Lowering::lowerTailCall(Node* node)
         m_out.jump(m_tailCallBlock);
 
         m_out.appendTo(ordinaryCase);
-        setJSValue(node, emitCall(node, callee, arguments));
+        LValue result = emitCall(node, callee, arguments);
+        if (continuation) {
+            ValueFromBlock resultOfCall = m_out.anchor(result);
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            result = m_out.phi(Int64, resultOfStub, resultOfCall);
+        }
+        setJSValue(node, result);
         return;
     }
 

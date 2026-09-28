@@ -147,10 +147,17 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         uint32_t callSiteBits = callSiteBitsOf(node);
-        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        // What the callee was found as says what it may well be.
+        StubIntrinsic intrinsic = StubIntrinsic::None;
+        if (Node* calleeNode = node->use(calleeRegister); !isConstruct && calleeNode->isBytecode(op_get_by_id))
+            intrinsic = stubIntrinsicFor(m_graph.codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
+        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, intrinsic](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
+            if (intrinsic != StubIntrinsic::None)
+                stubCalls->call(jit, Stub::CallIntrinsic, static_cast<uint32_t>(intrinsic));
+            else
+                stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
             jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
         });
         if (hasResult)
