@@ -682,6 +682,8 @@ There is nothing that is per process, nothing that is set after something is mad
   which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it
   will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine. What has to be gone
   back and forth in on the way to being made, as a `str` that is not ASCII is when it is encoded, can be refused sooner than that.
+  And what is given to a call by position is put on the stack, so `f(*values)` is a `RecursionError` if there are more of them than there is stack for, which is some hundreds of thousands. That one is not meant
+  to stay: with a keyword as well, a function of Python's is given them without their going on the stack, and it should be so without.
 - **The first half of a surrogate pair followed by the second half is the pair.** `'\ud83d' + '\ude00'` is one character here and two in CPython. In code units of 16 bits there is no telling them apart, and a `str`
   is to be the same string to both languages. Nothing but a program that puts halves together by hand can tell.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
