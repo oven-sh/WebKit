@@ -70,8 +70,9 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 
 ### A class is the prototype of its instances
 
-`instance.[[Prototype]]` is the class, so `type(x)` is a load from `x`'s structure. `class.[[Prototype]]` is its first base, and beyond a
-built-in class that JavaScript has too is JavaScript's: `Array.prototype` beyond `list`, `TypeError.prototype` beyond `TypeError`.
+`instance.[[Prototype]]` is the class, so `type(x)` is a load from `x`'s structure. `class.[[Prototype]]` is what the instances of its first base have for a
+prototype: that base, or if JavaScript made it, its `prototype`. Beyond a built-in class that JavaScript has too is JavaScript's: `Array.prototype` beyond `list`,
+`TypeError.prototype` beyond `TypeError`.
 
 Python does not walk that chain. A class has its method resolution order, a tuple, and `PyType::lookup` goes through it. Nor does
 JavaScript get past the first class in it: see "What JavaScript sees".
@@ -215,8 +216,9 @@ Every kind of cell that can have attributes has these methods (`PYTHON_DECLARE_E
 
 ### What Python sees
 
-An object of JavaScript's is an instance of `JSObject`, and a function of `JSFunction`, which is derived from it. Its attributes are its properties,
-as JavaScript finds them. `obj[key]`, `len()`, `in`, iteration and `isinstance()` do what they would in JavaScript. `import js` is the global object.
+An object of JavaScript's is an instance of its class: `type(js.Map.new()) is js.Map`. All are derived from `js.Object`, and a function that is no class is
+an instance of `js.Function`. Its attributes are its properties, as JavaScript finds them. `obj[key]`, `len()`, `in`, iteration and `isinstance()` do what they
+would in JavaScript. `import js` is the global object.
 
 - `obj.f(x)` passes `obj` as `this`.
 - **A function that is got from what an object inherits from is bound to the object**, as one got from a class is in Python. One that the
@@ -224,6 +226,56 @@ as JavaScript finds them. `obj[key]`, `len()`, `in`, iteration and `isinstance()
 - **Calling a class makes an instance**, Python having no `new`. That is asked only where there was nothing left to do but throw
   (`callConstructorWithoutNew`), so no call that works pays for it. What can be both called and constructed with is called, and `.new()` constructs.
 - JavaScript's methods are not attributes of a `list` or a `str`. `hasattr(x, "keys")` is how Python tells a mapping.
+
+### A class is a class, whichever language made it
+
+**A class of either language can be derived from one of the other's, to any depth and in any order, and neither is made into anything else.**
+`class C extends B` is what it always was, a constructor and a prototype, when `B` is Python's. `class B(A)` is a class of Python's when `A` is JavaScript's.
+
+To JavaScript a class of Python's is a class: it can be called and constructed with, `C.prototype` is `C`, and it has a `name` and what functions have.
+Its `[[Construct]]` goes by `new.target`.
+
+To Python a constructor of JavaScript's is a class as it is. `type(new C) is C`, `C.__mro__` is `(C, B, A, Object, object)`, and `isinstance()`, `issubclass()`,
+`super()`, `except` and `match` take it. What has `[[Construct]]` is a class, which is JavaScript's own test. So an arrow function is not.
+
+There is as much to know about such a class as about any: its order of resolution, how its instances are laid out, what is derived from it. That is
+kept in a `PyType` that the constructor has under a private name, as a function has its `FunctionRareData`. **No program is given it.** `asType()` finds it from
+the constructor, `PyType::object()` is the way back, `isClass()` asks whether a value is a class of either kind, and `isType()` whether a cell is a `PyType`.
+`JSTests/python/interop/class-identity.py` goes through every way of coming by a class.
+
+| a class of JavaScript's | is to Python |
+|---|---|
+| a property of the prototype | an attribute of the class: both are there for the instances |
+| what is `static` | the class's and not its instances', as what a metaclass defines is |
+| `get x() {}`, `set x(v) {}` | a descriptor with `__set__` |
+| `[[Construct]]` | `__new__`: `C.__new__(cls, ...)` is `Reflect.construct(C, [...], cls)`. `__init__` does nothing |
+
+- **Where Python would pass `self` to a function found in a class, one of JavaScript's gets `this`.** So a method of a class of Python's that calls
+  `self.sound()` gets what a class of JavaScript's overrides it with.
+- **What comes to a class of Python's looking for a property looks from that class on in the order of resolution.** That is right for an ordinary lookup,
+  which has been through what comes before, and for `super.name`, which does not want it.
+- **Making an instance.** For js `A`, py `B(A)`, js `C extends B`: `new C(x)` comes to `super(x)`, which is `[[Construct]]` of `B` with `C` for `new.target`. `B` looks
+  for `__new__` from its own place in the order and finds `A`'s, which constructs with `A`, still for `C`. Then `B.__init__`, then the rest of `C`'s constructor.
+  Each is run once, whichever language asked for the instance, and whatever is derived from `C`.
+- **An instance is the kind of cell that the class at the root makes.** `class Counter(js.Map)` makes a `Map`, and `class D extends dict` a `PyDict`. A constructor
+  that is not written in JavaScript makes a kind of its own, so a class cannot be derived from `Map` and `Set`, or from `Map` and `dict`.
+- **A class of Python's is told when one of JavaScript's is derived from it**: `__set_name__` and `__init_subclass__` are called when the class has been
+  defined. That takes two checks at the end of a class definition that has `extends` (`emitTellPythonOfDerivedClass`), which cost less than could be
+  measured.
+- The metaclass's `__new__` is not run for a class of JavaScript's, there being a class already.
+
+### Operators
+
+**What an operator of JavaScript's does with something of Python's is what the same operator does in Python.** `a + b` is `a.__add__(b)` or `b.__radd__(a)`, and so
+for `- * / % ** << >> & | ^`, unary `-` and `~`, and `== != < <= > >=`. `a += b` tries `a.__iadd__(b)` first. What has no meaning raises `TypeError`.
+
+`===` is identity, `== null` asks whether there is anything there, `+` with a string concatenates, and `x++` is `x = x + 1`. A list is an `Array` and a `bytes` a
+`Uint8Array`, so for those the operators are JavaScript's, unless they are of a class derived from those that has its own.
+
+Every cell of Python's has `OverloadsOperators` in its `TypeInfo`, and `MethodTable::operate`. **There is no switch.** What the compilers may assume of an operator
+depends on the types of its operands and on nothing else. Two objects are compared by their addresses, having been checked for the flag, unless that
+check has failed there before: 0.03 to 0.06ns for each `==` of two objects, and nothing that could be measured for anything else. That an operator is
+that of a compound assignment is said in the instruction, and read only when an object that overloads it has turned up.
 
 ### Errors
 
@@ -246,8 +298,9 @@ through a bare one or `finally`.
 
 What is written in C++ goes by the class of what it is given for what kind of cell that is. But JavaScript can give anything any prototype.
 
-- What has a class for its prototype is an instance of it only if it is the kind of cell that its instances are (`typeOf`). Otherwise it is an
-  object of JavaScript's that inherits from a class, and what it inherits is what the class itself has.
+- What has a class for its prototype, or the prototype of a class of JavaScript's that is derived from one, is an instance of it only if it is the kind
+  of cell that its instances are (`typeOf`). Otherwise it is an object of JavaScript's that inherits from a class, and what it inherits is what the class
+  itself has.
 - Every `Structure` for a cell of Python's has `IsImmutablePrototypeExoticObject`. Assigning to `__class__` sets the prototype, having checked.
 - One class of Python's, one class of cell.
 
@@ -257,7 +310,8 @@ Before something is invented, how the engine already models the nearest thing is
 is. So far: another language is a `SourceProviderSourceType`, as WebAssembly is. What the host provides is in `GlobalObjectMethodTable`. What is not to
 be in a stack trace has `ImplementationVisibility::Private`. What a cached property depends on is a watchpoint set in the `PropertySlot`. An error
 with its own idea of a message uses `finishCreationForEmbedderError`. A class of cell that is all of a size has an `IsoSubspace`. An object that is
-some values and nothing else is a `JSInternalFieldObjectImpl`. A cell has no vtable, so an `Array` that behaves a little differently is an `Array`
+some values and nothing else is a `JSInternalFieldObjectImpl`. What is known about a constructor hangs off the constructor. What speculation turned out
+wrong somewhere is an exit site. A cell has no vtable, so an `Array` that behaves a little differently is an `Array`
 whose `Structure` has another `ClassInfo`.
 
 There is nothing that is per process, nothing that is set after something is made, and nothing that only the shell can do.
@@ -282,5 +336,4 @@ There is nothing that is per process, nothing that is set after something is mad
 
 ## What is not decided
 
-Threads, when objects are finalized (`__del__`, and `with`-less file handles), extension modules written for CPython's C API, what
-`class D extends C` in JavaScript makes of a class of Python's, and whether JavaScript's operators mean anything for what is Python's.
+Threads, when objects are finalized (`__del__`, and `with`-less file handles), and extension modules written for CPython's C API.
