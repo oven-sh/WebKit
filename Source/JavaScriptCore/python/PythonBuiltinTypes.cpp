@@ -1038,7 +1038,7 @@ PYTHON_NATIVE(propertyWith)
     UNUSED_PARAM(scope);
     auto* original = asNativeObject(args.at(0));
     auto* copy = PyNativeObject::create(vm, original->structure());
-    for (unsigned i = 0; i < PyNativeObject::numberOfFields; ++i)
+    for (unsigned i = 0; i < PyNativeObject::numberOfInternalFields; ++i)
         copy->setField(vm, i, i == field ? args.at(1) : original->field(i));
     return JSValue::encode(copy);
 }

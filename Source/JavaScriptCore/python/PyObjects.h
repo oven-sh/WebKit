@@ -27,6 +27,7 @@
 
 #include "ErrorInstance.h"
 #include "JSArray.h"
+#include "JSInternalFieldObjectImpl.h"
 #include "JSObject.h"
 #include "JSTypedArrays.h"
 #include "PyInstance.h"
@@ -272,24 +273,31 @@ private:
 
 // Objects with up to four values in them and nothing else, told apart by their class: property, staticmethod, classmethod, super, the
 // views of a dict, NotImplemented and Ellipsis.
-class PyNativeObject final : public JSNonFinalObject {
+class PyNativeObject final : public JSInternalFieldObjectImpl<4> {
 public:
-    PYTHON_CELL_BOILERPLATE(PyNativeObject, pyNativeObjectSpace)
-    static constexpr unsigned numberOfFields = 4;
+    using Base = JSInternalFieldObjectImpl<4>;
+
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.pyNativeObjectSpace<mode>();
+    }
+
+    DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     static PyNativeObject* create(VM&, Structure*);
     static PyNativeObject* create(JSGlobalObject*, BuiltinType, JSValue = JSValue(), JSValue = JSValue(), JSValue = JSValue(), JSValue = JSValue());
 
-    JSValue field(unsigned index) const { return m_fields[index].get(); }
-    void setField(VM& vm, unsigned index, JSValue value) { m_fields[index].set(vm, this, value); }
+    JSValue field(unsigned index) const { return internalField(index).get(); }
+    void setField(VM& vm, unsigned index, JSValue value) { internalField(index).set(vm, this, value); }
 
 private:
     PyNativeObject(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
     }
-
-    WriteBarrier<Unknown> m_fields[numberOfFields];
 };
 
 // An attribute of a built-in type that is worked out by C++: function.__name__.

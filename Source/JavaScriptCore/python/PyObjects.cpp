@@ -27,6 +27,7 @@
 #include "PyObjects.h"
 
 #include "JSCInlines.h"
+#include "JSInternalFieldObjectImplInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "PyDict.h"
 #include "PyInstance.h"
@@ -582,10 +583,8 @@ std::optional<PySlice::Indices> PySlice::indices(JSGlobalObject* globalObject, i
 template<typename Visitor>
 void PyNativeObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = uncheckedDowncast<PyNativeObject>(cell);
-    Base::visitChildren(thisObject, visitor);
-    for (auto& field : thisObject->m_fields)
-        visitor.append(field);
+    // The fields are the base's to visit.
+    Base::visitChildren(cell, visitor);
 }
 
 DEFINE_PYTHON_CELL(PyNativeObject, "object", PyNativeObjectType)
