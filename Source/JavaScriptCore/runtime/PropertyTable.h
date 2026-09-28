@@ -133,6 +133,7 @@ public:
 
     void seal();
     void freeze();
+    void fix(); // As freeze(), for objects that may have properties that native code stands behind: those go on being asked.
 
     bool isSealed() const;
     bool isFrozen() const;

@@ -565,6 +565,9 @@ public:
 
     void setStructure(VM&, Structure*);
 
+    // What it has stays as it is: nothing can be written to, redefined or deleted. It can be given more, and assigning to what
+    // inherits from it goes on working (Structure::heirsMayOverrideReadOnlyProperties()).
+    JS_EXPORT_PRIVATE void fixProperties(JSGlobalObject*);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
 

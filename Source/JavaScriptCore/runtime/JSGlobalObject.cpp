@@ -2322,6 +2322,13 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
+    // (Ahead of what follows, which would have to be told.)
+    if (Options::useImmutableIntrinsics()) [[unlikely]] {
+        makeIntrinsicsImmutable();
+        for (JSObject* prototype : { static_cast<JSObject*>(arrayIteratorPrototype), static_cast<JSObject*>(mapIteratorPrototype), static_cast<JSObject*>(setIteratorPrototype), static_cast<JSObject*>(m_stringIteratorPrototype.get()) })
+            prototype->fixProperties(this);
+    }
+
     // Detect property change.
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->next), m_arrayIteratorProtocolWatchpointSet);
     installObjectPropertyChangeAdaptiveWatchpoint(setupAdaptiveWatchpoint(this, this->arrayPrototype(), vm.propertyNames->iteratorSymbol), m_arrayIteratorProtocolWatchpointSet);
@@ -3440,6 +3447,36 @@ void JSGlobalObject::tryInstallSpeciesWatchpoint(JSObject* prototype, JSObject* 
 
     speciesWatchpoint = makeUnique<SpeciesWatchpoint>(this, speciesCondition, speciesWatchpointSet);
     speciesWatchpoint->install(vm);
+}
+
+void JSGlobalObject::makeIntrinsicsImmutable()
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    static constexpr ASCIILiteral names[] = {
+        "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
+        "Math"_s, "JSON"_s, "Reflect"_s,
+    };
+    for (ASCIILiteral name : names) {
+        Identifier identifier = Identifier::fromString(vm, name);
+        JSValue value = get(this, identifier);
+        scope.assertNoException();
+        JSObject* object = value.getObject();
+        RELEASE_ASSERT(object);
+        object->fixProperties(this);
+        JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
+        scope.assertNoException();
+        if (JSObject* prototypeObject = prototype ? prototype.getObject() : nullptr)
+            prototypeObject->fixProperties(this);
+        putDirect(vm, identifier, value, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+    }
+    m_iteratorPrototype->fixProperties(this);
+    // (Without JSObject::preventExtensions()'s way of seeing to it that no element is added, which every array would pay for. One
+    // that has no elements to begin with asks whether it may have any.)
+    JSObject* objectPrototype = this->objectPrototype();
+    Structure* oldStructure = objectPrototype->structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    objectPrototype->setStructure(vm, Structure::preventExtensionsTransition(vm, oldStructure, &deferred));
 }
 
 void JSGlobalObject::installSaneChainWatchpoints()

@@ -357,6 +357,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
     setProtectPropertyTableWhileTransitioning(false);
+    setHeirsMayOverrideReadOnlyProperties(previous->heirsMayOverrideReadOnlyProperties());
     setTransitionOffset(vm, invalidOffset);
     setMaxOffset(vm, invalidOffset);
  
@@ -915,6 +916,11 @@ Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStr
     return nonPropertyTransition(vm, structure, TransitionKind::Freeze, deferred);
 }
 
+Structure* Structure::fixPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+{
+    return nonPropertyTransition(vm, structure, TransitionKind::FixProperties, deferred);
+}
+
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     return nonPropertyTransition(vm, structure, TransitionKind::PreventExtensions, deferred);
@@ -975,7 +981,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // table, since our logic for walking the property transition chain to rematerialize the
         // table doesn't know how to take into account such wholesale edits.
 
-        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze);
+        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || transitionKind == TransitionKind::FixProperties);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
@@ -985,6 +991,8 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
+        else if (transitionKind == TransitionKind::FixProperties)
+            table->fix();
         else
             table->freeze();
 
@@ -997,7 +1005,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         checkOffset(transition->maxOffset(), transition->inlineCapacity());
     }
     
-    if (setsReadOnlyOnNonAccessorProperties(transitionKind)
+    // (That says that stores to whatever inherits from the object have something to look out for.)
+    if (transitionKind == TransitionKind::FixProperties)
+        transition->setHeirsMayOverrideReadOnlyProperties(true);
+    else if (setsReadOnlyOnNonAccessorProperties(transitionKind)
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     
@@ -1836,6 +1847,9 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::Freeze:
         kindName = "Freeze";
+        break;
+    case TransitionKind::FixProperties:
+        kindName = "FixProperties";
         break;
     case TransitionKind::BecomePrototype:
         kindName = "BecomePrototype";

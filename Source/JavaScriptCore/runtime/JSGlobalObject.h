@@ -1278,6 +1278,11 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
+    // Options::useImmutableIntrinsics(). What the objects that the language defines have when the realm is made stays as it is, and
+    // so do the variables of the global object that they are found in: a program that is compiled ahead of time can then take
+    // Math.floor or [].push for what they are. All but Object.prototype can be given more, so that what the language gets later can
+    // be added; that nothing can turn up in Object.prototype is what says that a property no object on the way has is not there.
+    JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const

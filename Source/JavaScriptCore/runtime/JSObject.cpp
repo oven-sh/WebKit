@@ -872,8 +872,11 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
         }
 
         if (hasProperty) {
-            if (attributes & PropertyAttribute::ReadOnly)
-                return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+            if (attributes & PropertyAttribute::ReadOnly) {
+                if (!structure->heirsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                    return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+                break;
+            }
             if (attributes & PropertyAttribute::Accessor) {
                 ASSERT(isValidOffset(offset));
                 // We need to make sure that we decide to cache this property before we potentially execute aribitrary JS.
@@ -2887,6 +2890,24 @@ void JSObject::seal(VM& vm)
     }
 }
 
+void JSObject::fixProperties(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    if (structure()->heirsMayOverrideReadOnlyProperties())
+        return;
+    if (hasNonReifiedStaticProperties())
+        reifyAllStaticProperties(globalObject);
+    materializeLazyOwnProperties(vm);
+    // (That leaves a dictionary, of which nobody can tell from the Structure what it does not have.)
+    if (structure()->isDictionary())
+        flattenDictionaryObject(vm);
+    Structure* oldStructure = structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    setStructure(vm, Structure::fixPropertiesTransition(vm, oldStructure, &deferred));
+    if (mayBePrototype()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+
 void JSObject::freeze(VM& vm)
 {
     if (isFrozen(vm))
@@ -3054,6 +3075,9 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(index <= MAX_ARRAY_INDEX);
+
+    if (structure()->heirsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
+        return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
 
     ensureWritable(vm);
 
@@ -3410,6 +3434,9 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES: {
         if (indexingShouldBeSparse()) {
+            // Object.prototype must not end up with somewhere to keep elements for having refused one: every array would pay for it.
+            if (structure()->heirsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
+                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             auto* arrayStorage = ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
             if (!hasSlowPutArrayStorage(indexingType())) [[likely]]
                 RELEASE_AND_RETURN(scope, putByIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, shouldThrow, arrayStorage));

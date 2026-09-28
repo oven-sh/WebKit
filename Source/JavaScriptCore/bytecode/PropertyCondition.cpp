@@ -178,6 +178,8 @@ bool PropertyCondition::isStillValidAssumingImpurePropertyWatchpoint(
         unsigned currentAttributes;
         PropertyOffset currentOffset = structure->get(structure->vm(), concurrency, uid(), currentAttributes);
         if (currentOffset != invalidOffset) {
+            if (structure->heirsMayOverrideReadOnlyProperties())
+                currentAttributes &= ~static_cast<unsigned>(PropertyAttribute::ReadOnly);
             if (currentAttributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)) {
                 dataLogLnIf(PropertyConditionInternal::verbose,
                     "Invalid because we expected not to have a setter, but we have one at offset ",

@@ -301,6 +301,7 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* fixPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -861,6 +862,12 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+#if USE(BUN_JSC_ADDITIONS)
+    // Of an object whose properties were fixed (JSObject::fixProperties()). By the book, a property that cannot be written to keeps
+    // whatever inherits it from being assigned one of its own of that name: with Object.prototype.toString read-only,
+    // Foo.prototype.toString = f fails. That is not what fixing them is for, and here it does not.
+    DEFINE_BITFIELD(bool, heirsMayOverrideReadOnlyProperties, HeirsMayOverrideReadOnlyProperties, 1, 31);
+#endif
 
     enum class StructureVariant : uint8_t {
         Normal,
