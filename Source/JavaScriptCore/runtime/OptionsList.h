@@ -178,6 +178,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotKeepsQuotes, false, Normal, "An image says what the source says wherever an error message may quote it, for a program that is built without its text."_s) \
     v(Bool, useStaticHeapInEveryVM, true, Normal, "VMs other than the first of a process refer to what is in its static heap too, and run the program's code from its image the way the first does."_s) \
     v(Unsigned, staticHeapModuleToRefuseOtherVMs, 0, Normal, "For testing: VMs other than the first load this module of the static heap (counting from one) as if it were not there."_s) \
+    v(Bool, staticHeapHasBuiltinFunctions, true, Normal, "When a program is built, the embedder's builtin functions that are linked with it are made ahead of time as its modules are."_s) \
     v(Bool, staticHeapKeepsFunctionCode, false, Normal, "When a static heap is built: the unlinked code of functions that were compiled is decoded into it, rather than left in the payload for whoever asks."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \

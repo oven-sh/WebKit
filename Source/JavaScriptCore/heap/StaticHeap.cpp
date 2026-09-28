@@ -44,7 +44,9 @@ struct StaticHeapModule {
     uint32_t keyHash;
     uint32_t keyLength;
     uint32_t keyFlags;
+    // Or, of a builtin function: its UnlinkedFunctionExecutable. Then the hash is the embedder's stamp, and there are no flags.
     uint64_t codeBlock;
+    uint64_t isBuiltinFunction;
 };
 
 struct StaticHeapTDZ {
@@ -485,7 +487,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
 }
 
 // The functions of `codeBlock`, whose source is `source`, and theirs.
-static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, uint64_t& made)
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, uint64_t& made, UnlinkedFunctionExecutable* only = nullptr)
 {
     auto make = [&](UnlinkedFunctionExecutable* unlinked) {
         if (unlinked->staticExecutable())
@@ -556,6 +558,10 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
                 makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
         }
     };
+    if (only) {
+        make(only);
+        return;
+    }
     for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
         make(codeBlock->functionDecl(i));
     for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
@@ -787,10 +793,26 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             Region::AllocationScope notInRegion(false);
                             functions = { };
                         });
-                        UnlinkedCodeBlock* codeBlock = decodeAllForStaticHeap(decoder, key, functions);
+                        bool isBuiltinFunction = entryIsOfBuiltinFunction(decoder);
+                        UnlinkedFunctionExecutable* builtinFunction = nullptr;
+                        unsigned lengthOfBuiltin = 0;
+                        unsigned stampOfBuiltin = 0;
+                        if (isBuiltinFunction) {
+                            // Without code for it there is nothing to be had from its being here.
+                            if (imageView)
+                                builtinFunction = decodeAllOfBuiltinForStaticHeap(decoder, lengthOfBuiltin, stampOfBuiltin, functions);
+                            if (builtinFunction) {
+                                static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
+                                SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(lengthOfBuiltin), 1, 1 };
+                                makeExecutables(vm, nullptr, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, numberOfExecutables, builtinFunction);
+                            }
+                        }
+                        UnlinkedCodeBlock* codeBlock = isBuiltinFunction ? nullptr : decodeAllForStaticHeap(decoder, key, functions);
                         if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
                             codeBlock = nullptr;
-                        if (!codeBlock)
+                        if (isBuiltinFunction)
+                            numberOfCodeBlocksFailed += !builtinFunction;
+                        else if (!codeBlock)
                             numberOfCodeBlocksFailed++;
                         else if (imageView) {
                             // Nothing is asked of the provider here, which is not there. It is counted as referred to, in memory that is
@@ -811,7 +833,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                                 function->leaveCodeInPayload(decoder, offsets);
                             }
                         }
-                        modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
+                        if (isBuiltinFunction)
+                            modules[i] = { sortedOffsets[i], stampOfBuiltin, lengthOfBuiltin, 0, std::bit_cast<uint64_t>(builtinFunction && builtinFunction->staticExecutable() ? builtinFunction : nullptr), true };
+                        else
+                            modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock), false };
                     }
                     // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)
                     decoder.forgetWhatWasDecoded();
@@ -1075,7 +1100,7 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
     uint32_t entryOffset = static_cast<uint32_t>(cachedBytecode.entryOffset());
     size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
-    if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
+    if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock || modules[index].isBuiltinFunction)
         return nullptr;
     auto* module = &modules[index];
     if (key.hash() != module->keyHash || key.length() != module->keyLength || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
@@ -1086,18 +1111,65 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     if (&key.source().provider() != addressOfSourceProvider(index))
         return nullptr;
 
+    ensureDecoder(vm, index, key.source().provider());
+    return std::bit_cast<UnlinkedCodeBlock*>(module->codeBlock);
+}
+
+// What is here refers to it, to say which module it is of.
+void StaticHeap::ensureDecoder(VM& vm, size_t index, SourceProvider& provider)
+{
     static NeverDestroyed<BitVector> s_hasDecoder;
     static Lock s_decodersLock;
     Locker locker { s_decodersLock };
-    auto* decoder = static_cast<Decoder*>(addressOfDecoder(index));
-    if (!s_hasDecoder->get(index)) {
-        Ref ownBytecode = CachedBytecode::create(payload, [](const void*) { }, { });
-        ownBytecode->setPayloadIsPersistent();
-        ownBytecode->setEntryOffset(entryOffset);
-        Decoder::createForStaticHeap(decoder, vm, WTF::move(ownBytecode), &key.source().provider());
-        s_hasDecoder->set(index);
+    if (s_hasDecoder->get(index))
+        return;
+    Ref ownBytecode = CachedBytecode::create(std::span<uint8_t> { std::bit_cast<uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) }, [](const void*) { }, { });
+    ownBytecode->setPayloadIsPersistent();
+    ownBytecode->setEntryOffset(std::bit_cast<const StaticHeapModule*>(s_header->modules)[index].entryOffset);
+    Decoder::createForStaticHeap(addressOfDecoder(index), vm, WTF::move(ownBytecode), &provider);
+    s_hasDecoder->set(index);
+}
+
+class PlacedStringSourceProvider final : public StringSourceProvider {
+public:
+    PlacedStringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, String&& sourceURL)
+        : StringSourceProvider(source, sourceOrigin, SourceTaintedOrigin::Untainted, WTF::move(sourceURL), TextPosition(), SourceProviderSourceType::Program)
+    {
     }
-    return std::bit_cast<UnlinkedCodeBlock*>(module->codeBlock);
+};
+
+FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
+{
+    VM& vm = globalObject->vm();
+    if (!hasExecutablesOfFunctions(vm) || BytecodeOrderRecorder::ofVM(vm))
+        return nullptr;
+    std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
+    size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
+    if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock || !modules[index].isBuiltinFunction)
+        return nullptr;
+    if (modules[index].keyHash != embedderStamp || modules[index].keyLength != text.length())
+        return nullptr;
+    if (&AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
+        return nullptr;
+
+    SourceProvider* provider = nullptr;
+    if (void* place = takePlaceForSourceProvider(vm, entryOffset, sizeof(PlacedStringSourceProvider), provider)) {
+        provider = new (NotNull, place) PlacedStringSourceProvider(text, sourceOrigin, String { sourceURL });
+        provider->setAOTModuleID(entryOffset + 1);
+        provider->becomeShareableBetweenThreads();
+        didMakeSourceProvider(place);
+    }
+    if (!provider)
+        return nullptr;
+    ensureDecoder(vm, index, *provider);
+
+    FunctionExecutable* executable = std::bit_cast<UnlinkedFunctionExecutable*>(modules[index].codeBlock)->staticExecutable();
+    // What the functions inside it are given for the executable of the code that they are all in. It is written to.
+    if (auto*& slot = topLevelExecutableOfModuleWithProvider(vm, provider); !slot) {
+        slot = standInFor(vm, executable);
+        slot->setGivesStaticExecutables();
+    }
+    return executable;
 }
 
 } // namespace JSC

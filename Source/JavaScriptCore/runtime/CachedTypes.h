@@ -392,6 +392,9 @@ private:
 // is not to be had. And the key it is for.
 // functions: each with UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks(), as it was.
 UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
+// The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
+bool entryIsOfBuiltinFunction(Decoder&);
+UnlinkedFunctionExecutable* decodeAllOfBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder&, const void* recordOfExecutable);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);
@@ -464,7 +467,7 @@ public:
     struct Result {
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
-        Vector<uint32_t> entryOffsetsOfModules; // Of those, the ones that addModule was called for: what StaticHeap::build() takes.
+        Vector<uint32_t> entryOffsetsOfModules; // Of those, what StaticHeap::build() takes.
         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover

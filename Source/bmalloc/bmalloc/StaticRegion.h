@@ -81,6 +81,7 @@ public:
     // What is where in Arena::Bss.
     static constexpr size_t offsetOfEmptyStringInBss = 0; // WTF::StringImpl::empty()
     static constexpr size_t offsetOfSymbolsInBss = 64; // JSC::Symbols
+    static constexpr size_t offsetOfEmbedderSymbolsInBss = 128 * 1024; // JSC::StaticHeap::embedderSymbols()
     // The rest is JSC::StaticHeap's. Addresses cost nothing: only what is touched is there.
     static constexpr size_t offsetOfVTablesInBss = 256 * 1024;
     static constexpr size_t offsetOfVMInBss = 1 << 20;

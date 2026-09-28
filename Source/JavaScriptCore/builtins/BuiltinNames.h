@@ -248,7 +248,7 @@ enum class Index : unsigned {
     stackPrivateName,
     Count,
 };
-static_assert(bmalloc::StaticRegion::offsetOfSymbolsInBss + static_cast<size_t>(Index::Count) * sizeof(SymbolImpl::StaticSymbolImpl) <= bmalloc::StaticRegion::offsetOfDecodersInBss);
+static_assert(bmalloc::StaticRegion::offsetOfSymbolsInBss + static_cast<size_t>(Index::Count) * sizeof(SymbolImpl::StaticSymbolImpl) <= bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss);
 
 ALWAYS_INLINE SymbolImpl::StaticSymbolImpl& at(Index index)
 {

@@ -29,6 +29,7 @@ struct FunctionInfo;
 }
 class ScriptExecutable;
 class SourceCodeKey;
+class SourceOrigin;
 class SourceProvider;
 class TDZEnvironmentLink;
 class UnlinkedCodeBlock;
@@ -97,6 +98,9 @@ public:
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
     // What decoding that would give, if it is a module of the payload that build() was given, and is the code for that key.
     static UnlinkedCodeBlock* codeFor(VM&, const SourceCodeKey&, const CachedBytecode&);
+    // Likewise what linking the result of decodeBuiltinFunction() would give, for a builtin whose entry in the payload is there,
+    // and whose source is that. Its source() is what makeSource() would have returned. Only in the realm that the program is run in.
+    JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
 
     // A cell says what it is by the place of its Structure among all Structures. The first VM of a process makes the ones it starts
@@ -124,6 +128,10 @@ public:
 
     static VM* addressOfVM() { return reinterpret_cast<VM*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVMInBss); }
     static void* addressOfGlobalObject() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfGlobalObjectInBss + sizeOfCellHeader); }
+    // For symbols of the embedder's that every VM has the same ones of, as it has JSC::Symbols: made there, in an order that does
+    // not change, what is made when a program is built can refer to them.
+    static void* addressOfEmbedderSymbols() { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss); }
+    static constexpr size_t sizeForEmbedderSymbols = bmalloc::StaticRegion::offsetOfVTablesInBss - bmalloc::StaticRegion::offsetOfEmbedderSymbolsInBss;
     static bool isMapped() { return !!s_header; }
     // The next cell that is allocated in the VM is there. It is not collected, nor destroyed; didPlaceCell(), once it is made, has
     // every collection look at it.
@@ -150,6 +158,7 @@ public:
     template<typename T> static const T* inMalloc(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Malloc) + offset); }
     // For the code of a function, which was left in the payload. `placed` is what UnlinkedFunctionExecutable::leaveCodeInPayload() was given.
     static Ref<Decoder> decoderOfWhatWasLeftInPayload(VM&, Decoder& placed);
+    static void ensureDecoder(VM&, size_t indexOfModule, SourceProvider&);
     // What the VM has got for an executable of the static heap, if it has had to: see UnlinkedFunctionExecutable::unlinkedCodeBlockFor().
     // An executable like any other, of the VM's own, for the same function as one of the static heap's: for where that one's code
     // is no good, and there is nowhere in it to put any other.

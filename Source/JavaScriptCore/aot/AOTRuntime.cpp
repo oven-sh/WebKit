@@ -211,7 +211,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     Instance* instance;
     size_t environmentsSize = 0;
     size_t size;
-    if (Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
+    if (Image::environmentsSize() && !vm.m_aotInstanceOfProgram && StaticHeap::canPlaceCellsOf(vm)) {
         // Where cells can be that the collector did not allocate.
         environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
         size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + Image::numberOfFunctionsOfImageWithEnvironments() * sizeof(Data*));

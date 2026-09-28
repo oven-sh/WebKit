@@ -5347,11 +5347,23 @@ auto CachedCodeBlock<CodeBlockType>::readTail() const -> Tail
     return tail;
 }
 
+// TEMPORARY-PAYLOAD-STATS: what a payload is made of.
+enum PayloadPart : unsigned { PartSteps, PartInstructions, PartConstantsRepresentation, PartConstants, PartIdentifiers, PartSlots, PartExtras, PartRecord, PartExpressionInfo, PartOwnMembers, NumberOfPayloadParts };
+static std::atomic<size_t> s_payloadStats[NumberOfPayloadParts];
+static std::atomic<size_t> s_payloadCodeBlocks;
+static constexpr ASCIILiteral namesOfPayloadParts[NumberOfPayloadParts] = { "metadata steps"_s, "instructions"_s, "representations of constants"_s, "constants"_s, "identifiers"_s, "slots of children"_s, "extras (handlers, jump tables, ...)"_s, "records and tails"_s, "expression info"_s, "own members"_s };
+
 template<typename CodeBlockType>
 auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockType& codeBlock) -> Record*
 {
     ptrdiff_t regionStart = encoder.currentOffset();
     Layout layout;
+    ptrdiff_t statsFrom = regionStart;
+    auto statsTo = [&](PayloadPart part) {
+        s_payloadStats[part] += encoder.currentOffset() - statsFrom;
+        statsFrom = encoder.currentOffset();
+    };
+    ++s_payloadCodeBlocks;
     auto place = [&](Array& array, unsigned count, auto&& write) {
         array.count = count;
         if (count)
@@ -5368,13 +5380,18 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             auto steps = CachedMetadataSteps::compute(metadata);
             place(layout.steps, steps.size(), [&] { return encodeArrayForTail<uint32_t>(encoder, steps); });
         }
+        statsTo(PartSteps);
         const JSInstructionStream& instructions = *codeBlock.m_instructions;
         RELEASE_ASSERT(!instructions.isBorrowed()); // a borrowed stream's bytes live in the payload being read
         place(layout.instructions, instructions.m_instructions.size(), [&] { return encodeArrayForTail<uint8_t>(encoder, instructions.m_instructions); });
+        statsTo(PartInstructions);
         place(layout.constantsSourceCodeRepresentation, codeBlock.m_constantsSourceCodeRepresentation.size(), [&] { return encodeArrayForTail<SourceCodeRepresentation>(encoder, codeBlock.m_constantsSourceCodeRepresentation); });
     }
+    statsTo(PartConstantsRepresentation);
     place(layout.constants, codeBlock.m_constantRegisters.size(), [&] { return CachedJSValuePool::encode(encoder, codeBlock.m_constantRegisters.span()); });
+    statsTo(PartConstants);
     place(layout.identifiers, codeBlock.m_identifiers.size(), [&] { return encodeArrayForTail<CachedIdentifier>(encoder, codeBlock.m_identifiers); });
+    statsTo(PartIdentifiers);
     // The children's slots are part of this block's bytes; the records they point at are written after the region.
     auto allocateSlots = [&](unsigned count) {
         auto result = encoder.malloc(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * count, alignof(CachedWriteBarrier<CachedFunctionExecutable>));
@@ -5384,6 +5401,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     };
     place(layout.functionDecls, codeBlock.m_functionDecls.size(), [&] { return allocateSlots(codeBlock.m_functionDecls.size()); });
     place(layout.functionExprs, codeBlock.m_functionExprs.size(), [&] { return allocateSlots(codeBlock.m_functionExprs.size()); });
+    statsTo(PartSlots);
     if (CachedCodeBlockExtras::isNeeded(codeBlock)) {
         layout.flags |= LayoutHasExtras;
         auto result = encoder.malloc(sizeof(CachedCodeBlockExtras), alignof(CachedCodeBlockExtras));
@@ -5392,6 +5410,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         (new (result.buffer()) CachedCodeBlockExtras())->encode(encoder, codeBlock);
     }
 
+    statsTo(PartExtras);
     VarintWriter writer;
     // The tail holds the record's own offset in the region as a varint, so its size is settled where it is placed.
     auto result = encoder.mallocPlaced(alignof(Record), [&](ptrdiff_t offset) {
@@ -5404,6 +5423,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
     static_assert(PayloadType<Record>);
     Record* record = new (result.buffer()) Record();
     writer.copyTo(record->tailBytes());
+    statsTo(PartRecord);
     encoder.deferCold([record, &encoder, &codeBlock] {
         // Position-independent, so an identical one written earlier is reused.
         auto bytes = CachedExpressionInfo::pack(codeBlock.expressionInfo());
@@ -5413,13 +5433,16 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
             at = *existing;
         else {
             auto allocation = encoder.malloc(bytes.size(), alignof(CachedExpressionInfo));
+            s_payloadStats[PartExpressionInfo] += bytes.size();
             memcpySpan(std::span { allocation.buffer(), bytes.size() }, bytes.span());
             encoder.registerArray(hash, allocation.offset(), bytes.size());
             at = allocation.offset();
         }
         record->m_expressionInfo.pointAtPayloadOffset(encoder, at);
     });
+    statsFrom = encoder.currentOffset();
     record->encodeOwnMembers(encoder, codeBlock);
+    statsTo(PartOwnMembers);
 
     auto encodeChildren = [&](const Array& slots, const auto& executables) {
         if (!slots.count)
@@ -5650,6 +5673,10 @@ public:
             return nullptr;
         return m_executable.decode(decoder);
     }
+
+    unsigned sourceLength() const { return m_sourceLength; }
+    unsigned embedderStamp() const { return m_embedderStamp; }
+    bool isWhatItIsTakenFor() const { return tag() == CachedCodeBlockTag::CachedBuiltinFunctionTag; }
 
 private:
     unsigned m_sourceLength { 0 };
@@ -6269,6 +6296,14 @@ auto BytecodeLinkEncoder::finish() -> Result
     // span is shorter than that is a miss for every module, as for a payload of one module (GenericCacheEntry::isUpToDate).
     encoder.alignCurrentPageEnd();
     uint32_t payloadSize = safeCast<uint32_t>(encoder.currentOffset());
+    if (getenv("BUN_PAYLOAD_STATS")) { // TEMPORARY-PAYLOAD-STATS
+        size_t accounted = 0;
+        for (unsigned part = 0; part < NumberOfPayloadParts; ++part) {
+            dataLogLn("PAYLOAD: ", namesOfPayloadParts[part], ": ", s_payloadStats[part].load());
+            accounted += s_payloadStats[part].load();
+        }
+        dataLogLn("PAYLOAD: everything else (executables, heads of modules, symbol tables, padding): ", payloadSize - accounted, "; ", payloadSize, " in all, ", s_payloadCodeBlocks.load(), " code blocks");
+    }
     for (auto& module : m_impl->modules)
         *module.entry->payloadSizeSlot() = payloadSize;
 #if ENABLE(FTL_JIT)
@@ -6285,7 +6320,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.functionsWithoutName = encoder.functionsWithoutName();
     for (auto& module : m_impl->modules) {
         result.entryOffsets.append(module.entryOffset);
-        if (module.root->classInfo() != UnlinkedFunctionExecutable::info())
+        if (module.root->classInfo() != UnlinkedFunctionExecutable::info() || Options::staticHeapHasBuiltinFunctions())
             result.entryOffsetsOfModules.append(module.entryOffset);
     }
     m_impl->modules.clear();
@@ -6414,34 +6449,58 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+static void decodeAllInsideForStaticHeap(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
 {
-    VM& vm = decoder.vm();
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
-    std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
-    if (!cachedEntry->decode(decoder, entry) || !entry.second)
-        return nullptr;
-    key = entry.first;
-    Vector<UnlinkedCodeBlock*> worklist { entry.second };
+    Vector<UnlinkedCodeBlock*> worklist;
+    auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
+        if (executable->isCached()) {
+            bmalloc::StaticRegion::AllocationScope notInRegion(false);
+            functions.append({ executable, executable->offsetsOfCachedCodeBlocks() });
+        }
+        auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
+        if (forCall)
+            worklist.append(forCall);
+        if (forConstruct)
+            worklist.append(forConstruct);
+    };
+    if (codeBlockOrNull)
+        worklist.append(codeBlockOrNull);
+    if (functionOrNull)
+        decodeFunction(functionOrNull);
     while (!worklist.isEmpty()) {
         UnlinkedCodeBlock& codeBlock = *worklist.takeLast();
-        auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
-            if (executable->isCached()) {
-                bmalloc::StaticRegion::AllocationScope notInRegion(false);
-                functions.append({ executable, executable->offsetsOfCachedCodeBlocks() });
-            }
-            auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
-            if (forCall)
-                worklist.append(forCall);
-            if (forConstruct)
-                worklist.append(forConstruct);
-        };
         for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
             decodeFunction(codeBlock.functionDecl(i));
         for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
             decodeFunction(codeBlock.functionExpr(i));
     }
+}
+
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+{
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
+    std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
+    if (!cachedEntry->decode(decoder, entry) || !entry.second)
+        return nullptr;
+    key = entry.first;
+    decodeAllInsideForStaticHeap(decoder.vm(), entry.second, nullptr, functions);
     return entry.second;
+}
+
+bool entryIsOfBuiltinFunction(Decoder& decoder)
+{
+    return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->isWhatItIsTakenFor();
+}
+
+UnlinkedFunctionExecutable* decodeAllOfBuiltinForStaticHeap(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions)
+{
+    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
+    sourceLength = entry->sourceLength();
+    embedderStamp = entry->embedderStamp();
+    UnlinkedFunctionExecutable* executable = entry->decode(decoder, sourceLength, embedderStamp);
+    if (executable)
+        decodeAllInsideForStaticHeap(decoder.vm(), nullptr, executable, functions);
+    return executable;
 }
 
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder& decoder, const void* record)
