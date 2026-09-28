@@ -572,9 +572,7 @@ void DateCache::timeZoneCacheSlow()
     auto* cache = new OpaqueICUTimeZone;
     cache->m_canonicalTimeZone = canonical;
     UErrorCode status = U_ZERO_ERROR;
-    // UCAL_DEFAULT would have ICU find the calendar that the root locale's region prefers, which is this one,
-    // and that loads the likely subtags data.
-    cache->m_calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(upconverted, timeZoneView.length(), "", UCAL_GREGORIAN, &status));
+    cache->m_calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(upconverted, timeZoneView.length(), "", UCAL_DEFAULT, &status));
     ASSERT_UNUSED(status, U_SUCCESS(status));
     ucal_setGregorianChange(cache->m_calendar.get(), minECMAScriptTime, &status); // Ignore "unsupported" error.
     m_timeZoneCache = std::unique_ptr<OpaqueICUTimeZone, OpaqueICUTimeZoneDeleter>(cache);

@@ -40,10 +40,15 @@ using TimeZoneID = unsigned;
 // ever assigned this value.
 inline constexpr TimeZoneID offsetTimeZoneID = std::numeric_limits<TimeZoneID>::max();
 
-// The time zone table starts out with "UTC".
-inline constexpr TimeZoneID utcTimeZoneID()
+extern JS_EXPORT_PRIVATE TimeZoneID utcTimeZoneIDStorage;
+JS_EXPORT_PRIVATE TimeZoneID utcTimeZoneIDSlow();
+
+inline TimeZoneID utcTimeZoneID()
 {
-    return 0;
+    unsigned value = utcTimeZoneIDStorage;
+    if (value == std::numeric_limits<TimeZoneID>::max())
+        return utcTimeZoneIDSlow();
+    return value;
 }
 
 // Look up the as-stored, case-normalized identifier for a TimeZoneID. For Backward-link
