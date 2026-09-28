@@ -297,7 +297,7 @@ void PyType::setAttribute(VM& vm, PropertyName name, JSValue value)
 {
     auto& names = vm.pythonNames();
     Python::putStoredAttribute(vm, this, name, value);
-    ++names.typeEpoch;
+    attributeDidChange(vm, name);
     if (name == names.dunder_getattribute || name == names.dunder_setattr || name == names.dunder_delattr || Python::isDataDescriptor(globalObject(), value))
         instanceAccessMayHaveChanged(vm);
 }
@@ -306,15 +306,30 @@ bool PyType::deleteAttribute(VM& vm, JSGlobalObject* globalObject, PropertyName 
 {
     if (!lookupOwn(vm, name))
         return false;
-    ++vm.pythonNames().typeEpoch;
+    attributeDidChange(vm, name);
     return Python::deleteStoredAttribute(globalObject, this, name);
+}
+
+void PyType::attributeDidChange(VM& vm, PropertyName name)
+{
+    auto& names = vm.pythonNames();
+    if (name == names.dunder_getattribute || name == names.dunder_getattr || name == names.dunder_setattr || name == names.dunder_delattr)
+        forgetHooks();
+}
+
+void PyType::forgetHooks()
+{
+    m_knowsHooks = false;
+    // What is derived from it may have it from it.
+    for (PyType* subclass : subclasses())
+        subclass->forgetHooks();
 }
 
 unsigned PyType::hooks(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
-    if (m_hooksEpoch == names.typeEpoch) [[likely]]
+    if (m_knowsHooks) [[likely]]
         return m_flags & hookFlags;
 
     using Function = PyRealm::WellKnownFunction;
@@ -330,7 +345,7 @@ unsigned PyType::hooks(JSGlobalObject* globalObject)
     if (!isOneOf(lookup(vm, names.dunder_setattr), Function::ObjectSetAttr, Function::TypeSetAttr) || !isOneOf(lookup(vm, names.dunder_delattr), Function::ObjectDelAttr, Function::TypeDelAttr))
         flags |= HasCustomSetAttr;
     m_flags = (m_flags & ~hookFlags) | flags;
-    m_hooksEpoch = names.typeEpoch;
+    m_knowsHooks = true;
     return flags;
 }
 

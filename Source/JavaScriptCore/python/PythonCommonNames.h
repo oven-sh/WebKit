@@ -85,12 +85,6 @@ struct CommonNames {
     const Identifier globals; // ".globals"
     const Identifier builtins; // ".builtins"
 
-    // Goes up whenever an attribute of any class is set or deleted. What is remembered about a class is good for as long as it stays.
-    unsigned typeEpoch { 1 };
-
-    // What was wrong with the last piece of code that would not compile. JavaScriptCore's own way of saying so has no room for all of it.
-    SyntaxError lastSyntaxError;
-
     // The signature that is written so, taken apart. There is one, for as long as the VM lasts.
     const NativeSignature* signatureFor(ASCIILiteral);
 

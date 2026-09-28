@@ -30,6 +30,7 @@
 #include "ExceptionHelpers.h"
 #include "JSGlobalObject.h"
 #include "ParserTokens.h"
+#include "PythonSyntaxError.h"
 #include "SourceCode.h"
 #include <JavaScriptCore/ErrorInstance.h>
 #include <wtf/text/WTFString.h>
@@ -81,7 +82,18 @@ public:
     {
     }
 
+    // What is wrong with a piece of Python. There is more to say of that than there is room for otherwise, and it is Python that says it.
+    explicit ParserError(const Python::SyntaxError& error)
+        : m_message(error.message)
+        , m_line(error.line)
+        , m_type(SyntaxError)
+        , m_syntaxErrorType(SyntaxErrorIrrecoverable)
+        , m_pythonError(error)
+    {
+    }
+
     bool isValid() const { return m_type != ErrorNone; }
+    const std::optional<Python::SyntaxError>& pythonError() const LIFETIME_BOUND { return m_pythonError; }
     SyntaxErrorType syntaxErrorType() const { return m_syntaxErrorType; }
     const JSToken& token() const LIFETIME_BOUND { return m_token; }
     const String& message() const LIFETIME_BOUND { return m_message; }
@@ -125,6 +137,7 @@ private:
     int m_line { -1 };
     ErrorType m_type;
     SyntaxErrorType m_syntaxErrorType;
+    std::optional<Python::SyntaxError> m_pythonError;
 };
 
 } // namespace JSC

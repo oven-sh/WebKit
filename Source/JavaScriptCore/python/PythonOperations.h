@@ -225,6 +225,8 @@ JSObject* tryModule(JSGlobalObject*, JSValue);
 // import name, as the statement does it. `fromList` is None or a tuple of names.
 JS_EXPORT_PRIVATE JSValue importModule(JSGlobalObject*, JSObject* globals, const String& name, JSValue fromList, unsigned level, bool wantsLeaf);
 void registerModule(JSGlobalObject*, const String& name, JSValue module);
+// The source in a file. Null, with nothing raised, if it cannot be read.
+SourceCode readSourceIfPresent(JSGlobalObject*, const String& path);
 // The module that a file is, which is run if it has not been. For a module that is asked for by where it is: JavaScript's `import`.
 JSValue importModuleFromSource(JSGlobalObject*, const SourceCode&);
 // The same, as what a module of JavaScript's can import: each of its global variables by name, and itself as the default.

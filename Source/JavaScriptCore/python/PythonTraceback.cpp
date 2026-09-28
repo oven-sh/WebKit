@@ -362,6 +362,107 @@ static void appendTraceback(JSGlobalObject* globalObject, StringBuilder& builder
     }
 }
 
+// For a SyntaxError, where in the source it is, which is not where it was raised: the file and the line, the text of the line, and under that what part
+// of it. This is TracebackException._format_syntax_error() of CPython's Lib/traceback.py. What is left to say is then its message alone, with the name
+// of the file if there was no line to give with it, which this returns. Null if it is not a SyntaxError.
+static String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& builder, JSValue exception)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!isInstance(globalObject, exception, globalObject->pyRealm()->typeSyntaxError()))
+        return { };
+    auto attribute = [&] (ASCIILiteral name) -> JSValue {
+        JSValue value = getAttributeIfPresent(globalObject, exception, Identifier::fromString(vm, name));
+        if (scope.exception()) {
+            scope.clearException();
+            return jsUndefined();
+        }
+        return value ? value : jsUndefined();
+    };
+    auto text = [&] (JSValue value) -> String {
+        String result = str(globalObject, value);
+        if (scope.exception()) {
+            scope.clearException();
+            return "<exception str() failed>"_s;
+        }
+        return result;
+    };
+    auto isTruthy = [&] (JSValue value) {
+        bool result = isTrue(globalObject, value);
+        scope.clearException();
+        return result;
+    };
+
+    JSValue filename = attribute("filename"_s);
+    JSValue line = attribute("lineno"_s);
+    String suffix = emptyString();
+    if (!isNone(line))
+        builder.append("  File \""_s, isTruthy(filename) ? text(filename) : String("<string>"_s), "\", line "_s, text(line), '\n');
+    else if (!isNone(filename))
+        suffix = makeString(" ("_s, text(filename), ')');
+
+    JSValue textValue = attribute("text"_s);
+    if (textValue.isString()) {
+        // Lengths and offsets are in characters, so this goes by those.
+        Vector<char32_t> whole;
+        for (char32_t c : StringView(asString(textValue)->value(globalObject).data).codePoints())
+            whole.append(c);
+        size_t end = whole.size();
+        while (end && whole[end - 1] == '\n')
+            --end;
+        size_t start = 0;
+        while (start < end && (whole[start] == ' ' || whole[start] == '\n' || whole[start] == '\f'))
+            ++start;
+        auto stripped = whole.span().subspan(start, end - start);
+        int64_t spaces = start;
+        int64_t rightStrippedLength = end;
+        auto appendLine = [&] {
+            builder.append("    "_s);
+            for (char32_t c : stripped)
+                builder.append(c);
+            builder.append('\n');
+        };
+
+        JSValue offsetValue = attribute("offset"_s);
+        if (isNone(offsetValue))
+            appendLine();
+        else if (auto given = isInt(offsetValue) ? tryInt64(offsetValue) : std::nullopt) {
+            int64_t offset = *given;
+            int64_t endOffset = rightStrippedLength + 1;
+            JSValue endLine = attribute("end_lineno"_s);
+            bool isOnOneLine = isEqual(globalObject, line, endLine);
+            scope.clearException();
+            if (isOnOneLine) {
+                JSValue endOffsetValue = attribute("end_offset"_s);
+                auto givenEnd = isInt(endOffsetValue) ? tryInt64(endOffsetValue) : std::nullopt;
+                endOffset = givenEnd && *givenEnd ? *givenEnd : offset;
+            }
+            int64_t wholeLength = whole.size();
+            if (wholeLength && offset > wholeLength)
+                offset = rightStrippedLength + 1;
+            if (wholeLength && endOffset > wholeLength)
+                endOffset = rightStrippedLength + 1;
+            if (offset >= endOffset || endOffset < 0)
+                endOffset = offset + 1;
+            // From counting from one in the whole line to counting from zero in what is left of it.
+            int64_t column = offset - 1 - spaces;
+            int64_t endColumn = endOffset - 1 - spaces;
+            appendLine();
+            if (column >= 0) {
+                builder.append("    "_s);
+                // A tab is kept, so that what is under it lines up.
+                for (int64_t i = 0; i < column && i < static_cast<int64_t>(stripped.size()); ++i)
+                    builder.append(u_isUWhiteSpace(stripped[i]) ? stripped[i] : U' ');
+                for (int64_t i = column; i < endColumn; ++i)
+                    builder.append('^');
+                builder.append('\n');
+            }
+        }
+    }
+    JSValue message = attribute("msg"_s);
+    return makeString(isTruthy(message) ? text(message) : String("<no detail available>"_s), suffix);
+}
+
 static void appendException(JSGlobalObject* globalObject, StringBuilder& builder, JSValue exception, Vector<JSCell*, 8>& seen)
 {
     VM& vm = globalObject->vm();
@@ -386,7 +487,9 @@ static void appendException(JSGlobalObject* globalObject, StringBuilder& builder
 
     PyType* type = typeOf(globalObject, exception);
     String name = qualifiedNameOfType(globalObject, type);
-    String message = str(globalObject, exception);
+    String message = object ? appendSyntaxErrorLocation(globalObject, builder, exception) : String();
+    if (message.isNull())
+        message = str(globalObject, exception);
     if (scope.exception()) {
         scope.clearException();
         message = "<exception str() failed>"_s;

@@ -181,6 +181,8 @@ private:
 
     void addSubclass(PyType*);
     void instanceAccessMayHaveChanged(VM&);
+    void attributeDidChange(VM&, PropertyName);
+    void forgetHooks();
 
     WriteBarrier<PyType> m_metatype;
     WriteBarrier<PyType> m_base;
@@ -198,7 +200,7 @@ private:
     unsigned long m_flagsForPython { 0 };
     ErrorType m_errorType { ErrorType::Error };
     unsigned m_flags { 0 };
-    unsigned m_hooksEpoch { 0 }; // CommonNames::typeEpoch when hookFlags were worked out.
+    bool m_knowsHooks { false }; // Whether hookFlags are as they would be worked out to be.
 };
 
 inline bool isType(JSValue value) { return value.isCell() && value.asCell()->type() == PyTypeType; }

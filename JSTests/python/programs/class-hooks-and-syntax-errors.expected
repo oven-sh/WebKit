@@ -1,0 +1,30 @@
+nothing => [('Base', '-', 'set'), ('Mid', '-', 'set'), ('Leaf', '-', 'set'), ('Other', '-', 'set'), ('Both', '-', 'set')]
+__getattr__ on Mid => [('Base', '-', 'set'), ('Mid', 'mid', 'set'), ('Leaf', 'mid', 'set'), ('Other', '-', 'set'), ('Both', 'mid', 'set')]
+__getattr__ on Base too => [('Base', 'base', 'set'), ('Mid', 'mid', 'set'), ('Leaf', 'mid', 'set'), ('Other', 'base', 'set'), ('Both', 'mid', 'set')]
+Mid's deleted => [('Base', 'base', 'set'), ('Mid', 'base', 'set'), ('Leaf', 'base', 'set'), ('Other', 'base', 'set'), ('Both', 'base', 'set')]
+Base's deleted => [('Base', '-', 'set'), ('Mid', '-', 'set'), ('Leaf', '-', 'set'), ('Other', '-', 'set'), ('Both', '-', 'set')]
+on a second base => [('Base', '-', 'set'), ('Mid', '-', 'set'), ('Leaf', '-', 'set'), ('Other', '-', 'set'), ('Both', 'mixin', 'set')]
+__setattr__ on Base => [('Base', '-', 'hooked'), ('Mid', '-', 'hooked'), ('Leaf', '-', 'hooked'), ('Other', '-', 'hooked'), ('Both', '-', 'hooked')]
+Leaf takes object's back => [('Base', '-', 'hooked'), ('Mid', '-', 'hooked'), ('Leaf', '-', 'set'), ('Other', '-', 'hooked'), ('Both', '-', 'set')]
+both deleted => [('Base', '-', 'set'), ('Mid', '-', 'set'), ('Leaf', '-', 'set'), ('Other', '-', 'set'), ('Both', '-', 'set')]
+__getattribute__ on Base => [('Base', 'all', 'set'), ('Mid', 'all', 'set'), ('Leaf', 'all', 'set'), ('Other', 'all', 'set'), ('Both', 'all', 'set')]
+deleted => [('Base', '-', 'set'), ('Mid', '-', 'set'), ('Leaf', '-', 'set'), ('Other', '-', 'set'), ('Both', '-', 'set')]
+__delattr__ => [('Base', 'deleted'), ('Mid', 'kept'), ('Leaf', 'kept'), ('Other', 'deleted'), ('Both', 'kept')]
+__delattr__ refuses !! AttributeError no deleting
+and no more => (None, False)
+by setattr() => [('Base', 'by setattr', 'set'), ('Mid', 'by setattr', 'set'), ('Leaf', 'by setattr', 'set'), ('Other', 'by setattr', 'set'), ('Both', 'by setattr', 'set')]
+by type.__setattr__ => [('Base', '-', 'set'), ('Mid', 'by type.__setattr__', 'set'), ('Leaf', 'by type.__setattr__', 'set'), ('Other', '-', 'set'), ('Both', 'by type.__setattr__', 'set')]
+a class made afterwards => late
+metaclass none => -
+metaclass hook => ('meta', '-')
+metaclass gone => -
+'def f(:\n  pass' SyntaxError invalid syntax 1 7 1 8 'def f(:\n'
+'if 1:\nx' IndentationError expected an indented block after 'if' statement on line 1 2 1 2 2 'x\n'
+'def f():\n  x = 1\n  global x' SyntaxError name 'x' is assigned to before global declaration 3 3 3 11 None
+'def f():\n  def g():\n    nonlocal zz' SyntaxError no binding for nonlocal 'zz' found 3 5 3 16 None
+'class C:\n  return 1' SyntaxError 'return' outside function 2 3 2 11 None
+'def f():\n  def g():\n    break' SyntaxError 'break' outside loop 3 5 3 10 None
+'async def f():\n  def g():\n    await x\n' SyntaxError 'await' outside async function 3 5 3 12 None
+'def f(a, a): pass' SyntaxError duplicate argument 'a' in function definition 1 10 1 11 None
+'def f():\n  for i in range(3):\n    def g():\n      continue' SyntaxError 'continue' not properly in loop 4 7 4 15 None
+'def f():\n    from x import *' SyntaxError import * only allowed at module level 2 19 2 20 None

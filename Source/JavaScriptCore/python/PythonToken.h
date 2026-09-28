@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "PythonSyntaxError.h"
 #include "Identifier.h"
 #include <wtf/text/WTFString.h>
 
@@ -186,20 +187,6 @@ struct Token {
 };
 
 ASCIILiteral NODELETE tokenKindName(TokenKind);
-
-struct SyntaxError {
-    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError };
-
-    explicit operator bool() const { return !message.isNull(); }
-
-    Kind kind { Kind::SyntaxError };
-    bool isUnclosedBracket { false }; // The source ended before a bracket was closed. `line` is where it was opened.
-    String message;
-    unsigned line { 0 };
-    unsigned column { 0 };
-    unsigned endLine { 0 };
-    unsigned endColumn { 0 };
-};
 
 // SyntaxWarning, which is for whoever asked for the compilation to issue.
 struct SyntaxWarning {

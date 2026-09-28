@@ -44,11 +44,6 @@
 
 namespace JSC { namespace Python {
 
-static ParserError toParserError(const SyntaxError& error)
-{
-    return ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), error.message, error.line);
-}
-
 UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& source, CodeSpecializationKind kind, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
 {
     const FunctionInfo* info = executable->pythonInfo();
@@ -103,8 +98,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         // Only a module can fail here. All that is in it was parsed along with it.
         if (!syntaxError)
             syntaxError.message = makeString("internal error: '"_s, info->name.string(), "' on line "_s, info->line, " was Python and is Python no more"_s);
-        error = toParserError(syntaxError);
-        vm.pythonNames().lastSyntaxError = syntaxError;
+        error = ParserError(syntaxError);
         return nullptr;
     }
     Block* block = table->blockFor(blockKey);
@@ -116,21 +110,28 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     ParserArena parserArena;
     auto node = makeUnique<ScopeNode>(parserArena, source, arena, *table, *block, *info, root);
     error = BytecodeGenerator::generate(vm, node.get(), source, result, codeGenerationMode, nullptr, nullptr, nullptr);
-    if (node->error()) {
-        error = toParserError(node->error());
-        vm.pythonNames().lastSyntaxError = node->error();
-    }
+    if (node->error())
+        error = ParserError(node->error());
     if (error.isValid())
         return nullptr;
     return result;
 }
 
-static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope, const SyntaxError& error, const SourceCode& source)
+// What is wrong is found either in taking the source apart, or afterwards in what came of that.
+enum class FoundIn : uint8_t { Parsing, WhatWasParsed };
+
+static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope, const SyntaxError& error, const SourceCode& givenSource, FoundIn foundIn)
 {
     VM& vm = globalObject->vm();
     BuiltinType type = error.kind == SyntaxError::Kind::SyntaxError ? BuiltinType::SyntaxError : error.kind == SyntaxError::Kind::IndentationError ? BuiltinType::IndentationError : BuiltinType::TabError;
-    // The line that it is on, as it is in the source.
-    StringView text = source.provider()->source();
+    // The line that it is on. While the source is being taken apart it is at hand. Afterwards CPython has it no more, and looks in the file that it is
+    // said to be from, if there is such a file. So there is no line for what compile() was given with a name that was made up.
+    SourceCode source = givenSource;
+    if (foundIn == FoundIn::WhatWasParsed) {
+        source = readSourceIfPresent(globalObject, givenSource.provider()->sourceURL());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    StringView text = source.isNull() ? StringView() : source.provider()->source();
     unsigned lineStart = 0;
     for (unsigned line = 1; line < error.line && lineStart < text.length(); ++lineStart) {
         if (text[lineStart] == '\n')
@@ -139,11 +140,16 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     unsigned lineEnd = lineStart;
     while (lineEnd < text.length() && text[lineEnd] != '\n')
         ++lineEnd;
-    if (lineEnd < text.length())
+    bool endsLine = lineEnd < text.length();
+    if (endsLine)
         ++lineEnd;
-    JSValue lineText = error.line ? JSValue(jsString(vm, text.substring(lineStart, lineEnd - lineStart).toString())) : jsUndefined();
+    JSValue lineText = jsUndefined();
+    if (error.line && !source.isNull() && (lineStart < text.length() || foundIn == FoundIn::Parsing)) {
+        // What is taken apart always ends with the end of a line, which is added if it is not there.
+        lineText = jsString(vm, makeString(text.substring(lineStart, lineEnd - lineStart), !endsLine && foundIn == FoundIn::Parsing ? "\n"_s : ""_s));
+    }
 
-    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, source.provider()->sourceURL()), jsNumber(error.line), jsNumber(error.column + 1), lineText, jsNumber(error.endLine), jsNumber(error.endColumn + 1) });
+    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(error.column + 1), lineText, jsNumber(error.endLine), jsNumber(error.endColumn + 1) });
     JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), jsString(vm, error.message), details);
     RETURN_IF_EXCEPTION(scope, { });
     throwException(globalObject, scope, exception);
@@ -347,16 +353,15 @@ SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> byt
 }
 
 // Compiles a function and all that is in it. Python says what is wrong anywhere in a file before it runs any of it, and some of what can be
-// wrong is only found by generating code. False if something is, and then it is in lastSyntaxError.
-static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource)
+// wrong is only found by generating code. False if something is, and then `error` says what.
+static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error)
 {
     SourceCode source = executable->linkedSourceCode(parentSource);
-    ParserError error;
     UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
     if (!codeBlock)
         return false;
     for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i) {
-        if (!generateAll(vm, codeBlock->functionExpr(i), source))
+        if (!generateAll(vm, codeBlock->functionExpr(i), source, error))
             return false;
     }
     return true;
@@ -380,7 +385,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         if (module)
             table = SymbolTable::build(vm, arena, *module, inheritedFutureFeatures, error);
         if (!table) {
-            raiseSyntaxError(globalObject, scope, error, source);
+            raiseSyntaxError(globalObject, scope, error, source, module ? FoundIn::WhatWasParsed : FoundIn::Parsing);
             return nullptr;
         }
         futureFeatures = table->futureFeatures();
@@ -406,8 +411,13 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     auto* unlinked = UnlinkedFunctionExecutable::create(vm, source, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     unlinked->setPythonInfo(WTF::move(info));
 
-    if (!generateAll(vm, unlinked, source)) {
-        raiseSyntaxError(globalObject, scope, vm.pythonNames().lastSyntaxError, source);
+    ParserError error;
+    if (!generateAll(vm, unlinked, source, error)) {
+        // Anything else that can go wrong with generating code is the engine's to say.
+        if (error.pythonError())
+            raiseSyntaxError(globalObject, scope, *error.pythonError(), source, FoundIn::WhatWasParsed);
+        else
+            throwException(globalObject, scope, error.toErrorObject(globalObject, source));
         return nullptr;
     }
     return unlinked->link(vm, nullptr, source);

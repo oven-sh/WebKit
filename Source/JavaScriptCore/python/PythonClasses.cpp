@@ -330,8 +330,6 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     // What says when two of them are equal, and not what their hash is, cannot be hashed.
     if (type->lookupOwn(vm, names.dunder_eq) && !type->lookupOwn(vm, names.dunder_hash))
         type->putDirect(vm, names.dunder_hash, jsUndefined());
-    ++names.typeEpoch;
-
     callSetNames(globalObject, type, namespaceDict);
     RETURN_IF_EXCEPTION(scope, { });
 

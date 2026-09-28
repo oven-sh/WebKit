@@ -630,6 +630,22 @@ static JSValue loadAndRegister(JSGlobalObject* globalObject, const String& fullN
 
 // The source in a file, read as any Python program would read it: with what the host provides as the module posix. Null, with nothing
 // raised, if there is no such file.
+static SourceCode readSource(JSGlobalObject*, const String& path);
+
+SourceCode readSourceIfPresent(JSGlobalObject* globalObject, const String& path)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SourceCode source = readSource(globalObject, path);
+    // Whatever is the matter with it, there is no reading it, and whoever asks has something else to say.
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return { };
+        return { };
+    }
+    return source;
+}
+
 static SourceCode readSource(JSGlobalObject* globalObject, const String& path)
 {
     VM& vm = globalObject->vm();
