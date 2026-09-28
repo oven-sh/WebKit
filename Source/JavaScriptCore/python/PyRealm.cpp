@@ -120,6 +120,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeAnnotations(globalObject);
+    Python::initializeGenericAliasAndUnion(globalObject);
     Python::initializeTracebackTypes(globalObject);
     Python::initializeJavaScriptTypes(globalObject);
     static constexpr BuiltinType publicTypes[] = {
@@ -128,7 +129,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
         BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed,
     };
     auto publish = [&] (PyType* type) {
-        builtins->putDirect(vm, Identifier::fromString(vm, type->nameString(globalObject)), type);
+        builtins->putDirect(vm, Identifier::fromString(vm, type->nameWithoutModule(globalObject)), type);
     };
     for (BuiltinType type : publicTypes)
         publish(this->type(type));
@@ -160,7 +161,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     for (auto& type : m_types) {
         if (type->getDirect(vm, vm.pythonNames().dunder_doc))
             continue;
-        auto* description = Python::findTypeDescription(type->nameString(globalObject));
+        auto* description = Python::findTypeDescription(type->nameWithoutModule(globalObject));
         type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
     }
     Python::initializeLibrary(globalObject);

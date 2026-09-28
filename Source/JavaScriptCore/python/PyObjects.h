@@ -277,6 +277,7 @@ private:
 class PyNativeObject final : public JSInternalFieldObjectImpl<4> {
 public:
     using Base = JSInternalFieldObjectImpl<4>;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -294,6 +295,9 @@ public:
 
     JSValue field(unsigned index) const { return internalField(index).get(); }
     void setField(VM& vm, unsigned index, JSValue value) { internalField(index).set(vm, this, value); }
+
+    // It can be called if its class has __call__: a staticmethod, list[int].
+    static CallData getCallData(JSCell*);
 
 private:
     PyNativeObject(VM& vm, Structure* structure)

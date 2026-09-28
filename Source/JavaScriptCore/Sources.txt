@@ -757,6 +757,7 @@ python/PythonCompiler.cpp
 python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
 python/PythonGenerators.cpp
+python/PythonGenericAlias.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
 python/PythonModules.cpp

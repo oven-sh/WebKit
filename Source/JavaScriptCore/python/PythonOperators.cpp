@@ -1267,6 +1267,9 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self, key));
 
     if (isClass(base)) {
+        // type[int], which is not to make every class that has type for its class generic.
+        if (base == globalObject->pyRealm()->typeType())
+            return newGenericAlias(globalObject, base, key);
         // list[int]
         JSValue classGetItem = getAttributeIfPresent(globalObject, base, names.dunder_class_getitem);
         RETURN_IF_EXCEPTION(scope, { });

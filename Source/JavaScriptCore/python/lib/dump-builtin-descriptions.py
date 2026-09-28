@@ -84,7 +84,7 @@ def examples():
         type(generator).__dict__["__globals__"], dict.__dict__["fromkeys"], generator.__code__, sys._getframe(), sys._getframe().f_locals, sys, None, NotImplemented, ..., Class.__dict__, traceback,
         {}.keys(), {}.values(), {}.items(), iter([]), reversed([]), iter(()), iter(""), iter("ሴ"), iter(b""), iter(bytearray()), iter(range(1)), iter(range(1 << 100)), iter(set()),
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),
-        (lambda x: lambda: x)(1).__closure__[0], list[int], int | str, generator.__code__.co_lines(), generator.__code__.co_positions(), sys.flags, sys.version_info, sys.float_info, sys.int_info, sys.hash_info,
+        (lambda x: lambda: x)(1).__closure__[0], list[int], iter(list[int]), int | str, generator.__code__.co_lines(), generator.__code__.co_positions(), sys.flags, sys.version_info, sys.float_info, sys.int_info, sys.hash_info,
         sys.implementation,
     ]
     yield from awaitables

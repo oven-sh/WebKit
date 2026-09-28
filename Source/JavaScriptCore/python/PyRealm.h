@@ -75,6 +75,9 @@ namespace JSC {
     v(AsyncGeneratorWrappedValue, "async_generator_wrapped_value", Object, Native, 0) \
     v(ANextAwaitable, "anext_awaitable", Object, Native, 0) \
     v(PromiseAwaiter, "promise_awaiter", Object, Native, 0) \
+    v(GenericAlias, "types.GenericAlias", Object, Native, PyType::IsBaseType) \
+    v(GenericAliasIterator, "generic_alias_iterator", Object, Native, 0) \
+    v(Union, "typing.Union", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
     v(Frame, "frame", Object, Native, 0) \

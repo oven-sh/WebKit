@@ -1245,7 +1245,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     }
 
     JSCell* cell = callable.asCell();
-    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyTypeType || cell->type() == PyBoundMethodType || cell->type() == PyInstanceType;
+    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyTypeType || cell->type() == PyBoundMethodType || cell->type() == PyInstanceType || cell->type() == PyNativeObjectType;
     if (understandsKeywords)
         RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, keywordNames, arguments));
 

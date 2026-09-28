@@ -97,6 +97,10 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
     Structure* structure = createStructure(vm, globalObject, prototype);
     auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
+    if (size_t dot = reverseFind(name.span8(), '.'); dot != notFound) {
+        type->m_dottedName = name;
+        name = ASCIILiteral::fromLiteralUnsafe(name.characters() + dot + 1);
+    }
     type->m_name.set(vm, type, jsString(vm, String(name)));
     type->m_base.setMayBeNull(vm, type, base);
     type->m_layout = layout;
@@ -280,6 +284,20 @@ PyType* PyType::createForJavaScript(VM& vm, JSGlobalObject* globalObject, JSObje
 }
 
 String PyType::nameString(JSGlobalObject* globalObject) const
+{
+    if (!m_dottedName.isNull()) [[unlikely]]
+        return m_dottedName;
+    return m_name->value(globalObject);
+}
+
+String PyType::moduleOfBuiltin() const
+{
+    if (m_dottedName.isNull())
+        return { };
+    return String(m_dottedName.span8().first(reverseFind(m_dottedName.span8(), '.')));
+}
+
+String PyType::nameWithoutModule(JSGlobalObject* globalObject) const
 {
     return m_name->value(globalObject);
 }

@@ -1,0 +1,91 @@
+repr => [list[int], dict[str, int], tuple[int, ...], tuple[()], list[list[int]], type[int], list[None], list[...], list['x'], list[1], dict[str, list[dict[int, str]]]]
+types => (<class 'types.GenericAlias'>, 'GenericAlias', 'GenericAlias', 'types', <class 'type'>)
+all generic builtins => [list[int], dict[int], tuple[int], set[int], frozenset[int], type[int], enumerate[int], memoryview[int], staticmethod[int], classmethod[int], type[int]]
+not generic !! TypeError type 'int' is not subscriptable
+not generic 2 !! TypeError type 'str' is not subscriptable
+not generic 3 !! TypeError type 'object' is not subscriptable
+attributes => (<class 'list'>, (<class 'int'>,), (), False, None)
+one argument is a tuple => ((<class 'int'>, <class 'str'>), (<class 'int'>,), ((<class 'int'>, <class 'str'>),))
+read only !! AttributeError readonly attribute
+read only 2 !! AttributeError attribute '__parameters__' of 'types.GenericAlias' objects is not writable
+call => ([1, 2], {'a': 1}, (1,), set())
+orig class => (5, __main__.C[int], __main__.C[int])
+no orig class on builtin => False
+slotted => Slotted
+forwarded attributes => ('list', 'list', 'builtins', <method 'append' of 'list' objects>, 'Built-in mutable seq', (<class 'list'>, <class 'object'>))
+class is its own => (<class 'types.GenericAlias'>, <class 'types.GenericAlias'>)
+blocked !! AttributeError 'types.GenericAlias' object has no attribute '__bases__'
+blocked 2 !! AttributeError 'types.GenericAlias' object has no attribute '__copy__'
+missing !! AttributeError type object 'list' has no attribute 'nope'
+eq => (True, False, False, True, False, False, False)
+order !! TypeError '<' not supported between instances of 'types.GenericAlias' and 'types.GenericAlias'
+hash => (True, True, 2)
+unhashable !! TypeError unhashable type: 'list'
+isinstance !! TypeError isinstance() argument 2 cannot be a parameterized generic
+issubclass !! TypeError issubclass() argument 2 cannot be a parameterized generic
+mro entries => (<class 'list'>,)
+subclass => ((<class 'list'>,), (list[int],), (<class '__main__.L'>, <class 'list'>, <class 'object'>), [1])
+reduce => ((<class 'types.GenericAlias'>, (<class 'list'>, (<class 'int'>,))), <built-in function next>)
+dir => (['__args__', '__mro_entries__', '__origin__', '__parameters__', '__typing_unpacked_tuple_args__', '__unpacked__'], True)
+iter => ([*tuple[int, str]], [*tuple[int]], 'generic_alias_iterator', True, (<class 'int'>, <class 'str'>), None)
+iterator => (*list[int], 'stopped', (<built-in function iter>, ((),)), True)
+iterator reduce => (<built-in function iter>, (list[int],))
+starred eq => (False, True)
+new => (list[int], list[int, str], 1[2], 'a'[()])
+new wrong !! TypeError GenericAlias expected 2 arguments, got 1
+new wrong 2 !! TypeError GenericAlias expected 2 arguments, got 3
+new keyword !! TypeError GenericAlias() takes no keyword arguments
+derived !! AttributeError type object 'list' has no attribute 'extra'
+not generic alias !! TypeError list[int] is not a generic class
+callable => (True, False)
+bool and str => (True, 'list[int]', 'list[int]')
+operators !! TypeError unsupported operand type(s) for +: 'types.GenericAlias' and 'int'
+list argument => (list[[int, str], bool], list[[]])
+parameters => ((~T,), (~T, ~S), (~T,), (~T, ~S), (~T, ~S), (~T, ~S))
+substitute => (list[int], dict[int, str], dict[int, int], dict[str, list[int]], dict[str, int], list[[str]], tuple[(<class 'str'>, <class 'int'>), bytes], list[~S], list[list[int]])
+too many !! TypeError Too many arguments for list[~T]; actual 2, expected 1
+too few !! TypeError Too few arguments for dict[~T, ~S]; actual 1, expected 2
+unpack in substitution => dict[int, str]
+unpack unbounded => list[*tuple[int, ...]]
+union parameters => ((~T,), (~T, ~S), list[int] | dict[str, int])
+union collapses => list[int]
+prepare => dict[int, bytes]
+unpacked variable => tuple[int, int]
+unpacked variable wrong !! TypeError expected __typing_subst__ of BadVT objects to return a tuple, not type
+union repr => [int | str, int | None, None | int, int | str | bytes, list[int] | str, int | list[int] | None, type | int, int | str | bytes, int | str | bytes]
+union type => (<class 'typing.Union'>, 'Union', 'Union', 'typing', <class 'type'>)
+collapse => (<class 'int'>, <class 'int'>, int | str, int | str, list[int])
+union attributes => ((<class 'int'>, <class 'str'>), (<class 'int'>, <class 'NoneType'>), (), <class 'typing.Union'>, 'Union', 'Union', 'typing')
+union eq => (True, False, False, False, False, True)
+union hash => (True, True, 2)
+union order !! TypeError '<' not supported between instances of 'typing.Union' and 'typing.Union'
+isinstance union => (True, True, False, True, True, True)
+issubclass union => (True, True, False, True)
+isinstance union with alias !! TypeError isinstance() argument 2 cannot be a parameterized generic
+isinstance union with alias found first => True
+bad operand !! TypeError unsupported operand type(s) for |: 'type' and 'int'
+bad operand 2 !! TypeError unsupported operand type(s) for |: 'int' and 'type'
+bad operand 3 !! TypeError unsupported operand type(s) for |: 'type' and 'str'
+bad operand 4 !! TypeError unsupported operand type(s) for |: 'NoneType' and 'NoneType'
+bad operand 5 !! TypeError unsupported operand type(s) for |: 'types.GenericAlias' and 'int'
+cannot create !! TypeError cannot create 'typing.Union' instances
+cannot create 2 !! TypeError cannot create 'typing.Union' instances
+class getitem => (int | str, <class 'int'>, <class 'int'>, int | None, int | str, int | str | bytes, list[int] | int)
+class getitem empty !! TypeError Cannot take a Union of no types.
+cannot subclass instance !! TypeError type() doesn't support MRO entry resolution; use types.new_class()
+cannot subclass type !! TypeError type 'typing.Union' is not an acceptable base type
+union not generic !! TypeError int | str is not a generic class
+union read only !! AttributeError readonly attribute
+union no attribute !! AttributeError 'typing.Union' object has no attribute 'nope'
+union no dict !! AttributeError 'typing.Union' object has no attribute 'x' and no __dict__ for setting new attributes
+union call !! TypeError 'typing.Union' object is not callable
+metaclass wins => ('meta or', 'meta ror', 'meta or', 'meta ror')
+unhashable members => (int | __main__.U1, (<class 'int'>, <class '__main__.U1'>), <class '__main__.U1'>, (<class '__main__.U1'>, <class '__main__.U2'>), True, True, False, False)
+unhashable hash !! TypeError unhashable type: 'Unhashable'
+user classes => (__main__.C | int, __main__.C | None, __main__.C[int] | __main__.C, (<class '__main__.C'>, <class 'int'>))
+in match => ['int or str', 'int or str', 'other']
+own attributes => (['__args__', '__call__', '__dir__', '__doc__', '__eq__', '__ge__', '__getattribute__', '__getitem__', '__gt__', '__hash__', '__instancecheck__', '__iter__', '__le__', '__lt__', '__mro_entries__', '__ne__', '__new__', '__or__', '__origin__', '__parameters__', '__reduce__', '__repr__', '__ror__', '__subclasscheck__', '__typing_unpacked_tuple_args__', '__unpacked__'], ['__args__', '__class_getitem__', '__doc__', '__eq__', '__ge__', '__getattribute__', '__getitem__', '__gt__', '__hash__', '__le__', '__lt__', '__mro_entries__', '__name__', '__ne__', '__or__', '__origin__', '__parameters__', '__qualname__', '__repr__', '__ror__'], ['__doc__', '__iter__', '__next__', '__reduce__'])
+kinds => ['builtin_function_or_method', 'classmethod_descriptor', 'getset_descriptor', 'member_descriptor', 'method_descriptor', 'str', 'wrapper_descriptor']
+staticmethod is callable => (2, True, False, False)
+annotations !! NameError name 'ann' is not defined
+annotations => {'a': list[int], 'b': int | None, 'return': dict[str, list[int] | None]}

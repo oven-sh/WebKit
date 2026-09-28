@@ -202,7 +202,7 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
     if (!owner)
         return makeString(name, "()"_s);
     if (function->takesArgumentsOfTheClass())
-        return makeString(asType(owner)->nameString(globalObject), "()"_s);
+        return makeString(asType(owner)->nameWithoutModule(globalObject), "()"_s);
     if (isType(owner)) {
         // What was called is the function itself, which goes by the class that it is in, unless it is `instance.method` that was got first and called
         // afterwards. That goes by the class that it was got by way of. It calls the function from C++, which comes back into the engine to do it.
@@ -241,7 +241,7 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     unsigned keywordCount = args.keywordCount();
     unsigned minimum = signature.requiredPositionalCount();
     unsigned maximum = signature.positionalCount();
-    String name = function->takesArgumentsOfTheClass() ? asType(function->owner())->nameString(globalObject) : function->name(vm);
+    String name = function->takesArgumentsOfTheClass() ? asType(function->owner())->nameWithoutModule(globalObject) : function->name(vm);
 
     if (function->kind() == PyNativeFunction::Kind::Wrapper && !function->takesArgumentsOfTheClass()) {
         if (signature.family() == NativeSignature::Family::Unchecked)

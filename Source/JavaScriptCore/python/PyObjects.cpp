@@ -209,9 +209,8 @@ Structure* PyDerivedBytes::createStructure(VM& vm, JSGlobalObject* globalObject,
     return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags | pythonCellFlags), info(), NonArray);
 }
 
-CallData PyInstance::getCallData(JSCell* cell)
+static CallData callDataOfInstance(JSCell* cell)
 {
-    // It can be called if its class has __call__.
     CallData callData;
     JSObject* object = asObject(cell);
     VM& vm = cell->vm();
@@ -222,6 +221,16 @@ CallData PyInstance::getCallData(JSCell* cell)
         callData.native.isWasm = false;
     }
     return callData;
+}
+
+CallData PyInstance::getCallData(JSCell* cell)
+{
+    return callDataOfInstance(cell);
+}
+
+CallData PyNativeObject::getCallData(JSCell* cell)
+{
+    return callDataOfInstance(cell);
 }
 
 // ---- PyNativeFunction
@@ -246,7 +255,7 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
     if (owner && isType(owner)) {
         // It may be that CPython has it in a class that this one is derived from, and has no need of another.
         for (auto& ancestor : asType(owner)->mro()->span()) {
-            description = Python::findAttributeDescription(asType(ancestor.get())->nameString(globalObject), name);
+            description = Python::findAttributeDescription(asType(ancestor.get())->nameWithoutModule(globalObject), name);
             if (description)
                 break;
         }
@@ -260,7 +269,7 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
             description = Python::findFunctionDescription(asString(moduleName)->value(globalObject).data, name);
     }
     if (arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked) {
-        auto* typeDescription = Python::findTypeDescription(asType(owner)->nameString(globalObject));
+        auto* typeDescription = Python::findTypeDescription(asType(owner)->nameWithoutModule(globalObject));
         if (signature.isNull() && typeDescription)
             signature = typeDescription->signature;
         // One that does not say is left to see to them itself.
@@ -622,7 +631,7 @@ PyGetSetDescriptor* PyGetSetDescriptor::create(JSGlobalObject* globalObject, PyT
     PyRealm* realm = globalObject->pyRealm();
     // Which of the two it is called is as CPython has it, if it has it.
     // A class that is written in Python may be called what a built-in one is.
-    const Python::BuiltinDescription* description = owner->hasFlag(PyType::IsHeapType) ? nullptr : Python::findAttributeDescription(owner->nameString(globalObject), name);
+    const Python::BuiltinDescription* description = owner->hasFlag(PyType::IsHeapType) ? nullptr : Python::findAttributeDescription(owner->nameWithoutModule(globalObject), name);
     if (description) {
         isMember = description->kind == Python::BuiltinDescription::Kind::MemberDescriptor;
         doc = description->doc;

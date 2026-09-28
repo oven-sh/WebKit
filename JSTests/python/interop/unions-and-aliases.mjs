@@ -1,0 +1,10 @@
+import { IntOrStr, ListOfInt, Int, Str, List, Py } from "./unions-and-aliases.py";
+const show = (label, f) => { try { print(label, "=>", String(f())); } catch (e) { print(label, "!!", String(e)); } };
+show("typeof", () => [typeof IntOrStr, typeof ListOfInt, typeof Int]);
+show("String", () => [String(IntOrStr), String(ListOfInt)]);
+show("| in JavaScript", () => [Int | Str, Int | Str | List, (Int | Str) == IntOrStr, Py | Int]);
+show("| with a class of JavaScript's", () => [Int | Map, Map | Int]);
+show("| of two classes of JavaScript's is JavaScript's", () => Map | Set);
+show("calling an alias", () => ListOfInt([1, 2, 3]));
+show("attributes", () => [ListOfInt.__origin__ === List, ListOfInt.__args__[0] === Int, IntOrStr.__args__.length]);
+show("subscript", () => List.__class_getitem__(Str));

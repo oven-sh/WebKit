@@ -79,7 +79,7 @@ static String addressOf(JSCell* cell)
 String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
 {
     JSValue qualifiedName = type->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_qualname);
-    return qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject).data) : type->nameString(globalObject);
+    return qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject).data) : type->nameWithoutModule(globalObject);
 }
 
 String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
@@ -87,6 +87,8 @@ String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
     String name = qualifiedNameWithoutModule(globalObject, type);
+    if (String module = type->moduleOfBuiltin(); !module.isNull())
+        return makeString(module, '.', name);
     JSValue module = type->lookupOwn(vm, names.dunder_module);
     if (module && module.isString()) {
         String moduleName = asString(module)->value(globalObject);

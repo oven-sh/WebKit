@@ -123,7 +123,11 @@ public:
     PyTuple* mro() const { return m_mro.get(); }
     JSString* name() const { return m_name.get(); }
     void setName(VM& vm, JSString* name) { m_name.set(vm, this, name); }
+    // What it is called where something is said about it or about an instance of it: CPython's tp_name. For a built-in class of a module other
+    // than builtins that is `types.GenericAlias`, and its __name__ and its __module__ are the two parts of that.
     String nameString(JSGlobalObject*) const;
+    String nameWithoutModule(JSGlobalObject*) const;
+    String moduleOfBuiltin() const; // Null for one of builtins, and for one that is not built in.
     Layout layout() const { return m_layout; }
 
     bool hasFlag(Flag flag) const { return m_flags & flag; }
@@ -217,6 +221,7 @@ private:
     WriteBarrier<PyTuple> m_bases;
     WriteBarrier<PyTuple> m_mro;
     WriteBarrier<JSString> m_name;
+    ASCIILiteral m_dottedName; // Null unless it is such a one.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_javaScriptConstructor;
     WriteBarrier<JSObject> m_javaScriptPrototype;

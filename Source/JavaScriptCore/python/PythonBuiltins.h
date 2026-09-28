@@ -68,7 +68,10 @@ inline T unpack(CallFrame* callFrame, unsigned position)
 void addMethods(JSGlobalObject*, PyType*, std::initializer_list<MethodDefinition>);
 // For what is added to several classes at once, not all of which have all of it.
 void addMethodsThatCPythonHas(JSGlobalObject*, PyType*, std::initializer_list<MethodDefinition>);
+// The name that a __getattribute__ has been given. If it is no string, TypeError has been raised.
+std::optional<Identifier> attributeName(JSGlobalObject*, ThrowScope&, JSValue);
 void initializeAnnotations(JSGlobalObject*);
+void initializeGenericAliasAndUnion(JSGlobalObject*);
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 PyNativeFunction* addFunction(JSGlobalObject*, JSObject* module, ASCIILiteral name, NativeFunction, unsigned data = 0, ASCIILiteral signature = { }, PyNativeFunction::Arguments = PyNativeFunction::Arguments::AreChecked);

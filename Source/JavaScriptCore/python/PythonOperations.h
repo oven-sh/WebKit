@@ -231,6 +231,17 @@ JSValue buildClass(JSGlobalObject*, JSValue body, JSString* name, PyTuple* bases
 JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords);
 // isinstance() and issubclass(), which a class can have its own idea of.
 bool isInstanceOf(JSGlobalObject*, JSValue, JSValue classInfo);
+
+// list[int] and int | str
+bool isGenericAlias(JSGlobalObject*, JSValue);
+bool isUnion(JSGlobalObject*, JSValue);
+PyTuple* argumentsOfUnion(JSValue);
+JSValue newGenericAlias(JSGlobalObject*, JSValue origin, JSValue arguments, bool starred = false);
+JSValue unionOf(JSGlobalObject*, JSValue, JSValue); // NotImplemented if either is not something that there can be a union of.
+JSValue unionFrom(JSGlobalObject*, JSValue arguments);
+PyTuple* makeParameters(JSGlobalObject*, JSValue arguments);
+PyTuple* substituteParameters(JSGlobalObject*, JSValue self, JSValue arguments, PyTuple* parameters, JSValue item);
+void appendTypeRepr(JSGlobalObject*, StringBuilder&, JSValue);
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 // An attribute got through super().
 JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);

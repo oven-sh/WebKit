@@ -1,0 +1,16 @@
+js class in a union => (Map | int, int | Map, Map | None, Map | Set, (<class 'Map'>, <class 'int'>))
+collapses => <class 'Map'>
+isinstance => (True, False, True, True)
+js class as an argument => (list[Map], dict[str, Promise], True)
+js class is not generic !! TypeError type 'Map' is not subscriptable
+alias of a js class => (Map[int], 'Map')
+equal and hash => (True, True)
+annotations => {'a': Map | None, 'b': list[Date], 'return': <class 'Promise'>}
+typeof => object,function,function
+String => int | str,list[int]
+| in JavaScript => int | str,int | str | list,true,unions-and-aliases.Py | int
+| with a class of JavaScript's => int | Map,Map | int
+| of two classes of JavaScript's is JavaScript's => 0
+calling an alias => 1,2,3
+attributes => true,true,2
+subscript => list[str]

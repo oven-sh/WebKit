@@ -52,7 +52,7 @@ void addMethods(JSGlobalObject* globalObject, PyType* type, std::initializer_lis
 
 void addMethodsThatCPythonHas(JSGlobalObject* globalObject, PyType* type, std::initializer_list<MethodDefinition> methods)
 {
-    String typeName = type->nameString(globalObject);
+    String typeName = type->nameWithoutModule(globalObject);
     for (auto& method : methods) {
         if (findAttributeDescription(typeName, method.name))
             addMethods(globalObject, type, { method });
@@ -388,7 +388,7 @@ PYTHON_NATIVE(returnNotImplemented)
     return JSValue::encode(globalObject->pyRealm()->notImplemented());
 }
 
-static std::optional<Identifier> attributeName(JSGlobalObject* globalObject, ThrowScope& scope, JSValue name)
+std::optional<Identifier> attributeName(JSGlobalObject* globalObject, ThrowScope& scope, JSValue name)
 {
     if (!name.isString()) {
         raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
@@ -1471,10 +1471,17 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addMember(globalObject, type, "__flags__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromInt64(globalObject, asType(self)->flagsForPython()); });
     addGetSet(globalObject, type, "__text_signature__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         // Only a built-in class says how it is called in this way.
-        auto* description = asType(self)->hasFlag(PyType::IsHeapType) ? nullptr : findTypeDescription(asType(self)->nameString(globalObject));
+        auto* description = asType(self)->hasFlag(PyType::IsHeapType) ? nullptr : findTypeDescription(asType(self)->nameWithoutModule(globalObject));
         return description && !description->signature.isNull() ? JSValue(jsString(globalObject->vm(), String(description->signature))) : jsUndefined();
     });
-    addGetSet(globalObject, type, "__module__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, jsNontrivialString(globalObject->vm(), "builtins"_s)); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+    addGetSet(globalObject, type, "__module__"_s, [] (JSGlobalObject* globalObject, JSValue self) {
+        // A built-in class does not look in itself for it. `type` has there the very thing that is asking.
+        if (!asType(self)->hasFlag(PyType::IsHeapType)) {
+            String module = asType(self)->moduleOfBuiltin();
+            return JSValue(module.isNull() ? jsNontrivialString(globalObject->vm(), "builtins"_s) : jsString(globalObject->vm(), module));
+        }
+        return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, jsNontrivialString(globalObject->vm(), "builtins"_s));
+    }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
         if (value)
             asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module, value);
     });
@@ -1482,7 +1489,14 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()->object()) : jsUndefined(); });
     addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return orderOfResolution(globalObject, asType(self)); });
     addGetSet(globalObject, type, "__dict__"_s, getTypeDict);
-    addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined()); });
+    addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) {
+        // Nor for this.
+        if (self == globalObject->pyRealm()->typeType()) {
+            auto* description = findTypeDescription("type"_s);
+            return JSValue(jsString(globalObject->vm(), String(description->doc)));
+        }
+        return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined());
+    });
 
     addMethods(globalObject, realm->typeNoneType(), {
         { "__repr__"_s, nativeRepr },
