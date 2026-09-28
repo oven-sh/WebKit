@@ -123,6 +123,8 @@ private:
     TypedPointer slotWord(unsigned slot, unsigned word); // Word 0: structureID and offset. Word 1: pointer.
     LValue slotAddress(unsigned slot);
     unsigned allocateSlot() { return m_graph.numICSlots++; }
+    // What a frame says where it is with, while what the node does is being done somewhere else.
+    uint32_t callSiteBitsOf(Node*);
     unsigned allocateSlots(unsigned count)
     {
         unsigned first = m_graph.numICSlots;

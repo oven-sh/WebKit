@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CodeCache.h"
 
+#include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
@@ -102,10 +103,20 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
         // for that. (Not of any function that says `this`: some of those have a whole library inside, which would be there twice.)
         if (!Options::resolveAllScopeSlotsStatically() || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
             return;
-        if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct || !(unlinkedExecutable->features() & (ThisFeature | NewTargetFeature)))
+        if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
             return;
-        if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
-            return;
+        // Any other can be constructed with by calling it (FunctionExecutable::constructsByCalling()), unless it has a way of telling
+        // that from the real thing: new.target, said by itself, by what it evaluates, or by an arrow function inside it, which gets
+        // it from a variable that this one has stored it in.
+        bool canTellWhetherItIsConstructing = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
+        for (auto& identifier : unlinkedFunctionCodeBlock->identifiers())
+            canTellWhetherItIsConstructing |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
+        if (!canTellWhetherItIsConstructing) {
+            if (!(unlinkedExecutable->features() & ThisFeature))
+                return;
+            if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
+                return;
+        }
         if (auto* forConstruct = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForConstruct, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize))
             generateUnlinkedCodeBlockForFunctions(vm, forConstruct, source, codeGenerationMode, error, depth - 1, optimize);
     };

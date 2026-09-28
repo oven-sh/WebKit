@@ -132,6 +132,10 @@ public:
     // What an image of code from the static compiler (AOT::Image) knows this source by. Zero: nothing.
     uint32_t aotModuleID() const { return m_aotModuleID; }
     void setAOTModuleID(uint32_t id) { m_aotModuleID = id; }
+    // A program that was compiled ahead of time can be built without its text. Then source() is as long as the text was, so that
+    // what says where something is in it still does, and there is nothing in it to read.
+    bool hasNoText() const { return m_hasNoText; }
+    void setHasNoText() { m_hasNoText = true; }
 #endif
 
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
@@ -164,6 +168,7 @@ private:
     SourceTaintedOrigin m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
     uint32_t m_aotModuleID { 0 };
+    bool m_hasNoText { false };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };

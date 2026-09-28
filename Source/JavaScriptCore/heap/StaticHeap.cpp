@@ -466,6 +466,11 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
                 fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfThereIsOne(kind), executable, kind);
             }
         }
+        // (Whatever cannot be constructed with like that has code for it, or is not to be constructed with.)
+        if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction()) {
+            void* stub = image.addressOfStub(AOT::Stub::ConstructByCalling);
+            executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, stub, stub, FunctionExecutable::aotIndexOfWhatConstructsByCalling);
+        }
         unlinked->setStaticExecutable(executable);
         made++;
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {

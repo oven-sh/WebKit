@@ -262,7 +262,7 @@ void Lowering::lowerCatch(Node* node)
     LValue exception = plainCall(pointerType(), Entry::operationAOTCatch, m_vm);
     LBasicBlock caught = m_out.newBlock();
     // Termination is not for catching: keep unwinding.
-    m_out.store32(m_out.constInt32(CallSiteIndex(node->bytecodeIndex).bits()), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
+    m_out.store32(m_out.constInt32(callSiteBitsOf(node)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
     m_out.branch(m_out.isNull(exception), rarely(m_handleExceptions), usually(caught));
     m_out.appendTo(caught);
     setProj(node, bytecode.m_exception, exception);
@@ -405,7 +405,7 @@ bool Lowering::tryLowerMisc(Node* node)
             // All that differs from one to the next is where it is.
             if (!m_throwTDZBlock)
                 m_throwTDZBlock = m_out.newBlock();
-            m_throwTDZSites.append(m_out.anchor(m_out.constInt32(CallSiteIndex(node->bytecodeIndex).bits())));
+            m_throwTDZSites.append(m_out.anchor(m_out.constInt32(callSiteBitsOf(node))));
             m_out.jump(m_throwTDZBlock);
         } else
             throwTDZError(node);

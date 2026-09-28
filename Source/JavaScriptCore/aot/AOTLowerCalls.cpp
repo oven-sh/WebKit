@@ -63,7 +63,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    uint32_t callSiteBits = callSiteBitsOf(node);
     patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck, isProven, passesCallee, checksIsInitialized](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         constexpr GPRReg callee = GPRInfo::argumentGPR0;
@@ -148,7 +148,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-        uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+        uint32_t callSiteBits = callSiteBitsOf(node);
         patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
@@ -184,7 +184,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
 
-    uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    uint32_t callSiteBits = callSiteBitsOf(node);
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));

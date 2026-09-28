@@ -11,6 +11,7 @@
 #include "LineColumn.h"
 #include "WriteBarrier.h"
 #include <span>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -83,6 +84,8 @@ struct FunctionRef {
     FunctionExecutable* functionExpr(unsigned) const;
     // The number that goes with the slot (ImageFunction::siteConstants()), which is one of the function's.
     uint32_t siteConstantOf(const Slot*) const;
+    // What the source says there, and whether it is exactly that: of a program that goes without its text (Image::quoteAt()).
+    JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
     AllocationPlan planOf(const Slot* firstOfSite) const; // None, if the code is not from an image: then there is bytecode.
 
     Instance* instance { nullptr };

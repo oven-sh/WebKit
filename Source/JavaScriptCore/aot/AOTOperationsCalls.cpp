@@ -256,6 +256,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
     const void* startOfCallee;
+    if (isConstruct && executable->constructsByCalling())
+        return;
     if (executable->aotEntryFor(kind)) {
         // The call is going to go straight to the code, which takes it that it has been run before.
         DeferGCForAWhile deferGC(vm);

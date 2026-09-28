@@ -1619,17 +1619,22 @@ static void findTargetAndCall(CCallHelpers& jit)
 // Where a FunctionExecutable that was made when the program was built says its code is, to whoever makes frames the way the
 // interpreter wants them. Nothing is written in such an executable: which function it is, and where the code for that is, it says;
 // the rest is found from the callee. The first time, the function has nothing of the realm yet, and findCallTarget() sees to that.
-static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKind kind, Entry callLinkInfo)
+static void loadCalleeOfFrameBeingMadeAndItsVM(CCallHelpers& jit, GPRReg callee, GPRReg vm)
 {
-    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), T9);
-    jit.move(T9, T10);
-    Jump isPreciseAllocation = jit.branchTestPtr(CCallHelpers::NonZero, T10, TrustedImm32(PreciseAllocation::halfAlignment));
-    jit.andPtr(CCallHelpers::TrustedImmPtr(MarkedBlock::blockMask), T10);
-    jit.loadPtr(Address(T10, MarkedBlock::offsetOfHeader + MarkedBlock::Header::offsetOfVM()), T10);
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), callee);
+    jit.move(callee, vm);
+    Jump isPreciseAllocation = jit.branchTestPtr(CCallHelpers::NonZero, vm, TrustedImm32(PreciseAllocation::halfAlignment));
+    jit.andPtr(CCallHelpers::TrustedImmPtr(MarkedBlock::blockMask), vm);
+    jit.loadPtr(Address(vm, MarkedBlock::offsetOfHeader + MarkedBlock::Header::offsetOfVM()), vm);
     Jump haveVM = jit.jump();
     isPreciseAllocation.link(&jit);
-    jit.loadPtr(Address(T10, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), T10);
+    jit.loadPtr(Address(vm, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), vm);
     haveVM.link(&jit);
+}
+
+static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKind kind, Entry callLinkInfo)
+{
+    loadCalleeOfFrameBeingMadeAndItsVM(jit, T9, T10);
     jit.loadPtr(Address(T10, VM::offsetOfAOTInstanceOfProgram()), T10);
 
     jit.loadPtr(Address(T9, JSFunction::offsetOfExecutableOrRareData()), T9);
@@ -1651,6 +1656,33 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
 }
 static void generateEnterStaticFunctionForCall(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForCall, Entry::CallLinkInfoForCall); }
 static void generateEnterStaticFunctionForConstruct(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForConstruct, Entry::CallLinkInfoForConstruct); }
+
+// What a FunctionExecutable that was made when the program was built has for code to construct with, if its function was compiled
+// to be called and that is all (FunctionExecutable::constructsByCalling()). Few such functions ever see a `new`. The frame is that
+// of a native function, as far as anybody who walks the stack can tell.
+static void generateConstructByCalling(CCallHelpers& jit)
+{
+    loadCalleeOfFrameBeingMadeAndItsVM(jit, T9, T10);
+    jit.loadPtr(Address(T10, VM::offsetOfAOTRuntimeTable()), T11);
+    jit.emitFunctionPrologue();
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
+    jit.subPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
+    jit.storePtr(T11, Address(CCallHelpers::stackPointerRegister));
+    jit.move(GPRInfo::callFrameRegister, A0);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTConstructByCalling) * sizeof(void*)), T9);
+    jit.call(T9, OperationPtrTag);
+    jit.loadPtr(Address(CCallHelpers::stackPointerRegister), T11);
+    jit.addPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
+    // What was constructed. Or, with the VM, nothing: it threw.
+    Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    threw.link(&jit);
+    jit.move(GPRInfo::returnValueGPR2, T10);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::LookupExceptionHandler) * sizeof(void*)), T11);
+    unwind(jit, T10, T11);
+}
 
 static void generateLinkFunction(CCallHelpers& jit)
 {

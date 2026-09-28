@@ -668,6 +668,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     info.knownCallees = WTF::move(graph.knownCallees);
     info.siteConstants = WTF::move(graph.siteConstants);
     info.plans = WTF::move(graph.plans);
+    info.quotableSites = WTF::move(graph.quotableSites);
+    std::ranges::sort(info.quotableSites);
+    info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
     while (info.siteConstants.size() < info.numSlots)
         info.siteConstants.append(0);
     info.selectors = WTF::move(graph.selectors);

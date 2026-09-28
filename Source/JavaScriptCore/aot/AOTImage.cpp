@@ -20,9 +20,11 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
 #include "Options.h"
+#include "ParseInt.h"
 #include "SourceProvider.h"
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SHA1.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
@@ -76,6 +78,133 @@ static int compareSelectors(const StringImpl& a, const StringImpl& b) { return c
 
 // ---- Building
 
+// ---- What error messages quote, of a program that goes without its text
+
+static constexpr unsigned longestQuoteKeptWhole = 64;
+static constexpr unsigned longestCalleeKept = 96;
+static constexpr unsigned lengthOfTheEndsOfALongQuote = 40;
+
+// In "f.g(a, (b))": where the "(" is that goes with the ")" at the end. As functionCallBase() finds it (ExceptionHelpers.cpp).
+static size_t whereArgumentsStart(StringView text)
+{
+    unsigned length = text.length();
+    if (length < 2 || text[length - 1] != ')')
+        return notFound;
+    unsigned depth = 1;
+    bool isInComment = false;
+    for (unsigned i = length - 2; i; --i) {
+        char16_t c = text[i];
+        if (isInComment) {
+            if (c == '*' && text[i - 1] == '/') {
+                isInComment = false;
+                --i;
+            }
+        } else if (c == '(') {
+            if (!--depth)
+                return i;
+        } else if (c == ')')
+            ++depth;
+        else if (c == '/' && text[i - 1] == '*') {
+            isInComment = true;
+            --i;
+        }
+        if (!i)
+            break;
+    }
+    return notFound;
+}
+
+void collectQuotes(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock, StringView text, unsigned sourceOffset)
+{
+    if (!codeBlock->hasExpressionInfo())
+        return;
+    int length = text.length();
+    for (uint32_t offset : info.quotableSites) {
+        // As appendSourceToErrorMessage() goes about it (ErrorInstance.cpp).
+        auto entry = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(offset));
+        int divot = entry.divot + sourceOffset;
+        int start = divot - entry.startOffset;
+        int stop = divot + entry.endOffset;
+        if (stop <= 0 || start < 0 || start > length || stop > length)
+            continue;
+        Quote quote { offset, static_cast<uint32_t>(start), Quote::Exact, { } };
+        if (start < stop) {
+            StringView said = text.substring(start, stop - start);
+            if (said.length() <= longestQuoteKeptWhole)
+                quote.text = said.utf8();
+            else if (size_t open = whereArgumentsStart(said); open != notFound && open < longestCalleeKept) {
+                quote.kind = Quote::Call;
+                quote.text = said.left(open + 1).utf8();
+            } else {
+                quote.start = std::numeric_limits<uint32_t>::max();
+                quote.text = makeString(said.left(lengthOfTheEndsOfALongQuote), "..."_s, said.right(lengthOfTheEndsOfALongQuote)).utf8();
+            }
+        } else {
+            int from = start;
+            int to = start;
+            while (from > 0 && start - from < 20 && text[from - 1] != '\n')
+                from--;
+            while (from < start - 1 && isStrWhiteSpace(text[from]))
+                from++;
+            while (to < length && to - start < 20 && text[to] != '\n')
+                to++;
+            while (to > start && isStrWhiteSpace(text[to - 1]))
+                to--;
+            quote.kind = Quote::Approximate;
+            quote.start = from;
+            quote.text = text.substring(from, to - from).utf8();
+        }
+        info.quotes.append(WTF::move(quote));
+    }
+}
+
+static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
+{
+    while (value >= 0x80) {
+        bytes.append(static_cast<uint8_t>(value) | 0x80);
+        value >>= 7;
+    }
+    bytes.append(static_cast<uint8_t>(value));
+}
+
+static uint64_t readVarint(const uint8_t*& at)
+{
+    uint64_t value = 0;
+    for (unsigned shift = 0;; shift += 7) {
+        uint8_t byte = *at++;
+        value |= static_cast<uint64_t>(byte & 0x7f) << shift;
+        if (!(byte & 0x80))
+            return value;
+    }
+}
+
+// How many there are. Then for each, in order: how much further on in the bytecode it is than the one before; how much further on in
+// the text of quotes it starts than the one before did, which may be less than nothing; and how long it is, with its Quote::Kind.
+std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& function, unsigned bytecodeOffset) const
+{
+    if (!function.quotes)
+        return std::nullopt;
+    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.quotes;
+    uint64_t offset = 0;
+    int64_t start = 0;
+    for (uint64_t count = readVarint(at); count--;) {
+        offset += readVarint(at);
+        uint64_t step = readVarint(at);
+        start += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
+        uint64_t lengthAndKind = readVarint(at);
+        if (offset < bytecodeOffset)
+            continue;
+        if (offset > bytecodeOffset)
+            break;
+        String text = String::fromUTF8(std::span { this->at<char8_t>(header().textOfQuotesOffset) + start, static_cast<size_t>(lengthAndKind >> 2) });
+        auto kind = static_cast<Quote::Kind>(lengthAndKind & 3);
+        if (kind == Quote::Call)
+            text = makeString(text, "...)"_s);
+        return std::pair { WTF::move(text), kind != Quote::Approximate };
+    }
+    return std::nullopt;
+}
+
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
 {
     // Where they pointed depends on where the code was when it was compiled, which is nothing to do with the code.
@@ -93,6 +222,61 @@ Vector<uint8_t> ImageBuilder::finish()
     std::ranges::sort(m_functions, [](const Function& a, const Function& b) {
         return a.rank < b.rank;
     });
+
+    if (Options::aotReportStats()) [[unlikely]] {
+        // TEMPORARY-FOLDING-STATS: how much of the code is the same as some other function's, but for where it is and what it calls
+        // by way of an address (which has to be the same thing).
+        struct Group {
+            uint64_t count { 0 };
+            uint64_t size { 0 };
+        };
+        UncheckedKeyHashMap<String, Group> groups;
+        uint64_t total = 0;
+        for (auto& function : m_functions) {
+            Vector<uint8_t> bytes = function.code.bytes;
+            auto& info = function.code.info;
+            memset(bytes.mutableSpan().data(), 0, std::min<size_t>(bytes.size(), sizeof(CodeHeader)));
+            for (auto& call : info.stubCalls) {
+                uint32_t what = static_cast<uint32_t>(call.stub) << 8 | call.isTailCall << 3 | call.skipsArityCheck << 2 | call.isDirect << 1 | call.hasNoOtherWay;
+                memcpy(bytes.mutableSpan().data() + call.offset, &what, sizeof(what));
+                if (call.function != StubCall::noFunction) {
+                    const ImageKey& key = info.knownCallees[call.function];
+                    uint32_t words[3] = { key.module, key.start, key.kind };
+                    bytes.append(std::span { reinterpret_cast<const uint8_t*>(words), sizeof(words) });
+                }
+            }
+            total += function.code.bytes.size();
+            SHA1 sha1;
+            sha1.addBytes(bytes.span());
+            SHA1::Digest digest;
+            sha1.computeHash(digest);
+            auto& group = groups.add(String { std::span { reinterpret_cast<const Latin1Character*>(digest.data()), digest.size() } }, Group { }).iterator->value;
+            group.count++;
+            group.size = function.code.bytes.size();
+        }
+        uint64_t duplicates = 0, saved = 0, bySize[6] = { }, savedBySize[6] = { };
+        Vector<Group> largest;
+        for (auto& entry : groups) {
+            auto& group = entry.value;
+            if (group.count < 2)
+                continue;
+            duplicates += group.count - 1;
+            // (Each still needs a header, and a jump.)
+            uint64_t each = group.size > 32 ? group.size - 32 : 0;
+            saved += (group.count - 1) * each;
+            unsigned bucket = group.size <= 128 ? 0 : group.size <= 256 ? 1 : group.size <= 512 ? 2 : group.size <= 1024 ? 3 : group.size <= 4096 ? 4 : 5;
+            bySize[bucket] += group.count - 1;
+            savedBySize[bucket] += (group.count - 1) * each;
+            largest.append(group);
+        }
+        dataLogLn("FOLDING ", m_functions.size(), " functions, ", total, " bytes; ", groups.size(), " distinct; ", duplicates, " are copies, ", saved, " bytes to be had");
+        static constexpr ASCIILiteral names[] = { "<=128"_s, "<=256"_s, "<=512"_s, "<=1024"_s, "<=4096"_s, ">4096"_s };
+        for (unsigned i = 0; i < 6; ++i)
+            dataLogLn("FOLDING   size ", names[i], ": ", bySize[i], " copies, ", savedBySize[i], " bytes");
+        std::ranges::sort(largest, [](auto& a, auto& b) { return a.count * a.size > b.count * b.size; });
+        for (unsigned i = 0; i < std::min<size_t>(largest.size(), 8); ++i)
+            dataLogLn("FOLDING   a group of ", largest[i].count, " of ", largest[i].size, " bytes");
+    }
 
     unsigned capacity = 16;
     while (capacity < m_functions.size() * 2)
@@ -324,6 +508,56 @@ Vector<uint8_t> ImageBuilder::finish()
     header.magic = imageMagic;
     header.stamp = imageStamp();
     header.tableOffset = sizeof(ImageHeader);
+    // See Image::quoteAt().
+    Vector<uint8_t> quotes { 0 };
+    Vector<uint8_t> textOfQuotes;
+    Vector<uint32_t> quotesOfFunction;
+    quotesOfFunction.fill(0, m_functions.size());
+    {
+        UncheckedKeyHashMap<CString, uint32_t> whereItIs;
+        size_t numberOfQuotes = 0;
+        for (size_t index = 0; index < m_functions.size(); ++index) {
+            auto& all = m_functions[index].code.info.quotes;
+            if (all.isEmpty())
+                continue;
+            numberOfQuotes += all.size();
+            // Of those that start in the same place, the longest has the others at its start.
+            UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> longestFrom;
+            for (unsigned i = 0; i < all.size(); ++i) {
+                if (all[i].start == std::numeric_limits<uint32_t>::max() - 1 || all[i].start == std::numeric_limits<uint32_t>::max())
+                    continue;
+                auto result = longestFrom.add(all[i].start, i);
+                if (!result.isNewEntry && all[i].text.length() > all[result.iterator->value].text.length())
+                    result.iterator->value = i;
+            }
+            quotesOfFunction[index] = safeCast<uint32_t>(quotes.size());
+            appendVarint(quotes, all.size());
+            uint32_t previousOffset = 0;
+            int64_t previousStart = 0;
+            for (auto& quote : all) {
+                const CString* kept = &quote.text;
+                if (auto it = longestFrom.find(quote.start); it != longestFrom.end()) {
+                    const CString& longest = all[it->value].text;
+                    if (longest.length() >= quote.text.length() && !memcmp(longest.data(), quote.text.data(), quote.text.length()))
+                        kept = &longest;
+                }
+                uint32_t start = whereItIs.ensure(*kept, [&] {
+                    uint32_t result = safeCast<uint32_t>(textOfQuotes.size());
+                    textOfQuotes.append(kept->span());
+                    return result;
+                }).iterator->value;
+                appendVarint(quotes, quote.bytecodeOffset - previousOffset);
+                int64_t step = static_cast<int64_t>(start) - previousStart;
+                appendVarint(quotes, static_cast<uint64_t>(step << 1) ^ static_cast<uint64_t>(step >> 63));
+                appendVarint(quotes, static_cast<uint64_t>(quote.text.length()) << 2 | quote.kind);
+                previousOffset = quote.bytecodeOffset;
+                previousStart = start;
+            }
+        }
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
+    }
+
     header.tableCapacity = capacity;
     header.recordsOffset = header.tableOffset + capacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
@@ -346,6 +580,8 @@ Vector<uint8_t> ImageBuilder::finish()
     header.textOfSelectorsOffset = place(textOfSelectors.size());
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
     header.dispatchOffset = place(dispatch.sizeInBytes());
+    header.quotesOffset = place(quotes.size());
+    header.textOfQuotesOffset = place(textOfQuotes.size());
     header.hashOfIntrinsics = Options::useImmutableIntrinsics() && ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
     header.dispatchSize = safeCast<uint32_t>(dispatch.size());
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
@@ -371,6 +607,8 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
     memcpy(base + header.selectorsInOrderOffset, selectorsInOrder.span().data(), selectorsInOrder.sizeInBytes());
     memcpy(base + header.dispatchOffset, dispatch.span().data(), dispatch.sizeInBytes());
+    memcpy(base + header.quotesOffset, quotes.span().data(), quotes.size());
+    memcpy(base + header.textOfQuotesOffset, textOfQuotes.span().data(), textOfQuotes.size());
     for (size_t at : stubsAt)
         memcpy(code + at, stubs.bytes.span().data(), stubs.bytes.size());
 
@@ -396,6 +634,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.numberOfKnownCallees = info.knownCallees.size();
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
+        record.quotes = quotesOfFunction[index];
 
         ImageKey key = function.key;
         key.record = recordAt + 1;
@@ -839,6 +1078,8 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     if (Instance* instance = scope->realm()->aotInstance()) {
         uint32_t index = reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index;
         if (instance->data[index] && FunctionRef { instance, index }.executable() != executable)
+            return { };
+        if (const FunctionInfo& info = instance->infos[index]; info.executableAndKind && info.executable() != executable)
             return { };
     }
 

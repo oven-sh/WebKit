@@ -501,6 +501,7 @@ public:
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
     AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.
     static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
+    static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }

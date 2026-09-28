@@ -51,6 +51,8 @@ namespace AOT {
     /* See generateEnterStaticFunction(). */ \
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
+    /* See generateConstructByCalling(). */ \
+    v(ConstructByCalling) \
     /* From the direct entry of a function that has nothing of the realm yet, and that may have been called as no object. The */ \
     /* frame is made, with the Instance in it. T9 = CodeHeader::index, T10 = ImageEnvironment::distance of its module. Goes back there. */ \
     v(LinkFunction) \

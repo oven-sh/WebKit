@@ -59,6 +59,8 @@ struct ImageHeader {
     uint32_t hashOfIntrinsics; // ImmutableIntrinsics::hash(), if the code goes by their numbers. Zero: it does not.
     uint32_t dispatchOffset; // uint32_t: ImageDispatchEntry.
     uint32_t dispatchSize; // In entries.
+    uint32_t quotesOffset; // What ImageFunction::quotes is from. See Image::quoteAt().
+    uint32_t textOfQuotesOffset; // UTF-8.
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
 };
 
@@ -144,6 +146,8 @@ public:
 
     static Image* withShapes(); // The image, if it has any.
     static Image& of(const ImageFunction&); // The one it is in.
+    // What the source says where the function is at that offset in its bytecode: the text, and whether it is exactly that.
+    std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     AtomString nameOfSelector(uint32_t) const;
     uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
@@ -204,6 +208,8 @@ struct ImageCode {
     const ImageFunction* function { nullptr };
     explicit operator bool() const { return !!function; }
 };
+// Fills in info.quotes, from info.quotableSites. `text` is what the function is in, and its own source starts at sourceOffset.
+JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
 // Of the module that the scope is in, or is: whether code that takes its imports for what they were when it was compiled
 // (ImageFunction::usesStaticImports) may.

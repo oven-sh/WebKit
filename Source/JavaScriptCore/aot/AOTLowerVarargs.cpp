@@ -72,7 +72,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<uint32_t>(arguments.size()), callSiteBits = CallSiteIndex(node->bytecodeIndex).bits(), isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<uint32_t>(arguments.size()), callSiteBits = callSiteBitsOf(node), isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
@@ -97,7 +97,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
 
-    uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    uint32_t callSiteBits = callSiteBitsOf(node);
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
@@ -203,7 +203,7 @@ void Lowering::lowerTailCall(Node* node)
         prepare->clobber(RegisterSet::macroClobberedGPRs());
         prepare->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
         prepare->resultConstraints = { ValueRep::reg(GPRInfo::regT12) };
-        prepare->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<uint32_t>(arguments.size()), callSiteBits = CallSiteIndex(node->bytecodeIndex).bits()](CCallHelpers& jit, const StackmapGenerationParams&) {
+        prepare->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<uint32_t>(arguments.size()), callSiteBits = callSiteBitsOf(node)](CCallHelpers& jit, const StackmapGenerationParams&) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
@@ -270,7 +270,7 @@ LValue Lowering::emitCallVarargs(Node* node, LValue callee, LValue thisValue, LV
     else
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
 
-    uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    uint32_t callSiteBits = callSiteBitsOf(node);
     unsigned numParameters = m_graph.codeBlock()->numParameters();
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -371,7 +371,7 @@ void Lowering::lowerCallDirectEval(Node* node)
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
 
-    uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    uint32_t callSiteBits = callSiteBitsOf(node);
     uint32_t bytecodeIndexBits = node->bytecodeIndex.asBits();
     uint32_t lexicallyScopedFeatures = bytecode.m_lexicallyScopedFeatures;
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {

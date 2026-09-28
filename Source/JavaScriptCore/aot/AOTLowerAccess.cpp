@@ -263,7 +263,7 @@ void Lowering::lowerPutByVal(Node* node)
 
     auto throughStub = [&] {
         callStub(Stub::PutByVal, Void, { { base, GPRInfo::argumentGPR0 }, { lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
-            { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() }, { GPRInfo::regT10, CallSiteIndex(node->bytecodeIndex).bits() } });
+            { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() }, { GPRInfo::regT10, callSiteBitsOf(node) } });
     };
     if (isCompact()) {
         throughStub();

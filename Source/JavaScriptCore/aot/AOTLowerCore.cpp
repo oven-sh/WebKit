@@ -20,6 +20,81 @@
 
 namespace JSC { namespace AOT {
 
+// Whether an error that comes of it may say what the source says there (ErrorInstance::SourceAppender, createTDZError()). Most that
+// do are about a base that is undefined or null, or a callee that is no function.
+static bool mayBeQuoted(const Graph& graph, Node* node)
+{
+    auto mayBeNothing = [&](VirtualRegister base) {
+        Node* value = node->use(base);
+        return !value || value->type & (TOther | TEmpty);
+    };
+    auto mayNotBeAFunction = [&](VirtualRegister callee) {
+        if (graph.calleeIsProven(node))
+            return false;
+        Node* value = node->use(callee);
+        return !value || value->type & ~TFunction;
+    };
+    switch (node->opcode) {
+    case op_get_by_id:
+        return mayBeNothing(node->as<OpGetById>().m_base);
+    case op_get_length:
+        return mayBeNothing(node->as<OpGetLength>().m_base);
+    case op_get_by_val:
+        return mayBeNothing(node->as<OpGetByVal>().m_base);
+    case op_put_by_id:
+        return mayBeNothing(node->as<OpPutById>().m_base);
+    case op_put_by_val:
+        return mayBeNothing(node->as<OpPutByVal>().m_base);
+    case op_del_by_id:
+        return mayBeNothing(node->as<OpDelById>().m_base);
+    case op_del_by_val:
+        return mayBeNothing(node->as<OpDelByVal>().m_base);
+    case op_call:
+        return mayNotBeAFunction(node->as<OpCall>().m_callee);
+    case op_call_ignore_result:
+        return mayNotBeAFunction(node->as<OpCallIgnoreResult>().m_callee);
+    case op_tail_call:
+        return mayNotBeAFunction(node->as<OpTailCall>().m_callee);
+    case op_construct:
+        return !graph.calleeIsProven(node);
+    case op_get_by_id_with_this:
+    case op_get_by_id_direct:
+    case op_get_by_val_with_this:
+    case op_get_private_name:
+    case op_put_by_val_direct:
+    case op_put_private_name:
+    case op_set_private_brand:
+    case op_check_private_brand:
+    case op_has_private_name:
+    case op_has_private_brand:
+    case op_in_by_id:
+    case op_in_by_val:
+    case op_instanceof:
+    case op_call_direct_eval:
+    case op_call_varargs:
+    case op_tail_call_varargs:
+    case op_construct_varargs:
+    case op_super_construct:
+    case op_super_construct_varargs:
+    case op_iterator_open:
+    case op_iterator_next:
+    case op_check_tdz:
+    case op_to_object:
+    case op_get_prototype_of:
+    case op_spread:
+        return true;
+    default:
+        return false;
+    }
+}
+
+uint32_t Lowering::callSiteBitsOf(Node* node)
+{
+    if (mayBeQuoted(m_graph, node))
+        m_graph.quotableSites.append(node->bytecodeIndex.offset());
+    return CallSiteIndex(node->bytecodeIndex).bits();
+}
+
 using namespace B3;
 
 Lowering::Lowering(Graph& graph, Procedure& proc)
@@ -256,7 +331,7 @@ LValue Lowering::entry(Entry which)
 
 void Lowering::callPreflight(Node* node)
 {
-    m_out.store32(m_out.constInt32(CallSiteIndex(node->bytecodeIndex).bits()), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
+    m_out.store32(m_out.constInt32(callSiteBitsOf(node)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
 #if ASSERT_ENABLED
     m_out.storePtr(m_callFrame, m_out.address(m_heaps.root, m_vm, VM::topCallFrameOffset()));
 #endif
@@ -376,7 +451,7 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
     Vector<StubImmediate, 2> immediates;
     immediates.append({ GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
     if (throws)
-        immediates.append({ GPRInfo::regT10, CallSiteIndex(node->bytecodeIndex).bits() });
+        immediates.append({ GPRInfo::regT10, callSiteBitsOf(node) });
     PatchpointValue* result = callStub(stub, type, placed, immediates);
     return type == Void ? nullptr : result;
 }
@@ -388,7 +463,7 @@ unsigned Lowering::allocateSite(Node* node, unsigned identifier, unsigned extra)
     while (m_graph.sites.size() <= slot)
         m_graph.sites.append(Site { });
     m_graph.sites[slot].identifierAndExtra = identifier | extra << Site::identifierBits;
-    m_graph.sites[slot].callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    m_graph.sites[slot].callSiteBits = callSiteBitsOf(node);
     return slot;
 }
 

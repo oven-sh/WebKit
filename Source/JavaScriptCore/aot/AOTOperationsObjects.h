@@ -105,6 +105,7 @@ struct Slot;
     v(operationAOTPrepareTailCall) \
     v(operationAOTLinkCall) \
     v(operationAOTLinkFunction) \
+    v(operationAOTConstructByCalling) \
     v(operationAOTNoteFilled) \
     v(operationAOTGiveData) \
     v(operationAOTCallDirectEval) \
@@ -220,6 +221,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTSizeFrameForVarargs, size_t, (JSGlobalObje
 JSC_DECLARE_JIT_OPERATION(operationAOTSetupVarargsFrame, CallFrame*, (JSGlobalObject*, CallFrame* newCallFrame, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length));
 JSC_DECLARE_JIT_OPERATION(operationAOTPrepareTailCall, size_t, (JSGlobalObject*, EncodedJSValue callee));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject*, EncodedJSValue callee, uint32_t knownCallee, Slot*, uint32_t isConstruct));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* calleeFrame, uint32_t index, uint32_t distanceOfEnvironment));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance*, uint32_t index));

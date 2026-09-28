@@ -174,7 +174,7 @@ public:
     void** entries() { return m_entries; }
 
 private:
-    void* m_entries[numberOfEntries];
+    void* m_entries[numberOfEntries]; // First: see VM::offsetOfAOTRuntimeTable().
     Vector<std::unique_ptr<VirtualCallInfo>> m_callLinkInfos;
 };
 
@@ -468,6 +468,19 @@ struct SharedData {
 
 inline const FunctionInfo& FunctionRef::info() const { return instance->infos[index]; }
 
+// What the source says at a place in a function's bytecode, for an error message. It is not all there if it is long.
+struct Quote {
+    enum Kind : uint8_t {
+        Exact, // ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource
+        Approximate, // FoundApproximateSource
+        Call, // Exact, up to where the arguments start. They are left out: "...)" goes after it.
+    };
+    uint32_t bytecodeOffset;
+    uint32_t start; // Where it starts in the text. What starts in the same place starts the same.
+    Kind kind;
+    CString text; // UTF-8
+};
+
 // What a compilation produces, other than the code: all of it is plain data, and none of it is an address.
 struct CompiledFunctionInfo {
     unsigned codeSize { 0 };
@@ -496,6 +509,9 @@ struct CompiledFunctionInfo {
     static constexpr uint32_t siteConstantIsPlan = 1u << 30;
     Vector<uint32_t> siteConstants;
     Vector<uint32_t> plans; // See AllocationPlan.
+    // The bytecode offsets that a frame can be at when an error is made that says what the source says there. In order.
+    Vector<uint32_t> quotableSites;
+    Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
 };
@@ -526,6 +542,8 @@ struct ImageFunction {
     uint32_t usesStaticImports; // See Graph::usesStaticImports.
     uint32_t directEntryOffset;
     uint32_t startsCold; // See CompiledFunctionInfo::startsCold.
+    uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none.
+    uint32_t unused;
 
     const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }

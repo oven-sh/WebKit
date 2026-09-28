@@ -6120,8 +6120,16 @@ struct BytecodeLinkEncoder::Impl {
                     AOT::setOriginForStatistics(origin);
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock)))
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock))) {
+                    // (A function's key says where its source starts, if it is a function that somebody wrote.)
+                    auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                    bool isTopLevel = !(jobs[index].rank & 2);
+                    // (An embedder's builtin has its text wherever the embedder has it.)
+                    bool isOfProgram = !!dynamicDowncast<UnlinkedCodeBlock>(modules[jobs[index].module].root.get());
+                    if (Options::aotKeepsQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, modules[jobs[index].module].source.provider()->source(), isTopLevel ? 0 : jobs[index].key.start);
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
+                }
                 else {
                     Locker locker { declinedLock };
                     declined.add(jobs[index].codeBlock);

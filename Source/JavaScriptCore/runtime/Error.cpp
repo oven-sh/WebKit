@@ -144,6 +144,15 @@ public:
         if (visitor->isImplementationVisibilityPrivate())
             return IterationStatus::Continue;
 
+#if ENABLE(FTL_JIT)
+        // What such a function's source says is in the image, if anywhere. There is no call for a CodeBlock.
+        if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoText()) {
+            m_aotFunction = function;
+            m_bytecodeIndex = visitor->bytecodeIndex();
+            return IterationStatus::Done;
+        }
+#endif
+
         auto* codeBlock = visitor->codeBlock();
         if (!codeBlock)
             return IterationStatus::Continue;
@@ -157,10 +166,16 @@ public:
 
     CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
     BytecodeIndex NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
+#if ENABLE(FTL_JIT)
+    AOT::FunctionRef aotFunction() const { return m_aotFunction; }
+#endif
 
 private:
     CallFrame* m_startCallFrame;
     mutable CodeBlock* m_codeBlock { nullptr };
+#if ENABLE(FTL_JIT)
+    mutable AOT::FunctionRef m_aotFunction;
+#endif
     mutable bool m_foundStartCallFrame { false };
     mutable BytecodeIndex m_bytecodeIndex { 0 };
 };
@@ -177,7 +192,7 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
     return stackTrace;
 }
 
-std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
+static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
@@ -187,7 +202,36 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
     }
     FindFirstCallerFrameWithCodeblockFunctor functor(startCallFrame);
     StackVisitor::visit(vm.topCallFrame, vm, functor);
+    return functor;
+}
+
+std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startCallFrame)
+{
+    auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
+#if ENABLE(FTL_JIT)
+    if (functor.aotFunction())
+        return { functor.aotFunction().ensureCodeBlock(), functor.bytecodeIndex() };
+#endif
     return { functor.codeBlock(), functor.bytecodeIndex() };
+}
+
+std::optional<SourceQuote> quoteSourceWithoutText(VM& vm, CallFrame* startCallFrame)
+{
+#if ENABLE(FTL_JIT)
+    auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
+    if (!functor.aotFunction())
+        return std::nullopt;
+    SourceQuote result;
+    if (auto quote = functor.aotFunction().quoteAt(functor.bytecodeIndex())) {
+        result.text = WTF::move(quote->first);
+        result.isExact = quote->second;
+    }
+    return result;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(startCallFrame);
+    return std::nullopt;
+#endif
 }
 
 bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& lineColumn, String& sourceURL)

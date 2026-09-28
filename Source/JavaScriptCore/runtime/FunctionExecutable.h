@@ -283,6 +283,11 @@ public:
     JS_EXPORT_PRIVATE void becomeStatic(VM&);
     JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, void* entry, uint32_t index);
     void forgetAOTCode(CodeSpecializationKind); // It is not for the realm after all.
+    // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
+    // comes back (AOT::Stub::ConstructByCalling, which is then what aotEntryFor() is). That will do for a function that has no way
+    // of telling: see generateUnlinkedCodeBlockForFunctions().
+    static constexpr uint32_t aotIndexOfWhatConstructsByCalling = std::numeric_limits<uint32_t>::max();
+    bool constructsByCalling() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotIndexOfWhatConstructsByCalling; }
     static constexpr ptrdiff_t offsetOfAOTEntryFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotEntry) + static_cast<unsigned>(kind) * sizeof(void*); }
     static constexpr ptrdiff_t offsetOfAOTIndexFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotIndex) + static_cast<unsigned>(kind) * sizeof(uint32_t); }
 

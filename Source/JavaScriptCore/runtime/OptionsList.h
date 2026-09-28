@@ -175,6 +175,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotStartFunctionsCold, true, Normal, "A function from an image that can do without gets nothing of its own until it has been run a few times: see AOT::SharedData."_s) \
     v(Unsigned, aotMissesForEightSlots, 8, Normal, "How often a slot may fail a function that started with none of its own before it gets them: this many times for every eight slots it would have, ..."_s) \
     v(Unsigned, aotMissesToSpare, 4, Normal, "... and this many more."_s) \
+    v(Bool, aotKeepsQuotes, false, Normal, "An image says what the source says wherever an error message may quote it, for a program that is built without its text."_s) \
     v(Bool, staticHeapKeepsFunctionCode, false, Normal, "When a static heap is built: the unlinked code of functions that were compiled is decoded into it, rather than left in the payload for whoever asks."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \

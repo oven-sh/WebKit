@@ -521,7 +521,7 @@ FunctionRef FunctionRef::of(const CallFrame* callFrame)
 
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
 {
-    if (StaticHeap::contains(executable))
+    if (StaticHeap::contains(executable) && executable->aotIndexFor(kind) != FunctionExecutable::aotIndexOfWhatConstructsByCalling)
         return { vm.m_aotInstanceOfProgram, executable->aotIndexFor(kind) };
     if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
         return { };
@@ -565,6 +565,14 @@ uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
     if (!(info.flags & FunctionInfo::hasSiteConstants))
         return 0;
     return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots];
+}
+
+std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex bytecodeIndex) const
+{
+    const ImageFunction* function = info().function;
+    if (!function)
+        return std::nullopt;
+    return Image::of(*function).quoteAt(*function, bytecodeIndex.offset());
 }
 
 AllocationPlan FunctionRef::planOf(const Slot* firstOfSite) const
@@ -859,6 +867,8 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
     if (!instance || scope->realm() != instance->globalObject)
         return false;
     uint32_t index = executable->aotIndexFor(kind);
+    if (index == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
+        return true;
     if (instance->data[index])
         return true;
     if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold && Options::aotStartFunctionsCold()) {

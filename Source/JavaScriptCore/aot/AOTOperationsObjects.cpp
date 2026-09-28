@@ -233,6 +233,52 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     OPERATION_RETURN(scope, object);
 }
 
+// Stub::ConstructByCalling. What op_create_this and the op_ret of code that constructs do, around a call.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame* callFrame))
+{
+    auto* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
+    VM& vm = function->vm();
+    NativeCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSGlobalObject* globalObject = function->globalObject();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+
+    JSObject* thisObject = nullptr;
+    if (auto* constructor = dynamicDowncast<JSFunction>(newTarget); constructor && constructor->canUseAllocationProfiles()) {
+        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, 0)->objectAllocationProfile();
+        RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
+        Structure* structure = allocationProfile->structure();
+        thisObject = constructEmptyObject(vm, structure);
+        if (structure->hasPolyProto()) {
+            JSObject* prototype = allocationProfile->prototype();
+            thisObject->putDirectOffset(vm, knownPolyProtoOffset, prototype);
+            prototype->didBecomePrototype(vm);
+        }
+    } else {
+        JSValue proto = newTarget->get(globalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
+        if (proto.isObject())
+            thisObject = constructEmptyObject(globalObject, asObject(proto));
+        else {
+            JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
+            RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
+            thisObject = constructEmptyObject(functionGlobalObject);
+        }
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.ensureCapacity(callFrame->argumentCount());
+    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
+        arguments.append(callFrame->uncheckedArgument(i));
+    if (arguments.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return encodeResult(nullptr, &vm);
+    }
+    JSValue result = call(globalObject, function, JSC::getCallData(function), thisObject, arguments);
+    RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
+    return encodeResult(std::bit_cast<void*>(JSValue::encode(result.isObject() ? result : JSValue(thisObject))), nullptr);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (JSGlobalObject* globalObject, JSObject* callee, uint32_t inlineCapacity))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -613,6 +659,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject* globa
         OPERATION_RETURN(scope);
     }
     // The name is what the source has at the call site that the caller left in its frame.
+    if (auto quote = quoteSourceWithoutText(vm, callFrame)) {
+        throwException(globalObject, scope, quote->text.isNull() ? createTDZError(globalObject) : createTDZError(globalObject, StringView { quote->text }));
+        OPERATION_RETURN(scope);
+    }
     auto [block, index] = getBytecodeIndex(vm, callFrame);
     auto info = block->expressionInfoForBytecodeIndex(index);
     RefPtr provider = block->source().provider();
