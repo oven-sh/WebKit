@@ -578,10 +578,10 @@ PYTHON_RUNTIME_FUNCTION(raiseAssertionError)
 PYTHON_RUNTIME_FUNCTION(reraise)
 {
     PROLOGUE();
-    JSValue handled = realm->handledException();
+    Exception* handled = realm->handledThrown();
     if (!handled)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "No active exception to reraise"_s));
-    throwException(globalObject, scope, handled);
+    throwException(globalObject, scope, JSValue(handled));
     return { };
 }
 
@@ -626,18 +626,24 @@ PYTHON_RUNTIME_FUNCTION(runtimeRaise)
         object->putDirect(vm, names.private_suppressContext, jsBoolean(true));
     }
     setContext(globalObject, object);
-    addTracebackEntryForRaise(globalObject, exception, callerOf(callFrame));
     throwException(globalObject, scope, exception);
     return { };
+}
+
+// What these are given and give back is an exception as it was thrown: what `catch` gives besides the value.
+static JSValue previousOrMarker(PyRealm* realm)
+{
+    Exception* previous = realm->ownHandledException();
+    return previous ? JSValue(previous) : JSValue(realm->boundArgumentsMarker());
 }
 
 PYTHON_RUNTIME_FUNCTION(pushHandledException)
 {
     PROLOGUE();
     UNUSED_PARAM(scope);
-    JSValue previous = realm->ownHandledException();
-    realm->setOwnHandledException(vm, argument(0));
-    return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
+    JSValue previous = previousOrMarker(realm);
+    realm->setOwnHandledException(vm, uncheckedDowncast<Exception>(argument(0).asCell()));
+    return JSValue::encode(previous);
 }
 
 // pushIfThrown(whether a try was left by an exception, what with): in a `finally` that an exception is passing through, that exception is being handled.
@@ -645,22 +651,26 @@ PYTHON_RUNTIME_FUNCTION(pushIfThrown)
 {
     PROLOGUE();
     UNUSED_PARAM(scope);
-    JSValue previous = realm->ownHandledException();
-    if (argument(0).asBoolean()) {
-        JSValue thrown = argument(1);
-        if (auto* exception = dynamicDowncast<Exception>(thrown))
-            thrown = exception->value();
-        realm->setOwnHandledException(vm, thrown);
-    }
-    return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
+    JSValue previous = previousOrMarker(realm);
+    if (argument(0).asBoolean())
+        realm->setOwnHandledException(vm, uncheckedDowncast<Exception>(argument(1).asCell()));
+    return JSValue::encode(previous);
 }
 
 PYTHON_RUNTIME_FUNCTION(popHandledException)
 {
     PROLOGUE();
     UNUSED_PARAM(scope);
-    realm->setOwnHandledException(vm, isMarker(realm, argument(0)) ? JSValue() : argument(0));
+    realm->setOwnHandledException(vm, isMarker(realm, argument(0)) ? nullptr : uncheckedDowncast<Exception>(argument(0).asCell()));
     return JSValue::encode(jsUndefined());
+}
+
+// An exception that was made and not caught, in the form that one that was caught has: the part of a group that an `except*` clause handles.
+PYTHON_RUNTIME_FUNCTION(asThrown)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(Exception::create(vm, argument(0)));
 }
 
 // ---- with
@@ -1008,6 +1018,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("pushHandledException"_s, pushHandledException);
     add("pushIfThrown"_s, pushIfThrown);
     add("popHandledException"_s, popHandledException);
+    add("asThrown"_s, asThrown);
     add("loadExit"_s, loadExit);
     add("callEnter"_s, callEnter);
     add("callExit"_s, callExit);

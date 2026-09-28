@@ -72,6 +72,11 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
+    // It has been thrown again by the code that caught it, as at the end of a `finally`, and has not begun to unwind since. It is this
+    // object that is thrown then, and not what it holds.
+    bool isBeingRethrown() const { return m_isBeingRethrown; }
+    void setIsBeingRethrown(bool value) { m_isBeingRethrown = value; }
+
     bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
     void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
 
@@ -93,6 +98,7 @@ private:
 #endif
     Vector<StackFrame> m_stack;
     bool m_didNotifyInspectorOfThrow { false };
+    bool m_isBeingRethrown { false };
 
     friend class LLIntOffsetsExtractor;
 };

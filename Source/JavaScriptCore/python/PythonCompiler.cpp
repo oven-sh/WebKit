@@ -164,7 +164,7 @@ static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const So
     return true;
 }
 
-FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures)
+FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -192,6 +192,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     auto info = adoptRef(*new FunctionInfo);
     info->kind = kind;
     info->futureFeatures = futureFeatures;
+    info->visibility = visibility;
     info->hasDocstring = hasDocstring;
     info->name = Identifier::fromString(vm, "<module>"_s);
     info->qualifiedName = "<module>"_s;
@@ -202,7 +203,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     }
     unsigned parameterCount = info->parameterCount();
 
-    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), source.startOffset(), source.startOffset(), source.startOffset(), ImplementationVisibility::Public, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, SourceParseMode::MethodMode, false);
+    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), source.startOffset(), source.startOffset(), source.startOffset(), visibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, SourceParseMode::MethodMode, false);
     metadata.finishParsing(source, info->name, FunctionMode::FunctionExpression);
     auto* unlinked = UnlinkedFunctionExecutable::create(vm, source, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     unlinked->setPythonInfo(WTF::move(info));
@@ -227,9 +228,9 @@ JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* exec
     return JSFunction::create(vm, globalObject, executable, environment);
 }
 
-JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject)
+JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject, ImplementationVisibility visibility)
 {
-    FunctionExecutable* executable = compileSource(globalObject, source, CodeKind::Module, false, 0);
+    FunctionExecutable* executable = compileSource(globalObject, source, CodeKind::Module, false, 0, visibility);
     if (!executable)
         return nullptr;
     return bindToGlobals(globalObject, executable, namespaceObject);

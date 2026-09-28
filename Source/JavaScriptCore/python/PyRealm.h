@@ -254,11 +254,13 @@ public:
     // The exception being handled: what sys.exception() gives, and what a new exception's __context__ is.
     // The exception that is being handled: what sys.exception() gives, a bare `raise` raises again, and a new exception has for its context.
     // A generator has its own, which is put away with it when it yields. While it has none, it is that of whatever resumed it.
-    JSValue handledException() const { return m_handledException ? m_handledException.get() : m_outerHandledException.get(); }
-    JSValue ownHandledException() const { return m_handledException.get(); }
-    void setOwnHandledException(VM& vm, JSValue exception) { m_handledException.set(vm, this, exception); }
-    JSValue outerHandledException() const { return m_outerHandledException.get(); }
-    void setOuterHandledException(VM& vm, JSValue exception) { m_outerHandledException.set(vm, this, exception); }
+    // As it was thrown, so that a bare `raise` throws that again, and not a copy that has forgotten where it was first thrown.
+    Exception* handledThrown() const { return m_handledException ? m_handledException.get() : m_outerHandledException.get(); }
+    JSValue handledException() const { return handledThrown() ? handledThrown()->value() : JSValue(); }
+    Exception* ownHandledException() const { return m_handledException.get(); }
+    void setOwnHandledException(VM& vm, Exception* exception) { m_handledException.setMayBeNull(vm, this, exception); }
+    Exception* outerHandledException() const { return m_outerHandledException.get(); }
+    void setOuterHandledException(VM& vm, Exception* exception) { m_outerHandledException.setMayBeNull(vm, this, exception); }
 
     // What the iterator that a `yield from` was going through returned, on its way from the runtime to the code that wants it.
     JSValue takeReturnValue() { return std::exchange(m_returnValue, WriteBarrier<Unknown>()).get(); }
@@ -284,8 +286,8 @@ private:
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<JSObject> m_builtinsNamespace;
     WriteBarrier<JSObject> m_modules;
-    WriteBarrier<Unknown> m_handledException;
-    WriteBarrier<Unknown> m_outerHandledException;
+    WriteBarrier<Exception> m_handledException;
+    WriteBarrier<Exception> m_outerHandledException;
     WriteBarrier<Unknown> m_returnValue;
 };
 

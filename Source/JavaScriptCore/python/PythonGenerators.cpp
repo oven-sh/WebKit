@@ -72,17 +72,17 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     // What it was handling when it yielded, it is handling again, and beyond that whatever is being handled here.
     PyRealm* realm = globalObject->pyRealm();
     auto& handledName = vm.pythonNames().private_handled;
-    JSValue callersOwn = realm->ownHandledException();
-    JSValue callersOuter = realm->outerHandledException();
+    Exception* callersOwn = realm->ownHandledException();
+    Exception* callersOuter = realm->outerHandledException();
     JSValue generatorsOwn = generator->getDirect(vm, handledName);
-    realm->setOuterHandledException(vm, realm->handledException());
-    realm->setOwnHandledException(vm, generatorsOwn && !isNone(generatorsOwn) ? generatorsOwn : JSValue());
+    realm->setOuterHandledException(vm, realm->handledThrown());
+    realm->setOwnHandledException(vm, generatorsOwn && !isNone(generatorsOwn) ? uncheckedDowncast<Exception>(generatorsOwn.asCell()) : nullptr);
 
     JSValue value = JSC::call(globalObject, next, JSC::getCallData(next), field(JSGenerator::Field::This), arguments);
 
-    JSValue nowHandling = realm->ownHandledException();
+    Exception* nowHandling = realm->ownHandledException();
     if (nowHandling || generatorsOwn)
-        generator->putDirect(vm, handledName, nowHandling ? nowHandling : jsUndefined());
+        generator->putDirect(vm, handledName, nowHandling ? JSValue(nowHandling) : jsUndefined());
     realm->setOwnHandledException(vm, callersOwn);
     realm->setOuterHandledException(vm, callersOuter);
 

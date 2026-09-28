@@ -37,9 +37,8 @@
 
 namespace JSC { namespace Python {
 
-// A traceback is a PyNativeObject: the next one, the function whose frame it was, where in the source, and which frame, as a number that is
-// only good for telling whether it is the same frame, while that frame lasts.
-enum TracebackField : unsigned { Next, Function, Offset, FrameAddress };
+// A traceback is a PyNativeObject: the next one, the function whose frame it was, and where in the source.
+enum TracebackField : unsigned { Next, Function, Offset };
 // A frame is one too: the code, the globals, the line, and the frame that called it.
 enum FrameField : unsigned { Code, Globals, Line, Back };
 
@@ -50,45 +49,21 @@ static bool isTraceback(JSGlobalObject* globalObject, JSValue value)
     return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->typeTraceback();
 }
 
-static JSValue addressOf(CallFrame* frame)
-{
-    return jsDoubleNumber(static_cast<double>(std::bit_cast<uintptr_t>(frame)));
-}
-
-static void prepend(JSGlobalObject* globalObject, JSObject* exception, JSValue head, CallFrame* frame, BytecodeIndex bytecodeIndex)
-{
-    VM& vm = globalObject->vm();
-    CodeBlock* codeBlock = frame->codeBlock();
-    // What comes with the engine stands for what in CPython is written in C, which has no frames.
-    if (codeBlock->source().provider()->sourceURL().startsWith("<frozen "_s))
-        return;
-    DeferGCForAWhile deferGC(vm);
-    unsigned offset = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex).divot;
-    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head ? head : jsUndefined(), frame->jsCallee(), jsNumber(offset), addressOf(frame));
-    exception->putDirect(vm, vm.pythonNames().private_traceback, entry);
-}
-
 void addTracebackEntry(JSGlobalObject* globalObject, JSValue exception, CallFrame* frame, BytecodeIndex bytecodeIndex)
 {
     if (!exception.isObject())
         return;
     VM& vm = globalObject->vm();
-    JSValue head = asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback);
-    if (head && !isTraceback(globalObject, head))
-        head = { };
-    // Raised again where it was last seen: by a bare `raise`, or on its way out of a `finally` or past handlers that did not want it.
-    if (head && asNative(head)->field(TracebackField::FrameAddress) == addressOf(frame))
+    CodeBlock* codeBlock = frame->codeBlock();
+    if (codeBlock->ownerExecutable()->implementationVisibility() != ImplementationVisibility::Public)
         return;
-    prepend(globalObject, asObject(exception), head, frame, bytecodeIndex);
-}
-
-void addTracebackEntryForRaise(JSGlobalObject* globalObject, JSValue exception, CallFrame* frame)
-{
-    VM& vm = globalObject->vm();
+    DeferGCForAWhile deferGC(vm);
     JSValue head = asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback);
-    if (!head || !isTraceback(globalObject, head) || asNative(head)->field(TracebackField::FrameAddress) != addressOf(frame))
-        return;
-    prepend(globalObject, asObject(exception), head, frame, frame->bytecodeIndex());
+    if (!head || !isTraceback(globalObject, head))
+        head = jsUndefined();
+    unsigned offset = codeBlock->expressionInfoForBytecodeIndex(bytecodeIndex).divot;
+    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, frame->jsCallee(), jsNumber(offset));
+    asObject(exception)->putDirect(vm, vm.pythonNames().private_traceback, entry);
 }
 
 static FunctionExecutable* executableOf(JSValue function)

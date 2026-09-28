@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Identifier.h"
+#include "ImplementationVisibility.h"
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
@@ -68,6 +69,8 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     bool isMethod { false }; // Directly in a class.
     bool hasDocstring { false };
     unsigned futureFeatures { 0 };
+    // Private for what comes with the engine and stands for what in CPython is written in C: it is in no traceback and no stack trace.
+    ImplementationVisibility visibility { ImplementationVisibility::Public };
     unsigned line { 1 }; // That the source of it begins on.
 
     Identifier name;
@@ -102,6 +105,7 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->isMethod = isMethod;
         result->hasDocstring = hasDocstring;
         result->futureFeatures = futureFeatures;
+        result->visibility = visibility;
         result->line = line;
         result->name = name;
         result->qualifiedName = qualifiedName;

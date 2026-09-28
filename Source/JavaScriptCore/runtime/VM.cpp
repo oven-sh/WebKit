@@ -1350,7 +1350,9 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
-    if (!exception)
+    if (exception)
+        exception->setIsBeingRethrown(true);
+    else
         exception = Exception::create(*this, thrownValue);
 
     return throwException(globalObject, exception);

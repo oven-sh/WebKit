@@ -492,7 +492,7 @@ static JSValue sysAttribute(JSGlobalObject* globalObject, ASCIILiteral name)
 }
 
 // Runs the source of a module. Empty if it raised.
-static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& fullName, const String& path, const String& source, bool isPackage)
+static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& fullName, const String& path, const String& source, bool isPackage, ImplementationVisibility visibility = ImplementationVisibility::Public)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -515,7 +515,7 @@ static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& full
 
     auto provider = StringSourceProvider::create(source, SourceOrigin(), String(path), SourceTaintedOrigin::Untainted);
     provider->setLanguage(SourceLanguage::Python);
-    JSFunction* function = compileModule(globalObject, SourceCode(WTF::move(provider)), ns);
+    JSFunction* function = compileModule(globalObject, SourceCode(WTF::move(provider)), ns, visibility);
     if (function)
         call(globalObject, function);
     if (scope.exception()) {
@@ -543,7 +543,7 @@ static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, 
             return module;
         }
         if (auto source = librarySourceFor(fullName))
-            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeString("<frozen "_s, fullName, '>'), *source, false));
+            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeString("<frozen "_s, fullName, '>'), *source, false, ImplementationVisibility::Private));
     }
     if (!s_sourceReader)
         return { };

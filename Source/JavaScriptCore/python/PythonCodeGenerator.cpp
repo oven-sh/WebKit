@@ -1029,6 +1029,7 @@ private:
         info->isMethod = block.isMethod;
         info->hasDocstring = block.hasDocstring;
         info->futureFeatures = m_info.futureFeatures;
+        info->visibility = m_info.visibility;
         info->line = node.line;
         info->name = name;
         info->qualifiedName = qualifiedNameFor(name);
@@ -1132,7 +1133,7 @@ private:
     {
         const SourceCode& parentSource = g.m_scopeNode->source();
         unsigned parameterCount = info->isGeneratorBody ? static_cast<unsigned>(JSGenerator::Argument::NumberOfArguments) : info->parameterCount();
-        FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), node.start, node.start, node.start, ImplementationVisibility::Public, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, parseMode, false);
+        FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), node.start, node.start, node.start, info->visibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, parseMode, false);
         metadata.finishParsing(SourceCode(parentSource.provider(), node.start, node.end), info->name, FunctionMode::FunctionExpression);
         auto* executable = UnlinkedFunctionExecutable::create(m_vm, parentSource, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
         executable->setPythonInfo(WTF::move(info));
@@ -1512,13 +1513,13 @@ private:
             Reg awaitable = g.newTemporary();
             emitRuntimeCall(awaitable.get(), "getAsyncNext"_s, { iterator }, node);
             emitDelegate(dst, awaitable.get(), node);
-        }, [&] (RegisterID* exception) {
+        }, [&] (RegisterID* exception, RegisterID* thrown) {
             Reg type = g.newTemporary();
             g.emitGetById(type.get(), runtime(), Identifier::fromString(m_vm, "StopAsyncIteration"_s));
             Reg matches = g.newTemporary();
             emitCompare(matches.get(), ComparisonOperator::ExceptionMatch, exception, type.get());
             g.emitJumpIfTrue(matches.get(), exhausted);
-            g.emitThrow(exception);
+            g.emitThrow(thrown);
         }, [] { });
     }
 
@@ -2507,7 +2508,8 @@ private:
         g.emitLabel(finallyEndLabel.get());
     }
 
-    // try: body() except: handler(the exception) else: otherwise()
+    // try: body() except: handler(the exception, the same as it was thrown) else: otherwise()
+    // To let it go on its way, the handler throws the second, which is what says that it is the same throw and not a new one.
     template<typename Body, typename Handler, typename Otherwise>
     void emitTryCatch(const Body& body, const Handler& handler, const Otherwise& otherwise)
     {
@@ -2522,20 +2524,21 @@ private:
         g.emitJump(endLabel.get());
 
         g.emitLabel(catchLabel.get());
+        Reg exception = g.newTemporary();
         Reg thrown = g.newTemporary();
-        g.emitOutOfLineCatchHandler(thrown.get(), nullptr, tryData);
+        g.emitOutOfLineExceptionHandler(thrown.get(), exception.get(), nullptr, tryData);
         g.restoreScopeRegister();
-        handler(thrown.get());
+        handler(exception.get(), thrown.get());
         g.emitLabel(endLabel.get());
     }
 
-    // While it runs, `exception` is the exception being handled, and whichever way it is left, what was being handled before is again.
+    // While it runs, `thrown` is the exception being handled, and whichever way it is left, what was being handled before is again.
     template<typename Body>
-    void emitWhileHandling(RegisterID* exception, const Node& node, const Body& body)
+    void emitWhileHandling(RegisterID* thrown, const Node& node, const Body& body)
     {
         Reg previous = g.newTemporary();
-        emitRuntimeCall(previous.get(), "pushHandledException"_s, { exception }, node);
-        m_handledExceptions.append(exception);
+        emitRuntimeCall(previous.get(), "pushHandledException"_s, { thrown }, node);
+        m_handledExceptions.append(thrown);
         emitTryFinally(body, [&] {
             emitRuntimeCall(nullptr, "popHandledException"_s, { previous.get() }, node);
         });
@@ -2578,8 +2581,8 @@ private:
 
         emitTryCatch([&] {
             emit(node.body);
-        }, [&] (RegisterID* exception) {
-            emitWhileHandling(exception, node, [&] {
+        }, [&] (RegisterID* exception, RegisterID* thrown) {
+            emitWhileHandling(thrown, node, [&] {
                 Ref<Label> handled = g.newLabel();
                 for (ExceptHandler* handler : node.handlers) {
                     Ref<Label> next = g.newLabel();
@@ -2605,7 +2608,7 @@ private:
                     g.emitLabel(next.get());
                 }
                 // Nothing wanted it.
-                g.emitThrow(exception);
+                g.emitThrow(thrown);
                 g.emitLabel(handled.get());
             });
         }, [&] {
@@ -2619,8 +2622,8 @@ private:
     {
         emitTryCatch([&] {
             emit(node.body);
-        }, [&] (RegisterID* original) {
-            emitWhileHandling(original, node, [&] {
+        }, [&] (RegisterID* original, RegisterID* thrown) {
+            emitWhileHandling(thrown, node, [&] {
                 Reg results = g.newTemporary();
                 emitNewList(results.get(), { });
                 Reg rest = g.newTemporary();
@@ -2641,7 +2644,9 @@ private:
                     g.emitJumpIfTrue(isNone.get(), next.get());
 
                     emitTryCatch([&] {
-                        emitWhileHandling(match.get(), *handler, [&] {
+                        Reg matchAsThrown = g.newTemporary();
+                        emitRuntimeCall(matchAsThrown.get(), "asThrown"_s, { match.get() }, *handler);
+                        emitWhileHandling(matchAsThrown.get(), *handler, [&] {
                             SetForScope noReturn(m_isInExceptStar, true);
                             SetForScope noBreak(m_isInExceptStarOutsideLoop, true);
                             if (handler->name) {
@@ -2655,7 +2660,7 @@ private:
                             } else
                                 emit(handler->body);
                         });
-                    }, [&] (RegisterID* raised) {
+                    }, [&] (RegisterID* raised, RegisterID*) {
                         emitRuntimeCall(nullptr, "listAppend"_s, { results.get(), raised }, *handler);
                     }, [] { });
                     g.emitLabel(next.get());
@@ -2667,6 +2672,8 @@ private:
                 Reg isNone = g.newTemporary();
                 g.emitIsUndefinedOrNull(isNone.get(), toRaise.get());
                 g.emitJumpIfTrue(isNone.get(), done.get());
+                // It goes on from here as what was caught would have, whether or not it is the same object.
+                emitRuntimeCall(toRaise.get(), "asThrown"_s, { toRaise.get() }, node);
                 g.emitThrow(toRaise.get());
                 g.emitLabel(done.get());
             });
@@ -2701,17 +2708,17 @@ private:
                 if (item.optionalVariables)
                     emitAssign(item.optionalVariables, entered.get());
                 emitWith(node, index + 1);
-            }, [&] (RegisterID* exception) {
+            }, [&] (RegisterID* exception, RegisterID* thrown) {
                 // __exit__ is told of the exception, and may say that it has been dealt with.
                 g.emitLoad(finishedNormally.get(), jsBoolean(false));
-                emitWhileHandling(exception, position, [&] {
+                emitWhileHandling(thrown, position, [&] {
                     Reg suppress = g.newTemporary();
                     emitRuntimeCall(suppress.get(), "callExit"_s, { exit.get(), exception }, position);
                     if (node.isAsync)
                         emitAwaitValue(suppress.get(), suppress.get(), position, AwaitContext::AsyncExit);
                     Ref<Label> suppressed = g.newLabel();
                     emitJumpIfTrue(suppress.get(), suppressed.get());
-                    g.emitThrow(exception);
+                    g.emitThrow(thrown);
                     g.emitLabel(suppressed.get());
                 });
             }, [] { });

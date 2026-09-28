@@ -828,6 +828,7 @@ public:
         , m_handler(handler)
         , m_seenRemoteFunction(seenRemoteFunction)
         , m_thrownValue(thrownValue)
+        , m_isInFrameThatRethrew(exception->isBeingRethrown())
 #if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
     {
@@ -862,9 +863,10 @@ public:
         m_handler.m_valid = false;
         if (m_codeBlock) {
             if (!m_isTermination) {
-                // An exception in Python remembers each frame that it goes through.
-                if (m_codeBlock->source().provider()->language() == SourceLanguage::Python) [[unlikely]]
+                // An exception in Python remembers each frame that it comes to. It has been in the one that throws it again.
+                if (m_codeBlock->source().provider()->language() == SourceLanguage::Python && !m_isInFrameThatRethrew) [[unlikely]]
                     Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
+                m_isInFrameThatRethrew = false;
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
@@ -926,6 +928,7 @@ private:
     CatchInfo& m_handler;
     JSRemoteFunction*& m_seenRemoteFunction;
     JSValue m_thrownValue;
+    mutable bool m_isInFrameThatRethrew;
 
 #if ENABLE(WEBASSEMBLY)
     Exception* m_exception;
@@ -1006,6 +1009,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     CatchInfo catchInfo;
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
+    exception->setIsBeingRethrown(false);
     StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
 
     if (seenRemoteFunction) {
