@@ -1300,28 +1300,90 @@ private:
 
     // { a: x, b: y }: an op_new_object and, right after it, an op_put_by_id for each property (Options::evaluateObjectLiteralValuesFirst()).
     // How many of those there are.
+    // What the fast copy of a loop does better than code that has caches to go by: numbers that are not boxed, elements got at by
+    // their index, a call that is not made. A loop that has none of it gains nothing by there being two of it.
+    static bool isBetterInFastCopy(OpcodeID opcode)
+    {
+        switch (opcode) {
+        case op_add:
+        case op_sub:
+        case op_mul:
+        case op_div:
+        case op_mod:
+        case op_pow:
+        case op_inc:
+        case op_dec:
+        case op_negate:
+        case op_bitand:
+        case op_bitor:
+        case op_bitxor:
+        case op_bitnot:
+        case op_lshift:
+        case op_rshift:
+        case op_urshift:
+        case op_less:
+        case op_lesseq:
+        case op_greater:
+        case op_greatereq:
+        case op_jless:
+        case op_jlesseq:
+        case op_jgreater:
+        case op_jgreatereq:
+        case op_jnless:
+        case op_jnlesseq:
+        case op_jngreater:
+        case op_jngreatereq:
+        case op_get_by_val:
+        case op_put_by_val:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool isCallOrTheLike(OpcodeID opcode)
+    {
+        switch (opcode) {
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call:
+        case op_construct:
+        case op_call_varargs:
+        case op_tail_call_varargs:
+        case op_construct_varargs:
+        case op_super_construct:
+        case op_super_construct_varargs:
+        case op_call_direct_eval:
+        case op_iterator_open:
+        case op_iterator_next:
+            return true;
+        default:
+            return false;
+        }
+    }
+
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
-        if (!Options::aotSplitLoops() || !usesStubs)
+        if (!Options::aotSplitLoops() || !Options::aotLoopsToSplit() || !usesStubs)
             return false;
         unsigned size = m_instructions.size();
-        bool found = false;
+        struct OfBlock {
+            Vector<unsigned, 8> guards;
+            bool hasWhatIsBetterInFastCopy { false };
+            bool hasCallThatIsMade { false };
+            // A call that the fast copy does not make, or an element got at by its index: each time round, that is a call less.
+            bool hasWhatIsMuchBetterInFastCopy { false };
+        };
+        Vector<OfBlock> ofBlocks(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
             if (!block->isInLoop)
                 continue;
-            if (m_inLoop.isEmpty()) {
-                m_inLoop.ensureSize(size + 1);
-                m_guards.ensureSize(size + 1);
-                m_loopHeaders.ensureSize(size + 1);
-            }
-            if (block->isLoopHeader)
-                m_loopHeaders.set(block->bytecodeBegin);
+            OfBlock& ofBlock = ofBlocks[block->index];
             m_recentProperties.shrink(0);
             m_recentFunctions.shrink(0);
             BitVector partOfLiteral;
             for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
-                m_inLoop.set(offset);
                 const JSInstruction* instruction = m_instructions.at(offset).ptr();
                 if (partOfLiteral.get(offset))
                     continue;
@@ -1353,16 +1415,98 @@ private:
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }
-                if (canBeGuarded(instruction)) {
-                    m_guards.set(offset);
-                    found = true;
+                bool isGuarded = canBeGuarded(instruction);
+                if (isGuarded)
+                    ofBlock.guards.append(offset);
+                OpcodeID opcode = instruction->opcodeID();
+                if (isCallOrTheLike(opcode)) {
+                    if (isGuarded) {
+                        ofBlock.hasWhatIsBetterInFastCopy = true;
+                        ofBlock.hasWhatIsMuchBetterInFastCopy = true;
+                    } else
+                        ofBlock.hasCallThatIsMade = true;
+                } else if (isBetterInFastCopy(opcode)) {
+                    ofBlock.hasWhatIsBetterInFastCopy = true;
+                    if (opcode == op_get_by_val || opcode == op_put_by_val)
+                        ofBlock.hasWhatIsMuchBetterInFastCopy = true;
                 }
+            }
+        }
+
+        // The body of a loop is whatever gets to a jump back to its header without going through the header. A loop inside one that
+        // has two copies has two.
+        UncheckedKeyHashMap<BasicBlock*, BitVector> bodies;
+        for (auto [from, header] : m_backEdges) {
+            BitVector& body = bodies.ensure(header, [&] {
+                BitVector result(m_graph.blocks.size());
+                result.set(header->index);
+                return result;
+            }).iterator->value;
+            Vector<BasicBlock*> worklist { from };
+            while (!worklist.isEmpty()) {
+                BasicBlock* block = worklist.takeLast();
+                if (body.get(block->index))
+                    continue;
+                body.set(block->index);
+                for (BasicBlock* predecessor : block->predecessors)
+                    worklist.append(predecessor);
+            }
+        }
+        BitVector hasTwoCopies(m_graph.blocks.size());
+        for (auto& [header, body] : bodies) {
+            bool hasWhatIsBetter = false;
+            bool hasWhatIsMuchBetter = false;
+            bool hasCallThatIsMade = false;
+            for (unsigned index : body) {
+                hasWhatIsBetter |= ofBlocks[index].hasWhatIsBetterInFastCopy;
+                hasWhatIsMuchBetter |= ofBlocks[index].hasWhatIsMuchBetterInFastCopy;
+                hasCallThatIsMade |= ofBlocks[index].hasCallThatIsMade;
+            }
+            bool isWorthIt = true;
+            switch (Options::aotLoopsToSplit()) {
+            case 2:
+                isWorthIt = hasWhatIsBetter;
+                break;
+            case 3:
+                isWorthIt = !hasCallThatIsMade;
+                break;
+            case 4:
+                isWorthIt = hasWhatIsBetter && !hasCallThatIsMade;
+                break;
+            case 5:
+                isWorthIt = hasWhatIsMuchBetter || !hasCallThatIsMade;
+                break;
+            default:
+                break;
+            }
+            if (isWorthIt)
+                hasTwoCopies.merge(body);
+        }
+
+        bool found = false;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            if (!block->isInLoop || !hasTwoCopies.get(block->index))
+                continue;
+            if (m_inLoop.isEmpty()) {
+                m_inLoop.ensureSize(size + 1);
+                m_guards.ensureSize(size + 1);
+                m_loopHeaders.ensureSize(size + 1);
+            }
+            if (block->isLoopHeader)
+                m_loopHeaders.set(block->bytecodeBegin);
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
+                m_inLoop.set(offset);
+            for (unsigned offset : ofBlocks[block->index].guards) {
+                m_guards.set(offset);
+                found = true;
             }
         }
         m_hasGuards = found;
         if (found) {
-            for (auto [from, header] : m_backEdges)
-                m_graph.jumpsBack.add(static_cast<uint64_t>(header->bytecodeBegin) << 32 | from->bytecodeEnd);
+            for (auto [from, header] : m_backEdges) {
+                if (hasTwoCopies.get(header->index))
+                    m_graph.jumpsBack.add(static_cast<uint64_t>(header->bytecodeBegin) << 32 | from->bytecodeEnd);
+            }
         }
         return found;
     }

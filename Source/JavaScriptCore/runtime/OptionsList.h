@@ -162,6 +162,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotDisableFastPaths, 0, Normal, "For debugging the static compiler. 1: get_by_id cache, 2: put_by_id replace, 4: put_by_id transition, 8: get_by_val, 16: put_by_val, 32: scope caches, 64: closure variable stores, 128: tail calls (made as calls), 256: get_by_id on the prototype chain, 512: put_by_id transitions that are not direct, 1024: the megamorphic cache, 2048: allocation without the runtime, 4096: the equality thunks."_s) \
     v(Bool, aotUseLiveCalleeHints, false, Normal, "With useAOT: a call of a global variable is compiled for the function that the variable holds when the caller is compiled. For testing what is done, ahead of time, for calls of a module's functions."_s) \
     v(Bool, aotSplitLoops, true, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
+    v(Unsigned, aotLoopsToSplit, 1, Normal, "Which loops aotSplitLoops is for. 1: all. 2: those with something in them that the fast copy does better (arithmetic, elements got at by index, a call that it does not make). 3: those in which no call is made. 4: both. 5: those in which no call is made, or that have a call that the fast copy does not make or an element got at by its index."_s) \
     v(Unsigned, aotSkip, 0, Normal, "If not zero, the static compiler leaves out the function that would be this many-th."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
