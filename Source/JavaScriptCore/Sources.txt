@@ -758,6 +758,7 @@ python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
 python/PythonGenerators.cpp
 python/PythonGenericAlias.cpp
+python/PythonIterators.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
 python/PythonModules.cpp
@@ -766,7 +767,9 @@ python/PythonNumbers.cpp
 python/PythonObjectModel.cpp
 python/PythonOperators.cpp
 python/PythonParser.cpp
+python/PythonProperty.cpp
 python/PythonRange.cpp
+python/PythonReduce.cpp
 python/PythonRepr.cpp
 python/PythonRuntimeFunctions.cpp
 python/PythonSequences.cpp

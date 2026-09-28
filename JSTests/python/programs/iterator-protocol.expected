@@ -1,0 +1,448 @@
+list type => ('list_iterator', [1, 2, 3, 4], True)
+list hint => [4, 3, 0, 0]
+list reduce after 0 => ('iter', ([1, 2, 3, 4],), 0)
+list reduce after 2 => ('iter', ([1, 2, 3, 4],), 2)
+list reduce after 4 => ('iter', ([1, 2, 3, 4],), 4)
+list reduce after 5 => ('iter', ([],))
+list rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+list setstate => [[1, 2, 3, 4], [2, 3, 4], [4], [], [], [], [], [], [2, 3, 4]]
+list setstate later => [[1, 2, 3, 4], [2, 3, 4], [4]]
+list setstate when done => [[], []]
+list setstate 'x' !! TypeError an integer is required
+list setstate 1.5 !! TypeError an integer is required
+list setstate None !! TypeError an integer is required
+list setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+list setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+list setstate nothing !! TypeError list_iterator.__setstate__() takes exactly one argument (0 given)
+list is not left where it was => (None, [2, 3, 4])
+list reversed type => ('list_reverseiterator', [4, 3, 2, 1], True)
+list reversed hint => [4, 3, 0, 0]
+list reversed reduce after 0 !! TypeError 'type' object is not iterable
+list reversed reduce after 2 !! TypeError 'type' object is not iterable
+list reversed reduce after 4 !! TypeError 'type' object is not iterable
+list reversed reduce after 5 !! TypeError 'type' object is not iterable
+list reversed rebuilt => [[4, 3, 2, 1], [3, 2, 1], [1], [], []]
+list reversed setstate => [[1], [2, 1], [4, 3, 2, 1], [4, 3, 2, 1], [4, 3, 2, 1], [4, 3, 2, 1], [], [], [2, 1]]
+list reversed setstate later => [[1], [2, 1], [4, 3, 2, 1]]
+list reversed setstate when done => [[1], [2, 1]]
+list reversed setstate 'x' !! TypeError an integer is required
+list reversed setstate 1.5 !! TypeError an integer is required
+list reversed setstate None !! TypeError an integer is required
+list reversed setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+list reversed setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+list reversed setstate nothing !! TypeError list_reverseiterator.__setstate__() takes exactly one argument (0 given)
+list reversed is not left where it was => (None, [3, 2, 1])
+tuple type => ('tuple_iterator', [1, 2, 3, 4], True)
+tuple hint => [4, 3, 0, 0]
+tuple reduce after 0 => ('iter', ((1, 2, 3, 4),), 0)
+tuple reduce after 2 => ('iter', ((1, 2, 3, 4),), 2)
+tuple reduce after 4 => ('iter', ((1, 2, 3, 4),), 4)
+tuple reduce after 5 => ('iter', ((),))
+tuple rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+tuple setstate => [[1, 2, 3, 4], [2, 3, 4], [4], [], [], [], [1, 2, 3, 4], [1, 2, 3, 4], [2, 3, 4]]
+tuple setstate later => [[1, 2, 3, 4], [2, 3, 4], [4]]
+tuple setstate when done => [[], []]
+tuple setstate 'x' !! TypeError an integer is required
+tuple setstate 1.5 !! TypeError an integer is required
+tuple setstate None !! TypeError an integer is required
+tuple setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+tuple setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+tuple setstate nothing !! TypeError tuple_iterator.__setstate__() takes exactly one argument (0 given)
+tuple is not left where it was => (None, [2, 3, 4])
+str type => ('str_ascii_iterator', ['a', 'b', 'c', 'd'], True)
+str hint => [4, 3, 0, 0]
+str reduce after 0 => ('iter', ('abcd',), 0)
+str reduce after 2 => ('iter', ('abcd',), 2)
+str reduce after 4 => ('iter', ('abcd',), 4)
+str reduce after 5 => ('iter', ('',))
+str rebuilt => [['a', 'b', 'c', 'd'], ['b', 'c', 'd'], ['d'], [], []]
+str setstate => [['a', 'b', 'c', 'd'], ['b', 'c', 'd'], ['d'], [], [], [], ['a', 'b', 'c', 'd'], ['a', 'b', 'c', 'd'], ['b', 'c', 'd']]
+str setstate later => [['a', 'b', 'c', 'd'], ['b', 'c', 'd'], ['d']]
+str setstate when done => [[], []]
+str setstate 'x' !! TypeError an integer is required
+str setstate 1.5 !! TypeError an integer is required
+str setstate None !! TypeError an integer is required
+str setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+str setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+str setstate nothing !! TypeError str_ascii_iterator.__setstate__() takes exactly one argument (0 given)
+str is not left where it was => (None, ['b', 'c', 'd'])
+str wide type => ('str_iterator', ['a', 'é', '😀', 'd'], True)
+str wide hint => [4, 3, 0, 0]
+str wide reduce after 0 => ('iter', ('aé😀d',), 0)
+str wide reduce after 2 => ('iter', ('aé😀d',), 2)
+str wide reduce after 4 => ('iter', ('aé😀d',), 4)
+str wide reduce after 5 => ('iter', ('',))
+str wide rebuilt => [['a', 'é', '😀', 'd'], ['é', '😀', 'd'], ['d'], [], []]
+str wide setstate => [['a', 'é', '😀', 'd'], ['é', '😀', 'd'], ['d'], [], [], [], ['a', 'é', '😀', 'd'], ['a', 'é', '😀', 'd'], ['é', '😀', 'd']]
+str wide setstate later => [['a', 'é', '😀', 'd'], ['é', '😀', 'd'], ['d']]
+str wide setstate when done => [[], []]
+str wide setstate 'x' !! TypeError an integer is required
+str wide setstate 1.5 !! TypeError an integer is required
+str wide setstate None !! TypeError an integer is required
+str wide setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+str wide setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+str wide setstate nothing !! TypeError str_iterator.__setstate__() takes exactly one argument (0 given)
+str wide is not left where it was => (None, ['é', '😀', 'd'])
+bytes type => ('bytes_iterator', [97, 98, 99, 100], True)
+bytes hint => [4, 3, 0, 0]
+bytes reduce after 0 => ('iter', (b'abcd',), 0)
+bytes reduce after 2 => ('iter', (b'abcd',), 2)
+bytes reduce after 4 => ('iter', (b'abcd',), 4)
+bytes reduce after 5 => ('iter', ((),))
+bytes rebuilt => [[97, 98, 99, 100], [98, 99, 100], [100], [], []]
+bytes setstate => [[97, 98, 99, 100], [98, 99, 100], [100], [], [], [], [97, 98, 99, 100], [97, 98, 99, 100], [98, 99, 100]]
+bytes setstate later => [[97, 98, 99, 100], [98, 99, 100], [100]]
+bytes setstate when done => [[], []]
+bytes setstate 'x' !! TypeError an integer is required
+bytes setstate 1.5 !! TypeError an integer is required
+bytes setstate None !! TypeError an integer is required
+bytes setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+bytes setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+bytes setstate nothing !! TypeError bytes_iterator.__setstate__() takes exactly one argument (0 given)
+bytes is not left where it was => (None, [98, 99, 100])
+bytearray type => ('bytearray_iterator', [97, 98, 99, 100], True)
+bytearray hint => [4, 3, 0, 0]
+bytearray reduce after 0 => ('iter', (bytearray(b'abcd'),), 0)
+bytearray reduce after 2 => ('iter', (bytearray(b'abcd'),), 2)
+bytearray reduce after 4 => ('iter', (bytearray(b'abcd'),), 4)
+bytearray reduce after 5 => ('iter', ((),))
+bytearray rebuilt => [[97, 98, 99, 100], [98, 99, 100], [100], [], []]
+bytearray setstate => [[97, 98, 99, 100], [98, 99, 100], [100], [], [], [], [], [], [98, 99, 100]]
+bytearray setstate later => [[97, 98, 99, 100], [98, 99, 100], [100]]
+bytearray setstate when done => [[], []]
+bytearray setstate 'x' !! TypeError an integer is required
+bytearray setstate 1.5 !! TypeError an integer is required
+bytearray setstate None !! TypeError an integer is required
+bytearray setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+bytearray setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+bytearray setstate nothing !! TypeError bytearray_iterator.__setstate__() takes exactly one argument (0 given)
+bytearray is not left where it was => (None, [98, 99, 100])
+range type => ('range_iterator', [0, 10, 20, 30], True)
+range hint => [4, 3, 0, 0]
+range reduce after 0 => ('iter', (range(0, 40, 10),), None)
+range reduce after 2 => ('iter', (range(20, 40, 10),), None)
+range reduce after 4 => ('iter', (range(40, 40, 10),), None)
+range reduce after 5 => ('iter', (range(40, 40, 10),), None)
+range rebuilt => [[0, 10, 20, 30], [10, 20, 30], [30], [], []]
+range setstate => [[0, 10, 20, 30], [10, 20, 30], [30], [], [], [], [0, 10, 20, 30], [0, 10, 20, 30], [10, 20, 30]]
+range setstate later => [[20, 30], [30], []]
+range setstate when done => [[], []]
+range setstate 'x' !! TypeError 'str' object cannot be interpreted as an integer
+range setstate 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+range setstate None !! TypeError 'NoneType' object cannot be interpreted as an integer
+range setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C long
+range setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C long
+range setstate nothing !! TypeError range_iterator.__setstate__() takes exactly one argument (0 given)
+range is not left where it was => (None, [10, 20, 30])
+range down type => ('range_iterator', [4, 3, 2, 1], True)
+range down hint => [4, 3, 0, 0]
+range down reduce after 0 => ('iter', (range(4, 0, -1),), None)
+range down reduce after 2 => ('iter', (range(2, 0, -1),), None)
+range down reduce after 4 => ('iter', (range(0, 0, -1),), None)
+range down reduce after 5 => ('iter', (range(0, 0, -1),), None)
+range down rebuilt => [[4, 3, 2, 1], [3, 2, 1], [1], [], []]
+range down setstate => [[4, 3, 2, 1], [3, 2, 1], [1], [], [], [], [4, 3, 2, 1], [4, 3, 2, 1], [3, 2, 1]]
+range down setstate later => [[2, 1], [1], []]
+range down setstate when done => [[], []]
+range down setstate 'x' !! TypeError 'str' object cannot be interpreted as an integer
+range down setstate 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+range down setstate None !! TypeError 'NoneType' object cannot be interpreted as an integer
+range down setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C long
+range down setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C long
+range down setstate nothing !! TypeError range_iterator.__setstate__() takes exactly one argument (0 given)
+range down is not left where it was => (None, [3, 2, 1])
+long range type => ('longrange_iterator', [1180591620717411303424, 1180591620717411303425, 1180591620717411303426, 1180591620717411303427], True)
+long range hint => [4, 3, 0, 0]
+long range reduce after 0 => ('iter', (range(1180591620717411303424, 1180591620717411303428),), None)
+long range reduce after 2 => ('iter', (range(1180591620717411303426, 1180591620717411303428),), None)
+long range reduce after 4 => ('iter', (range(1180591620717411303428, 1180591620717411303428),), None)
+long range reduce after 5 => ('iter', (range(1180591620717411303428, 1180591620717411303428),), None)
+long range rebuilt => [[1180591620717411303424, 1180591620717411303425, 1180591620717411303426, 1180591620717411303427], [1180591620717411303425, 1180591620717411303426, 1180591620717411303427], [1180591620717411303427], [], []]
+long range setstate !! TypeError state must be an int, not bool
+long range setstate later => [[1180591620717411303426, 1180591620717411303427], [1180591620717411303427], []]
+long range setstate when done => [[], []]
+long range setstate 'x' !! TypeError state must be an int, not str
+long range setstate 1.5 !! TypeError state must be an int, not float
+long range setstate None !! TypeError state must be an int, not NoneType
+long range setstate 1208925819614629174706176 => []
+long range setstate -1208925819614629174706176 => [1180591620717411303424, 1180591620717411303425, 1180591620717411303426, 1180591620717411303427]
+long range setstate nothing !! TypeError longrange_iterator.__setstate__() takes exactly one argument (0 given)
+long range is not left where it was => (None, [1180591620717411303425, 1180591620717411303426, 1180591620717411303427])
+dict type => ('dict_keyiterator', [1, 2, 3, 4], True)
+dict hint => [4, 3, 0, 0]
+dict reduce after 0 => ('iter', ([1, 2, 3, 4],))
+dict reduce after 2 => ('iter', ([3, 4],))
+dict reduce after 4 => ('iter', ([],))
+dict reduce after 5 => ('iter', ([],))
+dict rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+dict is not left where it was => (None, [2, 3, 4])
+dict values type => ('dict_valueiterator', ['a', 'b', 'c', 'd'], True)
+dict values hint => [4, 3, 0, 0]
+dict values reduce after 0 => ('iter', (['a', 'b', 'c', 'd'],))
+dict values reduce after 2 => ('iter', (['c', 'd'],))
+dict values reduce after 4 => ('iter', ([],))
+dict values reduce after 5 => ('iter', ([],))
+dict values rebuilt => [['a', 'b', 'c', 'd'], ['b', 'c', 'd'], ['d'], [], []]
+dict values is not left where it was => (None, ['b', 'c', 'd'])
+dict items type => ('dict_itemiterator', [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')], True)
+dict items hint => [4, 3, 0, 0]
+dict items reduce after 0 => ('iter', ([(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')],))
+dict items reduce after 2 => ('iter', ([(3, 'c'), (4, 'd')],))
+dict items reduce after 4 => ('iter', ([],))
+dict items reduce after 5 => ('iter', ([],))
+dict items rebuilt => [[(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')], [(2, 'b'), (3, 'c'), (4, 'd')], [(4, 'd')], [], []]
+dict items is not left where it was => (None, [(2, 'b'), (3, 'c'), (4, 'd')])
+dict reversed type => ('dict_reversekeyiterator', [4, 3, 2, 1], True)
+dict reversed hint => [4, 3, 0, 0]
+dict reversed reduce after 0 => ('iter', ([4, 3, 2, 1],))
+dict reversed reduce after 2 => ('iter', ([2, 1],))
+dict reversed reduce after 4 => ('iter', ([],))
+dict reversed reduce after 5 => ('iter', ([],))
+dict reversed rebuilt => [[4, 3, 2, 1], [3, 2, 1], [1], [], []]
+dict reversed is not left where it was => (None, [3, 2, 1])
+dict keys reversed type => ('dict_reversekeyiterator', [4, 3, 2, 1], True)
+dict keys reversed hint => [4, 3, 0, 0]
+dict keys reversed reduce after 0 => ('iter', ([4, 3, 2, 1],))
+dict keys reversed reduce after 2 => ('iter', ([2, 1],))
+dict keys reversed reduce after 4 => ('iter', ([],))
+dict keys reversed reduce after 5 => ('iter', ([],))
+dict keys reversed rebuilt => [[4, 3, 2, 1], [3, 2, 1], [1], [], []]
+dict keys reversed is not left where it was => (None, [3, 2, 1])
+dict values reversed type => ('dict_reversevalueiterator', ['d', 'c', 'b', 'a'], True)
+dict values reversed hint => [4, 3, 0, 0]
+dict values reversed reduce after 0 => ('iter', (['d', 'c', 'b', 'a'],))
+dict values reversed reduce after 2 => ('iter', (['b', 'a'],))
+dict values reversed reduce after 4 => ('iter', ([],))
+dict values reversed reduce after 5 => ('iter', ([],))
+dict values reversed rebuilt => [['d', 'c', 'b', 'a'], ['c', 'b', 'a'], ['a'], [], []]
+dict values reversed is not left where it was => (None, ['c', 'b', 'a'])
+dict items reversed type => ('dict_reverseitemiterator', [(4, 'd'), (3, 'c'), (2, 'b'), (1, 'a')], True)
+dict items reversed hint => [4, 3, 0, 0]
+dict items reversed reduce after 0 => ('iter', ([(4, 'd'), (3, 'c'), (2, 'b'), (1, 'a')],))
+dict items reversed reduce after 2 => ('iter', ([(2, 'b'), (1, 'a')],))
+dict items reversed reduce after 4 => ('iter', ([],))
+dict items reversed reduce after 5 => ('iter', ([],))
+dict items reversed rebuilt => [[(4, 'd'), (3, 'c'), (2, 'b'), (1, 'a')], [(3, 'c'), (2, 'b'), (1, 'a')], [(1, 'a')], [], []]
+dict items reversed is not left where it was => (None, [(3, 'c'), (2, 'b'), (1, 'a')])
+set type => ('set_iterator', [1, 2, 3, 4], True)
+set hint => [4, 3, 0, 0]
+set reduce after 0 => ('iter', ([1, 2, 3, 4],))
+set reduce after 2 => ('iter', ([3, 4],))
+set reduce after 4 => ('iter', ([],))
+set reduce after 5 => ('iter', ([],))
+set rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+set is not left where it was => (None, [2, 3, 4])
+frozenset type => ('set_iterator', [1, 2, 3, 4], True)
+frozenset hint => [4, 3, 0, 0]
+frozenset reduce after 0 => ('iter', ([1, 2, 3, 4],))
+frozenset reduce after 2 => ('iter', ([3, 4],))
+frozenset reduce after 4 => ('iter', ([],))
+frozenset reduce after 5 => ('iter', ([],))
+frozenset rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+frozenset is not left where it was => (None, [2, 3, 4])
+sequence type => ('iterator', [0, 10, 20, 30], True)
+sequence hint => [NotImplemented, NotImplemented, NotImplemented, 0]
+sequence reduce after 0 => ('iter', (<Seq>,), 0)
+sequence reduce after 2 => ('iter', (<Seq>,), 2)
+sequence reduce after 4 => ('iter', (<Seq>,), 4)
+sequence reduce after 5 => ('iter', ((),))
+sequence rebuilt => [[0, 10, 20, 30], [10, 20, 30], [30], [], []]
+sequence setstate => [[0, 10, 20, 30], [10, 20, 30], [30], [], [], [], [0, 10, 20, 30], [0, 10, 20, 30], [10, 20, 30]]
+sequence setstate later => [[0, 10, 20, 30], [10, 20, 30], [30]]
+sequence setstate when done => [[], []]
+sequence setstate 'x' !! TypeError an integer is required
+sequence setstate 1.5 !! TypeError an integer is required
+sequence setstate None !! TypeError an integer is required
+sequence setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+sequence setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+sequence setstate nothing !! TypeError iterator.__setstate__() takes exactly one argument (0 given)
+sequence is not left where it was => (None, [10, 20, 30])
+sequence with len type => ('iterator', [0, 10, 20, 30], True)
+sequence with len hint => [4, 3, 0, 0]
+sequence with len reduce after 0 => ('iter', (<SeqLen>,), 0)
+sequence with len reduce after 2 => ('iter', (<SeqLen>,), 2)
+sequence with len reduce after 4 => ('iter', (<SeqLen>,), 4)
+sequence with len reduce after 5 => ('iter', ((),))
+sequence with len rebuilt => [[0, 10, 20, 30], [10, 20, 30], [30], [], []]
+sequence with len setstate => [[0, 10, 20, 30], [10, 20, 30], [30], [], [], [], [0, 10, 20, 30], [0, 10, 20, 30], [10, 20, 30]]
+sequence with len setstate later => [[0, 10, 20, 30], [10, 20, 30], [30]]
+sequence with len setstate when done => [[], []]
+sequence with len setstate 'x' !! TypeError an integer is required
+sequence with len setstate 1.5 !! TypeError an integer is required
+sequence with len setstate None !! TypeError an integer is required
+sequence with len setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+sequence with len setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+sequence with len setstate nothing !! TypeError iterator.__setstate__() takes exactly one argument (0 given)
+sequence with len is not left where it was => (None, [10, 20, 30])
+reversed type => ('reversed', [30, 20, 10, 0], True)
+reversed hint => [4, 3, 0, 0]
+reversed reduce after 0 !! TypeError 'type' object is not iterable
+reversed reduce after 2 !! TypeError 'type' object is not iterable
+reversed reduce after 4 !! TypeError 'type' object is not iterable
+reversed reduce after 5 !! TypeError 'type' object is not iterable
+reversed rebuilt => [[30, 20, 10, 0], [20, 10, 0], [0], [], []]
+reversed setstate => [[0], [10, 0], [30, 20, 10, 0], [30, 20, 10, 0], [30, 20, 10, 0], [30, 20, 10, 0], [], [], [10, 0]]
+reversed setstate later => [[0], [10, 0], [30, 20, 10, 0]]
+reversed setstate when done => [[], []]
+reversed setstate 'x' !! TypeError an integer is required
+reversed setstate 1.5 !! TypeError an integer is required
+reversed setstate None !! TypeError an integer is required
+reversed setstate 1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+reversed setstate -1208925819614629174706176 !! OverflowError Python int too large to convert to C ssize_t
+reversed setstate nothing !! TypeError reversed.__setstate__() takes exactly one argument (0 given)
+reversed is not left where it was => (None, [20, 10, 0])
+enumerate type => ('enumerate', [(0, 'a'), (1, 'b'), (2, 'c'), (3, 'd')], True)
+enumerate hint => ['none', 'none', 'none', 'none']
+enumerate reduce after 0 !! TypeError 'type' object is not iterable
+enumerate reduce after 2 !! TypeError 'type' object is not iterable
+enumerate reduce after 4 !! TypeError 'type' object is not iterable
+enumerate reduce after 5 !! TypeError 'type' object is not iterable
+enumerate rebuilt => [[(0, 'a'), (1, 'b'), (2, 'c'), (3, 'd')], [(1, 'b'), (2, 'c'), (3, 'd')], [(3, 'd')], [], []]
+enumerate is not left where it was => (None, [(1, 'b'), (2, 'c'), (3, 'd')])
+enumerate from type => ('enumerate', [(5, 'a'), (6, 'b'), (7, 'c'), (8, 'd')], True)
+enumerate from hint => ['none', 'none', 'none', 'none']
+enumerate from reduce after 0 !! TypeError 'type' object is not iterable
+enumerate from reduce after 2 !! TypeError 'type' object is not iterable
+enumerate from reduce after 4 !! TypeError 'type' object is not iterable
+enumerate from reduce after 5 !! TypeError 'type' object is not iterable
+enumerate from rebuilt => [[(5, 'a'), (6, 'b'), (7, 'c'), (8, 'd')], [(6, 'b'), (7, 'c'), (8, 'd')], [(8, 'd')], [], []]
+enumerate from is not left where it was => (None, [(6, 'b'), (7, 'c'), (8, 'd')])
+enumerate big type => ('enumerate', [(1180591620717411303424, 'a'), (1180591620717411303425, 'b'), (1180591620717411303426, 'c'), (1180591620717411303427, 'd')], True)
+enumerate big hint => ['none', 'none', 'none', 'none']
+enumerate big reduce after 0 !! TypeError 'type' object is not iterable
+enumerate big reduce after 2 !! TypeError 'type' object is not iterable
+enumerate big reduce after 4 !! TypeError 'type' object is not iterable
+enumerate big reduce after 5 !! TypeError 'type' object is not iterable
+enumerate big rebuilt => [[(1180591620717411303424, 'a'), (1180591620717411303425, 'b'), (1180591620717411303426, 'c'), (1180591620717411303427, 'd')], [(1180591620717411303425, 'b'), (1180591620717411303426, 'c'), (1180591620717411303427, 'd')], [(1180591620717411303427, 'd')], [], []]
+enumerate big is not left where it was => (None, [(1180591620717411303425, 'b'), (1180591620717411303426, 'c'), (1180591620717411303427, 'd')])
+zip type => ('zip', [('a', 1), ('b', 2), ('c', 3), ('d', 4)], True)
+zip hint => ['none', 'none', 'none', 'none']
+zip reduce after 0 !! TypeError 'type' object is not iterable
+zip reduce after 2 !! TypeError 'type' object is not iterable
+zip reduce after 4 !! TypeError 'type' object is not iterable
+zip reduce after 5 !! TypeError 'type' object is not iterable
+zip rebuilt => [[('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('b', 2), ('c', 3), ('d', 4)], [('d', 4)], [], []]
+zip setstate => [[('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)]]
+zip setstate later => [[('c', 3), ('d', 4)], [('c', 3), ('d', 4)], [('c', 3), ('d', 4)]]
+zip setstate when done => [[], []]
+zip setstate 'x' => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip setstate 1.5 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip setstate None => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip setstate 1208925819614629174706176 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip setstate -1208925819614629174706176 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip setstate nothing !! TypeError zip.__setstate__() takes exactly one argument (0 given)
+zip is not left where it was => (None, [('b', 2), ('c', 3), ('d', 4)])
+zip strict type => ('zip', [('a', 1), ('b', 2), ('c', 3), ('d', 4)], True)
+zip strict hint => ['none', 'none', 'none', 'none']
+zip strict reduce after 0 !! TypeError 'type' object is not iterable
+zip strict reduce after 2 !! TypeError 'type' object is not iterable
+zip strict reduce after 4 !! TypeError 'type' object is not iterable
+zip strict reduce after 5 !! TypeError 'type' object is not iterable
+zip strict rebuilt => [[('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('b', 2), ('c', 3), ('d', 4)], [('d', 4)], [], []]
+zip strict setstate => [[('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)], [('a', 1), ('b', 2), ('c', 3), ('d', 4)]]
+zip strict setstate later => [[('c', 3), ('d', 4)], [('c', 3), ('d', 4)], [('c', 3), ('d', 4)]]
+zip strict setstate when done => [[], []]
+zip strict setstate 'x' => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip strict setstate 1.5 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip strict setstate None => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip strict setstate 1208925819614629174706176 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip strict setstate -1208925819614629174706176 => [('a', 1), ('b', 2), ('c', 3), ('d', 4)]
+zip strict setstate nothing !! TypeError zip.__setstate__() takes exactly one argument (0 given)
+zip strict is not left where it was => (None, [('b', 2), ('c', 3), ('d', 4)])
+map type => ('map', ['1', '2', '3', '4'], True)
+map hint => ['none', 'none', 'none', 'none']
+map reduce after 0 !! TypeError 'type' object is not iterable
+map reduce after 2 !! TypeError 'type' object is not iterable
+map reduce after 4 !! TypeError 'type' object is not iterable
+map reduce after 5 !! TypeError 'type' object is not iterable
+map rebuilt => [['1', '2', '3', '4'], ['2', '3', '4'], ['4'], [], []]
+map setstate => [['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4'], ['1', '2', '3', '4']]
+map setstate later => [['3', '4'], ['3', '4'], ['3', '4']]
+map setstate when done => [[], []]
+map setstate 'x' => ['1', '2', '3', '4']
+map setstate 1.5 => ['1', '2', '3', '4']
+map setstate None => ['1', '2', '3', '4']
+map setstate 1208925819614629174706176 => ['1', '2', '3', '4']
+map setstate -1208925819614629174706176 => ['1', '2', '3', '4']
+map setstate nothing !! TypeError map.__setstate__() takes exactly one argument (0 given)
+map is not left where it was => (None, ['2', '3', '4'])
+map two type => ('map', [1, 4, 9, 16], True)
+map two hint => ['none', 'none', 'none', 'none']
+map two reduce after 0 !! TypeError 'type' object is not iterable
+map two reduce after 2 !! TypeError 'type' object is not iterable
+map two reduce after 4 !! TypeError 'type' object is not iterable
+map two reduce after 5 !! TypeError 'type' object is not iterable
+map two rebuilt => [[1, 4, 9, 16], [4, 9, 16], [16], [], []]
+map two setstate => [[1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16]]
+map two setstate later => [[9, 16], [9, 16], [9, 16]]
+map two setstate when done => [[], []]
+map two setstate 'x' => [1, 4, 9, 16]
+map two setstate 1.5 => [1, 4, 9, 16]
+map two setstate None => [1, 4, 9, 16]
+map two setstate 1208925819614629174706176 => [1, 4, 9, 16]
+map two setstate -1208925819614629174706176 => [1, 4, 9, 16]
+map two setstate nothing !! TypeError map.__setstate__() takes exactly one argument (0 given)
+map two is not left where it was => (None, [4, 9, 16])
+map strict type => ('map', [1, 4, 9, 16], True)
+map strict hint => ['none', 'none', 'none', 'none']
+map strict reduce after 0 !! TypeError 'type' object is not iterable
+map strict reduce after 2 !! TypeError 'type' object is not iterable
+map strict reduce after 4 !! TypeError 'type' object is not iterable
+map strict reduce after 5 !! TypeError 'type' object is not iterable
+map strict rebuilt => [[1, 4, 9, 16], [4, 9, 16], [16], [], []]
+map strict setstate => [[1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16], [1, 4, 9, 16]]
+map strict setstate later => [[9, 16], [9, 16], [9, 16]]
+map strict setstate when done => [[], []]
+map strict setstate 'x' => [1, 4, 9, 16]
+map strict setstate 1.5 => [1, 4, 9, 16]
+map strict setstate None => [1, 4, 9, 16]
+map strict setstate 1208925819614629174706176 => [1, 4, 9, 16]
+map strict setstate -1208925819614629174706176 => [1, 4, 9, 16]
+map strict setstate nothing !! TypeError map.__setstate__() takes exactly one argument (0 given)
+map strict is not left where it was => (None, [4, 9, 16])
+filter type => ('filter', [1, 2, 3, 4], True)
+filter hint => ['none', 'none', 'none', 'none']
+filter reduce after 0 !! TypeError 'type' object is not iterable
+filter reduce after 2 !! TypeError 'type' object is not iterable
+filter reduce after 4 !! TypeError 'type' object is not iterable
+filter reduce after 5 !! TypeError 'type' object is not iterable
+filter rebuilt => [[1, 2, 3, 4], [2, 3, 4], [4], [], []]
+filter is not left where it was => (None, [2, 3, 4])
+memoryview type => ('memory_iterator', [97, 98, 99, 100], True)
+memoryview hint => ['none', 'none', 'none', 'none']
+memoryview has no __reduce__ of its own
+callable type => ('callable_iterator', [1, 2, 3, 4], True)
+callable hint => ['none', 'none', 'none', 'none']
+callable reduce after 0 => ('iter', ('counter', 5))
+callable reduce after 2 => ('iter', ('counter', 5))
+callable reduce after 4 => ('iter', ('counter', 5))
+callable reduce after 5 => ('iter', ((),))
+callable is not left where it was => (None, [2, 3, 4])
+list grown => (3, ('iter', ([1, 2, 3, 4],), 1), [2, 3, 4])
+list shrunk => (0, ('iter', ([],), 1), [])
+list reversed shrunk => (0, "TypeError: 'type' object is not iterable", [])
+dict grown => (0, 'RuntimeError: dictionary changed size during iteration', 'RuntimeError: dictionary changed size during iteration')
+set grown => (0, 'RuntimeError: Set changed size during iteration', 'RuntimeError: Set changed size during iteration')
+bytearray shrunk => (0, ('iter', (bytearray(b''),), 1), [])
+memoryview released => (97, None, 'ValueError: operation forbidden on released memoryview object')
+map strict shorter !! ValueError map() argument 2 is shorter than argument 1
+map strict longer !! ValueError map() argument 2 is longer than argument 1
+map strict third shorter !! ValueError map() argument 3 is shorter than arguments 1-2
+map strict third longer !! ValueError map() argument 3 is longer than arguments 1-2
+map not strict => [1]
+map strict of one => ['1', '2']
+map made strict !! ValueError map() argument 2 is shorter than argument 1
+zip made strict !! ValueError zip() argument 2 is shorter than argument 1
+zip made lax => (None, [(1, 1)])
+map bad keyword !! TypeError map() got an unexpected keyword argument 'nope'
+map too few !! TypeError map() must have at least two arguments.
+derived => [('E', [(0, 'a'), (1, 'b')]), ('Z', [('a', 'c'), ('b', 'd')]), ('M', ['1']), ('F', [1]), ('list_reverseiterator', [2, 1])]
+derived reduce !! TypeError 'type' object is not iterable
+derived attributes => (None, 1, {'x': 1})
+derived isinstance => (True, True, 'enumerate')
+derived next => ('mine', 'mine')
+cannot be derived from => ["TypeError: type 'list_iterator' is not an acceptable base type", "TypeError: type 'tuple_iterator' is not an acceptable base type", "TypeError: type 'str_ascii_iterator' is not an acceptable base type", "TypeError: type 'range_iterator' is not an acceptable base type", "TypeError: type 'dict_keyiterator' is not an acceptable base type", "TypeError: type 'set_iterator' is not an acceptable base type", "TypeError: type 'iterator' is not an acceptable base type", "TypeError: type 'memory_iterator' is not an acceptable base type", "TypeError: type 'callable_iterator' is not an acceptable base type"]
+cannot be made => ["TypeError: cannot create 'list_iterator' instances", "TypeError: cannot create 'tuple_iterator' instances", "TypeError: cannot create 'str_ascii_iterator' instances", "TypeError: cannot create 'range_iterator' instances", "TypeError: cannot create 'dict_keyiterator' instances", "TypeError: cannot create 'set_iterator' instances", "TypeError: cannot create 'iterator' instances", "TypeError: cannot create 'memory_iterator' instances", "TypeError: cannot create 'callable_iterator' instances"]
+builtins replaced !! NameError name 'replaced' is not defined
+builtins replaced => not iter
+builtins deleted !! AttributeError iter

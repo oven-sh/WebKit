@@ -40,7 +40,7 @@ namespace Python {
 
 // name is __name__.
 #define FOR_EACH_PYTHON_DUNDER_NAME(v) \
-    v(abs) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotate_func) v(annotations) v(annotations_cache) v(args) v(await) v(base) v(bases) v(bool) \
+    v(abs) v(abstractmethods) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotate_func) v(annotations) v(annotations_cache) v(args) v(await) v(base) v(bases) v(bool) \
     v(build_class) v(builtins) v(bytes) v(call) v(cause) v(ceil) v(class) v(class_getitem) v(classcell) v(classdict) v(closure) \
     v(code) v(complex) v(conditional_annotations) v(contains) v(context) v(copy) v(debug) v(deepcopy) v(defaults) v(del) v(delattr) v(delete) v(delitem) v(dict) v(dir) v(divmod) v(doc) \
     v(enter) v(eq) v(exit) v(file) v(firstlineno) v(float) v(floor) v(floordiv) v(format) v(func) v(ge) v(get) v(getattr) v(getattribute) \
@@ -57,7 +57,7 @@ namespace Python {
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
     v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
-    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
+    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
 #define FOR_EACH_PYTHON_EXCEPTION_FIELD(v) \

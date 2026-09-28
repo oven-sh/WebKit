@@ -1,0 +1,93 @@
+get set delete => (0, None, 5, None, False)
+attributes => ('the doc', 'x', 'x', 'x', 'x', None, None, None, 'given')
+names => ('ro', 'wo', 'nothing', 'renamed')
+no name !! AttributeError 'property' object has no attribute '__name__'
+name from getter => len
+getter without a name !! AttributeError 'property' object has no attribute '__name__'
+set name => (None, 'n', None, 'len')
+no setter !! AttributeError property 'ro' of 'C' object has no setter
+no deleter !! AttributeError property 'ro' of 'C' object has no deleter
+no getter !! AttributeError property 'wo' of 'C' object has no getter
+nothing get !! AttributeError property 'nothing' of 'C' object has no getter
+nothing set !! AttributeError property 'nothing' of 'C' object has no setter
+nothing delete !! AttributeError property 'nothing' of 'C' object has no deleter
+unnamed get !! AttributeError property of 'C' object has no getter
+unnamed set !! AttributeError property of 'C' object has no setter
+unnamed delete !! AttributeError property of 'C' object has no deleter
+unnamed with a getter !! AttributeError property 'len' of 'C' object has no setter
+from the class => (True, True, 'gone')
+__get__ of nothing !! TypeError __get__(None, None) is invalid
+__get__ of nothing at all !! TypeError __get__(None, None) is invalid
+__get__ wrong !! TypeError __get__ expected at least 1 argument, got 0
+__set__ wrong !! TypeError __set__ expected 2 arguments, got 1
+set_name => given
+set_name wrong !! TypeError __set_name__() takes 2 positional arguments but 1 were given
+set_name wrong 2 !! TypeError __set_name__() takes 2 positional arguments but 3 were given
+copies => (<built-in function len>, <built-in function len>, <built-in function len>, True, False, None, True)
+copies keep the name => ('ro', 'x')
+doc follows the getter => ('doc one', 'doc two', None, 'own', 'doc one', 'doc one')
+set doc => (None, 'new', None, None)
+read only !! AttributeError readonly attribute
+no attributes !! AttributeError 'property' object has no attribute 'other' and no __dict__ for setting new attributes
+init again => (None, 'g2', 'doc two', None)
+keywords => (None, <built-in function abs>, <built-in function len>, 'd')
+too many !! TypeError property() takes at most 4 arguments (5 given)
+bad keyword !! TypeError property() got an unexpected keyword argument 'nope'
+derived => ('doc one', None, None, 'own', 'P', {'__doc__': 'doc one'}, 'class doc')
+derived with no room => None
+derived with no room for the getter's !! AttributeError 'Q' object attribute '__doc__' is read-only
+derived in use => ('from P', 'p')
+derived no setter !! AttributeError property 'p' of 'D' object has no setter
+abstract => (False, False)
+abstract functions => (True, True, True, True, True, False)
+abstract read only !! AttributeError attribute '__isabstractmethod__' of 'property' objects is not writable
+own attributes => ['__delete__', '__doc__', '__get__', '__init__', '__isabstractmethod__', '__name__', '__new__', '__set__', '__set_name__', 'deleter', 'fdel', 'fget', 'fset', 'getter', 'setter']
+raises !! ZeroDivisionError division by zero
+attribute error falls to getattr => got missing
+nested class name !! AttributeError property 'p' of 'Outer.Inner' object has no setter
+not there !! AttributeError __abstractmethods__
+on type !! AttributeError __abstractmethods__
+on a built-in class !! AttributeError __abstractmethods__
+one !! TypeError Can't instantiate abstract class A without an implementation for abstract method 'f'
+flags => (True, frozenset({'f'}), True)
+two !! TypeError Can't instantiate abstract class A without an implementation for abstract methods 'f', 'g'
+sorted !! TypeError Can't instantiate abstract class A without an implementation for abstract methods 'a', 'm', 'z'
+not inherited => ('B', False)
+but found !! AttributeError __abstractmethods__
+empty => ('A', False)
+deleted => ('A', False)
+deleted twice !! AttributeError __abstractmethods__
+not strings !! TypeError sequence item 0: expected str instance, int found
+not iterable !! TypeError 'int' object is not iterable
+own __new__ => own __new__
+own __new__ that calls object's !! TypeError Can't instantiate abstract class CallsObject without an implementation for abstract method 'f'
+derived from list => []
+derived from Exception => E
+set on a built-in class !! TypeError cannot set '__abstractmethods__' attribute of immutable type 'int'
+bool of NotImplemented !! TypeError NotImplemented should not be used in a boolean context
+not NotImplemented !! TypeError NotImplemented should not be used in a boolean context
+if NotImplemented !! TypeError NotImplemented should not be used in a boolean context
+duplicate keyword !! TypeError __main__.f() got multiple values for keyword argument 'a'
+duplicate keyword for a method !! TypeError __main__.C.__init__() got multiple values for keyword argument 's'
+duplicate keyword for a built-in !! TypeError dict() got multiple values for keyword argument 'a'
+duplicate keyword for a class !! TypeError __main__.C() got multiple values for keyword argument 'a'
+not a mapping !! TypeError __main__.f() argument after ** must be a mapping, not int
+not a mapping for a built-in !! TypeError len() argument after ** must be a mapping, not int
+not a mapping for an object !! TypeError <a Repr> argument after ** must be a mapping, not int
+not iterable, after others !! TypeError Value after * must be an iterable, not int
+not iterable, twice !! TypeError Value after * must be an iterable, not int
+not iterable, in a list !! TypeError Value after * must be an iterable, not int
+not iterable for a built-in !! TypeError len() argument after * must be an iterable, not int
+set anything on a built-in class !! NameError name 'attempt' is not defined
+set anything on a built-in class => ["cannot set '__name__' attribute of immutable type 'int'", "cannot set '__doc__' attribute of immutable type 'int'", "cannot set '__module__' attribute of immutable type 'int'", "cannot set '__bases__' attribute of immutable type 'int'", "cannot set '__qualname__' attribute of immutable type 'int'", "cannot set 'x' attribute of immutable type 'int'", "cannot set '__annotations__' attribute of immutable type 'int'"]
+delete on a built-in class !! TypeError cannot set '__doc__' attribute of immutable type 'int'
+keywords must be strings !! TypeError keywords must be strings
+not iterable !! TypeError __main__.f() argument after * must be an iterable, not int
+mro failure !! TypeError Cannot create a consistent method resolution order (MRO) for bases X, Y
+mro failure of two !! TypeError Cannot create a consistent method resolution order (MRO) for bases M1, M2
+module => ('m', 'doc', ['__doc__', '__loader__', '__name__', '__package__', '__spec__'])
+module keywords => ('m', 'd')
+module wrong !! TypeError module() missing required argument 'name' (pos 1)
+module wrong 2 !! TypeError module() argument 'name' must be str, not int
+module wrong 3 !! TypeError module() takes at most 2 arguments (3 given)
+module doc of any type => 5

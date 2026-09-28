@@ -156,7 +156,7 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
         return finishCall(call(globalObject, method, received));
     }
     if (isNone(received)) {
-        if (auto* native = tryIterator(iterator)) {
+        if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass()) {
             JSValue yielded = native->next(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!yielded)

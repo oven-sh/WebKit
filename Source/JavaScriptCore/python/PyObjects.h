@@ -219,36 +219,54 @@ public:
         Tuple,
         Range, // index: the next value. stop: how many are left. step
         LongRange, // a: the range, which is not a small one. b: which of its items is next, an int
-        Str, // a: the string. index, in code units
+        AsciiStr, // a: the string. index, in code units
+        Str, // The same, of a string that is not all ASCII. They are two classes in CPython.
         Bytes,
-        DictKeys, // a: the dict. index: the entry. stop: its size when this began
+        ByteArray,
+        Memory, // a: the memoryview. index. stop: how long it was when this began
+        DictKeys, // a: the dict. index: the entry. stop: its size when this began. step: how many it has given
         DictValues,
         DictItems,
         DictReverseKeys,
-        Set,
+        DictReverseValues,
+        DictReverseItems,
+        Set, // The same
         Sequence, // a: what has __getitem__. index
         Callable, // a: the callable. b: the sentinel
         Enumerate, // a: an iterator. index: the count, or b if it is one that does not fit
         Zip, // a: a tuple of iterators. index: whether it is strict
-        Map, // a: the function. b: a tuple of iterators
+        Map, // a: the function. b: a tuple of iterators. index: whether it is strict
         Filter, // a: the function or None. b: an iterator
         Reversed, // a: a sequence. index
         JavaScript, // a: a JavaScript iterator. b: its next
     };
 
     static PyIterator* create(JSGlobalObject*, Kind, JSValue a = JSValue(), JSValue b = JSValue(), int64_t index = 0, int64_t stop = 0, int64_t step = 0);
+    // Of a class derived from the one that goes with the kind.
+    static PyIterator* create(JSGlobalObject*, Structure*, Kind, JSValue a = JSValue(), JSValue b = JSValue(), int64_t index = 0, int64_t stop = 0, int64_t step = 0);
     // One of the kinds that go through a dict.
     static PyIterator* create(JSGlobalObject*, Kind, PyDict*);
     static BuiltinType typeFor(Kind);
 
     Kind kind() const { return m_kind; }
-    // Empty when there is no more.
+    // Of a class that a program derived from enumerate or the like, which may have a __next__() of its own.
+    bool isOfDerivedClass() const { return m_isOfDerivedClass; }
+    // Empty when there is no more. This is the __next__() of the built-in class.
     JSValue next(JSGlobalObject*);
 
     JSValue a() const { return m_a.get(); }
     JSValue b() const { return m_b.get(); }
     int64_t index() const { return m_index; }
-    int64_t remaining() const { return m_stop; }
+    int64_t stop() const { return m_stop; }
+    int64_t step() const { return m_step; }
+    bool isReverse() const { return m_kind == Kind::DictReverseKeys || m_kind == Kind::DictReverseValues || m_kind == Kind::DictReverseItems; }
+
+    // For __setstate__().
+    void setIndex(int64_t index) { m_index = index; }
+    void setStop(int64_t stop) { m_stop = stop; }
+    void setB(VM& vm, JSValue b) { m_b.set(vm, this, b); }
+    // Another that is where this one is, and goes on from there by itself.
+    PyIterator* copy(JSGlobalObject*) const;
 
 private:
     PyIterator(VM& vm, Structure* structure, Kind kind, JSValue a, JSValue b, int64_t index, int64_t stop, int64_t step)
@@ -265,6 +283,7 @@ private:
     void finish() { m_a.clear(); }
 
     Kind m_kind;
+    bool m_isOfDerivedClass { false };
     WriteBarrier<Unknown> m_a;
     WriteBarrier<Unknown> m_b;
     int64_t m_index;
@@ -446,6 +465,16 @@ inline PyRange* tryRange(JSValue value) { return tryCell<PyRange, PyRangeType>(v
 inline PySlice* trySlice(JSValue value) { return tryCell<PySlice, PySliceType>(value); }
 inline PyIterator* tryIterator(JSValue value) { return tryCell<PyIterator, PyIteratorType>(value); }
 inline PyBoxedValue* tryBoxedValue(JSValue value) { return tryCell<PyBoxedValue, PyBoxedValueType>(value); }
+
+// The string that a str is, or that an instance of a class derived from str holds. Null for anything else.
+inline JSString* stringIn(JSValue value)
+{
+    if (value.isString())
+        return asString(value);
+    if (auto* boxed = tryBoxedValue(value); boxed && boxed->value().isString())
+        return asString(boxed->value());
+    return nullptr;
+}
 inline PyNativeObject* tryNativeObject(JSValue value) { return tryCell<PyNativeObject, PyNativeObjectType>(value); }
 inline PyNativeObject* asNativeObject(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
 

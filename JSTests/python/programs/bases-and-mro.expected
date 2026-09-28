@@ -1,0 +1,48 @@
+before => ('A.f', 'D.f then A.f', ['C', 'A', 'object'], ['D', 'C', 'A', 'object'], ['C'], [])
+after => ('B.f', 'D.f then B.f', ['C', 'B', 'object'], ['D', 'C', 'B', 'object'], [], ['C'], 'B', ['B'])
+what A had is gone !! AttributeError 'C' object has no attribute 'only_a'
+what B has is there => ('only B', 'only B', True, False, True, False)
+two => ('A.f', ['C', 'A', 'B', 'object'], ['D', 'C', 'A', 'B', 'object'], 'only A', 'only B', ['C'], ['C'])
+the other way => ('B.f', ['C', 'B', 'A', 'object'], 'B')
+not a tuple !! TypeError can only assign tuple to C.__bases__, not list
+empty !! TypeError can only assign non-empty tuple to C.__bases__, not ()
+not classes !! TypeError C.__bases__ must be tuple of classes, not 'int'
+itself !! TypeError a __bases__ item causes an inheritance cycle
+a cycle !! TypeError a __bases__ item causes an inheritance cycle
+delete !! TypeError cannot delete '__bases__' attribute of immutable type 'C'
+twice the same !! TypeError duplicate base class A
+object !! TypeError __bases__ assignment: 'object' deallocator differs from 'B'
+another layout !! TypeError __bases__ assignment: 'int' deallocator differs from 'B'
+another layout 2 !! TypeError __bases__ assignment: 'list' object layout differs from 'B'
+an exception !! TypeError __bases__ assignment: 'Exception' object layout differs from 'B'
+built in !! TypeError cannot set '__bases__' attribute of immutable type 'int'
+unchanged by all that => (['B', 'A'], ['C', 'B', 'A', 'object'], ['D', 'C', 'B', 'A', 'object'])
+same slots => ['US', 'S2', 'object']
+other slots !! TypeError __bases__ assignment: 'S3' object layout differs from 'S2'
+more slots !! TypeError __bases__ assignment: 'S4' object layout differs from 'S2'
+no slots !! TypeError __bases__ assignment: 'A' object layout differs from 'S2'
+a failure further down => ['W', 'Y', 'Z', 'X', 'object']
+undone !! NameError name 'attempt' is not defined
+undone => (None, ['R'], ['Q', 'R', 'P', 'object'], ['T', 'Q', 'R', 'P', 'object'], ['R'], ['T', 'Q'])
+hooks before !! NameError name 'attempt2' is not defined
+hooks before => AttributeError
+hooks after => G1 got missing
+hooks after that => AttributeError
+data descriptor before => from the instance
+data descriptor after => from the property
+derived from list => (7, ['UL', 'L2', 'list', 'object'])
+exceptions !! TypeError __bases__ assignment: 'E2' object layout differs from 'E1'
+caught !! UE x
+called => ([('mro', 'MA', 1), ('mro', 'MB', 2)], ['MB', 'MA', 'object'])
+reversed => (['RC', 'RB', 'RA', 'object'], 'RB', ['RC', 'RA', 'RB', 'object'])
+called again => ([('mro', 'MB', 2)], ['MB', 'MA', 'MC', 'object'])
+mro() returns empty !! TypeError type MRO must not be empty
+mro() returns not classes !! TypeError mro() returned a non-class ('int')
+mro() returns not iterable !! TypeError 'int' object is not iterable
+mro() returns unsuitable !! TypeError mro() returned base with unsuitable layout ('int')
+mro() returns without itself !! TypeError super(type, obj): obj (type k) is not an instance or subtype of type (k).
+mro() returns a generator !! TypeError super(type, obj): obj (type k) is not an instance or subtype of type (k).
+mro() raises !! ZeroDivisionError division by zero
+mro is not callable !! TypeError 'int' object is not callable
+type.mro => (['int', 'object'], ['int', 'object'], ['bool', 'int', 'object'], 'list', False)
+__mro__ read only !! AttributeError attribute '__mro__' of 'type' objects is not writable

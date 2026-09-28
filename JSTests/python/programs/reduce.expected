@@ -1,0 +1,44 @@
+plain => ('__newobj__', (<class '__main__.C'>,), {'a': 1}, None, None)
+every protocol => [('_reduce_ex was asked', 'C', 0), ('_reduce_ex was asked', 'C', 1), ('__newobj__', (<class '__main__.C'>,), {'a': 1}), ('__newobj__', (<class '__main__.C'>,), {'a': 1}), ('__newobj__', (<class '__main__.C'>,), {'a': 1}), ('__newobj__', (<class '__main__.C'>,), {'a': 1}), ('__newobj__', (<class '__main__.C'>,), {'a': 1}), ('_reduce_ex was asked', 'C', -1)]
+reduce => ('_reduce_ex was asked', 'C', 0)
+object => ('__newobj__', (<class 'object'>,), None, None, None)
+nothing in it => ('__newobj__', (<class '__main__.Empty'>,), None, None, None)
+getstate => ({'a': 1}, None, None, None, None, None)
+the state is the dict => True
+slots => ((None, {'x': 1}), None, ('__newobj__', (<class '__main__.S'>,), (None, {'x': 1}), None, None), ['x', 'y'])
+slots and a dict => (({'z': 2}, {'x': 1}), ('__newobj__', (<class '__main__.SD'>,), ({'z': 2}, {'x': 1}), None, None))
+a list => ('__newobj__', (<class '__main__.L'>,), {'tag': 1}, [1, 2], None)
+a dict => ('__newobj__', (<class '__main__.D'>,), {'tag': 1}, None, [('a', 1)])
+built-in list and dict => (('__newobj__', (<class 'list'>,), None, [1], None), ('__newobj__', (<class 'dict'>,), None, None, [('a', 1)]))
+derived from int => ('__newobj__', (<class '__main__.I'>, 5), None, None, None)
+derived from tuple => ('__newobj__', (<class '__main__.T'>, (1, 2)), None, None, None)
+derived from str => ('__newobj__', (<class '__main__.St'>, 's'), None, None, None)
+built-in values !! NameError name 'attempt' is not defined
+built-in values => [('__newobj__', (<class 'int'>, 1), None, None, None), ('__newobj__', (<class 'float'>, 1.5), None, None, None), ('__newobj__', (<class 'str'>, 's'), None, None, None), ('__newobj__', (<class 'tuple'>, (1,)), None, None, None), ('__newobj__', (<class 'NoneType'>,), None, None, None), ('__newobj__', (<class 'bool'>, 1), None, None, None), ('__newobj__', (<class 'bytes'>, b'b'), None, None, None), ('__newobj__', (<class 'complex'>, 0.0, 1.0), None, None, None), ('frozenset', ([1],), None), ('set', ([1],), None), ('range', (0, 2, 1)), ('slice', (None, 1, None)), ('E', 'l', 'l', 'i', 'p', 's', 'i', 's'), ('N', 'o', 't', 'I', 'm', 'p', 'l', 'e', 'm', 'e', 'n', 't', 'e', 'd')]
+cannot be pickled => ["TypeError: cannot pickle 'function' object", "TypeError: cannot pickle 'generator' object", "TypeError: cannot pickle 'module' object", 'TypeError: object.__reduce_ex__() takes exactly one argument (0 given)', 'TypeError: object.__reduce_ex__() takes exactly one argument (0 given)', 'TypeError: cannot pickle memoryview objects', "TypeError: cannot pickle 'dict_keys' object", 'len']
+a method => ('getattr', True, '__init__')
+getnewargs => (('__newobj__', (<class '__main__.NA'>, 1, 2), None, None, None), ('__newobj_ex__', (<class '__main__.NAE'>, (1,), {'k': 2}), None, None, None), ('__newobj__', (<class '__main__.NAE0'>, 1), None, None, None))
+getnewargs not a tuple !! TypeError __getnewargs__ should return a tuple, not 'list'
+getnewargs ex not a tuple !! TypeError __getnewargs_ex__ should return a tuple, not 'list'
+getnewargs ex of three !! ValueError __getnewargs_ex__ should return a tuple of length 2, not 3
+getnewargs ex first !! TypeError first item of the tuple returned by __getnewargs_ex__ must be a tuple, not 'list'
+getnewargs ex second !! TypeError second item of the tuple returned by __getnewargs_ex__ must be a dict, not 'list'
+getnewargs raises !! ZeroDivisionError division by zero
+own getstate => ('__newobj__', (<class '__main__.GS'>,), 'own state', None, None)
+own reduce => ('own reduce', 'own reduce', 'own reduce')
+the instance's reduce is not asked => ('__newobj__', (<class '__main__.ORI'>,))
+own reduce_ex => (('own reduce_ex', 3), ('__newobj__', (<class '__main__.ORE'>,)))
+protocol wrong !! TypeError 'str' object cannot be interpreted as an integer
+protocol missing !! TypeError object.__reduce_ex__() takes exactly one argument (0 given)
+protocol too big !! OverflowError Python int too large to convert to C int
+protocol index => ('_reduce_ex was asked', 'C')
+slotnames wrong !! TypeError BadNames.__slotnames__ should be a list or None, not int
+slotnames None => None
+weakref and dict slots => ('__newobj__', (<class '__main__.W'>,), None, None, None)
+an exception => ((<class '__main__.E'>, (1, 2)), (<class '__main__.E'>, ()))
+a class => TypeError: object.__reduce_ex__() takes exactly one argument (0 given)
+sizes => (16, 16, 32, 32, 48, 56, 33, 36, 16, 24, 32, 48, 40, 152, 72)
+sizeof wrong !! TypeError object.__sizeof__() takes no arguments (1 given)
+where they are => [True, True, True, True]
+kinds => ['method_descriptor', 'method_descriptor', 'method_descriptor', 'method_descriptor']
+in dir => ['__getstate__', '__reduce__', '__reduce_ex__', '__sizeof__']

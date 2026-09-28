@@ -401,6 +401,39 @@ void PyType::addSubclass(PyType* subclass)
     m_subclasses.append(Weak<PyType>(subclass));
 }
 
+void PyType::removeSubclass(PyType* subclass)
+{
+    m_subclasses.removeAllMatching([&] (auto& weak) { return !weak || weak.get() == subclass; });
+}
+
+void PyType::setBases(VM& vm, PyTuple* bases, PyType* base)
+{
+    for (auto& old : m_bases->span())
+        asType(old.get())->removeSubclass(this);
+    m_bases.set(vm, this, bases);
+    m_base.set(vm, this, base);
+    for (auto& direct : bases->span())
+        asType(direct.get())->addSubclass(this);
+    // To JavaScript it is derived from the first of them.
+    setPrototypeDirect(vm, asType(bases->at(0))->prototypeObject());
+}
+
+void PyType::setOrder(VM& vm, PyTuple* order)
+{
+    m_mro.set(vm, this, order);
+    m_flags &= ~(IsSequence | IsMapping);
+    for (auto& ancestor : order->span()) {
+        if (unsigned collectionFlags = asType(ancestor.get())->m_flags & (IsSequence | IsMapping); collectionFlags && ancestor.get() != this) {
+            m_flags |= collectionFlags;
+            break;
+        }
+    }
+    // What it finds, and where, may all be different.
+    m_knowsHooks = false;
+    if (m_instanceAccessIsAsFound->isStillValid())
+        m_instanceAccessIsAsFound->fireAll(vm, "The order in which the bases of a class are searched was changed");
+}
+
 Vector<PyType*> PyType::subclasses() const
 {
     Vector<PyType*> result;

@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PyDict.h"
+#include "PyNativeFunction.h"
 #include "PyInstance.h"
 #include "PyObjects.h"
 #include "PythonBytes.h"
@@ -239,12 +240,21 @@ PYTHON_RUNTIME_FUNCTION(newSlice)
     return JSValue::encode(PySlice::create(globalObject, argument(0), argument(1), argument(2)));
 }
 
+static String describeCallable(JSGlobalObject*, JSValue);
+
+// listExtend(list, iterable, what is being called with them or a marker)
 PYTHON_RUNTIME_FUNCTION(runtimeListExtend)
 {
     PROLOGUE();
     listExtend(globalObject, asList(argument(0)), argument(1));
     if (scope.exception() && !typeOf(globalObject, argument(1))->lookup(vm, vm.pythonNames().dunder_iter) && catchException(globalObject, BuiltinType::TypeError))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+    {
+        if (argument(2) == realm->boundArgumentsMarker())
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+        String callee = describeCallable(globalObject, argument(2));
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(callee, " argument after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
+    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -379,19 +389,27 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
 
 // ---- Calls
 
+// What something that is called is called, where what is wrong is how it was called: _PyObject_FunctionStr() of CPython's Objects/object.c.
 static String describeCallable(JSGlobalObject* globalObject, JSValue callable)
 {
     VM& vm = globalObject->vm();
-    if (auto* function = dynamicDowncast<JSFunction>(callable)) {
-        if (!function->isHostOrBuiltinFunction()) {
-            if (auto* info = function->jsExecutable()->unlinkedExecutable()->pythonInfo())
-                return makeString(info->qualifiedName, "()"_s);
-        }
-        return makeString(function->name(vm), "()"_s);
-    }
-    if (isClass(callable))
-        return makeString(asType(callable)->nameString(globalObject), "()"_s);
-    return makeString(typeName(globalObject, callable), " object"_s);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSValue qualifiedName = getAttributeIfPresent(globalObject, callable, names.dunder_qualname);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!qualifiedName)
+        RELEASE_AND_RETURN(scope, str(globalObject, callable));
+    String name = str(globalObject, qualifiedName);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue module = getAttributeIfPresent(globalObject, callable, names.dunder_module);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!module || isNone(module))
+        return makeString(name, "()"_s);
+    String moduleName = str(globalObject, module);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (module.isString() && moduleName == "builtins"_s)
+        return makeString(name, "()"_s);
+    return makeString(moduleName, '.', name, "()"_s);
 }
 
 // callKeywords(function, names, positional arguments..., values of the keywords...)

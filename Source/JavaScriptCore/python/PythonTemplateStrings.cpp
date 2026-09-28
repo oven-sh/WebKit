@@ -46,16 +46,6 @@ namespace TemplateIterField {
 enum Field : unsigned { Strings, Interpolations, IsFromStrings };
 }
 
-// The string that a str is, or that an instance of a class derived from str holds. Null for anything else.
-static JSString* stringIn(JSValue value)
-{
-    if (value.isString())
-        return asString(value);
-    if (auto* boxed = tryBoxedValue(value); boxed && boxed->value().isString())
-        return asString(boxed->value());
-    return nullptr;
-}
-
 // What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
 static String fullyQualifiedTypeName(JSGlobalObject* globalObject, JSValue value)
 {

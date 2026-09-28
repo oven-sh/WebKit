@@ -42,6 +42,7 @@ namespace JSC {
 class BytecodeIndex;
 class CodeBlock;
 class PyDict;
+class PyNativeObject;
 class PyRange;
 class PyFrame;
 class SourceCode;
@@ -234,6 +235,11 @@ JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* base
 // isinstance() and issubclass(), which a class can have its own idea of.
 bool isInstanceOf(JSGlobalObject*, JSValue, JSValue classInfo);
 
+// property
+JSValue getProperty(JSGlobalObject*, PyNativeObject*, JSValue instance);
+void setProperty(JSGlobalObject*, PyNativeObject*, JSValue instance, JSValue); // An empty value deletes.
+bool isAbstract(JSGlobalObject*, JSValue); // Whether it says that it is: __isabstractmethod__.
+
 // list[int] and int | str
 bool isGenericAlias(JSGlobalObject*, JSValue);
 bool isUnion(JSGlobalObject*, JSValue);
@@ -259,6 +265,9 @@ JSObject* createTypingModule(JSGlobalObject*); // _typing
 JSValue newInterpolation(JSGlobalObject*, JSValue value, JSValue expression, JSValue conversion, JSValue formatSpecification);
 JSValue newTemplate(JSGlobalObject*, JSValue strings, JSValue interpolations);
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
+PyTuple* defaultOrder(JSGlobalObject*, PyType*); // What type.mro() gives.
+void setBases(JSGlobalObject*, PyType*, JSValue); // C.__bases__ = ...
+bool areLaidOutAlike(JSGlobalObject*, PyType* oldType, PyType* newType); // Whether an instance of the one could be made an instance of the other.
 // An attribute got through super().
 JSValue getSuperAttribute(JSGlobalObject*, JSValue superObject, PropertyName);
 
@@ -373,6 +382,7 @@ JSValue nextOfLongRange(JSGlobalObject*, PyRange*, JSValue index);
 JSValue toInt(JSGlobalObject*, JSValue);
 // The value of an int, if it fits.
 std::optional<int64_t> tryInt64(JSValue);
+int compareInts(JSValue, JSValue); // Negative, zero or positive. Both are ints, of any size.
 // What __index__ gives, as something to index with: clamped to the range of an int64 if `clamp`, or else it raises IndexError.
 std::optional<int64_t> toIndex(JSGlobalObject*, JSValue, bool clamp = false);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.

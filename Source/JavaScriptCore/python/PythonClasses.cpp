@@ -46,6 +46,15 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    for (unsigned i = 0; i < bases->length(); ++i) {
+        for (unsigned j = i + 1; j < bases->length(); ++j) {
+            if (asType(bases->at(i)) == asType(bases->at(j))) {
+                raiseTypeError(globalObject, scope, makeString("duplicate base class "_s, asType(bases->at(i))->nameWithoutModule(globalObject)));
+                return nullptr;
+            }
+        }
+    }
+
     Vector<Vector<PyType*, 8>, 4> sequences;
     for (auto& base : bases->span()) {
         Vector<PyType*, 8> order;
@@ -82,9 +91,11 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
         if (!next) {
             StringBuilder names;
             bool isFirst = true;
+            Vector<PyType*, 8> named;
             for (size_t i = 0; i < sequences.size(); ++i) {
-                if (positions[i] >= sequences[i].size())
+                if (positions[i] >= sequences[i].size() || named.contains(sequences[i][positions[i]]))
                     continue;
+                named.append(sequences[i][positions[i]]);
                 String name = sequences[i][positions[i]]->nameString(globalObject);
                 if (!isFirst)
                     names.append(", "_s);
@@ -115,6 +126,56 @@ static PyType* solidBase(PyType* type)
         return type;
     PyType* base = solidBase(type->base());
     return type->basicSize() != base->basicSize() || type->itemSize() != base->itemSize() ? type : base;
+}
+
+// The class, and then what linearize() gives: what type.mro() returns.
+PyTuple* defaultOrder(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* rest = linearize(globalObject, type->bases());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    PyTuple* order = PyTuple::create(globalObject, rest->length() + 1);
+    order->initializeAt(vm, 0, type);
+    for (unsigned i = 0; i < rest->length(); ++i)
+        order->initializeAt(vm, i + 1, rest->at(i));
+    return order;
+}
+
+// The order for a class as it is now. A metaclass can have its own idea of it: mro_invoke() and mro_check() of the same.
+static PyTuple* computeOrder(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (type->metatype() == globalObject->pyRealm()->typeType())
+        RELEASE_AND_RETURN(scope, defaultOrder(globalObject, type));
+
+    JSValue method = getAttribute(globalObject, type, Identifier::fromString(vm, "mro"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSValue result = call(globalObject, method);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    PyTuple* order = tupleFromIterable(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!order->length()) {
+        raiseTypeError(globalObject, scope, "type MRO must not be empty"_s);
+        return nullptr;
+    }
+    PyType* solid = solidBase(type);
+    for (auto& entry : order->span()) {
+        if (!isClass(entry.get())) {
+            raiseTypeError(globalObject, scope, makeString("mro() returned a non-class ('"_s, typeName(globalObject, entry.get()), "')"_s));
+            return nullptr;
+        }
+        if (!solid->isSubtypeOf(solidBase(asType(entry.get())))) {
+            raiseTypeError(globalObject, scope, makeString("mro() returned base with unsuitable layout ('"_s, asType(entry.get())->nameString(globalObject), "')"_s));
+            return nullptr;
+        }
+    }
+    // What is kept is the data of each class, whichever language made it.
+    PyTuple* types = PyTuple::create(globalObject, order->length());
+    for (unsigned i = 0; i < order->length(); ++i)
+        types->initializeAt(vm, i, asType(order->at(i)));
+    return types;
 }
 
 // The base whose instances are laid out as the new class's will be. All the others have to be content with that: best_base() of the same.
@@ -350,10 +411,20 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     // What says when two of them are equal, and not what their hash is, cannot be hashed.
     if (type->lookupOwn(vm, names.dunder_eq) && !type->lookupOwn(vm, names.dunder_hash))
         type->putDirect(vm, names.dunder_hash, jsUndefined());
+    if (metatype != realm->typeType()) {
+        PyTuple* ownOrder = computeOrder(globalObject, type);
+        RETURN_IF_EXCEPTION(scope, { });
+        type->setOrder(vm, ownOrder);
+    }
     callSetNames(globalObject, type, namespaceDict);
     RETURN_IF_EXCEPTION(scope, { });
 
     // super().__init_subclass__(**keywords)
+    if (std::ranges::none_of(type->mro()->span(), [&] (auto& entry) { return entry.get() == type; })) {
+        // Only an mro() that leaves the class out of its own order can bring this about.
+        String typeName = type->nameString(globalObject);
+        return raiseTypeError(globalObject, scope, makeString("super(type, obj): obj (type "_s, typeName, ") is not an instance or subtype of type ("_s, typeName, ")."_s));
+    }
     JSValue hook = type->lookupAfter(vm, type, names.dunder_init_subclass);
     if (hook) {
         JSValue bound = bindDescriptor(globalObject, hook, JSValue(), type);
@@ -514,6 +585,85 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
         }
     }
     return result;
+}
+
+// ---- C.__bases__ = ...: type_set_bases() of CPython's Objects/typeobject.c
+
+// Works out again the order for a class and for all that is derived from it, noting what each had. False if something has been raised.
+static bool recomputeOrders(JSGlobalObject* globalObject, PyType* type, MarkedArgumentBuffer& changed)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyTuple* order = computeOrder(globalObject, type);
+    RETURN_IF_EXCEPTION(scope, false);
+    changed.append(type);
+    changed.append(type->mro());
+    type->setOrder(vm, order);
+    for (PyType* subclass : type->subclasses()) {
+        bool ok = recomputeOrders(globalObject, subclass, changed);
+        RETURN_IF_EXCEPTION(scope, false);
+        ASSERT_UNUSED(ok, ok);
+    }
+    return true;
+}
+
+void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = type->nameString(globalObject);
+    if (!value) {
+        raiseTypeError(globalObject, scope, makeString("cannot delete '__bases__' attribute of immutable type '"_s, name, '\''));
+        return;
+    }
+    // FIXME: A class that JavaScript made is derived from what its prototype is derived from, and it is that that would have to be changed.
+    if (type->javaScriptConstructor()) {
+        raiseTypeError(globalObject, scope, makeString("cannot set '__bases__' attribute of immutable type '"_s, name, '\''));
+        return;
+    }
+    if (!isTuple(value)) {
+        raiseTypeError(globalObject, scope, makeString("can only assign tuple to "_s, name, ".__bases__, not "_s, typeName(globalObject, value)));
+        return;
+    }
+    PyTuple* bases = asTuple(value);
+    if (!bases->length()) {
+        raiseTypeError(globalObject, scope, makeString("can only assign non-empty tuple to "_s, name, ".__bases__, not ()"_s));
+        return;
+    }
+    for (auto& entry : bases->span()) {
+        if (!isClass(entry.get())) {
+            raiseTypeError(globalObject, scope, makeString(name, ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, entry.get()), '\''));
+            return;
+        }
+        if (asType(entry.get())->isSubtypeOf(type)) {
+            raiseTypeError(globalObject, scope, "a __bases__ item causes an inheritance cycle"_s);
+            return;
+        }
+    }
+    PyType* base = bestBase(globalObject, bases);
+    RETURN_IF_EXCEPTION(scope, void());
+    PyType* oldBase = type->base();
+    // In CPython what is collected is freed in one way and what is not in another, and it is by that that they are told apart first.
+    constexpr unsigned long isCollected = 1ul << 14;
+    if ((base->flagsForPython() & isCollected) != (oldBase->flagsForPython() & isCollected)) {
+        raiseTypeError(globalObject, scope, makeString("__bases__ assignment: '"_s, base->nameString(globalObject), "' deallocator differs from '"_s, oldBase->nameString(globalObject), '\''));
+        return;
+    }
+    if (!areLaidOutAlike(globalObject, oldBase, base)) {
+        raiseTypeError(globalObject, scope, makeString("__bases__ assignment: '"_s, base->nameString(globalObject), "' object layout differs from '"_s, oldBase->nameString(globalObject), '\''));
+        return;
+    }
+
+    PyTuple* oldBases = type->bases();
+    type->setBases(vm, bases, base);
+    MarkedArgumentBuffer changed;
+    recomputeOrders(globalObject, type, changed);
+    if (!scope.exception())
+        return;
+    // As it was.
+    for (size_t i = changed.size(); i; i -= 2)
+        asType(changed.at(i - 2))->setOrder(vm, asTuple(changed.at(i - 1)));
+    type->setBases(vm, oldBases, oldBase);
 }
 
 // ---- super

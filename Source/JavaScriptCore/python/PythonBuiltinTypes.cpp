@@ -220,7 +220,9 @@ PYTHON_SHARED_NATIVE(nativeIter)
 PYTHON_SHARED_NATIVE(nativeNext)
 {
     NATIVE_PROLOGUE();
-    JSValue value = iteratorNext(globalObject, args.at(0));
+    // This is the built-in class's own, whatever a class derived from it may have.
+    auto* native = tryIterator(args[0]);
+    JSValue value = native ? native->next(globalObject) : iteratorNext(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (!value)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::StopIteration, JSValue()));
@@ -310,6 +312,24 @@ PYTHON_NATIVE(objectNew)
         if (type->lookup(vm, names.dunder_init).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit))
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() takes no arguments"_s)));
     }
+    if (type->hasFlag(PyType::IsAbstract)) {
+        JSValue methods = type->lookupOwn(vm, names.dunder_abstractmethods);
+        if (!methods)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, "__abstractmethods__"_s));
+        MarkedArgumentBuffer unsorted;
+        collect(globalObject, methods, unsorted);
+        RETURN_IF_EXCEPTION(scope, { });
+        MarkedArgumentBuffer sorted;
+        sortValues(globalObject, unsorted, JSValue(), false, sorted);
+        RETURN_IF_EXCEPTION(scope, { });
+        StringBuilder joined;
+        for (size_t i = 0; i < sorted.size(); ++i) {
+            if (!sorted.at(i).isString())
+                return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, sorted.at(i)), " found"_s)));
+            joined.append(i ? "', '"_s : ""_s, asString(sorted.at(i))->value(globalObject).data);
+        }
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Can't instantiate abstract class "_s, type->nameString(globalObject), " without an implementation for abstract method"_s, sorted.size() > 1 ? "s"_s : ""_s, " '"_s, joined.toString(), '\'')));
+    }
     if (type->layout() != PyType::Layout::Object) {
         PyType* builtin = type;
         while (builtin->hasFlag(PyType::IsHeapType))
@@ -317,6 +337,12 @@ PYTHON_NATIVE(objectNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
     }
     return JSValue::encode(PyInstance::create(vm, type->instanceStructure()));
+}
+
+PYTHON_NATIVE(notImplementedBool)
+{
+    NATIVE_PROLOGUE();
+    return JSValue::encode(raiseTypeError(globalObject, scope, "NotImplemented should not be used in a boolean context"_s));
 }
 
 // NoneType(), type(NotImplemented)() and type(...)(): the one that there is.
@@ -598,7 +624,7 @@ static PyTuple* orderOfResolution(JSGlobalObject* globalObject, PyType* type)
 // Whether an instance of one class could as well be an instance of another: compatible_for_assignment() of CPython's Objects/typeobject.c, and what that
 // calls. It is easier to tell of a class and its base than of any two, so each is followed up to the last that it is laid out like, and those are
 // compared.
-static bool areLaidOutAlike(JSGlobalObject* globalObject, PyType* oldType, PyType* newType)
+bool areLaidOutAlike(JSGlobalObject* globalObject, PyType* oldType, PyType* newType)
 {
     VM& vm = globalObject->vm();
     constexpr unsigned long inlineValues = 1ul << 2;
@@ -774,7 +800,13 @@ PYTHON_NATIVE(typeCall)
 PYTHON_NATIVE(typeMro)
 {
     NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(listFromIterable(globalObject, orderOfResolution(globalObject, asType(args.at(0))))));
+    // It is worked out, and not looked up: a metaclass whose mro() calls this is asking what it would be.
+    PyTuple* order = defaultOrder(globalObject, asType(args[0]));
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer classes;
+    for (auto& entry : order->span())
+        classes.append(asType(entry.get())->object());
+    return JSValue::encode(newList(globalObject, classes));
 }
 
 PYTHON_NATIVE(typeSubclasses)
@@ -1130,35 +1162,6 @@ PYTHON_NATIVE(nativeObjectNew)
     RELEASE_AND_RETURN(scope, JSValue::encode(allocateNativeObject(globalObject, scope, args.at(0))));
 }
 
-// property(fget=None, fset=None, fdel=None, doc=None)
-PYTHON_NATIVE(propertyInit)
-{
-    NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    static constexpr ASCIILiteral keywords[] = { "fget"_s, "fset"_s, "fdel"_s, "doc"_s };
-    auto* property = asNativeObject(args[0]);
-    for (unsigned i = 0; i < 4; ++i) {
-        JSValue value = args.at(i + 1);
-        if (!value)
-            value = args.keyword(globalObject, keywords[i]);
-        property->setField(vm, i, value ? value : jsUndefined());
-    }
-    RETURN_NONE();
-}
-
-// @x.setter and its like: a copy, with one function replaced.
-PYTHON_NATIVE(propertyWith)
-{
-    auto field = unpack<unsigned>(callFrame, 0);
-    NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    auto* original = asNativeObject(args.at(0));
-    auto* copy = PyNativeObject::create(vm, original->structure());
-    for (unsigned i = 0; i < PyNativeObject::numberOfInternalFields; ++i)
-        copy->setField(vm, i, i == field ? args.at(1) : original->field(i));
-    return JSValue::encode(copy);
-}
-
 template<unsigned field>
 static JSValue getField(JSGlobalObject*, JSValue self)
 {
@@ -1217,28 +1220,6 @@ PYTHON_NATIVE(nativeDescriptorRepr)
     auto [owner, name] = ownerAndNameOf(args[0]);
     auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(args[0].asCell());
     return JSValue::encode(jsString(vm, makeString('<', getSet->isMember() ? "member"_s : "attribute"_s, " '"_s, name->value(globalObject).data, "' of '"_s, owner->nameString(globalObject), "' objects>"_s)));
-}
-
-PYTHON_NATIVE(propertySet)
-{
-    NATIVE_PROLOGUE();
-    JSValue setter = asNativeObject(args.at(0))->field(1);
-    if (!setter || isNone(setter))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, "property has no setter"_s));
-    scope.release();
-    call(globalObject, setter, args.at(1), args.at(2));
-    RETURN_NONE();
-}
-
-PYTHON_NATIVE(propertyDelete)
-{
-    NATIVE_PROLOGUE();
-    JSValue deleter = asNativeObject(args.at(0))->field(2);
-    if (!deleter || isNone(deleter))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, "property has no deleter"_s));
-    scope.release();
-    call(globalObject, deleter, args.at(1));
-    RETURN_NONE();
 }
 
 // staticmethod(function) and classmethod(function)
@@ -1320,11 +1301,13 @@ PYTHON_NATIVE(superGetAttribute)
 PYTHON_NATIVE(moduleNew)
 {
     NATIVE_PROLOGUE();
-    if (args.size() < 2)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "module() missing required argument 'name' (pos 1)"_s));
-    if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module() argument 'name' must be str, not "_s, typeName(globalObject, args[1]))));
-    return JSValue::encode(newModule(globalObject, asString(args[1])->value(globalObject), asType(args[0])));
+    JSValue name = args.at(1);
+    if (!name.isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module() argument 'name' must be str, not "_s, typeName(globalObject, name))));
+    JSObject* module = newModule(globalObject, asString(name)->value(globalObject), asType(args[0]));
+    if (JSValue doc = args.at(2))
+        module->putDirect(vm, names.dunder_doc, doc);
+    return JSValue::encode(module);
 }
 
 PYTHON_NATIVE(moduleRepr)
@@ -1484,7 +1467,35 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         if (value)
             asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module, value);
     });
-    addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); });
+    addGetSet(globalObject, type, "__abstractmethods__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        // `type` has there the very thing that is asking.
+        JSValue methods = self == globalObject->pyRealm()->typeType() ? JSValue() : asType(self)->lookupOwn(vm, vm.pythonNames().dunder_abstractmethods);
+        return methods ? methods : raise(globalObject, scope, BuiltinType::AttributeError, "__abstractmethods__"_s);
+    }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        PyType* type = asType(self);
+        bool isAbstract = false;
+        if (value) {
+            isAbstract = isTrue(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, void());
+            type->setAttribute(vm, vm.pythonNames().dunder_abstractmethods, value);
+        } else {
+            bool wasThere = type->deleteAttribute(vm, globalObject, vm.pythonNames().dunder_abstractmethods);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (!wasThere) {
+                raise(globalObject, scope, BuiltinType::AttributeError, "__abstractmethods__"_s);
+                return;
+            }
+        }
+        if (isAbstract)
+            type->setFlag(PyType::IsAbstract);
+        else
+            type->clearFlag(PyType::IsAbstract);
+    });
+    addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) { setBases(globalObject, asType(self), value); });
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()->object()) : jsUndefined(); });
     addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return orderOfResolution(globalObject, asType(self)); });
     addGetSet(globalObject, type, "__dict__"_s, getTypeDict);
@@ -1502,7 +1513,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__bool__"_s, returnFalse },
         { "__hash__"_s, nativeHash },
     });
-    addMethods(globalObject, realm->typeNotImplementedType(), { { "__repr__"_s, nativeRepr } });
+    addMethods(globalObject, realm->typeNotImplementedType(), { { "__repr__"_s, nativeRepr }, { "__bool__"_s, notImplementedBool } });
     addMethods(globalObject, realm->typeEllipsis(), { { "__repr__"_s, nativeRepr } });
 }
 
@@ -1605,18 +1616,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     PyType* property = realm->typeProperty();
     addMethods(globalObject, property, {
         { "__new__"_s, nativeObjectNew, Kind::New },
-        { "__init__"_s, propertyInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
-        { "__get__"_s, descriptorGet },
-        { "__set__"_s, propertySet },
-        { "__delete__"_s, propertyDelete },
-        { "getter"_s, propertyWith, PyNativeFunction::Kind::Method, pack(0) },
-        { "setter"_s, propertyWith, PyNativeFunction::Kind::Method, pack(1) },
-        { "deleter"_s, propertyWith, PyNativeFunction::Kind::Method, pack(2) },
     });
-    addMember(globalObject, property, "fget"_s, getField<0>);
-    addMember(globalObject, property, "fset"_s, getField<1>);
-    addMember(globalObject, property, "fdel"_s, getField<2>);
-    addGetSet(globalObject, property, "__doc__"_s, getField<3>);
 
     for (PyType* type : { realm->typeStaticMethod(), realm->typeClassMethod() }) {
         addMethods(globalObject, type, {

@@ -840,7 +840,7 @@ PYTHON_NATIVE(enumerateNew)
     }
     JSValue iterator = getIterator(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Enumerate, iterator, bigStart, start));
+    return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Enumerate, iterator, bigStart, start));
 }
 
 static PyTuple* iteratorsOf(JSGlobalObject* globalObject, const NativeArguments& args, unsigned first, ASCIILiteral function)
@@ -869,7 +869,7 @@ PYTHON_NATIVE(zipNew)
     RETURN_IF_EXCEPTION(scope, { });
     PyTuple* iterators = iteratorsOf(globalObject, args, 1, "zip"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Zip, iterators, JSValue(), strict));
+    return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Zip, iterators, JSValue(), strict));
 }
 
 PYTHON_NATIVE(mapNew)
@@ -877,9 +877,12 @@ PYTHON_NATIVE(mapNew)
     NATIVE_PROLOGUE();
     if (args.size() < 3)
         return JSValue::encode(raiseTypeError(globalObject, scope, "map() must have at least two arguments."_s));
+    JSValue strictValue = args.keyword(globalObject, "strict"_s);
+    bool strict = strictValue && isTrue(globalObject, strictValue);
+    RETURN_IF_EXCEPTION(scope, { });
     PyTuple* iterators = iteratorsOf(globalObject, args, 2, "map"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Map, args[1], iterators));
+    return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Map, args[1], iterators, strict));
 }
 
 PYTHON_NATIVE(filterNew)
@@ -887,7 +890,7 @@ PYTHON_NATIVE(filterNew)
     NATIVE_PROLOGUE();
     JSValue iterator = getIterator(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Filter, args[1], iterator));
+    return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Filter, args[1], iterator));
 }
 
 PYTHON_NATIVE(reversedNew)
@@ -903,30 +906,7 @@ PYTHON_NATIVE(reversedNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not reversible"_s)));
     int64_t size = length(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Reversed, args[1], JSValue(), size - 1));
-}
-
-// How many more there are, if that can be told.
-PYTHON_NATIVE(iteratorLengthHint)
-{
-    NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    auto* iterator = tryIterator(args.at(0));
-    if (!iterator || !iterator->a()) {
-        if (iterator && iterator->kind() == PyIterator::Kind::Range)
-            return JSValue::encode(intFromInt64(globalObject, iterator->remaining()));
-        return JSValue::encode(jsNumber(0));
-    }
-    switch (iterator->kind()) {
-    case PyIterator::Kind::LongRange:
-        return JSValue::encode(numberBinaryOperation(globalObject, BinaryOperator::Sub, uncheckedDowncast<PyRange>(iterator->a().asCell())->length(), iterator->b()));
-    case PyIterator::Kind::List:
-        return JSValue::encode(jsNumber(std::max<int64_t>(static_cast<int64_t>(asList(iterator->a())->length()) - iterator->index(), 0)));
-    case PyIterator::Kind::Tuple:
-        return JSValue::encode(jsNumber(std::max<int64_t>(static_cast<int64_t>(uncheckedDowncast<PyTuple>(iterator->a().asCell())->length()) - iterator->index(), 0)));
-    default:
-        RETURN_NOT_IMPLEMENTED();
-    }
+    return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Reversed, args[1], JSValue(), size - 1));
 }
 
 // ---- Setting them up
@@ -1016,11 +996,16 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
 
     addMethods(globalObject, realm->typeDictKeys(), {
         { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictKeys) },
+        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseKeys) },
         { "__contains__"_s, keysContains },
     });
-    addMethods(globalObject, realm->typeDictValues(), { { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictValues) } });
+    addMethods(globalObject, realm->typeDictValues(), {
+        { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictValues) },
+        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseValues) },
+    });
     addMethods(globalObject, realm->typeDictItems(), {
         { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictItems) },
+        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseItems) },
         { "__contains__"_s, itemsContains },
     });
     for (PyType* view : { realm->typeDictKeys(), realm->typeDictValues(), realm->typeDictItems() }) {
@@ -1110,8 +1095,8 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
-    for (BuiltinType builtin : { BuiltinType::ListIterator, BuiltinType::ListReverseIterator, BuiltinType::TupleIterator, BuiltinType::RangeIterator, BuiltinType::LongRangeIterator, BuiltinType::StrIterator, BuiltinType::BytesIterator,
-        BuiltinType::DictKeyIterator, BuiltinType::DictValueIterator, BuiltinType::DictItemIterator, BuiltinType::DictReverseKeyIterator, BuiltinType::SetIterator, BuiltinType::SequenceIterator,
+    for (BuiltinType builtin : { BuiltinType::ListIterator, BuiltinType::ListReverseIterator, BuiltinType::TupleIterator, BuiltinType::RangeIterator, BuiltinType::LongRangeIterator, BuiltinType::StrAsciiIterator, BuiltinType::StrIterator, BuiltinType::BytesIterator, BuiltinType::ByteArrayIterator, BuiltinType::MemoryIterator,
+        BuiltinType::DictKeyIterator, BuiltinType::DictValueIterator, BuiltinType::DictItemIterator, BuiltinType::DictReverseKeyIterator, BuiltinType::DictReverseValueIterator, BuiltinType::DictReverseItemIterator, BuiltinType::SetIterator, BuiltinType::SequenceIterator,
         BuiltinType::CallableIterator, BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed }) {
         PyType* type = realm->type(builtin);
         type->setInstanceStructure(vm, PyIterator::createStructure(vm, globalObject, type));
@@ -1119,7 +1104,7 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
             { "__iter__"_s, nativeSelf },
             { "__next__"_s, nativeNext },
         });
-        addMethodsThatCPythonHas(globalObject, type, { { "__length_hint__"_s, iteratorLengthHint } });
+        addIteratorProtocol(globalObject, type);
     }
     addMethods(globalObject, realm->typeEnumerate(), { { "__new__"_s, enumerateNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClassButNotChecked } });
     addMethods(globalObject, realm->typeZip(), { { "__new__"_s, zipNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass } });

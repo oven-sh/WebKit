@@ -37,7 +37,6 @@
 
 namespace JSC { namespace Python {
 
-bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted);
 
 // ---- BaseException
 

@@ -74,6 +74,11 @@ void initializeAnnotations(JSGlobalObject*);
 void initializeGenericAliasAndUnion(JSGlobalObject*);
 void initializeTypeParameters(JSGlobalObject*);
 void initializeTemplateStrings(JSGlobalObject*);
+void initializeProperty(JSGlobalObject*);
+void initializeReduce(JSGlobalObject*);
+void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __reduce__() and __setstate__(), those of them that it has in CPython
+JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there
+bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted);
 JSC_DECLARE_HOST_FUNCTION(typeOr); // __or__ and __ror__ of what there can be a union of
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);

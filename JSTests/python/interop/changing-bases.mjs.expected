@@ -1,0 +1,22 @@
+derived from A => A.f,A,true,false,true | A.f,A,true,false,true | D,C,A,object
+derived from B => B.f,B,false,true,false | B.f,B,false,true,false | D,C,B,object
+its prototype => true,true
+and still => B.f,B,false,true,false | B.f,B,false,true,false
+derived from both => A.f,A,true,true,true | A.f,A,true,true,true | only A | only B | D,C,A,B,object
+the other way round => B.f,B,true,true,true | B.f,B,true,true,true | only A | only B | D,C,B,A,object
+back again => A.f,A,true,false,true | A.f,A,true,false,true | D,C,A,object
+what B had is gone !! TypeError: c.only_b is not a function. (In 'c.only_b()', 'c.only_b' is undefined)
+through super => J.g then A.f,true,false
+through super, after => J.g then B.f,false,true,J,C,B,object
+the bases of a class of JavaScript's !! TypeError: cannot set '__bases__' attribute of immutable type 'J'
+from JavaScript !! TypeError: can only assign tuple to C.__bases__, not list
+the prototype cannot be set !! TypeError: Cannot set prototype of immutable prototype object
+abstract !! TypeError: Can't instantiate abstract class Abstract without an implementation for abstract method 'f'
+abstract with new !! TypeError: Can't instantiate abstract class Abstract without an implementation for abstract method 'f'
+derived in JavaScript => 1
+property => 5,read only
+no setter !! AttributeError: property 'ro' of 'P' object has no setter
+no deleter !! AttributeError: property 'x' of 'P' object has no deleter
+what is not there => true
+a slot with nothing in it => true
+a slot with something in it => true,

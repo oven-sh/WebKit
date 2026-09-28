@@ -120,6 +120,8 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeBuiltinFunctions(globalObject, builtins);
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
+    Python::initializeProperty(globalObject);
+    Python::initializeReduce(globalObject);
     Python::initializeAnnotations(globalObject);
     Python::initializeTemplateStrings(globalObject);
     Python::initializeGenericAliasAndUnion(globalObject);

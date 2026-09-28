@@ -439,10 +439,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
     case DescriptorKind::Property: {
         if (!instance)
             return value;
-        JSValue getter = uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
-        if (isNone(getter) || !getter)
-            return raise(globalObject, scope, BuiltinType::AttributeError, "property has no getter"_s);
-        RELEASE_AND_RETURN(scope, callForInstance(globalObject, getter, instance));
+        RELEASE_AND_RETURN(scope, getProperty(globalObject, uncheckedDowncast<PyNativeObject>(value.asCell()), instance));
     }
     case DescriptorKind::StaticMethod:
         return uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
@@ -763,19 +760,10 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
         getSet->setter()(globalObject, value, newValue);
         return true;
     }
-    case DescriptorKind::Property: {
-        JSValue function = uncheckedDowncast<PyNativeObject>(found.asCell())->field(newValue ? 1 : 2);
-        if (!function || isNone(function)) {
-            raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no "_s, newValue ? "setter"_s : "deleter"_s));
-            return true;
-        }
+    case DescriptorKind::Property:
         scope.release();
-        if (newValue)
-            callForInstance(globalObject, function, value, newValue);
-        else
-            callForInstance(globalObject, function, value);
+        setProperty(globalObject, uncheckedDowncast<PyNativeObject>(found.asCell()), value, newValue);
         return true;
-    }
     case DescriptorKind::JavaScriptAccessor:
         if (!newValue) {
             raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no deleter"_s));
@@ -832,6 +820,12 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, value);
     StringView attribute { name.uid() };
+
+    // Nothing of a built-in class can be set, whatever there may be to set it with.
+    if (isType(value) && !asType(value)->hasFlag(PyType::IsHeapType)) {
+        raiseTypeError(globalObject, scope, makeString("cannot set '"_s, attribute, "' attribute of immutable type '"_s, asType(value)->nameString(globalObject), '\''));
+        return;
+    }
 
     JSValue found = type->lookup(vm, name);
     if (found) {

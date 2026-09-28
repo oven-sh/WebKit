@@ -793,7 +793,8 @@ private:
     }
 
     // A list of the elements, some of which are *iterables to be taken apart.
-    RegisterID* emitListWithStarred(RegisterID* dst, Sequence<Expression*> elements, const Node& node)
+    // `callee` is for f(*x), which says of what is wrong with x that it is wrong for f.
+    RegisterID* emitListWithStarred(RegisterID* dst, Sequence<Expression*> elements, const Node& node, RegisterID* callee = nullptr)
     {
         size_t plain = 0;
         while (plain < elements.size() && !elements[plain]->is<Starred>())
@@ -806,7 +807,7 @@ private:
         for (size_t i = plain; i < elements.size(); ++i) {
             if (auto* starred = elements[i]->tryAs<Starred>()) {
                 Reg iterable = emit(starred->value);
-                emitRuntimeCall(nullptr, "listExtend"_s, { dst, iterable.get() }, *starred);
+                emitRuntimeCall(nullptr, "listExtend"_s, { dst, iterable.get(), callee && elements.size() == 1 ? callee : marker() }, *starred);
             } else {
                 Reg value = emit(elements[i]);
                 emitRuntimeCall(nullptr, "listAppend"_s, { dst, value.get() }, node);
@@ -1085,7 +1086,7 @@ private:
 
         // callSpread(function, a list of the positional arguments, a dict of the keywords or None)
         Reg positional = g.newTemporary();
-        emitListWithStarred(positional.get(), node.arguments, node);
+        emitListWithStarred(positional.get(), node.arguments, node, function.get());
         Reg keywords = g.newTemporary();
         if (node.keywords.empty())
             g.emitLoad(keywords.get(), jsUndefined());

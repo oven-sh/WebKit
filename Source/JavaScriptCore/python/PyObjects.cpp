@@ -705,7 +705,8 @@ DEFINE_PYTHON_CELL(PyIterator, "iterator", PyIteratorType)
 PyIterator* PyIterator::create(JSGlobalObject* globalObject, Kind kind, PyDict* dict)
 {
     PyTuple* backingKeys = dict->backing() ? dict->backingKeys(globalObject) : nullptr;
-    int64_t start = kind == Kind::DictReverseKeys ? (backingKeys ? backingKeys->length() : 0) + dict->ownTable().entryCount() : 0;
+    bool isReverse = kind == Kind::DictReverseKeys || kind == Kind::DictReverseValues || kind == Kind::DictReverseItems;
+    int64_t start = isReverse ? (backingKeys ? backingKeys->length() : 0) + dict->ownTable().entryCount() : 0;
     return create(globalObject, kind, dict, backingKeys ? JSValue(backingKeys) : JSValue(), start, dict->size());
 }
 
@@ -722,10 +723,16 @@ BuiltinType PyIterator::typeFor(Kind kind)
         return BuiltinType::RangeIterator;
     case Kind::LongRange:
         return BuiltinType::LongRangeIterator;
+    case Kind::AsciiStr:
+        return BuiltinType::StrAsciiIterator;
     case Kind::Str:
         return BuiltinType::StrIterator;
     case Kind::Bytes:
         return BuiltinType::BytesIterator;
+    case Kind::ByteArray:
+        return BuiltinType::ByteArrayIterator;
+    case Kind::Memory:
+        return BuiltinType::MemoryIterator;
     case Kind::DictKeys:
         return BuiltinType::DictKeyIterator;
     case Kind::DictValues:
@@ -734,6 +741,10 @@ BuiltinType PyIterator::typeFor(Kind kind)
         return BuiltinType::DictItemIterator;
     case Kind::DictReverseKeys:
         return BuiltinType::DictReverseKeyIterator;
+    case Kind::DictReverseValues:
+        return BuiltinType::DictReverseValueIterator;
+    case Kind::DictReverseItems:
+        return BuiltinType::DictReverseItemIterator;
     case Kind::Set:
         return BuiltinType::SetIterator;
     case Kind::Sequence:
@@ -755,12 +766,23 @@ BuiltinType PyIterator::typeFor(Kind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-PyIterator* PyIterator::create(JSGlobalObject* globalObject, Kind kind, JSValue a, JSValue b, int64_t index, int64_t stop, int64_t step)
+PyIterator* PyIterator::create(JSGlobalObject* globalObject, Structure* structure, Kind kind, JSValue a, JSValue b, int64_t index, int64_t stop, int64_t step)
 {
     VM& vm = globalObject->vm();
-    auto* iterator = new (NotNull, allocateCell<PyIterator>(vm)) PyIterator(vm, globalObject->pyRealm()->structureFor(typeFor(kind)), kind, a, b, index, stop, step);
+    auto* iterator = new (NotNull, allocateCell<PyIterator>(vm)) PyIterator(vm, structure, kind, a, b, index, stop, step);
     iterator->finishCreation(vm);
+    iterator->m_isOfDerivedClass = structure != globalObject->pyRealm()->structureFor(typeFor(kind));
     return iterator;
+}
+
+PyIterator* PyIterator::create(JSGlobalObject* globalObject, Kind kind, JSValue a, JSValue b, int64_t index, int64_t stop, int64_t step)
+{
+    return create(globalObject, globalObject->pyRealm()->structureFor(typeFor(kind)), kind, a, b, index, stop, step);
+}
+
+PyIterator* PyIterator::copy(JSGlobalObject* globalObject) const
+{
+    return create(globalObject, structure(), m_kind, m_a.get(), m_b.get(), m_index, m_stop, m_step);
 }
 
 JSValue PyIterator::next(JSGlobalObject* globalObject)
@@ -775,7 +797,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     switch (m_kind) {
     case Kind::List: {
         auto* list = uncheckedDowncast<JSArray>(m_a.get().asCell());
-        if (m_index >= list->length()) {
+        if (m_index < 0 || m_index >= list->length()) {
             finish();
             return { };
         }
@@ -784,7 +806,8 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     case Kind::ListReverse: {
         auto* list = uncheckedDowncast<JSArray>(m_a.get().asCell());
         if (m_index < 0 || m_index >= list->length()) {
-            finish();
+            // It keeps the list, and __setstate__() can set it going again.
+            m_index = -1;
             return { };
         }
         RELEASE_AND_RETURN(scope, list->getIndex(globalObject, static_cast<unsigned>(m_index--)));
@@ -816,6 +839,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         m_b.set(vm, this, following);
         return value;
     }
+    case Kind::AsciiStr:
     case Kind::Str: {
         JSString* string = asString(m_a.get());
         if (m_index >= string->length()) {
@@ -839,8 +863,10 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             return Python::raise(globalObject, scope, BuiltinType::RuntimeError, "Set changed size during iteration"_s);
         }
         while (m_index < set->entryCount()) {
-            if (JSValue key = set->keyAt(m_index++))
+            if (JSValue key = set->keyAt(m_index++)) {
+                ++m_step;
                 return key;
+            }
         }
         finish();
         return { };
@@ -848,7 +874,9 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     case Kind::DictKeys:
     case Kind::DictValues:
     case Kind::DictItems:
-    case Kind::DictReverseKeys: {
+    case Kind::DictReverseKeys:
+    case Kind::DictReverseValues:
+    case Kind::DictReverseItems: {
         PyDict* dict = asDict(m_a.get());
         if (dict->size() != static_cast<uint64_t>(m_stop)) {
             m_stop = -1;
@@ -858,7 +886,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         auto* backingKeys = m_b ? uncheckedDowncast<PyTuple>(m_b.get().asCell()) : nullptr;
         int64_t backingCount = backingKeys ? backingKeys->length() : 0;
         PyHashTable& table = dict->ownTable();
-        bool isReverse = m_kind == Kind::DictReverseKeys;
+        bool isReverse = this->isReverse();
         while (isReverse ? m_index > 0 : m_index < backingCount + table.entryCount()) {
             int64_t position = isReverse ? --m_index : m_index++;
             JSValue key;
@@ -872,9 +900,10 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             }
             if (!value)
                 continue;
-            if (m_kind == Kind::DictValues)
+            ++m_step;
+            if (m_kind == Kind::DictValues || m_kind == Kind::DictReverseValues)
                 return value;
-            if (m_kind == Kind::DictItems)
+            if (m_kind == Kind::DictItems || m_kind == Kind::DictReverseItems)
                 return PyTuple::create(globalObject, { key, value });
             return key;
         }
@@ -935,8 +964,11 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         }
         return PyTuple::create(globalObject, { index, value });
     }
-    case Kind::Zip: {
-        auto* iterators = uncheckedDowncast<PyTuple>(m_a.get().asCell());
+    case Kind::Zip:
+    case Kind::Map: {
+        bool isZip = m_kind == Kind::Zip;
+        auto* iterators = uncheckedDowncast<PyTuple>((isZip ? m_a : m_b).get().asCell());
+        ASCIILiteral name = isZip ? "zip"_s : "map"_s;
         unsigned count = iterators->length();
         if (!count)
             return { };
@@ -952,27 +984,17 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
                 return { };
             // strict=True: they all have to run out together.
             if (i)
-                return Python::raiseValueError(globalObject, scope, makeString("zip() argument "_s, i + 1, " is shorter than argument"_s, i == 1 ? " 1"_s : "s 1-"_s, i == 1 ? String() : String::number(i)));
+                return Python::raiseValueError(globalObject, scope, makeString(name, "() argument "_s, i + 1, " is shorter than argument"_s, i == 1 ? " "_s : "s 1-"_s, i));
             for (unsigned j = 1; j < count; ++j) {
                 JSValue other = Python::iteratorNext(globalObject, iterators->at(j));
                 RETURN_IF_EXCEPTION(scope, { });
                 if (other)
-                    return Python::raiseValueError(globalObject, scope, makeString("zip() argument "_s, j + 1, " is longer than argument"_s, j == 1 ? " 1"_s : "s 1-"_s, j == 1 ? String() : String::number(j)));
+                    return Python::raiseValueError(globalObject, scope, makeString(name, "() argument "_s, j + 1, " is longer than argument"_s, j == 1 ? " "_s : "s 1-"_s, j));
             }
             return { };
         }
-        return PyTuple::createFromArguments(globalObject, values);
-    }
-    case Kind::Map: {
-        auto* iterators = uncheckedDowncast<PyTuple>(m_b.get().asCell());
-        MarkedArgumentBuffer values;
-        for (unsigned i = 0; i < iterators->length(); ++i) {
-            JSValue value = Python::iteratorNext(globalObject, iterators->at(i));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (!value)
-                return { };
-            values.append(value);
-        }
+        if (isZip)
+            return PyTuple::createFromArguments(globalObject, values);
         RELEASE_AND_RETURN(scope, Python::call(globalObject, m_a.get(), values));
     }
     case Kind::Filter: {
@@ -1005,9 +1027,17 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         }
         RELEASE_AND_RETURN(scope, asObject(result)->get(globalObject, vm.propertyNames->value));
     }
-    case Kind::Bytes: {
+    case Kind::Memory: {
+        if (m_index >= m_stop) {
+            finish();
+            return { };
+        }
+        RELEASE_AND_RETURN(scope, Python::getItem(globalObject, m_a.get(), Python::intFromInt64(globalObject, m_index++)));
+    }
+    case Kind::Bytes:
+    case Kind::ByteArray: {
         auto* view = uncheckedDowncast<JSUint8Array>(m_a.get().asCell());
-        if (view->isDetached() || static_cast<uint64_t>(m_index) >= view->length()) {
+        if (m_index < 0 || view->isDetached() || static_cast<uint64_t>(m_index) >= view->length()) {
             finish();
             return { };
         }

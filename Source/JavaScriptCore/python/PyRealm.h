@@ -101,12 +101,17 @@ namespace JSC {
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \
     v(RangeIterator, "range_iterator", Object, Native, 0) \
     v(LongRangeIterator, "longrange_iterator", Object, Native, 0) \
-    v(StrIterator, "str_ascii_iterator", Object, Native, 0) \
+    v(StrAsciiIterator, "str_ascii_iterator", Object, Native, 0) \
+    v(StrIterator, "str_iterator", Object, Native, 0) \
     v(BytesIterator, "bytes_iterator", Object, Native, 0) \
+    v(ByteArrayIterator, "bytearray_iterator", Object, Native, 0) \
+    v(MemoryIterator, "memory_iterator", Object, Native, 0) \
     v(DictKeyIterator, "dict_keyiterator", Object, Native, 0) \
     v(DictValueIterator, "dict_valueiterator", Object, Native, 0) \
     v(DictItemIterator, "dict_itemiterator", Object, Native, 0) \
     v(DictReverseKeyIterator, "dict_reversekeyiterator", Object, Native, 0) \
+    v(DictReverseValueIterator, "dict_reversevalueiterator", Object, Native, 0) \
+    v(DictReverseItemIterator, "dict_reverseitemiterator", Object, Native, 0) \
     v(SetIterator, "set_iterator", Object, Native, 0) \
     v(SequenceIterator, "iterator", Object, Native, 0) \
     v(CallableIterator, "callable_iterator", Object, Native, 0) \
@@ -248,6 +253,8 @@ public:
         ObjectRepr,
         ObjectStr,
         ObjectFormat,
+        ObjectReduce,
+        ObjectGetState,
         TypeCall,
         TypeGetAttribute,
         TypeSetAttr,

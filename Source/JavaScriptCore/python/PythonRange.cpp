@@ -68,7 +68,7 @@ static JSValue floorDivide(JSGlobalObject* globalObject, JSValue a, JSValue b) {
 static JSValue modulo(JSGlobalObject* globalObject, JSValue a, JSValue b) { return numberBinaryOperation(globalObject, BinaryOperator::Mod, a, b); }
 
 // Less than, equal to or greater than zero.
-static int compareInts(JSValue a, JSValue b)
+int compareInts(JSValue a, JSValue b)
 {
     bool isUnordered = false;
     return *numberCompare(classify(a), classify(b), isUnordered);

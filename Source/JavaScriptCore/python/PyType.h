@@ -123,6 +123,9 @@ public:
     PyTuple* mro() const { return m_mro.get(); }
     JSString* name() const { return m_name.get(); }
     void setName(VM& vm, JSString* name) { m_name.set(vm, this, name); }
+    // For C.__bases__ = ..., and for a metaclass that has an mro() of its own. See Python::setBases().
+    void setBases(VM&, PyTuple* bases, PyType* base);
+    void setOrder(VM&, PyTuple*);
     // What it is called where something is said about it or about an instance of it: CPython's tp_name. For a built-in class of a module other
     // than builtins that is `types.GenericAlias`, and its __name__ and its __module__ are the two parts of that.
     String nameString(JSGlobalObject*) const;
@@ -212,6 +215,7 @@ private:
     }
 
     void addSubclass(PyType*);
+    void removeSubclass(PyType*);
     void instanceAccessMayHaveChanged(VM&);
     void attributeDidChange(VM&, PropertyName);
     void forgetHooks();

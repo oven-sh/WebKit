@@ -515,7 +515,7 @@ PYTHON_NATIVE(bytesBytes)
 PYTHON_NATIVE(bytesIter)
 {
     BYTES_PROLOGUE("__iter__");
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Bytes, selfValue));
+    return JSValue::encode(PyIterator::create(globalObject, typeOf(globalObject, selfValue)->hasFlag(PyType::IsBytes) ? PyIterator::Kind::Bytes : PyIterator::Kind::ByteArray, selfValue));
 }
 
 PYTHON_NATIVE(bytesGetItem)
@@ -2087,7 +2087,7 @@ PYTHON_NATIVE(memoryHash)
 PYTHON_NATIVE(memoryIter)
 {
     MEMORY_PROLOGUE();
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Sequence, self));
+    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Memory, self, JSValue(), 0, self->length()));
 }
 
 // An attribute, which a view that has been released does not have.

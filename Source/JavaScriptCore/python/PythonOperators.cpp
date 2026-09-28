@@ -1411,8 +1411,10 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
     JSCell* cell = value.asCell();
     using Kind = PyIterator::Kind;
     switch (cell->type()) {
-    case StringType:
-        return PyIterator::create(globalObject, Kind::Str, value);
+    case StringType: {
+        auto view = asString(value)->view(globalObject);
+        return PyIterator::create(globalObject, view->containsOnlyASCII() ? Kind::AsciiStr : Kind::Str, value);
+    }
     case PyTupleType:
         return PyIterator::create(globalObject, Kind::Tuple, value);
     case PyDictType:
@@ -1464,7 +1466,7 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
 
 JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator)
 {
-    if (auto* native = tryIterator(iterator))
+    if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass())
         return native->next(globalObject);
 
     VM& vm = globalObject->vm();

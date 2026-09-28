@@ -925,13 +925,18 @@ bool deletePropertyFromJavaScript(JSGlobalObject* globalObject, JSValue receiver
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool hasOwnWay = typeOf(globalObject, receiver)->hooks(globalObject) & PyType::HasCustomSetAttr;
+    PyType* type = typeOf(globalObject, receiver);
+    // To JavaScript, deleting what is not there is done as soon as it is asked for. What a __delattr__ of the class's own means by
+    // AttributeError is not for us to say, nor what a property does. A slot with nothing in it is something that is not there.
+    bool isForTheClassToSay = type->hooks(globalObject) & PyType::HasCustomSetAttr;
+    if (JSValue found = type->lookup(vm, name); found && !isForTheClassToSay) {
+        auto* native = dynamicDowncast<PyGetSetDescriptor>(found);
+        isForTheClassToSay = !(native && native->isMember()) && isDataDescriptor(globalObject, found);
+    }
     deleteAttribute(globalObject, receiver, name);
     if (!scope.exception())
         return true;
-    // To JavaScript, deleting what is not there is done as soon as it is asked for. What a __delattr__ of the class's own means by
-    // AttributeError is not for us to say.
-    return !hasOwnWay && catchException(globalObject, BuiltinType::AttributeError);
+    return !isForTheClassToSay && catchException(globalObject, BuiltinType::AttributeError);
 }
 
 bool definePropertyFromJavaScript(JSGlobalObject* globalObject, JSObject* receiver, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
