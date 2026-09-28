@@ -1063,8 +1063,9 @@ private:
                 break;
             }
             // Objects are compared by their addresses, with an exit for one that overloads ==. So that
-            // is not for where one is expected.
-            bool mayCallOverloadedOperator = m_graph.mayOverloadOperators(node->child1()->prediction() | node->child2()->prediction());
+            // is not for where there has been one.
+            bool mayCallOverloadedOperator = m_graph.mayOverloadOperators(node->child1()->prediction() | node->child2()->prediction())
+                && m_graph.hasExitSite(node->origin.semantic, BadType);
             if (!mayCallOverloadedOperator && node->child1()->shouldSpeculateObject() && node->child2()->shouldSpeculateObject()) {
                 fixEdge<ObjectUse>(node->child1());
                 fixEdge<ObjectUse>(node->child2());

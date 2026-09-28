@@ -154,6 +154,7 @@ class PyDict final : public PyHashTable {
 public:
     using Base = PyHashTable;
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -226,6 +227,7 @@ class PySet final : public PyHashTable {
 public:
     using Base = PyHashTable;
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)

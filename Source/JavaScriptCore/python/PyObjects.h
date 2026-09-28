@@ -44,6 +44,7 @@ class PyDict;
     using Base = JSNonFinalObject; \
     template<typename CellType, SubspaceAccess mode> \
     static GCClient::IsoSubspace* subspaceFor(VM& vm) { return vm.spaceName<mode>(); } \
+    PYTHON_OVERLOADS_OPERATORS \
     DECLARE_EXPORT_INFO; \
     DECLARE_VISIT_CHILDREN; \
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
@@ -285,6 +286,7 @@ public:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
+    PYTHON_OVERLOADS_OPERATORS
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     static PyNativeObject* create(VM&, Structure*);
@@ -352,6 +354,7 @@ public:
     DECLARE_EXPORT_INFO;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 };
 
 // The same, for a class derived from bytes or bytearray.
@@ -361,6 +364,7 @@ public:
     DECLARE_EXPORT_INFO;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 };
 
 // An exception. It is an Error, as a list is an Array: JavaScript can tell by Error.isError(), it has a stack that was noted when it was made, with
@@ -376,6 +380,7 @@ public:
     static PyException* create(VM&, PyType*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 
 private:
     using Base::Base;

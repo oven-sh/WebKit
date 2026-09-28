@@ -449,6 +449,58 @@ bool isCalledByPython(VM& vm, CallFrame* callFrame)
     return callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType || callee->type() == PyInstanceType;
 }
 
+JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto binary = [&] (BinaryOperator which) { RELEASE_AND_RETURN(scope, binaryOperation(globalObject, which, false, left, right)); };
+    // A comparison is a boolean to JavaScript, whatever it is that __lt__ returns.
+    auto comparison = [&] (ComparisonOperator which) -> JSValue {
+        JSValue result = compare(globalObject, which, left, right);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, jsBoolean(isTrue(globalObject, result)));
+    };
+    switch (op) {
+    case OverloadableOperator::Add:
+        return binary(BinaryOperator::Add);
+    case OverloadableOperator::Subtract:
+        return binary(BinaryOperator::Sub);
+    case OverloadableOperator::Multiply:
+        return binary(BinaryOperator::Mult);
+    case OverloadableOperator::Divide:
+        return binary(BinaryOperator::Div);
+    case OverloadableOperator::Remainder:
+        return binary(BinaryOperator::Mod);
+    case OverloadableOperator::Exponentiate:
+        return binary(BinaryOperator::Pow);
+    case OverloadableOperator::LeftShift:
+        return binary(BinaryOperator::LShift);
+    case OverloadableOperator::RightShift:
+        return binary(BinaryOperator::RShift);
+    case OverloadableOperator::BitwiseAnd:
+        return binary(BinaryOperator::BitAnd);
+    case OverloadableOperator::BitwiseOr:
+        return binary(BinaryOperator::BitOr);
+    case OverloadableOperator::BitwiseXor:
+        return binary(BinaryOperator::BitXor);
+    case OverloadableOperator::Negate:
+        RELEASE_AND_RETURN(scope, unaryOperation(globalObject, UnaryOperator::USub, left));
+    case OverloadableOperator::BitwiseNot:
+        RELEASE_AND_RETURN(scope, unaryOperation(globalObject, UnaryOperator::Invert, left));
+    case OverloadableOperator::Equal:
+        return comparison(ComparisonOperator::Eq);
+    case OverloadableOperator::Less:
+        return comparison(ComparisonOperator::Lt);
+    case OverloadableOperator::LessOrEqual:
+        return comparison(ComparisonOperator::LtE);
+    case OverloadableOperator::Greater:
+        return comparison(ComparisonOperator::Gt);
+    case OverloadableOperator::GreaterOrEqual:
+        return comparison(ComparisonOperator::GtE);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 bool isPythonObject(JSGlobalObject* globalObject, JSValue value)
 {
     if (isType(value))

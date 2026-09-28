@@ -1,0 +1,28 @@
+binary => Vec(4, 6) Vec(-2, -2) Vec(3, 6) Vec(0.5, 1.0) Vec(1, 0) Vec(1, 4) Vec(4, 8) Vec(1, 2) and or xor
+reflected => Vec(11, 12) Vec(9, 8) Vec(3, 6)
+unary => Vec(-1, -2) Vec(2, 1)
+compare => true false false true true true false false false false
+identity => false true true false true true
+assignment => Vec(7, 10) Vec(2, 3) Vec(0, 1) Vec(1, 2)
+with a string => Vec(1, 2)! <Vec(1, 2)> Vec(1, 2)
+in place is not JavaScript's => added
+path => a/b/c root/x
+nothing defined !! TypeError: unsupported operand type(s) for +: 'Plain' and 'int'
+nothing defined, compare !! TypeError: '<' not supported between instances of 'Plain' and 'Plain'
+nothing defined, equal => true false true
+nothing defined, negate !! TypeError: bad operand type for unary -: 'Plain'
+built in => {2, 3} {1, 2, 3, 4} {1} {1, 4} false true
+tuples => true false true (1, 2, 1, 3) (1, 2, 1, 2)
+dicts => true false {'a': 1, 'b': 2}
+complex => (2+2j) (-3+4j) (-1-2j) true (2+4j) (0.5+1j)
+ranges and classes => true true false
+derived from list => VList add true 12
+derived from bytes => VBytes add
+what is not a boolean => false true
+raises !! ValueError: no comparing
+numbers first => 10000100005
+then Python => Vec(4, 6) Vec(2, 4) true true Vec(-1, -2)
+objects first => 200000
+then Python again => true false false false false
+Python hot => Vec(30000, 60000) 59999
+and numbers still => 3 12 true true -5 ab true false

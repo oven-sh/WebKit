@@ -60,7 +60,7 @@ DEFINE_VISIT_CHILDREN(PyType);
 
 Structure* PyType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | pythonCellFlags), info());
 }
 
 Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, PyType* prototype)

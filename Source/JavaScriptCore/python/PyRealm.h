@@ -199,6 +199,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    PYTHON_OVERLOADS_OPERATORS
     DECLARE_VISIT_CHILDREN;
 
     // Empty. initialize() fills it in, once the global object knows of it.

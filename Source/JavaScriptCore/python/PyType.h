@@ -85,6 +85,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    PYTHON_OVERLOADS_OPERATORS
     DECLARE_VISIT_CHILDREN;
 
     // A built-in one. `base` is null for object only. It is not whole until finishBuiltin(), which needs there to be tuples.

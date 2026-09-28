@@ -1638,7 +1638,7 @@ DEFINE_VISIT_CHILDREN(PyMemoryView);
 
 Structure* PyMemoryView::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | pythonCellFlags), info());
 }
 
 PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly)

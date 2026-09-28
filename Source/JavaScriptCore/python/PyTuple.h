@@ -74,6 +74,7 @@ public:
 
     // To JavaScript it is like an array that cannot be changed.
     PYTHON_DECLARE_EXOTIC_METHODS
+    PYTHON_OVERLOADS_OPERATORS
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 

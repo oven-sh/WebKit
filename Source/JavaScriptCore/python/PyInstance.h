@@ -33,6 +33,17 @@ namespace JSC {
 // prototype is not JavaScript's to set: every Structure for a cell of Python's has IsImmutablePrototypeExoticObject, as Object.prototype has. Assigning
 // to __class__ sets it, having checked. And the other way about, something of JavaScript's that is given a class for a prototype is no instance of it:
 // see Python::typeOf().
+//
+// What an operator of JavaScript's does with something of Python's is what the same operator does in Python: a + b is a.__add__(b), or b.__radd__(a). So it
+// has OverloadsOperators too, and PYTHON_OVERLOADS_OPERATORS in its class.
+static constexpr unsigned pythonCellFlags = IsImmutablePrototypeExoticObject | OverloadsOperators;
+
+namespace Python {
+JS_EXPORT_PRIVATE JSValue operateFromJavaScript(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right);
+}
+
+#define PYTHON_OVERLOADS_OPERATORS \
+    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right) { return Python::operateFromJavaScript(globalObject, op, left, right); }
 
 // What makes something of Python's an exotic object to JavaScript: see PyType.h. Every kind of cell that can have attributes of its own has these.
 #define PYTHON_DECLARE_EXOTIC_METHODS \
@@ -126,6 +137,7 @@ public:
 
     PYTHON_DECLARE_EXOTIC_METHODS
     PYTHON_DECLARE_EXOTIC_INDEX_METHODS
+    PYTHON_OVERLOADS_OPERATORS
 
 private:
     PyInstance(VM& vm, Structure* structure, size_t inlineCapacity)

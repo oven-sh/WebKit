@@ -59,6 +59,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    PYTHON_OVERLOADS_OPERATORS
     DECLARE_VISIT_CHILDREN;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 

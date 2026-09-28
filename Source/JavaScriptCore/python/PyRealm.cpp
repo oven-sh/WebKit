@@ -67,7 +67,7 @@ DEFINE_VISIT_CHILDREN(PyRealm);
 
 Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | pythonCellFlags), info());
 }
 
 PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)

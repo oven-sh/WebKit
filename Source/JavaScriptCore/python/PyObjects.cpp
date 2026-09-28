@@ -62,7 +62,7 @@ PyInstance* PyInstance::create(VM& vm, Structure* structure)
 
 Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned inlineCapacity)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyInstanceType, StructureFlags | IsImmutablePrototypeExoticObject), info(), NonArray, inlineCapacity);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyInstanceType, StructureFlags | pythonCellFlags), info(), NonArray, inlineCapacity);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callInstance);
@@ -105,7 +105,7 @@ const ClassInfo PyException::s_info = { "Error"_s, &Base::s_info, nullptr, nullp
 
 Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags | pythonCellFlags), info());
 }
 
 PyException* PyException::create(VM& vm, PyType* type)
@@ -204,12 +204,12 @@ const ClassInfo PyDerivedBytes::s_info = { "bytes"_s, &Base::s_info, nullptr, nu
 
 Structure* PyDerivedList::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags | IsImmutablePrototypeExoticObject), info(), ArrayWithUndecided);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags | pythonCellFlags), info(), ArrayWithUndecided);
 }
 
 Structure* PyDerivedBytes::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags | IsImmutablePrototypeExoticObject), info(), NonArray);
+    return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags | pythonCellFlags), info(), NonArray);
 }
 
 CallData PyInstance::getCallData(JSCell* cell)
@@ -363,7 +363,7 @@ PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, const ArgLis
 
 Structure* PyTuple::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | pythonCellFlags), info());
 }
 
 bool PyTuple::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -436,7 +436,7 @@ void PyTuple::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject
     const ClassInfo ClassName::s_info = { pythonName ""_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ClassName) }; \
     Structure* ClassName::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype) \
     { \
-        return Structure::create(vm, globalObject, prototype, TypeInfo(jsType, StructureFlags | IsImmutablePrototypeExoticObject), info()); \
+        return Structure::create(vm, globalObject, prototype, TypeInfo(jsType, StructureFlags | pythonCellFlags), info()); \
     } \
     DEFINE_VISIT_CHILDREN(ClassName);
 

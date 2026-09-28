@@ -46,7 +46,7 @@ const ClassInfo PyFrame::s_info = { "frame"_s, &Base::s_info, nullptr, nullptr, 
 
 Structure* PyFrame::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | IsImmutablePrototypeExoticObject), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | pythonCellFlags), info());
 }
 
 PyFrame::PyFrame(VM& vm, Structure* structure, JSFunction* function, unsigned variableCount)
