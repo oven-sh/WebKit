@@ -170,6 +170,9 @@ struct Block {
 
 // The bits are those of co_flags and of the flags of compile().
 enum FutureFeature : unsigned {
+    // These two are only for how the source is parsed, and code says nothing of them.
+    DoNotImplyDedent = 0x200, // PyCF_DONT_IMPLY_DEDENT
+    AllowIncompleteInput = 0x4000, // PyCF_ALLOW_INCOMPLETE_INPUT
     AllowTopLevelAwait = 0x2000, // PyCF_ALLOW_TOP_LEVEL_AWAIT
     FutureBarryAsFLUFL = 0x400000, // CO_FUTURE_BARRY_AS_BDFL
     FutureAnnotations = 0x1000000, // CO_FUTURE_ANNOTATIONS

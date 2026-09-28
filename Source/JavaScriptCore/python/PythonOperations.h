@@ -473,6 +473,7 @@ std::optional<int64_t> toIndexOrOverflow(JSGlobalObject*, JSValue); // PyNumber_
 // The value of an int, a bool or a float, or of what has __float__ or __index__.
 std::optional<double> toDouble(JSGlobalObject*, JSValue);
 String reprOfDouble(double);
+String reprOfComplex(double real, double imaginary);
 
 // ---- The arguments of a function written in C++
 

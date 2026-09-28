@@ -45,6 +45,8 @@ ASCIILiteral tokenKindName(TokenKind kind)
         return "ENDMARKER"_s;
     case TokenKind::Error:
         return "ERRORTOKEN"_s;
+    case TokenKind::Invalid:
+        return "OP"_s;
     case TokenKind::Newline:
         return "NEWLINE"_s;
     case TokenKind::Indent:
@@ -106,6 +108,7 @@ public:
         , m_line(range.line)
         , m_lineStart(range.lineStart)
         , m_columnCacheOffset(range.lineStart)
+        , m_lastLine(range.lastLine)
     {
         if (!range.start) {
             if constexpr (sizeof(CharacterType) == 2) {
@@ -136,11 +139,17 @@ public:
 
     bool run()
     {
+        m_bufferStart = m_lineStart;
         while (!m_isDone) {
             bool ok = !m_strings.isEmpty() && m_strings.last().isScanningText ? scanStringText() : scanToken();
             if (!ok) {
                 m_position = std::min(m_position, m_end);
-                add(TokenKind::Error, m_position);
+                // It is nowhere. What is kept for it is where the tokenizer is, which is where something is said to be wrong if the tokenizer says so, or if that is where it is said to be.
+                bool isWhereTokenizerIs = m_error.isFromTokenizer || m_error.endColumn == -2;
+                auto [line, column] = isWhereTokenizerIs ? std::pair { m_error.line, static_cast<unsigned>(m_error.column + 1) } : whereTokenizerEnds();
+                Token& token = add(TokenKind::Error, m_position);
+                token.line = token.endLine = line;
+                token.column = token.endColumn = column;
                 return false;
             }
         }
@@ -243,18 +252,54 @@ private:
     // ---- Results
 
     // For an error that is of a line and of nowhere in it. What Python sees is one more than this, which is 0.
-    static constexpr unsigned noColumn = std::numeric_limits<unsigned>::max();
+    static constexpr int noColumn = -1;
 
-    bool fail(String&& message, unsigned line, unsigned column, unsigned endLine, unsigned endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
+    // Who says it in CPython. See SyntaxError::isFromTokenizer.
+    enum class SaidBy : bool { Parser, Tokenizer };
+
+    bool fail(String&& message, unsigned line, int column, unsigned endLine, int endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError, SaidBy saidBy = SaidBy::Tokenizer)
     {
         m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
+        m_error.isFromTokenizer = saidBy == SaidBy::Tokenizer;
+        m_error.isInsideFString = !m_strings.isEmpty();
+        m_error.tokenizerLine = lastLine();
+        m_error.lastLineIsEnded = m_lastLine == ScanRange::LastLine::IsEnded;
+        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0)) {
+            m_error.openBracket = m_brackets.last().character;
+            m_error.openBracketLine = m_brackets.last().line;
+            m_error.openBracketColumn = m_brackets.last().column;
+        }
         return false;
     }
 
+    // _PyTokenizer_syntaxerror(): it is said to be at the last character that has been taken.
     bool fail(String&& message, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
-        unsigned column = columnOf(std::min(m_position, m_end));
+        int column = static_cast<int>(columnOf(std::min(m_position, m_end))) - 1;
         return fail(WTF::move(message), m_line, column, m_line, column, kind);
+    }
+
+    // _Pypegen_tokenizer_error(), for what has no more to say about where than the line
+    bool failOnLine(String&& message, SyntaxError::Kind kind)
+    {
+        return fail(WTF::move(message), m_line, 0, m_line, noColumn, kind, SaidBy::Parser);
+    }
+
+    // _PyPegen_raise_error(), of the token that says that the tokenizer can go no further, which is nowhere. It is said to be as far along the line as the tokenizer is: `position`.
+    bool failWhereTokenizerIs(String&& message, unsigned position, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
+    {
+        // What ends the last line may not be there to be counted.
+        unsigned within = std::min(position, m_end);
+        return fail(WTF::move(message), m_line, static_cast<int>(columnOf(within) + (position - within)) - 1, m_line, -2, kind, SaidBy::Parser);
+    }
+
+    // Where the line that is being scanned ends, before what ends it.
+    unsigned endOfLine()
+    {
+        unsigned position = std::min(m_position, m_end);
+        while (position < m_end && !isNewline(m_source[position]))
+            ++position;
+        return position;
     }
 
     // `start` and `end` are where in the source it would be if it were an error, and are on the line.
@@ -290,6 +335,7 @@ private:
         token.column = column;
         token.endLine = m_line;
         token.endColumn = columnOf(m_position);
+        token.isInsideBrackets = !m_brackets.isEmpty();
         m_tokens.append(token);
         m_lineHasTokens = true;
         return m_tokens.last();
@@ -330,19 +376,50 @@ private:
 
     bool failForTabs()
     {
-        return fail("inconsistent use of tabs and spaces in indentation"_s, SyntaxError::Kind::TabError);
+        return failOnLine("inconsistent use of tabs and spaces in indentation"_s, SyntaxError::Kind::TabError);
+    }
+
+    bool failForUnclosedBracket()
+    {
+        Bracket bracket = m_brackets.last();
+        fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+        m_error.isAtEndOfSource = true;
+        return false;
+    }
+
+    // The source has ended where it may not.
+    bool failAtEnd(unsigned position)
+    {
+        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0)) {
+            // The tokenizer has taken what ends the line.
+            if (!isAtEnd())
+                consumeNewline();
+            return failForUnclosedBracket();
+        }
+        failWhereTokenizerIs("unexpected EOF while parsing"_s, position);
+        m_error.isAtEndOfSource = true;
+        return false;
     }
 
     // A backslash has been taken. What follows has to be the end of the line.
     bool consumeLineContinuation()
     {
-        if (isAtEnd())
-            return fail("unexpected EOF while parsing"_s);
-        if (!isNewline(current()))
-            return fail("unexpected character after line continuation character"_s);
+        // The end of the source is the end of a line, so what comes after the backslash is that, and then there is nothing.
+        if (isAtEnd() && m_lastLine == ScanRange::LastLine::IsEnded)
+            return failAtEnd(m_position + 1);
+        if (isAtEnd() || !isNewline(current())) {
+            // It is said to be as far as the character is from where CPython's tokenizer has kept the source from, which is not always the beginning of the line. See m_bufferStart. What is
+            // beyond the end of the line is brought back to it when a program is told. If there is no character it is the backslash.
+            int fromBeginning = isAtEnd() ? -1 : 0;
+            for (unsigned i = m_bufferStart; i < m_position; ++i)
+                fromBeginning += lengthInUTF8(m_source[i]);
+            return fail("unexpected character after line continuation character"_s, m_line, fromBeginning, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+        }
+        // There being no other line to go on to, the tokenizer is still on this one.
+        unsigned afterNewline = m_position + (current() == '\r' && at(m_position + 1) == '\n' ? 2 : 1);
+        if (afterNewline >= m_end)
+            return failAtEnd(m_position + 1);
         consumeNewline();
-        if (isAtEnd())
-            return fail("unexpected EOF while parsing"_s);
         return true;
     }
 
@@ -367,8 +444,9 @@ private:
                 return false;
         }
 
-        // What is still open at the end is closed by finish().
-        if (isAtEnd())
+        // What is still open at the end is closed by finish(). But a last line of nothing but white space, that nothing ends, is a line like any other: it is what ends a line that shows it
+        // to be blank.
+        if (isAtEnd() && (m_lastLine == ScanRange::LastLine::IsEnded || m_position == m_lineStart))
             return true;
         unsigned c = current();
         if (c == '#' || isNewline(c)) {
@@ -390,43 +468,87 @@ private:
         }
         if (indentation.column > last.column) {
             if (m_indentation.size() >= maximumIndentation)
-                return fail("too many levels of indentation"_s, SyntaxError::Kind::IndentationError);
+                return failOnLine("too many levels of indentation"_s, SyntaxError::Kind::IndentationError);
             if (indentation.alternateColumn <= last.alternateColumn)
                 return failForTabs();
             m_indentation.append(indentation);
             add(TokenKind::Indent, m_position);
             return true;
         }
-        while (m_indentation.size() > 1 && indentation.column < m_indentation.last().column) {
+        // Whether it comes back to where something began is found out before anything is said to have ended.
+        size_t remaining = m_indentation.size();
+        while (remaining > 1 && indentation.column < m_indentation[remaining - 1].column)
+            --remaining;
+        // A function that is scanned by itself ends where something is indented less than it is.
+        bool endsWhatIsScanned = remaining == 1 && indentation.column < m_indentation[0].column;
+        if (indentation.column != m_indentation[remaining - 1].column && !endsWhatIsScanned)
+            return failWhereTokenizerIs("unindent does not match any outer indentation level"_s, endOfLine() + (endOfLine() < m_end || m_lastLine == ScanRange::LastLine::IsEnded), SyntaxError::Kind::IndentationError);
+        while (m_indentation.size() > remaining) {
             m_indentation.removeLast();
             add(TokenKind::Dedent, m_position);
         }
-        if (indentation.column != m_indentation.last().column) {
-            // A function that is scanned by itself ends where something is indented less than it is.
-            if (m_indentation.size() == 1 && indentation.column < m_indentation.last().column)
-                return true;
-            return fail("unindent does not match any outer indentation level"_s, SyntaxError::Kind::IndentationError);
-        }
+        if (endsWhatIsScanned)
+            return true;
         if (indentation.alternateColumn != m_indentation.last().alternateColumn)
             return failForTabs();
         return true;
     }
 
-    bool finish()
+    // The line that the tokenizer is on when it has come to the end of the source, and how far along it: the end of the last line that there was to read, with what ends it.
+    std::pair<unsigned, unsigned> whereTokenizerEnds()
     {
-        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0)) {
-            Bracket bracket = m_brackets.last();
-            fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn);
-            m_error.isUnclosedBracket = true;
-            return false;
+        unsigned line = m_end ? m_line : 0;
+        unsigned column = columnOf(m_position) + (isAtEnd() && m_lastLine == ScanRange::LastLine::IsEnded);
+        if (m_position == m_lineStart && m_lineStart) {
+            --line;
+            unsigned lineEnd = m_lineStart - 1;
+            if (m_source[lineEnd] == '\n' && lineEnd && m_source[lineEnd - 1] == '\r')
+                --lineEnd;
+            column = 1;
+            for (unsigned i = lineEnd; i && !isNewline(m_source[i - 1]); --i)
+                column += lengthInUTF8(m_source[i - 1]);
         }
-        if (m_lineHasTokens && !m_hasEnclosingBracket)
-            add(TokenKind::Newline, m_position);
-        while (m_indentation.size() > 1) {
-            m_indentation.removeLast();
-            add(TokenKind::Dedent, m_position);
+        return { line, column };
+    }
+
+    bool finish(unsigned endOfLineStart)
+    {
+        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0))
+            return failForUnclosedBracket();
+        // What ends the last line is added if it is not there, and takes up room.
+        bool lastLineIsEnded = m_lastLine == ScanRange::LastLine::IsEnded;
+        bool isInLine = m_lineHasTokens && !m_hasEnclosingBracket;
+        if (isInLine && lastLineIsEnded)
+            ++add(TokenKind::Newline, endOfLineStart).endColumn;
+        // These are nowhere. What is kept for them is where the tokenizer is, which is at the end of the last line that there was to read, with what ends it.
+        auto [line, column] = whereTokenizerEnds();
+        auto addAtEnd = [&] (TokenKind kind) {
+            Token& token = add(kind, m_position);
+            token.line = token.endLine = line;
+            token.column = token.endColumn = column;
+        };
+        auto addDedents = [&] {
+            while (m_indentation.size() > 1) {
+                m_indentation.removeLast();
+                addAtEnd(TokenKind::Dedent);
+            }
+        };
+        // What has been begun is only found to have ended at the beginning of a line, and the end of the source is one only if there is nothing at all on the last line.
+        if (lastLineIsEnded || m_position == m_lineStart)
+            addDedents();
+        if (m_lastLine == ScanRange::LastLine::IsEndedByTheEnd && !m_tokens.isEmpty()) {
+            auto addNewline = [&] {
+                addAtEnd(TokenKind::Newline);
+                m_tokens.last().isMadeOfTheEnd = true;
+            };
+            addNewline();
+            // The end is taken for the end of a line again whenever some other token has come since it last was.
+            if (m_indentation.size() > 1 && m_arena.impliesDedent) {
+                addDedents();
+                addNewline();
+            }
         }
-        add(TokenKind::EndMarker, m_position);
+        addAtEnd(TokenKind::EndMarker);
         m_isDone = true;
         return true;
     }
@@ -451,6 +573,8 @@ private:
             while (c == ' ' || c == '\t' || c == '\f')
                 c = at(++m_position);
 
+            // What ends the line begins where the comment does, if there is one.
+            unsigned endOfLineStart = m_position;
             if (c == '#') {
                 while (!isAtEnd() && !isNewline(current()))
                     ++m_position;
@@ -458,7 +582,7 @@ private:
             }
 
             if (isAtEnd())
-                return finish();
+                return finish(endOfLineStart);
 
             if (isNewline(c)) {
                 unsigned start = m_position;
@@ -466,10 +590,11 @@ private:
                 if (isSignificant) {
                     // It ends where the line does, and the next line has not begun.
                     m_position += c == '\r' && at(m_position + 1) == '\n' ? 2 : 1;
-                    add(TokenKind::Newline, start);
+                    add(TokenKind::Newline, endOfLineStart);
                     m_position = start;
                 }
                 consumeNewline();
+                m_bufferStart = m_position;
                 m_isAtBeginningOfLine = true;
                 if (isSignificant)
                     return true;
@@ -599,6 +724,24 @@ private:
         }
     }
 
+    // Py_UNICODE_ISPRINTABLE()
+    static bool isPrintable(char32_t c)
+    {
+        switch (u_charType(c)) {
+        case U_CONTROL_CHAR:
+        case U_FORMAT_CHAR:
+        case U_SURROGATE:
+        case U_PRIVATE_USE_CHAR:
+        case U_UNASSIGNED:
+        case U_LINE_SEPARATOR:
+        case U_PARAGRAPH_SEPARATOR:
+        case U_SPACE_SEPARATOR:
+            return c == ' ';
+        default:
+            return true;
+        }
+    }
+
     // A name with something in it that is not ASCII: it has to be made of what Unicode allows in one, and it is its NFKC form that counts.
     bool addNormalizedName(unsigned start, std::span<const CharacterType> characters)
     {
@@ -616,10 +759,9 @@ private:
             // Everything up to it is a name, and it is what is wrong.
             m_position = start + before;
             unsigned column = columnOf(m_position);
-            unsigned endColumn = columnOf(start + i);
-            if (u_isprint(c))
-                return fail(makeString("invalid character '"_s, StringView(buffer.span().subspan(before, i - before)), "' (U+"_s, hex(static_cast<unsigned>(c), 4), ')'), m_line, column, m_line, endColumn);
-            return fail(makeString("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, endColumn);
+            if (isPrintable(c))
+                return fail(makeString("invalid character '"_s, StringView(buffer.span().subspan(before, i - before)), "' (U+"_s, hex(static_cast<unsigned>(c), 4), ')'), m_line, column, m_line, column);
+            return fail(makeString("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, column);
         }
 
         UErrorCode status = U_ZERO_ERROR;
@@ -710,10 +852,8 @@ private:
             warn(makeString("invalid "_s, kind, " literal"_s), { }, m_line, m_position - 1, m_position - 1, true);
             return true;
         }
-        if (isIdentifierPart(c)) {
-            ++m_position;
+        if (c < 0x80 && isIdentifierPart(c))
             return failInNumber(kind);
-        }
         return true;
     }
 
@@ -729,7 +869,6 @@ private:
                     ++m_position;
                     return fail(makeString("invalid digit '"_s, digit, "' in "_s, kind, " literal"_s));
                 }
-                ++m_position;
                 return failInNumber(kind);
             }
             while (isDigit(current()))
@@ -766,7 +905,7 @@ private:
         }
         if (unsigned limit = m_arena.maximumDigitsOfIntLiteral; limit && radix == 10 && digits.size() > limit) {
             // Which line is enough. Nobody overlooks such a thing once they are told that.
-            return fail(makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."_s), m_line, noColumn, m_line, noColumn);
+            return fail(makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."_s), m_line, noColumn, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
         }
         token.numberKind = NumberKind::BigInteger;
         token.radix = radix;
@@ -893,7 +1032,7 @@ private:
     const Identifier* decodeString(unsigned start, unsigned end, bool isRaw, bool isBytes, unsigned line, unsigned column)
     {
         auto failHere = [&] (String&& message) -> const Identifier* {
-            fail(WTF::move(message), line, column, m_line, columnOf(m_position));
+            fail(WTF::move(message), line, column, m_line, columnOf(m_position), SyntaxError::Kind::SyntaxError, SaidBy::Parser);
             return nullptr;
         };
 
@@ -1085,7 +1224,6 @@ private:
         unsigned column = columnOf(start);
         unsigned quote = current();
         unsigned quoteSize = at(m_position + 1) == quote && at(m_position + 2) == quote ? 3 : 1;
-        unsigned quoteColumn = columnOf(m_position);
         m_position += quoteSize;
         unsigned contentStart = m_position;
 
@@ -1096,12 +1234,17 @@ private:
                 unsigned detectedAt = lastLine();
                 // In f"{x" the second quote was meant to end the whole, and what is missing is the brace.
                 if (!m_strings.isEmpty() && m_strings.last().quote == quote && m_strings.last().quoteSize == quoteSize)
-                    return fail(makeString(m_strings.last().prefix(), "-string: expecting '}'"_s), line, quoteColumn, line, quoteColumn);
+                    return fail(makeString(m_strings.last().prefix(), "-string: expecting '}'"_s), line, column, line, column);
+                // A line that nothing ends may be taken to be ended, and then it is the end of the line that has been come to.
+                bool isAtEndOfSource = isAtEnd() && (quoteSize == 3 || m_lastLine != ScanRange::LastLine::IsEnded);
                 if (quoteSize == 3)
-                    return fail(makeString("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, quoteColumn, line, quoteColumn);
-                if (hasEscapedQuote)
-                    return fail(makeString("unterminated string literal (detected at line "_s, detectedAt, "); perhaps you escaped the end quote?"_s), line, quoteColumn, line, quoteColumn);
-                return fail(makeString("unterminated string literal (detected at line "_s, detectedAt, ')'), line, quoteColumn, line, quoteColumn);
+                    fail(makeString("unterminated triple-quoted string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
+                else if (hasEscapedQuote)
+                    fail(makeString("unterminated string literal (detected at line "_s, detectedAt, "); perhaps you escaped the end quote?"_s), line, column, line, column);
+                else
+                    fail(makeString("unterminated string literal (detected at line "_s, detectedAt, ')'), line, column, line, column);
+                m_error.isAtEndOfSource = isAtEndOfSource;
+                return false;
             }
             unsigned c = consumeInString();
             if (c == quote) {
@@ -1139,7 +1282,7 @@ private:
         state.quote = current();
         state.quoteSize = at(m_position + 1) == state.quote && at(m_position + 2) == state.quote ? 3 : 1;
         state.line = m_line;
-        state.column = columnOf(m_position);
+        state.column = columnOf(start);
         m_position += state.quoteSize;
         add(isTemplate ? TokenKind::TStringStart : TokenKind::FStringStart, start);
         m_strings.append(state);
@@ -1150,10 +1293,13 @@ private:
     bool addStringText(StringState& state, unsigned start, unsigned end, unsigned line, unsigned column)
     {
         const Identifier* value = decodeString(start, end, state.isRaw, false, line, column);
-        if (!value)
-            return false;
         Token& token = add(state.isTemplate ? TokenKind::TStringMiddle : TokenKind::FStringMiddle, start, line, column);
         token.text = value;
+        if (!value) {
+            token.hasDecodingError = true;
+            String message = std::exchange(m_error, { }).message;
+            token.text = message.is8Bit() ? &m_arena.identifiers().makeIdentifier(m_vm, message.span8()) : &m_arena.identifiers().makeIdentifier(m_vm, message.span16());
+        }
         return true;
     }
 
@@ -1194,10 +1340,13 @@ private:
             bool isInFormatSpecification = state.isInFormatSpecification && state.isInExpression();
             if (isAtEnd() || (state.quoteSize == 1 && isNewline(current()))) {
                 if (isInFormatSpecification && !isAtEnd())
-                    return fail(makeString(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s));
+                    return fail(makeString(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s), m_line, columnOf(m_position), m_line, columnOf(m_position));
                 unsigned detectedAt = lastLine();
-                if (state.quoteSize == 3)
-                    return fail(makeString("unterminated triple-quoted "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
+                if (state.quoteSize == 3) {
+                    fail(makeString("unterminated triple-quoted "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
+                    m_error.isAtEndOfSource = true;
+                    return false;
+                }
                 return fail(makeString("unterminated "_s, state.prefix(), "-string literal (detected at line "_s, detectedAt, ')'), state.line, state.column, state.line, state.column);
             }
 
@@ -1492,7 +1641,7 @@ private:
                 if (m_hasEnclosingBracket) {
                     m_position = start;
                     m_end = start;
-                    return finish();
+                    return finish(m_position);
                 }
                 return fail(makeString("unmatched '"_s, character, '\''));
             }
@@ -1525,8 +1674,10 @@ private:
             m_position = start;
             unsigned column = columnOf(start);
             if (c < 0x20 || c == 0x7F)
-                return fail(makeString("invalid non-printable character U+"_s, hex(c, 4)), m_line, column, m_line, column + 1);
-            return fail("invalid syntax"_s, m_line, column, m_line, column + 1);
+                return fail(makeString("invalid non-printable character U+"_s, hex(c, 4)), m_line, column, m_line, column);
+            ++m_position;
+            add(TokenKind::Invalid, start);
+            return true;
         }
 
         if (c == '=' && state && state->isInExpression() && state->isAtTopOfExpression())
@@ -1547,6 +1698,10 @@ private:
     unsigned m_end;
     unsigned m_line;
     unsigned m_lineStart;
+    ScanRange::LastLine m_lastLine;
+    // Where the last line began that was begun with no token under way. CPython's tokenizer lets go of what came before whenever it begins such a line, and so not on going on to another line
+    // in a string or after a backslash.
+    unsigned m_bufferStart { 0 };
     unsigned m_columnCacheOffset;
     unsigned m_columnCacheValue { 0 };
 

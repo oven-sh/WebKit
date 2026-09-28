@@ -277,7 +277,20 @@ enum class FoundIn : uint8_t { Parsing, WhatWasParsed };
 static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope, const SyntaxError& error, const SourceCode& givenSource, FoundIn foundIn)
 {
     VM& vm = globalObject->vm();
-    BuiltinType type = error.kind == SyntaxError::Kind::SyntaxError ? BuiltinType::SyntaxError : error.kind == SyntaxError::Kind::IndentationError ? BuiltinType::IndentationError : BuiltinType::TabError;
+    BuiltinType type = BuiltinType::SyntaxError;
+    switch (error.kind) {
+    case SyntaxError::Kind::SyntaxError:
+        break;
+    case SyntaxError::Kind::IndentationError:
+        type = BuiltinType::IndentationError;
+        break;
+    case SyntaxError::Kind::TabError:
+        type = BuiltinType::TabError;
+        break;
+    case SyntaxError::Kind::IncompleteInputError:
+        type = BuiltinType::IncompleteInputError;
+        break;
+    }
     // The line that it is on. While the source is being taken apart it is at hand. Afterwards CPython has it no more, and looks in the file that it is
     // said to be from, if there is such a file. So there is no line for what compile() was given with a name that was made up.
     SourceCode source = givenSource;
@@ -297,16 +310,39 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     bool endsLine = lineEnd < text.length();
     if (endsLine)
         ++lineEnd;
-    JSValue lineText = jsUndefined();
-    if (error.line && !source.isNull() && (lineStart < text.length() || foundIn == FoundIn::Parsing)) {
-        // What is taken apart always ends with the end of a line, which is added if it is not there.
-        if (error.isFromTokenizer)
-            lineText = jsString(vm, text.substring(lineStart, lineEnd - lineStart - endsLine).toString());
-        else
-            lineText = jsString(vm, makeString(text.substring(lineStart, lineEnd - lineStart), !endsLine && foundIn == FoundIn::Parsing ? "\n"_s : ""_s));
+    if (error.lineGoesOnToTheEnd) {
+        lineEnd = text.length();
+        endsLine = lineEnd > lineStart && text[lineEnd - 1] == '\n';
     }
+    JSValue lineText = jsUndefined();
+    StringView line = text.substring(lineStart, lineEnd - lineStart - endsLine);
+    // Where there is no source there is no line to be on, and the line is empty.
+    bool hasLine = (error.line || foundIn == FoundIn::Parsing) && !source.isNull() && (lineStart < text.length() || foundIn == FoundIn::Parsing);
+    // What is taken apart always ends with the end of a line, which is added if it is not there. The line comes with that if it is the one that the tokenizer is on, and is fetched again without it
+    // if the tokenizer has gone on. What the tokenizer raises for itself never has it.
+    bool hasEndOfLine = foundIn == FoundIn::Parsing ? !error.isFromTokenizer && error.tokenizerLine <= error.line && (endsLine || error.lastLineIsEnded) : endsLine;
+    if (hasLine)
+        lineText = jsString(vm, makeString(line, hasEndOfLine ? "\n"_s : ""_s));
 
-    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(error.column + 1), lineText, jsNumber(error.endLine), jsNumber(error.endColumn + 1) });
+    // _PyPegen_byte_offset_to_character_offset(): how many characters there are in so many bytes of the line. It is the line that is wrong that is gone by, though it end on another.
+    auto characterOffset = [&] (int bytes) -> int {
+        if (!hasLine)
+            return bytes;
+        int count = 0;
+        int used = 0;
+        for (char32_t character : line.codePoints()) {
+            if (used >= bytes)
+                return count;
+            used += character < 0x80 ? 1 : character < 0x800 ? 2 : character < 0x10000 ? 3 : 4;
+            ++count;
+        }
+        // And no more than one beyond the end of it.
+        return count + (used < bytes && hasEndOfLine) + (used + hasEndOfLine < bytes);
+    };
+    int offset = characterOffset(std::max(error.column + 1, 0));
+    int endOffset = error.endColumn + 1 > 0 ? characterOffset(error.endColumn + 1) : error.endColumn + 1;
+
+    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(offset), lineText, jsNumber(error.endLine), jsNumber(endOffset) });
     JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), jsString(vm, error.message), details);
     RETURN_IF_EXCEPTION(scope, { });
     throwException(globalObject, scope, exception);
@@ -554,6 +590,8 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(source.provider()->isPython());
 
+    unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput);
+    inheritedFutureFeatures &= ~parsingFlags;
     unsigned futureFeatures = inheritedFutureFeatures;
     bool hasDocstring = false;
     bool isCoroutine = false;
@@ -563,6 +601,8 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         Arena arena;
         arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
         arena.usesLessGreater = inheritedFutureFeatures & FutureBarryAsFLUFL;
+        arena.impliesDedent = !(parsingFlags & DoNotImplyDedent);
+        arena.allowsIncompleteInput = parsingFlags & AllowIncompleteInput;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;

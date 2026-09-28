@@ -42,6 +42,13 @@ struct ScanRange {
     unsigned line { 1 };
     unsigned lineStart { 0 }; // Where the line that `start` is on begins.
     bool isInsideBrackets { false }; // A lambda or a generator expression between brackets, where a newline means nothing.
+    // What is done about a last line that nothing ends.
+    enum class LastLine : uint8_t {
+        IsEnded, // For a module: it is as if the end of a line were there.
+        IsLeft, // For an expression.
+        IsEndedByTheEnd, // For what is typed at a prompt: the first time that the end of the source is come to, it is taken for the end of a line, whether or not there was one before it.
+    };
+    LastLine lastLine { LastLine::IsEnded };
 };
 
 // The scanner. It alone reads the source: what the parser needs to know is all in the tokens.

@@ -32,19 +32,33 @@ namespace JSC { namespace Python {
 
 // What is wrong with a piece of source, as far as it takes to make the exception.
 struct SyntaxError {
-    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError };
+    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError, IncompleteInputError };
 
     explicit operator bool() const { return !message.isNull(); }
 
     Kind kind { Kind::SyntaxError };
-    bool isUnclosedBracket { false }; // The source ended before a bracket was closed. `line` is where it was opened.
+    bool isAtEndOfSource { false }; // The scanner stopped because the source ended: in brackets, in a string, or after a backslash.
     String message;
     unsigned line { 0 };
-    unsigned column { 0 };
+    // Columns are from 0 and in bytes of UTF-8. What a program is given is one more, and in characters. Some of what CPython gives is 0 or -1, which here is -1 or -2.
+    int column { 0 };
     unsigned endLine { 0 };
-    unsigned endColumn { 0 };
-    // CPython's tokenizer says it, and not its parser. The line that it gives is without the end of the line.
+    int endColumn { 0 };
+    // In CPython there are two kinds of thing that its tokenizer can find wrong. One kind it raises an exception for itself. That comes before whatever its parser has found wrong earlier in the
+    // source, and the line that goes with it is without the end of the line. For the other it only says that it can go no further, and the parser says why if it gets that far.
     bool isFromTokenizer { false };
+    // It was in an f-string when it stopped, and so what the parser has found wrong is not to give way to it.
+    bool isInsideFString { false };
+    // The line that CPython's tokenizer, which is asked for one token at a time, would have got to. If that is beyond the line that is wrong, the line is fetched again, and comes without its end.
+    unsigned tokenizerLine { 0 };
+    // The line that goes with it is all that the tokenizer has read since the line began, which is the rest of the source: it was in a string that goes over more lines than one.
+    bool lineGoesOnToTheEnd { false };
+    // Whether a last line that nothing ends is taken to be ended. See ScanRange::LastLine.
+    bool lastLineIsEnded { true };
+    // Where the scanner stopped, the bracket that was opened last and not closed, if any.
+    char openBracket { 0 };
+    unsigned openBracketLine { 0 };
+    unsigned openBracketColumn { 0 };
 };
 
 } } // namespace JSC::Python

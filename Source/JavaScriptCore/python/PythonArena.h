@@ -79,6 +79,10 @@ public:
     unsigned maximumDigitsOfIntLiteral { 0 };
     // Whether `<>` is how it is said that two things differ, and not `!=`: from __future__ import barry_as_FLUFL, in the source or in what compiles it.
     bool usesLessGreater { false };
+    // For what is typed at a prompt, a line at a time. Whether what has been begun is taken to have ended where the source does, and whether source that is wrong only in that there is not
+    // enough of it is said to be that: PyCF_DONT_IMPLY_DEDENT and PyCF_ALLOW_INCOMPLETE_INPUT.
+    bool impliesDedent { true };
+    bool allowsIncompleteInput { false };
 
 private:
     static constexpr size_t alignment = 8;

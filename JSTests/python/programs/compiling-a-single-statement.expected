@@ -1,0 +1,72 @@
+''                                 ('SyntaxError', 'invalid syntax', 0, 0, 0, 0, '')
+'\n'                               ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, '\n')
+'\n\n'                             ('SyntaxError', 'invalid syntax', 2, 0, 2, 0, '\n')
+'  \n'                             ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, '  \n')
+'# c'                              ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, '# c')
+'# c\n'                            ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, '# c\n')
+'x'                                compiled
+'x\n'                              compiled
+'x\n\n'                            compiled
+'x\n# c\n'                         compiled
+'x; y'                             compiled
+'x; y\n'                           compiled
+'x;\n'                             compiled
+'x\ny'                             ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 2, 1, 3, 'x\n')
+'x\ny\n'                           ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 2, 1, 3, 'x\n')
+'x\n  y\n'                         ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 2, 1, 3, 'x\n')
+'x\n)'                             ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 2, 1, 3, 'x\n')
+"x\n'"                             ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 2, 1, 3, 'x\n')
+'x # c\ny'                         ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 3, 1, 7, 'x # c\n')
+'if x: y'                          ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, 'if x: y')
+'if x: y\n'                        compiled
+'if x:\n  y'                       compiled
+'if x:\n  y\n'                     compiled
+'if x:\n  y\n\n'                   compiled
+'if x:\n  y\nz'                    ('SyntaxError', 'invalid syntax', 3, 1, 3, 2, 'z')
+'if x:\n  y\nelse:\n  z\n'         compiled
+'if x:\n  y\n# c\n'                compiled
+'if x:\n  y\n  # c\n'              compiled
+'def f(): pass'                    ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, 'def f(): pass')
+'def f():\n  pass\n\n\nx'          ('SyntaxError', 'invalid syntax', 5, 1, 5, 2, 'x')
+'class C: pass\nx'                 ('SyntaxError', 'invalid syntax', 2, 1, 2, 2, 'x')
+'for x in y: z\n'                  compiled
+'while x: y\nelse: z\n'            compiled
+'with x: y\n'                      compiled
+'try: x\nfinally: y\n'             compiled
+'match x:\n  case y: z\n'          compiled
+'@d\ndef f(): pass\n'              compiled
+'x = (\n1)\n'                      compiled
+'x = (\n1)\ny'                     ('SyntaxError', 'multiple statements found while compiling a single statement', 2, 3, 2, 4, '1)\n')
+'x \\\n+ 1'                        compiled
+'\nx'                              compiled
+'\n\nx\n'                          compiled
+'  x'                              ('IndentationError', 'unexpected indent', 1, 2, 1, -1, '  x')
+'x\n\x0c'                          compiled
+'x\t\n \n'                         compiled
+'x = 1 2'                          ('SyntaxError', 'invalid syntax', 1, 7, 1, 8, 'x = 1 2')
+'if x:\n'                          ('IndentationError', "expected an indented block after 'if' statement on line 1", 1, 6, 1, -1, 'if x:\n')
+'if x'                             ('SyntaxError', "expected ':'", 1, 4, 1, -1, 'if x')
+'1 +'                              ('SyntaxError', 'invalid syntax', 1, 0, 1, 0, '1 +')
+'('                                ('SyntaxError', "'(' was never closed", 1, 1, 1, 0, '(')
+'pass\npass'                       ('SyntaxError', 'multiple statements found while compiling a single statement', 1, 5, 1, 6, 'pass\n')
+'async def f(): pass\n'            compiled
+'import a, b\n'                    compiled
+'x: int = 1\n'                     compiled
+'lambda: 1\n'                      compiled
+"'''a\nb'''\n"                     compiled
+"'''a\nb'''\nx"                    ('SyntaxError', 'multiple statements found while compiling a single statement', 2, 5, 2, 6, "b'''\n")
+'def f():\n  x\n  '                ('SyntaxError', 'invalid syntax', 3, 0, 3, 0, '  ')
+'def f():\n  x\n '                 ('IndentationError', 'unindent does not match any outer indentation level', 3, 1, 3, -1, ' ')
+'def f():\n  x\n    '              ('IndentationError', 'unexpected indent', 3, 4, 3, -1, '    ')
+'if x:\n  y\n  '                   ('SyntaxError', 'invalid syntax', 3, 0, 3, 0, '  ')
+'if x:\n  y\n  # c'                ('SyntaxError', 'invalid syntax', 3, 0, 3, 0, '  # c')
+'x\n  '                            compiled
+'if x:\n  y\n\t'                   ('TabError', 'inconsistent use of tabs and spaces in indentation', 3, 1, 3, 0, '\t')
+'if x:\n  y\n  \n'                 compiled
+'if x:\n  y\n  \n  '               ('SyntaxError', 'invalid syntax', 4, 0, 4, 0, '  ')
+'if x:\n  if y:\n    z\n  '        ('SyntaxError', 'invalid syntax', 4, 0, 4, 0, '  ')
+'if x:\n  if y:\n    z\n    '      ('SyntaxError', 'invalid syntax', 4, 0, 4, 0, '    ')
+'import '                          ('SyntaxError', "Expected one or more names after 'import'", 1, 0, 1, 7, 'import ')
+'x \\'                             ('SyntaxError', 'unexpected character after line continuation character', 1, 3, 1, 0, 'x \\')
+'(\\'                              ('SyntaxError', 'unexpected character after line continuation character', 1, 2, 1, 0, '(\\')
+'f(a=1'                            ('SyntaxError', "'(' was never closed", 1, 2, 1, 0, 'f(a=1')

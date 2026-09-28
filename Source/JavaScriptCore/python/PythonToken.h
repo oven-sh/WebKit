@@ -121,6 +121,7 @@ namespace JSC { namespace Python {
 enum class TokenKind : uint8_t {
     EndMarker,
     Error, // Where the scanner could go no further.
+    Invalid, // A character that begins nothing: $, ? or `. It is for the parser to say so, if there is nothing wrong before it.
     Newline,
     Indent,
     Dedent,
@@ -166,6 +167,9 @@ struct Token {
     bool isBytes : 1 { false }; // b"..."
     bool hasUnicodePrefix : 1 { false }; // u"..."
     bool isLessGreater : 1 { false }; // NotEqual, spelled <>
+    bool isInsideBrackets : 1 { false }; // Counting one that opens them, and not one that closes the last of them.
+    bool isMadeOfTheEnd : 1 { false }; // Newline, which the end of the source has been taken for. It is nowhere, as that is.
+    bool hasDecodingError : 1 { false }; // Of a middle: its escapes cannot be undone, and `text` is why. It is said when the whole string has been parsed.
 
     // In code units of the source.
     unsigned start { 0 };

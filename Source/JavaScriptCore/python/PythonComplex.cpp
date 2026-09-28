@@ -427,6 +427,11 @@ static String reprOfComplex(Complex value)
     return makeString('(', reprOfPart(value.real, false), reprOfPart(value.imag, true), "j)"_s);
 }
 
+String reprOfComplex(double real, double imaginary)
+{
+    return reprOfComplex(Complex { real, imaginary });
+}
+
 PYTHON_NATIVE(complexRepr)
 {
     return JSValue::encode(jsString(globalObject->vm(), reprOfComplex(valueOf(tryComplex(callFrame->argument(0))))));

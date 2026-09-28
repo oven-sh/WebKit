@@ -188,7 +188,7 @@ private:
     void fail(String&& message, const Node& node)
     {
         if (!m_error)
-            m_error = { SyntaxError::Kind::SyntaxError, false, WTF::move(message), node.line, node.column, node.endLine, node.endColumn };
+            m_error = { SyntaxError::Kind::SyntaxError, false, WTF::move(message), node.line, static_cast<int>(node.column), node.endLine, static_cast<int>(node.endColumn) };
     }
 
     // Says where in the source what is emitted next comes from, for when it raises.
@@ -1440,8 +1440,9 @@ private:
     {
         auto info = adoptRef(*new FunctionInfo);
         info->kind = kind;
-        info->isGenerator = block.isGenerator;
-        info->isCoroutine = block.isCoroutine;
+        // A `yield` where there is no function is found when it is come to.
+        info->isGenerator = block.isGenerator && block.isFunctionLike();
+        info->isCoroutine = block.isCoroutine && block.isFunctionLike();
         info->usesNamespace = kind == CodeKind::Class;
         info->isNested = block.isNested;
         info->isMethod = block.isMethod;
@@ -1921,7 +1922,11 @@ private:
         emitLabel(start.get());
 
         noteDocstring();
-        emitBody();
+        {
+            // What turns a StopIteration that gets out into a RuntimeError is one of them.
+            NestedBlock block(*this, m_block.location);
+            emitBody();
+        }
         emitReturnAtEnd();
     }
 
@@ -2070,6 +2075,9 @@ private:
             else
                 OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
+        std::optional<NestedBlock> block;
+        if (generator.isAsync)
+            block.emplace(*this, *generator.target);
         Ref<Label> loop = g.newLabel();
         Ref<Label> end = g.newLabel();
         emitLabel(loop.get());
@@ -2316,7 +2324,7 @@ private:
             if (!targets[i]->is<Starred>())
                 continue;
             if (starIndex >= 0)
-                fail("multiple starred expressions in assignment"_s, *targets[i]);
+                fail("multiple starred expressions in assignment"_s, node);
             starIndex = i;
         }
         Vector<Reg, 8> values;
@@ -2506,10 +2514,11 @@ private:
             auto& node = statement.as<Return>();
             if (!isFunctionLike() || m_info.kind == CodeKind::Class)
                 return fail("'return' outside function"_s, node);
-            if (m_isInExceptStar)
-                return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, node);
             if (node.value && m_info.isCoroutine && m_info.isGenerator)
                 return fail("'return' with value in async generator"_s, node);
+            // By then CPython has gone on to the value, if it has nothing to do for it and it is on the same line.
+            if (m_isInExceptStar)
+                return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, node.value && node.value->is<Constant>() && node.value->line == node.line ? static_cast<Node&>(*node.value) : node);
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
             markIfOnAnotherLine(node);
             if (!g.emitReturnViaFinallyIfNeeded(value.get())) {
@@ -2557,7 +2566,10 @@ private:
             auto truth = constantTruth(node.test);
             if (truth && !*truth) {
                 mark(*node.test);
-                emitNeverComeTo(node.body);
+                {
+                    NestedBlock block(*this, node);
+                    emitNeverComeTo(node.body);
+                }
                 emit(node.orElse);
                 emitLabel(scope->breakTarget());
                 return;
@@ -2569,7 +2581,10 @@ private:
                 mark(*node.test);
             else
                 emitBranch(node.test, otherwise.get(), false);
-            emit(node.body);
+            {
+                NestedBlock block(*this, node);
+                emit(node.body);
+            }
             emitLabel(*scope->continueTarget());
             emitLineAfterBackwardJump(*node.test);
             g.emitJump(head.get());
@@ -2582,10 +2597,10 @@ private:
             return emitFor(statement.as<For>());
         case Statement::Kind::Break: {
             LabelScope* scope = g.breakTarget(Identifier());
-            if (!scope)
-                return fail("'break' outside loop"_s, statement);
             if (m_isInExceptStarOutsideLoop)
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
+            if (!scope)
+                return fail("'break' outside loop"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), scope->breakTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 emitJump(scope->breakTarget());
@@ -2594,10 +2609,10 @@ private:
         }
         case Statement::Kind::Continue: {
             LabelScope* scope = g.continueTarget(Identifier());
-            if (!scope)
-                return fail("'continue' not properly in loop"_s, statement);
             if (m_isInExceptStarOutsideLoop)
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
+            if (!scope)
+                return fail("'continue' not properly in loop"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), *scope->continueTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 emitJump(*scope->continueTarget());
@@ -2709,6 +2724,100 @@ private:
         }
     }
 
+    // The number that is written in a pattern: 1, -1, 1.5, 2j, 1+2j and so on, and True and False. CPython has worked these out by the time that it generates code.
+    struct PatternNumber {
+        // What is not an int is a float, or complex.
+        bool isInt { false };
+        bool isComplex { false };
+        bool isBool { false };
+        bool isNegative { false };
+        uint64_t magnitude { 0 };
+        double real { 0 };
+        double imaginary { 0 };
+
+        // As two keys of a dict are the same.
+        bool operator==(const PatternNumber& other) const
+        {
+            if (imaginary != other.imaginary)
+                return false;
+            if (isInt && other.isInt)
+                return magnitude == other.magnitude && (isNegative == other.isNegative || !magnitude);
+            if (!isInt && !other.isInt)
+                return real == other.real;
+            const PatternNumber& integer = isInt ? *this : other;
+            double value = isInt ? other.real : real;
+            // Only if the float is that very int.
+            if (std::trunc(value) != value || std::abs(value) >= 18446744073709551616.0)
+                return false;
+            return static_cast<uint64_t>(std::abs(value)) == integer.magnitude && (std::signbit(value) == integer.isNegative || !integer.magnitude);
+        }
+
+        String repr() const
+        {
+            if (isBool)
+                return magnitude ? "True"_s : "False"_s;
+            if (isInt)
+                return makeString(isNegative && magnitude ? "-"_s : ""_s, magnitude);
+            if (!isComplex)
+                return reprOfDouble(real);
+            return reprOfComplex(real, imaginary);
+        }
+    };
+
+    static std::optional<PatternNumber> patternNumberOf(Expression& expression)
+    {
+        if (auto* constant = expression.tryAs<Constant>()) {
+            PatternNumber number;
+            switch (constant->type) {
+            case Constant::Type::True:
+            case Constant::Type::False:
+                number.isBool = true;
+                number.isInt = true;
+                number.magnitude = constant->type == Constant::Type::True;
+                return number;
+            case Constant::Type::Integer:
+                number.isInt = true;
+                number.magnitude = constant->integer;
+                return number;
+            case Constant::Type::Float:
+                number.real = constant->real;
+                return number;
+            case Constant::Type::Imaginary:
+                number.isComplex = true;
+                number.imaginary = constant->real;
+                return number;
+            default:
+                return std::nullopt;
+            }
+        }
+        if (auto* unary = expression.tryAs<UnaryOp>()) {
+            if (unary->op != UnaryOperator::USub)
+                return std::nullopt;
+            auto number = patternNumberOf(*unary->operand);
+            if (!number || number->isBool)
+                return std::nullopt;
+            number->isNegative = !number->isNegative;
+            number->real = -number->real;
+            number->imaginary = -number->imaginary;
+            return number;
+        }
+        if (auto* binary = expression.tryAs<BinOp>()) {
+            if (binary->op != BinaryOperator::Add && binary->op != BinaryOperator::Sub)
+                return std::nullopt;
+            auto left = patternNumberOf(*binary->left);
+            auto right = patternNumberOf(*binary->right);
+            if (!left || !right || left->isComplex || left->isBool || !right->isComplex)
+                return std::nullopt;
+            PatternNumber number;
+            number.isComplex = true;
+            number.real = left->isInt ? (left->isNegative ? -1.0 : 1.0) * static_cast<double>(left->magnitude) : left->real;
+            number.real = binary->op == BinaryOperator::Add ? number.real + right->real : number.real - right->real;
+            number.imaginary = binary->op == BinaryOperator::Add ? right->imaginary : -right->imaginary;
+            return number;
+        }
+        return std::nullopt;
+    }
+
     // Whether they would be the same key of a dict.
     static bool isSameConstant(Constant& a, Constant& b)
     {
@@ -2771,6 +2880,9 @@ private:
             return;
         switch (pattern.kind) {
         case Pattern::Kind::MatchValue: {
+            Expression& expression = *pattern.as<MatchValue>().value;
+            if (!expression.is<Constant>() && !expression.is<Attribute>() && !patternNumberOf(expression))
+                return fail("patterns may only match literals and attribute lookups"_s, pattern);
             Reg value = emit(pattern.as<MatchValue>().value);
             Reg same = g.newTemporary();
             mark(pattern);
@@ -2924,16 +3036,24 @@ private:
 
         // A key that is written out twice can be seen now. One that is looked up has to wait until it is.
         for (unsigned i = 0; i < size; ++i) {
-            auto* key = node.keys[i]->tryAs<Constant>();
-            if (!key) {
-                if (!node.keys[i]->is<Attribute>() && !node.keys[i]->is<UnaryOp>() && !node.keys[i]->is<BinOp>())
-                    return fail("mapping pattern keys may only match literals and attribute lookups"_s, *node.keys[i]);
+            Expression& key = *node.keys[i];
+            if (auto number = patternNumberOf(key)) {
+                for (unsigned j = 0; j < i; ++j) {
+                    if (auto other = patternNumberOf(*node.keys[j]); other && *number == *other)
+                        return fail(makeString("mapping pattern checks duplicate key ("_s, number->repr(), ')'), node);
+                }
+                continue;
+            }
+            auto* constant = key.tryAs<Constant>();
+            if (!constant) {
+                if (!key.is<Attribute>())
+                    return fail("mapping pattern keys may only match literals and attribute lookups"_s, node);
                 continue;
             }
             for (unsigned j = 0; j < i; ++j) {
                 auto* other = node.keys[j]->tryAs<Constant>();
-                if (other && isSameConstant(*key, *other))
-                    return fail(makeString("mapping pattern checks duplicate key ("_s, reprOfConstant(*key), ')'), node);
+                if (other && isSameConstant(*constant, *other))
+                    return fail(makeString("mapping pattern checks duplicate key ("_s, reprOfConstant(*constant), ')'), node);
             }
         }
 
@@ -3006,6 +3126,25 @@ private:
         emitLabel(end.get());
     }
 
+    // A loop, a `with`, and each part of a `try`. CPython keeps a stack of them as it generates code, which has room for so many (CO_MAXBLOCKS), and a program that has more of them one
+    // inside another is refused. There is no such stack here, and they are counted so that the same programs are.
+    class NestedBlock {
+        WTF_MAKE_NONCOPYABLE(NestedBlock);
+    public:
+        NestedBlock(CodeGenerator& generator, const Node& node)
+            : m_generator(generator)
+        {
+            static constexpr unsigned maximum = 21;
+            if (m_generator.m_nestedBlocks++ >= maximum)
+                m_generator.fail("too many statically nested blocks"_s, node);
+        }
+
+        ~NestedBlock() { --m_generator.m_nestedBlocks; }
+
+    private:
+        CodeGenerator& m_generator;
+    };
+
     void emitFor(For& node)
     {
         if (node.isAsync && !checkIsAsync("'async for'"_s, node))
@@ -3043,7 +3182,10 @@ private:
             else
                 emitAssign(node.target, value.get());
         }
-        emit(node.body);
+        {
+            NestedBlock block(*this, node);
+            emit(node.body);
+        }
         emitLabel(*scope->continueTarget());
         emitLineAfterBackwardJump(*node.iterable);
         g.emitJump(head.get());
@@ -3166,6 +3308,7 @@ private:
     {
         if (!node.finalBody.empty()) {
             emitTryFinally([&] {
+                NestedBlock block(*this, node);
                 emitTryExcept(node);
             }, [&] (RegisterID* completionType, RegisterID* completionValue) {
                 // If an exception is on its way through, it is what is being handled meanwhile.
@@ -3177,6 +3320,7 @@ private:
                     emitRuntimeCall(previous.get(), "pushIfThrown"_s, { wasThrown.get(), completionValue }, node);
                 }
                 emitTryFinally([&] {
+                    NestedBlock block(*this, node);
                     emit(node.finalBody);
                 }, [&] {
                     SetForScope isArtificial(m_isArtificial, true);
@@ -3201,9 +3345,11 @@ private:
         }
 
         emitTryCatch([&] {
+            NestedBlock block(*this, node);
             emit(node.body);
         }, [&] (RegisterID* exception, RegisterID* thrown) {
             emitWhileHandling(thrown, node, [&] {
+                NestedBlock handlers(*this, node);
                 Ref<Label> handled = g.newLabel();
                 for (ExceptHandler* handler : node.handlers) {
                     Ref<Label> next = g.newLabel();
@@ -3214,6 +3360,7 @@ private:
                         emitCompare(matches.get(), ComparisonOperator::ExceptionMatch, exception, type.get());
                         g.emitJumpIfFalse(matches.get(), next.get());
                     }
+                    NestedBlock block(*this, *handler);
                     if (handler->name) {
                         // except E as name: the name is gone afterwards, so that the exception, which refers to the frame, can go too.
                         emitStoreName(*handler->name, exception, *handler);
@@ -3243,9 +3390,11 @@ private:
     void emitTryExceptStar(Try& node)
     {
         emitTryCatch([&] {
+            NestedBlock block(*this, node);
             emit(node.body);
         }, [&] (RegisterID* original, RegisterID* thrown) {
             emitWhileHandling(thrown, node, [&] {
+                NestedBlock handlers(*this, node);
                 Reg results = g.newTemporary();
                 emitNewList(results.get(), { });
                 Reg rest = g.newTemporary();
@@ -3271,6 +3420,7 @@ private:
                         emitWhileHandling(matchAsThrown.get(), *handler, [&] {
                             SetForScope noReturn(m_isInExceptStar, true);
                             SetForScope noBreak(m_isInExceptStarOutsideLoop, true);
+                            NestedBlock block(*this, *handler);
                             if (handler->name) {
                                 emitStoreName(*handler->name, match.get(), *handler);
                                 emitTryFinally([&] {
@@ -3330,6 +3480,7 @@ private:
         Reg finishedNormally = g.emitLoad(g.newTemporary(), jsBoolean(true));
         emitTryFinally([&] {
             emitTryCatch([&] {
+                NestedBlock block(*this, position);
                 if (item.optionalVariables)
                     emitAssign(item.optionalVariables, entered.get());
                 emitWith(node, index + 1);
@@ -4013,6 +4164,7 @@ private:
     BytecodeGenerator& g;
     VM& m_vm;
     std::unique_ptr<CodeDetails> m_details;
+    unsigned m_nestedBlocks { 0 };
     bool m_isInExceptStar { false };
     bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.
     bool m_isNeverComeTo { false }; // In `if 0:` or the like.

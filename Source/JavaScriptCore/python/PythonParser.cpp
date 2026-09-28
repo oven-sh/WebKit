@@ -28,6 +28,9 @@
 
 #include "PythonLexer.h"
 #include "VM.h"
+#include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -50,7 +53,94 @@ public:
     {
     }
 
+    // _PyPegen_run_parser(). If the source will not parse it is gone through again, and this time what is in the grammar only to be recognized as a mistake is tried as well, so that
+    // there is something to say about it. Whichever of those is come to first is what is said. If none is, all that there is to say is how far the parser got the first time.
     Module* parseModule(Module::Kind kind)
+    {
+        m_lastLineIsEnded = kind == Module::Kind::Module;
+        if (Module* module = parseModuleOnce(kind))
+            return module;
+        // It did parse, and there is no more to be said.
+        if (m_isBadSingleStatement)
+            return nullptr;
+        unsigned lastToken = m_furthest;
+        if (m_arena.allowsIncompleteInput && tokenizerIsAtEndOfSource()) {
+            m_error = { };
+            SetForScope scope(m_failsInEitherPass, true);
+            failAtLastToken("incomplete input"_s, SyntaxError::Kind::IncompleteInputError);
+            m_error.lineGoesOnToTheEnd = m_tokens[m_furthest].kind == TokenKind::Error && m_scannerError.isFromTokenizer;
+            return nullptr;
+        }
+        if (!m_error) {
+            m_index = 0;
+            m_isSecondPass = true;
+            m_callsInvalidRules = true;
+            m_keepsWhatIsParsed = true;
+            m_memos = { };
+            parseModuleOnce(kind);
+        }
+
+        // _Pypegen_set_syntax_error()
+        if (m_error && !m_hasScannerError && m_scannerError && m_tokens[m_furthest].kind == TokenKind::Error)
+            return nullptr;
+        if (m_hasScannerError)
+            return nullptr;
+        bool hasSomethingToSay = !!m_error;
+        if (!hasSomethingToSay) {
+            failGenerically(m_tokens[lastToken]);
+            if (m_error.kind == SyntaxError::Kind::IndentationError)
+                return nullptr;
+        }
+        // _PyPegen_tokenize_full_source_to_check_for_errors(): what is wrong further on may be the reason.
+        if (!m_scannerError)
+            return nullptr;
+        // If there is something to say already, that is only done while the tokenizer has not come to the end of the source.
+        if (hasSomethingToSay && tokenizerIsAtEndOfSource())
+            return nullptr;
+        if (m_scannerError.isFromTokenizer) {
+            if (!m_scannerError.isInsideFString)
+                m_error = m_scannerError;
+            return nullptr;
+        }
+        // A bracket that was never closed is, if it was opened before the line that the parser got to.
+        if (m_scannerError.openBracket && m_tokens[m_furthest].line > m_scannerError.openBracketLine) {
+            unsigned tokenizerLine = m_scannerError.tokenizerLine;
+            m_error = { SyntaxError::Kind::SyntaxError, true, makeString('\'', m_scannerError.openBracket, "' was never closed"_s), m_scannerError.openBracketLine, static_cast<int>(m_scannerError.openBracketColumn), m_scannerError.openBracketLine, -1 };
+            m_error.tokenizerLine = tokenizerLine;
+            m_error.lastLineIsEnded = m_lastLineIsEnded;
+        }
+        return nullptr;
+    }
+
+    Statement* parseDefinitionAlone() { return at(SoftKeyword::Type) ? parseTypeAlias() : parseDefinition(); }
+    Expression* parseExpressionAlone() { return parseExpression(); }
+
+private:
+    // Whether CPython's tokenizer, which is asked for one token at a time, would have come to the end of the source.
+    bool tokenizerIsAtEndOfSource()
+    {
+        const Token& token = m_tokens[m_furthest];
+        if (token.kind == TokenKind::Error)
+            return m_scannerError.isAtEndOfSource;
+        if (token.kind == TokenKind::EndMarker || token.isMadeOfTheEnd)
+            return true;
+        if (token.end != m_tokens.last().start)
+            return false;
+        // What says that something has ended, where the source has.
+        if (token.kind == TokenKind::Dedent)
+            return true;
+        // It has if it has made a token of the last of the source: it looks at what comes next to see where most tokens end. That is the end of a line, if the source is taken to end with one.
+        return !m_lastLineIsEnded && token.kind != TokenKind::String && token.kind != TokenKind::Newline;
+    }
+
+    // In the second pass the same thing is parsed over and over, as one thing and another is tried. As in CPython, what came of it is kept, by the token that it began at.
+    struct Memo {
+        Expression* result;
+        unsigned end;
+    };
+    using MemoTable = UncheckedKeyHashMap<unsigned, Memo, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+
+    Module* parseModuleOnce(Module::Kind kind)
     {
         auto* module = m_arena.create<Module>();
         module->kind = kind;
@@ -63,8 +153,41 @@ public:
             break;
         }
         case Module::Kind::Interactive: {
+            // statement_newline
             Vector<Statement*, 16> body;
-            ok = at(TokenKind::EndMarker) || consume(TokenKind::Newline) || parseStatement(body);
+            if (at(TokenKind::Newline))
+                body.append(make<Pass>(next()));
+            else if (!parseStatement(body))
+                break;
+            else {
+                switch (body.last()->kind) {
+                case Statement::Kind::FunctionDef:
+                case Statement::Kind::ClassDef:
+                case Statement::Kind::If:
+                case Statement::Kind::With:
+                case Statement::Kind::For:
+                case Statement::Kind::Try:
+                case Statement::Kind::While:
+                case Statement::Kind::Match:
+                    // What has blocks is followed by the end of a line. It has none of its own: this is the one that is made of the end of the source.
+                    if (!consume(TokenKind::Newline))
+                        return nullptr;
+                    break;
+                default:
+                    break;
+                }
+            }
+            // bad_single_statement(): there is to be nothing after what the tokenizer has been asked for but white space and comments.
+            for (unsigned i = m_furthest + 1; i < m_tokens.size(); ++i) {
+                TokenKind kind = m_tokens[i].kind;
+                if (kind == TokenKind::Newline || kind == TokenKind::Indent || kind == TokenKind::Dedent || kind == TokenKind::EndMarker)
+                    continue;
+                SetForScope scope(m_failsInEitherPass, true);
+                failAtLastToken("multiple statements found while compiling a single statement"_s);
+                m_isBadSingleStatement = true;
+                return nullptr;
+            }
+            ok = true;
             module->body = m_arena.copy(body);
             break;
         }
@@ -76,30 +199,20 @@ public:
             }
             break;
         }
-        if (ok && !m_error)
-            return module;
-        // What the scanner stumbled on comes first if the parser got that far.
-        if (m_tokens[m_furthest].kind == TokenKind::Error)
-            m_error = m_scannerError;
-        else if (!m_error) {
-            failGenerically();
-            // With nothing better to say, what is wrong further on may be the reason. A bracket that was never closed is, if it was opened before this.
-            if (m_scannerError && m_error.kind == SyntaxError::Kind::SyntaxError && (!m_scannerError.isUnclosedBracket || m_error.line > m_scannerError.line))
-                m_error = m_scannerError;
-        }
-        return nullptr;
+        return ok && !m_error ? module : nullptr;
     }
 
-    Statement* parseDefinitionAlone() { return at(SoftKeyword::Type) ? parseTypeAlias() : parseDefinition(); }
-    Expression* parseExpressionAlone() { return parseExpression(); }
-
-private:
     // ---- Tokens
 
     const Token& peek(unsigned ahead = 0)
     {
         unsigned index = std::min<unsigned>(m_index + ahead, m_tokens.size() - 1);
         m_furthest = std::max(m_furthest, index);
+        // To ask the tokenizer for a token that it cannot give is the end of it, whatever the token was wanted for.
+        if (m_tokens[index].kind == TokenKind::Error && !m_error) [[unlikely]] {
+            m_error = m_scannerError;
+            m_hasScannerError = true;
+        }
         return m_tokens[index];
     }
 
@@ -148,17 +261,84 @@ private:
     // While something is only being tried, being wrong is not an error.
     bool isSpeculating() const { return m_speculationDepth; }
 
-    std::nullptr_t fail(String&& message, unsigned line, unsigned column, unsigned endLine, unsigned endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
+    std::nullptr_t fail(String&& message, unsigned line, int column, unsigned endLine, int endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
-        if (!m_error && !isSpeculating())
-            m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
+        if (m_error)
+            return nullptr;
+        // Most of what can be said is said by what is only tried the second time.
+        if (!m_callsInvalidRules && !m_failsInEitherPass)
+            return nullptr;
+        if (!m_isSecondPass && isSpeculating())
+            return nullptr;
+        m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
+        m_error.tokenizerLine = m_tokens[m_furthest].endLine;
+        m_error.lastLineIsEnded = m_lastLineIsEnded;
         return nullptr;
     }
 
+    // For what CPython's parser says as soon as it comes to it: a token that the grammar insists on, and what is found wrong in making something of what has been parsed.
+    template<typename... Arguments>
+    std::nullptr_t failInEitherPass(Arguments&&... arguments)
+    {
+        SetForScope scope(m_failsInEitherPass, true);
+        return fail(std::forward<Arguments>(arguments)...);
+    }
+
+    // These take up no room in the source, and CPython has them nowhere. What is kept as where they end is where the tokenizer was when it made them.
+    static bool isNowhere(const Token& token)
+    {
+        return token.kind == TokenKind::Indent || token.kind == TokenKind::Dedent || token.kind == TokenKind::EndMarker || token.kind == TokenKind::Error || token.isMadeOfTheEnd;
+    }
+
+    // RAISE_SYNTAX_ERROR_KNOWN_LOCATION()
     std::nullptr_t fail(String&& message, const Token& token, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
+        if (isNowhere(token))
+            return fail(WTF::move(message), token.line, -1, token.endLine, -1, kind);
         return fail(WTF::move(message), token.line, token.column, token.endLine, token.endColumn, kind);
     }
+
+    // RAISE_SYNTAX_ERROR_KNOWN_RANGE()
+    std::nullptr_t fail(String&& message, const Token& first, const Token& last)
+    {
+        return fail(WTF::move(message), first.line, first.column, last.endLine, last.endColumn);
+    }
+
+    std::nullptr_t fail(String&& message, const Node& first, const Token& last)
+    {
+        return fail(WTF::move(message), first.line, first.column, last.endLine, last.endColumn);
+    }
+
+    std::nullptr_t fail(String&& message, const Token& first, const Node& last)
+    {
+        return fail(WTF::move(message), first.line, first.column, last.endLine, last.endColumn);
+    }
+
+    // RAISE_SYNTAX_ERROR() and RAISE_INDENTATION_ERROR(): at the last token that the tokenizer has been asked for
+    std::nullptr_t failAtLastToken(String&& message, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
+    {
+        const Token& token = m_tokens[m_furthest];
+        if (isNowhere(token))
+            return fail(WTF::move(message), token.line, static_cast<int>(token.endColumn) - 1, token.endLine, -2, kind);
+        return fail(WTF::move(message), token.line, token.column, token.endLine, token.endColumn, kind);
+    }
+
+    // RAISE_SYNTAX_ERROR_STARTING_FROM(): from there to where the tokenizer is
+    std::nullptr_t failStartingFrom(String&& message, unsigned line, unsigned column)
+    {
+        const Token& token = m_tokens[m_furthest];
+        return fail(WTF::move(message), line, column, token.endLine, static_cast<int>(token.endColumn) - 1);
+    }
+
+    std::nullptr_t failStartingFrom(String&& message, const Token& token)
+    {
+        if (isNowhere(token)) {
+            const Token& last = m_tokens[m_furthest];
+            return fail(WTF::move(message), token.line, -1, last.endLine, static_cast<int>(last.endColumn) - 1);
+        }
+        return failStartingFrom(WTF::move(message), token.line, token.column);
+    }
+    std::nullptr_t failStartingFrom(String&& message, const Node& node) { return failStartingFrom(WTF::move(message), node.line, node.column); }
 
     std::nullptr_t fail(String&& message, const Node& node)
     {
@@ -176,15 +356,11 @@ private:
     }
 
     // Nothing better to say than where it stopped making sense.
-    void failGenerically()
+    void failGenerically(const Token& token)
     {
-        const Token& token = m_tokens[m_furthest];
-        if (token.kind == TokenKind::Indent) {
-            fail("unexpected indent"_s, token, SyntaxError::Kind::IndentationError);
-            return;
-        }
-        if (token.kind == TokenKind::Dedent) {
-            fail("unexpected unindent"_s, token, SyntaxError::Kind::IndentationError);
+        SetForScope scope(m_failsInEitherPass, true);
+        if (token.kind == TokenKind::Indent || token.kind == TokenKind::Dedent) {
+            failAtLastToken(token.kind == TokenKind::Indent ? "unexpected indent"_s : "unexpected unindent"_s, SyntaxError::Kind::IndentationError);
             return;
         }
         fail("invalid syntax"_s, token);
@@ -201,8 +377,10 @@ private:
     {
         if (consume(TokenKind::Colon))
             return true;
-        if (colonIs == ColonIs::Insisted || at(TokenKind::Newline))
-            fail("expected ':'"_s);
+        if (colonIs == ColonIs::Insisted)
+            failInEitherPass("expected ':'"_s, peek());
+        else if (at(TokenKind::Newline))
+            failAtLastToken("expected ':'"_s);
         return false;
     }
 
@@ -210,7 +388,7 @@ private:
     {
         if (m_vm.isSafeToRecurse()) [[likely]]
             return true;
-        fail("too many nested parentheses"_s);
+        failInEitherPass("too many nested parentheses"_s, peek());
         return false;
     }
 
@@ -223,6 +401,35 @@ private:
         --m_speculationDepth;
         if (!result)
             m_index = index;
+        return result;
+    }
+
+    // For trying something in the second pass: nothing is taken. What is found wrong on the way is an error all the same.
+    template<typename Function>
+    auto lookForWhatIsWrong(const Function& function)
+    {
+        unsigned index = m_index;
+        auto result = function();
+        m_index = index;
+        return result;
+    }
+
+    template<typename Function>
+    Expression* memoized(MemoTable& table, const Function& function)
+    {
+        if (!m_keepsWhatIsParsed) [[likely]]
+            return function();
+        if (m_error)
+            return nullptr;
+        unsigned index = m_index;
+        if (auto iterator = table.find(index); iterator != table.end()) {
+            m_index = iterator->value.end;
+            return iterator->value.result;
+        }
+        Expression* result = function();
+        if (!result)
+            m_index = index;
+        table.add(index, Memo { result, m_index });
         return result;
     }
 
@@ -404,32 +611,51 @@ private:
 
     bool makeTarget(Expression& expression, ExpressionContext context)
     {
-        Expression* invalid = setContext(expression, context);
-        if (!invalid)
-            return true;
-        fail(makeString(context == ExpressionContext::Del ? "cannot delete "_s : "cannot assign to "_s, describe(*invalid)), *invalid);
-        return false;
+        return !setContext(expression, context);
     }
 
-    // The left of `=` in a statement.
-    bool makeAssignmentTarget(Expression& expression)
+    // _PyPegen_get_invalid_target(): the part of it that cannot be assigned to, or deleted
+    enum class Targets : uint8_t { Star, Del, For };
+    static Expression* invalidTarget(Expression& expression, Targets targets)
     {
-        Expression* invalid = setContext(expression, ExpressionContext::Store);
-        if (!invalid)
-            return true;
-        if (invalid->is<Yield>() || invalid->is<YieldFrom>()) {
-            fail("assignment to yield expression not possible"_s, *invalid);
-            return false;
+        auto firstOf = [&] (auto& elements) -> Expression* {
+            for (Expression* element : elements) {
+                if (Expression* invalid = invalidTarget(*element, targets))
+                    return invalid;
+            }
+            return nullptr;
+        };
+        switch (expression.kind) {
+        case Expression::Kind::List:
+            return firstOf(expression.as<List>().elements);
+        case Expression::Kind::Tuple:
+            return firstOf(expression.as<Tuple>().elements);
+        case Expression::Kind::Starred:
+            if (targets == Targets::Del)
+                return &expression;
+            return invalidTarget(*expression.as<Starred>().value, targets);
+        case Expression::Kind::Compare:
+            // The `a in b` of `for a in b` is a comparison to whatever has parsed it as an expression.
+            if (targets == Targets::For) {
+                if (expression.as<Compare>().ops[0] == ComparisonOperator::In)
+                    return invalidTarget(*expression.as<Compare>().left, targets);
+                return nullptr;
+            }
+            return &expression;
+        case Expression::Kind::Name:
+        case Expression::Kind::Subscript:
+        case Expression::Kind::Attribute:
+            return nullptr;
+        default:
+            return &expression;
         }
-        bool isWhole = invalid == &expression;
-        bool mayHaveMeantEquality = isWhole && !invalid->is<GeneratorExp>();
-        if (auto* constant = invalid->tryAs<Constant>())
-            mayHaveMeantEquality &= constant->type != Constant::Type::None && constant->type != Constant::Type::True && constant->type != Constant::Type::False;
-        if (mayHaveMeantEquality)
-            fail(makeString("cannot assign to "_s, describe(*invalid), " here. Maybe you meant '==' instead of '='?"_s), *invalid);
-        else
-            fail(makeString("cannot assign to "_s, describe(*invalid)), *invalid);
-        return false;
+    }
+
+    // RAISE_SYNTAX_ERROR_INVALID_TARGET()
+    void failForInvalidTarget(Expression& expression, Targets targets)
+    {
+        if (Expression* invalid = invalidTarget(expression, targets))
+            fail(makeString(targets == Targets::Del ? "cannot delete "_s : "cannot assign to "_s, describe(*invalid)), *invalid);
     }
 
     // star_target
@@ -466,11 +692,13 @@ private:
         Vector<Expression*, 8> elements;
         elements.append(first);
         while (consume(TokenKind::Comma)) {
-            if (at(TokenKind::KeywordIn))
-                break;
+            // The last comma may have nothing after it.
+            unsigned index = m_index;
             Expression* element = parseStarTarget();
-            if (!element)
-                return nullptr;
+            if (!element) {
+                m_index = index;
+                break;
+            }
             elements.append(element);
         }
         auto* tuple = make<Tuple>(start);
@@ -495,9 +723,14 @@ private:
         while (consume(TokenKind::Comma)) {
             if (!(this->*canStartElement)())
                 break;
+            unsigned index = m_index;
             Expression* element = parseElement();
-            if (!element)
-                return nullptr;
+            if (!element) {
+                if (m_error)
+                    return nullptr;
+                m_index = index;
+                break;
+            }
             elements.append(element);
         }
         auto* tuple = make<Tuple>(start);
@@ -562,9 +795,11 @@ private:
     // star_expression
     Expression* parseStarExpression()
     {
-        if (at(TokenKind::Star))
-            return parseStarred();
-        return parseExpression();
+        return memoized(m_memos.starExpressions, [&] {
+            if (at(TokenKind::Star))
+                return parseStarred();
+            return parseExpression();
+        });
     }
 
     // star_named_expression
@@ -588,19 +823,24 @@ private:
     {
         Mark start = mark();
         next();
+        unsigned index = m_index;
         if (consume(TokenKind::KeywordFrom)) {
-            Expression* value = parseExpression();
-            if (!value)
+            if (Expression* value = parseExpression()) {
+                auto* yield = make<YieldFrom>(start);
+                yield->value = value;
+                return yield;
+            }
+            if (m_error)
                 return nullptr;
-            auto* yield = make<YieldFrom>(start);
-            yield->value = value;
-            return yield;
+            m_index = index;
         }
         Expression* value = nullptr;
         if (canStartStarExpression()) {
             value = parseStarExpressions();
-            if (!value)
+            if (m_error)
                 return nullptr;
+            if (!value)
+                m_index = index;
         }
         auto* yield = make<Yield>(start);
         yield->value = value;
@@ -622,12 +862,59 @@ private:
             named->value = value;
             return named;
         }
+        if (m_callsInvalidRules) {
+            recognizeInvalidNamedExpression();
+            if (m_error)
+                return nullptr;
+        }
         Expression* expression = parseExpression();
-        if (!expression)
+        if (!expression || at(TokenKind::ColonEqual))
             return nullptr;
-        if (at(TokenKind::ColonEqual))
-            return fail(makeString("cannot use assignment expressions with "_s, describe(*expression)), *expression);
         return expression;
+    }
+
+    // invalid_named_expression
+    void recognizeInvalidNamedExpression()
+    {
+        if (!m_invalidNamedExpressions.add(m_index).isNewEntry)
+            return;
+        lookForWhatIsWrong([&] {
+            Expression* target = parseExpression();
+            if (target && consume(TokenKind::ColonEqual) && parseExpression())
+                fail(makeString("cannot use assignment expressions with "_s, describe(*target)), *target);
+            return false;
+        });
+        if (m_error)
+            return;
+        auto isFollowedByAnother = [&] { return at(TokenKind::Equal) || at(TokenKind::ColonEqual); };
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::Name) || !atAhead(1, TokenKind::Equal))
+                return false;
+            const Token& name = next();
+            next();
+            Expression* value = parseBitwiseOr();
+            if (value && !isFollowedByAnother())
+                fail("invalid syntax. Maybe you meant '==' or ':=' instead of '='?"_s, name, *value);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            // !(list | tuple | genexp | 'True' | 'None' | 'False')
+            if (at(TokenKind::KeywordTrue) || at(TokenKind::KeywordNone) || at(TokenKind::KeywordFalse))
+                return false;
+            if (at(TokenKind::LeftParenthesis) || at(TokenKind::LeftBracket)) {
+                Expression* atom = lookForWhatIsWrong([&] { return parseAtom(); });
+                if (m_error)
+                    return false;
+                if (atom && (atom->is<List>() || atom->is<GeneratorExp>() || (atom->is<Tuple>() && at(TokenKind::LeftParenthesis))))
+                    return false;
+            }
+            Expression* target = parseBitwiseOr();
+            if (target && consume(TokenKind::Equal) && parseBitwiseOr() && !isFollowedByAnother())
+                fail(makeString("cannot assign to "_s, describe(*target), " here. Maybe you meant '==' instead of '='?"_s), *target);
+            return false;
+        });
     }
 
     // expression
@@ -635,21 +922,158 @@ private:
     {
         if (!isSafeToRecurse())
             return nullptr;
+        return memoized(m_memos.expressions, [&] () -> Expression* {
+            if (m_callsInvalidRules) {
+                recognizeInvalidExpression();
+                if (m_error)
+                    return nullptr;
+                recognizeLegacyExpression();
+                if (m_error)
+                    return nullptr;
+            }
+            return parseExpressionItself();
+        });
+    }
+
+    // expression_without_invalid
+    Expression* parseExpressionWithoutInvalid()
+    {
+        SetForScope scope(m_callsInvalidRules, false);
+        return parseExpressionItself();
+    }
+
+    // _PyPegen_check_legacy_stmt()
+    static bool isLegacyStatement(Expression& expression)
+    {
+        auto* name = expression.tryAs<Name>();
+        return name && (*name->id == "print"_s || *name->id == "exec"_s);
+    }
+
+    // invalid_expression. As in what CPython generates from its grammar, when one of these is all there and yet has nothing to say, the rest are not tried.
+    void recognizeInvalidExpression()
+    {
+        bool isDone = false;
+        lookForWhatIsWrong([&] {
+            if (!consume(TokenKind::String))
+                return false;
+            Expression* first = nullptr;
+            Expression* last = nullptr;
+            while (!at(TokenKind::String)) {
+                unsigned index = m_index;
+                Expression* expression = parseExpressionWithoutInvalid();
+                if (!expression) {
+                    m_index = index;
+                    break;
+                }
+                if (!first)
+                    first = expression;
+                last = expression;
+            }
+            if (first && at(TokenKind::String))
+                fail("invalid syntax. Is this intended to be part of the string?"_s, *first, *last);
+            return false;
+        });
+        if (m_error)
+            return;
+
+        lookForWhatIsWrong([&] {
+            // !(NAME STRING | SOFT_KEYWORD)
+            if (at(TokenKind::Name) && (atAhead(1, TokenKind::String) || peek().softKeyword != SoftKeyword::None))
+                return false;
+            Expression* first = parseDisjunction();
+            if (!first)
+                return false;
+            Expression* second = parseExpressionWithoutInvalid();
+            if (!second)
+                return false;
+            isDone = true;
+            if (!isLegacyStatement(*first) && m_tokens[m_index - 1].isInsideBrackets)
+                fail("invalid syntax. Perhaps you forgot a comma?"_s, *first, *second);
+            return false;
+        });
+        if (m_error || isDone)
+            return;
+
+        lookForWhatIsWrong([&] {
+            Expression* body = parseDisjunction();
+            if (!body || !consume(TokenKind::KeywordIf))
+                return false;
+            Expression* test = parseDisjunction();
+            if (!test)
+                return false;
+            if (!at(TokenKind::KeywordElse) && !at(TokenKind::Colon)) {
+                fail("expected 'else' after 'if' expression"_s, *body, *test);
+                return false;
+            }
+            if (!consume(TokenKind::KeywordElse))
+                return false;
+            bool isExpression = lookForWhatIsWrong([&] { return parseExpression(); });
+            if (!isExpression && !m_error)
+                fail("expected expression after 'else', but statement is given"_s, peek());
+            return false;
+        });
+        if (m_error)
+            return;
+
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::KeywordPass) && !at(TokenKind::KeywordBreak) && !at(TokenKind::KeywordContinue))
+                return false;
+            const Token& statement = next();
+            if (consume(TokenKind::KeywordIf) && parseDisjunction() && consume(TokenKind::KeywordElse) && parseSimpleStatement())
+                fail("expected expression before 'if', but statement is given"_s, statement);
+            return false;
+        });
+        if (m_error)
+            return;
+
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::KeywordLambda))
+                return false;
+            const Token& lambda = next();
+            if (!parseParameters(TokenKind::Colon, false) || !at(TokenKind::Colon))
+                return false;
+            const Token& colon = next();
+            if (at(TokenKind::FStringMiddle) || at(TokenKind::TStringMiddle))
+                fail(prefixed(at(TokenKind::TStringMiddle), "lambda expressions are not allowed without parentheses"_s), lambda, colon);
+            return false;
+        });
+    }
+
+    // invalid_legacy_expression
+    void recognizeLegacyExpression()
+    {
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::Name) || atAhead(1, TokenKind::LeftParenthesis))
+                return false;
+            Name* name = makeName(next());
+            Expression* rest = parseStarExpressions();
+            if (rest && isLegacyStatement(*name))
+                fail(makeString("Missing parentheses in call to '"_s, name->id->string(), "'. Did you mean "_s, name->id->string(), "(...)?"_s), *name, *rest);
+            return false;
+        });
+    }
+
+    Expression* parseExpressionItself()
+    {
         if (at(TokenKind::KeywordLambda))
             return parseLambda();
         Mark start = mark();
         Expression* body = parseDisjunction();
         if (!body || !at(TokenKind::KeywordIf))
             return body;
+        // If it does not go on as it should, this much is an expression all the same.
+        unsigned index = m_index;
+        auto isOnlyBody = [&] {
+            m_index = index;
+            return body;
+        };
         next();
         Expression* test = parseDisjunction();
-        if (!test)
-            return nullptr;
-        if (!consume(TokenKind::KeywordElse))
-            return fail("expected 'else' after 'if' expression"_s, *body, *test);
+        if (!test || !consume(TokenKind::KeywordElse))
+            return isOnlyBody();
         Expression* orElse = parseExpression();
         if (!orElse)
-            return nullptr;
+            return isOnlyBody();
         auto* conditional = make<IfExp>(start);
         conditional->test = test;
         conditional->body = body;
@@ -663,7 +1087,7 @@ private:
         Mark start = mark();
         next();
         Arguments* arguments = parseParameters(TokenKind::Colon, false);
-        if (!arguments || !expectColon(ColonIs::Insisted))
+        if (!arguments || !consume(TokenKind::Colon))
             return nullptr;
         Expression* body = parseExpression();
         if (!body)
@@ -683,12 +1107,20 @@ private:
             return first;
         Vector<Expression*, 8> values;
         values.append(first);
-        while (consume(keyword)) {
+        while (at(keyword)) {
+            unsigned index = m_index;
+            next();
             Expression* value = parseOperand();
-            if (!value)
-                return nullptr;
+            if (!value) {
+                if (m_error)
+                    return nullptr;
+                m_index = index;
+                break;
+            }
             values.append(value);
         }
+        if (values.size() == 1)
+            return first;
         auto* operation = make<BoolOp>(start);
         operation->op = op;
         operation->values = m_arena.copy(values);
@@ -697,15 +1129,20 @@ private:
 
     Expression* parseDisjunction()
     {
-        return parseBooleanOperation(TokenKind::KeywordOr, BooleanOperator::Or, [&] { return parseConjunction(); });
+        return memoized(m_memos.disjunctions, [&] { return parseBooleanOperation(TokenKind::KeywordOr, BooleanOperator::Or, [&] { return parseConjunction(); }); });
     }
 
     Expression* parseConjunction()
     {
-        return parseBooleanOperation(TokenKind::KeywordAnd, BooleanOperator::And, [&] { return parseInversion(); });
+        return memoized(m_memos.conjunctions, [&] { return parseBooleanOperation(TokenKind::KeywordAnd, BooleanOperator::And, [&] { return parseInversion(); }); });
     }
 
     Expression* parseInversion()
+    {
+        return memoized(m_memos.inversions, [&] { return parseInversionItself(); });
+    }
+
+    Expression* parseInversionItself()
     {
         if (!at(TokenKind::KeywordNot))
             return parseComparison();
@@ -732,7 +1169,7 @@ private:
             // from __future__ import barry_as_FLUFL
             if (peek().isLessGreater != m_arena.usesLessGreater) {
                 if (m_arena.usesLessGreater)
-                    fail("with Barry as BDFL, use '<>' instead of '!='"_s);
+                    failInEitherPass("with Barry as BDFL, use '<>' instead of '!='"_s, peek());
                 return std::nullopt;
             }
             next();
@@ -774,19 +1211,25 @@ private:
         Expression* left = parseBitwiseOr();
         if (!left)
             return nullptr;
-        auto op = consumeComparisonOperator();
-        if (!op)
-            return left;
         Vector<ComparisonOperator, 4> ops;
         Vector<Expression*, 4> comparators;
-        do {
+        while (true) {
+            unsigned index = m_index;
+            auto op = consumeComparisonOperator();
+            if (!op)
+                break;
             Expression* comparator = parseBitwiseOr();
-            if (!comparator)
-                return nullptr;
+            if (!comparator) {
+                if (m_error)
+                    return nullptr;
+                m_index = index;
+                break;
+            }
             ops.append(*op);
             comparators.append(comparator);
-            op = consumeComparisonOperator();
-        } while (op);
+        }
+        if (ops.isEmpty())
+            return m_error ? nullptr : left;
         auto* compare = make<Compare>(start);
         compare->left = left;
         compare->ops = m_arena.copy(ops);
@@ -836,6 +1279,13 @@ private:
 
     Expression* parseBinaryOperation(unsigned minimumPrecedence)
     {
+        if (minimumPrecedence >= m_memos.binaryOperations.size())
+            return parseFactor();
+        return memoized(m_memos.binaryOperations[minimumPrecedence], [&] { return parseBinaryOperationItself(minimumPrecedence); });
+    }
+
+    Expression* parseBinaryOperationItself(unsigned minimumPrecedence)
+    {
         Mark start = mark();
         Expression* left = parseFactor();
         if (!left)
@@ -844,10 +1294,22 @@ private:
             auto info = binaryOperator(peek().kind);
             if (!info || info->precedence < minimumPrecedence)
                 return left;
+            unsigned index = m_index;
             next();
-            Expression* right = parseBinaryOperation(info->precedence + 1);
-            if (!right)
+            // invalid_arithmetic
+            if (m_callsInvalidRules && info->precedence >= 5 && at(TokenKind::KeywordNot)) {
+                const Token& keyword = next();
+                if (Expression* operand = parseInversion())
+                    fail("'not' after an operator must be parenthesized"_s, keyword, *operand);
                 return nullptr;
+            }
+            Expression* right = parseBinaryOperation(info->precedence + 1);
+            if (!right) {
+                if (m_error)
+                    return nullptr;
+                m_index = index;
+                return left;
+            }
             auto* operation = make<BinOp>(start);
             operation->left = left;
             operation->op = info->op;
@@ -858,6 +1320,11 @@ private:
 
     // factor
     Expression* parseFactor()
+    {
+        return memoized(m_memos.factors, [&] { return parseFactorItself(); });
+    }
+
+    Expression* parseFactorItself()
     {
         UnaryOperator op;
         switch (peek().kind) {
@@ -877,6 +1344,13 @@ private:
             return nullptr;
         Mark start = mark();
         next();
+        // invalid_factor
+        if (m_callsInvalidRules && at(TokenKind::KeywordNot)) {
+            const Token& keyword = next();
+            if (Expression* operand = parseFactor())
+                fail("'not' after an operator must be parenthesized"_s, keyword, *operand);
+            return nullptr;
+        }
         Expression* operand = parseFactor();
         if (!operand)
             return nullptr;
@@ -891,11 +1365,17 @@ private:
     {
         Mark start = mark();
         Expression* left = parseAwaitPrimary();
-        if (!left || !consume(TokenKind::DoubleStar))
+        if (!left || !at(TokenKind::DoubleStar))
             return left;
+        unsigned index = m_index;
+        next();
         Expression* right = parseFactor();
-        if (!right)
-            return nullptr;
+        if (!right) {
+            if (m_error)
+                return nullptr;
+            m_index = index;
+            return left;
+        }
         auto* operation = make<BinOp>(start);
         operation->left = left;
         operation->op = BinaryOperator::Pow;
@@ -905,6 +1385,11 @@ private:
 
     // await_primary
     Expression* parseAwaitPrimary()
+    {
+        return memoized(m_memos.awaitPrimaries, [&] { return parseAwaitPrimaryItself(); });
+    }
+
+    Expression* parseAwaitPrimaryItself()
     {
         if (!at(TokenKind::KeywordAwait))
             return parsePrimary();
@@ -921,14 +1406,33 @@ private:
     // primary
     Expression* parsePrimary()
     {
+        return memoized(m_memos.primaries, [&] { return parsePrimaryItself(); });
+    }
+
+    Expression* parsePrimaryItself()
+    {
         Mark start = mark();
         Expression* value = parseAtom();
         while (value) {
+            unsigned index = m_index;
+            auto isAllThereIs = [&] () -> Expression* {
+                if (m_error)
+                    return nullptr;
+                m_index = index;
+                return value;
+            };
+            // f(x for x in y) is f and a generator expression, so one of those is looked for after whatever this is. And what is looked for when there is none may begin with any bracket:
+            // invalid_comprehension. For a parenthesis parseArguments() sees to it.
+            if (m_callsInvalidRules && (at(TokenKind::LeftBrace) || at(TokenKind::LeftBracket))) {
+                recognizeInvalidComprehension();
+                if (m_error)
+                    return nullptr;
+            }
             switch (peek().kind) {
             case TokenKind::Dot: {
                 next();
                 if (!at(TokenKind::Name))
-                    return nullptr;
+                    return isAllThereIs();
                 const Identifier* name = next().text;
                 auto* attribute = make<Attribute>(start);
                 attribute->value = value;
@@ -940,7 +1444,7 @@ private:
                 Vector<Expression*, 8> arguments;
                 Vector<Keyword*, 8> keywords;
                 if (!parseArguments(arguments, keywords))
-                    return nullptr;
+                    return isAllThereIs();
                 auto* call = make<Call>(start);
                 call->function = value;
                 call->arguments = m_arena.copy(arguments);
@@ -952,7 +1456,7 @@ private:
                 next();
                 Expression* slice = parseSlices();
                 if (!slice || !expect(TokenKind::RightBracket))
-                    return nullptr;
+                    return isAllThereIs();
                 auto* subscript = make<Subscript>(start);
                 subscript->value = value;
                 subscript->slice = slice;
@@ -971,84 +1475,444 @@ private:
         return at(TokenKind::KeywordFor) || (at(TokenKind::KeywordAsync) && atAhead(1, TokenKind::KeywordFor));
     }
 
-    // '(' [arguments] ')'
-    bool parseArguments(Vector<Expression*, 8>& arguments, Vector<Keyword*, 8>& keywords)
+    // assignment_expression | expression !':='
+    Expression* parseAssignmentExpressionOrExpression()
+    {
+        if (at(TokenKind::Name) && atAhead(1, TokenKind::ColonEqual))
+            return parseNamedExpression();
+        unsigned index = m_index;
+        Expression* expression = parseExpression();
+        if (expression && !at(TokenKind::ColonEqual))
+            return expression;
+        m_index = index;
+        return nullptr;
+    }
+
+    // starred_expression
+    Expression* parseStarredExpression()
+    {
+        if (!at(TokenKind::Star))
+            return nullptr;
+        Mark start = mark();
+        const Token& star = peek();
+        if (m_callsInvalidRules) {
+            // invalid_starred_expression_unpacking
+            lookForWhatIsWrong([&] {
+                next();
+                if (!parseExpression() || !consume(TokenKind::Equal))
+                    return false;
+                if (Expression* value = parseExpression())
+                    fail("cannot assign to iterable argument unpacking"_s, star, *value);
+                return false;
+            });
+            if (m_error)
+                return nullptr;
+        }
+        next();
+        if (Expression* value = parseExpression()) {
+            auto* starred = make<Starred>(start);
+            starred->value = value;
+            return starred;
+        }
+        // invalid_starred_expression
+        failAtLastToken("Invalid star expression"_s);
+        return nullptr;
+    }
+
+    // invalid_kwarg
+    void recognizeInvalidKeywordArgument()
+    {
+        if ((at(TokenKind::KeywordTrue) || at(TokenKind::KeywordFalse) || at(TokenKind::KeywordNone)) && atAhead(1, TokenKind::Equal)) {
+            fail(makeString("cannot assign to "_s, at(TokenKind::KeywordTrue) ? "True"_s : at(TokenKind::KeywordFalse) ? "False"_s : "None"_s), peek(), peek(1));
+            return;
+        }
+        bool isNamed = at(TokenKind::Name) && atAhead(1, TokenKind::Equal);
+        lookForWhatIsWrong([&] {
+            if (!isNamed)
+                return false;
+            const Token& name = next();
+            const Token& equal = next();
+            Vector<Comprehension*, 2> generators;
+            if (parseExpression() && atComprehension() && parseComprehensionClauses(generators))
+                fail("invalid syntax. Maybe you meant '==' or ':=' instead of '='?"_s, name, equal);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            if (isNamed)
+                return false;
+            Expression* expression = parseExpression();
+            if (expression && at(TokenKind::Equal))
+                fail("expression cannot contain assignment, perhaps you meant \"==\"?"_s, *expression, peek());
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::DoubleStar))
+                return false;
+            const Token& stars = next();
+            if (!parseExpression() || !consume(TokenKind::Equal))
+                return false;
+            if (Expression* value = parseExpression())
+                fail("cannot assign to keyword argument unpacking"_s, stars, *value);
+            return false;
+        });
+    }
+
+    struct CallArguments {
+        Vector<Expression*, 8> positional;
+        Vector<Keyword*, 8> keywords;
+        bool hasKeywordSection { false }; // kwargs, in the grammar. There may be *x in it as well as x=y and **x.
+    };
+
+    // What has been parsed already, so that it need not be parsed again.
+    struct Parsed {
+        Expression* expression { nullptr };
+        unsigned start { 0 };
+        unsigned end { 0 };
+    };
+
+    // args. It leaves off before whatever cannot be part of them, and is false if there are none.
+    bool parseArgs(CallArguments& result) { return parseArgs(result, Parsed()); }
+    bool parseArgs(CallArguments& result, Parsed first)
+    {
+        enum class Section : uint8_t { Positional, KeywordOrStarred, KeywordOrDoubleStarred };
+        Section section = Section::Positional;
+
+        // NAME '=' expression
+        auto parseNamed = [&] {
+            if (!at(TokenKind::Name) || !atAhead(1, TokenKind::Equal))
+                return false;
+            Mark start = mark();
+            const Identifier* name = next().text;
+            next();
+            Expression* value = parseExpression();
+            if (!value)
+                return false;
+            auto* keyword = make<Keyword>(start);
+            keyword->name = name;
+            keyword->value = value;
+            result.keywords.append(keyword);
+            return true;
+        };
+        auto parseOne = [&] {
+            unsigned index = m_index;
+            if (section == Section::Positional) {
+                if (at(TokenKind::Star)) {
+                    if (Expression* starred = parseStarredExpression()) {
+                        result.positional.append(starred);
+                        return true;
+                    }
+                } else {
+                    Expression* value;
+                    if (first.expression && first.start == index) {
+                        value = first.expression;
+                        m_index = first.end;
+                    } else
+                        value = parseAssignmentExpressionOrExpression();
+                    if (value && !at(TokenKind::Equal)) {
+                        result.positional.append(value);
+                        return true;
+                    }
+                }
+                if (m_error)
+                    return false;
+                m_index = index;
+                section = Section::KeywordOrStarred;
+            }
+            if (section == Section::KeywordOrStarred) {
+                if (m_callsInvalidRules) {
+                    recognizeInvalidKeywordArgument();
+                    if (m_error)
+                        return false;
+                }
+                if (parseNamed())
+                    return true;
+                if (m_error)
+                    return false;
+                m_index = index;
+                if (Expression* starred = parseStarredExpression()) {
+                    result.positional.append(starred);
+                    return true;
+                }
+                if (m_error)
+                    return false;
+                m_index = index;
+                section = Section::KeywordOrDoubleStarred;
+            }
+            if (m_callsInvalidRules) {
+                recognizeInvalidKeywordArgument();
+                if (m_error)
+                    return false;
+            }
+            if (parseNamed())
+                return true;
+            if (m_error)
+                return false;
+            m_index = index;
+            if (!at(TokenKind::DoubleStar))
+                return false;
+            Mark start = mark();
+            next();
+            Expression* value = parseExpression();
+            if (!value)
+                return false;
+            auto* keyword = make<Keyword>(start);
+            keyword->value = value;
+            result.keywords.append(keyword);
+            return true;
+        };
+
+        bool hasAny = false;
+        while (true) {
+            unsigned index = m_index;
+            if (hasAny && !consume(TokenKind::Comma))
+                break;
+            if (!parseOne()) {
+                m_index = index;
+                break;
+            }
+            hasAny = true;
+            result.hasKeywordSection = section != Section::Positional;
+        }
+        return hasAny && !m_error;
+    }
+
+    // _PyPegen_get_last_comprehension_item()
+    static Expression& lastItemOf(const Vector<Comprehension*, 2>& generators)
+    {
+        Comprehension& last = *generators.last();
+        return last.conditions.size() ? *last.conditions[last.conditions.size() - 1] : *last.iterable;
+    }
+
+    // for_if_clauses, of which there is at least one
+    bool parseSomeComprehensionClauses(Vector<Comprehension*, 2>& generators)
+    {
+        return atComprehension() && parseComprehensionClauses(generators);
+    }
+
+    // invalid_arguments
+    void recognizeInvalidArguments()
+    {
+        bool isDone = false;
+        lookForWhatIsWrong([&] {
+            CallArguments arguments;
+            if (!parseArgs(arguments) || !arguments.hasKeywordSection || !at(TokenKind::Comma))
+                return false;
+            const Token& comma = next();
+            bool hasAny = false;
+            while (true) {
+                unsigned index = m_index;
+                if (hasAny && !consume(TokenKind::Comma))
+                    break;
+                if (!parseStarredExpression() || at(TokenKind::Equal)) {
+                    m_index = index;
+                    break;
+                }
+                hasAny = true;
+            }
+            if (hasAny)
+                failStartingFrom("iterable argument unpacking follows keyword argument unpacking"_s, comma);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            Expression* element = parseExpression();
+            Vector<Comprehension*, 2> generators;
+            if (!element || !parseSomeComprehensionClauses(generators) || !consume(TokenKind::Comma))
+                return false;
+            // [args | expression for_if_clauses]
+            unsigned index = m_index;
+            CallArguments rest;
+            if (!parseArgs(rest) && !m_error) {
+                m_index = index;
+                Vector<Comprehension*, 2> others;
+                if (!parseExpression() || !parseSomeComprehensionClauses(others))
+                    m_index = index;
+            }
+            fail("Generator expression must be parenthesized"_s, *element, lastItemOf(generators));
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            if (!at(TokenKind::Name) || !atAhead(1, TokenKind::Equal))
+                return false;
+            const Token& name = next();
+            const Token& equal = next();
+            Vector<Comprehension*, 2> generators;
+            if (parseExpression() && parseSomeComprehensionClauses(generators))
+                fail("invalid syntax. Maybe you meant '==' or ':=' instead of '='?"_s, name, equal);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            // (args ',')?
+            unsigned index = m_index;
+            CallArguments arguments;
+            if (!parseArgs(arguments) || !consume(TokenKind::Comma))
+                m_index = index;
+            if (m_error || !at(TokenKind::Name) || !atAhead(1, TokenKind::Equal))
+                return false;
+            const Token& name = next();
+            const Token& equal = next();
+            if (at(TokenKind::Comma) || at(TokenKind::RightParenthesis))
+                fail("expected argument value expression"_s, name, equal);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            CallArguments arguments;
+            Vector<Comprehension*, 2> generators;
+            if (!parseArgs(arguments) || !parseSomeComprehensionClauses(generators))
+                return false;
+            // _PyPegen_nonparen_genexp_in_call()
+            isDone = true;
+            if (arguments.positional.size() > 1)
+                fail("Generator expression must be parenthesized"_s, *arguments.positional.last(), lastItemOf(generators));
+            return false;
+        });
+        if (m_error || isDone)
+            return;
+        lookForWhatIsWrong([&] {
+            CallArguments arguments;
+            if (!parseArgs(arguments) || !consume(TokenKind::Comma))
+                return false;
+            Expression* element = parseExpression();
+            Vector<Comprehension*, 2> generators;
+            if (element && parseSomeComprehensionClauses(generators))
+                fail("Generator expression must be parenthesized"_s, *element, lastItemOf(generators));
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            CallArguments arguments;
+            CallArguments rest;
+            if (!parseArgs(arguments) || !consume(TokenKind::Comma) || !parseArgs(rest))
+                return false;
+            // _PyPegen_arguments_parsing_error()
+            bool hasUnpacking = std::ranges::any_of(arguments.keywords, [] (Keyword* keyword) { return !keyword->name; });
+            failAtLastToken(hasUnpacking ? "positional argument follows keyword argument unpacking"_s : "positional argument follows keyword argument"_s);
+            return false;
+        });
+    }
+
+    // genexp | '(' [arguments] ')'. What a class is derived from is not the first of those.
+    enum class GeneratorIs : bool { NotAllowed, Allowed };
+    bool parseArguments(Vector<Expression*, 8>& arguments, Vector<Keyword*, 8>& keywords, GeneratorIs generatorIs = GeneratorIs::Allowed)
     {
         Mark open = mark();
+        unsigned openIndex = m_index;
         next();
-        bool sawKeywordUnpacking = false;
-        while (!at(TokenKind::RightParenthesis)) {
-            Mark start = mark();
-            if (at(TokenKind::Star)) {
-                next();
-                Expression* value = parseExpression();
-                if (!value)
-                    return false;
-                if (sawKeywordUnpacking) {
-                    fail("iterable argument unpacking follows keyword argument unpacking"_s, *value);
-                    return false;
-                }
-                auto* starred = make<Starred>(start);
-                starred->value = value;
-                arguments.append(starred);
-            } else if (at(TokenKind::DoubleStar)) {
-                next();
-                Expression* value = parseExpression();
-                if (!value)
-                    return false;
-                auto* keyword = make<Keyword>(start);
-                keyword->value = value;
-                keywords.append(keyword);
-                sawKeywordUnpacking = true;
-            } else if (at(TokenKind::Name) && atAhead(1, TokenKind::Equal)) {
-                const Identifier* name = next().text;
-                next();
-                if (at(TokenKind::Comma) || at(TokenKind::RightParenthesis)) {
-                    fail("expected argument value expression"_s, previous());
-                    return false;
-                }
-                Expression* value = parseExpression();
-                if (!value)
-                    return false;
-                auto* keyword = make<Keyword>(start);
-                keyword->name = name;
-                keyword->value = value;
-                keywords.append(keyword);
-            } else {
-                Expression* value = parseNamedExpression();
-                if (!value)
-                    return false;
-                if (atComprehension()) {
-                    Vector<Comprehension*, 2> generators;
-                    if (!parseComprehensionClauses(generators))
-                        return false;
-                    // f(x for x in y): the parentheses of the call are those of the generator expression.
-                    bool isAlone = arguments.isEmpty() && keywords.isEmpty() && at(TokenKind::RightParenthesis);
-                    if (!isAlone) {
-                        fail("Generator expression must be parenthesized"_s, value->line, value->column, previous().endLine, previous().endColumn);
-                        return false;
-                    }
-                    next();
+        if (consume(TokenKind::RightParenthesis))
+            return true;
+
+        Parsed first;
+        if (generatorIs == GeneratorIs::Allowed) {
+            first.start = m_index;
+            first.expression = at(TokenKind::Star) || at(TokenKind::DoubleStar) ? nullptr : parseAssignmentExpressionOrExpression();
+            first.end = m_index;
+            if (first.expression && atComprehension()) {
+                // f(x for x in y): the parentheses of the call are those of the generator expression.
+                Vector<Comprehension*, 2> generators;
+                if (parseComprehensionClauses(generators) && consume(TokenKind::RightParenthesis)) {
                     auto* generator = make<GeneratorExp>(open);
-                    generator->element = value;
+                    generator->element = first.expression;
                     generator->generators = m_arena.copy(generators);
                     arguments.append(generator);
                     return true;
                 }
-                if (at(TokenKind::Equal)) {
-                    fail("expression cannot contain assignment, perhaps you meant \"==\"?"_s, value->line, value->column, peek().endLine, peek().endColumn);
-                    return false;
-                }
-                if (!keywords.isEmpty()) {
-                    fail(sawKeywordUnpacking ? "positional argument follows keyword argument unpacking"_s : "positional argument follows keyword argument"_s, *value);
-                    return false;
-                }
-                arguments.append(value);
             }
-            if (!consume(TokenKind::Comma))
-                break;
+            if (m_error)
+                return false;
+            if (m_callsInvalidRules) {
+                m_index = openIndex;
+                recognizeInvalidComprehension();
+                if (m_error)
+                    return false;
+            }
+            m_index = openIndex + 1;
         }
-        return expect(TokenKind::RightParenthesis);
+
+        // What has once been found not to be arguments is not gone into again. That may have been found while what is wrong was not being looked for, and then it never is: CPython keeps what
+        // comes of this rule of its grammar, and does not keep how it was come by.
+        if (m_isSecondPass && m_notArguments.contains(openIndex))
+            return false;
+        CallArguments result;
+        if (parseArgs(result, first)) {
+            consume(TokenKind::Comma);
+            if (consume(TokenKind::RightParenthesis)) {
+                arguments = WTF::move(result.positional);
+                keywords = WTF::move(result.keywords);
+                return true;
+            }
+        }
+        if (m_callsInvalidRules && !m_error) {
+            m_index = openIndex + 1;
+            recognizeInvalidArguments();
+        }
+        if (m_isSecondPass)
+            m_notArguments.add(openIndex);
+        return false;
+    }
+
+    // invalid_comprehension, at the bracket
+    void recognizeInvalidComprehension()
+    {
+        bool isParenthesis = at(TokenKind::LeftParenthesis);
+        lookForWhatIsWrong([&] {
+            next();
+            Expression* starred = parseStarredExpression();
+            Vector<Comprehension*, 2> generators;
+            if (starred && parseSomeComprehensionClauses(generators))
+                fail("iterable unpacking cannot be used in comprehension"_s, *starred);
+            return false;
+        });
+        if (m_error || isParenthesis)
+            return;
+        lookForWhatIsWrong([&] {
+            next();
+            Expression* first = parseStarNamedExpression();
+            if (!first || !at(TokenKind::Comma))
+                return false;
+            const Token& comma = next();
+            unsigned afterComma = m_index;
+            // star_named_expressions
+            Expression* last = nullptr;
+            while (true) {
+                unsigned index = m_index;
+                if (last && !consume(TokenKind::Comma))
+                    break;
+                Expression* element = parseStarNamedExpression();
+                if (!element) {
+                    // The last comma may have nothing after it.
+                    if (!last)
+                        m_index = index;
+                    break;
+                }
+                last = element;
+            }
+            if (m_error)
+                return false;
+            Vector<Comprehension*, 2> generators;
+            if (last && parseSomeComprehensionClauses(generators)) {
+                fail("did you forget parentheses around the comprehension target?"_s, *first, *last);
+                return false;
+            }
+            if (m_error)
+                return false;
+            m_index = afterComma;
+            generators.clear();
+            if (parseSomeComprehensionClauses(generators))
+                fail("did you forget parentheses around the comprehension target?"_s, *first, comma);
+            return false;
+        });
     }
 
     // slices
@@ -1078,15 +1942,8 @@ private:
     Expression* parseSliceOrStarred()
     {
         Mark start = mark();
-        if (at(TokenKind::Star)) {
-            next();
-            Expression* value = parseExpression();
-            if (!value)
-                return nullptr;
-            auto* starred = make<Starred>(start);
-            starred->value = value;
-            return starred;
-        }
+        if (at(TokenKind::Star))
+            return parseStarredExpression();
 
         Expression* lower = nullptr;
         if (!at(TokenKind::Colon)) {
@@ -1185,6 +2042,30 @@ private:
     {
         if (!isSafeToRecurse())
             return nullptr;
+        unsigned index = m_index;
+        Expression* result = parseParenthesizedItself();
+        if (result || !m_callsInvalidRules || m_error)
+            return result;
+        // invalid_group
+        m_index = index + 1;
+        if (at(TokenKind::Star)) {
+            Expression* starred = parseStarredExpression();
+            if (starred && at(TokenKind::RightParenthesis))
+                return fail("cannot use starred expression here"_s, *starred);
+        } else if (at(TokenKind::DoubleStar)) {
+            const Token& stars = next();
+            if (parseExpression() && at(TokenKind::RightParenthesis))
+                return fail("cannot use double starred expression here"_s, stars);
+        }
+        if (m_error)
+            return nullptr;
+        m_index = index;
+        recognizeInvalidComprehension();
+        return nullptr;
+    }
+
+    Expression* parseParenthesizedItself()
+    {
         Mark start = mark();
         next();
         if (consume(TokenKind::RightParenthesis))
@@ -1204,7 +2085,7 @@ private:
 
         if (atComprehension()) {
             if (first->is<Starred>())
-                return fail("iterable unpacking cannot be used in comprehension"_s, *first);
+                return nullptr;
             Vector<Comprehension*, 2> generators;
             if (!parseComprehensionClauses(generators) || !expect(TokenKind::RightParenthesis))
                 return nullptr;
@@ -1214,9 +2095,10 @@ private:
             return generator;
         }
 
-        if (consume(TokenKind::RightParenthesis)) {
+        if (at(TokenKind::RightParenthesis)) {
             if (first->is<Starred>())
-                return fail("cannot use starred expression here"_s, *first);
+                return nullptr;
+            next();
             first->isParenthesized = true;
             return first;
         }
@@ -1246,6 +2128,17 @@ private:
     {
         if (!isSafeToRecurse())
             return nullptr;
+        unsigned index = m_index;
+        Expression* result = parseListDisplayItself();
+        if (result || !m_callsInvalidRules || m_error)
+            return result;
+        m_index = index;
+        recognizeInvalidComprehension();
+        return nullptr;
+    }
+
+    Expression* parseListDisplayItself()
+    {
         Mark start = mark();
         next();
         Vector<Expression*, 8> elements;
@@ -1255,7 +2148,7 @@ private:
                 return nullptr;
             if (elements.isEmpty() && atComprehension()) {
                 if (element->is<Starred>())
-                    return fail("iterable unpacking cannot be used in comprehension"_s, *element);
+                    return nullptr;
                 Vector<Comprehension*, 2> generators;
                 if (!parseComprehensionClauses(generators) || !expect(TokenKind::RightBracket))
                     return nullptr;
@@ -1280,6 +2173,94 @@ private:
     {
         if (!isSafeToRecurse())
             return nullptr;
+        unsigned index = m_index;
+        Expression* result = parseBraceDisplayItself();
+        if (result || m_error)
+            return result;
+        // What CPython generates from its grammar leaves out, the first time, whatever alternative begins with something that is there only to be recognized as a mistake. This one begins with
+        // the brace. So it is tried both times, and the first time nothing else is looked for on the way.
+        // From here on the same things are parsed over and over.
+        m_keepsWhatIsParsed = true;
+        m_index = index + 1;
+        recognizeInvalidPairs();
+        if (m_error || !m_callsInvalidRules)
+            return nullptr;
+        // invalid_dict_comprehension
+        m_index = index + 1;
+        if (at(TokenKind::DoubleStar)) {
+            const Token& stars = next();
+            Vector<Comprehension*, 2> generators;
+            if (parseBitwiseOr() && parseSomeComprehensionClauses(generators) && at(TokenKind::RightBrace))
+                return fail("dict unpacking cannot be used in dict comprehension"_s, stars);
+            if (m_error)
+                return nullptr;
+        }
+        m_index = index;
+        recognizeInvalidComprehension();
+        return nullptr;
+    }
+
+    // The last two of invalid_kvpair, which are the last two of invalid_double_starred_kvpairs as well
+    void recognizeInvalidValue()
+    {
+        lookForWhatIsWrong([&] {
+            if (!parseExpression() || !consume(TokenKind::Colon) || !at(TokenKind::Star))
+                return false;
+            const Token& star = next();
+            if (parseBitwiseOr()) {
+                SetForScope scope(m_failsInEitherPass, true);
+                failStartingFrom("cannot use a starred expression in a dictionary value"_s, star);
+            }
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            if (!parseExpression() || !at(TokenKind::Colon))
+                return false;
+            const Token& colon = next();
+            if (at(TokenKind::RightBrace) || at(TokenKind::Comma))
+                failInEitherPass("expression expected after dictionary key and ':'"_s, colon);
+            return false;
+        });
+    }
+
+    // invalid_double_starred_kvpairs
+    void recognizeInvalidPairs()
+    {
+        lookForWhatIsWrong([&] {
+            // ','.double_starred_kvpair+ ','
+            bool hasAny = false;
+            while (true) {
+                unsigned index = m_index;
+                if (hasAny && !consume(TokenKind::Comma))
+                    break;
+                bool isPair = consume(TokenKind::DoubleStar) ? !!parseBitwiseOr() : parseExpression() && consume(TokenKind::Colon) && parseExpression();
+                if (!isPair) {
+                    m_index = index;
+                    break;
+                }
+                hasAny = true;
+            }
+            if (m_error || !hasAny || !consume(TokenKind::Comma))
+                return false;
+            // invalid_kvpair
+            lookForWhatIsWrong([&] {
+                Expression* key = parseExpression();
+                if (key && !at(TokenKind::Colon))
+                    failInEitherPass("':' expected after dictionary key"_s, key->line, static_cast<int>(key->endColumn) - 1, key->endLine, -1);
+                return false;
+            });
+            if (!m_error)
+                recognizeInvalidValue();
+            return false;
+        });
+        if (!m_error)
+            recognizeInvalidValue();
+    }
+
+    Expression* parseBraceDisplayItself()
+    {
         Mark start = mark();
         next();
         if (consume(TokenKind::RightBrace))
@@ -1295,7 +2276,7 @@ private:
         if (first && !at(TokenKind::Colon)) {
             if (atComprehension()) {
                 if (first->is<Starred>())
-                    return fail("iterable unpacking cannot be used in comprehension"_s, *first);
+                    return nullptr;
                 Vector<Comprehension*, 2> generators;
                 if (!parseComprehensionClauses(generators) || !expect(TokenKind::RightBrace))
                     return nullptr;
@@ -1326,12 +2307,10 @@ private:
         Expression* key = first;
         while (true) {
             if (!key && at(TokenKind::DoubleStar)) {
-                const Token& stars = next();
+                next();
                 Expression* value = parseBitwiseOr();
                 if (!value)
                     return nullptr;
-                if (keys.isEmpty() && atComprehension())
-                    return fail("dict unpacking cannot be used in dict comprehension"_s, stars.line, stars.column, value->endLine, value->endColumn);
                 keys.append(nullptr);
                 values.append(value);
             } else {
@@ -1343,11 +2322,7 @@ private:
                 if (key->is<Starred>() || (key->is<NamedExpr>() && !key->isParenthesized))
                     return nullptr;
                 if (!consume(TokenKind::Colon))
-                    return fail("':' expected after dictionary key"_s, *key);
-                if (at(TokenKind::Star))
-                    return fail("cannot use a starred expression in a dictionary value"_s);
-                if (at(TokenKind::Comma) || at(TokenKind::RightBrace))
-                    return fail("expression expected after dictionary key and ':'"_s, previous());
+                    return nullptr;
                 Expression* value = parseExpression();
                 if (!value)
                     return nullptr;
@@ -1376,6 +2351,14 @@ private:
         return dict;
     }
 
+    // invalid_for_target, after the `for`
+    void recognizeInvalidForTarget(unsigned index)
+    {
+        m_index = index;
+        if (Expression* target = parseStarExpressions())
+            failForInvalidTarget(*target, Targets::For);
+    }
+
     // for_if_clauses
     bool parseComprehensionClauses(Vector<Comprehension*, 2>& generators)
     {
@@ -1383,11 +2366,26 @@ private:
             auto* comprehension = m_arena.create<Comprehension>();
             comprehension->isAsync = consume(TokenKind::KeywordAsync);
             next();
+            unsigned index = m_index;
             comprehension->target = parseStarTargets();
-            if (!comprehension->target)
-                return false;
-            if (!consume(TokenKind::KeywordIn)) {
-                fail("'in' expected after for-loop variables"_s);
+            if (!comprehension->target || !consume(TokenKind::KeywordIn)) {
+                if (!m_callsInvalidRules || m_error)
+                    return false;
+                // invalid_for_if_clause
+                m_index = index;
+                bool hasVariables = false;
+                while (parseBitwiseOr()) {
+                    hasVariables = true;
+                    if (!consume(TokenKind::Comma))
+                        break;
+                }
+                if (m_error)
+                    return false;
+                if (hasVariables && !at(TokenKind::KeywordIn)) {
+                    failAtLastToken("'in' expected after for-loop variables"_s);
+                    return false;
+                }
+                recognizeInvalidForTarget(index);
                 return false;
             }
             comprehension->iterable = parseDisjunction();
@@ -1482,7 +2480,10 @@ private:
                 hasExpressions = true;
         }
         if ((hasText || hasExpressions) && hasBytes)
-            return fail("cannot mix bytes and nonbytes literals"_s, first, last);
+        {
+            SetForScope scope(m_failsInEitherPass, true);
+            return failAtLastToken("cannot mix bytes and nonbytes literals"_s);
+        }
 
         if (!hasExpressions) {
             if (strings.size() == 1)
@@ -1499,6 +2500,11 @@ private:
     // strings
     Expression* parseStrings()
     {
+        return memoized(m_memos.strings, [&] { return parseStringsItself(); });
+    }
+
+    Expression* parseStringsItself()
+    {
         Vector<Expression*, 8> strings;
         bool isTemplate = at(TokenKind::TStringStart);
         while (true) {
@@ -1509,9 +2515,12 @@ private:
                 string = parseStringWithExpressions(false);
             else if (at(TokenKind::TStringStart) && isTemplate)
                 string = parseStringWithExpressions(true);
-            else if (at(TokenKind::String) || at(TokenKind::FStringStart) || at(TokenKind::TStringStart))
-                return fail("cannot mix t-string literals with string or bytes literals"_s, strings[0]->line, strings[0]->column, peek().endLine, peek().endColumn);
-            else
+            else if (at(TokenKind::String) || at(TokenKind::FStringStart) || at(TokenKind::TStringStart)) {
+                Expression* other = at(TokenKind::String) ? makeStringConstant(next()) : parseStringWithExpressions(at(TokenKind::TStringStart));
+                if (!other)
+                    return nullptr;
+                return fail("cannot mix t-string literals with string or bytes literals"_s, *strings.last(), *other);
+            } else
                 break;
             if (!string)
                 return nullptr;
@@ -1534,8 +2543,11 @@ private:
         TokenKind close = isTemplate ? TokenKind::TStringEnd : TokenKind::FStringEnd;
 
         Vector<Expression*, 8> values;
+        const Identifier* decodingError = nullptr;
         while (!at(close)) {
             if (at(middle)) {
+                if (peek().hasDecodingError && !decodingError)
+                    decodingError = peek().text;
                 Constant* text = makeStringConstant(next());
                 if (!isEmptyString(*text))
                     values.append(text);
@@ -1547,6 +2559,8 @@ private:
                 return nullptr;
         }
         const Token& end = next();
+        if (decodingError)
+            return failInEitherPass(String(decodingError->string()), end);
 
         if (isTemplate) {
             auto* result = m_arena.create<TemplateStr>();
@@ -1591,9 +2605,10 @@ private:
             break;
         }
 
+        const Token& first = peek();
         Expression* value = parseYieldOrStarExpressions();
         if (!value) {
-            fail(prefixed(isTemplate, "expecting a valid expression after '{'"_s), previous());
+            fail(prefixed(isTemplate, "expecting a valid expression after '{'"_s), first);
             return false;
         }
 
@@ -1605,20 +2620,21 @@ private:
         unsigned debugEndColumn = 0;
 
         int conversion = -1;
-        if (at(TokenKind::Exclamation)) {
+        bool hasConversion = at(TokenKind::Exclamation);
+        if (hasConversion) {
             const Token& exclamation = next();
             if (!at(TokenKind::Name)) {
-                fail(prefixed(isTemplate, "missing conversion character"_s));
+                fail(prefixed(isTemplate, at(TokenKind::Colon) || at(TokenKind::RightBrace) ? "missing conversion character"_s : "invalid conversion character"_s));
                 return false;
             }
             const Token& name = next();
             if (name.start != exclamation.end) {
-                fail(prefixed(isTemplate, "conversion type must come right after the exclamation mark"_s), name);
+                failInEitherPass(prefixed(isTemplate, "conversion type must come right after the exclamation mark"_s), exclamation, name);
                 return false;
             }
             StringView text = name.text->string();
             if (text.length() != 1 || (text[0] != 's' && text[0] != 'r' && text[0] != 'a')) {
-                fail(makeString(isTemplate ? 't' : 'f', "-string: invalid conversion character '"_s, text, "': expected 's', 'r', or 'a'"_s), name);
+                failInEitherPass(makeString(isTemplate ? 't' : 'f', "-string: invalid conversion character '"_s, text, "': expected 's', 'r', or 'a'"_s), name);
                 return false;
             }
             conversion = text[0];
@@ -1642,7 +2658,7 @@ private:
             conversion = 'r';
 
         if (!at(TokenKind::RightBrace)) {
-            fail(prefixed(isTemplate, formatSpecification ? "expecting '}', or format specs"_s : conversion != -1 && !isDebug ? "expecting ':' or '}'"_s : isDebug ? "expecting '!', or ':', or '}'"_s : "expecting '=', or '!', or ':', or '}'"_s));
+            fail(prefixed(isTemplate, formatSpecification ? "expecting '}', or format specs"_s : hasConversion ? "expecting ':' or '}'"_s : isDebug ? "expecting '!', or ':', or '}'"_s : "expecting '=', or '!', or ':', or '}'"_s));
             return false;
         }
         const Token& close = next();
@@ -1701,6 +2717,8 @@ private:
         Vector<Expression*, 8> pieces;
         while (true) {
             if (at(middle)) {
+                if (peek().hasDecodingError)
+                    return failInEitherPass(String(peek().text->string()), peek());
                 Constant* text = makeStringConstant(next());
                 if (!isEmptyString(*text))
                     pieces.append(text);
@@ -1772,29 +2790,48 @@ private:
                     return fail("/ may appear only once"_s);
                 if (sawStar)
                     return fail("/ must be ahead of *"_s);
-                if (positional.isEmpty())
-                    return fail("at least one argument must precede /"_s);
+                if (positional.isEmpty()) {
+                    if (m_callsInvalidRules && atAhead(1, TokenKind::Comma))
+                        fail("at least one argument must precede /"_s);
+                    return nullptr;
+                }
                 next();
                 sawSlash = true;
                 positionalOnly = std::exchange(positional, { });
                 if (at(TokenKind::Star))
-                    return fail("expected comma between / and *"_s, previous().line, previous().column, peek().endLine, peek().endColumn);
+                    return fail("expected comma between / and *"_s);
             } else if (at(TokenKind::Star)) {
-                if (sawStar)
-                    return fail("* argument may appear only once"_s);
+                if (sawStar) {
+                    // It has to be followed as the first was.
+                    const Token& star = next();
+                    if (!at(TokenKind::Comma)) {
+                        if (!parseParameter(allowsAnnotations) || (!at(TokenKind::Comma) && !at(terminator)))
+                            return nullptr;
+                    }
+                    return fail("* argument may appear only once"_s, star);
+                }
                 const Token& star = next();
                 sawStar = true;
+                // Of a lambda it is said to be wherever the parser has got to.
+                auto failForBareStar = [&] {
+                    if (allowsAnnotations)
+                        return fail("named arguments must follow bare *"_s, star);
+                    return failAtLastToken("named arguments must follow bare *"_s);
+                };
                 if (at(TokenKind::Comma)) {
                     if (atAhead(1, terminator) || atAhead(1, TokenKind::DoubleStar))
-                        return fail("named arguments must follow bare *"_s, star);
+                        return failForBareStar();
                 } else {
                     if (at(terminator))
-                        return fail("named arguments must follow bare *"_s, star);
+                        return failForBareStar();
                     arguments->variadic = parseParameter(allowsAnnotations, true);
                     if (!arguments->variadic)
                         return nullptr;
-                    if (at(TokenKind::Equal))
+                    if (at(TokenKind::Equal)) {
+                        if (arguments->variadic->annotation && arguments->variadic->annotation->is<Starred>())
+                            return nullptr;
                         return fail("var-positional argument cannot have default value"_s);
+                    }
                 }
             } else if (at(TokenKind::DoubleStar)) {
                 next();
@@ -1803,19 +2840,36 @@ private:
                     return nullptr;
                 if (at(TokenKind::Equal))
                     return fail("var-keyword argument cannot have default value"_s);
-                consume(TokenKind::Comma);
-                if (!at(terminator))
-                    return fail("arguments cannot follow var-keyword argument"_s);
+                if (consume(TokenKind::Comma) && !at(terminator)) {
+                    if (at(TokenKind::Star) || at(TokenKind::DoubleStar) || at(TokenKind::Slash))
+                        return fail("arguments cannot follow var-keyword argument"_s);
+                    if (Argument* argument = parseParameter(allowsAnnotations))
+                        return fail("arguments cannot follow var-keyword argument"_s, *argument);
+                    return nullptr;
+                }
                 break;
             } else {
-                if (at(TokenKind::LeftParenthesis))
-                    return fail(allowsAnnotations ? "Function parameters cannot be parenthesized"_s : "Lambda expression parameters cannot be parenthesized"_s);
+                if (at(TokenKind::LeftParenthesis)) {
+                    // Only after parameters that are no more than names, and with nothing but such between the parentheses.
+                    if (!m_callsInvalidRules || sawSlash || sawStar || !defaults.isEmpty())
+                        return nullptr;
+                    const Token& open = next();
+                    bool hasAny = false;
+                    while (parseParameter(allowsAnnotations)) {
+                        hasAny = true;
+                        if (!consume(TokenKind::Comma))
+                            break;
+                    }
+                    if (hasAny && at(TokenKind::RightParenthesis))
+                        fail(allowsAnnotations ? "Function parameters cannot be parenthesized"_s : "Lambda expression parameters cannot be parenthesized"_s, open, peek());
+                    return nullptr;
+                }
                 Argument* argument = parseParameter(allowsAnnotations);
                 if (!argument)
                     return nullptr;
                 Expression* defaultValue = nullptr;
                 if (consume(TokenKind::Equal)) {
-                    if (at(TokenKind::Comma) || at(terminator))
+                    if (at(TokenKind::Comma) || at(TokenKind::RightParenthesis))
                         return fail("expected default value expression"_s, previous());
                     defaultValue = parseExpression();
                     if (!defaultValue)
@@ -1827,8 +2881,11 @@ private:
                 } else {
                     if (defaultValue)
                         defaults.append(defaultValue);
-                    else if (!defaults.isEmpty())
-                        return fail("parameter without a default follows parameter with a default"_s, *argument);
+                    else if (!defaults.isEmpty()) {
+                        if (at(TokenKind::Comma) || at(terminator))
+                            fail("parameter without a default follows parameter with a default"_s, *argument);
+                        return nullptr;
+                    }
                     positional.append(argument);
                 }
             }
@@ -1849,9 +2906,9 @@ private:
     {
         if (!at(TokenKind::LeftBracket))
             return true;
-        const Token& open = next();
+        next();
         if (at(TokenKind::RightBracket)) {
-            fail("Type parameter list cannot be empty"_s, open.line, open.column, peek().endLine, peek().endColumn);
+            failStartingFrom("Type parameter list cannot be empty"_s, peek());
             return false;
         }
         Vector<TypeParameter*, 4> parameters;
@@ -1873,7 +2930,7 @@ private:
                     return false;
                 if (kind != TypeParameter::Kind::TypeVar) {
                     ASCIILiteral what = bound->is<Tuple>() ? "constraints"_s : "bound"_s;
-                    fail(makeString("cannot use "_s, what, " with "_s, kind == TypeParameter::Kind::TypeVarTuple ? "TypeVarTuple"_s : "ParamSpec"_s), colon.line, colon.column, bound->endLine, bound->endColumn);
+                    failStartingFrom(makeString("cannot use "_s, what, " with "_s, kind == TypeParameter::Kind::TypeVarTuple ? "TypeVarTuple"_s : "ParamSpec"_s), colon);
                     return false;
                 }
             }
@@ -1927,9 +2984,15 @@ private:
         while (consume(TokenKind::Comma)) {
             if (at(terminator) || at(TokenKind::KeywordIf))
                 break;
+            // The last comma may have nothing after it.
+            unsigned index = m_index;
             Pattern* pattern = parseMaybeStarPattern();
-            if (!pattern)
-                return false;
+            if (!pattern) {
+                if (m_error)
+                    return false;
+                m_index = index;
+                break;
+            }
             patterns.append(pattern);
         }
         return true;
@@ -1960,17 +3023,18 @@ private:
         Pattern* pattern = parseOrPattern();
         if (!pattern || !consume(TokenKind::KeywordAs))
             return pattern;
-        if (!at(TokenKind::Name)) {
-            Expression* target = speculate([&] { return parseExpression(); });
-            if (target)
-                return fail(makeString("cannot use "_s, describe(*target), " as pattern target"_s), *target);
+        // pattern_capture_target
+        if (!at(TokenKind::Name) || at(SoftKeyword::Underscore) || atAhead(1, TokenKind::Dot) || atAhead(1, TokenKind::LeftParenthesis) || atAhead(1, TokenKind::Equal)) {
+            // invalid_as_pattern
+            if (at(SoftKeyword::Underscore))
+                return fail("cannot use '_' as a target"_s);
+            if (!m_callsInvalidRules)
+                return nullptr;
+            if (Expression* target = parseExpression())
+                fail(makeString("cannot use "_s, describe(*target), " as pattern target"_s), *target);
             return nullptr;
         }
-        if (at(SoftKeyword::Underscore))
-            return fail("cannot use '_' as a target"_s);
         const Token& name = next();
-        if (at(TokenKind::Dot) || at(TokenKind::LeftParenthesis) || at(TokenKind::Equal))
-            return nullptr;
         auto* as = make<MatchAs>(start);
         as->pattern = pattern;
         as->name = name.text;
@@ -2016,13 +3080,13 @@ private:
 
         Constant& real = (isNegative ? number->as<UnaryOp>().operand : number)->as<Constant>();
         if (real.type == Constant::Type::Imaginary)
-            return fail("real number required in complex literal"_s, real);
+            return failInEitherPass("real number required in complex literal"_s, real);
         BinaryOperator op = next().kind == TokenKind::Plus ? BinaryOperator::Add : BinaryOperator::Sub;
         if (!at(TokenKind::Number))
             return nullptr;
         Constant* imaginary = makeNumber(next());
         if (imaginary->type != Constant::Type::Imaginary)
-            return fail("imaginary number required in complex literal"_s, *imaginary);
+            return failInEitherPass("imaginary number required in complex literal"_s, *imaginary);
         auto* complex = make<BinOp>(start);
         complex->left = number;
         complex->op = op;
@@ -2133,8 +3197,23 @@ private:
                 Pattern* pattern = parsePattern();
                 if (!pattern)
                     return nullptr;
-                if (!keywordPatterns.isEmpty())
-                    return fail("positional patterns follow keyword patterns"_s, *pattern);
+                if (!keywordPatterns.isEmpty()) {
+                    // All that there are of them
+                    if (!m_callsInvalidRules)
+                        return nullptr;
+                    Pattern* last = pattern;
+                    while (at(TokenKind::Comma)) {
+                        unsigned index = m_index;
+                        next();
+                        Pattern* another = at(TokenKind::Name) && atAhead(1, TokenKind::Equal) ? nullptr : parsePattern();
+                        if (!another) {
+                            m_index = index;
+                            break;
+                        }
+                        last = another;
+                    }
+                    return fail("positional patterns follow keyword patterns"_s, *pattern, *last);
+                }
                 patterns.append(pattern);
             }
             if (!consume(TokenKind::Comma))
@@ -2258,7 +3337,7 @@ private:
         Vector<Statement*, 16> body;
         if (consume(TokenKind::Newline)) {
             if (!consume(TokenKind::Indent)) {
-                fail(makeString("expected an indented block after "_s, after, " on line "_s, line), peek(), SyntaxError::Kind::IndentationError);
+                failAtLastToken(makeString("expected an indented block after "_s, after, " on line "_s, line), SyntaxError::Kind::IndentationError);
                 return false;
             }
             if (!parseStatementsUntil(TokenKind::Dedent, body))
@@ -2348,6 +3427,12 @@ private:
     Statement* parseSimpleStatement()
     {
         Mark start = mark();
+        // An assignment is what is tried first, and so what is wrong with one is looked for before anything else is tried. Where it could be one, parseAssignmentOrExpression() sees to that.
+        if (m_callsInvalidRules && (!at(TokenKind::Name) || at(SoftKeyword::Type)) && !canStartStarExpression()) {
+            recognizeInvalidAssignment();
+            if (m_error)
+                return nullptr;
+        }
         switch (peek().kind) {
         case TokenKind::KeywordPass:
             return makeKeywordStatement<Pass>();
@@ -2437,6 +3522,11 @@ private:
         case TokenKind::Name:
             if (at(SoftKeyword::Type) && atAhead(1, TokenKind::Name) && (atAhead(2, TokenKind::Equal) || atAhead(2, TokenKind::LeftBracket))) {
                 // Two names side by side begin nothing else, so what is wrong with it is what is wrong with a type statement.
+                if (m_callsInvalidRules) {
+                    recognizeInvalidAssignment();
+                    if (m_error)
+                        return nullptr;
+                }
                 return parseTypeAlias();
             }
             return parseAssignmentOrExpression();
@@ -2504,26 +3594,130 @@ private:
     // assignment | star_expressions
     Statement* parseAssignmentOrExpression()
     {
+        unsigned index = m_index;
+        Statement* statement = parseAssignmentOrExpressionItself();
+        if (!m_callsInvalidRules || m_error || (statement && !statement->is<Expr>()))
+            return statement;
+        // An assignment is tried before an expression by itself is, and so what is wrong with one is looked for before it is taken for that.
+        unsigned end = m_index;
+        m_index = index;
+        recognizeInvalidAssignment();
+        if (m_error)
+            return nullptr;
+        m_index = end;
+        return statement;
+    }
+
+    // invalid_assignment
+    void recognizeInvalidAssignment()
+    {
+        bool isDone = false;
+        lookForWhatIsWrong([&] {
+            // invalid_ann_assign_target
+            if (!at(TokenKind::LeftParenthesis) && !at(TokenKind::LeftBracket))
+                return false;
+            bool isBracket = at(TokenKind::LeftBracket);
+            Expression* target = parseAtom();
+            if (!target || !(isBracket ? target->is<List>() : target->is<Tuple>() || target->is<List>()))
+                return false;
+            if (consume(TokenKind::Colon) && parseExpression())
+                fail(makeString("only single target (not "_s, describe(*target), ") can be annotated"_s), *target);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            Expression* first = parseStarNamedExpression();
+            if (!first || !consume(TokenKind::Comma))
+                return false;
+            // star_named_expressions*
+            while (true) {
+                unsigned index = m_index;
+                if (!parseStarNamedExpression()) {
+                    m_index = index;
+                    break;
+                }
+                consume(TokenKind::Comma);
+            }
+            if (!m_error && consume(TokenKind::Colon) && parseExpression())
+                fail("only single target (not tuple) can be annotated"_s, *first);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            Expression* target = parseExpression();
+            if (target && consume(TokenKind::Colon) && parseExpression())
+                fail("illegal target for annotation"_s, *target);
+            return false;
+        });
+        if (m_error)
+            return;
+        // (star_targets '=')*
+        auto skipTargets = [&] {
+            while (true) {
+                unsigned index = m_index;
+                if (!parseStarTargets() || !consume(TokenKind::Equal)) {
+                    m_index = index;
+                    return;
+                }
+            }
+        };
+        lookForWhatIsWrong([&] {
+            skipTargets();
+            Expression* target = parseStarExpressions();
+            if (target && at(TokenKind::Equal)) {
+                isDone = true;
+                failForInvalidTarget(*target, Targets::Star);
+            }
+            return false;
+        });
+        if (m_error || isDone)
+            return;
+        lookForWhatIsWrong([&] {
+            skipTargets();
+            Expression* target = at(TokenKind::KeywordYield) ? parseYield() : nullptr;
+            if (target && at(TokenKind::Equal))
+                fail("assignment to yield expression not possible"_s, *target);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            Expression* target = parseStarExpressions();
+            if (!target || !augmentedOperator(peek().kind))
+                return false;
+            next();
+            if (parseYieldOrStarExpressions())
+                fail(makeString('\'', describe(*target), "' is an illegal expression for augmented assignment"_s), *target);
+            return false;
+        });
+    }
+
+    Statement* parseAssignmentOrExpressionItself()
+    {
         Mark start = mark();
         Expression* first = parseStarExpressions();
         if (!first)
             return nullptr;
 
         if (at(TokenKind::Colon)) {
+            if (!first->is<Name>() && !first->is<Attribute>() && !first->is<Subscript>())
+                return nullptr;
             next();
             Expression* annotation = parseExpression();
             if (!annotation)
                 return nullptr;
-            if (first->is<List>() || first->is<Tuple>())
-                return fail(makeString("only single target (not "_s, describe(*first), ") can be annotated"_s), *first);
-            if (!first->is<Name>() && !first->is<Attribute>() && !first->is<Subscript>())
-                return fail("illegal target for annotation"_s, *first);
             setContext(*first, ExpressionContext::Store);
             Expression* value = nullptr;
-            if (consume(TokenKind::Equal)) {
+            if (at(TokenKind::Equal)) {
+                unsigned index = m_index;
+                next();
                 value = parseYieldOrStarExpressions();
-                if (!value)
+                if (m_error)
                     return nullptr;
+                if (!value)
+                    m_index = index;
             }
             auto* statement = make<AnnAssign>(start);
             statement->target = first;
@@ -2537,7 +3731,7 @@ private:
             Vector<Expression*, 4> targets;
             Expression* value = first;
             while (consume(TokenKind::Equal)) {
-                if (!makeAssignmentTarget(*value))
+                if (!makeTarget(*value, ExpressionContext::Store))
                     return nullptr;
                 targets.append(value);
                 value = parseYieldOrStarExpressions();
@@ -2552,7 +3746,7 @@ private:
 
         if (auto op = augmentedOperator(peek().kind)) {
             if (!first->is<Name>() && !first->is<Attribute>() && !first->is<Subscript>())
-                return fail(makeString('\'', describe(*first), "' is an illegal expression for augmented assignment"_s), *first);
+                return nullptr;
             setContext(*first, ExpressionContext::Store);
             next();
             Expression* value = parseYieldOrStarExpressions();
@@ -2575,43 +3769,30 @@ private:
     {
         Mark start = mark();
         next();
+        unsigned index = m_index;
+        // invalid_del_stmt
+        auto isInvalid = [&] () -> Statement* {
+            if (!m_callsInvalidRules || m_error)
+                return nullptr;
+            m_index = index;
+            if (Expression* whole = parseStarExpressions())
+                failForInvalidTarget(*whole, Targets::Del);
+            return nullptr;
+        };
         Vector<Expression*, 8> targets;
         do {
             if (at(TokenKind::Newline) || at(TokenKind::Semicolon))
                 break;
             Expression* target = parsePrimary();
-            if (!target)
-                return nullptr;
-            if (!at(TokenKind::Comma) && !at(TokenKind::Newline) && !at(TokenKind::Semicolon)) {
-                // It goes on, so it is not something that can be deleted. Find out what it is, to say so.
-                m_index = indexOf(*target);
-                Expression* whole = parseStarExpressions();
-                if (!whole)
-                    return nullptr;
-                makeTarget(*whole, ExpressionContext::Del);
-                return nullptr;
-            }
-            if (!makeTarget(*target, ExpressionContext::Del))
-                return nullptr;
+            if (!target || !makeTarget(*target, ExpressionContext::Del))
+                return isInvalid();
             targets.append(target);
         } while (consume(TokenKind::Comma));
-        if (targets.isEmpty())
-            return nullptr;
+        if (targets.isEmpty() || (!at(TokenKind::Newline) && !at(TokenKind::Semicolon)))
+            return isInvalid();
         auto* statement = make<Delete>(start);
         statement->targets = m_arena.copy(targets);
         return statement;
-    }
-
-    // The token that a node that has just been parsed began with.
-    unsigned indexOf(const Node& node)
-    {
-        unsigned index = m_index;
-        while (index && m_tokens[index].start > node.start)
-            --index;
-        // (x) begins before x does.
-        while (index && m_tokens[index - 1].kind == TokenKind::LeftParenthesis && m_tokens[index].start == node.start && m_tokens[index].kind != TokenKind::LeftParenthesis)
-            --index;
-        return index;
     }
 
     // dotted_name
@@ -2637,12 +3818,18 @@ private:
     {
         if (!consume(TokenKind::KeywordAs))
             return true;
-        if (!at(TokenKind::Name)) {
-            Expression* target = speculate([&] { return parseExpression(); });
-            if (target)
-                fail(makeString("cannot use "_s, describe(*target), " as import target"_s), *target);
-            return false;
+        // invalid_dotted_as_name and invalid_import_from_as_name, which come first
+        if (m_callsInvalidRules) {
+            bool isName = at(TokenKind::Name) && (atAhead(1, TokenKind::Comma) || atAhead(1, TokenKind::RightParenthesis) || atAhead(1, TokenKind::Semicolon) || atAhead(1, TokenKind::Newline));
+            if (!isName) {
+                if (Expression* target = lookForWhatIsWrong([&] { return parseExpression(); }))
+                    fail(makeString("cannot use "_s, describe(*target), " as import target"_s), *target);
+                if (m_error)
+                    return false;
+            }
         }
+        if (!at(TokenKind::Name))
+            return false;
         result = next().text;
         return true;
     }
@@ -2651,9 +3838,25 @@ private:
     Statement* parseImport()
     {
         Mark start = mark();
-        next();
-        if (at(TokenKind::Newline))
-            return fail("Expected one or more names after 'import'"_s, previous());
+        const Token& keyword = next();
+        // invalid_import
+        if (m_callsInvalidRules) {
+            lookForWhatIsWrong([&] {
+                do {
+                    if (!parseDottedName())
+                        return false;
+                } while (consume(TokenKind::Comma));
+                if (consume(TokenKind::KeywordFrom) && parseDottedName()) {
+                    peek();
+                    failStartingFrom("Did you mean to use 'from ... import ...' instead?"_s, keyword);
+                }
+                return false;
+            });
+            if (m_error)
+                return nullptr;
+            if (at(TokenKind::Newline))
+                return failStartingFrom("Expected one or more names after 'import'"_s, peek());
+        }
         Vector<Alias*, 4> names;
         do {
             Mark aliasStart = mark();
@@ -2702,7 +3905,7 @@ private:
             names.append(alias);
         } else {
             if (at(TokenKind::Newline))
-                return fail("Expected one or more names after 'import'"_s, previous());
+                return failStartingFrom("Expected one or more names after 'import'"_s, peek());
             bool isParenthesized = consume(TokenKind::LeftParenthesis);
             while (true) {
                 if (!at(TokenKind::Name))
@@ -2721,7 +3924,7 @@ private:
                 if (isParenthesized && at(TokenKind::RightParenthesis))
                     break;
                 if (!isParenthesized && at(TokenKind::Newline))
-                    return fail("trailing comma not allowed without surrounding parentheses"_s, previous());
+                    return failAtLastToken("trailing comma not allowed without surrounding parentheses"_s);
             }
             if (isParenthesized && !expect(TokenKind::RightParenthesis))
                 return nullptr;
@@ -2775,7 +3978,7 @@ private:
             if (!parseElse(orElse))
                 return nullptr;
             if (at(TokenKind::KeywordElif))
-                return fail("'elif' block follows an 'else' block"_s);
+                return failAtLastToken("'elif' block follows an 'else' block"_s);
         }
         auto* statement = make<If>(start);
         statement->test = test;
@@ -2809,11 +4012,13 @@ private:
         Mark start = mark();
         bool isAsync = consume(TokenKind::KeywordAsync);
         next();
+        unsigned index = m_index;
         Expression* target = parseStarTargets();
-        if (!target)
+        if (!target || !consume(TokenKind::KeywordIn)) {
+            if (m_callsInvalidRules && !m_error)
+                recognizeInvalidForTarget(index);
             return nullptr;
-        if (!consume(TokenKind::KeywordIn))
-            return fail("'in' expected after for-loop variables"_s);
+        }
         Expression* iterable = parseStarExpressions();
         if (!iterable || !expectColon())
             return nullptr;
@@ -2837,12 +4042,23 @@ private:
         item->contextExpression = parseExpression();
         if (!item->contextExpression)
             return nullptr;
-        if (consume(TokenKind::KeywordAs)) {
+        if (at(TokenKind::KeywordAs)) {
+            unsigned index = m_index;
+            next();
+            auto atEnd = [&] { return at(TokenKind::Comma) || at(TokenKind::RightParenthesis) || at(TokenKind::Colon); };
             item->optionalVariables = parseStarTarget();
-            if (!item->optionalVariables)
-                return nullptr;
-            if (!at(TokenKind::Comma) && !at(TokenKind::RightParenthesis) && !at(TokenKind::Colon))
-                return nullptr;
+            if (item->optionalVariables && atEnd())
+                return item;
+            item->optionalVariables = nullptr;
+            // invalid_with_item
+            if (m_callsInvalidRules && !m_error) {
+                m_index = index + 1;
+                Expression* target = parseExpression();
+                if (target && atEnd())
+                    failForInvalidTarget(*target, Targets::Star);
+            }
+            // The expression by itself is an item.
+            m_index = index;
         }
         return item;
     }
@@ -2853,6 +4069,7 @@ private:
         Mark start = mark();
         bool isAsync = consume(TokenKind::KeywordAsync);
         next();
+        unsigned afterKeyword = m_index;
 
         Vector<WithItem*, 4> items;
         // with (a as b, c as d): or with (a, b): where the parentheses are those of a tuple, or with (a).b: and so on.
@@ -2873,16 +4090,46 @@ private:
             items.clear();
             return false;
         });
+        bool hasItems = true;
         if (!isParenthesized) {
             do {
                 WithItem* item = parseWithItem();
-                if (!item)
-                    return nullptr;
+                if (!item) {
+                    hasItems = false;
+                    break;
+                }
                 items.append(item);
             } while (consume(TokenKind::Comma));
         }
-        if (!expectColon())
+        if (!hasItems || !consume(TokenKind::Colon)) {
+            if (!m_callsInvalidRules || m_error)
+                return nullptr;
+            // invalid_with_stmt. Here what comes after `as` need not be followed by anything in particular.
+            auto skipItems = [&] (bool isInParentheses) {
+                do {
+                    if (isInParentheses && at(TokenKind::RightParenthesis))
+                        break;
+                    if (!(isInParentheses ? parseExpressions() : parseExpression()))
+                        return false;
+                    if (at(TokenKind::KeywordAs)) {
+                        unsigned index = m_index;
+                        next();
+                        if (!parseStarTarget())
+                            m_index = index;
+                    }
+                } while (!m_error && consume(TokenKind::Comma));
+                return !m_error;
+            };
+            m_index = afterKeyword;
+            if (skipItems(false) && at(TokenKind::Newline))
+                return failAtLastToken("expected ':'"_s);
+            if (m_error)
+                return nullptr;
+            m_index = afterKeyword;
+            if (consume(TokenKind::LeftParenthesis) && skipItems(true) && consume(TokenKind::RightParenthesis) && at(TokenKind::Newline))
+                return failAtLastToken("expected ':'"_s);
             return nullptr;
+        }
         Sequence<Statement*> body;
         if (!parseBlock(body, "'with' statement"_s, start.line))
             return nullptr;
@@ -2893,6 +4140,48 @@ private:
         return statement;
     }
 
+    // invalid_except_stmt and invalid_except_star_stmt, after the `except` or the `except*`
+    void recognizeInvalidExcept(unsigned index, bool isStar)
+    {
+        m_index = index;
+        lookForWhatIsWrong([&] {
+            Expression* first = parseExpression();
+            if (first && consume(TokenKind::Comma) && parseExpressions() && consume(TokenKind::KeywordAs) && consume(TokenKind::Name) && at(TokenKind::Colon))
+                failStartingFrom("multiple exception types must be parenthesized when using 'as'"_s, *first);
+            return false;
+        });
+        if (m_error)
+            return;
+        lookForWhatIsWrong([&] {
+            if (!parseExpression())
+                return false;
+            if (at(TokenKind::KeywordAs) && atAhead(1, TokenKind::Name)) {
+                next();
+                next();
+            }
+            if (at(TokenKind::Newline))
+                failAtLastToken("expected ':'"_s);
+            return false;
+        });
+        if (m_error)
+            return;
+        if (isStar ? at(TokenKind::Newline) || at(TokenKind::Colon) : at(TokenKind::Newline)) {
+            failAtLastToken(isStar ? "expected one or more exception types"_s : "expected ':'"_s);
+            return;
+        }
+        lookForWhatIsWrong([&] {
+            if (!parseExpression() || !consume(TokenKind::KeywordAs))
+                return false;
+            Expression* target = parseExpression();
+            if (!target || !consume(TokenKind::Colon))
+                return false;
+            Sequence<Statement*> body;
+            if (parseBlock(body, isStar ? "'except*' statement"_s : "'except' statement"_s, 0))
+                fail(makeString("cannot use except"_s, isStar ? "*"_s : ""_s, " statement with "_s, describe(*target)), *target);
+            return false;
+        });
+    }
+
     // try_stmt
     Statement* parseTry()
     {
@@ -2901,41 +4190,68 @@ private:
         if (!expectColon(ColonIs::Insisted))
             return nullptr;
         Sequence<Statement*> body;
-        if (!parseBlock(body, "'try' statement"_s, start.line))
-            return nullptr;
+        unsigned afterColon = m_index;
+        if (!parseBlock(body, "'try' statement"_s, start.line)) {
+            // Where invalid_try_stmt looks for both kinds of `except`, it does not ask that there be anything before them. So what is wrong with the first of them is found, though nothing
+            // can come of the whole.
+            if (!m_callsInvalidRules || m_error)
+                return nullptr;
+            m_index = afterColon;
+            if (!at(TokenKind::KeywordExcept))
+                return nullptr;
+        }
 
         Vector<ExceptHandler*, 4> handlers;
         bool isStar = false;
         while (at(TokenKind::KeywordExcept)) {
             Mark handlerStart = mark();
-            next();
-            bool handlerIsStar = consume(TokenKind::Star);
-            if (!handlers.isEmpty() && handlerIsStar != isStar)
-                return fail("cannot have both 'except' and 'except*' on the same 'try'"_s, previous());
+            const Token& keyword = next();
+            bool handlerIsStar = at(TokenKind::Star);
+            if (!handlers.isEmpty() && handlerIsStar != isStar) {
+                // The last two of invalid_try_stmt. It has to be all there, as far as the colon.
+                if (!m_callsInvalidRules)
+                    return nullptr;
+                const Token& last = handlerIsStar ? next() : keyword;
+                bool hasType = !!lookForWhatIsWrong([&] { return parseExpression(); });
+                if (m_error || (handlerIsStar && !hasType))
+                    return nullptr;
+                if (hasType) {
+                    parseExpression();
+                    if (at(TokenKind::KeywordAs) && atAhead(1, TokenKind::Name)) {
+                        next();
+                        next();
+                    }
+                }
+                if (at(TokenKind::Colon))
+                    fail("cannot have both 'except' and 'except*' on the same 'try'"_s, keyword, last);
+                return nullptr;
+            }
+            consume(TokenKind::Star);
             isStar = handlerIsStar;
 
+            unsigned afterKeyword = m_index;
             Expression* type = nullptr;
             const Identifier* name = nullptr;
+            bool isWellFormed = true;
             if (!at(TokenKind::Colon)) {
                 type = parseExpressions();
-                if (!type)
-                    return nullptr;
-                if (at(TokenKind::KeywordAs)) {
-                    if (type->is<Tuple>() && !type->isParenthesized)
-                        return fail("multiple exception types must be parenthesized when using 'as'"_s, *type);
-                    next();
-                    if (!at(TokenKind::Name)) {
-                        Expression* target = speculate([&] { return parseExpression(); });
-                        if (target)
-                            return fail(makeString("cannot use except"_s, isStar ? "*"_s : ""_s, " statement with "_s, describe(*target)), *target);
-                        return nullptr;
+                if (type && at(TokenKind::KeywordAs)) {
+                    if ((type->is<Tuple>() && !type->isParenthesized) || !atAhead(1, TokenKind::Name))
+                        isWellFormed = false;
+                    else {
+                        next();
+                        name = next().text;
                     }
-                    name = next().text;
                 }
+                isWellFormed &= !!type;
             } else if (isStar)
-                return fail("expected one or more exception types"_s);
-            if (!expectColon())
+                isWellFormed = false;
+            if (!isWellFormed || !at(TokenKind::Colon)) {
+                if (m_callsInvalidRules && !m_error)
+                    recognizeInvalidExcept(afterKeyword, isStar);
                 return nullptr;
+            }
+            next();
             Sequence<Statement*> handlerBody;
             if (!parseBlock(handlerBody, isStar ? "'except*' statement"_s : "'except' statement"_s, handlerStart.line))
                 return nullptr;
@@ -2956,7 +4272,7 @@ private:
             if (!expectColon(ColonIs::Insisted) || !parseBlock(finalBody, "'finally' statement"_s, line))
                 return nullptr;
         } else if (handlers.isEmpty())
-            return fail("expected 'except' or 'finally' block"_s);
+            return failAtLastToken("expected 'except' or 'finally' block"_s);
 
         auto* statement = make<Try>(start);
         statement->isStar = isStar;
@@ -2981,7 +4297,7 @@ private:
                 Vector<Expression*, 8> elements;
                 elements.append(first);
                 while (consume(TokenKind::Comma)) {
-                    if (at(TokenKind::Colon))
+                    if (at(TokenKind::Colon) || at(TokenKind::Newline))
                         break;
                     Expression* element = parseStarNamedExpression();
                     if (!element)
@@ -2993,6 +4309,9 @@ private:
                 first = tuple;
             } else if (first->is<Starred>())
                 return nullptr;
+            // invalid_match_stmt
+            if (at(TokenKind::Newline))
+                return failAtLastToken("expected ':'"_s);
             if (!at(TokenKind::Colon) || !atAhead(1, TokenKind::Newline))
                 return nullptr;
             return first;
@@ -3004,7 +4323,7 @@ private:
         next();
         next();
         if (!consume(TokenKind::Indent))
-            return fail(makeString("expected an indented block after 'match' statement on line "_s, start.line), peek(), SyntaxError::Kind::IndentationError);
+            return failAtLastToken(makeString("expected an indented block after 'match' statement on line "_s, start.line), SyntaxError::Kind::IndentationError);
 
         Vector<MatchCase*, 8> cases;
         while (at(SoftKeyword::Case)) {
@@ -3051,7 +4370,7 @@ private:
                 return nullptr;
             Vector<Expression*, 8> bases;
             Vector<Keyword*, 8> keywords;
-            if (at(TokenKind::LeftParenthesis) && !parseArguments(bases, keywords))
+            if (at(TokenKind::LeftParenthesis) && !parseArguments(bases, keywords, GeneratorIs::NotAllowed))
                 return nullptr;
             if (!expectColon())
                 return nullptr;
@@ -3073,21 +4392,24 @@ private:
             return nullptr;
         const Identifier* name = next().text;
         Sequence<TypeParameter*> typeParameters;
+        unsigned afterName = m_index;
         if (!parseTypeParameters(typeParameters))
-            return nullptr;
+            m_index = afterName;
         if (!consume(TokenKind::LeftParenthesis))
-            return fail("expected '('"_s);
+            return fail("expected '('"_s, peek());
         Arguments* arguments = parseParameters(TokenKind::RightParenthesis, true);
         if (!arguments || !expect(TokenKind::RightParenthesis))
             return nullptr;
         Expression* returns = nullptr;
-        if (consume(TokenKind::Arrow)) {
+        if (at(TokenKind::Arrow)) {
+            unsigned index = m_index;
+            next();
             returns = parseExpression();
             if (!returns)
-                return nullptr;
+                m_index = index;
         }
-        if (!expect(TokenKind::Colon))
-            return nullptr;
+        if (!consume(TokenKind::Colon))
+            return fail("expected ':'"_s, peek());
         Sequence<Statement*> body;
         if (!parseBlock(body, "function definition"_s, start.line))
             return nullptr;
@@ -3108,7 +4430,32 @@ private:
     SyntaxError& m_error;
     SyntaxError m_scannerError;
     unsigned m_index { 0 };
+    // The last token that has been looked at, which is how far CPython's tokenizer would have got, being asked for one token at a time.
     unsigned m_furthest { 0 };
+    bool m_hasScannerError { false }; // m_error is m_scannerError.
+    bool m_isSecondPass { false };
+    // Whether what is in the grammar only to be recognized as a mistake is tried. In the second pass, but for a part of it here and there.
+    bool m_callsInvalidRules { false };
+    bool m_failsInEitherPass { false };
+    bool m_keepsWhatIsParsed { false };
+    bool m_isBadSingleStatement { false };
+    bool m_lastLineIsEnded { true };
+    // For each rule of the grammar that CPython does this for: those that are marked (memo), and those that begin with themselves.
+    struct Memos {
+        MemoTable expressions;
+        MemoTable starExpressions;
+        MemoTable disjunctions;
+        MemoTable conjunctions;
+        MemoTable inversions;
+        std::array<MemoTable, 7> binaryOperations; // By precedence: bitwise_or is 1 and term is 6.
+        MemoTable factors;
+        MemoTable awaitPrimaries;
+        MemoTable primaries;
+        MemoTable strings;
+    };
+    Memos m_memos;
+    HashSet<unsigned, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_invalidNamedExpressions;
+    HashSet<unsigned, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_notArguments;
     unsigned m_speculationDepth { 0 };
 };
 
@@ -3117,7 +4464,9 @@ private:
 Module* parse(VM& vm, Arena& arena, StringView source, Module::Kind kind, Vector<SyntaxWarning>& warnings, SyntaxError& error)
 {
     Vector<Token> tokens;
-    tokenize(vm, arena, source, { }, tokens, warnings, error);
+    ScanRange range;
+    range.lastLine = kind == Module::Kind::Module ? ScanRange::LastLine::IsEnded : kind == Module::Kind::Expression ? ScanRange::LastLine::IsLeft : ScanRange::LastLine::IsEndedByTheEnd;
+    tokenize(vm, arena, source, range, tokens, warnings, error);
     return Parser(vm, arena, tokens, error).parseModule(kind);
 }
 

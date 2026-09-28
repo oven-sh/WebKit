@@ -161,7 +161,7 @@ private:
     bool fail(String&& message, const Node& location)
     {
         if (!m_error)
-            m_error = { SyntaxError::Kind::SyntaxError, false, WTF::move(message), location.line, location.column, location.endLine, location.endColumn };
+            m_error = { SyntaxError::Kind::SyntaxError, false, WTF::move(message), location.line, static_cast<int>(location.column), location.endLine, static_cast<int>(location.endColumn) };
         return false;
     }
 

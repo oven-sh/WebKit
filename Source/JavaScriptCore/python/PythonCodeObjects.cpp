@@ -541,7 +541,7 @@ PYTHON_NATIVE(builtinCompile)
 
     SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait);
+    unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput);
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
     // What the interpreter was started with is no optimization.

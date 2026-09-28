@@ -8,13 +8,14 @@
 #   wrong-arguments.py   what is said when each method of each built-in class, and each built-in function, is called with no arguments, with nine, with
 #                        a keyword that it does not have, with no instance, and with an instance of the wrong class. It must never crash.
 #   language-features.py what the language reference describes, a piece at a time
+#   syntax-errors.py     what is said to be wrong with some ten thousand pieces of source that will not compile, and where
 #
 # Beside each is what CPython prints, in a .reference file, which is made by running it with CPython.
 
 jsc=$1
 show=${2:-0}
 cd "$(dirname "$0")" || exit 2
-for audit in own-attributes wrong-arguments language-features; do
+for audit in own-attributes wrong-arguments language-features syntax-errors; do
     "$jsc" $audit.py > /tmp/python-audit-$audit.txt 2> /tmp/python-audit-$audit.err || echo "$audit: stopped early: $(tail -1 /tmp/python-audit-$audit.err)"
     python3 compare.py $audit $audit.reference /tmp/python-audit-$audit.txt "$show"
 done

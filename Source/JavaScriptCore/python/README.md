@@ -276,6 +276,34 @@ what part of a line to point at, and with what; lines that are the same over and
 **`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
 `ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
 
+### What is said to be wrong with source
+
+The parser is written by hand and goes down through the grammar, as the one for JavaScript does. CPython's is generated from `Grammar/python.gram`, and **what it says is wrong with source, and where, is
+whatever comes of how that grammar is gone through**. So the parser here goes about it in the same way (`Parser::parseModule()` is `_PyPegen_run_parser()`).
+
+- **The source is gone through twice, if it will not parse.** The first time nothing is looked for but whether it parses. The second time, what is in the grammar only to be recognized as a mistake (its
+  `invalid_` rules) is tried as well, each where the grammar has it among the alternatives. Whichever is come to first is what is said. If none is, all that there is to say is `invalid syntax`, at the last
+  token that was looked at *the first time*. Source that parses is gone through once, and none of this costs it anything.
+- **A few things are said the first time:** a token that the grammar insists on (`else`, `try` and `finally` are followed by a colon), and what is found wrong in making something of what has been parsed, such as
+  `b'' ''`. And, by an accident of how CPython's parser is generated, what is wrong with the pairs of a dict: it leaves out, the first time, whatever alternative *begins* with an `invalid_` rule, and that one
+  begins with the brace. That is why `{1: 2, 3 4}` wants a colon and `{3 4}` a comma.
+- **As much as will parse is what is parsed.** `a +` is `a`, with a `+` after it that whoever asked for an expression can make nothing of. It comes to the same for whether source parses, and decides which rule
+  is the one to find fault.
+- **What comes of a rule is kept, by the token that it began at,** for the rules that CPython does that for. That keeps the second time from taking for ever, and it can be seen. There is a part of the grammar in
+  which mistakes are not looked for (`expression_without_invalid`), what is parsed there is kept like the rest, and so what is wrong with it is never found: `f(4, x for x in y)` is told that a generator
+  expression must be parenthesized, and `"s" + f(4, x for x in y)` only that it is invalid syntax.
+- **The scanner scans the whole source first, and CPython's is asked for one token at a time.** What is said depends on how far it has got: for where something is said to end, for whether the line that
+  goes with it has its end, and for which comes first of what the scanner and the parser have found wrong. So the parser keeps the last token that it has looked at (`m_furthest`), and tokens that take up no room keep
+  where the tokenizer would have been.
+- **After whatever can be called, subscripted or asked for an attribute, a generator expression is looked for,** since `f(x for x in y)` is `f` and one of those. What is looked for when there is none may begin with
+  any bracket. That is how what is wrong inside the braces of `a {b c}` comes to be found.
+
+`compile()` for `'eval'` and `'single'` begins elsewhere in the grammar, and only for `'exec'` is a last line that nothing ends taken to be ended. For `'single'` the end of the source is taken for the end of a line
+instead, which is why `if x: y` will not compile that way without one. `PyCF_DONT_IMPLY_DEDENT` and `PyCF_ALLOW_INCOMPLETE_INPUT` are for a prompt, which has to tell what is wrong from what is not yet all there.
+
+`JSTests/python/audits/syntax-errors.py` measures all this: some fourteen thousand pieces of source that will not compile, out of CPython's tests and made by changing one token of the programs here. All that is
+said of each is compared: the class, `msg`, `lineno`, `offset`, `end_lineno`, `end_offset` and `text`.
+
 ### Warnings
 
 `_warnings` (`PythonWarnings.cpp`) is `Python/_warnings.c`, function for function: it decides whether a warning is shown, raised or passed over. If `warnings.py` has been imported it has the filters, and shows what is
