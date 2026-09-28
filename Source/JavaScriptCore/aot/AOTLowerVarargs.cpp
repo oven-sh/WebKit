@@ -359,20 +359,151 @@ LValue Lowering::emitCallVarargs(Node* node, LValue callee, LValue thisValue, LV
 void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, VirtualRegister thisRegister, VirtualRegister argumentsRegister, int firstVarArg, bool isConstruct, bool isTail)
 {
     Node* calleeNode = node->use(calleeRegister);
+    Node* argumentsNode = node->use(argumentsRegister);
     LValue callee = lowJSValue(calleeNode);
     LValue thisValue = lowJSValue(node->use(thisRegister));
-    LValue arguments = lowJSValue(node->use(argumentsRegister));
 
-    // How much stack this function uses is not known until its code is generated.
-    PatchpointValue* numUsedStackSlots = m_out.patchpoint(Int32);
-    numUsedStackSlots->effects = Effects::none();
-    numUsedStackSlots->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
-        jit.move(CCallHelpers::TrustedImm32(params.proc().frameSize() / sizeof(Register)), params[0].gpr());
-    });
-    LValue length = vmCall(node, Int64, Entry::operationAOTSizeFrameForVarargs, m_globalObject, arguments, numUsedStackSlots, m_out.constInt32(firstVarArg));
+    // The runtime is handed the list, says how long it is, and copies it to the frame.
+    auto spread = [&](Node* spread) {
+        return vmCall(spread, pointerType(), Entry::operationAOTSpread, m_globalObject, lowJSValue(spread->use(spread->as<OpSpread>().m_argument)));
+    };
+    auto elementOf = [&](Node* array, unsigned i) {
+        return array->use(VirtualRegister(array->as<OpNewArrayWithSpread>().m_argv.offset() - static_cast<int>(i)));
+    };
+    auto makeList = [&]() -> LValue {
+        if (!argumentsNode->isElided)
+            return lowJSValue(argumentsNode);
+        if (argumentsNode->isBytecode(op_spread))
+            return spread(argumentsNode);
+        unsigned count = argumentsNode->as<OpNewArrayWithSpread>().m_argc;
+        Vector<LValue, 8> values;
+        for (unsigned i = 0; i < count; ++i) {
+            Node* element = elementOf(argumentsNode, i);
+            values.append(element->isElided ? spread(element) : lowJSValue(element));
+        }
+        for (unsigned i = 0; i < count; ++i)
+            m_out.store64(values[i], scratchWord(i));
+        return vmCall(argumentsNode, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, m_scratch, m_out.constInt32(count));
+    };
+    auto callTheLongWay = [&](bool isTail) {
+        LValue arguments = makeList();
+        // How much stack this function uses is not known until its code is generated.
+        PatchpointValue* numUsedStackSlots = m_out.patchpoint(Int32);
+        numUsedStackSlots->effects = Effects::none();
+        numUsedStackSlots->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.move(CCallHelpers::TrustedImm32(params.proc().frameSize() / sizeof(Register)), params[0].gpr());
+        });
+        LValue length = vmCall(node, Int64, Entry::operationAOTSizeFrameForVarargs, m_globalObject, arguments, numUsedStackSlots, m_out.constInt32(firstVarArg));
+        return emitCallVarargs(node, callee, thisValue, arguments, length, firstVarArg, isConstruct, isTail);
+    };
+
+    // Or a stub copies what there is to the frame, if that is all there is to it.
+    struct Item {
+        Node* node;
+        bool isSpread;
+    };
+    Vector<Item, 4> items;
+    uint32_t flags = 0;
+    if (usesStubs && Options::aotCallsWithLists() && Graph::listOfArgumentsOf(node)) {
+        if (!argumentsNode->isElided) {
+            items.append({ argumentsNode, true });
+            flags = listIsArrayLike;
+        } else if (argumentsNode->isBytecode(op_spread))
+            items.append({ argumentsNode->use(argumentsNode->as<OpSpread>().m_argument), true });
+        else {
+            for (unsigned i = 0; i < argumentsNode->as<OpNewArrayWithSpread>().m_argc; ++i) {
+                Node* element = elementOf(argumentsNode, i);
+                if (element->isElided)
+                    items.append({ element->use(element->as<OpSpread>().m_argument), true });
+                else
+                    items.append({ element, false });
+            }
+        }
+    }
+    auto call = [&](bool isTail) -> LValue {
+        if (items.isEmpty())
+            return callTheLongWay(isTail);
+
+        uint64_t spreads = 0;
+        for (unsigned i = 0; i < items.size(); ++i) {
+            Node* item = items[i].node;
+            if (items[i].isSpread)
+                spreads |= 1ull << i;
+            // If it has not been made, there is nothing there, which is how the stub is told to look in this function's own frame.
+            if (items[i].isSpread && item->isMadeWhenWanted) {
+                if (item->isBytecode(op_create_rest))
+                    flags |= item->as<OpCreateRest>().m_numParametersToSkip;
+                m_out.store64(m_out.load64(whereItIsOnceMade(item)), scratchWord(i));
+            } else
+                m_out.store64(lowJSValue(item), scratchWord(i));
+        }
+
+        PatchpointValue* attempt = m_out.patchpoint(m_proc.addTuple({ Int64, Int32 }));
+        attempt->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
+        attempt->append(ConstrainedValue(thisValue, ValueRep::reg(GPRInfo::argumentGPR1)));
+        attempt->append(ConstrainedValue(m_scratch, ValueRep::reg(GPRInfo::argumentGPR2)));
+        attempt->clobber(RegisterSet::macroClobberedGPRs());
+        attempt->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+        attempt->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR), ValueRep::reg(GPRInfo::regT12) };
+        attempt->setGenerator([stubCalls = &m_graph.stubCalls, count = static_cast<uint32_t>(items.size()), spreads, flags, isConstruct, isTail,
+            callSiteBits = callSiteBitsOf(node), numParameters = m_graph.codeBlock()->numParameters()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            static_assert(BaselineJITRegisters::Call::calleeGPR == GPRInfo::argumentGPR0);
+            jit.move(CCallHelpers::TrustedImm32(count), GPRInfo::argumentGPR3);
+            jit.move(CCallHelpers::TrustedImm64(spreads), GPRInfo::argumentGPR4);
+            jit.move(CCallHelpers::TrustedImm32(flags), GPRInfo::argumentGPR5);
+            jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
+            stubCalls->call(jit, Stub::MakeFrameWithList);
+            // (Two instructions.)
+            CCallHelpers::Jump made;
+            if (isTail) {
+                made = jit.jump();
+                jit.breakpoint();
+            } else {
+                stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call);
+                made = jit.jump();
+            }
+            jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::regT12);
+            CCallHelpers::Jump done = jit.jump();
+            made.link(&jit);
+            if (isTail) {
+                auto slotOfFrameBeingMade = [](CallFrameSlot slot, ptrdiff_t offset = 0) {
+                    return CCallHelpers::Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
+                };
+                jit.store64(BaselineJITRegisters::Call::calleeGPR, slotOfFrameBeingMade(CallFrameSlot::callee));
+                jit.store32(GPRInfo::regT9, slotOfFrameBeingMade(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
+                jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT11);
+                jit.loadPtr(CCallHelpers::Address(GPRInfo::regT11, Instance::offsetOfRuntimeTable()), GPRInfo::regT11);
+                jit.loadPtr(CCallHelpers::Address(GPRInfo::regT11, static_cast<unsigned>(Entry::CallLinkInfoForTailCall) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
+                jit.loadPtr(CCallHelpers::Address(GPRInfo::regT11, static_cast<unsigned>(Entry::VirtualTailCall) * sizeof(void*)), BaselineJITRegisters::Call::callTargetGPR);
+                emitTailCallSequence(jit, params, numParameters);
+            } else
+                jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::regT12);
+            done.link(&jit);
+            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+        });
+        if (isTail)
+            return callTheLongWay(true);
+
+        LBasicBlock wasCalled = m_out.newBlock();
+        LBasicBlock wasNotCalled = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(m_out.notZero32(m_out.extract(attempt, 1)), usually(wasCalled), rarely(wasNotCalled));
+
+        m_out.appendTo(wasCalled, wasNotCalled);
+        ValueFromBlock quickResult = m_out.anchor(m_out.extract(attempt, 0));
+        m_out.jump(continuation);
+
+        m_out.appendTo(wasNotCalled, continuation);
+        ValueFromBlock longResult = m_out.anchor(callTheLongWay(false));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        return m_out.phi(Int64, quickResult, longResult);
+    };
 
     if (!isTail) {
-        setJSValue(node, emitCallVarargs(node, callee, thisValue, arguments, length, firstVarArg, isConstruct, false));
+        setJSValue(node, call(false));
         return;
     }
 
@@ -381,10 +512,10 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     m_out.branch(canTailCall(node, callee, calleeNode->type), usually(tailCase), rarely(ordinaryCase));
 
     m_out.appendTo(tailCase, ordinaryCase);
-    emitCallVarargs(node, callee, thisValue, arguments, length, firstVarArg, false, true);
+    call(true);
 
     m_out.appendTo(ordinaryCase);
-    setJSValue(node, emitCallVarargs(node, callee, thisValue, arguments, length, firstVarArg, false, false));
+    setJSValue(node, call(false));
 }
 
 // ---- eval(...)

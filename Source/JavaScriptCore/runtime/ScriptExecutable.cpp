@@ -361,6 +361,12 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     RELEASE_ASSERT(function);
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
+    // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->m_unlinkedExecutable.get()) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
+        String name = executable->name().string();
+        throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
+        return nullptr;
+    }
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
     // We continue using the same CodeGenerationMode for Generators because live generator objects can

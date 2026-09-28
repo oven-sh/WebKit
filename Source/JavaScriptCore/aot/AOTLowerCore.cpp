@@ -118,6 +118,11 @@ static unsigned scratchWordsFor(Node* node)
         return node->as<OpNewArray>().m_argc;
     case op_new_array_with_spread:
         return node->as<OpNewArrayWithSpread>().m_argc;
+    case op_call_varargs:
+    case op_tail_call_varargs:
+    case op_construct_varargs:
+    case op_super_construct_varargs:
+        return 1;
     case op_strcat:
         return node->as<OpStrcat>().m_count;
     case op_enumerator_next:
@@ -191,6 +196,8 @@ bool Lowering::run()
     for (BasicBlock* block : m_graph.m_rpo) {
         for (Node* node : block->nodes) {
             scratchWords = std::max(scratchWords, scratchWordsFor(node));
+            if (node->isMadeWhenWanted)
+                m_madeWhenWanted.add(node, m_out.lockedStackSlot(sizeof(EncodedJSValue)));
             for (auto& use : node->uses)
                 use.node->useCount++;
         }
@@ -644,8 +651,36 @@ LValue Lowering::lowRaw(Node* node)
     default:
         break;
     }
+    if (node->isMadeWhenWanted)
+        return makeIfNotMade(node);
     RELEASE_ASSERT(node->lowered);
     return node->lowered;
+}
+
+TypedPointer Lowering::whereItIsOnceMade(Node* node)
+{
+    return m_out.address(m_heaps.root, m_madeWhenWanted.get(node), 0);
+}
+
+LValue Lowering::makeIfNotMade(Node* node)
+{
+    LBasicBlock make = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+
+    LValue made = m_out.load64(whereItIsOnceMade(node));
+    ValueFromBlock earlier = m_out.anchor(made);
+    m_out.branch(m_out.notZero64(made), unsure(continuation), unsure(make));
+
+    m_out.appendTo(make, continuation);
+    LValue result = node->isBytecode(op_create_rest)
+        ? vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, m_out.constInt32(node->as<OpCreateRest>().m_numParametersToSkip))
+        : vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject);
+    m_out.store64(result, whereItIsOnceMade(node));
+    ValueFromBlock now = m_out.anchor(result);
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(Int64, earlier, now);
 }
 
 LValue Lowering::lowConstantRegister(VirtualRegister reg)
@@ -807,6 +842,10 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (node->isElided)
             continue;
         setOrigin(node);
+        if (node->isMadeWhenWanted) {
+            m_out.store64(m_out.int64Zero, whereItIsOnceMade(node));
+            continue;
+        }
         lowerNode(node);
         if (m_graph.failed())
             return;

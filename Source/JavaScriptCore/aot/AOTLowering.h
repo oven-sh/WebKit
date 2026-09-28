@@ -268,6 +268,9 @@ private:
     void lowerTailCall(Node*);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, bool isConstruct, bool isTail);
     LValue emitCallVarargs(Node*, LValue callee, LValue thisValue, LValue arguments, LValue length, int firstVarArg, bool isConstruct, bool isTail);
+    // Node::isMadeWhenWanted: where it is once it has been made, and it, made now if it has not been.
+    TypedPointer whereItIsOnceMade(Node*);
+    LValue makeIfNotMade(Node*);
     void lowerCallDirectEval(Node*);
 
     // AOTLowerCalls.cpp
@@ -291,6 +294,7 @@ private:
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
     LValue m_scratch { nullptr };
+    UncheckedKeyHashMap<Node*, LValue> m_madeWhenWanted;
     LBasicBlock m_handleExceptions { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;

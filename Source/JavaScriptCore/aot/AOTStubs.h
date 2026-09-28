@@ -71,6 +71,11 @@ enum class StubIntrinsic : uint8_t {
 static constexpr unsigned numberOfStubIntrinsics = static_cast<unsigned>(StubIntrinsic::NumberOfStubIntrinsics) - 1;
 StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool resultIsWanted);
 
+// See Stub::MakeFrameWithList.
+static constexpr uint32_t listSkipMask = 0xffff;
+static constexpr uint32_t listIsArrayLike = 0x10000; // f.apply(o, list): nobody is asked how to iterate over it.
+static constexpr unsigned mostItemsInList = 32;
+
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
     /* pointer. Clobbers only T0-T3. */ \
@@ -81,6 +86,12 @@ StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIn
     /* The same, but for the call itself: if it is not that function after all, nothing has been done, and this comes back */ \
     /* two instructions further on than it was called from. */ \
     v(TryCallIntrinsic) \
+    /* The frame of a call whose arguments are a list that is put together when it is made. A1 = this, A2 = the items, A3 = how */ \
+    /* many, A4 = a bit for each that is to be spread, A5 = listIsArrayLike or not, and listSkipMask. An item to be spread that is */ \
+    /* nothing stands for the arguments the caller was itself passed, but for that many. The frame goes below the caller's, which */ \
+    /* has to put the stack pointer back. Leaves A0 and T10 alone, and the number of arguments in T9: what Call wants. If an */ \
+    /* item is not an array that can just be copied, it comes back two instructions further on, and there is no frame. */ \
+    v(MakeFrameWithList) \
     /* See generateEnter(). */ \
     v(Enter) \
     v(EnterFunctionForCall) \

@@ -141,6 +141,7 @@ struct Node {
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
+    bool isMadeWhenWanted { false }; // See Graph::findListsOfArguments().
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
@@ -340,6 +341,13 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
+    // f(a, ...b), f.apply(o, b): the arguments go from where they are to the frame of the callee (Stub::MakeFrameWithList). What
+    // would have been made only to be copied from, right before the call, is not (Node::isElided): the call sees to it, if it turns
+    // out that copying will not do. An array of the rest of the arguments, or an arguments object, that such calls pass on says
+    // nothing that the frame does not say, until somebody gets hold of it: it is made when somebody does (Node::isMadeWhenWanted).
+    void findListsOfArguments();
+    // The list, if the node is a call that takes one and takes all of it.
+    static Node* listOfArgumentsOf(const Node*);
     // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
     // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);

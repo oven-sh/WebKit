@@ -453,6 +453,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
+    graph.findListsOfArguments();
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());

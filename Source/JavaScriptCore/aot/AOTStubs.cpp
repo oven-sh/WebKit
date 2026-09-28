@@ -15,6 +15,7 @@
 #include "CodeBlock.h"
 #include "FunctionExecutable.h"
 #include "GetterSetter.h"
+#include "Interpreter.h"
 #include "JSGlobalObject.h"
 #include "JSMap.h"
 #include "JSSet.h"
@@ -2284,6 +2285,172 @@ StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIn
     return StubIntrinsic::None;
 }
 static void generateConstruct(CCallHelpers& jit) { generateCallTo(jit, Entry::CallLinkInfoForConstruct, CodeSpecializationKind::CodeForConstruct); }
+
+static void generateMakeFrameWithList(CCallHelpers& jit)
+{
+    constexpr GPRReg thisValue = A1, items = A2, count = A3, spreads = A4, flags = A5;
+    constexpr GPRReg globalObject = GPRInfo::argumentGPR6, shape = GPRInfo::argumentGPR7, scratch = GPRInfo::regT8;
+    constexpr GPRReg total = T9, cursor = T11, bitsLeft = T12, itemsLeft = T13, item = GPRInfo::regT14, length = GPRInfo::regT15;
+    CCallHelpers::JumpList cannot;
+
+    loadInstance(jit, T13);
+    jit.loadPtr(Address(T13, Instance::offsetOfGlobalObject()), globalObject);
+
+    // Spreading an array comes to copying it for as long as nobody has changed how arrays are iterated over.
+    Jump nobodyIsAsked = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(listIsArrayLike));
+    jit.loadPtr(Address(globalObject, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet() + InlineWatchpointSet::offsetOfData()), T11);
+    cannot.append(jit.branchPtr(CCallHelpers::Equal, T11, CCallHelpers::TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated))));
+    Jump isThin = jit.branchTestPtr(CCallHelpers::NonZero, T11, TrustedImm32(InlineWatchpointSet::IsThinFlag));
+    jit.load8(Address(T11, WatchpointSet::offsetOfState()), T11);
+    cannot.append(jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(IsInvalidated)));
+    isThin.link(&jit);
+    nobodyIsAsked.link(&jit);
+
+    auto loadNumberOfOwnArguments = [&] {
+        jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), length);
+        jit.and32(TrustedImm32(listSkipMask), flags, scratch);
+        jit.add32(TrustedImm32(1), scratch);
+        Jump hasSome = jit.branch32(CCallHelpers::Above, length, scratch);
+        jit.move(scratch, length);
+        hasSome.link(&jit);
+        jit.sub32(scratch, length);
+    };
+
+    // How many there are, and whether every one of them can be had by copying.
+    jit.move(TrustedImm32(0), total);
+    jit.move(items, cursor);
+    jit.move(spreads, bitsLeft);
+    jit.move(count, itemsLeft);
+    CCallHelpers::Label nextToCount = jit.label();
+    {
+        jit.load64(Address(cursor), item);
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), cursor);
+        jit.move(TrustedImm32(1), length);
+        Jump isOne = jit.branchTest64(CCallHelpers::Zero, bitsLeft, TrustedImm32(1));
+        Jump isOwn = jit.branchTest64(CCallHelpers::Zero, item);
+
+        cannot.append(jit.branchIfNotCell(item, DoNotHaveTagRegisters));
+        cannot.append(jit.branchIfNotType(item, ArrayType));
+        jit.load8(Address(item, JSCell::indexingTypeAndMiscOffset()), shape);
+        Jump anyArrayWillDo = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(listIsArrayLike));
+        // JSGlobalObject::isOriginalArrayStructure(): so it has nothing of its own to say about being iterated over.
+        static_assert(sizeof(WriteBarrierStructureID) == 4 && IndexingShapeShift == 1);
+        jit.and32(TrustedImm32(IndexingShapeMask), shape, scratch);
+        jit.lshift32(TrustedImm32(1), scratch);
+        Jump isNotCopyOnWrite = jit.branchTest32(CCallHelpers::Zero, shape, TrustedImm32(CopyOnWrite));
+        jit.add32(TrustedImm32(((SlowPutArrayStorageShape - UndecidedShape) >> IndexingShapeShift) * sizeof(WriteBarrierStructureID)), scratch);
+        isNotCopyOnWrite.link(&jit);
+        jit.addPtr(globalObject, scratch);
+        jit.load32(Address(scratch, JSGlobalObject::offsetOfOriginalArrayStructureForIndexingShape()), scratch);
+        jit.load32(Address(item, JSCell::structureIDOffset()), length);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, scratch, length));
+        anyArrayWillDo.link(&jit);
+
+        jit.and32(TrustedImm32(IndexingShapeMask), shape);
+        static_assert(UndecidedShape < Int32Shape && Int32Shape < DoubleShape && DoubleShape < ContiguousShape && ContiguousShape < ArrayStorageShape);
+        cannot.append(jit.branch32(CCallHelpers::Below, shape, TrustedImm32(UndecidedShape)));
+        cannot.append(jit.branch32(CCallHelpers::Above, shape, TrustedImm32(ContiguousShape)));
+        jit.loadPtr(Address(item, JSObject::butterflyOffset()), length);
+        jit.load32(Address(length, Butterfly::offsetOfPublicLength()), length);
+        Jump haveLength = jit.branch32(CCallHelpers::NotEqual, shape, TrustedImm32(UndecidedShape));
+        cannot.append(jit.branchTest32(CCallHelpers::NonZero, length));
+        Jump isEmpty = jit.jump();
+
+        isOwn.link(&jit);
+        loadNumberOfOwnArguments();
+
+        isOne.link(&jit);
+        haveLength.link(&jit);
+        isEmpty.link(&jit);
+        jit.add64(length, total);
+        jit.urshift64(TrustedImm32(1), bitsLeft);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), itemsLeft).linkTo(nextToCount, &jit);
+    }
+    cannot.append(jit.branch64(CCallHelpers::Above, total, CCallHelpers::TrustedImm64(maxArguments)));
+
+    // Where the frame goes, if there is room. From here on the stack pointer is below it: whatever else runs on this stack (a
+    // signal handler) takes what is below the stack pointer for its own.
+    constexpr GPRReg frame = T12, destination = T11, source = T13;
+    jit.add64(TrustedImm32(CallFrame::headerSizeInRegisters + 1 + 1), total, T11);
+    jit.and64(TrustedImm32(~1), T11);
+    jit.lshift64(TrustedImm32(3), T11);
+    jit.move(CCallHelpers::stackPointerRegister, frame);
+    jit.subPtr(T11, frame);
+    loadInstance(jit, T13);
+    jit.loadPtr(Address(T13, Instance::offsetOfVM()), T13);
+    jit.loadPtr(Address(T13, VM::offsetOfSoftStackLimit()), T13);
+    cannot.append(jit.branchPtr(CCallHelpers::Below, frame, T13));
+    jit.addPtr(TrustedImm32(sizeof(CallerFrameAndPC)), frame, CCallHelpers::stackPointerRegister);
+
+    jit.store64(thisValue, Address(frame, CallFrame::thisArgumentOffset() * static_cast<int>(sizeof(Register))));
+    jit.addPtr(TrustedImm32(CallFrame::argumentOffset(0) * static_cast<int>(sizeof(Register))), frame, destination);
+    CCallHelpers::Label nextToCopy = jit.label();
+    {
+        CCallHelpers::JumpList copied;
+        jit.load64(Address(items), item);
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), items);
+        Jump isSpread = jit.branchTest64(CCallHelpers::NonZero, spreads, TrustedImm32(1));
+        jit.store64(item, Address(destination));
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), destination);
+        copied.append(jit.jump());
+
+        isSpread.link(&jit);
+        Jump isOwn = jit.branchTest64(CCallHelpers::Zero, item);
+        jit.load8(Address(item, JSCell::indexingTypeAndMiscOffset()), shape);
+        jit.and32(TrustedImm32(IndexingShapeMask), shape);
+        jit.loadPtr(Address(item, JSObject::butterflyOffset()), source);
+        jit.load32(Address(source, Butterfly::offsetOfPublicLength()), length);
+        copied.append(jit.branchTest32(CCallHelpers::Zero, length));
+        Jump isDouble = jit.branch32(CCallHelpers::Equal, shape, TrustedImm32(DoubleShape));
+
+        // What is not there is for the prototypes to answer for.
+        CCallHelpers::Label nextValue = jit.label();
+        jit.load64(Address(source), scratch);
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), source);
+        cannot.append(jit.branchTest64(CCallHelpers::Zero, scratch));
+        jit.store64(scratch, Address(destination));
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), destination);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), length).linkTo(nextValue, &jit);
+        copied.append(jit.jump());
+
+        isDouble.link(&jit);
+        jit.move(CCallHelpers::TrustedImm64(JSValue::DoubleEncodeOffset), shape);
+        CCallHelpers::Label nextDouble = jit.label();
+        jit.loadDouble(Address(source), FPRInfo::fpRegT0);
+        jit.addPtr(TrustedImm32(sizeof(double)), source);
+        cannot.append(jit.branchIfNaN(FPRInfo::fpRegT0));
+        jit.moveDoubleTo64(FPRInfo::fpRegT0, scratch);
+        jit.add64(shape, scratch);
+        jit.store64(scratch, Address(destination));
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), destination);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), length).linkTo(nextDouble, &jit);
+        copied.append(jit.jump());
+
+        isOwn.link(&jit);
+        loadNumberOfOwnArguments();
+        copied.append(jit.branchTest32(CCallHelpers::Zero, length));
+        jit.and32(TrustedImm32(listSkipMask), flags, scratch);
+        jit.lshift32(TrustedImm32(3), scratch);
+        jit.addPtr(GPRInfo::callFrameRegister, scratch, source);
+        jit.addPtr(TrustedImm32(CallFrame::argumentOffset(0) * static_cast<int>(sizeof(Register))), source);
+        CCallHelpers::Label nextOwn = jit.label();
+        jit.load64(Address(source), scratch);
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), source);
+        jit.store64(scratch, Address(destination));
+        jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), destination);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), length).linkTo(nextOwn, &jit);
+
+        copied.link(&jit);
+        jit.urshift64(TrustedImm32(1), spreads);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), count).linkTo(nextToCopy, &jit);
+    }
+    jit.add32(TrustedImm32(1), total);
+    jit.ret();
+
+    cannot.link(&jit);
+    jit.addPtr(TrustedImm32(2 * sizeof(uint32_t)), CCallHelpers::linkRegister);
+    jit.ret();
+}
 
 #else // CPU(ARM64)
 
