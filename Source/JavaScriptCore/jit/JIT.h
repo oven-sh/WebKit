@@ -498,6 +498,9 @@ namespace JSC {
         void emit_op_py_enter(const JSInstruction*);
         void emit_op_py_line(const JSInstruction*);
         void emit_op_py_leave(const JSInstruction*);
+        void emit_op_py_call(const JSInstruction*);
+        void emit_op_py_branch(const JSInstruction*);
+        void emit_op_py_jump(const JSInstruction*);
         void emit_op_py_load_global(const JSInstruction*);
         void emit_op_rshift(const JSInstruction*);
         void emit_op_set_function_name(const JSInstruction*);

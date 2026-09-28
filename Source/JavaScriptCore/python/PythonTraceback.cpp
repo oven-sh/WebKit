@@ -246,7 +246,10 @@ static JSValue getFrameTrace(JSGlobalObject*, JSValue self)
 
 static void setFrameTrace(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
-    asFrame(self)->setTrace(globalObject->vm(), value && !isNone(value) ? value : JSValue());
+    PyFrame* frame = asFrame(self);
+    frame->setTrace(globalObject->vm(), value && !isNone(value) ? value : JSValue());
+    if (frame->trace() && frame->tracesOpcodes())
+        setTracesOpcodes(globalObject, frame, true);
 }
 
 template<bool (PyFrame::*getter)() const>
@@ -264,7 +267,10 @@ static void setFrameFlag(JSGlobalObject* globalObject, JSValue self, JSValue val
         raiseTypeError(globalObject, scope, value ? "attribute value type must be bool"_s : "can't delete numeric/char attribute"_s);
         return;
     }
-    (asFrame(self)->*setter)(value.asBoolean());
+    PyFrame* frame = asFrame(self);
+    (frame->*setter)(value.asBoolean());
+    if (setter == &PyFrame::setTracesOpcodes && frame->tracesOpcodes() && frame->trace())
+        setTracesOpcodes(globalObject, frame, true);
 }
 
 PYTHON_NATIVE(frameClear)

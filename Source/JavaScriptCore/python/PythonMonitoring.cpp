@@ -30,6 +30,7 @@
 #include "FrameTracers.h"
 #include "FunctionExecutable.h"
 #include "JSGenerator.h"
+#include "PreciseJumpTargetsInlines.h"
 #include "PyFrame.h"
 #include "PythonBuiltins.h"
 #include <wtf/SetForScope.h>
@@ -89,8 +90,12 @@ static void setEvents(JSGlobalObject* globalObject, unsigned tool, uint32_t even
 {
     MonitoringState& state = stateOf(globalObject);
     for (unsigned event = 0; event < numberOfUngroupedMonitoringEvents; ++event) {
+        bool wasAskedFor = state.tools[event] >> tool & 1;
+        bool isAskedFor = events >> event & 1;
+        if (isAskedFor && !wasAskedFor && event < numberOfLocalMonitoringEvents)
+            ++state.timesAskedFor[tool][event];
         state.tools[event] &= ~(1u << tool);
-        state.tools[event] |= (events >> event & 1) << tool;
+        state.tools[event] |= isAskedFor << tool;
     }
     updateWatching(globalObject);
 }
@@ -131,11 +136,15 @@ static void setLocalEvents(JSGlobalObject* globalObject, FunctionExecutable* exe
         return false;
     };
     bool hadAny = hasAny();
-    monitor.toolVersions[tool] = state.toolVersions[tool];
     for (unsigned event = 0; event < numberOfLocalMonitoringEvents; ++event) {
+        bool wasAskedFor = localToolsFor(state, monitor, event) >> tool & 1;
+        bool isAskedFor = events >> event & 1;
+        if (isAskedFor && !wasAskedFor)
+            monitor.forgetDisabled(tool, event);
         monitor.tools[event] &= ~(1u << tool);
-        monitor.tools[event] |= (events >> event & 1) << tool;
+        monitor.tools[event] |= isAskedFor << tool;
     }
+    monitor.toolVersions[tool] = state.toolVersions[tool];
     state.codesWithLocalEvents += hasAny() - hadAny;
     updateWatching(globalObject);
 }
@@ -178,9 +187,15 @@ static uint8_t toolsFor(const Site& site, MonitoringEvent event)
     if (!monitor)
         return tools;
     tools |= localToolsFor(state, *monitor, index);
-    if (monitor->restartVersion == state.restartVersion)
-        tools &= ~monitor->disabledTools.get(CodeMonitor::keyFor(site.offset, event));
-    return tools;
+    if (monitor->restartVersion != state.restartVersion || monitor->disabledTools[index].isEmpty())
+        return tools;
+    for (unsigned tool = 0; tool < numberOfMonitoringTools; ++tool) {
+        if (monitor->timesAskedFor[tool][index] == state.timesAskedFor[tool][index])
+            continue;
+        monitor->timesAskedFor[tool][index] = state.timesAskedFor[tool][index];
+        monitor->forgetDisabled(tool, index);
+    }
+    return tools & ~monitor->disabledTools[index].get(site.offset + 1);
 }
 
 static void disableAt(const Site& site, MonitoringEvent event, unsigned tool)
@@ -190,10 +205,13 @@ static void disableAt(const Site& site, MonitoringEvent event, unsigned tool)
         event = MonitoringEvent::Call;
     CodeMonitor& monitor = site.executable->ensurePythonMonitor();
     if (monitor.restartVersion != state.restartVersion) {
-        monitor.disabledTools.clear();
+        for (auto& disabled : monitor.disabledTools)
+            disabled.clear();
         monitor.restartVersion = state.restartVersion;
     }
-    monitor.disabledTools.add(CodeMonitor::keyFor(site.offset, event), 0).iterator->value |= 1u << tool;
+    unsigned index = static_cast<unsigned>(event);
+    monitor.timesAskedFor[tool][index] = state.timesAskedFor[tool][index];
+    monitor.disabledTools[index].add(site.offset + 1, 0).iterator->value |= 1u << tool;
 }
 
 // ---- sys.settrace() and sys.setprofile()
@@ -255,6 +273,12 @@ static void setTracesOpcodes(JSGlobalObject* globalObject, FunctionExecutable* e
     uint32_t wanted = enable ? events | bit(MonitoringEvent::Instruction) : events & ~bit(MonitoringEvent::Instruction);
     if (wanted != events)
         setLocalEvents(globalObject, executable, traceTool, wanted);
+}
+
+// _PyEval_SetOpcodeTrace()
+void setTracesOpcodes(JSGlobalObject* globalObject, PyFrame* frame, bool enable)
+{
+    setTracesOpcodes(globalObject, executableOfCode(codeObjectFor(globalObject, frame->executable())), enable);
 }
 
 static Outcome tellTraceFunction(const Site& site, MonitoringEvent event, JSValue argument)
@@ -339,13 +363,13 @@ static Outcome tellProfileFunction(const Site& site, MonitoringEvent event, JSVa
 // ---- Telling
 
 // call_instrumentation_vector(). `second` is what comes after the code object: where in it, or for a line, which. False if what was told raised.
-static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValue third = JSValue(), JSValue fourth = JSValue())
+static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValue third = JSValue(), JSValue fourth = JSValue(), std::optional<uint8_t> givenTools = std::nullopt)
 {
     JSGlobalObject* globalObject = site.globalObject;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MonitoringState& state = stateOf(globalObject);
-    uint8_t tools = toolsFor(site, event);
+    uint8_t tools = givenTools ? *givenTools : toolsFor(site, event);
     if (!tools)
         return true;
     MarkedArgumentBuffer arguments;
@@ -384,9 +408,6 @@ static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValu
                 return false;
             }
             disableAt(site, event, tool);
-            // What was registered for both kinds of branch has done with both.
-            if ((event == MonitoringEvent::BranchLeft && state.callbackIsForEitherBranch[tool] & 1) || (event == MonitoringEvent::BranchRight && state.callbackIsForEitherBranch[tool] & 2))
-                disableAt(site, event == MonitoringEvent::BranchLeft ? MonitoringEvent::BranchRight : MonitoringEvent::BranchLeft, tool);
             break;
         }
     }
@@ -402,6 +423,59 @@ static bool fireAtOffset(const Site& site, MonitoringEvent event, JSValue third 
 static bool fireInstruction(const Site& site)
 {
     return fireAtOffset(site, MonitoringEvent::Instruction);
+}
+
+// ---- Calls of what is not written in Python
+
+// Whether calling it is only to begin a frame of Python code, which is told of for itself.
+static bool beginsFrame(JSValue callable)
+{
+    if (auto* method = dynamicDowncast<PyBoundMethod>(callable))
+        callable = method->function();
+    auto* function = dynamicDowncast<JSFunction>(callable);
+    return function && !function->isHostOrBuiltinFunction() && function->jsExecutable()->isPython();
+}
+
+// The call that the frame was last told to be making is over. If something is being thrown, `thrownFrom` is where in the frame that is from, which is the call if it came out of what was
+// called. The call is what comes after op_py_call. False if what was told of it raised.
+static bool finishPendingCall(JSGlobalObject* globalObject, CallFrame* callFrame, std::optional<BytecodeIndex> thrownFrom = std::nullopt)
+{
+    VM& vm = globalObject->vm();
+    PyFrame* frame = PyFrame::forCallFrameIfExists(vm, callFrame);
+    if (!frame || !frame->pendingCallable())
+        return true;
+    bool hasRaised = thrownFrom && thrownFrom->offset() == callFrame->codeBlock()->instructions().at(frame->pendingCallOffset()).next().offset();
+    JSValue callable = frame->pendingCallable();
+    JSValue argument = frame->pendingArgument();
+    BytecodeIndex index(frame->pendingCallOffset());
+    frame->clearPendingCall();
+    auto site = siteOf(globalObject, callFrame, index);
+    if (!site)
+        return true;
+    // The frame has gone on since, and is told of as if it had not.
+    frame->setLineOverride(frame->lineAt(vm, index));
+    bool succeeded = fire(*site, hasRaised ? MonitoringEvent::CRaise : MonitoringEvent::CReturn, jsNumber(site->offset), callable, argument, frame->pendingCallTools());
+    frame->setLineOverride(-1);
+    return succeeded;
+}
+
+// Where the jump that comes `skipped` instructions after this one goes, and where what follows it is.
+struct JumpTargets {
+    unsigned taken;
+    unsigned notTaken;
+};
+
+template<typename Block>
+static JumpTargets jumpTargetsAfter(Block* codeBlock, unsigned offset, unsigned skipped)
+{
+    auto instruction = codeBlock->instructions().at(offset);
+    for (unsigned i = 0; i <= skipped; ++i)
+        instruction = instruction.next();
+    JumpTargets result { instruction.offset(), instruction.next().offset() };
+    extractStoredJumpTargetsForInstruction(codeBlock, instruction, [&] (int32_t relative) {
+        result.taken = instruction.offset() + relative;
+    });
+    return result;
 }
 
 // ---- What the code calls, when it finds that something is to be told
@@ -422,8 +496,10 @@ void enterFrame(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeInde
     // Whatever line comes first is a new one.
     if (PyFrame* frame = isResume ? nullptr : PyFrame::forCallFrameIfExists(vm, callFrame))
         frame->setLastLine(-1);
-    if (pythonInfoOfFrame(callFrame)->isGeneratorBody && callFrame->uncheckedArgument(static_cast<unsigned>(JSGenerator::Argument::ResumeMode)).asInt32() == static_cast<int32_t>(JSGenerator::ResumeMode::ThrowMode))
-        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::PyThrow, callFrame->uncheckedArgument(static_cast<unsigned>(JSGenerator::Argument::Value)))));
+    // JSGenerator::Argument counts `this`.
+    auto argument = [&] (JSGenerator::Argument which) { return callFrame->uncheckedArgument(static_cast<unsigned>(which) - 1); };
+    if (pythonInfoOfFrame(callFrame)->isGeneratorBody && argument(JSGenerator::Argument::ResumeMode).asInt32() == static_cast<int32_t>(JSGenerator::ResumeMode::ThrowMode))
+        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::PyThrow, argument(JSGenerator::Argument::Value))));
     RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, isResume ? MonitoringEvent::PyResume : MonitoringEvent::PyStart)));
 }
 
@@ -438,6 +514,8 @@ void frameIsAtLine(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeI
     if (!site)
         return;
     // A line is told of if what was run last was on some other.
+    finishPendingCall(globalObject, callFrame);
+    RETURN_IF_EXCEPTION(scope, void());
     PyFrame* frame = PyFrame::forCallFrame(vm, callFrame);
     if (kind == LineKind::OfHandledException) {
         if (JSValue exception = globalObject->pyRealm()->handledException())
@@ -458,7 +536,111 @@ void frameIsAtLine(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeI
         --state.callbackDepth;
         RETURN_IF_EXCEPTION(scope, void());
     }
-    RELEASE_AND_RETURN(scope, void(fireInstruction(*site)));
+    fireInstruction(*site);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isAfterBackwardJump)
+        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken))));
+}
+
+void frameIsCalling(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, JSValue callable, JSValue argument, ToldArgument kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MonitoringState& state = stateOf(globalObject);
+    if (!state.isWatching)
+        return;
+    auto site = siteOf(globalObject, callFrame, index);
+    if (!site)
+        return;
+    finishPendingCall(globalObject, callFrame);
+    RETURN_IF_EXCEPTION(scope, void());
+    fireInstruction(*site);
+    RETURN_IF_EXCEPTION(scope, void());
+    uint8_t tools = toolsFor(*site, MonitoringEvent::Call);
+    if (!tools)
+        return;
+    switch (kind) {
+    case ToldArgument::None:
+        argument = state.missing.get();
+        break;
+    case ToldArgument::First:
+        break;
+    case ToldArgument::ListOfPositional: {
+        JSArray* list = asList(argument);
+        argument = list->length() ? listGet(globalObject, list, 0) : state.missing.get();
+        RETURN_IF_EXCEPTION(scope, void());
+        break;
+    }
+    }
+    // A method of an object is told of as the function, called with the object.
+    if (auto* method = dynamicDowncast<PyBoundMethod>(callable); method && typeOf(globalObject, method) == globalObject->pyRealm()->typeMethod()) {
+        callable = method->function();
+        argument = method->self();
+    }
+    fireAtOffset(*site, MonitoringEvent::Call, callable, argument);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!beginsFrame(callable))
+        PyFrame::forCallFrame(vm, callFrame)->setPendingCall(vm, callable, argument, site->offset, tools);
+}
+
+static void tellOfBranch(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, bool isTaken, unsigned skipped)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!stateOf(globalObject).isWatching)
+        return;
+    auto site = siteOf(globalObject, callFrame, index);
+    if (!site)
+        return;
+    finishPendingCall(globalObject, callFrame);
+    RETURN_IF_EXCEPTION(scope, void());
+    fireInstruction(*site);
+    RETURN_IF_EXCEPTION(scope, void());
+    MonitoringEvent event = isTaken ? MonitoringEvent::BranchRight : MonitoringEvent::BranchLeft;
+    if (!toolsFor(*site, event))
+        return;
+    JumpTargets targets = jumpTargetsAfter(callFrame->codeBlock(), site->offset, skipped);
+    RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, event, jsNumber(isTaken ? targets.taken : targets.notTaken))));
+}
+
+void frameIsBranching(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, bool isTaken)
+{
+    tellOfBranch(globalObject, callFrame, index, isTaken, 0);
+}
+
+// What comes after op_py_iter_next finds out whether there was anything, and then jumps if there was not.
+void frameIsBranchingInLoop(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, bool isExhausted)
+{
+    tellOfBranch(globalObject, callFrame, index, isExhausted, 1);
+}
+
+void frameIsJumping(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!stateOf(globalObject).isWatching)
+        return;
+    auto site = siteOf(globalObject, callFrame, index);
+    if (!site)
+        return;
+    finishPendingCall(globalObject, callFrame);
+    RETURN_IF_EXCEPTION(scope, void());
+    fireInstruction(*site);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (toolsFor(*site, MonitoringEvent::Jump))
+        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken))));
+}
+
+// code.co_branches(): where each jump that depends on something is, where it goes on to if it is not made, and where it goes if it is
+void forEachBranch(UnlinkedCodeBlock* codeBlock, const ScopedLambda<void(unsigned, unsigned, unsigned)>& function)
+{
+    for (const auto& instruction : codeBlock->instructions()) {
+        OpcodeID opcode = instruction->opcodeID();
+        if (opcode != op_py_branch && opcode != op_py_iter_next)
+            continue;
+        JumpTargets targets = jumpTargetsAfter(codeBlock, instruction.offset(), opcode == op_py_iter_next);
+        function(instruction.offset(), targets.notTaken, targets.taken);
+    }
 }
 
 void frameIsReturning(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, JSValue value)
@@ -468,13 +650,17 @@ void frameIsReturning(JSGlobalObject* globalObject, CallFrame* callFrame, Byteco
     auto site = siteOf(globalObject, callFrame, index);
     if (!site)
         return;
+    if (!finishPendingCall(globalObject, callFrame) || !fireInstruction(*site))
+        return;
     // Several `return` statements can share what does the returning, if there is a `finally` on the way out. What comes after one is on no line of its own, so the line is the last
     // that there was.
     PyFrame* frame = PyFrame::forCallFrameIfExists(globalObject->vm(), callFrame);
     if (frame)
         frame->setLineOverride(frame->lastLine());
-    // What the body of a class hands back is for what makes the class.
-    fireAtOffset(*site, MonitoringEvent::PyReturn, pythonInfoOfFrame(callFrame)->kind == CodeKind::Class ? jsUndefined() : value);
+    // The body of a class hands back the cell that __class__ is in, if anything in it wants that. Here it hands back the environment that has the variable.
+    if (pythonInfoOfFrame(callFrame)->kind == CodeKind::Class)
+        value = cellForClass(globalObject, value);
+    fireAtOffset(*site, MonitoringEvent::PyReturn, value);
     if (frame)
         frame->setLineOverride(-1);
 }
@@ -483,7 +669,8 @@ void frameIsYielding(JSGlobalObject* globalObject, CallFrame* callFrame, Bytecod
 {
     if (!stateOf(globalObject).isWatching)
         return;
-    if (auto site = siteOf(globalObject, callFrame, index))
+    auto site = siteOf(globalObject, callFrame, index);
+    if (site && finishPendingCall(globalObject, callFrame) && fireInstruction(*site))
         fireAtOffset(*site, MonitoringEvent::PyYield, value);
 }
 
@@ -549,7 +736,9 @@ Exception* tellOfException(VM& vm, CallFrame* callFrame, BytecodeIndex index, JS
         event = MonitoringEvent::PyUnwind;
         break;
     }
-    if (!toolsFor(*site, event))
+    PyFrame* existingFrame = PyFrame::forCallFrameIfExists(vm, callFrame);
+    bool hasPendingCall = existingFrame && existingFrame->pendingCallable();
+    if (!toolsFor(*site, event) && !hasPendingCall)
         return nullptr;
 
     // What is told is called from this frame, those that were beyond it being done with. What it raises is raised in place of what was being raised.
@@ -562,7 +751,9 @@ Exception* tellOfException(VM& vm, CallFrame* callFrame, BytecodeIndex index, JS
         PyFrame* frame = progress == ExceptionProgress::LeavesFrame ? PyFrame::forCallFrameIfExists(vm, callFrame) : nullptr;
         if (frame)
             frame->setLineOverride(frame->lastLine());
-        fireAtOffset(*site, event, thrown);
+        // It came out of what the frame was calling.
+        if (finishPendingCall(globalObject, callFrame, index))
+            fireAtOffset(*site, event, thrown);
         if (frame)
             frame->setLineOverride(-1);
         if (Exception* raised = scope.exception()) {
@@ -676,7 +867,6 @@ static void clearTool(JSGlobalObject* globalObject, unsigned tool)
     MonitoringState& state = stateOf(globalObject);
     for (auto& callback : state.callbacks[tool])
         callback.clear();
-    state.callbackIsForEitherBranch[tool] = 0;
     setEvents(globalObject, tool, 0);
     // What it asked for of code objects is forgotten when they are next looked at.
     ++state.toolVersions[tool];
@@ -747,14 +937,9 @@ PYTHON_NATIVE(monitoringRegisterCallback)
         previous = callbacks[left].get();
         setOrClear(vm, realm, callbacks[left], function);
         setOrClear(vm, realm, callbacks[right], function);
-        state.callbackIsForEitherBranch[*tool] = function ? 3 : 0;
     } else {
         previous = callbacks[event].get();
         setOrClear(vm, realm, callbacks[event], function);
-        if (event == left)
-            state.callbackIsForEitherBranch[*tool] &= ~1;
-        if (event == right)
-            state.callbackIsForEitherBranch[*tool] &= ~2;
     }
     return JSValue::encode(previous ? previous : jsUndefined());
 }
@@ -775,7 +960,8 @@ static std::optional<uint32_t> normalizeEvents(JSGlobalObject* globalObject, int
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t result = events;
-    if ((result & returnFromCEvents) && !(result & bit(MonitoringEvent::Call))) {
+    // All three or none of the two.
+    if ((result & returnFromCEvents) && (result & (returnFromCEvents | bit(MonitoringEvent::Call))) != (returnFromCEvents | bit(MonitoringEvent::Call))) {
         raiseValueError(globalObject, scope, "cannot set C_RETURN or C_RAISE events independently"_s);
         return std::nullopt;
     }

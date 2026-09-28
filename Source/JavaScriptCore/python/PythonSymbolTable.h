@@ -135,6 +135,7 @@ struct Block {
     Vector<const Identifier*> staticAttributes;
     // Whether there is an import statement in it, which goes by the globals of the code that it is in.
     bool hasImport { false };
+    bool hasClassDefinition { false }; // Which is made by what the builtins have as __build_class__.
     Block* annotationBlock { nullptr };
 
     struct Directive {

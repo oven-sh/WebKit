@@ -198,6 +198,7 @@ private:
         // What was not written is on no line. Where it is said to be from is for if it goes wrong.
         if (m_isArtificial)
             return;
+        m_lastMarked = node;
         bool isOnAnotherLine = node.line != m_lastMarkedLine;
         m_lastMarkedLine = node.line;
         // What follows is from the same place, having nothing to say otherwise.
@@ -405,14 +406,35 @@ private:
     {
         Reg truth = g.newTemporary();
         OpPyToBool::emit(&g, truth.get(), value);
-        g.emitJumpIfTrue(truth.get(), target);
+        emitBranchOn(truth.get(), target, true);
+    }
+
+    // A jump that was written, on what is true or false.
+    void emitBranchOn(RegisterID* condition, Label& target, bool jumpsIfTrue)
+    {
+        if (!m_isArtificial && !m_isNeverComeTo)
+            OpPyBranch::emit(&g, condition, jumpsIfTrue);
+        // The two are to be next to each other.
+        g.disablePeepholeOptimization();
+        if (jumpsIfTrue)
+            g.emitJumpIfTrue(condition, target);
+        else
+            g.emitJumpIfFalse(condition, target);
+    }
+
+    // One that depends on nothing, and goes forward.
+    void emitJump(Label& target)
+    {
+        if (!m_isArtificial && !m_isNeverComeTo)
+            OpPyJump::emit(&g);
+        g.emitJump(target);
     }
 
     void emitJumpIfFalse(RegisterID* value, Label& target)
     {
         Reg truth = g.newTemporary();
         OpPyToBool::emit(&g, truth.get(), value);
-        g.emitJumpIfFalse(truth.get(), target);
+        emitBranchOn(truth.get(), target, false);
     }
 
     // Jumps if the condition is (or is not) true, without making a value of `not`, `and` and `or`.
@@ -441,10 +463,8 @@ private:
             Reg value = emit(comparison->left);
             Reg isNone = g.newTemporary();
             g.emitIsUndefinedOrNull(isNone.get(), value.get());
-            if ((comparison->ops[0] == ComparisonOperator::Is) == jumpIfTrue)
-                g.emitJumpIfTrue(isNone.get(), target);
-            else
-                g.emitJumpIfFalse(isNone.get(), target);
+            markIfOnAnotherLine(*condition);
+            emitBranchOn(isNone.get(), target, (comparison->ops[0] == ComparisonOperator::Is) == jumpIfTrue);
             return;
         }
         Reg value = emit(condition);
@@ -713,6 +733,9 @@ private:
         OpcodeID last = g.lastOpcodeID();
         if (last != op_py_ret && last != op_ret && last != op_throw)
             noteConstant({ CodeDetails::Constant::Kind::None });
+        // It is on no line of its own, and is said to be where the last thing that was written is.
+        if (m_lastMarked.end)
+            g.emitExpressionInfo(JSTextPosition(m_lastMarked.start), JSTextPosition(m_lastMarked.start), JSTextPosition(m_lastMarked.end));
         g.emitReturn(none());
     }
 
@@ -860,7 +883,7 @@ private:
             Ref<Label> end = g.newLabel();
             emitBranch(node.test, otherwise.get(), false);
             emitInto(result.get(), node.body);
-            g.emitJump(end.get());
+            emitJump(end.get());
             emitLabel(otherwise.get());
             emitInto(result.get(), node.orElse);
             emitLabel(end.get());
@@ -1176,14 +1199,25 @@ private:
     RegisterID* marker() { return g.moveLinkTimeConstant(nullptr, LinkTimeConstant::pyBoundArgumentsMarker); }
 
     // With only the first so many of the arguments that there are registers for.
-    RegisterID* emitRawCall(RegisterID* dst, RegisterID* function, CallArguments& call, unsigned argumentCount, const Node& node)
+    // Whether it is a call that was written, of what is being called. If it is of something of the engine's that makes the call, that has been seen to.
+    enum class Told : bool { No, Yes };
+
+    RegisterID* emitRawCall(RegisterID* dst, RegisterID* function, CallArguments& call, unsigned argumentCount, const Node& node, Told told = Told::Yes)
     {
         Vector<Reg, CallFrame::headerSizeInRegisters> callFrame;
         for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
             callFrame.append(g.newTemporary());
         mark(node);
+        if (told == Told::Yes)
+            emitTellOfCall(function, argumentCount ? call.argumentRegister(0) : nullptr, argumentCount ? ToldArgument::First : ToldArgument::None);
         OpCall::emit(&g, dst, function, argumentCount + 1, call.stackOffset(), g.nextValueProfileIndex());
         return dst;
+    }
+
+    void emitTellOfCall(RegisterID* callee, RegisterID* argument, ToldArgument kind)
+    {
+        if (!m_isArtificial && !m_isNeverComeTo)
+            OpPyCall::emit(&g, callee, argument ? argument : callee, static_cast<unsigned>(kind));
     }
 
     // super() with no arguments means super(__class__, self), which only the compiler can know.
@@ -1307,7 +1341,10 @@ private:
                 emitInto(call.argumentRegister(i++), argument);
             for (Keyword* keyword : node.keywords)
                 emitInto(call.argumentRegister(i++), keyword->value);
-            return emitRawCall(destination(dst).get(), helper.get(), call, count + 2, node);
+            markIfOnAnotherLine(node);
+            // The first that is given, by name if none is given by position.
+            emitTellOfCall(function.get(), count ? call.argumentRegister(2) : nullptr, count ? ToldArgument::First : ToldArgument::None);
+            return emitRawCall(destination(dst).get(), helper.get(), call, count + 2, node, Told::No);
         }
 
         // callSpread(function, a list of the positional arguments, a dict of the keywords or None)
@@ -1333,7 +1370,9 @@ private:
         g.move(call.argumentRegister(0), function.get());
         g.move(call.argumentRegister(1), positional.get());
         g.move(call.argumentRegister(2), keywords.get());
-        return emitRawCall(destination(dst).get(), helper.get(), call, 3, node);
+        markIfOnAnotherLine(node);
+        emitTellOfCall(function.get(), positional.get(), ToldArgument::ListOfPositional);
+        return emitRawCall(destination(dst).get(), helper.get(), call, 3, node, Told::No);
     }
 
     // ---- Making functions
@@ -1715,7 +1754,7 @@ private:
 
     bool usesGlobals()
     {
-        if (!isFunctionLike() || m_block.hasImport)
+        if (!isFunctionLike() || m_block.hasImport || m_block.hasClassDefinition)
             return true;
         for (Symbol& symbol : m_block.symbols) {
             if (symbol.scope == NameScope::GlobalImplicit || symbol.scope == NameScope::GlobalExplicit)
@@ -2468,7 +2507,7 @@ private:
                 return;
             }
             Ref<Label> end = g.newLabel();
-            g.emitJump(end.get());
+            emitJump(end.get());
             emitLabel(otherwise.get());
             emit(node.orElse);
             emitLabel(end.get());
@@ -2513,7 +2552,7 @@ private:
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), scope->breakTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
-                g.emitJump(scope->breakTarget());
+                emitJump(scope->breakTarget());
             }
             return;
         }
@@ -2525,7 +2564,7 @@ private:
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), *scope->continueTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
-                g.emitJump(*scope->continueTarget());
+                emitJump(*scope->continueTarget());
             }
             return;
         }
@@ -2924,7 +2963,7 @@ private:
             if (matchCase.guard)
                 emitBranch(matchCase.guard, next.get(), false);
             emit(matchCase.body);
-            g.emitJump(end.get());
+            emitJump(end.get());
             emitLabel(next.get());
         }
         emitLabel(end.get());
@@ -3058,7 +3097,7 @@ private:
         Ref<Label> tryEndLabel = g.newEmittedLabel();
         g.popTry(tryData, tryEndLabel.get());
         otherwise();
-        g.emitJump(endLabel.get());
+        emitJump(endLabel.get());
 
         emitLabel(catchLabel.get());
         Reg exception = g.newTemporary();
@@ -3150,7 +3189,7 @@ private:
                         });
                     } else
                         emit(handler->body);
-                    g.emitJump(handled.get());
+                    emitJump(handled.get());
                     emitLabel(next.get());
                 }
                 // Nothing wanted it.
@@ -3327,7 +3366,27 @@ private:
                         emitRuntimeCall(nullptr, "dictUpdate"_s, { keywords.get(), value.get() }, *keyword);
                 }
             }
-            emitRuntimeCall(dst, "buildClass"_s, { body.get(), stringConstant(*node.name), bases.get(), keywords.get() }, node);
+            // It is whatever the builtins have by that name, and is called as anything is.
+            Reg function = g.newTemporary();
+            emitRuntimeCall(function.get(), "loadBuildClass"_s, { m_builtins.get() }, node);
+            Reg positional = g.newTemporary();
+            {
+                // One after the other, as the elements of a display are.
+                Vector<Reg, 8> first { g.newTemporary(), g.newTemporary() };
+                g.move(first[0].get(), body.get());
+                g.move(first[1].get(), stringConstant(*node.name));
+                emitNewList(positional.get(), first);
+            }
+            emitRuntimeCall(nullptr, "listExtend"_s, { positional.get(), bases.get(), marker() }, node);
+            Reg helper = g.newTemporary();
+            g.emitGetById(helper.get(), runtime(), Identifier::fromString(m_vm, "callSpread"_s));
+            CallArguments call(g, nullptr, 3);
+            g.emitLoad(call.thisRegister(), jsUndefined());
+            g.move(call.argumentRegister(0), function.get());
+            g.move(call.argumentRegister(1), positional.get());
+            g.move(call.argumentRegister(2), keywords.get());
+            emitTellOfCall(function.get(), positional.get(), ToldArgument::ListOfPositional);
+            emitRawCall(dst, helper.get(), call, 3, node, Told::No);
         }
     }
 
@@ -3924,6 +3983,7 @@ private:
     bool m_isInConstantDisplay { false };
     unsigned m_numberOfLines { 0 }; // How many times op_py_line has been emitted.
     unsigned m_comprehensionElementLine { 0 };
+    Node m_lastMarked;
     const Node* m_tupleThatIsUnpacked { nullptr };
     bool m_isArtificial { true }; // In what has to be done that nobody wrote, which is on no line. So it is until what was written begins.
     unsigned m_decoratorLine { 0 }; // Of the first decorator of the definition that is being made, if it has any.

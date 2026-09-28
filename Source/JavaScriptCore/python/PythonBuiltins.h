@@ -95,6 +95,7 @@ bool isCode(JSGlobalObject*, JSValue);
 Vector<Identifier> sortedFreeVariables(const FunctionInfo&); // In the order of co_freevars.
 void initializeCodeType(JSGlobalObject*);
 
+void forEachBranch(UnlinkedCodeBlock*, const ScopedLambda<void(unsigned offset, unsigned notTaken, unsigned taken)>&);
 void addMonitoring(JSGlobalObject*, JSObject* sys); // sys.monitoring, sys.settrace() and sys.setprofile(): PythonMonitoring.cpp
 JSObject* createSysModule(JSGlobalObject*);
 JSValue findOrLoadModule(JSGlobalObject*, const String& name);

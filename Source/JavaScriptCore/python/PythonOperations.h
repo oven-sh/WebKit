@@ -319,6 +319,8 @@ JSValue localsOfFrame(JSGlobalObject*, PyFrame*);
 CallFrame* callerOf(CallFrame*);
 // What is in a cell, which is empty if nothing is.
 JSValue contentsOfCell(JSValue cell);
+// The cell for __class__, from what the body of a class returned. None if there is none.
+JSValue cellForClass(JSGlobalObject*, JSValue returnedByBody);
 // Whether it is a generator whose code has CO_ITERABLE_COROUTINE, and so can be awaited.
 bool isIterableCoroutine(JSGlobalObject*, JSValue);
 void setContentsOfCell(VM&, JSValue cell, JSValue);
@@ -337,7 +339,13 @@ enum class LineKind : uint8_t {
     OfHandledException, // Nothing is told. The frame is back on the line that what is being handled was raised on, as it is when `with` lets an exception go on its way.
 };
 void frameIsAtLine(JSGlobalObject*, CallFrame*, BytecodeIndex, LineKind);
+void setTracesOpcodes(JSGlobalObject*, PyFrame*, bool); // Whether sys.settrace() is told of each instruction of the frame's code.
 int lineOfTracebackFor(JSGlobalObject*, JSValue exception, PyFrame*); // The line that an exception came to a frame on, or -1.
+enum class ToldArgument : uint8_t { None, First, ListOfPositional };
+void frameIsCalling(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue callable, JSValue argument, ToldArgument);
+void frameIsBranching(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isTaken);
+void frameIsBranchingInLoop(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isExhausted); // At op_py_iter_next.
+void frameIsJumping(JSGlobalObject*, CallFrame*, BytecodeIndex);
 void frameIsReturning(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
 void frameIsYielding(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
 // A generator that the frame was going through, or waiting on, has returned. To be called if VM::isPythonWatched().

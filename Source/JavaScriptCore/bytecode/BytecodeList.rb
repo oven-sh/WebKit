@@ -1467,6 +1467,24 @@ op :py_line,
         kind: unsigned,
     }
 
+# What comes before a call. `argumentKind` is a Python::ToldArgument, and says what `argument` is: nothing, the first argument, or a list of those given by position.
+op :py_call,
+    args: {
+        callee: VirtualRegister,
+        argument: VirtualRegister,
+        argumentKind: unsigned,
+    }
+
+# What comes before a jump that depends on `condition`, which is true or false. The jump is the next instruction, and is made if the condition is `jumpsIfTrue`.
+op :py_branch,
+    args: {
+        condition: VirtualRegister,
+        jumpsIfTrue: bool,
+    }
+
+# What comes before a jump forward that depends on nothing. The jump is the next instruction. One that goes back has op_py_line before it.
+op :py_jump
+
 # What comes before a generator is left because it yields.
 op :py_leave,
     args: {

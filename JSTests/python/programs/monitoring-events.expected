@@ -1,0 +1,188 @@
+frames simple
+    simple PY_START 0
+    py PY_START 0
+    py PY_RETURN 0 1
+    simple PY_RETURN 2 1
+frames generators
+    generators PY_START 0
+    gen PY_START 0
+    gen PY_YIELD 1 1
+    gen PY_RESUME 1
+    gen PY_YIELD 2 s
+    gen PY_RESUME 2
+    gen PY_RETURN 3 3
+    generators PY_RETURN 4 None
+frames throws
+    throws PY_START 0
+    gen PY_START 0
+    gen PY_YIELD 1 1
+    gen PY_THROW 1 ValueError('t',)
+    gen PY_UNWIND ValueError('t',)
+    gen PY_START 0
+    gen PY_YIELD 1 1
+    gen PY_THROW 1 GeneratorExit()
+    gen PY_UNWIND GeneratorExit()
+    throws PY_RETURN 7 None
+frames catches
+    catches PY_START 0
+    propagates PY_START 0
+    raises PY_START 0
+    raises PY_UNWIND KeyError('k',)
+    propagates PY_UNWIND KeyError('k',)
+    catches PY_RETURN 4 None
+frames delegates
+    delegates PY_START 0
+    outer PY_START 0
+    gen PY_START 0
+    gen PY_YIELD 1 1
+    outer PY_YIELD 1 1
+    outer PY_RESUME 1
+    gen PY_RESUME 1
+    gen PY_YIELD 2 None
+    outer PY_YIELD 1 None
+    outer PY_RESUME 1
+    gen PY_RESUME 2
+    gen PY_RETURN 3 3
+    outer PY_RETURN 2 3
+    delegates PY_RETURN 4 None
+errors catches
+    raises RAISE 1 KeyError('k',)
+    raises PY_UNWIND KeyError('k',)
+    propagates RAISE 1 KeyError('k',)
+    propagates PY_UNWIND KeyError('k',)
+    catches RAISE 2 KeyError('k',)
+    catches EXCEPTION_HANDLED KeyError('k',)
+errors bare
+    bare RAISE 3 ValueError('v',)
+    bare EXCEPTION_HANDLED ValueError('v',)
+    bare RERAISE ValueError('v',)
+    bare EXCEPTION_HANDLED ValueError('v',)
+    bare RERAISE ValueError('v',)
+    bare EXCEPTION_HANDLED ValueError('v',)
+errors named
+    named RAISE 2 ValueError('v',)
+    named EXCEPTION_HANDLED ValueError('v',)
+errors no_match
+    no_match RAISE 3 ValueError('v',)
+    no_match EXCEPTION_HANDLED ValueError('v',)
+    no_match RERAISE ValueError('v',)
+    no_match EXCEPTION_HANDLED ValueError('v',)
+    no_match RERAISE ValueError('v',)
+    no_match EXCEPTION_HANDLED ValueError('v',)
+errors iterators
+    __next__ RAISE 0 StopIteration()
+    __next__ PY_UNWIND StopIteration()
+    iterators RAISE 1 StopIteration()
+    iterators STOP_ITERATION 2 StopIteration(3,)
+errors delegates
+    outer STOP_ITERATION 1 StopIteration(3,)
+raised finallies
+    finallies RAISE 3 ValueError('v',)
+raised withs
+    withs RAISE 3 ValueError('v',)
+    withs RAISE 7 ValueError('w',)
+raised throws
+    gen PY_THROW 1 ValueError('t',)
+    gen RAISE 1 ValueError('t',)
+    gen PY_UNWIND ValueError('t',)
+    throws RAISE 3 ValueError('t',)
+    gen PY_THROW 1 GeneratorExit()
+    gen RAISE 1 GeneratorExit()
+    gen PY_UNWIND GeneratorExit()
+calls calls
+    calls CALL 1 py MISSING
+    calls CALL 2 py 1
+    calls CALL 3 len a
+    calls C_RETURN 3 len a
+    calls CALL 4 list.append [1]
+    calls C_RETURN 4 list.append [1]
+    calls CALL 5 list.append [1]
+    calls C_RETURN 5 list.append [1]
+    calls CALL 6 int 1
+    calls C_RETURN 6 int 1
+    calls CALL 7 M MISSING
+    calls C_RETURN 7 M MISSING
+    calls CALL 8 M MISSING
+    calls C_RETURN 8 M MISSING
+    calls CALL 8 M.__enter__ M
+    calls CALL 9 py 1
+    calls CALL 10 py 1
+    calls CALL 11 len a
+    calls C_RETURN 11 len a
+    calls CALL 12 print 
+    calls C_RETURN 12 print 
+    calls CALL 13 int x
+    calls C_RAISE 13 int x
+calls callable_objects
+    callable_objects CALL 1 __build_class__ callable_objects.<locals>.K
+    callable_objects C_RETURN 1 __build_class__ callable_objects.<locals>.K
+    callable_objects CALL 3 callable_objects.<locals>.K MISSING
+    callable_objects C_RETURN 3 callable_objects.<locals>.K MISSING
+    callable_objects CALL 3 K 1
+    callable_objects C_RETURN 3 K 1
+    callable_objects CALL 4 callable_objects.<locals>.<lambda> MISSING
+    callable_objects CALL 5 M MISSING
+    callable_objects C_RETURN 5 M MISSING
+    callable_objects CALL 6 M.__enter__ M
+calls generators
+    generators CALL 1 gen MISSING
+    generators CALL 2 next gen
+    generators C_RETURN 2 next gen
+    generators CALL 3 generator.send gen
+    generators C_RETURN 3 generator.send gen
+call only simple
+    simple CALL 1 py 1
+branches branches
+    branches BRANCH_RIGHT 1 4
+    branches BRANCH_RIGHT 5 5
+    branches BRANCH_RIGHT 6 8
+    branches BRANCH_LEFT 8 8
+    branches BRANCH_LEFT 8 8
+    branches BRANCH_RIGHT 8 10
+    branches BRANCH_RIGHT 10 10
+    branches BRANCH_LEFT 11 11
+    branches BRANCH_RIGHT 12 14
+    branches BRANCH_LEFT 14 15
+branches branches
+    branches BRANCH_LEFT 1 2
+    branches BRANCH_LEFT 5 5
+    branches BRANCH_LEFT 6 7
+    branches BRANCH_LEFT 6 7
+    branches BRANCH_RIGHT 6 8
+    branches BRANCH_LEFT 8 8
+    branches BRANCH_LEFT 8 8
+    branches BRANCH_RIGHT 8 10
+    branches BRANCH_RIGHT 10 10
+    branches BRANCH_LEFT 11 11
+    branches BRANCH_RIGHT 12 14
+    branches BRANCH_LEFT 14 15
+lines lines
+    lines LINE 1
+    lines LINE 2
+    lines LINE 3
+    lines LINE 2
+    lines LINE 3
+    lines LINE 2
+    lines LINE 4
+    lines LINE 5
+everything catches
+    catches PY_START 0
+    catches LINE 1
+    catches LINE 2
+    catches CALL 2 propagates MISSING
+    propagates PY_START 0
+    propagates LINE 1
+    propagates CALL 1 raises MISSING
+    raises PY_START 0
+    raises LINE 1
+    raises CALL 1 KeyError k
+    raises C_RETURN 1 KeyError k
+    raises RAISE 1 KeyError('k',)
+    raises PY_UNWIND KeyError('k',)
+    propagates RAISE 1 KeyError('k',)
+    propagates PY_UNWIND KeyError('k',)
+    catches RAISE 2 KeyError('k',)
+    catches EXCEPTION_HANDLED KeyError('k',)
+    catches LINE 3
+    catches LINE 4
+    catches PY_RETURN 4 None

@@ -100,6 +100,7 @@ public:
 
     PyFrame* back(VM&);
     unsigned line(VM&);
+    unsigned lineAt(VM&, BytecodeIndex); // The line that some instruction of its code is from.
     JSValue namespaceArgument(VM&, CallFrame*);
     // Where it has got to in the bytecode. Nothing if it has not started.
     std::optional<BytecodeIndex> bytecodeIndex(VM&);
@@ -114,6 +115,24 @@ public:
     void setLastLine(int line) { m_lastLine = line; }
     // What f_lineno is to be for the time being, or -1 for it to be worked out.
     void setLineOverride(int line) { m_lineOverride = line; }
+    // A call that has been told of, of what is not written in Python, and where it was made. When it is over that is told of too, which is done at the next thing that is told of the
+    // frame, nothing being told of it in between.
+    JSValue pendingCallable() const { return m_pendingCallable.get(); }
+    JSValue pendingArgument() const { return m_pendingArgument.get(); }
+    unsigned pendingCallOffset() const { return m_pendingCallOffset; }
+    uint8_t pendingCallTools() const { return m_pendingCallTools; } // Who was told of it.
+    void setPendingCall(VM& vm, JSValue callable, JSValue argument, unsigned offset, uint8_t tools)
+    {
+        m_pendingCallTools = tools;
+        m_pendingCallable.set(vm, this, callable);
+        m_pendingArgument.set(vm, this, argument);
+        m_pendingCallOffset = offset;
+    }
+    void clearPendingCall()
+    {
+        m_pendingCallable.clear();
+        m_pendingArgument.clear();
+    }
     bool tracesLines() const { return m_tracesLines; }
     void setTracesLines(bool value) { m_tracesLines = value; }
     bool tracesOpcodes() const { return m_tracesOpcodes; }
@@ -145,11 +164,15 @@ private:
     WriteBarrier<Unknown> m_namespace; // Once it is over.
     WriteBarrier<PyDict> m_extraLocals;
     WriteBarrier<Unknown> m_trace;
+    WriteBarrier<Unknown> m_pendingCallable;
+    WriteBarrier<Unknown> m_pendingArgument;
     CallFrame* m_callFrame { nullptr }; // While it is on the stack, unless it is a generator's, which is looked for when it is wanted.
     BytecodeIndex m_bytecodeIndex; // Once it is over.
     unsigned m_variableCount;
     int m_lastLine { -1 };
     int m_lineOverride { -1 };
+    unsigned m_pendingCallOffset { 0 };
+    uint8_t m_pendingCallTools { 0 };
     bool m_isOver { false };
     bool m_tracesLines { true };
     bool m_tracesOpcodes { false };

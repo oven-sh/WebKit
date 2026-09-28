@@ -1,0 +1,61 @@
+module => ('module', 'sys.monitoring', ['COVERAGE_ID', 'DEBUGGER_ID', 'DISABLE', 'MISSING', 'OPTIMIZER_ID', 'PROFILER_ID', '_all_events', 'clear_tool_id', 'events', 'free_tool_id', 'get_events', 'get_local_events', 'get_tool', 'register_callback', 'restart_events', 'set_events', 'set_local_events', 'use_tool_id'])
+events => [(0, 'NO_EVENTS'), (1, 'PY_START'), (2, 'PY_RESUME'), (4, 'PY_RETURN'), (8, 'PY_YIELD'), (16, 'CALL'), (32, 'LINE'), (64, 'INSTRUCTION'), (128, 'JUMP'), (256, 'BRANCH_LEFT'), (512, 'BRANCH_RIGHT'), (1024, 'STOP_ITERATION'), (2048, 'RAISE'), (4096, 'EXCEPTION_HANDLED'), (8192, 'PY_UNWIND'), (16384, 'PY_THROW'), (32768, 'RERAISE'), (65536, 'C_RETURN'), (131072, 'C_RAISE'), (262144, 'BRANCH')]
+ids => (0, 1, 2, 5)
+sentinels => ('object', 'object', False, 'SimpleNamespace')
+no tool => [None, None, None, None, None, None]
+use => (None, 'one', 'ValueError: tool 1 is already in use', None, None, None, 'two', None)
+tool -1 => ('ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)', 'ValueError: invalid tool -1 (must be between 0 and 5)')
+tool 6 => ('ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)', 'ValueError: invalid tool 6 (must be between 0 and 5)')
+tool 7 => ('ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)', 'ValueError: invalid tool 7 (must be between 0 and 5)')
+tool 8 => ('ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)', 'ValueError: invalid tool 8 (must be between 0 and 5)')
+tool 100 => ('ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)', 'ValueError: invalid tool 100 (must be between 0 and 5)')
+tool 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer")
+tool None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer")
+tool 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer")
+tool 1099511627776 => ('OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int')
+name => ['ValueError: tool name must be a str', 'ValueError: tool name must be a str', 'ValueError: tool name must be a str']
+free what is free => (None, None)
+not in use => ('ValueError: tool 3 is not in use', 'ValueError: tool 3 is not in use', 0, 0, None)
+set => [0, 32, 5, 16, 16, 768, 256, 800, 64512, 65535]
+set 65536 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set 131072 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set 65568 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set 65552 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set 131088 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set -1 !! ValueError invalid event set 0xffffffff
+set 524288 !! ValueError invalid event set 0x80000
+set 33554432 !! ValueError invalid event set 0x2000000
+set 'a' !! TypeError 'str' object cannot be interpreted as an integer
+set None !! TypeError 'NoneType' object cannot be interpreted as an integer
+set 1099511627776 !! OverflowError Python int too large to convert to C int
+_all_events => ({}, None, {'CALL': 1, 'LINE': 1}, None, {})
+set local => [0, 32, 5, 16, 768, 1024, 2047]
+set local 2048 !! ValueError invalid local event set 0x800
+set local 8192 !! ValueError invalid local event set 0x2000
+set local 65536 !! ValueError cannot set C_RETURN or C_RAISE events independently
+set local 2048 !! ValueError invalid local event set 0x800
+set local 524288 !! ValueError invalid local event set 0x80000
+set local -1 !! ValueError invalid local event set 0xfff8ffff
+set local 'a' !! TypeError 'str' object cannot be interpreted as an integer
+not code => [('TypeError: code must be a code object', 'TypeError: code must be a code object'), ('TypeError: code must be a code object', 'TypeError: code must be a code object'), ('TypeError: code must be a code object', 'TypeError: code must be a code object')]
+order of checks => ('TypeError: code must be a code object', 'TypeError: code must be a code object', "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: invalid tool 9 (must be between 0 and 5)', "TypeError: 'str' object cannot be interpreted as an integer")
+register => (None, True, True, None)
+register 0 !! ValueError The callback can only be set for one event at a time
+register 48 !! ValueError The callback can only be set for one event at a time
+register 524288 !! ValueError invalid event 524288
+register 1073741824 !! ValueError invalid event 1073741824
+register -1 !! ValueError The callback can only be set for one event at a time
+register 'a' !! TypeError 'str' object cannot be interpreted as an integer
+register each => [(None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True), (None, True)]
+branch and its two => (None, True, True, None)
+not callable => (None, 5)
+clear => (None, None, None, None, 't', 0, 0, None)
+free => (None, None, None, None, 0, None, None, 0)
+restart => None
+wrong numbers => ['TypeError: use_tool_id expected 2 arguments, got 0', 'TypeError: use_tool_id expected 2 arguments, got 1', 'TypeError: sys.monitoring.get_tool() takes exactly one argument (0 given)', 'TypeError: set_events expected 2 arguments, got 1', 'TypeError: register_callback expected 3 arguments, got 2', 'TypeError: sys.monitoring.restart_events() takes no arguments (1 given)', 'TypeError: get_local_events expected 2 arguments, got 1', 'TypeError: sys.monitoring.use_tool_id() takes no keyword arguments']
+audited => (None, True, None, None, [('sys.monitoring.register_callback', 1), ('sys.monitoring.register_callback', 1), ('sys.settrace', 0), ('sys.setprofile', 0)])
+get => (None, None)
+set and get => (None, True, None, None, None, True, None, None)
+tools 6 and 7 are not seen => (None, None, {'PY_START': 192, 'PY_RESUME': 192, 'PY_RETURN': 192, 'PY_YIELD': 192, 'CALL': 64, 'LINE': 128, 'JUMP': 128, 'STOP_ITERATION': 128, 'RAISE': 128, 'PY_UNWIND': 192, 'PY_THROW': 192}, [None, None, None, None, None, None], None, None, {})
+not callable => (None, 5, None)
+nothing => ('TypeError: sys.settrace() takes exactly one argument (0 given)', 'TypeError: sys.setprofile() takes exactly one argument (0 given)', 'TypeError: sys.gettrace() takes no arguments (1 given)')

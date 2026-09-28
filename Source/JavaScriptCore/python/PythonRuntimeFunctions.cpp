@@ -1042,6 +1042,16 @@ PYTHON_RUNTIME_FUNCTION(displayHook)
 
 // ---- Classes and modules
 
+// LOAD_BUILD_CLASS
+PYTHON_RUNTIME_FUNCTION(loadBuildClass)
+{
+    PROLOGUE();
+    JSValue function = getStoredAttribute(vm, asObject(argument(0)), Identifier::fromString(vm, "__build_class__"_s));
+    if (!function)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NameError, "__build_class__ not found"_s));
+    return JSValue::encode(function);
+}
+
 PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
 {
     PROLOGUE();
@@ -1157,6 +1167,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("yieldFromStep"_s, yieldFromStep);
     add("takeReturnValue"_s, takeReturnValue);
     add("newCoroutine"_s, runtimeNewCoroutine);
+    add("loadBuildClass"_s, loadBuildClass);
     add("cellGet"_s, runtimeCellGet);
     add("cellSet"_s, runtimeCellSet);
     add("wrapAsyncYield"_s, runtimeWrapAsyncYield);

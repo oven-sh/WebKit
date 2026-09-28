@@ -2707,6 +2707,25 @@ llintOp(op_py_line, OpPyLine, macro (size, get, dispatch)
 end)
 
 
+macro pyCheckpoint(opcodeName, opcodeStruct, slowPath)
+    llintOp(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch)
+        loadp CodeBlock[cfr], t0
+        loadp CodeBlock::m_vm[t0], t0
+        loadi VM::m_pythonLimitUnlessWatched[t0], t1
+        btiz t1, .pyCheckpointSlow
+        dispatch()
+
+    .pyCheckpointSlow:
+        callSlowPath(slowPath)
+        dispatch()
+    end)
+end
+
+pyCheckpoint(py_call, OpPyCall, _slow_path_py_call)
+pyCheckpoint(py_branch, OpPyBranch, _slow_path_py_branch)
+pyCheckpoint(py_jump, OpPyJump, _slow_path_py_jump)
+
+
 llintOp(op_py_leave, OpPyLeave, macro (size, get, dispatch)
     loadp CodeBlock[cfr], t0
     loadp CodeBlock::m_vm[t0], t0

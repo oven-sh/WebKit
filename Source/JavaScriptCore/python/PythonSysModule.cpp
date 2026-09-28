@@ -93,7 +93,15 @@ bool auditSlow(JSGlobalObject* globalObject, ASCIILiteral event, const ArgList& 
     for (unsigned i = 0; i < hooks->length(); ++i) {
         JSValue hook = listGet(globalObject, hooks, i);
         RETURN_IF_EXCEPTION(scope, false);
+        // Nothing is told of what a hook does, by sys.settrace() and its like, unless the hook says that it may be.
+        JSValue canBeTraced = getAttributeIfPresent(globalObject, hook, Identifier::fromString(vm, "__cantrace__"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        bool isTraced = canBeTraced && isTrue(globalObject, canBeTraced);
+        RETURN_IF_EXCEPTION(scope, false);
+        unsigned& callbackDepth = globalObject->pyRealm()->monitoring().callbackDepth;
+        callbackDepth += !isTraced;
         call(globalObject, hook, name, tuple);
+        callbackDepth -= !isTraced;
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
@@ -606,6 +614,8 @@ PYTHON_NATIVE(sysCallTracing)
     MarkedArgumentBuffer arguments;
     for (auto& argument : asTuple(args[1])->span())
         arguments.append(argument.get());
+    // What is called is told of, though this be called by what is being told of something.
+    SetForScope callbackDepth(realm->monitoring().callbackDepth, 0u);
     RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, args[0], arguments)));
 }
 

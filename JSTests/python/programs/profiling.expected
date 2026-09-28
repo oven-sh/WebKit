@@ -1,0 +1,260 @@
+python_calls
+    python_calls call 0 None
+    py call 0 None
+    py return 0 0
+    py call 0 None
+    py return 0 1
+    python_calls return 2 1
+c_calls
+    c_calls call 0 None
+    c_calls c_call 1 len
+    c_calls c_return 1 len
+    c_calls c_call 2 abs
+    c_calls c_return 2 abs
+    c_calls c_call 3 max
+    c_calls c_return 3 max
+    c_calls return 3 2
+c_methods
+    c_methods call 0 None
+    c_methods c_call 2 list.append
+    c_methods c_return 2 list.append
+    c_methods c_call 3 str.upper
+    c_methods c_return 3 str.upper
+    c_methods c_call 4 dict.get
+    c_methods c_return 4 dict.get
+    c_methods c_call 5 list.pop
+    c_methods c_return 5 list.pop
+    c_methods return 5 1
+unbound
+    unbound call 0 None
+    unbound c_call 1 list.append
+    unbound c_return 1 list.append
+    unbound c_call 2 str.upper
+    unbound c_return 2 str.upper
+    unbound c_call 3 dict.get
+    unbound c_return 3 dict.get
+    unbound return 3 None
+classes
+    classes call 0 None
+    __init__ call 0 None
+    __init__ return 0 None
+    classes return 5 None
+methods
+    methods call 0 None
+    __init__ call 0 None
+    __init__ return 0 None
+    m call 0 None
+    m return 0 1
+    m call 0 None
+    m return 0 1
+    __call__ call 0 None
+    __call__ return 0 2
+    s call 0 None
+    s return 1 5
+    k call 0 None
+    k return 1 6
+    k call 0 None
+    k return 1 6
+    m call 0 None
+    m return 0 1
+    methods return 9 None
+special
+    special call 0 None
+    __init__ call 0 None
+    __init__ return 0 None
+    special c_call 2 len
+    __len__ call 0 None
+    __len__ return 0 3
+    special c_return 2 len
+    __add__ call 0 None
+    __add__ return 0 4
+    p call 0 None
+    p return 1 7
+    special return 4 None
+c_raises
+    c_raises call 0 None
+    c_raises c_call 3 list.pop
+    c_raises c_exception 3 list.pop
+    c_raises c_call 5 len
+    c_raises c_exception 5 len
+    c_raises return 6 None
+c_raises_out
+    c_raises_out call 0 None
+    c_raises_out return 1 None
+nested_c
+    nested_c call 0 None
+    nested_c c_call 1 abs
+    nested_c c_return 1 abs
+    nested_c c_call 1 len
+    nested_c c_return 1 len
+    nested_c return 1 1
+c_calls_python
+    c_calls_python call 0 None
+    py call 0 None
+    py return 0 1
+    c_calls_python c_call 2 sorted
+    py call 0 None
+    py return 0 1
+    c_calls_python c_return 2 sorted
+    c_calls_python c_call 3 max
+    py call 0 None
+    py return 0 1
+    c_calls_python c_return 3 max
+    c_calls_python return 3 1
+keywords
+    keywords call 0 None
+    py call 0 None
+    py return 0 1
+    keywords c_call 3 sorted
+    keywords c_return 3 sorted
+    keywords return 4 None
+stars
+    stars call 0 None
+    py call 0 None
+    py return 0 1
+    py call 0 None
+    py return 0 1
+    stars c_call 4 len
+    stars c_return 4 len
+    stars c_call 5 max
+    stars c_return 5 max
+    stars c_call 6 print
+    stars c_return 6 print
+    stars return 6 None
+no_args
+    no_args call 0 None
+    no_args c_call 2 globals
+    no_args c_return 2 globals
+    no_args c_call 3 locals
+    no_args c_return 3 locals
+    no_args return 3 None
+generators
+    generators call 0 None
+    generators c_call 2 next
+    gen call 0 None
+    gen return 1 1
+    generators c_return 2 next
+    gen call 1 None
+    gen return 2 2
+    gen call 2 None
+    gen return 2 None
+    gen call 0 None
+    gen return 1 1
+    gen call 1 None
+    gen return 2 2
+    gen call 2 None
+    gen return 2 None
+    generators return 4 None
+gen_methods
+    gen_methods call 0 None
+    gen_methods c_call 2 generator.send
+    gen call 0 None
+    gen return 1 1
+    gen_methods c_return 2 generator.send
+    gen_methods c_call 3 generator.close
+    gen call 1 None
+    gen return 1 None
+    gen_methods c_return 3 generator.close
+    gen_methods c_call 5 generator.throw
+    gen call 0 None
+    gen return 0 None
+    gen_methods c_exception 5 generator.throw
+    gen_methods return 6 None
+comprehension
+    comprehension call 0 None
+    comprehension c_call 1 len
+    comprehension c_return 1 len
+    comprehension c_call 1 len
+    comprehension c_return 1 len
+    comprehension return 1 [1, 1]
+lambdas
+    lambdas call 0 None
+    <lambda> call 0 None
+    <lambda> c_call 0 len
+    <lambda> c_return 0 len
+    <lambda> return 0 1
+    lambdas return 1 1
+decorators
+    decorators call 0 None
+    py call 0 None
+    py return 0 decorators.<locals>.g
+    decorators return 4 None
+with_block
+    with_block call 0 None
+    __enter__ call 0 None
+    __enter__ return 0 M
+    __exit__ call 0 None
+    __exit__ return 0 False
+    with_block return 1 None
+builds_class
+    builds_class call 0 None
+    builds_class c_call 1 __build_class__
+    K call 0 None
+    K return 0 None
+    builds_class c_return 1 __build_class__
+    builds_class return 2 builds_class.<locals>.K
+imports
+    imports call 0 None
+    imports return 1 None
+isinstance_etc
+    isinstance_etc call 0 None
+    isinstance_etc c_call 1 isinstance
+    isinstance_etc c_return 1 isinstance
+    isinstance_etc c_call 2 getattr
+    isinstance_etc c_return 2 getattr
+    isinstance_etc c_call 3 hasattr
+    isinstance_etc c_return 3 hasattr
+    isinstance_etc c_call 4 repr
+    isinstance_etc c_return 4 repr
+    isinstance_etc c_call 5 print
+    isinstance_etc c_return 5 print
+    isinstance_etc return 5 None
+raising_python
+    raising_python call 0 None
+    r call 0 None
+    r return 0 None
+    raising_python return 3 None
+in_expressions
+    in_expressions call 0 None
+    in_expressions c_call 1 len
+    in_expressions c_return 1 len
+    in_expressions c_call 1 len
+    in_expressions c_return 1 len
+    in_expressions c_call 2 len
+    in_expressions c_return 2 len
+    in_expressions c_call 2 abs
+    in_expressions c_return 2 abs
+    in_expressions c_call 3 len
+    in_expressions c_return 3 len
+    in_expressions return 3 2
+chained_methods
+    chained_methods call 0 None
+    chained_methods c_call 1 str.strip
+    chained_methods c_return 1 str.strip
+    chained_methods c_call 1 str.upper
+    chained_methods c_return 1 str.upper
+    chained_methods c_call 1 str.lower
+    chained_methods c_return 1 str.lower
+    chained_methods return 1 a
+super_calls
+    super_calls call 0 None
+    super_calls c_call 1 __build_class__
+    A call 0 None
+    A return 1 None
+    super_calls c_return 1 __build_class__
+    super_calls c_call 3 __build_class__
+    B call 0 None
+    B return 1 cell
+    super_calls c_return 3 __build_class__
+    f call 0 None
+    f call 0 None
+    f return 0 1
+    f return 0 1
+    super_calls return 5 1
+coroutines
+    coroutines call 0 None
+    coroutines c_call 2 coroutine.send
+    co call 0 None
+    co return 0 1
+    coroutines c_exception 2 coroutine.send
+    coroutines return 3 None

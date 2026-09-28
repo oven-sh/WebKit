@@ -72,6 +72,17 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner)
     return &variableOfCell(cell);
 }
 
+JSValue cellForClass(JSGlobalObject* globalObject, JSValue returnedByBody)
+{
+    auto* scope = dynamicDowncast<JSLexicalEnvironment>(returnedByBody);
+    if (!scope)
+        return jsUndefined();
+    SymbolTableEntry::Fast entry = scope->symbolTable()->get(globalObject->vm().pythonNames().dunder_class.impl());
+    if (entry.isNull())
+        return jsUndefined();
+    return PyNativeObject::create(globalObject, BuiltinType::Cell, scope, jsNumber(entry.scopeOffset().offset()));
+}
+
 JSValue contentsOfCell(JSValue cell)
 {
     return variableOfCell(cell).get();

@@ -460,6 +460,7 @@ private:
         }
         if (!visit(node.bases) || !checkKeywords(node.keywords) || !visit(node.keywords))
             return false;
+        m_current->hasClassDefinition = true;
         if (!enterBlock(*node.name, BlockType::Class, &node, node))
             return false;
         m_private = node.name;

@@ -1863,6 +1863,29 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_line)
     END();
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_call)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyCall>();
+    Python::frameIsCalling(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), GET_C(bytecode.m_callee).jsValue(), GET_C(bytecode.m_argument).jsValue(), static_cast<Python::ToldArgument>(bytecode.m_argumentKind));
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_branch)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyBranch>();
+    Python::frameIsBranching(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), GET_C(bytecode.m_condition).jsValue().isTrue() == bytecode.m_jumpsIfTrue);
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_jump)
+{
+    BEGIN();
+    Python::frameIsJumping(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)));
+    END();
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_leave)
 {
     BEGIN();
@@ -1911,13 +1934,17 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_iter_next)
         Python::forgetCaughtStopIteration(globalObject);
     JSValue returnedByGenerator;
     JSValue result = Python::iteratorNext(globalObject, GET_C(bytecode.m_iterator).jsValue(), &returnedByGenerator);
-    if (!result && vm.isPythonWatched()) [[unlikely]] {
+    if (vm.isPythonWatched()) [[unlikely]] {
         CHECK_EXCEPTION();
         BytecodeIndex index(codeBlock->bytecodeOffset(pc));
-        if (returnedByGenerator)
-            Python::generatorHasReturnedTo(globalObject, callFrame, index, returnedByGenerator);
-        else
-            Python::tellOfCaughtStopIteration(globalObject, callFrame, index);
+        if (!result) {
+            if (returnedByGenerator)
+                Python::generatorHasReturnedTo(globalObject, callFrame, index, returnedByGenerator);
+            else
+                Python::tellOfCaughtStopIteration(globalObject, callFrame, index);
+            CHECK_EXCEPTION();
+        }
+        Python::frameIsBranchingInLoop(globalObject, callFrame, index, !result);
     }
     RETURN_PROFILED(result);
 }

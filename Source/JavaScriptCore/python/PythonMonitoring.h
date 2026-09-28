@@ -78,11 +78,18 @@ struct CodeMonitor {
     std::array<uint8_t, numberOfLocalMonitoringEvents> tools { };
     // What MonitoringState::toolVersions had when each tool last asked. If it has moved on, the tool has been cleared since and asks for nothing.
     std::array<uint32_t, numberOfMonitoringTools> toolVersions { };
-    // Tools that have said of an event at a place that they want no more of it, by returning sys.monitoring.DISABLE. It holds until sys.monitoring.restart_events().
-    UncheckedKeyHashMap<uint64_t, uint8_t> disabledTools;
+    // For each event, by where in the code plus one: the tools that have said that they want no more of it there, by returning sys.monitoring.DISABLE. It holds until
+    // sys.monitoring.restart_events(), or until the tool stops asking for the event and asks for it again.
+    std::array<UncheckedKeyHashMap<unsigned, uint8_t>, numberOfLocalMonitoringEvents> disabledTools;
     uint32_t restartVersion { 0 };
+    // What MonitoringState::timesAskedFor had when what a tool has disabled was last looked at.
+    std::array<std::array<uint32_t, numberOfLocalMonitoringEvents>, numberOfMonitoringTools> timesAskedFor { };
 
-    static uint64_t keyFor(unsigned offset, MonitoringEvent event) { return (static_cast<uint64_t>(offset) << 8 | static_cast<uint8_t>(event)) + 1; }
+    void forgetDisabled(unsigned tool, unsigned event)
+    {
+        for (auto& tools : disabledTools[event].values())
+            tools &= ~(1u << tool);
+    }
 };
 
 // What a realm has, sys being a realm's.
@@ -90,11 +97,11 @@ struct MonitoringState {
     // Which tools are told of each event, wherever it happens.
     std::array<uint8_t, numberOfUngroupedMonitoringEvents> tools { };
     WriteBarrier<Unknown> callbacks[numberOfMonitoringTools][numberOfMonitoringEvents];
-    // Whether what a tool has for BRANCH_LEFT (1) and BRANCH_RIGHT (2) was registered for BRANCH, which is deprecated. Then to disable one is to disable both.
-    std::array<uint8_t, numberOfMonitoringTools> callbackIsForEitherBranch { };
     WriteBarrier<Unknown> toolNames[numberOfMonitoringTools];
     std::array<uint32_t, numberOfMonitoringTools> toolVersions { };
     uint32_t restartVersion { 1 };
+    // How many times each tool has begun to ask for each event, wherever it happens.
+    std::array<std::array<uint32_t, numberOfLocalMonitoringEvents>, numberOfMonitoringTools> timesAskedFor { };
     // Nothing is told of what is done by what is being told.
     unsigned callbackDepth { 0 };
     WriteBarrier<Unknown> traceFunction;

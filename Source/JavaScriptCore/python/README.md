@@ -87,6 +87,38 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
 
+### Being told of what is run
+
+`sys.monitoring` (PEP 669), and `sys.settrace()` and `sys.setprofile()`, which are made out of it as in CPython's `legacy_tracing.c`. It is all in `PythonMonitoring.cpp`.
+
+**There is one version of the code, which has in it a place for each thing that can be told of.** Each does nothing but look at one word of the VM's, as `op_check_traps` does.
+
+| | |
+|---|---|
+| `op_py_enter` | what a piece of code begins with, and a generator each time it is resumed: `PY_START`, `PY_RESUME`, `PY_THROW` |
+| `op_py_line` | the beginning of a line: `LINE`. Before a jump back, `JUMP` too |
+| `op_py_call` | before a call: `CALL` |
+| `op_py_branch` | before a jump that depends on something, which it is given: `BRANCH_LEFT`, `BRANCH_RIGHT` |
+| `op_py_jump` | before a jump forward that depends on nothing: `JUMP` |
+| `op_py_leave`, `op_py_ret` | before a yield, and the return: `PY_YIELD`, `PY_RETURN` |
+| the unwinder | `RAISE`, `RERAISE`, `EXCEPTION_HANDLED`, `PY_UNWIND` |
+| `op_py_iter_next`, `yield from` | which are C++ already: `STOP_ITERATION`, and the branch of a `for` |
+
+- **Why not two versions, one with the places in it, as the debugger has?** They would have two sets of offsets, where `co_lines()`, `co_branches()` and what is told have to agree. And a frame
+  that is running has to be told of at once: `pdb.set_trace()` sets `f_trace` on the frames that it was called from, and expects to hear of the next line of each.
+- **How deep.** `op_py_enter` counts how deep in Python's calls the thread is (`VM::m_pythonDepth`), and `op_py_ret`, `op_py_leave` and the unwinder count down. Beyond
+  `VM::m_pythonLimitUnlessWatched` it takes the slow path, which raises `RecursionError`. That word is 0 while anything is to be told, so the one comparison finds that too.
+- **A line is told of if the frame was last on some other**, as in CPython. So there is an `op_py_line` wherever the line changes as the code is written out, and wherever it can be jumped to. The frame
+  object has the line that it was last on.
+- **`C_RETURN` and `C_RAISE` have no place of their own.** The frame remembers the call that it was told to be making, and its end is told of at the next thing that is told of the frame, nothing being told of
+  it in between. If that is the unwinder, it came out of the call if the frame is at the call.
+- **What is told by the unwinder is called with the exception set aside**, as the debugger's hooks are, and from the frame that it is told of. What it raises is what is being thrown from there on.
+- `INSTRUCTION` is told at each of these places. What the engine runs is its own business.
+- How many times an exception is caught and sent on by what nobody wrote is not what it is in CPython, which wraps every generator in a handler, for one.
+
+What it costs when nothing is being told, for each time round: nothing to 2% for a loop or a branch, 1ns of 10 for a call in Baseline and 2.6ns of 23 in the interpreter, and for a step of a generator nothing
+in Baseline and 9ns of 51 in the interpreter. The DFG and the FTL can have a watchpoint.
+
 ### Code objects
 
 A code object is a `FunctionExecutable`: a piece of source, and what has to be known to compile it that the source does not say (`FunctionInfo`). Instructions are made from

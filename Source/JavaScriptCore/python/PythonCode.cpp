@@ -339,8 +339,13 @@ PYTHON_NATIVE(codePositions)
 // code.co_branches()
 PYTHON_NATIVE(codeBranches)
 {
-    // FIXME: It goes with the BRANCH events of sys.monitoring, of which there are none yet.
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::CodeLines, globalObject->pyRealm()->emptyTuple()));
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    MarkedArgumentBuffer branches;
+    forEachBranch(compiledCodeOf(vm, executableOf(args[0])).codeBlock, [&] (unsigned offset, unsigned notTaken, unsigned taken) {
+        branches.append(PyTuple::create(globalObject, { jsNumber(offset), jsNumber(notTaken), jsNumber(taken) }));
+    });
+    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::CodeLines, PyTuple::createFromArguments(globalObject, branches)));
 }
 
 // code._varname_from_oparg(oparg): the name of a local variable, a cell or a free variable, by where it comes among all of them

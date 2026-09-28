@@ -80,6 +80,8 @@ void PyFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_namespace);
     visitor.append(thisObject->m_extraLocals);
     visitor.append(thisObject->m_trace);
+    visitor.append(thisObject->m_pendingCallable);
+    visitor.append(thisObject->m_pendingArgument);
     visitor.appendValues(thisObject->variables(), thisObject->m_variableCount);
 }
 
@@ -331,8 +333,15 @@ unsigned PyFrame::line(VM& vm)
     if (m_lineOverride >= 0)
         return m_lineOverride;
     auto index = bytecodeIndex(vm);
-    if (!index)
+    // Until what was written has begun, it is where it says that it begins.
+    if (!index || index->offset() <= details().enterOffset)
         return functionInfo().firstLine + functionInfo().lineDelta;
+    return lineAt(vm, *index);
+}
+
+unsigned PyFrame::lineAt(VM& vm, BytecodeIndex givenIndex)
+{
+    std::optional<BytecodeIndex> index = givenIndex;
     const SourceCode& source = executable()->source();
     return source.provider()->documentLineColumnForOffset(unlinkedCodeBlockOf(vm, executable())->expressionInfoForBytecodeIndex(*index).divot + source.startOffset()).line + functionInfo().lineDelta;
 }
