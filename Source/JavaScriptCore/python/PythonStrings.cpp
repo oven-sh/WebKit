@@ -30,6 +30,7 @@
 #include "PyDict.h"
 #include "PyObjects.h"
 #include "PythonBytes.h"
+#include "PythonCharacters.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
 #include "PythonText.h"
@@ -42,57 +43,26 @@ namespace JSC { namespace Python {
 
 // ---- Characters and code units
 
-bool stringHasSurrogatePairs(StringView view)
-{
-    if (view.is8Bit())
-        return false;
-    for (char16_t c : view.span16()) {
-        if (U16_IS_LEAD(c))
-            return true; // A lone one is a character by itself, but then counting finds that out.
-    }
-    return false;
-}
-
-static unsigned countCharacters(StringView view)
-{
-    unsigned count = 0;
-    auto span = view.span16();
-    for (size_t i = 0; i < span.size(); ++i, ++count) {
-        if (U16_IS_LEAD(span[i]) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1]))
-            ++i;
-    }
-    return count;
-}
-
 unsigned stringLength(JSGlobalObject* globalObject, JSString* string)
 {
     if (string->is8Bit())
         return string->length();
-    auto view = string->view(globalObject);
-    if (!stringHasSurrogatePairs(view))
-        return string->length();
-    return countCharacters(view);
-}
-
-unsigned stringOffsetOfCharacter(StringView view, unsigned character)
-{
-    auto span = view.span16();
-    size_t i = 0;
-    for (; character && i < span.size(); ++i, --character) {
-        if (U16_IS_LEAD(span[i]) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1]))
-            ++i;
-    }
-    return i;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String value = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    return Characters(vm, value).count();
 }
 
 JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue key)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto view = string->view(globalObject);
+    String value = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    bool hasPairs = stringHasSurrogatePairs(view);
-    int64_t length = hasPairs ? countCharacters(view) : view->length();
+    StringView view = value;
+    Characters characters(vm, value);
+    int64_t length = characters.count();
 
     if (auto* slice = trySlice(key)) {
         auto indices = slice->indices(globalObject, length);
@@ -100,20 +70,15 @@ JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue ke
         if (!indices->length)
             return jsEmptyString(vm);
         if (indices->step == 1) {
-            unsigned start = hasPairs ? stringOffsetOfCharacter(view, indices->start) : indices->start;
-            unsigned end = hasPairs ? stringOffsetOfCharacter(view, indices->stop) : indices->stop;
-            RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, start, end - start));
+            unsigned start = characters.codeUnitOf(indices->start);
+            RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, start, characters.codeUnitOf(indices->stop) - start));
         }
         TextBuilder builder;
         int64_t at = indices->start;
         for (int64_t i = 0; i < indices->length; ++i, at += indices->step) {
-            if (!hasPairs) {
-                builder.append(view[at]);
-                continue;
-            }
-            unsigned offset = stringOffsetOfCharacter(view, at);
+            unsigned offset = characters.codeUnitOf(at);
             builder.append(view[offset]);
-            if (U16_IS_LEAD(view[offset]) && offset + 1 < view->length() && U16_IS_TRAIL(view[offset + 1]))
+            if (U16_IS_LEAD(view[offset]) && offset + 1 < view.length() && U16_IS_TRAIL(view[offset + 1]))
                 builder.append(view[offset + 1]);
         }
         RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, builder.tryFinish()));
@@ -126,11 +91,10 @@ JSValue stringGetItem(JSGlobalObject* globalObject, JSString* string, JSValue ke
     int64_t i = *index < 0 ? *index + length : *index;
     if (i < 0 || i >= length)
         return raise(globalObject, scope, BuiltinType::IndexError, "string index out of range"_s);
-    if (!hasPairs)
-        return jsSingleCharacterString(vm, view[i]);
-    unsigned offset = stringOffsetOfCharacter(view, i);
-    unsigned size = U16_IS_LEAD(view[offset]) && offset + 1 < view->length() && U16_IS_TRAIL(view[offset + 1]) ? 2 : 1;
-    RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, offset, size));
+    unsigned offset = characters.codeUnitOf(i);
+    if (U16_IS_LEAD(view[offset]) && offset + 1 < view.length() && U16_IS_TRAIL(view[offset + 1]))
+        RELEASE_AND_RETURN(scope, jsSubstring(globalObject, string, offset, 2));
+    return jsSingleCharacterString(vm, view[offset]);
 }
 
 JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t count)
@@ -187,19 +151,35 @@ static bool isPrintable(char32_t c)
     }
 }
 
+template<typename A, typename B>
+static int compareCharacters(std::span<const A> a, std::span<const B> b)
+{
+    size_t common = std::min(a.size(), b.size());
+    size_t i = 0;
+    while (i < common && a[i] == b[i])
+        ++i;
+    // If one ends with half a pair and the other goes on with the other half, the one that ends is still the lesser, since half a pair is less than any pair.
+    if (i == common)
+        return a.size() == b.size() ? 0 : a.size() < b.size() ? -1 : 1;
+    if constexpr (sizeof(A) == 1 && sizeof(B) == 1)
+        return a[i] < b[i] ? -1 : 1;
+    // The halves of a pair are numbered below U+E000, and a pair stands for what is above U+FFFF, so it is the characters that are compared. The one that they differ in began a code unit back if that is the
+    // first half of a pair in either.
+    if (i && U16_IS_LEAD(a[i - 1]) && (U16_IS_TRAIL(a[i]) || U16_IS_TRAIL(b[i])))
+        --i;
+    auto characterAt = [i] (auto codeUnits) -> char32_t {
+        if (U16_IS_LEAD(codeUnits[i]) && i + 1 < codeUnits.size() && U16_IS_TRAIL(codeUnits[i + 1]))
+            return U16_GET_SUPPLEMENTARY(codeUnits[i], codeUnits[i + 1]);
+        return codeUnits[i];
+    };
+    return characterAt(a) < characterAt(b) ? -1 : 1;
+}
+
 int compareStrings(StringView a, StringView b)
 {
-    unsigned common = std::min(a.length(), b.length());
-    for (unsigned i = 0; i < common; ++i) {
-        char16_t x = a[i];
-        char16_t y = b[i];
-        if (x == y)
-            continue;
-        // The halves of a pair are numbered below U+E000, and stand for what is above U+FFFF.
-        auto rank = [] (char16_t c) -> unsigned { return U16_IS_SURROGATE(c) ? c + 0x10000 : c; };
-        return rank(x) < rank(y) ? -1 : 1;
-    }
-    return a.length() == b.length() ? 0 : a.length() < b.length() ? -1 : 1;
+    if (a.is8Bit())
+        return b.is8Bit() ? compareCharacters(a.span8(), b.span8()) : compareCharacters(a.span8(), b.span16());
+    return b.is8Bit() ? compareCharacters(a.span16(), b.span8()) : compareCharacters(a.span16(), b.span16());
 }
 
 String reprOfString(StringView view)
@@ -559,11 +539,6 @@ String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& scope, c
     return { };
 }
 
-static unsigned lengthInCharacters(const String& string)
-{
-    return stringHasSurrogatePairs(string) ? countCharacters(string) : string.length();
-}
-
 // `prefixLength` is how much at the front is a sign and 0x and the like, which '=' puts the padding after.
 // Null, with MemoryError raised, if there is no room for it.
 static String pad(JSGlobalObject* globalObject, const String& text, unsigned prefixLength, const FormatSpecification& specification, char defaultAlign)
@@ -573,7 +548,7 @@ static String pad(JSGlobalObject* globalObject, const String& text, unsigned pre
         raiseMemoryError(globalObject, scope);
         return { };
     }
-    unsigned length = lengthInCharacters(text);
+    unsigned length = Characters(globalObject->vm(), text).count();
     if (length >= specification.width)
         return text;
     if (specification.width > static_cast<int64_t>(String::MaxLength)) {
@@ -669,8 +644,8 @@ String formatString(JSGlobalObject* globalObject, const String& value, const For
         return { };
     }
     String text = value;
-    if (specification.precision >= 0 && specification.precision < static_cast<int64_t>(lengthInCharacters(text)))
-        text = StringView(text).left(stringHasSurrogatePairs(text) ? stringOffsetOfCharacter(text, specification.precision) : specification.precision).toString();
+    if (Characters characters(vm, text); specification.precision >= 0 && specification.precision < static_cast<int64_t>(characters.count()))
+        text = text.left(characters.codeUnitOf(specification.precision));
     RELEASE_AND_RETURN(scope, pad(globalObject, text, 0, specification, '<'));
 }
 
@@ -1190,8 +1165,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                 }
             } else if (argument.isString()) {
                 text = asString(argument)->value(globalObject);
-                if (lengthInCharacters(text) != 1)
-                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
+                if (unsigned count = Characters(vm, text).count(); count != 1)
+                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not a string of length "_s, count));
             } else {
                 Number number = classify(argument);
                 JSValue given = argument;

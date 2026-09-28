@@ -223,6 +223,9 @@ private:
     // TODO: remove once atomic strings are process-wide.
     static constexpr const unsigned s_hashFlagNeverAtomize = 1u << 6;
 #endif
+    // Set once a 16-bit string has been scanned and found to contain no surrogate pairs, so that its code units are its code points.
+    // Never set for 8-bit strings, for which that always holds.
+    static constexpr const unsigned s_hashFlagHasNoSurrogatePairs = 1u << 7;
 
     static constexpr const unsigned s_hashZeroValue = 0;
     static constexpr const unsigned s_hashFlagStringKindIsAtom = 1u << (s_flagStringKindCount);
@@ -362,6 +365,15 @@ public:
     bool canBecomeAtom() const { return !(m_hashAndFlags & s_hashFlagNeverAtomize); }
     void setNeverAtomize() { ASSERT(!isAtom()); m_hashAndFlags |= s_hashFlagNeverAtomize; }
 #endif
+
+    bool hasNoSurrogatePairs() const { return m_hashAndFlags & s_hashFlagHasNoSurrogatePairs; }
+    void setHasNoSurrogatePairs() const
+    {
+        ASSERT(!is8Bit());
+        // Static strings are shared between threads, so nothing about them is ever written.
+        if (!isStatic())
+            m_hashAndFlags |= s_hashFlagHasNoSurrogatePairs;
+    }
 
 private:
     // The high bits of 'hash' are always empty, but we prefer to store our flags
@@ -1077,8 +1089,12 @@ ALWAYS_INLINE Ref<StringImpl> StringImpl::createSubstringSharingImpl(StringImpl&
         if (substringSize >= allocationSize<Latin1Character>(length) && charactersAreAllLatin1(span))
             return create8BitUnconditionally(span);
 
-        if (substringSize >= allocationSize<char16_t>(length))
-            return create(span);
+        if (substringSize >= allocationSize<char16_t>(length)) {
+            Ref copy = create(span);
+            if (rep.hasNoSurrogatePairs())
+                copy->setHasNoSurrogatePairs();
+            return copy;
+        }
     }
 
     SUPPRESS_UNCOUNTED_LOCAL auto* ownerRep = ((rep.bufferOwnership() == BufferSubstring) ? rep.substringBuffer() : &rep);
@@ -1087,7 +1103,10 @@ ALWAYS_INLINE Ref<StringImpl> StringImpl::createSubstringSharingImpl(StringImpl&
     SUPPRESS_UNCOUNTED_LOCAL auto* stringImpl = static_cast<StringImpl*>(StringImplMalloc::malloc(substringSize));
     if (rep.is8Bit())
         return adoptRef(*new (NotNull, stringImpl) StringImpl(rep.span8().subspan(offset, length), *ownerRep));
-    return adoptRef(*new (NotNull, stringImpl) StringImpl(rep.span16().subspan(offset, length), *ownerRep));
+    Ref substring = adoptRef(*new (NotNull, stringImpl) StringImpl(rep.span16().subspan(offset, length), *ownerRep));
+    if (rep.hasNoSurrogatePairs())
+        substring->setHasNoSurrogatePairs();
+    return substring;
 }
 
 template<typename CharacterType> ALWAYS_INLINE RefPtr<StringImpl> StringImpl::tryCreateUninitialized(size_t length, std::span<CharacterType>& output)

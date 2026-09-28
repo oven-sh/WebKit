@@ -187,6 +187,7 @@ class Thunks;
 }
 #endif // ENABLE(FTL_JIT)
 namespace Python {
+class SurrogatePairCache;
 struct CommonNames;
 }
 namespace Profiler {
@@ -989,6 +990,9 @@ public:
     LazyUniqueRef<VM, StringSplitCache> m_stringSplitCache;
     ALWAYS_INLINE StringSplitCache* stringSplitCache() { return m_stringSplitCache.getIfExists(); }
     StringSplitCache& ensureStringSplitCache() { return m_stringSplitCache.get(*this); }
+    LazyUniqueRef<VM, Python::SurrogatePairCache> m_pythonSurrogatePairCache;
+    ALWAYS_INLINE Python::SurrogatePairCache* pythonSurrogatePairCache() { return m_pythonSurrogatePairCache.getIfExists(); }
+    Python::SurrogatePairCache& ensurePythonSurrogatePairCache() { return m_pythonSurrogatePairCache.get(*this); }
 
     const UniqueRef<MicrotaskCallCache> m_syncResumeCallCache;
     MicrotaskCallCache& syncResumeCallCache() { return m_syncResumeCallCache.get(); }

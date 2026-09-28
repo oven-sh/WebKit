@@ -34,6 +34,7 @@
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
 #include "PyObjects.h"
+#include "PythonCharacters.h"
 #include "PythonGenerators.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
@@ -1028,7 +1029,7 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             RETURN_IF_EXCEPTION(scope, false);
             auto needle = asString(value)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
-            return haystack->find(needle) != notFound;
+            return findCharacters(haystack, needle) != notFound;
         }
         case PyDictType:
             RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(cell)->contains(globalObject, value));

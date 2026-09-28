@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "PythonBytes.h"
+#include "PythonCharacters.h"
 
 #include <unicode/ucasemap.h>
 #include <unicode/uchar.h>
@@ -98,38 +99,16 @@ static unsigned kindOf(StringView view)
 static JSValue toJS(VM& vm, const String& string) { return jsString(vm, string); }
 static JSValue toJS(VM& vm, StringView view) { return jsString(vm, view.toString()); }
 
-// From code units, which is what JavaScript's strings are made of, to characters, which is what Python counts in.
-static int64_t toCharacterIndex(StringView view, size_t offset)
-{
-    if (!stringHasSurrogatePairs(view))
-        return offset;
-    int64_t count = 0;
-    for (size_t i = 0; i < offset; ++i, ++count) {
-        if (U16_IS_LEAD(view[i]) && i + 1 < view.length() && U16_IS_TRAIL(view[i + 1]))
-            ++i;
-    }
-    return count;
-}
-
-static unsigned toOffset(StringView view, int64_t character)
-{
-    return stringHasSurrogatePairs(view) ? stringOffsetOfCharacter(view, character) : character;
-}
-
-static int64_t characterCount(StringView view)
-{
-    return toCharacterIndex(view, view.length());
-}
-
 // The part of a string that optional start and end arguments select. Nothing if it raised, or if it ends before it begins, and that is not somewhere that even an empty string is found.
 struct Selection {
     StringView view;
     unsigned start { 0 }; // In code units.
 };
 
-static std::optional<Selection> select(JSGlobalObject* globalObject, ThrowScope& scope, StringView view, JSValue startValue, JSValue endValue)
+static std::optional<Selection> select(JSGlobalObject* globalObject, ThrowScope& scope, const String& string, const Characters& characters, JSValue startValue, JSValue endValue)
 {
-    int64_t length = characterCount(view);
+    StringView view = string;
+    int64_t length = characters.count();
     auto resolve = [&] (JSValue value, int64_t whenAbsent) -> int64_t {
         if (!value || isNone(value))
             return whenAbsent;
@@ -143,8 +122,8 @@ static std::optional<Selection> select(JSGlobalObject* globalObject, ThrowScope&
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (first > last)
         return std::nullopt;
-    unsigned start = toOffset(view, first);
-    return Selection { view.substring(start, toOffset(view, last) - start), start };
+    unsigned start = characters.codeUnitOf(first);
+    return Selection { view.substring(start, characters.codeUnitOf(last) - start), start };
 }
 
 // ---- Making one
@@ -291,7 +270,7 @@ PYTHON_NATIVE(strSplit)
         String separator = separatorString->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         // Where it plainly cannot be found there is nothing to do, and what was to be split is all that there is, whatever class it is of.
-        if (kindOf(view) < kindOf(separator) || characterCount(view) < characterCount(separator)) {
+        if (kindOf(view) < kindOf(separator) || Characters(vm, self).count() < Characters(vm, separator).count()) {
             MarkedArgumentBuffer whole;
             whole.append(args[0]);
             RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, whole)));
@@ -301,7 +280,7 @@ PYTHON_NATIVE(strSplit)
         if (!fromRight) {
             unsigned start = 0;
             while (static_cast<int64_t>(pieces.size()) < limit) {
-                size_t found = view.find(separator, start);
+                size_t found = findCharacters(view, separator, start);
                 if (found == notFound)
                     break;
                 add(start, static_cast<unsigned>(found));
@@ -311,7 +290,7 @@ PYTHON_NATIVE(strSplit)
         } else {
             unsigned end = length;
             while (static_cast<int64_t>(pieces.size()) < limit && end >= separator.length()) {
-                size_t found = view.left(end).reverseFind(separator);
+                size_t found = reverseFindCharacters(view.left(end), separator);
                 if (found == notFound)
                     break;
                 add(static_cast<unsigned>(found + separator.length()), end);
@@ -369,7 +348,7 @@ PYTHON_NATIVE(strPartition)
     if (separator.isEmpty())
         return JSValue::encode(raiseValueError(globalObject, scope, "empty separator"_s));
     StringView view = self;
-    size_t found = fromRight ? view.reverseFind(separator) : view.find(separator);
+    size_t found = fromRight ? reverseFindCharacters(view, separator) : findCharacters(view, separator);
     JSValue empty = jsEmptyString(vm);
     // What was given is what is given back, whatever class it is of: the string if there is no separator in it, and the separator if there is.
     if (found == notFound)
@@ -394,16 +373,25 @@ PYTHON_NATIVE(strStrip)
         characters = given->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    auto shouldStrip = [&] (char16_t c) { return hasCharacters ? characters.contains(c) : isSpace(c); };
+    // A character at a time, which is one code unit or two.
+    auto shouldStrip = [&] (StringView character) { return hasCharacters ? findCharacters(characters, character) != notFound : isSpace(character[0]); };
     unsigned start = 0;
     unsigned end = view.length();
     if (left) {
-        while (start < end && shouldStrip(view[start]))
-            ++start;
+        while (start < end) {
+            unsigned size = U16_IS_LEAD(view[start]) && start + 1 < end && U16_IS_TRAIL(view[start + 1]) ? 2 : 1;
+            if (!shouldStrip(view.substring(start, size)))
+                break;
+            start += size;
+        }
     }
     if (right) {
-        while (end > start && shouldStrip(view[end - 1]))
-            --end;
+        while (end > start) {
+            unsigned size = U16_IS_TRAIL(view[end - 1]) && end - 1 > start && U16_IS_LEAD(view[end - 2]) ? 2 : 1;
+            if (!shouldStrip(view.substring(end - size, size)))
+                break;
+            end -= size;
+        }
     }
     if (!start && end == view.length())
         return JSValue::encode(unboxString(args[0]));
@@ -424,10 +412,10 @@ PYTHON_NATIVE(strJustify)
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("The fill character must be a unicode character, not "_s, typeName(globalObject, args[2]))));
         fill = given->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (characterCount(fill) != 1)
+        if (Characters(vm, fill).count() != 1)
             return JSValue::encode(raiseTypeError(globalObject, scope, "The fill character must be exactly one character long"_s));
     }
-    int64_t length = characterCount(self);
+    int64_t length = Characters(vm, self).count();
     if (*width <= length)
         return JSValue::encode(unboxString(args[0]));
     if (*width > static_cast<int64_t>(String::MaxLength))
@@ -451,7 +439,7 @@ PYTHON_NATIVE(strZfill)
     STR_PROLOGUE("zfill");
     auto width = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t length = characterCount(self);
+    int64_t length = Characters(vm, self).count();
     if (*width <= length)
         return JSValue::encode(unboxString(args[0]));
     if (*width > static_cast<int64_t>(String::MaxLength))
@@ -507,7 +495,7 @@ PYTHON_NATIVE(strRemoveAffix)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(prefix ? "removeprefix"_s : "removesuffix"_s, "() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     String affix = given->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!affix.isEmpty() && (prefix ? self.startsWith(affix) : self.endsWith(affix)))
+    if (!affix.isEmpty() && (prefix ? startsWithCharacters(self, affix) : endsWithCharacters(self, affix)))
         return JSValue::encode(toJS(vm, prefix ? StringView(self).substring(affix.length()) : StringView(self).left(self.length() - affix.length())));
     return JSValue::encode(unboxString(args[0]));
 }
@@ -802,13 +790,14 @@ PYTHON_NATIVE(strStartsOrEndsWith)
     auto atStart = unpack<bool>(callFrame, 0);
     STR_PROLOGUE("startswith");
     ASCIILiteral method = atStart ? "startswith"_s : "endswith"_s;
-    auto selection = select(globalObject, scope, self, args.at(2), args.at(3));
+    Characters characters(vm, self);
+    auto selection = select(globalObject, scope, self, characters, args.at(2), args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
     auto matches = [&] (JSString* candidate) -> bool {
         if (!selection)
             return false;
         auto affix = candidate->view(globalObject);
-        return atStart ? selection->view.startsWith(affix) : selection->view.endsWith(affix);
+        return atStart ? startsWithCharacters(selection->view, affix) : endsWithCharacters(selection->view, affix);
     };
     JSValue candidate = args[1];
     if (JSString* string = stringIn(candidate))
@@ -836,15 +825,16 @@ PYTHON_NATIVE(strFind)
     ASCIILiteral method = raises ? (fromRight ? "rindex"_s : "index"_s) : (fromRight ? "rfind"_s : "find"_s);
     String needle = stringArgument(globalObject, scope, args[1], method, 1);
     RETURN_IF_EXCEPTION(scope, { });
-    auto selection = select(globalObject, scope, self, args.at(2), args.at(3));
+    Characters characters(vm, self);
+    auto selection = select(globalObject, scope, self, characters, args.at(2), args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
-    size_t found = !selection ? notFound : fromRight ? selection->view.reverseFind(needle) : selection->view.find(needle);
+    size_t found = !selection ? notFound : fromRight ? reverseFindCharacters(selection->view, needle) : findCharacters(selection->view, needle);
     if (found == notFound) {
         if (raises)
             return JSValue::encode(raiseValueError(globalObject, scope, "substring not found"_s));
         return JSValue::encode(jsNumber(-1));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, toCharacterIndex(self, selection->start + found))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, characters.characterAt(selection->start + found))));
 }
 
 PYTHON_NATIVE(strCount)
@@ -852,15 +842,16 @@ PYTHON_NATIVE(strCount)
     STR_PROLOGUE("count");
     String needle = stringArgument(globalObject, scope, args[1], "count"_s, 1);
     RETURN_IF_EXCEPTION(scope, { });
-    auto selection = select(globalObject, scope, self, args.at(2), args.at(3));
+    Characters characters(vm, self);
+    auto selection = select(globalObject, scope, self, characters, args.at(2), args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
     if (!selection)
         return JSValue::encode(jsNumber(0));
     StringView view = selection->view;
     if (needle.isEmpty())
-        RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, characterCount(view) + 1)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, characters.characterAt(selection->start + view.length()) - characters.characterAt(selection->start) + 1)));
     int32_t count = 0;
-    for (size_t at = view.find(needle); at != notFound; at = view.find(needle, at + needle.length()))
+    for (size_t at = findCharacters(view, needle); at != notFound; at = findCharacters(view, needle, at + needle.length()))
         ++count;
     return JSValue::encode(jsNumber(count));
 }
@@ -901,7 +892,7 @@ PYTHON_NATIVE(strReplace)
     }
     unsigned start = 0;
     for (int64_t done = 0; done < limit; ++done) {
-        size_t found = view.find(from, start);
+        size_t found = findCharacters(view, from, start);
         if (found == notFound)
             break;
         builder.append(view.substring(start, found - start), to);

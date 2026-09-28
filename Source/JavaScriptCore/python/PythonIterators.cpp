@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyTuple.h"
+#include "PythonCharacters.h"
 #include "PythonSequences.h"
 
 // What the iterators of the built-in classes have besides __next__(): how many more there are, and what copying and pickling go by. Each is as in CPython, where they are
@@ -51,24 +52,25 @@ JSValue getBuiltin(JSGlobalObject* globalObject, ASCIILiteral name)
 // An iterator over a str counts in code units, and Python in characters.
 static int64_t charactersBefore(JSGlobalObject* globalObject, JSString* string, int64_t units)
 {
-    auto view = string->view(globalObject);
-    if (view->is8Bit())
+    if (string->is8Bit())
         return units;
-    int64_t characters = 0;
-    for (int64_t i = 0; i < units; ++characters)
-        i += i + 1 < view->length() && U16_IS_LEAD(view[i]) && U16_IS_TRAIL(view[i + 1]) ? 2 : 1;
-    return characters;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String value = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    return Characters(vm, value).characterAt(units);
 }
 
 static int64_t unitsBefore(JSGlobalObject* globalObject, JSString* string, int64_t characters)
 {
-    auto view = string->view(globalObject);
-    if (view->is8Bit())
-        return std::min<int64_t>(characters, view->length());
-    int64_t units = 0;
-    for (; characters > 0 && units < view->length(); --characters)
-        units += units + 1 < view->length() && U16_IS_LEAD(view[units]) && U16_IS_TRAIL(view[units + 1]) ? 2 : 1;
-    return units;
+    if (string->is8Bit())
+        return std::min<int64_t>(characters, string->length());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String value = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    Characters all(vm, value);
+    return all.codeUnitOf(std::min<int64_t>(characters, all.count()));
 }
 
 static int64_t sizeOf(JSGlobalObject* globalObject, PyIterator* iterator)

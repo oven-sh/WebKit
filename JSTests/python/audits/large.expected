@@ -206,3 +206,5 @@ n = 'a' * (2**31 - 5) ;; min(n[:2**20]) => made str 1
 n = 'a' * (2**31 - 5) ;; str(n) is n => made bool
 n = 'a' * (2**31 - 5) ;; type('S', (str,), {})(n) => made S 2147483643
 n = 'a' * (2**31 - 5) ;; repr(type('S', (str,), {})(n)) => made str 2147483645
+n = '\U0001f600' * (2**30 - 16) ;; (len(n), n[-1], n.find('x'), n.rfind(n[0])) => made tuple 4
+n = '中' * (2**31 - 64) ;; (len(n), n[-1], n[2**30], n.rfind(n[0])) => made tuple 4

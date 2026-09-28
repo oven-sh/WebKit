@@ -81,11 +81,8 @@ PySet* setFromIterable(JSGlobalObject*, Structure*, JSValue);
 
 // ---- str
 
-// Python counts characters, and JavaScript counts UTF-16 code units. They differ only if there are surrogate pairs.
+// Python counts characters, and JavaScript counts UTF-16 code units. They differ only if there are surrogate pairs: see PythonCharacters.h.
 unsigned stringLength(JSGlobalObject*, JSString*);
-bool stringHasSurrogatePairs(StringView);
-// The code unit that the character begins at.
-unsigned stringOffsetOfCharacter(StringView, unsigned character);
 String reprOfString(StringView);
 // By character, which is not the order of the code units: U+FFFF comes before U+10000. Negative, zero or positive.
 int compareStrings(StringView, StringView);

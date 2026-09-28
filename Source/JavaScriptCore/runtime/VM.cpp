@@ -119,6 +119,7 @@
 #include "ProgramExecutableInlines.h"
 #include "PropertyInlineCache.h"
 #include "PropertyTableInlines.h"
+#include "PythonCharacters.h"
 #include "PythonCommonNames.h"
 #include "RandomizingFuzzerAgent.h"
 #include "RegExpCache.h"
@@ -306,6 +307,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 
         m_stringSplitCache.initLater([](VM&, auto& ref) {
             ref.set(makeUniqueRef<StringSplitCache>());
+        });
+
+        m_pythonSurrogatePairCache.initLater([](VM&, auto& ref) {
+            ref.set(makeUniqueRef<Python::SurrogatePairCache>());
         });
 
         m_shadowChicken.initLater([](VM&, auto& ref) {

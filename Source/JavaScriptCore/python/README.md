@@ -361,6 +361,25 @@ What such a method returns is not to be taken for what it should be either. `str
 `asString()` is only for what `isString()` has been asked of: an instance of a class derived from `str` is another kind of cell. And where `str()`, `repr()`, `format()` and `bytes()` give what the method
 returned, they give that very object, of whatever class it is: `strObject()` and `reprObject()`.
 
+### Characters and code units
+
+A `str` is a JavaScript string, and stays one whichever language has it. That is made of code units of 16 bits, and Python counts in characters, of which one past U+FFFF is two code units, a surrogate pair. None
+of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for a long string than for a short one. `PythonCharacters.h` sees to both.
+
+- **Most strings have no pairs**, and then a character is a code unit. That is so of any string of 8 bit characters. Of the rest it is found by going through the string once, and since a string does not change it
+  is kept from then on, in a bit of `StringImpl`'s flags, beside the one that says how wide the characters are. A part of such a string is another, so `createSubstringSharingImpl()` hands it on. JavaScript pays
+  nothing for it: the bit was spare.
+- **For a string that has pairs**, which character each of them is is written down, in order: `SurrogatePairs`. The code unit that a character begins at is its index and one more for each pair before it, and how
+  many those are is found by halving. There is as much of it as there are pairs, so a page of text with one emoji in it costs four bytes, and there is nothing to choose in how it is laid out. A string has
+  nowhere to keep it, so it is kept for the strings lately asked about, in a cache of the VM's that is emptied when the collector has run, as what `String.prototype.split()` came to is. Whoever is using one holds
+  on to it, since the collector can run in the middle.
+- **`Characters`** is what the rest of the code uses: `count()`, `codeUnitOf(index)` and `characterAt(offset)`, of one string.
+- **Order is by character.** The halves of a pair are numbered below U+E000 and a pair stands for what is above U+FFFF, so `compareStrings()` finds the code unit that two strings first differ in, goes back one if
+  that is in the middle of a pair, and compares the characters there.
+- **Half a pair by itself is a character**, as it is in Python, where `surrogateescape` makes them. It is not part of a pair that has the same for one of its halves: `'\ud83d' in '\U0001f600'` is false. So what is
+  looked for with `findCharacters()` and the rest is not found in the middle of a pair. That takes looking into only if it begins with a second half or ends with a first half, which is next to never.
+  And `strip()` goes by a character at a time, or it would take half of one emoji for half of another.
+
 ### What there is no room for
 
 Nearly everything that is put together here has in it something that is as long as a program makes it, and a program of one line can make that as long as a string can be: `getattr(1, 'a' * (2 ** 31 - 5))` has
@@ -630,6 +649,8 @@ There is nothing that is per process, nothing that is set after something is mad
   which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it
   will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine. What has to be gone
   back and forth in on the way to being made, as a `str` that is not ASCII is when it is encoded, can be refused sooner than that.
+- **The first half of a surrogate pair followed by the second half is the pair.** `'\ud83d' + '\ude00'` is one character here and two in CPython. In code units of 16 bits there is no telling them apart, and a `str`
+  is to be the same string to both languages. Nothing but a program that puts halves together by hand can tell.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
 - **The last bits of a complex quotient or power can differ.** The steps are CPython's, but a compiler may do a multiplication and an addition in one, without rounding between them. JavaScriptCore is built

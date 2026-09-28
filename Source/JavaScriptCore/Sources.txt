@@ -751,6 +751,7 @@ python/PythonAsync.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp
 python/PythonBytes.cpp
+python/PythonCharacters.cpp
 python/PythonClasses.cpp
 python/PythonCode.cpp
 python/PythonCodeGenerator.cpp

@@ -93,6 +93,7 @@
 #include "PreventCollectionScope.h"
 #include "ProgramExecutable.h"
 #include "ProxyObject.h"
+#include "PythonCharacters.h"
 #include "SamplingProfiler.h"
 #include "ShadowChicken.h"
 #include "SpaceTimeMutatorScheduler.h"
@@ -2925,6 +2926,8 @@ void Heap::runCollectionEpilogue()
     }
     vm().keyAtomStringCache.clear();
     if (auto* cache = vm().stringSplitCache())
+        cache->clear();
+    if (auto* cache = vm().pythonSurrogatePairCache())
         cache->clear();
     vm().jsonAtomStringCache.clearJSStrings();
 
