@@ -249,7 +249,7 @@ ALWAYS_INLINE JSString* jsString(JSGlobalObject* globalObject, const String& u1,
     return JSString::create(vm, newString.releaseImpl().releaseNonNull());
 }
 
-ALWAYS_INLINE JSValue jsStringFromRegisterArray(JSGlobalObject* globalObject, Register* strings, unsigned count)
+ALWAYS_INLINE JSValue jsStringFromRegisterArray(JSGlobalObject* globalObject, Register* strings, unsigned count, unsigned firstOperand)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -257,6 +257,8 @@ ALWAYS_INLINE JSValue jsStringFromRegisterArray(JSGlobalObject* globalObject, Re
 
     for (unsigned i = 0; i < count; ++i) {
         JSValue v = strings[-static_cast<int>(i)].jsValue();
+        if (v.isObject()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, addUpInsteadOfConcatenating(globalObject, { strings, -1 }, count, firstOperand));
         JSString* string = v.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (!ropeBuilder.append(string))

@@ -281,6 +281,8 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case MultiPutByOffset:
     case MultiDeleteByOffset:
     case ToPrimitive:
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:
     case Throw:

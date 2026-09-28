@@ -859,6 +859,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallCustomAccessorGetter:
     case CallCustomAccessorSetter:
     case ToPrimitive:
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:
     case InByVal:

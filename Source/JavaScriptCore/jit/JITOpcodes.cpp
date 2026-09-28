@@ -297,6 +297,14 @@ void JIT::emit_op_to_primitive(const JSInstruction* currentInstruction)
     VirtualRegister dst = bytecode.m_dst;
     VirtualRegister src = bytecode.m_src;
 
+    // What the operand before it left is an object if it is what the operands so far have been added up to. See Operations.h.
+    if (bytecode.m_previous != src) {
+        emitGetVirtualRegister(bytecode.m_previous, regT0);
+        Jump previousIsImm = branchIfNotCell(regT0);
+        addSlowCase(branchIfObject(regT0));
+        previousIsImm.link(this);
+    }
+
     emitGetVirtualRegister(src, regT0);
     
     Jump isImm = branchIfNotCell(regT0);

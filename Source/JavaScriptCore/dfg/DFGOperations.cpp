@@ -4947,6 +4947,66 @@ JSC_DEFINE_JIT_OPERATION(operationMakeRope3, JSString*, (JSGlobalObject* globalO
     OPERATION_RETURN(scope, jsString(globalObject, a, b, c));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationToPrimitiveForStrCat, EncodedJSValue, (JSGlobalObject* globalObject, void* buffer, size_t size, uint32_t index, uint32_t previous, uint32_t literalsAfter))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What this calls can run anything, which can put the buffer to another use.
+    MarkedArgumentBuffer operands;
+    for (size_t i = 0; i < size; ++i)
+        operands.append(JSValue::decode(static_cast<EncodedJSValue*>(buffer)[i]));
+    ASSERT(!operands.hasOverflowed());
+
+    OPERATION_RETURN(scope, JSValue::encode(toPrimitiveForStringConcatenation(globalObject, { std::bit_cast<const Register*>(ArgList(operands).data()), 1 }, index, previous, literalsAfter)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationStrCatAddingUp, EncodedJSValue, (JSGlobalObject* globalObject, void* buffer, size_t size, uint32_t firstOperand))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What this calls can run anything, which can put the buffer to another use.
+    MarkedArgumentBuffer operands;
+    for (size_t i = 0; i < size; ++i)
+        operands.append(JSValue::decode(static_cast<EncodedJSValue*>(buffer)[i]));
+    ASSERT(!operands.hasOverflowed());
+
+    OPERATION_RETURN(scope, JSValue::encode(addUpInsteadOfConcatenating(globalObject, { std::bit_cast<const Register*>(ArgList(operands).data()), 1 }, size, firstOperand)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationToPrimitiveForTargetOfStrCat, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue target, EncodedJSValue previous))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(toPrimitiveForTargetOfStringConcatenation(globalObject, JSValue::decode(target), JSValue::decode(previous))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationToPrimitiveForAdditionOfEmptyString, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue value, uint32_t addition))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(toPrimitiveForAdditionOfEmptyString(globalObject, JSValue::decode(value), addition)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationToStringForAdditionOfEmptyString, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(toStringForAdditionOfEmptyString(globalObject, JSValue::decode(value))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationStrCat2, JSString*, (JSGlobalObject* globalObject, EncodedJSValue a, EncodedJSValue b))
 {
     VM& vm = globalObject->vm();

@@ -8,4 +8,4 @@ a function of Python's as a tag => ('list', ['a', 'b', 'c'], (1, 'two'))
 made with a value of JavaScript's => true,,
 values of JavaScript's in Python => true,,true,.2f
 + => 4,Template(strings=('<', '><', '>'), interpolations=(Interpolation(1, 'value', None, ''), Interpolation(2, 'value', None, '')))
-+ with a string => Template(strings=('Hello ', ', ', ' times'), interpolations=(Interpolation('World', 'name', None, ''), Interpolation(3, 'count', 'r', '>4')))x
++ with a string !! TypeError: can only concatenate string.templatelib.Template (not "str") to string.templatelib.Template

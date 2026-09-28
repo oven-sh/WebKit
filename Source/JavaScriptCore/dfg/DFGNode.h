@@ -3144,7 +3144,43 @@ public:
         ASSERT(m_flags & NodeHasVarArgs);
         return children.numChildren();
     }
-    
+
+    // What ToPrimitiveForStrCat and StrCatAddingUp are for. The functions that do it are in Operations.h.
+    enum class StrCatStep : uint8_t {
+        Operand, // toPrimitiveForStringConcatenation(). Its children are the operands that it may read.
+        Target, // toPrimitiveForTargetOfStringConcatenation()
+        AdditionOfEmptyString, // toPrimitiveForAdditionOfEmptyString(), and toStringForAdditionOfEmptyString()
+        Concatenation, // addUpInsteadOfConcatenating()
+    };
+
+    bool hasStrCatStep() { return op() == ToPrimitiveForStrCat || op() == StrCatAddingUp; }
+
+    StrCatStep strCatStep()
+    {
+        ASSERT(hasStrCatStep());
+        return static_cast<StrCatStep>(m_opInfo.as<uint64_t>() & 0xff);
+    }
+
+    // For Operand, which of its children it is for. For AdditionOfEmptyString, which addition. For Concatenation, which of its children is the first operand.
+    unsigned strCatData()
+    {
+        ASSERT(hasStrCatStep());
+        return static_cast<uint32_t>(m_opInfo.as<uint64_t>() >> 32);
+    }
+
+    // For Operand.
+    unsigned strCatPreviousOperandIndex()
+    {
+        ASSERT(strCatStep() == StrCatStep::Operand);
+        return static_cast<uint32_t>(m_opInfo2.as<uint64_t>());
+    }
+
+    unsigned strCatLiteralsAfter()
+    {
+        ASSERT(strCatStep() == StrCatStep::Operand);
+        return static_cast<uint32_t>(m_opInfo2.as<uint64_t>() >> 32);
+    }
+
     UseKind binaryUseKind()
     {
         ASSERT(child1().useKind() == child2().useKind());

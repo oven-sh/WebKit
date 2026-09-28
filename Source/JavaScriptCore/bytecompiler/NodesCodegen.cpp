@@ -3226,17 +3226,11 @@ RegisterID* BinaryOpNode::emitStrcat(BytecodeGenerator& generator, RegisterID* d
     }
 
     Vector<RefPtr<RegisterID>, 16> temporaryRegisters;
+    unsigned firstOperand = lhs ? 1 : 0;
 
     // If there is an assignment, allocate a temporary to hold the lhs after conversion.
-    // We could possibly avoid this (the lhs is converted last anyway, we could let the
-    // op_strcat node handle its conversion if required).
     if (lhs)
         temporaryRegisters.append(generator.newTemporary());
-
-    // Emit code for the leftmost node ((a) in the example).
-    temporaryRegisters.append(generator.newTemporary());
-    RegisterID* leftMostAddChildTempRegister = temporaryRegisters.last().get();
-    generator.emitNode(leftMostAddChildTempRegister, leftMostAddChild);
 
     // Note on ordering of conversions:
     //
@@ -3254,31 +3248,40 @@ RegisterID* BinaryOpNode::emitStrcat(BytecodeGenerator& generator, RegisterID* d
     // And optionally, if there is an assignment:
     //     * convert (d) to primitive   <-  (this would be triggered by the assigning addition)
     //
-    // As such we do not plant an op to convert the leftmost child now.  Instead, use
-    // 'leftMostAddChildTempRegister' as a flag to trigger generation of the conversion
-    // once the second node has been generated.  However, if the leftmost child is an
-    // immediate we can trivially determine that no conversion will be required.
-    // If this is the case
-    if (leftMostAddChild->isString())
-        leftMostAddChildTempRegister = nullptr;
-
-    while (reverseExpressionList.size()) {
-        ExpressionNode* node = reverseExpressionList.last();
-        reverseExpressionList.removeLast();
-
-        // Emit the code for the current node.
+    // A string literal needs no conversion. It is evaluated before the operand to the left of it is
+    // converted, so that it is there to be added if that operand overloads operators: see
+    // "String concatenation and overloaded operators" in Operations.h.
+    reverseExpressionList.append(leftMostAddChild);
+    auto emitOperand = [&] {
         temporaryRegisters.append(generator.newTemporary());
-        generator.emitNode(temporaryRegisters.last().get(), node);
+        generator.emitNode(temporaryRegisters.last().get(), reverseExpressionList.takeLast());
+        return temporaryRegisters.last().get();
+    };
+    auto emitLiterals = [&] {
+        unsigned count = 0;
+        for (; !reverseExpressionList.isEmpty() && reverseExpressionList.last()->isString(); ++count)
+            emitOperand();
+        return count;
+    };
+    RegisterID* previous = nullptr;
+    auto emitConversion = [&] (RegisterID* operand, unsigned literalsAfter) {
+        generator.emitToPrimitiveForStrcat(operand, operand, previous ? previous : operand, temporaryRegisters[0].get(), firstOperand, literalsAfter);
+        previous = operand;
+    };
 
-        // On the first iteration of this loop, when we first reach this point we have just
-        // generated the second node, which means it is time to convert the leftmost operand.
-        if (leftMostAddChildTempRegister) {
-            generator.emitToPrimitive(leftMostAddChildTempRegister, leftMostAddChildTempRegister);
-            leftMostAddChildTempRegister = nullptr; // Only do this once.
+    bool startsWithLiteral = emitLiterals();
+    while (!reverseExpressionList.isEmpty()) {
+        RegisterID* operand = emitOperand();
+        unsigned literalsAfter = emitLiterals();
+        if (!previous && !startsWithLiteral && !literalsAfter) {
+            // The first two, neither of which is a literal.
+            RegisterID* second = emitOperand();
+            unsigned literalsAfterSecond = emitLiterals();
+            emitConversion(operand, 0);
+            emitConversion(second, literalsAfterSecond);
+            continue;
         }
-        // Plant a conversion for this node, if necessary.
-        if (!node->isString())
-            generator.emitToPrimitive(temporaryRegisters.last().get(), temporaryRegisters.last().get());
+        emitConversion(operand, literalsAfter);
     }
     ASSERT(temporaryRegisters.size() >= 3);
 
@@ -3289,9 +3292,9 @@ RegisterID* BinaryOpNode::emitStrcat(BytecodeGenerator& generator, RegisterID* d
     // If there is an assignment convert the lhs now.  This will also copy lhs to
     // the temporary register we allocated for it.
     if (lhs)
-        generator.emitToPrimitive(temporaryRegisters[0].get(), lhs);
+        generator.emitToPrimitiveForStrcat(temporaryRegisters[0].get(), lhs, previous ? previous : lhs, temporaryRegisters[0].get(), firstOperand, 0);
 
-    return generator.emitStrcat(generator.finalDestination(dst, temporaryRegisters[0].get()), temporaryRegisters[0].get(), temporaryRegisters.size());
+    return generator.emitStrcat(generator.finalDestination(dst, temporaryRegisters[0].get()), temporaryRegisters[0].get(), temporaryRegisters.size(), firstOperand);
 }
 
 void BinaryOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, Label& trueTarget, Label& falseTarget, FallThroughMode fallThroughMode)

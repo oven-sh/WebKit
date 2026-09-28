@@ -1494,22 +1494,6 @@ void LOLJIT::emit_op_to_property_key_or_number(const JSInstruction* currentInstr
     m_fastAllocator.releaseScratches(allocations);
 }
 
-void LOLJIT::emit_op_to_primitive(const JSInstruction* currentInstruction)
-{
-    auto bytecode = currentInstruction->as<OpToPrimitive>();
-    auto allocations = m_fastAllocator.allocate(*this, bytecode, m_bytecodeIndex);
-    auto [ srcGPR ] = allocations.uses;
-    auto [ dstGPR ] = allocations.defs;
-
-    Jump isImm = branchIfNotCell(srcGPR);
-    addSlowCase(branchIfObject(srcGPR));
-    isImm.link(this);
-
-    move(srcGPR, dstGPR);
-
-    m_fastAllocator.releaseScratches(allocations);
-}
-
 void LOLJIT::emit_op_create_lexical_environment(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpCreateLexicalEnvironment>();

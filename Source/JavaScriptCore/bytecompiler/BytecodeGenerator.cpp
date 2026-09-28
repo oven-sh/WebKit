@@ -1904,15 +1904,12 @@ RegisterID* BytecodeGenerator::emitBinaryOp(OpcodeID opcodeID, RegisterID* dst, 
             return value.isEmpty();
         };
 
-        if (isConstantEmptyString(src1)) {
-            emitToPrimitive(dst, src2);
-            return emitToString(dst, dst);
-        }
+        unsigned isCompoundAssignment = types.isCompoundAssignment() ? AdditionOfEmptyStringIsCompoundAssignment : 0;
+        if (isConstantEmptyString(src1))
+            return emitAdditionOfEmptyString(dst, src2, EmptyStringIsOnTheLeft | isCompoundAssignment);
 
-        if (isConstantEmptyString(src2)) {
-            emitToPrimitive(dst, src1);
-            return emitToString(dst, dst);
-        }
+        if (isConstantEmptyString(src2))
+            return emitAdditionOfEmptyString(dst, src1, EmptyStringIsOnTheRight | isCompoundAssignment);
 
         return emitBinaryOp<OpAdd>(dst, src1, src2, types);
     }
@@ -1954,7 +1951,15 @@ RegisterID* BytecodeGenerator::emitToNumeric(RegisterID* dst, RegisterID* src)
 
 RegisterID* BytecodeGenerator::emitToString(RegisterID* dst, RegisterID* src)
 {
-    return emitUnaryOp<OpToString>(dst, src);
+    OpToString::emit(this, dst, src, false);
+    return dst;
+}
+
+RegisterID* BytecodeGenerator::emitAdditionOfEmptyString(RegisterID* dst, RegisterID* src, unsigned addition)
+{
+    OpToPrimitive::emit(this, dst, src, src, VirtualRegister(), 0, 0, addition);
+    OpToString::emit(this, dst, dst, true);
+    return dst;
 }
 
 RegisterID* BytecodeGenerator::emitTypeOf(RegisterID* dst, RegisterID* src)
@@ -4281,15 +4286,15 @@ RegisterID* BytecodeGenerator::emitSuperConstruct(RegisterID* dst, RegisterID* f
     return emitConstructImpl<OpSuperConstruct>(dst, func, lazyThis, expectedFunction, callArguments, divot, divotStart, divotEnd, isDefaultDerivedConstructorCall);
 }
 
-RegisterID* BytecodeGenerator::emitStrcat(RegisterID* dst, RegisterID* src, int count)
+RegisterID* BytecodeGenerator::emitStrcat(RegisterID* dst, RegisterID* src, int count, unsigned firstOperand)
 {
-    OpStrcat::emit(this, dst, src, count);
+    OpStrcat::emit(this, dst, src, count, firstOperand);
     return dst;
 }
 
-void BytecodeGenerator::emitToPrimitive(RegisterID* dst, RegisterID* src)
+void BytecodeGenerator::emitToPrimitiveForStrcat(RegisterID* dst, RegisterID* src, RegisterID* previous, RegisterID* strcatSrc, unsigned firstOperand, unsigned literalsAfter)
 {
-    OpToPrimitive::emit(this, dst, src);
+    OpToPrimitive::emit(this, dst, src, previous, strcatSrc, firstOperand, literalsAfter, NoAdditionOfEmptyString);
 }
 
 RegisterID* BytecodeGenerator::emitToPropertyKey(RegisterID* dst, RegisterID* src)

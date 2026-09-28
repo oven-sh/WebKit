@@ -429,6 +429,11 @@ void BytecodeOptimizerAccess::decode()
                         break;
                     if (insn.opcode == op_strcat && name == BytecodeOperandName::src)
                         break;
+                    // It is one of the registers of an op_strcat, and may read others of them.
+                    if (insn.opcode == op_to_primitive && !insn.instruction->as<OpToPrimitive>().m_additionOfEmptyString && (name != BytecodeOperandName::src || insn.instruction->as<OpToPrimitive>().m_src == insn.instruction->as<OpToPrimitive>().m_dst))
+                        break;
+                    if (insn.opcode == op_to_primitive && name == BytecodeOperandName::strcatSrc)
+                        break;
                     if (!insn.explicitUses.contains(operand))
                         insn.explicitUses.append(operand);
                     break;
@@ -552,6 +557,19 @@ void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
     case op_strcat: {
         auto op = insn.instruction->as<OpStrcat>();
         range(op.m_src, -1, op.m_count);
+        break;
+    }
+    case op_to_primitive: {
+        // Those to the left of it, the literals after it, and for the first the second.
+        auto op = insn.instruction->as<OpToPrimitive>();
+        if (op.m_additionOfEmptyString)
+            break;
+        if (op.m_firstOperand && op.m_dst == op.m_strcatSrc) {
+            range(op.m_previous, -1, 1);
+            break;
+        }
+        VirtualRegister first = op.m_strcatSrc - static_cast<int>(op.m_firstOperand);
+        range(first, -1, std::max<int>(first.offset() - op.m_src.offset() + 1 + op.m_literalsAfter, 2));
         break;
     }
     default:

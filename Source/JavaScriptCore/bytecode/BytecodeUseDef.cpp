@@ -194,7 +194,6 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpResolveScope, scope)
     USES(OpResolveScopeForHoistingFuncDeclInEval, scope)
     USES(OpGetFromScope, scope)
-    USES(OpToPrimitive, src)
     USES(OpToPropertyKey, src)
     USES(OpToPropertyKeyOrNumber, src)
     USES(OpGetById, base)
@@ -359,6 +358,20 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_new_array:
         handleNewArrayLike(instruction->as<OpNewArray>());
         return;
+
+    case op_to_primitive: {
+        auto bytecode = instruction->as<OpToPrimitive>();
+        functor(bytecode.m_src);
+        functor(bytecode.m_previous);
+        if (bytecode.m_additionOfEmptyString || (bytecode.m_firstOperand && bytecode.m_dst == bytecode.m_strcatSrc))
+            return;
+        int first = bytecode.m_strcatSrc.offset() - static_cast<int>(bytecode.m_firstOperand);
+        // Those to the left of it, the literals after it, and for the first the second.
+        int last = std::min(bytecode.m_src.offset() - static_cast<int>(bytecode.m_literalsAfter), first - 1);
+        for (int operand = first; operand >= last; --operand)
+            functor(VirtualRegister { operand });
+        return;
+    }
 
     case op_strcat: {
         auto bytecode = instruction->as<OpStrcat>();

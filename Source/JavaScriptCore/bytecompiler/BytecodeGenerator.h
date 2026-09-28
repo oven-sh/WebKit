@@ -795,6 +795,7 @@ namespace JSC {
         RegisterID* emitToNumber(RegisterID* dst, RegisterID* src);
         RegisterID* emitToNumeric(RegisterID* dst, RegisterID* src);
         RegisterID* emitToString(RegisterID* dst, RegisterID* src);
+        RegisterID* emitAdditionOfEmptyString(RegisterID* dst, RegisterID* src, unsigned addition);
         RegisterID* emitToObject(RegisterID* dst, RegisterID* src, const Identifier& message);
         RegisterID* emitToThis(RegisterID* srcDst);
         RegisterID* emitInc(RegisterID* srcDst);
@@ -908,8 +909,8 @@ namespace JSC {
 
         RegisterID* emitConstruct(RegisterID* dst, RegisterID* func, RegisterID* lazyThis, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
         RegisterID* emitSuperConstruct(RegisterID* dst, RegisterID* func, RegisterID* lazyThis, ExpectedFunction, CallArguments&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isDefaultDerivedConstructorCall);
-        RegisterID* emitStrcat(RegisterID* dst, RegisterID* src, int count);
-        void emitToPrimitive(RegisterID* dst, RegisterID* src);
+        RegisterID* emitStrcat(RegisterID* dst, RegisterID* src, int count, unsigned firstOperand = 0);
+        void emitToPrimitiveForStrcat(RegisterID* dst, RegisterID* src, RegisterID* previous, RegisterID* strcatSrc, unsigned firstOperand, unsigned literalsAfter);
         RegisterID* emitToPropertyKey(RegisterID* dst, RegisterID* src);
         RegisterID* emitToPropertyKeyOrNumber(RegisterID* dst, RegisterID* src);
 

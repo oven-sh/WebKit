@@ -411,6 +411,11 @@ JSC_DECLARE_JIT_OPERATION(operationCallStringConstructor, JSString*, (JSGlobalOb
 JSC_DECLARE_JIT_OPERATION(operationMakeRope2, JSString*, (JSGlobalObject*, JSString*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationMakeRope3, JSString*, (JSGlobalObject*, JSString*, JSString*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationStrCat2, JSString*, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationToPrimitiveForStrCat, EncodedJSValue, (JSGlobalObject*, void* buffer, size_t size, uint32_t index, uint32_t previous, uint32_t literalsAfter));
+JSC_DECLARE_JIT_OPERATION(operationStrCatAddingUp, EncodedJSValue, (JSGlobalObject*, void* buffer, size_t size, uint32_t firstOperand));
+JSC_DECLARE_JIT_OPERATION(operationToPrimitiveForTargetOfStrCat, EncodedJSValue, (JSGlobalObject*, EncodedJSValue target, EncodedJSValue previous));
+JSC_DECLARE_JIT_OPERATION(operationToPrimitiveForAdditionOfEmptyString, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t addition));
+JSC_DECLARE_JIT_OPERATION(operationToStringForAdditionOfEmptyString, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationStrCat3, JSString*, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationMakeAtomString1, JSString*, (JSGlobalObject*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationMakeAtomString2, JSString*, (JSGlobalObject*, JSString*, JSString*));

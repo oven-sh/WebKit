@@ -1,0 +1,135 @@
+--- in the interpreter
+path + s => object Path('p/x')    [Path('p').__add__('/x')]
+s + path => object Path('/xp')    [Path('p').__radd__('/x')]
+s + path + s => object Path('apb')    [Path('p').__radd__('a'); Path('ap').__add__('b')]
+path + s + s => object Path('pab')    [Path('p').__add__('a'); Path('pa').__add__('b')]
+s + path + path => !! TypeError: unsupported operand type(s) for +: 'Path' and 'Path'    [Path('p').__radd__('a'); Path('ap').__add__(Path('p'))]
+s + text + s => string atb    [Text.__radd__('a')]
+s + text + number => string at1    [Text.__radd__('a')]
+s + counts + number => number 4 
+s + counts + s + number => string 3x1 
+number + (s + counts) + number => number 5 
+plain + s => string plain!    [Plain.__str__]
+s + plain => string value: plain    [Plain.__str__]
+s + plain + s => string <plain>    [Plain.__str__]
+declines + s => string declines!    [Declines.__add__('!')]
+s + declines + s => string <declines>    [Declines.__radd__('<')]
+raises + s => !! ValueError: no 
+s + raises + s => !! ValueError: no 
+path + empty => object Path('p')    [Path('p').__add__('')]
+empty + path => object Path('p')    [Path('p').__radd__('')]
+plain + empty => string plain    [Plain.__str__]
+empty + counts => number 0 
+s += path => object Path('ap')    [Path('p').__radd__('a')]
+s += path + s => object Path('apb')    [Path('p').__add__('b'); Path('pb').__radd__('a')]
+path += s => object Path('pa')    [Path('p').__add__('a')]
+path += s + number => object Path('pa1b')    [Path('p').__add__('a1b')]
+in place += s => object InPlace(['a', 'b1c', '']) 
+template literal => string Path('p') plain    [Plain.__str__]
+String() => string Path('p') 
+concat() => string aPath('p') 
+str subclass => object ab,ba,<a>,string 
+int subclass => object 5b,b5,<5> 
+in order => object Path('apbc')    [evaluate a; evaluate path; Path('p').__radd__('a'); evaluate b; Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c')]
+in order, with literals => object Path('apbcdef')    [evaluate path; Path('p').__radd__('a'); Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c'); Path('apbc').__add__('d'); Path('apbcd').__add__('e'); evaluate f; Path('apbcde').__add__('f')]
+in order, assigning => object Path('pabc')    [evaluate path; evaluate a; evaluate c; Path('p').__add__('abc')]
+tuple => string <(1, 2)> 
+dict => string <{'a': 1}> 
+set => string <{1}> 
+range => string <range(0, 2)> 
+complex => string <1j> 
+none => string <undefined> 
+class => string <function type() { [native code] }> 
+big => string <1180591620717411303424> 
+tuple + s => string (1, 2)s 
+bytes + s => string b'ab's 
+--- again
+path + s => object Path('p/x')    [Path('p').__add__('/x')]
+s + path => object Path('/xp')    [Path('p').__radd__('/x')]
+s + path + s => object Path('apb')    [Path('p').__radd__('a'); Path('ap').__add__('b')]
+path + s + s => object Path('pab')    [Path('p').__add__('a'); Path('pa').__add__('b')]
+s + path + path => !! TypeError: unsupported operand type(s) for +: 'Path' and 'Path'    [Path('p').__radd__('a'); Path('ap').__add__(Path('p'))]
+s + text + s => string atb    [Text.__radd__('a')]
+s + text + number => string at1    [Text.__radd__('a')]
+s + counts + number => number 4 
+s + counts + s + number => string 3x1 
+number + (s + counts) + number => number 5 
+plain + s => string plain!    [Plain.__str__]
+s + plain => string value: plain    [Plain.__str__]
+s + plain + s => string <plain>    [Plain.__str__]
+declines + s => string declines!    [Declines.__add__('!')]
+s + declines + s => string <declines>    [Declines.__radd__('<')]
+raises + s => !! ValueError: no 
+s + raises + s => !! ValueError: no 
+path + empty => object Path('p')    [Path('p').__add__('')]
+empty + path => object Path('p')    [Path('p').__radd__('')]
+plain + empty => string plain    [Plain.__str__]
+empty + counts => number 0 
+s += path => object Path('ap')    [Path('p').__radd__('a')]
+s += path + s => object Path('apb')    [Path('p').__add__('b'); Path('pb').__radd__('a')]
+path += s => object Path('pa')    [Path('p').__add__('a')]
+path += s + number => object Path('pa1b')    [Path('p').__add__('a1b')]
+in place += s => object InPlace(['a', 'b1c', '']) 
+template literal => string Path('p') plain    [Plain.__str__]
+String() => string Path('p') 
+concat() => string aPath('p') 
+str subclass => object ab,ba,<a>,string 
+int subclass => object 5b,b5,<5> 
+in order => object Path('apbc')    [evaluate a; evaluate path; Path('p').__radd__('a'); evaluate b; Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c')]
+in order, with literals => object Path('apbcdef')    [evaluate path; Path('p').__radd__('a'); Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c'); Path('apbc').__add__('d'); Path('apbcd').__add__('e'); evaluate f; Path('apbcde').__add__('f')]
+in order, assigning => object Path('pabc')    [evaluate path; evaluate a; evaluate c; Path('p').__add__('abc')]
+tuple => string <(1, 2)> 
+dict => string <{'a': 1}> 
+set => string <{1}> 
+range => string <range(0, 2)> 
+complex => string <1j> 
+none => string <undefined> 
+class => string <function type() { [native code] }> 
+big => string <1180591620717411303424> 
+tuple + s => string (1, 2)s 
+bytes + s => string b'ab's 
+--- after ten thousand times
+path + s => object Path('p/x')    [Path('p').__add__('/x')]
+s + path => object Path('/xp')    [Path('p').__radd__('/x')]
+s + path + s => object Path('apb')    [Path('p').__radd__('a'); Path('ap').__add__('b')]
+path + s + s => object Path('pab')    [Path('p').__add__('a'); Path('pa').__add__('b')]
+s + path + path => !! TypeError: unsupported operand type(s) for +: 'Path' and 'Path'    [Path('p').__radd__('a'); Path('ap').__add__(Path('p'))]
+s + text + s => string atb    [Text.__radd__('a')]
+s + text + number => string at1    [Text.__radd__('a')]
+s + counts + number => number 4 
+s + counts + s + number => string 3x1 
+number + (s + counts) + number => number 5 
+plain + s => string plain!    [Plain.__str__]
+s + plain => string value: plain    [Plain.__str__]
+s + plain + s => string <plain>    [Plain.__str__]
+declines + s => string declines!    [Declines.__add__('!')]
+s + declines + s => string <declines>    [Declines.__radd__('<')]
+raises + s => !! ValueError: no 
+s + raises + s => !! ValueError: no 
+path + empty => object Path('p')    [Path('p').__add__('')]
+empty + path => object Path('p')    [Path('p').__radd__('')]
+plain + empty => string plain    [Plain.__str__]
+empty + counts => number 0 
+s += path => object Path('ap')    [Path('p').__radd__('a')]
+s += path + s => object Path('apb')    [Path('p').__add__('b'); Path('pb').__radd__('a')]
+path += s => object Path('pa')    [Path('p').__add__('a')]
+path += s + number => object Path('pa1b')    [Path('p').__add__('a1b')]
+in place += s => object InPlace(['a', 'b1c', '']) 
+template literal => string Path('p') plain    [Plain.__str__]
+String() => string Path('p') 
+concat() => string aPath('p') 
+str subclass => object ab,ba,<a>,string 
+int subclass => object 5b,b5,<5> 
+in order => object Path('apbc')    [evaluate a; evaluate path; Path('p').__radd__('a'); evaluate b; Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c')]
+in order, with literals => object Path('apbcdef')    [evaluate path; Path('p').__radd__('a'); Path('ap').__add__('b'); evaluate c; Path('apb').__add__('c'); Path('apbc').__add__('d'); Path('apbcd').__add__('e'); evaluate f; Path('apbcde').__add__('f')]
+in order, assigning => object Path('pabc')    [evaluate path; evaluate a; evaluate c; Path('p').__add__('abc')]
+tuple => string <(1, 2)> 
+dict => string <{'a': 1}> 
+set => string <{1}> 
+range => string <range(0, 2)> 
+complex => string <1j> 
+none => string <undefined> 
+class => string <function type() { [native code] }> 
+big => string <1180591620717411303424> 
+tuple + s => string (1, 2)s 
+bytes + s => string b'ab's 

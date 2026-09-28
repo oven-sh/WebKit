@@ -1587,6 +1587,10 @@ private:
 
     struct InlineStackEntry {
         ByteCodeParser* const m_byteCodeParser;
+
+        // By the src of the op_strcat, or the operand of the op_to_string, for those that are being gone through: whether an operand so far has been compiled for
+        // objects that overload operators.
+        UncheckedKeyHashMap<int, bool, DefaultHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_strCatsThatAddUp;
         
         CodeBlock* const m_codeBlock;
         CodeBlock* const m_profiledBlock;
@@ -9237,8 +9241,34 @@ void ByteCodeParser::parseBlock(unsigned limit)
             
         case op_to_primitive: {
             auto bytecode = currentInstruction->as<OpToPrimitive>();
-            Node* value = get(bytecode.m_src);
-            set(bytecode.m_dst, addToGraph(ToPrimitive, value));
+            // ToPrimitive exits if it is given an object that overloads operators. Once that has happened here, or to an operand before this one, what
+            // the interpreter does about it is done.
+            auto stepInfo = [] (Node::StrCatStep step, unsigned data) { return OpInfo(static_cast<uint64_t>(data) << 32 | static_cast<uint64_t>(step)); };
+            bool& addsUp = m_inlineStackTop->m_strCatsThatAddUp.add((bytecode.m_additionOfEmptyString ? bytecode.m_dst : bytecode.m_strcatSrc).offset(), false).iterator->value;
+            addsUp |= m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType);
+            if (!addsUp) {
+                set(bytecode.m_dst, addToGraph(ToPrimitive, get(bytecode.m_src)));
+                NEXT_OPCODE(op_to_primitive);
+            }
+            if (bytecode.m_additionOfEmptyString) {
+                addVarArgChild(get(bytecode.m_src));
+                set(bytecode.m_dst, addToGraph(Node::VarArg, ToPrimitiveForStrCat, stepInfo(Node::StrCatStep::AdditionOfEmptyString, bytecode.m_additionOfEmptyString), OpInfo()));
+                NEXT_OPCODE(op_to_primitive);
+            }
+            if (bytecode.m_firstOperand && bytecode.m_dst == bytecode.m_strcatSrc) {
+                addVarArgChild(get(bytecode.m_src));
+                addVarArgChild(get(bytecode.m_previous));
+                set(bytecode.m_dst, addToGraph(Node::VarArg, ToPrimitiveForStrCat, stepInfo(Node::StrCatStep::Target, 0), OpInfo()));
+                NEXT_OPCODE(op_to_primitive);
+            }
+            VirtualRegister first = bytecode.m_strcatSrc - static_cast<int>(bytecode.m_firstOperand);
+            unsigned index = first.offset() - bytecode.m_src.offset();
+            unsigned previous = first.offset() - bytecode.m_previous.offset();
+            // Those to the left of it, the literals after it, and for the first the second.
+            unsigned count = std::max(index + 1 + bytecode.m_literalsAfter, 2u);
+            for (unsigned i = 0; i < count; ++i)
+                addVarArgChild(get(first - static_cast<int>(i)));
+            set(bytecode.m_dst, addToGraph(Node::VarArg, ToPrimitiveForStrCat, stepInfo(Node::StrCatStep::Operand, index), OpInfo(static_cast<uint64_t>(bytecode.m_literalsAfter) << 32 | previous)));
             NEXT_OPCODE(op_to_primitive);
         }
 
@@ -9260,6 +9290,12 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto bytecode = currentInstruction->as<OpStrcat>();
             int startOperand = bytecode.m_src.offset();
             int numOperands = bytecode.m_count;
+            if (m_inlineStackTop->m_strCatsThatAddUp.take(startOperand)) {
+                for (int operandIdx = 0; operandIdx < numOperands; ++operandIdx)
+                    addVarArgChild(get(VirtualRegister(startOperand - operandIdx)));
+                set(bytecode.m_dst, addToGraph(Node::VarArg, StrCatAddingUp, OpInfo(static_cast<uint64_t>(bytecode.m_firstOperand) << 32 | static_cast<uint64_t>(Node::StrCatStep::Concatenation)), OpInfo()));
+                NEXT_OPCODE(op_strcat);
+            }
             const unsigned maxArguments = 3;
             Node* operands[AdjacencyList::Size] = { };
             unsigned indexInOperands = 0;
@@ -11164,6 +11200,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_to_string: {
             auto bytecode = currentInstruction->as<OpToString>();
             Node* value = get(bytecode.m_operand);
+            if (bytecode.m_isAdditionOfEmptyString && m_inlineStackTop->m_strCatsThatAddUp.take(bytecode.m_operand.offset())) {
+                addVarArgChild(value);
+                set(bytecode.m_dst, addToGraph(Node::VarArg, StrCatAddingUp, OpInfo(static_cast<uint64_t>(Node::StrCatStep::AdditionOfEmptyString)), OpInfo()));
+                NEXT_OPCODE(op_to_string);
+            }
             set(bytecode.m_dst, addToGraph(ToString, value));
             NEXT_OPCODE(op_to_string);
         }

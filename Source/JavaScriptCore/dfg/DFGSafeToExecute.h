@@ -720,6 +720,8 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case InstanceOfCustom:
     case CallObjectConstructor:
     case ToPrimitive:
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:
     case ToNumber:

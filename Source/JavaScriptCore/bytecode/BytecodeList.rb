@@ -1103,17 +1103,38 @@ op :ret,
         value: VirtualRegister,
     }
 
+# a + b + c, where one of the first two is a string. Each operand has been through op_to_primitive. If firstOperand is 1 it is d += a + b + c, and src is d.
+# See "String concatenation and overloaded operators" in Operations.h.
 op :strcat,
     args: {
         dst: VirtualRegister,
         src: VirtualRegister,
         count: int,
+        firstOperand: unsigned,
     }
 
+# Only ever for an operand of + where the other is a string.
+#
+# If additionOfEmptyString is 0 it is for an operand of an op_strcat, whose src and firstOperand these are. previous is the last operand to have been through this
+# before this one, or this one if there is none. literalsAfter is how many of the operands that follow are string literals, which are in their registers already.
+#
+# Otherwise it is src + "" or "" + src, and an op_to_string follows. See AdditionOfEmptyString in Operations.h.
 op :to_primitive,
     args: {
         dst: VirtualRegister,
         src: VirtualRegister,
+        previous: VirtualRegister,
+        strcatSrc: VirtualRegister,
+        firstOperand: unsigned,
+        literalsAfter: unsigned,
+        additionOfEmptyString: unsigned,
+    }
+
+op :to_string,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+        isAdditionOfEmptyString: bool,
     }
 
 op :to_property_key,
@@ -1493,7 +1514,6 @@ op_group :UnaryOp,
     [
         :eq_null,
         :neq_null,
-        :to_string,
         :is_empty,
         :typeof_is_undefined,
         :typeof_is_object,

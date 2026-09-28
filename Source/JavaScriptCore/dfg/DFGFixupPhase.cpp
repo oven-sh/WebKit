@@ -2071,6 +2071,10 @@ private:
             break;
         }
 
+        case ToPrimitiveForStrCat:
+        case StrCatAddingUp:
+            break;
+
         case ToPropertyKeyOrNumber: {
             if (node->child1()->shouldSpeculateInt32()) {
                 fixEdge<Int32Use>(node->child1());

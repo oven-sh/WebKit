@@ -531,7 +531,7 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right, bool)
+    static JSValue operate(JSGlobalObject* globalObject, OverloadableOperator op, JSValue left, JSValue right, bool isCompoundAssignment)
     {
         DollarVMAssertScope assertScope;
         VM& vm = globalObject->vm();
@@ -547,13 +547,18 @@ public:
         MarkedArgumentBuffer arguments;
         arguments.append(jsString(vm, String(names[static_cast<unsigned>(op)])));
         arguments.append(left);
-        if (right)
+        if (right) {
             arguments.append(right);
+            arguments.append(jsBoolean(isCompoundAssignment));
+        }
         ASSERT(!arguments.hasOverflowed());
         JSValue result = call(globalObject, handler, arguments, "The handler is not a function"_s);
         RETURN_IF_EXCEPTION(scope, { });
         if (op >= OverloadableOperator::Equal)
             return jsBoolean(result.toBoolean(globalObject));
+        // That is how the handler declines.
+        if (op == OverloadableOperator::Add && result.isUndefined() && (left.isString() || right.isString()))
+            return { };
         return result;
     }
 

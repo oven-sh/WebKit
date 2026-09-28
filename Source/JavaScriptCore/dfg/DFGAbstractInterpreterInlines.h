@@ -964,6 +964,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setTypeForNode(node, SpecString);
         break;
     }
+
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
+        clobberWorld();
+        makeHeapTopForNode(node);
+        break;
         
     case ArithAdd: {
         JSValue left = forNode(node->child1()).value();

@@ -76,7 +76,6 @@ namespace JSC::LOL {
     macro(op_to_numeric) \
     macro(op_to_property_key) \
     macro(op_to_property_key_or_number) \
-    macro(op_to_primitive) \
     macro(op_rshift) \
     macro(op_urshift) \
     macro(op_bitnot) \

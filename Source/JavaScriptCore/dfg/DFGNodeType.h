@@ -210,6 +210,9 @@ namespace JSC { namespace DFG {
     \
     /* Add of values that always convers its inputs to strings. May have two or three kids. */\
     macro(StrCat, NodeResultJS | NodeMustGenerate) \
+    /* What op_to_primitive and op_strcat do once an object that overloads operators has turned up. See Operations.h. */\
+    macro(ToPrimitiveForStrCat, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    macro(StrCatAddingUp, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
     \
     /* Property access. */\
     macro(GetByVal, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \

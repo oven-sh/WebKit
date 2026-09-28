@@ -802,6 +802,25 @@ JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator
     };
     switch (op) {
     case OverloadableOperator::Add:
+        // With a string of JavaScript's it is the object that is asked, and the string is not: in Python a str will be added to nothing but a str, and
+        // "value: " + object is how a program in JavaScript says what something is. If the object has nothing to say, that is what it gets.
+        if (left.isString() || right.isString()) {
+            auto& names = vm.pythonNames();
+            bool objectIsOnTheLeft = !left.isString();
+            JSValue object = objectIsOnTheLeft ? left : right;
+            JSValue string = objectIsOnTheLeft ? right : left;
+            PyType* type = typeOf(globalObject, object);
+            for (const Identifier* name : { objectIsOnTheLeft && isInPlace ? &names.inPlaceMethod(BinaryOperator::Add) : nullptr, objectIsOnTheLeft ? &names.method(BinaryOperator::Add) : &names.reflectedMethod(BinaryOperator::Add) }) {
+                JSValue method = name ? type->lookup(vm, *name) : JSValue();
+                if (!method)
+                    continue;
+                JSValue result = call(globalObject, method, object, string);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (result != globalObject->pyRealm()->notImplemented())
+                    return result;
+            }
+            return { };
+        }
         return binary(BinaryOperator::Add);
     case OverloadableOperator::Subtract:
         return binary(BinaryOperator::Sub);

@@ -89,13 +89,27 @@ bool compareWithOverloadedOperator(JSGlobalObject* globalObject, OverloadableOpe
     return result.asBoolean();
 }
 
+static JSValue addWithoutOverloading(JSGlobalObject*, JSValue, JSValue);
+
 NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if ((v1.overloadsOperators() || v2.overloadsOperators()) && !v1.isString() && !v2.isString()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, callOverloadedOperator(globalObject, OverloadableOperator::Add, v1, v2));
+    if (v1.overloadsOperators() || v2.overloadsOperators()) [[unlikely]] {
+        JSValue result = callOverloadedOperator(globalObject, OverloadableOperator::Add, v1, v2);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return result;
+        ASSERT(v1.isString() || v2.isString());
+    }
+    RELEASE_AND_RETURN(scope, addWithoutOverloading(globalObject, v1, v2));
+}
+
+static JSValue addWithoutOverloading(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue p1 = v1.toPrimitive(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -133,6 +147,147 @@ NEVER_INLINE JSValue jsAddSlowCase(JSGlobalObject* globalObject, JSValue v1, JSV
     };
 
     RELEASE_AND_RETURN(scope, arithmeticBinaryOp<OverloadableOperator::Add>(globalObject, p1, p2, doubleOp, bigIntOp, "Invalid mix of BigInt and other type in addition."_s));
+}
+
+// ---- String concatenation and overloaded operators. See Operations.h.
+
+JSValue OperandsOfStringConcatenation::at(unsigned index) const
+{
+    return first[static_cast<int>(index) * stride].jsValue();
+}
+
+// What the operands up to and including the one that this is in place of come to, along with so many of those that follow it.
+static bool isSumSoFar(JSValue value)
+{
+    return value.isCell() && value.asCell()->type() == InternalFieldTupleType;
+}
+
+static JSValue sumSoFar(JSGlobalObject* globalObject, JSValue sum, unsigned following)
+{
+    return InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), sum, jsNumber(following));
+}
+
+static JSValue valueOfSumSoFar(JSValue sum)
+{
+    return uncheckedDowncast<InternalFieldTuple>(sum.asCell())->internalField(InternalFieldTuple::Field::Slot0).get();
+}
+
+// ((a + b) + c) + ...
+static JSValue addUp(JSGlobalObject* globalObject, OperandsOfStringConcatenation operands, unsigned count)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(count);
+    JSValue sum = operands.at(0);
+    unsigned next = 1;
+    for (unsigned i = count; i--;) {
+        JSValue operand = operands.at(i);
+        if (!isSumSoFar(operand))
+            continue;
+        sum = valueOfSumSoFar(operand);
+        next = i + 1 + uncheckedDowncast<InternalFieldTuple>(operand.asCell())->internalField(InternalFieldTuple::Field::Slot1).get().asInt32();
+        break;
+    }
+    for (; next < count; ++next) {
+        sum = jsAdd(globalObject, sum, operands.at(next));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return sum;
+}
+
+JSValue toPrimitiveForStringConcatenation(JSGlobalObject* globalObject, OperandsOfStringConcatenation operands, unsigned index, unsigned previous, unsigned literalsAfter)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue operand = operands.at(index);
+    bool hasSum = previous != index && isSumSoFar(operands.at(previous));
+    if (!operand.isObject() && !hasSum)
+        return operand;
+
+    JSValue sum;
+    if (hasSum) {
+        sum = valueOfSumSoFar(operands.at(previous));
+        // The second has been added to the first already, if the first is what it came to.
+        if (previous || index != 1) {
+            sum = jsAdd(globalObject, sum, operand);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    } else if (!index && !literalsAfter) {
+        // The second is no literal and has been evaluated. This is when they are added. If it is the second that overloads operators, it is given the first as it is.
+        JSValue second = operands.at(1);
+        if (!operand.overloadsOperators() && !second.overloadsOperators())
+            RELEASE_AND_RETURN(scope, operand.toPrimitive(globalObject));
+        sum = jsAdd(globalObject, operand, second);
+        RETURN_IF_EXCEPTION(scope, { });
+        return sumSoFar(globalObject, sum, 1);
+    } else {
+        if (!operand.overloadsOperators())
+            RELEASE_AND_RETURN(scope, operand.toPrimitive(globalObject));
+        sum = operand;
+        if (index) {
+            JSValue left = addUp(globalObject, operands, index);
+            RETURN_IF_EXCEPTION(scope, { });
+            sum = jsAdd(globalObject, left, operand);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    for (unsigned i = 0; i < literalsAfter; ++i) {
+        sum = jsAdd(globalObject, sum, operands.at(index + 1 + i));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return sumSoFar(globalObject, sum, literalsAfter);
+}
+
+JSValue addUpInsteadOfConcatenating(JSGlobalObject* globalObject, OperandsOfStringConcatenation operands, unsigned count, unsigned firstOperand)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!firstOperand)
+        RELEASE_AND_RETURN(scope, addUp(globalObject, operands, count));
+
+    // d += a + b + c
+    ASSERT(firstOperand == 1);
+    JSValue left = operands.at(0);
+    JSValue right = addUp(globalObject, { operands.first + operands.stride, operands.stride }, count - 1);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!left.overloadsOperators() && !right.overloadsOperators())
+        RELEASE_AND_RETURN(scope, jsAdd(globalObject, left, right));
+    JSCell* cell = left.overloadsOperators() ? left.asCell() : right.asCell();
+    JSValue result = cell->methodTable()->operate(globalObject, OverloadableOperator::Add, left, right, true);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
+    RELEASE_AND_RETURN(scope, addWithoutOverloading(globalObject, left, right));
+}
+
+JSValue toPrimitiveForTargetOfStringConcatenation(JSGlobalObject* globalObject, JSValue target, JSValue previous)
+{
+    // It is left as it is for whichever of the two overloads operators to be given. The op_strcat comes next.
+    if (target.overloadsOperators() || isSumSoFar(previous))
+        return target;
+    return target.toPrimitive(globalObject);
+}
+
+JSValue toPrimitiveForAdditionOfEmptyString(JSGlobalObject* globalObject, JSValue operand, unsigned addition)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (operand.overloadsOperators()) [[unlikely]] {
+        JSValue empty = jsEmptyString(vm);
+        bool isOnTheLeft = addition & EmptyStringIsOnTheLeft;
+        JSValue result = operand.asCell()->methodTable()->operate(globalObject, OverloadableOperator::Add, isOnTheLeft ? empty : operand, isOnTheLeft ? operand : empty, addition & AdditionOfEmptyStringIsCompoundAssignment);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return sumSoFar(globalObject, result, 0);
+    }
+    RELEASE_AND_RETURN(scope, operand.toPrimitive(globalObject));
+}
+
+JSValue toStringForAdditionOfEmptyString(JSGlobalObject* globalObject, JSValue value)
+{
+    if (isSumSoFar(value))
+        return valueOfSumSoFar(value);
+    return value.toString(globalObject);
 }
 
 JSString* jsTypeStringForValueWithConcurrency(VM& vm, JSGlobalObject* globalObject, JSValue v, Concurrency concurrency)

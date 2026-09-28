@@ -400,7 +400,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_string)
 {
     BEGIN();
     auto bytecode = pc->as<OpToString>();
-    RETURN(GET_C(bytecode.m_operand).jsValue().toString(globalObject));
+    JSValue operand = GET_C(bytecode.m_operand).jsValue();
+    if (bytecode.m_isAdditionOfEmptyString)
+        RETURN(toStringForAdditionOfEmptyString(globalObject, operand));
+    RETURN(operand.toString(globalObject));
 }
 
 #if ENABLE(JIT)
@@ -1234,14 +1237,20 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_strcat)
 {
     BEGIN();
     auto bytecode = pc->as<OpStrcat>();
-    RETURN(jsStringFromRegisterArray(globalObject, &GET(bytecode.m_src), bytecode.m_count));
+    RETURN(jsStringFromRegisterArray(globalObject, &GET(bytecode.m_src), bytecode.m_count, bytecode.m_firstOperand));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_primitive)
 {
     BEGIN();
     auto bytecode = pc->as<OpToPrimitive>();
-    RETURN(GET_C(bytecode.m_src).jsValue().toPrimitive(globalObject));
+    if (bytecode.m_additionOfEmptyString)
+        RETURN(toPrimitiveForAdditionOfEmptyString(globalObject, GET_C(bytecode.m_src).jsValue(), bytecode.m_additionOfEmptyString));
+    if (bytecode.m_firstOperand && bytecode.m_dst == bytecode.m_strcatSrc)
+        RETURN(toPrimitiveForTargetOfStringConcatenation(globalObject, GET_C(bytecode.m_src).jsValue(), GET_C(bytecode.m_previous).jsValue()));
+    ASSERT(bytecode.m_dst == bytecode.m_src);
+    VirtualRegister first = bytecode.m_strcatSrc - static_cast<int>(bytecode.m_firstOperand);
+    RETURN(toPrimitiveForStringConcatenation(globalObject, { &GET(first), -1 }, first.offset() - bytecode.m_dst.offset(), first.offset() - bytecode.m_previous.offset(), bytecode.m_literalsAfter));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_enter)

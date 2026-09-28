@@ -119,7 +119,8 @@ struct MethodTable {
     using CustomHasInstanceFunctionPtr = bool (*)(JSObject*, JSGlobalObject*, JSValue);
     CustomHasInstanceFunctionPtr METHOD_TABLE_ENTRY(customHasInstance);
 
-    // The class is the left operand's if that has OverloadsOperators, and otherwise the right's.
+    // The class is the left operand's if that has OverloadsOperators, and otherwise the right's. It can decline to add something to a string, by returning
+    // the empty value having thrown nothing, and then they are concatenated as any object and a string are.
     using OperateFunctionPtr = JSValue (*)(JSGlobalObject*, OverloadableOperator, JSValue left, JSValue right, bool isCompoundAssignment);
     OperateFunctionPtr METHOD_TABLE_ENTRY(operate);
 

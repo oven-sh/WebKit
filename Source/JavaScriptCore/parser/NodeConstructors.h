@@ -608,8 +608,16 @@ namespace JSC {
     }
 
     inline AddNode::AddNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)
-        : BinaryOpNode(location, ResultType::forAdd(expr1->resultDescriptor(), expr2->resultDescriptor()), expr1, expr2, op_add, rightHasAssignments)
+        : BinaryOpNode(location, ResultType::forAdd(expr1->resultDescriptor(), resultOfRightOperand(expr2)), expr1, expr2, op_add, rightHasAssignments)
     {
+    }
+
+    // A string plus anything is a string, unless it is an object that overloads operators. emitStrcat() sees to that for the operands of the additions that it
+    // takes apart, which are those down the left. In a + ("b" + c) + d it does not take the one on the right apart, so that is no proof that a + (...) is a string.
+    inline ResultType AddNode::resultOfRightOperand(ExpressionNode* expr2)
+    {
+        ResultType result = expr2->resultDescriptor();
+        return expr2->isAdd() && result.definitelyIsString() ? ResultType::addResultType() : result;
     }
 
     inline SubNode::SubNode(const JSTokenLocation& location, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments)

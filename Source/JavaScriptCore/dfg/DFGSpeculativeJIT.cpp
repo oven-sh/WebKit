@@ -15996,16 +15996,63 @@ void SpeculativeJIT::compileToPrimitive(Node* node)
     GPRReg argumentGPR = argument.gpr();
     GPRReg resultGPR = result.gpr();
 
+    Jump alreadyPrimitive = branchIfNotCell(argumentGPR);
+    Jump isNotObject = branchIfNotObject(argumentGPR);
+    // It is an operand of +, with a string. What that comes to is then up to the object, and this is compiled again for that: see ToPrimitiveForStrCat.
+    if (m_graph.mayOverloadOperators(m_state.forNode(node->child1()).m_type))
+        speculationCheck(BadType, JSValueSource(argumentGPR), node->child1(), branchTest8(NonZero, Address(argumentGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverloadsOperators)));
+    Jump notPrimitive = jump();
+
     argument.use();
 
-    Jump alreadyPrimitive = branchIfNotCell(argumentGPR);
-    Jump notPrimitive = branchIfObject(argumentGPR);
-
     alreadyPrimitive.link(this);
+    isNotObject.link(this);
     move(argumentGPR, resultGPR);
 
     addSlowPathGenerator(slowPathCall(notPrimitive, this, operationToPrimitive, resultGPR, LinkableConstant::globalObject(*this, node), argumentGPR));
 
+    jsValueResult(resultGPR, node, DataFormatJS, UseChildrenCalledExplicitly);
+}
+
+void SpeculativeJIT::compileStrCatWithOverloadedOperators(Node* node)
+{
+    unsigned count = node->numChildren();
+    Node::StrCatStep step = node->strCatStep();
+    if (step == Node::StrCatStep::Target || step == Node::StrCatStep::AdditionOfEmptyString) {
+        JSValueOperand first(this, m_graph.varArgChild(node, 0));
+        std::optional<JSValueOperand> second;
+        if (count > 1)
+            second.emplace(this, m_graph.varArgChild(node, 1));
+        GPRReg firstGPR = first.gpr();
+        GPRReg secondGPR = second ? second->gpr() : InvalidGPRReg;
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        GPRReg resultGPR = result.gpr();
+        if (step == Node::StrCatStep::Target)
+            callOperation(operationToPrimitiveForTargetOfStrCat, resultGPR, LinkableConstant::globalObject(*this, node), firstGPR, secondGPR);
+        else if (node->op() == ToPrimitiveForStrCat)
+            callOperation(operationToPrimitiveForAdditionOfEmptyString, resultGPR, LinkableConstant::globalObject(*this, node), firstGPR, TrustedImm32(node->strCatData()));
+        else
+            callOperation(operationToStringForAdditionOfEmptyString, resultGPR, LinkableConstant::globalObject(*this, node), firstGPR);
+        jsValueResult(resultGPR, node);
+        return;
+    }
+
+    ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(sizeof(EncodedJSValue) * count);
+    EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+    for (unsigned i = 0; i < count; ++i) {
+        JSValueOperand operand(this, m_graph.varArgChild(node, i));
+        storeValue(operand.gpr(), buffer + i);
+        operand.use();
+    }
+
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    if (step == Node::StrCatStep::Operand)
+        callOperation(operationToPrimitiveForStrCat, resultGPR, LinkableConstant::globalObject(*this, node), TrustedImmPtr(buffer), size_t(count), TrustedImm32(node->strCatData()), TrustedImm32(node->strCatPreviousOperandIndex()), TrustedImm32(node->strCatLiteralsAfter()));
+    else
+        callOperation(operationStrCatAddingUp, resultGPR, LinkableConstant::globalObject(*this, node), TrustedImmPtr(buffer), size_t(count), TrustedImm32(node->strCatData()));
     jsValueResult(resultGPR, node, DataFormatJS, UseChildrenCalledExplicitly);
 }
 

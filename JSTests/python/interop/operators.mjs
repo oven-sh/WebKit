@@ -7,7 +7,10 @@ show("unary", () => [-a, ~a].join(" "));
 show("compare", () => [a == m.Vec(1, 2), a != m.Vec(1, 2), a == b, a != b, a < b, a <= b, a > b, a >= b, a == 1, 1 == a].join(" "));
 show("identity", () => [a === m.Vec(1, 2), a === a, a !== b, a == null, a != undefined, Object.is(a, a)].join(" "));
 show("assignment", () => { let v = a; v += b; v *= 2; v -= a; let w = a; w++; let u = a; u--; return [v, w, u, a].join(" "); });
-show("with a string", () => [a + "!", "<" + a + ">", `${a}`].join(" "));
+// It is asked, as for anything else. What comes of adding a number to a string in Python is its own affair. See strings-and-operators.mjs.
+show("with a string on the right", () => a + "!");
+show("with a string on the left", () => "<" + a);
+show("in a template", () => `${a}`);
 show("in place", () => { let p = m.InPlace(); const same = p; p += 1; return [p === same, p.log].join(" "); });
 show("path", () => [m.Path("a") / "b" / "c", "root" / m.Path("x")].join(" "));
 show("nothing defined", () => m.Plain() + 1);

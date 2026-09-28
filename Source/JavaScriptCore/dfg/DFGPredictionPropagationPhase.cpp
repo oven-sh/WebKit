@@ -1622,6 +1622,12 @@ private:
             setPrediction(SpecString);
             break;
         }
+        // What it gives is up to the object, and nothing profiles it.
+        case ToPrimitiveForStrCat:
+        case StrCatAddingUp: {
+            setPrediction(SpecHeapTop);
+            break;
+        }
         case MakeAtomString: {
             setPrediction(SpecStringIdent);
             break;

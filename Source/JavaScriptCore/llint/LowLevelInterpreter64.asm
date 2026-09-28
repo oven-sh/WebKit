@@ -2692,6 +2692,11 @@ end)
 
 
 llintOpWithReturn(op_to_primitive, OpToPrimitive, macro (size, get, dispatch, return)
+    get(m_previous, t2)
+    loadConstantOrVariable(size, t2, t1)
+    btqnz t1, notCellMask, .opToPrimitivePreviousIsImm
+    bbaeq JSCell::m_type[t1], ObjectType, .opToPrimitiveSlowCase
+.opToPrimitivePreviousIsImm:
     get(m_src, t2)
     loadConstantOrVariable(size, t2, t0)
     btqnz t0, notCellMask, .opToPrimitiveIsImm

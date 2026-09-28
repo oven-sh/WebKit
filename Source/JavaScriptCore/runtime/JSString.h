@@ -701,7 +701,7 @@ private:
         return newString;
     }
 
-    friend JSValue jsStringFromRegisterArray(JSGlobalObject*, Register*, unsigned);
+    friend JSValue jsStringFromRegisterArray(JSGlobalObject*, Register*, unsigned, unsigned);
 
     template<bool reportAllocation, typename Function> const String& resolveRopeWithFunction(JSGlobalObject* nullOrGlobalObjectForOOM, Function&&) const;
     JS_EXPORT_PRIVATE GCOwnedDataScope<AtomStringImpl*> resolveRopeToAtomString(JSGlobalObject*) const;

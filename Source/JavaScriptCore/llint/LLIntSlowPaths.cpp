@@ -2426,14 +2426,20 @@ LLINT_SLOW_PATH_DECL(slow_path_strcat)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpStrcat>();
-    LLINT_RETURN(jsStringFromRegisterArray(globalObject, &callFrame->uncheckedR(bytecode.m_src), bytecode.m_count));
+    LLINT_RETURN(jsStringFromRegisterArray(globalObject, &callFrame->uncheckedR(bytecode.m_src), bytecode.m_count, bytecode.m_firstOperand));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_to_primitive)
 {
     LLINT_BEGIN();
     auto bytecode = pc->as<OpToPrimitive>();
-    LLINT_RETURN(getOperand(callFrame, bytecode.m_src).toPrimitive(globalObject));
+    if (bytecode.m_additionOfEmptyString)
+        LLINT_RETURN(toPrimitiveForAdditionOfEmptyString(globalObject, getOperand(callFrame, bytecode.m_src), bytecode.m_additionOfEmptyString));
+    if (bytecode.m_firstOperand && bytecode.m_dst == bytecode.m_strcatSrc)
+        LLINT_RETURN(toPrimitiveForTargetOfStringConcatenation(globalObject, getOperand(callFrame, bytecode.m_src), getOperand(callFrame, bytecode.m_previous)));
+    ASSERT(bytecode.m_dst == bytecode.m_src);
+    VirtualRegister first = bytecode.m_strcatSrc - static_cast<int>(bytecode.m_firstOperand);
+    LLINT_RETURN(toPrimitiveForStringConcatenation(globalObject, { &callFrame->uncheckedR(first), -1 }, first.offset() - bytecode.m_dst.offset(), first.offset() - bytecode.m_previous.offset(), bytecode.m_literalsAfter));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_throw)

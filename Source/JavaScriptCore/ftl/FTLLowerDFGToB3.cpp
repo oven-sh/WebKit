@@ -850,6 +850,10 @@ private:
         case StrCat:
             compileStrCat();
             break;
+        case ToPrimitiveForStrCat:
+        case StrCatAddingUp:
+            compileStrCatWithOverloadedOperators();
+            break;
         case ArithAdd:
         case ArithSub:
             compileArithAddOrSub();
@@ -11751,12 +11755,46 @@ IGNORE_CLANG_WARNINGS_END
             unsure(isObjectCase), unsure(continuation));
 
         m_out.appendTo(isObjectCase, continuation);
+        // It is an operand of +, with a string. What that comes to is then up to the object, and this is compiled again for that: see ToPrimitiveForStrCat.
+        speculateDoesNotOverloadOperators(m_node->child1(), value);
         results.append(m_out.anchor(vmCall(
             Int64, operationToPrimitive, weakPointer(globalObject), value)));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
         setJSValue(m_out.phi(Int64, results));
+    }
+
+    void compileStrCatWithOverloadedOperators()
+    {
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        unsigned count = m_node->numChildren();
+        switch (m_node->strCatStep()) {
+        case Node::StrCatStep::Target:
+            setJSValue(vmCall(Int64, operationToPrimitiveForTargetOfStrCat, weakPointer(globalObject), lowJSValue(m_graph.varArgChild(m_node, 0)), lowJSValue(m_graph.varArgChild(m_node, 1))));
+            return;
+        case Node::StrCatStep::AdditionOfEmptyString:
+            if (m_node->op() == ToPrimitiveForStrCat)
+                setJSValue(vmCall(Int64, operationToPrimitiveForAdditionOfEmptyString, weakPointer(globalObject), lowJSValue(m_graph.varArgChild(m_node, 0)), m_out.constInt32(m_node->strCatData())));
+            else
+                setJSValue(vmCall(Int64, operationToStringForAdditionOfEmptyString, weakPointer(globalObject), lowJSValue(m_graph.varArgChild(m_node, 0))));
+            return;
+        case Node::StrCatStep::Operand:
+        case Node::StrCatStep::Concatenation:
+            break;
+        }
+
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(sizeof(EncodedJSValue) * count);
+        EncodedJSValue* buffer = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+        for (unsigned i = 0; i < count; ++i)
+            m_out.store64(lowJSValue(m_graph.varArgChild(m_node, i)), m_out.absolute(buffer + i));
+
+        if (m_node->strCatStep() == Node::StrCatStep::Operand) {
+            setJSValue(vmCall(Int64, operationToPrimitiveForStrCat, weakPointer(globalObject), m_out.constIntPtr(buffer), m_out.constIntPtr(count),
+                m_out.constInt32(m_node->strCatData()), m_out.constInt32(m_node->strCatPreviousOperandIndex()), m_out.constInt32(m_node->strCatLiteralsAfter())));
+            return;
+        }
+        setJSValue(vmCall(Int64, operationStrCatAddingUp, weakPointer(globalObject), m_out.constIntPtr(buffer), m_out.constIntPtr(count), m_out.constInt32(m_node->strCatData())));
     }
 
     void compileToPropertyKey()

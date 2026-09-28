@@ -1312,6 +1312,9 @@ namespace JSC {
         AddNode(const JSTokenLocation&, ExpressionNode* expr1, ExpressionNode* expr2, bool rightHasAssignments);
 
         bool isAdd() const final { return true; }
+
+    private:
+        static ResultType resultOfRightOperand(ExpressionNode*);
     };
 
     class SubNode final : public BinaryOpNode {

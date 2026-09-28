@@ -411,6 +411,8 @@ bool doesGC(Graph& graph, Node* node)
     case ToObject:
     case OpenAsyncFromSyncIterator:
     case ToPrimitive:
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
     case ToPropertyKey:
     case ToPropertyKeyOrNumber:
     case ToThis:

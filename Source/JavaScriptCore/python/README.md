@@ -297,13 +297,24 @@ the constructor, `PyType::object()` is the way back, `isClass()` asks whether a 
 **What an operator of JavaScript's does with something of Python's is what the same operator does in Python.** `a + b` is `a.__add__(b)` or `b.__radd__(a)`, and so
 for `- * / % ** << >> & | ^`, unary `-` and `~`, and `== != < <= > >=`. `a += b` tries `a.__iadd__(b)` first. What has no meaning raises `TypeError`.
 
-`===` is identity, `== null` asks whether there is anything there, `+` with a string concatenates, and `x++` is `x = x + 1`. A list is an `Array` and a `bytes` a
+`===` is identity, `== null` asks whether there is anything there, and `x++` is `x = x + 1`. A list is an `Array` and a `bytes` a
 `Uint8Array`, so for those the operators are JavaScript's, unless they are of a class derived from those that has its own.
+
+**With a string of JavaScript's it is the object that is asked, and the string is not**: `x + "s"` is `x.__add__("s")` and `"s" + x` is `x.__radd__("s")`. If it has nothing to say
+they are concatenated, as any object and a string are, so that `"value: " + x` says what `x` is. In Python that would be a `TypeError`, a `str` being added to nothing but a `str`.
+What the object raises is thrown.
 
 Every cell of Python's has `OverloadsOperators` in its `TypeInfo`, and `MethodTable::operate`. **There is no switch.** What the compilers may assume of an operator
 depends on the types of its operands and on nothing else. Two objects are compared by their addresses, having been checked for the flag, unless that
 check has failed there before: 0.03 to 0.06ns for each `==` of two objects, and nothing that could be measured for anything else. That an operator is
 that of a compound assignment is said in the instruction, and read only when an object that overloads it has turned up.
+
+JavaScript compiles few additions of strings to additions. A string plus anything being a string, `"a" + x + "b"` is a conversion of `x` and one concatenation, and `x + ""` is two
+conversions. That still holds, and what an object says is still heeded, when it would have been and in the same order: "String concatenation and overloaded operators" in
+`runtime/Operations.h` says how. The conversion already left the interpreter for any object, and that is where it is found out. It costs a load and a compare in the interpreter
+and in Baseline for each operand that is converted, which could not be measured (52.6ns and 30.3ns for a concatenation, with and without), and nothing in the DFG and FTL, which
+exit the first time and are compiled again to do what the interpreter does. `JSTests/stress/overloaded-operators-strings.js` writes each expression twice, as one would and as
+additions of two operands, and has both do the same things in the same order.
 
 ### Waiting
 

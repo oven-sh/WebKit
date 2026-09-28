@@ -260,7 +260,6 @@ using ReplayRegisterAllocator = RegisterAllocator<ReplayBackend>;
     macro(OpToNumeric, m_operand, 0) \
     macro(OpToPropertyKey, m_src, 0) \
     macro(OpToPropertyKeyOrNumber, m_src, 0) \
-    macro(OpToPrimitive, m_src, 0) \
     macro(OpBitnot, m_operand, 0) \
     macro(OpResolveScope, m_scope, 1) \
     macro(OpGetFromScope, m_scope, 1) \

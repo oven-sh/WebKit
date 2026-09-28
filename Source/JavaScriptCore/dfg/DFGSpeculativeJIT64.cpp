@@ -3659,6 +3659,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case ToPrimitiveForStrCat:
+    case StrCatAddingUp:
+        compileStrCatWithOverloadedOperators(node);
+        break;
+
     case ArithAdd:
         compileArithAdd(node);
         break;
