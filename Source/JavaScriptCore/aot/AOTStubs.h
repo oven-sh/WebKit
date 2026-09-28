@@ -265,6 +265,8 @@ class HeaderReferences {
 public:
     // What a frame of the function has for a callee: CalleeBits::boxNativeCallee() of the header.
     void moveBoxedHeader(CCallHelpers&, GPRReg);
+    // The address of the header with the tag in it, which takes one instruction: for a stub that does the rest of that itself.
+    void moveTaggedHeader(CCallHelpers&, GPRReg);
     void loadIndex(CCallHelpers&, GPRReg); // CodeHeader::index
     void link(LinkBuffer&, CCallHelpers::Label header);
 

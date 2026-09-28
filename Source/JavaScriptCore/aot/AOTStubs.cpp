@@ -39,8 +39,17 @@ static void jumpToEntry(CCallHelpers& jit, GPRReg data, Entry entry)
     jit.farJump(data, JITThunkPtrTag);
 }
 
+// Of what HeaderReferences::moveTaggedHeader() left there.
+static void boxHeader(CCallHelpers& jit)
+{
+    jit.move(CCallHelpers::TrustedImm64(lowestAccessibleAddress()), CCallHelpers::dataTempRegister);
+    jit.subPtr(CCallHelpers::dataTempRegister, boxedHeaderGPR);
+}
+
+// Leaves T11 alone: the function may have put aside there what the frame had for a callee.
 static void generatePrologue(CCallHelpers& jit)
 {
+    boxHeader(jit);
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT0);
     jit.loadPtr(Address(GPRInfo::regT0, Instance::offsetOfVM()), GPRInfo::regT1);
     jit.subPtr(GPRInfo::callFrameRegister, GPRInfo::regT9, GPRInfo::regT2);
@@ -49,6 +58,8 @@ static void generatePrologue(CCallHelpers& jit)
     // A frame so big that the subtraction wrapped around.
     Jump wrapped = jit.branchPtr(CCallHelpers::Above, GPRInfo::regT2, GPRInfo::callFrameRegister);
     jit.move(GPRInfo::regT2, CCallHelpers::stackPointerRegister);
+    // There is room for the frame: from now on it says which function's it is.
+    jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
     jit.ret();
 
     overflow.link(&jit);
@@ -114,6 +125,7 @@ static void generateArityCheck(CCallHelpers& jit)
     comeBack();
 
     overflow.link(&jit);
+    boxHeader(jit);
     jit.move(GPRInfo::regT10, CCallHelpers::linkRegister);
     jit.emitFunctionPrologue();
     jumpToEntry(jit, GPRInfo::regT5, Entry::ThrowStackOverflowAtPrologue);
@@ -1915,7 +1927,13 @@ static constexpr Stub stubsThatCallOperations[] = {
 };
 static constexpr Stub stubsThatCallFunctions[] = { Stub::Call, Stub::Construct, Stub::CallAndLink, Stub::ConstructAndLink };
 static constexpr unsigned mostArgumentsWithThunk = 8;
-static constexpr unsigned numberOfThunks = std::size(stubsThatCallOperations) * numberOfEntries + std::size(stubsThatCallFunctions) * mostArgumentsWithThunk;
+// The prologue is told how big the frame is, which is a multiple of this; and whoever sees to there being enough arguments, how many.
+static constexpr unsigned unitOfFrameSize = stackAlignmentBytes();
+static constexpr unsigned biggestFrameWithThunk = 64 * unitOfFrameSize;
+static constexpr unsigned firstThunkOfCalls = std::size(stubsThatCallOperations) * numberOfEntries;
+static constexpr unsigned firstThunkOfPrologue = firstThunkOfCalls + std::size(stubsThatCallFunctions) * mostArgumentsWithThunk;
+static constexpr unsigned firstThunkOfArityCheck = firstThunkOfPrologue + biggestFrameWithThunk / unitOfFrameSize;
+static constexpr unsigned numberOfThunks = firstThunkOfArityCheck + mostArgumentsWithThunk;
 
 std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
 {
@@ -1927,8 +1945,12 @@ std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
     }
     for (unsigned i = 0; i < std::size(stubsThatCallFunctions); ++i) {
         if (stubsThatCallFunctions[i] == stub)
-            return !valueOfT9 || valueOfT9 > mostArgumentsWithThunk ? std::nullopt : std::optional<unsigned> { static_cast<unsigned>(std::size(stubsThatCallOperations) * numberOfEntries + i * mostArgumentsWithThunk + valueOfT9 - 1) };
+            return !valueOfT9 || valueOfT9 > mostArgumentsWithThunk ? std::nullopt : std::optional<unsigned> { firstThunkOfCalls + i * mostArgumentsWithThunk + valueOfT9 - 1 };
     }
+    if (stub == Stub::Prologue && valueOfT9 && valueOfT9 <= biggestFrameWithThunk && !(valueOfT9 % unitOfFrameSize))
+        return firstThunkOfPrologue + valueOfT9 / unitOfFrameSize - 1;
+    if (stub == Stub::ArityCheck && valueOfT9 && valueOfT9 <= mostArgumentsWithThunk)
+        return firstThunkOfArityCheck + valueOfT9 - 1;
     return std::nullopt;
 }
 
@@ -1979,6 +2001,17 @@ const StubBlob& stubBlob()
                         RELEASE_ASSERT_NOT_REACHED();
                     }
                 }
+            }
+            for (unsigned frameSize = unitOfFrameSize; frameSize <= biggestFrameWithThunk; frameSize += unitOfFrameSize) {
+                jit.align();
+                thunkLabels.append(jit.label());
+                jit.move(CCallHelpers::TrustedImm32(frameSize), GPRInfo::regT9);
+                generatePrologue(jit);
+            }
+            for (unsigned numParameters = 1; numParameters <= mostArgumentsWithThunk; ++numParameters) {
+                thunkLabels.append(jit.label());
+                jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
+                jit.jump().linkTo(labels[static_cast<unsigned>(Stub::ArityCheck)], &jit);
             }
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
         }
@@ -2038,6 +2071,12 @@ void HeaderReferences::moveBoxedHeader(CCallHelpers& jit, GPRReg reg)
     jit.nop(); // adr reg, header + NativeCalleeTag
     jit.move(CCallHelpers::TrustedImm64(lowestAccessibleAddress()), CCallHelpers::dataTempRegister);
     jit.subPtr(CCallHelpers::dataTempRegister, reg);
+}
+
+void HeaderReferences::moveTaggedHeader(CCallHelpers& jit, GPRReg reg)
+{
+    m_references.append({ jit.label(), reg, false });
+    jit.nop(); // adr reg, header + NativeCalleeTag
 }
 
 void HeaderReferences::loadIndex(CCallHelpers& jit, GPRReg reg)

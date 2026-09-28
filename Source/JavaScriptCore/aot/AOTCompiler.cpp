@@ -490,6 +490,18 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         // The frame has the Instance where a CodeBlock would be, and the object that was called for a callee. Once there is known to
         // be room for the frame that is put aside, and what says which function this is takes its place. Until then nobody looks,
         // and if there is no room, whoever says so wants to know which function (generateThrowStackOverflowAtPrologue()).
+        constexpr unsigned frameSizeThatNeedsNoCheck = 256;
+        if (usesStubs && (makesCalls || code.frameSize() > frameSizeThatNeedsNoCheck)) {
+            // The stub does all that.
+            if (graph.calleeSlot)
+                jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT11);
+            graph.headerReferences.moveTaggedHeader(jit, boxedHeaderGPR);
+            stubCalls.call(jit, Stub::Prologue, code.frameSize());
+            if (graph.calleeSlot)
+                jit.store64(GPRInfo::regT11, CCallHelpers::Address(GPRInfo::callFrameRegister, graph.calleeSlot->offsetFromFP()));
+            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
+            return;
+        }
         graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
         auto becomeFrameOfThisFunction = makeScopeExit([&] {
             if (!graph.calleeSlot) {
@@ -502,15 +514,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         });
         // The limit leaves room for the runtime to do what it has to when the stack is used up, which is a great deal more than this.
         // However deep the calls go, whatever made the last of them has checked.
-        constexpr unsigned frameSizeThatNeedsNoCheck = 256;
-        if (usesStubs && !makesCalls && code.frameSize() <= frameSizeThatNeedsNoCheck) {
-            jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
-            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
-            return;
-        }
         if constexpr (usesStubs) {
-            jit.move(CCallHelpers::TrustedImm32(code.frameSize()), GPRInfo::regT9);
-            stubCalls.call(jit, Stub::Prologue);
+            jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
             jit.emitSave(code.calleeSaveRegisterAtOffsetList());
             return;
         }
@@ -546,10 +551,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     if (usesStubs && checksArity) {
         // What is done about too few comes first: it refers to the header, which has to be within reach.
         tooFewArguments = jit.label();
-        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
+        graph.headerReferences.moveTaggedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
         jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
-        jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
-        stubCalls.call(jit, Stub::ArityCheck);
+        stubCalls.call(jit, Stub::ArityCheck, numParameters);
         arityFixed = jit.jump();
     }
     CCallHelpers::Label directEntry;
@@ -568,8 +572,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         directEntry = jit.label();
         graph.headerReferences.loadIndex(jit, GPRInfo::regT9);
         jit.loadPtr(CCallHelpers::calleeFrameSlot(CallFrameSlot::codeBlock).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::regT10);
-        jit.addPtr(CCallHelpers::TrustedImm32(Instance::offsetOfData()), GPRInfo::regT10);
-        jit.loadPtr(CCallHelpers::BaseIndex(GPRInfo::regT10, GPRInfo::regT9, CCallHelpers::TimesEight), GPRInfo::regT10);
+        jit.addLeftShift64(GPRInfo::regT10, GPRInfo::regT9, CCallHelpers::TrustedImm32(3), GPRInfo::regT10);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT10, Instance::offsetOfData()), GPRInfo::regT10);
         jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT10).linkTo(noData, &jit);
         if (!checksArity && !graph.catchEntrypoints.isEmpty())
             directlyEntered = jit.jump();
