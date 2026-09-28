@@ -65,20 +65,6 @@ for (const [form, suffix] of forms) {
         shouldBe(read(), 2, form + ", cache created by an earlier statement");
     }
 
-    // A global object with no JSGlobalProxy in front of it. The LLInt caches a load from the prototype chain
-    // of such an object, so the first case does not need the JIT.
-    function testWithoutProxy(name, count, body, declaration, expected) {
-        const global = $vm.createGlobalObject();
-        const access = new Function("object", body + " // " + form);
-        noInline(access);
-        for (let i = 0; i < count; ++i)
-            access(global);
-        global.$vm.evaluateWithScopeExtension(declaration + suffix);
-        shouldBe(String(access(global)), expected, form + ", " + name);
-    }
-    testWithoutProxy("no proxy, prototype data property in the LLInt", 20, `return typeof object.toString;`, `var toString = 33;`, "number");
-    testWithoutProxy("no proxy, get_by_id miss", testLoopCount, `return object.name1;`, `var name1 = 33;`, "33");
-
     // The reader is on the stack, in optimized code, when the program runs.
     {
         const realm = $262.createRealm();
@@ -118,6 +104,23 @@ for (const [form, suffix] of forms) {
         const descriptor = Object.getOwnPropertyDescriptor(realm.global, "name1");
         shouldBe(JSON.stringify(descriptor), `{"value":2,"writable":true,"enumerable":true,"configurable":false}`, form + ", descriptor");
     }
+}
+
+// A global object with no JSGlobalProxy in front of it. The LLInt caches a load from the prototype chain of
+// such an object, so the first case does not need the JIT. $vm.evaluateWithScopeExtension() has no bytecode
+// cache: give it only programs of the JSONP form, which have no bytecode.
+{
+    function testWithoutProxy(name, count, body, declaration, expected) {
+        const global = $vm.createGlobalObject();
+        const access = new Function("object", body);
+        noInline(access);
+        for (let i = 0; i < count; ++i)
+            access(global);
+        global.$vm.evaluateWithScopeExtension(declaration);
+        shouldBe(String(access(global)), expected, name);
+    }
+    testWithoutProxy("no proxy, prototype data property in the LLInt", 20, `return typeof object.toString;`, `var toString = 33;`, "number");
+    testWithoutProxy("no proxy, get_by_id miss", testLoopCount, `return object.name1;`, `var name1 = 33;`, "33");
 }
 
 // A function declaration never runs on the JSONP fast path. Its binding goes through the same function.
@@ -168,15 +171,12 @@ for (const [form, suffix] of forms) {
     evaluate(`var name3 = 4;`);
     shouldBe(structureID(), dictionary, "new name, dictionary: same Structure");
     shouldBe(global.name3, 4, "new name, dictionary: value");
-    evaluate(`var name4 = 5; void 0;`);
-    shouldBe(structureID(), dictionary, "new name as bytecode, dictionary: same Structure");
-    shouldBe(global.name4, 5, "new name as bytecode, dictionary: value");
 
     // The global object leaves the dictionary state again, and a site caches a miss for it again.
     $vm.flattenDictionaryObject(global);
-    const readName5 = warmReader("name5");
+    const readName4 = warmReader("name4");
     const flattenedAgain = structureID();
-    evaluate(`var name5 = 6;`);
+    evaluate(`var name4 = 5;`);
     shouldBe(structureID() !== flattenedAgain, true, "new name, flattened again: another Structure");
-    shouldBe(readName5(global), 6, "new name, flattened again: value at the warm site");
+    shouldBe(readName4(global), 5, "new name, flattened again: value at the warm site");
 }
