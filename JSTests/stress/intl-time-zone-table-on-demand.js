@@ -30,7 +30,8 @@ function zoned(timeZone) {
 // Before the whole table exists: UTC, which it starts out with, and primary identifiers.
 shouldBe(new Temporal.ZonedDateTime(0n, "UTC").timeZoneId, "UTC", "UTC");
 shouldBe(resolved("UTC"), "UTC", "UTC");
-const early = ["Europe/Berlin", "America/New_York", "Asia/Tokyo", "America/Los_Angeles", "America/Argentina/Buenos_Aires"];
+// Ones that are primary identifiers to IANA and to CLDR both: which of the two ICU goes by depends on the platform.
+const early = ["Europe/Berlin", "America/New_York", "Asia/Tokyo", "America/Los_Angeles", "Australia/Sydney"];
 const earlyZoned = early.map(zoned);
 for (const name of early) {
     shouldBe(resolved(name), name, "a primary identifier");
