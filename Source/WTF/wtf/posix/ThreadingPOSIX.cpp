@@ -97,6 +97,14 @@
 #define SA_RESTART 0
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+#include <signal.h>
+#include <sys/mman.h>
+#include <wtf/ForbidHeapAllocation.h>
+#include <wtf/MmapSpan.h>
+#include <wtf/PageBlock.h>
+#endif
+
 namespace WTF {
 
 Thread::~Thread() = default;
@@ -328,8 +336,72 @@ void Thread::initializeCurrentThreadEvenIfNonWTFCreated()
 #endif
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The kernel can only deliver a stack overflow on an alternate signal stack: the fault is on the
+// guard page of the thread's own stack. The embedder gives one to the threads it creates, and this
+// gives one to a thread that WTF creates, for as long as the thread runs its entry point.
+class AlternateSignalStack {
+    WTF_MAKE_NONCOPYABLE(AlternateSignalStack);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    AlternateSignalStack()
+    {
+        // bionic and the sanitizer runtimes give every thread a stack, and they release it themselves.
+        stack_t current;
+        if (sigaltstack(nullptr, &current) || !(current.ss_flags & SS_DISABLE))
+            return;
+
+        m_mapping = MmapSpan<uint8_t>::tryAlloc(pageSize() + size);
+        if (!m_mapping)
+            return;
+
+        // An overflow of the handler itself faults on this page and does not reach the mapping below.
+        mprotect(m_mapping.mutableSpan().data(), pageSize(), PROT_NONE);
+
+        stack_t alternateStack { };
+        alternateStack.ss_sp = stack().data();
+        alternateStack.ss_size = stack().size();
+        if (sigaltstack(&alternateStack, nullptr))
+            m_mapping = { };
+    }
+
+    ~AlternateSignalStack()
+    {
+        if (!m_mapping)
+            return;
+
+        // A stack that something else registered since then stays registered.
+        stack_t current;
+        bool isRegistered = sigaltstack(nullptr, &current) || current.ss_sp == stack().data();
+        if (!isRegistered)
+            return;
+
+        stack_t disabled { };
+        disabled.ss_flags = SS_DISABLE;
+        // Darwin checks the size of a stack that it disables too.
+        disabled.ss_size = stack().size();
+        if (sigaltstack(&disabled, nullptr)) {
+            // The kernel can still deliver a signal on this stack, so it stays mapped.
+            auto registeredStack = m_mapping.leakSpan();
+            UNUSED_VARIABLE(registeredStack);
+        }
+    }
+
+private:
+    // The crash handler of the embedder writes its whole report on this stack.
+    static constexpr size_t size = 512 * KB;
+
+    std::span<uint8_t> stack() LIFETIME_BOUND { return m_mapping.mutableSpan().subspan(pageSize()); }
+
+    MmapSpan<uint8_t> m_mapping;
+};
+#endif
+
 static void* wtfThreadEntryPoint(void* context)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    AlternateSignalStack alternateSignalStack;
+#endif
     Thread::entryPoint(reinterpret_cast<Thread::NewThreadContext*>(context));
     return nullptr;
 }
