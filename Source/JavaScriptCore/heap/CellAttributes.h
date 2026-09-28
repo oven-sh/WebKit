@@ -32,23 +32,12 @@
 
 namespace JSC {
 
-// Who decides that a cell is dead.
-enum class CellLifetime : uint8_t {
-    // The collector: a cell that marking does not reach is dead.
-    Collected,
-
-    // The ExplicitlyFreedCellClient. Marking one of these cells records that something refers to
-    // it, and has no bearing on whether it stays.
-    ExplicitlyFreed,
-};
-
 struct CellAttributes {
     CellAttributes() { }
     
-    CellAttributes(DestructionMode destruction, HeapCell::Kind cellKind, CellLifetime lifetime = CellLifetime::Collected)
+    CellAttributes(DestructionMode destruction, HeapCell::Kind cellKind)
         : destruction(destruction)
         , cellKind(cellKind)
-        , lifetime(lifetime)
     {
     }
     
@@ -56,7 +45,6 @@ struct CellAttributes {
     
     DestructionMode destruction { DoesNotNeedDestruction };
     HeapCell::Kind cellKind { HeapCell::JSCell };
-    CellLifetime lifetime { CellLifetime::Collected };
 };
 
 } // namespace JSC

@@ -192,10 +192,10 @@ class PyRealm final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm)
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
-        return &vm.cellSpace();
+        return vm.pyRealmSpace<mode>();
     }
 
     DECLARE_EXPORT_INFO;

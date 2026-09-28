@@ -35,7 +35,6 @@
 #include "ConservativeRoots.h"
 #include "DeferGCInlines.h"
 #include "EdenGCActivityCallback.h"
-#include "ExplicitlyFreedCellClient.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
 #include "FastMallocAlignedMemoryAllocator.h"
@@ -1023,13 +1022,6 @@ void Heap::removeDeadHeapSnapshotNodes(HeapProfiler& heapProfiler)
     }
 }
 
-void Heap::finishMarkingExplicitlyFreedCells()
-{
-    if (m_explicitlyFreedCellClient)
-        m_explicitlyFreedCellClient->didConvergeMarking(*this);
-    m_explicitlyFreedBytesKeptThisCycle = m_objectSpace.finishMarkingExplicitlyFreedCells(m_explicitlyFreedCellClient);
-}
-
 void Heap::updateObjectCounts()
 {
     if (m_collectionScope && m_collectionScope.value() == CollectionScope::Full) {
@@ -1037,7 +1029,7 @@ void Heap::updateObjectCounts()
         m_totalBytesVisited = 0;
     }
 
-    m_totalBytesVisitedThisCycle = bytesVisited() + m_explicitlyFreedBytesKeptThisCycle;
+    m_totalBytesVisitedThisCycle = bytesVisited();
     
     m_totalBytesVisited += m_totalBytesVisitedThisCycle;
 }
@@ -2232,10 +2224,7 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
         // https://bugs.webkit.org/show_bug.cgi?id=180310
         if (converged && visitor.isEmpty()) {
             assertMarkStacksEmpty();
-            if (m_explicitlyFreedCellClient)
-                m_explicitlyFreedCellClient->didReachFixpoint(*this, visitor);
-            if (visitor.isEmpty())
-                return changePhase(conn, CollectorPhase::End);
+            return changePhase(conn, CollectorPhase::End);
         }
             
         m_scheduler->didExecuteConstraints();
@@ -2262,7 +2251,7 @@ NEVER_INLINE bool Heap::runFixpointPhase(GCConductor conn)
     if (visitor.didReachTermination())
         return true; // This is like relooping to the top of runFixpointPhase().
         
-    if (m_currentRequest.keepsWorldStopped || !m_scheduler->shouldResume())
+    if (!m_scheduler->shouldResume())
         return true;
 
     m_scheduler->willResume();
@@ -2341,7 +2330,6 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
             writeBarrier(codeBlock);
         });
 
-    finishMarkingExplicitlyFreedCells();
     updateObjectCounts();
     endMarking();
 
@@ -3658,12 +3646,6 @@ void Heap::addDirtyWeakGCHashTable(WeakGCHashTable* weakGCHashTable)
 void WeakGCHashTable::addToDirtyList(VM& vm)
 {
     vm.heap.addDirtyWeakGCHashTable(this);
-}
-
-void Heap::didFreeSinceLastCollection(size_t bytes)
-{
-    size_t& allocated = bytes >= oversizedAllocationThreshold ? m_oversizedBytesAllocatedThisCycle : m_nonOversizedBytesAllocatedThisCycle;
-    allocated -= std::min(allocated, bytes);
 }
 
 void Heap::didAllocateBlock(size_t capacity)

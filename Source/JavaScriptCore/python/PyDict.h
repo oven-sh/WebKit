@@ -94,12 +94,6 @@ public:
     using Base = JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.cellSpace();
-    }
-
     DECLARE_VISIT_CHILDREN;
 
     static constexpr int notFound = -1;
@@ -160,6 +154,12 @@ class PyDict final : public PyHashTable {
 public:
     using Base = PyHashTable;
     PYTHON_DECLARE_EXOTIC_METHODS
+
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.pyDictSpace<mode>();
+    }
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -226,6 +226,12 @@ class PySet final : public PyHashTable {
 public:
     using Base = PyHashTable;
     PYTHON_DECLARE_EXOTIC_METHODS
+
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return vm.pySetSpace<mode>();
+    }
 
     DECLARE_EXPORT_INFO;
 

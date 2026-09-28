@@ -36,7 +36,6 @@
 namespace JSC {
 
 class CompleteSubspace;
-class ExplicitlyFreedCellClient;
 class Heap;
 class HeapCell;
 class HeapIterationScope;
@@ -140,7 +139,6 @@ public:
     MarkedBlock::Handle* findMarkedBlockHandleDebug(MarkedBlock*);
 
     void beginMarking();
-    size_t finishMarkingExplicitlyFreedCells(ExplicitlyFreedCellClient*); // Returns the bytes kept that marking had not counted.
     void endMarking();
     void snapshotUnswept();
     void clearNewlyAllocated();
@@ -156,8 +154,6 @@ public:
     HeapVersion edenVersion() const { return m_edenVersion; }
 
     void registerPreciseAllocation(PreciseAllocation*, bool isNewAllocation);
-    // Between collections only.
-    void unregisterPreciseAllocation(PreciseAllocation*);
     const Vector<PreciseAllocation*>& preciseAllocations() const LIFETIME_BOUND { return m_preciseAllocations; }
     unsigned preciseAllocationsNurseryOffset() const { return m_preciseAllocationsNurseryOffset; }
     unsigned preciseAllocationsOffsetForThisCollection() const { return m_preciseAllocationsOffsetForThisCollection; }
@@ -220,7 +216,6 @@ private:
     HeapVersion m_edenVersion { initialVersion };
     bool m_isIterating { false };
     bool m_isMarking { false };
-    bool m_hasExplicitlyFreedCells { false };
     bool m_conservativeScanIsPrepared { false };
     Lock m_directoryLock;
     MarkedBlockSet m_blocks;

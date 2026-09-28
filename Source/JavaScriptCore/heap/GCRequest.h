@@ -51,10 +51,6 @@ struct GCRequest {
     
     std::optional<CollectionScope> scope;
     RefPtr<SharedTask<void()>> didFinishEndPhase;
-    // The mutator is not resumed between the beginning of the collection and its end. For a request that the mutator waits
-    // for: it has nothing to run meanwhile, and if it is conducting the collection it goes on doing so, where resuming would
-    // have it hand that over to the collector thread. So its marking constraints run on the mutator's thread.
-    bool keepsWorldStopped { false };
 #if USE(BUN_JSC_ADDITIONS)
     // Set by an embedder on a collection it requests because the application has gone idle (as opposed to one paced by
     // allocation, forced by the program, or by memory pressure). Only such a collection may let optimized code that has

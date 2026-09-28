@@ -189,13 +189,6 @@ public:
         inline size_t markCount();
         inline size_t size();
 
-        // For CellLifetime::ExplicitlyFreed, once marking has converged. The first marks every cell
-        // that was live when the collection began or was allocated since. The caller then clears
-        // the marks of the free ones, and the second brings the block's bookkeeping up to date and
-        // returns the number of bytes that marking had not already counted.
-        void markLiveCells();
-        size_t didMarkLiveCells();
-
         size_t backingStorageSize() { return std::bit_cast<uintptr_t>(end()) - std::bit_cast<uintptr_t>(pageStart()); }
         
         bool isAllocated();
@@ -647,12 +640,6 @@ inline bool MarkedBlock::testAndSetMarked(const void* p, Dependency dependency)
 {
     assertMarksNotStale();
     return header().m_marks.concurrentTestAndSet(atomNumber(p), dependency);
-}
-
-inline void MarkedBlock::clearMarked(const void* p)
-{
-    assertMarksNotStale();
-    header().m_marks.clear(atomNumber(p));
 }
 
 inline const WTF::BitSet<MarkedBlock::atomsPerBlock>& MarkedBlock::marks() const

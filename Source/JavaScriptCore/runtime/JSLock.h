@@ -52,8 +52,6 @@ namespace JSC {
 
 class CallFrame;
 class VM;
-class VMEntryScope;
-struct EntryFrame;
 class JSGlobalObject;
 class JSLock;
 
@@ -134,22 +132,6 @@ public:
         unsigned m_dropDepth;
     };
 
-    // For an embedder that has a lock of its own, outside this one, which decides which thread runs.
-    // The thread about to give that lock up calls relinquish(); once it has it back it calls resume()
-    // with what relinquish() returned. In between, the VM is any other thread's to lock.
-    //
-    // This differs from DropAllLocks in that threads come back in whatever order the embedder's lock
-    // wakes them, each to the JavaScript frames it left. It is not the end of a turn either, so no
-    // microtasks run.
-    struct Relinquished {
-        intptr_t lockCount { 0 };
-        CallFrame* topCallFrame { nullptr };
-        EntryFrame* topEntryFrame { nullptr };
-        VMEntryScope* entryScope { nullptr };
-    };
-    JS_EXPORT_PRIVATE Relinquished relinquish();
-    JS_EXPORT_PRIVATE void resume(const Relinquished&);
-
     void makeWebThreadAware()
     {
         m_isWebThreadAware = true;
@@ -180,7 +162,6 @@ private:
     // See https://bugs.webkit.org/show_bug.cgi?id=169042#c6
     std::atomic<bool> m_hasOwnerThread { false };
     bool m_shouldReleaseHeapAccess;
-    bool m_isRelinquishing { false };
     RefPtr<Thread> m_ownerThread;
     intptr_t m_lockCount;
     unsigned m_lockDropDepth;

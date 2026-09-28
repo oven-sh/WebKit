@@ -77,7 +77,6 @@ class CollectingScope;
 class ConservativeRoots;
 class GCDeferralContext;
 class EdenGCActivityCallback;
-class ExplicitlyFreedCellClient;
 class FastMallocAlignedMemoryAllocator;
 class FullGCActivityCallback;
 class GCActivityCallback;
@@ -287,7 +286,19 @@ class Heap;
     v(moduleNamespaceObjectSpace, moduleNamespaceObjectHeapCellType, JSModuleNamespaceObject) \
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
+    v(pyBoundMethodSpace, cellHeapCellType, PyBoundMethod) \
+    v(pyBoxedValueSpace, cellHeapCellType, PyBoxedValue) \
+    v(pyComplexSpace, cellHeapCellType, PyComplex) \
+    v(pyDictSpace, cellHeapCellType, PyDict) \
+    v(pyGetSetDescriptorSpace, cellHeapCellType, PyGetSetDescriptor) \
+    v(pyIteratorSpace, cellHeapCellType, PyIterator) \
+    v(pyMemoryViewSpace, cellHeapCellType, PyMemoryView) \
     v(pyNativeFunctionSpace, cellHeapCellType, PyNativeFunction) \
+    v(pyNativeObjectSpace, cellHeapCellType, PyNativeObject) \
+    v(pyRangeSpace, cellHeapCellType, PyRange) \
+    v(pyRealmSpace, cellHeapCellType, PyRealm) \
+    v(pySetSpace, cellHeapCellType, PySet) \
+    v(pySliceSpace, cellHeapCellType, PySlice) \
     v(pyTypeSpace, pyTypeHeapCellType, PyType) \
     v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
@@ -570,8 +581,6 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
-    // Takes back a didAllocate() of this cycle: the memory has gone, so it is no reason to collect.
-    void didFreeSinceLastCollection(size_t);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
@@ -679,9 +688,6 @@ public:
     uint64_t phaseVersion() const { return m_phaseVersion; }
     
     JS_EXPORT_PRIVATE void addMarkingConstraint(std::unique_ptr<MarkingConstraint>);
-
-    // Must outlive the heap, or be cleared first.
-    void setExplicitlyFreedCellClient(ExplicitlyFreedCellClient* client) { m_explicitlyFreedCellClient = client; }
     
     HeapVerifier* verifier() const LIFETIME_BOUND { return m_verifier.get(); }
     
@@ -858,7 +864,6 @@ private:
 #endif
     void visitCompilerWorklistWeakReferences();
     void removeDeadCompilerWorklistEntries();
-    void finishMarkingExplicitlyFreedCells();
     void updateObjectCounts();
     void endMarking();
 
@@ -1000,8 +1005,6 @@ private:
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
     std::unique_ptr<MarkStackArray> m_raceMarkStack;
     std::unique_ptr<MarkingConstraintSet> m_constraintSet;
-    ExplicitlyFreedCellClient* m_explicitlyFreedCellClient { nullptr };
-    size_t m_explicitlyFreedBytesKeptThisCycle { 0 };
     std::unique_ptr<VerifierSlotVisitor> m_verifierSlotVisitor;
 
     // We pool the slot visitors used by parallel marking threads. It's useful to be able to

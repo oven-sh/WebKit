@@ -22,7 +22,6 @@
 #include "MarkedSpace.h"
 
 #include "BlockDirectoryInlines.h"
-#include "ExplicitlyFreedCellClient.h"
 #include "HeapInlines.h"
 #include "IncrementalSweeper.h"
 #include "MarkedBlockInlines.h"
@@ -324,35 +323,6 @@ void MarkedSpace::stopAllocating()
         });
 }
 
-void MarkedSpace::unregisterPreciseAllocation(PreciseAllocation* allocation)
-{
-    ASSERT(!heap().collectionScope());
-    unsigned hole = allocation->indexInSpace();
-    ASSERT(m_preciseAllocations[hole] == allocation);
-    auto fillHoleFrom = [&](unsigned index) {
-        if (index != hole) {
-            m_preciseAllocations[hole] = m_preciseAllocations[index];
-            m_preciseAllocations[hole]->setIndexInSpace(hole);
-        }
-        hole = index;
-    };
-
-    // Those that have been through a collection come first.
-    bool isNew = hole >= m_preciseAllocationsNurseryOffset;
-    if (!isNew)
-        fillHoleFrom(--m_preciseAllocationsNurseryOffset);
-    fillHoleFrom(m_preciseAllocations.size() - 1);
-    m_preciseAllocations.removeLast();
-
-    if (auto& set = preciseAllocationSet())
-        set->remove(allocation->cell());
-
-    size_t size = allocation->cellSize();
-    m_capacity -= size;
-    if (isNew)
-        heap().didFreeSinceLastCollection(size);
-}
-
 void MarkedSpace::prepareForConservativeScan()
 {
     if (m_conservativeScanIsPrepared)
@@ -467,61 +437,6 @@ void MarkedSpace::beginMarking()
     }
     
     m_isMarking = true;
-}
-
-size_t MarkedSpace::finishMarkingExplicitlyFreedCells(ExplicitlyFreedCellClient* client)
-{
-    ASSERT(m_isMarking);
-    ASSERT(heap().worldIsStopped());
-
-    if (!m_hasExplicitlyFreedCells)
-        return 0;
-
-    auto forEachBlock = [&](const auto& functor) {
-        forEachDirectory(
-            [&](BlockDirectory& directory) -> IterationStatus {
-                if (directory.attributes().lifetime == CellLifetime::ExplicitlyFreed)
-                    directory.forEachBlock(functor);
-                return IterationStatus::Continue;
-            });
-    };
-
-    size_t bytes = 0;
-
-    forEachBlock(
-        [&](MarkedBlock::Handle* handle) {
-            handle->markLiveCells();
-        });
-    // A precise allocation that the last collection found dead has been swept by now, so all that
-    // remain are live.
-    for (PreciseAllocation* allocation : m_preciseAllocations) {
-        if (allocation->attributes().lifetime != CellLifetime::ExplicitlyFreed)
-            continue;
-        if (!allocation->testAndSetMarked())
-            bytes += allocation->cellSize();
-    }
-
-    if (client) {
-        client->takeFreedCells(heap(),
-            [&](HeapCell* cell) {
-                ASSERT(cell->cellAttributes().lifetime == CellLifetime::ExplicitlyFreed);
-                if (cell->isPreciseAllocation()) {
-                    PreciseAllocation& allocation = cell->preciseAllocation();
-                    ASSERT(allocation.isMarked());
-                    allocation.clearMarked();
-                    bytes -= std::min(bytes, allocation.cellSize());
-                    return;
-                }
-                ASSERT(cell->markedBlock().isMarked(cell));
-                cell->markedBlock().clearMarked(cell);
-            });
-    }
-
-    forEachBlock(
-        [&](MarkedBlock::Handle* handle) {
-            bytes += handle->didMarkLiveCells();
-        });
-    return bytes;
 }
 
 void MarkedSpace::endMarking()

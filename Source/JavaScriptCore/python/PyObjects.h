@@ -39,10 +39,10 @@ class PyDict;
 
 // The small built-in kinds of object. Each is a cell with a few fields, and its class is its prototype, as for any other.
 
-#define PYTHON_CELL_BOILERPLATE(ClassName) \
+#define PYTHON_CELL_BOILERPLATE(ClassName, spaceName) \
     using Base = JSNonFinalObject; \
-    template<typename CellType, SubspaceAccess> \
-    static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); } \
+    template<typename CellType, SubspaceAccess mode> \
+    static GCClient::IsoSubspace* subspaceFor(VM& vm) { return vm.spaceName<mode>(); } \
     DECLARE_EXPORT_INFO; \
     DECLARE_VISIT_CHILDREN; \
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
@@ -52,7 +52,7 @@ class PyDict;
 class PyBoundMethod final : public JSNonFinalObject {
 public:
     static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetCallData;
-    PYTHON_CELL_BOILERPLATE(PyBoundMethod)
+    PYTHON_CELL_BOILERPLATE(PyBoundMethod, pyBoundMethodSpace)
 
     static PyBoundMethod* create(JSGlobalObject*, JSValue function, JSValue self);
     JSValue function() const { return m_function.get(); }
@@ -75,7 +75,7 @@ private:
 // an int64, which is nearly always, they are here as that too, for what is done a great deal.
 class PyRange final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyRange)
+    PYTHON_CELL_BOILERPLATE(PyRange, pyRangeSpace)
 
     // They are ints and nothing else, and the step is not zero. Null if it raised.
     static PyRange* create(JSGlobalObject*, JSValue start, JSValue stop, JSValue step);
@@ -107,7 +107,7 @@ private:
 
 class PyComplex final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyComplex)
+    PYTHON_CELL_BOILERPLATE(PyComplex, pyComplexSpace)
 
     static PyComplex* create(VM&, Structure*, double real, double imaginary);
     static PyComplex* create(JSGlobalObject*, double real, double imaginary);
@@ -130,7 +130,7 @@ private:
 // is a view of can be resized or detached under it and the worst that comes of it is an error.
 class PyMemoryView final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyMemoryView)
+    PYTHON_CELL_BOILERPLATE(PyMemoryView, pyMemoryViewSpace)
 
     static PyMemoryView* create(JSGlobalObject*, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly);
 
@@ -174,7 +174,7 @@ private:
 
 class PySlice final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PySlice)
+    PYTHON_CELL_BOILERPLATE(PySlice, pySliceSpace)
 
     static PySlice* create(JSGlobalObject*, JSValue start, JSValue stop, JSValue step);
     JSValue start() const { return m_start.get(); }
@@ -209,7 +209,7 @@ private:
 // Everything that is iterated by C++. What the fields are for depends on the kind.
 class PyIterator final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyIterator)
+    PYTHON_CELL_BOILERPLATE(PyIterator, pyIteratorSpace)
 
     enum class Kind : uint8_t {
         List, // a: the list. index
@@ -274,7 +274,7 @@ private:
 // views of a dict, NotImplemented and Ellipsis.
 class PyNativeObject final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyNativeObject)
+    PYTHON_CELL_BOILERPLATE(PyNativeObject, pyNativeObjectSpace)
     static constexpr unsigned numberOfFields = 4;
 
     static PyNativeObject* create(VM&, Structure*);
@@ -295,7 +295,7 @@ private:
 // An attribute of a built-in type that is worked out by C++: function.__name__.
 class PyGetSetDescriptor final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyGetSetDescriptor)
+    PYTHON_CELL_BOILERPLATE(PyGetSetDescriptor, pyGetSetDescriptorSpace)
 
     using Getter = JSValue (*)(JSGlobalObject*, JSValue self);
     using Setter = void (*)(JSGlobalObject*, JSValue self, JSValue value); // The value is empty to delete.
@@ -368,7 +368,7 @@ private:
 class PyBoxedValue final : public JSNonFinalObject {
 public:
     static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut;
-    PYTHON_CELL_BOILERPLATE(PyBoxedValue)
+    PYTHON_CELL_BOILERPLATE(PyBoxedValue, pyBoxedValueSpace)
     PYTHON_DECLARE_EXOTIC_METHODS
 
     static PyBoxedValue* create(VM&, Structure*, JSValue);

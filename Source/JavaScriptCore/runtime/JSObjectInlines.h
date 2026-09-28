@@ -946,8 +946,8 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (isButterflylessObjectType(type())) {
-        throwTypeError(globalObject, scope, type() == WebAssemblyGCObjectType ? "Cannot define private field on a WebAssembly GC object"_s : "Cannot define private field on a Python object"_s);
+    if (type() == WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
         return;
     }
 
@@ -1019,8 +1019,8 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     }
     EXCEPTION_ASSERT(!scope.exception());
 
-    if (isButterflylessObjectType(type())) {
-        throwTypeError(globalObject, scope, type() == WebAssemblyGCObjectType ? "Cannot add private method to a WebAssembly GC object"_s : "Cannot add private method to a Python object"_s);
+    if (type() == WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
         return;
     }
 
@@ -1613,10 +1613,6 @@ ALWAYS_INLINE bool JSObject::putDirectIndex(JSGlobalObject* globalObject, uint64
 {
     if (propertyName <= MAX_ARRAY_INDEX) [[likely]]
         return putDirectIndex(globalObject, static_cast<uint32_t>(propertyName), value, attributes, mode);
-    if (isButterflylessObjectType(type())) [[unlikely]] {
-        PropertyDescriptor descriptor(value, attributes);
-        return methodTable()->defineOwnProperty(this, globalObject, Identifier::from(getVM(globalObject), propertyName), descriptor, mode == PutDirectIndexShouldThrow);
-    }
     return putDirect(getVM(globalObject), Identifier::from(getVM(globalObject), propertyName), value, attributes);
 }
 

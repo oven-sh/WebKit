@@ -2009,7 +2009,7 @@ ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
     ASSERT(inherits(info()));
 
-    if (structure()->hijacksIndexingHeader() || isButterflylessObjectType(type()))
+    if (structure()->hijacksIndexingHeader())
         return nullptr;
 
     ensureWritable(vm);

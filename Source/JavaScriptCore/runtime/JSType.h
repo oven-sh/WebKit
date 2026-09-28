@@ -154,14 +154,7 @@ namespace JSC {
     macro(JSWeakSetType, SpecWeakSetObject) \
     macro(WebAssemblyModuleType, SpecObjectOther) \
     macro(WebAssemblyInstanceType, SpecObjectOther) \
-    /* Start butterfly-less object types: they derive from JSObject directly, so offset 8 is theirs. */ \
     macro(WebAssemblyGCObjectType, SpecObjectOther) \
-    /* A Python object is the payload of the cell. */ \
-    macro(PyObjectType, SpecObjectOther) \
-    macro(PyObjectWithManagedSlotsType, SpecObjectOther) \
-    /* Points at a Python object that has no room for a cell header in front of it. */ \
-    macro(PyProxyType, SpecObjectOther) \
-    /* End butterfly-less object types. */ \
     /* Start StringObjectType types. */ \
     macro(StringObjectType, SpecStringObject) \
     /* We do not want to accept String.prototype in StringObjectUse, so that we do not include it as SpecStringObject. */ \
@@ -173,14 +166,10 @@ namespace JSC {
     macro(PyTupleType, SpecObjectOther) \
     macro(PyDictType, SpecObjectOther) \
     macro(PySetType, SpecObjectOther) \
-    macro(PyBytesType, SpecObjectOther) \
     macro(PyRangeType, SpecObjectOther) \
     macro(PySliceType, SpecObjectOther) \
     macro(PyBoundMethodType, SpecObjectOther) \
-    macro(PyModuleType, SpecObjectOther) \
-    macro(PyNamespaceType, SpecObjectOther) \
     macro(PyIteratorType, SpecObjectOther) \
-    macro(PyGeneratorType, SpecObjectOther) \
     macro(PyBoxedValueType, SpecObjectOther) \
     macro(PyNativeObjectType, SpecObjectOther) \
     macro(InternalFieldTupleType, SpecCellOther) \
@@ -219,20 +208,12 @@ static constexpr uint32_t LastObjectType = MaxJSType;
 static constexpr uint32_t FirstScopeType = GlobalObjectType;
 static constexpr uint32_t LastScopeType = WithScopeType;
 
-static constexpr uint32_t FirstButterflylessObjectType = WebAssemblyGCObjectType;
-static constexpr uint32_t LastButterflylessObjectType = PyProxyType;
-
 static constexpr uint32_t NumberOfTypedArrayTypes = LastTypedArrayType - FirstTypedArrayType + 1;
 static constexpr uint32_t NumberOfTypedArrayTypesExcludingDataView = NumberOfTypedArrayTypes - 1;
 static constexpr uint32_t NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView = NumberOfTypedArrayTypes - 3;
 
 static_assert(sizeof(JSType) == sizeof(uint8_t), "sizeof(JSType) is one byte.");
 static_assert(LastJSCObjectType < 0b11100000, "Embedder can use 0b11100000 or upper.");
-
-inline constexpr bool isButterflylessObjectType(JSType type)
-{
-    return (static_cast<uint32_t>(type) - FirstButterflylessObjectType) <= (LastButterflylessObjectType - FirstButterflylessObjectType);
-}
 
 inline constexpr bool isTypedArrayType(JSType type)
 {

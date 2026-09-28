@@ -213,7 +213,7 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
 
 bool addErrorInfo(VM& vm, Vector<StackFrame>* stackTrace, JSObject* obj)
 {
-    if (!stackTrace || isButterflylessObjectType(obj->type()))
+    if (!stackTrace)
         return false;
 
     if (!stackTrace->isEmpty()) {

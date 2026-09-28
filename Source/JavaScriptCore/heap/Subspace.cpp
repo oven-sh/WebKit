@@ -50,8 +50,6 @@ void Subspace::initialize(const HeapCellType& heapCellType, AlignedMemoryAllocat
 
     JSC::Heap& heap = m_space.heap();
     heap.objectSpace().m_subspaces.append(this);
-    if (heapCellType.attributes().lifetime == CellLifetime::ExplicitlyFreed)
-        heap.objectSpace().m_hasExplicitlyFreedCells = true;
 }
 
 Subspace::~Subspace() = default;

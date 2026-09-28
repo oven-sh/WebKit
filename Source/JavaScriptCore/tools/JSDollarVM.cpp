@@ -895,8 +895,6 @@ JSC_DEFINE_CUSTOM_SETTER(testStaticAccessorPutter, (JSGlobalObject* globalObject
     JSObject* thisObject = receiver.isObject() ? asObject(receiver) : receiver.synthesizePrototype(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     RELEASE_ASSERT(thisObject);
-    if (isButterflylessObjectType(thisObject->type()))
-        return false;
 
     return thisObject->putDirect(vm, PropertyName(Identifier::fromString(vm, "testField"_s)), JSValue::decode(value));
 }
