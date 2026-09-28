@@ -27,10 +27,12 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "PyObjects.h"
 #include "PyTuple.h"
 #include "PythonBytes.h"
 #include "PythonSequences.h"
 #include "PythonStrings.h"
+#include "TopExceptionScope.h"
 #include <wtf/SafeStrerror.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -377,7 +379,7 @@ static void fillOSError(JSGlobalObject* globalObject, JSObject* self, const Nati
 
     if (filename && !isNone(filename)) {
         PyType* type = typeOf(globalObject, filename);
-        bool isNumber = type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || tryComplex(filename);
+        bool isNumber = type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || dynamicDowncast<PyComplex>(filename);
         if (isExactly(globalObject, self, globalObject->pyRealm()->typeBlockingIOError()) && isNumber) {
             // The third argument of a BlockingIOError can be how many characters were written.
             auto written = toIndex(globalObject, filename);

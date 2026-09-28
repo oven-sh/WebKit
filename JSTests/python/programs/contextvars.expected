@@ -1,0 +1,73 @@
+module => ('_contextvars', 'Context Variables', ['Context', 'ContextVar', 'Token', 'copy_context'])
+class Context => ('_contextvars', 'Context', (<class '_contextvars.Context'>, <class 'object'>), None, False, True, [('__contains__', 'wrapper_descriptor'), ('__doc__', 'NoneType'), ('__eq__', 'wrapper_descriptor'), ('__ge__', 'wrapper_descriptor'), ('__getitem__', 'wrapper_descriptor'), ('__gt__', 'wrapper_descriptor'), ('__hash__', 'NoneType'), ('__iter__', 'wrapper_descriptor'), ('__le__', 'wrapper_descriptor'), ('__len__', 'wrapper_descriptor'), ('__lt__', 'wrapper_descriptor'), ('__ne__', 'wrapper_descriptor'), ('__new__', 'builtin_function_or_method'), ('copy', 'method_descriptor'), ('get', 'method_descriptor'), ('items', 'method_descriptor'), ('keys', 'method_descriptor'), ('run', 'method_descriptor'), ('values', 'method_descriptor')])
+class ContextVar => ('_contextvars', 'ContextVar', (<class '_contextvars.ContextVar'>, <class 'object'>), None, False, False, [('__class_getitem__', 'classmethod_descriptor'), ('__doc__', 'NoneType'), ('__hash__', 'wrapper_descriptor'), ('__new__', 'builtin_function_or_method'), ('__repr__', 'wrapper_descriptor'), ('get', 'method_descriptor'), ('name', 'member_descriptor'), ('reset', 'method_descriptor'), ('set', 'method_descriptor')])
+class Token => ('_contextvars', 'Token', (<class '_contextvars.Token'>, <class 'object'>), None, False, True, [('MISSING', 'MISSING'), ('__class_getitem__', 'classmethod_descriptor'), ('__doc__', 'NoneType'), ('__enter__', 'method_descriptor'), ('__exit__', 'method_descriptor'), ('__hash__', 'NoneType'), ('__new__', 'builtin_function_or_method'), ('__repr__', 'wrapper_descriptor'), ('old_value', 'getset_descriptor'), ('var', 'getset_descriptor')])
+class MISSING => ('Token', 'MISSING', (<class 'Token.MISSING'>, <class 'object'>), None, False, False, [('__doc__', 'NoneType'), ('__repr__', 'wrapper_descriptor')])
+cannot be derived from => ["TypeError: type '_contextvars.Context' is not an acceptable base type", "TypeError: type '_contextvars.ContextVar' is not an acceptable base type", "TypeError: type '_contextvars.Token' is not an acceptable base type"]
+generic => (_contextvars.ContextVar[int], _contextvars.Token[int], "TypeError: type '_contextvars.Context' is not subscriptable")
+repr => (<ContextVar name='v' at 0x>, <ContextVar name='d' default=5 at 0x>, <ContextVar name='n' default=None at 0x>, <ContextVar name='q\'"' default='s' at 0x>)
+name => ('v', 'AttributeError: readonly attribute', 'AttributeError: readonly attribute')
+ContextVar((), {}) !! TypeError ContextVar() takes exactly 1 positional argument (0 given)
+ContextVar((1,), {}) !! TypeError context variable name must be a str
+ContextVar((None,), {}) !! TypeError context variable name must be a str
+ContextVar(('a', 1), {}) !! TypeError ContextVar() takes at most 1 positional argument (2 given)
+ContextVar(('a',), {'default': 1}) => <ContextVar name='a' default=1 at 0x>
+ContextVar(('a',), {'x': 1}) !! TypeError ContextVar() got an unexpected keyword argument 'x'
+ContextVar((), {'name': 'a'}) !! TypeError ContextVar() takes exactly 1 positional argument (0 given)
+ContextVar((), {'default': 1}) !! TypeError ContextVar() takes exactly 1 positional argument (0 given)
+ContextVar(('a',), {'default': 1, 'x': 2}) !! TypeError ContextVar() takes at most 2 arguments (3 given)
+ContextVar((b'a',), {}) !! TypeError context variable name must be a str
+a name that is a subclass of str => ('s', 'S')
+get => ("LookupError: <ContextVar name='v' at 0x>", 1, None, 5, 1, None, 'TypeError: get expected at most 1 argument, got 2', 'TypeError: ContextVar.get() takes no keyword arguments')
+LookupError has the variable => ('LookupError', True, 1)
+hash and equality => (True, True, True, True, False, True, 1)
+no other attributes => ("AttributeError: '_contextvars.ContextVar' object has no attribute 'x' and no __dict__ for setting new attributes", False, "AttributeError: '_contextvars.ContextVar' object has no attribute 'default'")
+set and reset => (1, 2, 1, "LookupError: <ContextVar name='v' at 0x>")
+tokens => (<Token var=<ContextVar name='v' at 0x> at 0x>, True, <Token.MISSING>, True, 1, <Token.MISSING>, 'MISSING')
+a token is used once => ("<Token var=<ContextVar name='v' at 0x> at 0x>", <Token used var=<ContextVar name='v' at 0x> at 0x>, "RuntimeError: <Token used var=<ContextVar name='v' at 0x> at 0x> has already been used once")
+another variable's token => "ValueError: <Token var=<ContextVar name='v' at 0x> at 0x> was created by a different ContextVar"
+another context's token => "ValueError: <Token var=<ContextVar name='v' at 0x> at 0x> was created in a different Context"
+not a token => ['TypeError: expected an instance of Token, got 1', 'TypeError: expected an instance of Token, got None', "TypeError: expected an instance of Token, got 't'", "TypeError: expected an instance of Token, got <class '_contextvars.Token'>"]
+wrong numbers => ('TypeError: ContextVar.set() takes exactly one argument (0 given)', 'TypeError: ContextVar.set() takes exactly one argument (2 given)', 'TypeError: ContextVar.reset() takes exactly one argument (0 given)', 'TypeError: ContextVar.set() takes no keyword arguments', 'TypeError: ContextVar.reset() takes no keyword arguments')
+Token() => ('RuntimeError: Tokens can only be created by ContextVars', 'RuntimeError: Tokens can only be created by ContextVars', "TypeError: unhashable type: '_contextvars.Token'", "AttributeError: attribute 'var' of '_contextvars.Token' objects is not writable")
+reset out of order => ("LookupError: <ContextVar name='v' at 0x>", 1)
+a token in `with` => ((1, 'Token'), 0, <Token used var=<ContextVar name='v' at 0x> at 0x>)
+a token in `with`, and something is raised => 0
+a token in `with`, twice => "RuntimeError: <Token used var=<ContextVar name='v' at 0x> at 0x> has already been used once"
+set to the default => (<Token.MISSING>, 5)
+Context() => (0, [], 'TypeError: Context() does not accept any arguments', 'TypeError: Context() does not accept any arguments', "TypeError: unhashable type: '_contextvars.Context'", False)
+repr of a context => <_contextvars.Context object at 0x>
+as a mapping => (2, ['d', 'v'], 1, 2, True, False, 1, None, 9, ['d', 'v'], [1, 2], [('d', 2), ('v', 1)])
+the views => ('keys', 'values', 'items', 'keys', True, 2)
+a view is gone through once => (2, 0)
+missing => ("KeyError: <ContextVar name='n' default=None at 0x>", True)
+keys that are no variables => [('TypeError: a ContextVar key was expected, got 1', 'TypeError: a ContextVar key was expected, got 1', 'TypeError: a ContextVar key was expected, got 1'), ("TypeError: a ContextVar key was expected, got 'v'", "TypeError: a ContextVar key was expected, got 'v'", "TypeError: a ContextVar key was expected, got 'v'"), ('TypeError: a ContextVar key was expected, got None', 'TypeError: a ContextVar key was expected, got None', 'TypeError: a ContextVar key was expected, got None')]
+cannot be changed => ("AttributeError: '_contextvars.Context' object has no attribute '__setitem__'", "AttributeError: '_contextvars.Context' object has no attribute '__delitem__'", False, False)
+equality => (True, True, False, False, True, False, True, NotImplemented, "TypeError: '<' not supported between instances of '_contextvars.Context' and '_contextvars.Context'", True)
+equality goes by == => (True, False, True)
+equality that raises => 'RuntimeError: eq'
+copy => (True, True, None, 9, 1)
+wrong numbers for the methods => ('TypeError: Context.copy() takes no arguments (1 given)', 'TypeError: Context.keys() takes no arguments (1 given)', 'TypeError: get expected at least 1 argument, got 0', 'TypeError: get expected at most 2 arguments, got 3', 'TypeError: Context.get() takes no keyword arguments')
+run => (((1, 2), {'x': 3}), 'TypeError: run() missing 1 required positional argument', "TypeError: 'int' object is not callable", 'TypeError: run() missing 1 required positional argument')
+what is set in one is not seen outside => (("LookupError: <ContextVar name='v' at 0x>", 'inner'), 'outer', 'inner')
+copy_context() => (('outer', 'inner'), 'outer', 'inner')
+a copy is of how things were => (1, 2, 1)
+entered twice => 'RuntimeError: cannot enter context: <_contextvars.Context object at 0x> is already entered'
+entered again afterwards => 1
+something is raised inside => ("KeyError: 'k'", 1, "LookupError: <ContextVar name='v' at 0x>", 1)
+one in another => (("LookupError: <ContextVar name='v' at 0x>", 'b'), 'a')
+copy_context() takes nothing => ('TypeError: _contextvars.copy_context() takes no arguments (1 given)', 'Context', True)
+a context that is entered has what is set in it => (1, 1, True, False)
+reset takes it out again => (0, False)
+a generator runs in that of what resumes it => ('in the generator', 'in the generator', 'outside again')
+and so does a coroutine => ('in the coroutine', 'in the coroutine')
+a generator resumed in another => ('in the generator', "LookupError: <ContextVar name='v' at 0x>", 'in the generator', None)
+many 1 => ((True, -1), 1, 1, 1, [-1], 1)
+many 5 => ((True, 1), 5, 5, 5, [-1, -1, -1], 5)
+many 33 => ((True, 239), 33, 33, 33, [-1, -1, -1], 33)
+many 200 => ((True, 9900), 200, 200, 200, [-1, -1, -1], 200)
+many 3000 => ((True, 2248500), 3000, 3000, 3000, [-1, -1, -1], 3000)
+many, and some taken out 4 => (2, 2, 3)
+many, and some taken out 40 => (26, 26, 507)
+many, and some taken out 1000 => (666, 666, 332667)
+each copy keeps what it had => True

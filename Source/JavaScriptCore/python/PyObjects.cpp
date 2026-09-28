@@ -790,6 +790,12 @@ BuiltinType PyIterator::typeFor(Kind kind)
         return BuiltinType::LineIterator;
     case Kind::CodePositions:
         return BuiltinType::PositionsIterator;
+    case Kind::ContextKeys:
+        return BuiltinType::ContextKeys;
+    case Kind::ContextValues:
+        return BuiltinType::ContextValues;
+    case Kind::ContextItems:
+        return BuiltinType::ContextItems;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -842,7 +848,10 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     }
     case Kind::Tuple:
     case Kind::CodeLines:
-    case Kind::CodePositions: {
+    case Kind::CodePositions:
+    case Kind::ContextKeys:
+    case Kind::ContextValues:
+    case Kind::ContextItems: {
         auto* tuple = uncheckedDowncast<PyTuple>(m_a.get().asCell());
         if (m_index >= tuple->length()) {
             finish();

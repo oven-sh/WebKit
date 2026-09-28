@@ -23,7 +23,7 @@ for expected in "$@"; do
         esac
         # Where things are in memory is not part of what is expected.
         # shellcheck disable=SC2086
-        if ! "$jsc" $options $module "$test" 2>&1 | sed -e 's/0x[0-9a-f]*/0x/g' | cmp -s - "$expected"; then
+        if ! "$jsc" --useDollarVM=1 $options $module "$test" 2>&1 | sed -e 's/0x[0-9a-f]*/0x/g' | cmp -s - "$expected"; then
             failures=$((failures + 1))
             echo "FAIL: $test $options"
         fi

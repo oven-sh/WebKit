@@ -112,6 +112,13 @@ namespace JSC {
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \
     v(LineIterator, "line_iterator", Object, Native, 0) \
     v(PositionsIterator, "positions_iterator", Object, Native, 0) \
+    v(Context, "_contextvars.Context", Object, Native, PyType::HasWeakReferences) \
+    v(ContextVar, "_contextvars.ContextVar", Object, Native, 0) \
+    v(Token, "_contextvars.Token", Object, Native, 0) \
+    v(TokenMissing, "Token.MISSING", Object, Native, 0) \
+    v(ContextKeys, "keys", Object, Native, 0) \
+    v(ContextValues, "values", Object, Native, 0) \
+    v(ContextItems, "items", Object, Native, 0) \
     v(RangeIterator, "range_iterator", Object, Native, 0) \
     v(LongRangeIterator, "longrange_iterator", Object, Native, 0) \
     v(StrAsciiIterator, "str_ascii_iterator", Object, Native, 0) \
@@ -294,6 +301,10 @@ public:
     JSObject* runtimeFunctions() const { return m_runtimeFunctions.get(); }
     // What frame.f_locals is an instance of. It is written in Python.
     PyType* frameLocalsProxyType() const { return m_frameLocalsProxyType.get(); }
+    // The contextvars.Context that has been entered and not left, if any. See PythonContextVars.cpp.
+    JSObject* currentContext() const { return m_currentContext.get(); }
+    void setCurrentContext(VM& vm, JSObject* context) { m_currentContext.setMayBeNull(vm, this, context); }
+    Structure* asyncContextFrameStructure() const { return m_asyncContextFrameStructure.get(); }
     // It has two bases, and so is not among the types that are made from a table.
     PyType* exceptionGroupType() const { return m_exceptionGroupType.get(); }
     void setExceptionGroupType(VM& vm, PyType* type) { m_exceptionGroupType.set(vm, this, type); }
@@ -362,6 +373,8 @@ private:
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<PyType> m_frameLocalsProxyType;
     WriteBarrier<PyType> m_exceptionGroupType;
+    WriteBarrier<JSObject> m_currentContext;
+    WriteBarrierStructureID m_asyncContextFrameStructure;
     WriteBarrier<JSObject> m_builtinsModule;
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
     Python::MonitoringState m_monitoring;

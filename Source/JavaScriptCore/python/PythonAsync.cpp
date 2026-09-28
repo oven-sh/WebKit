@@ -30,6 +30,7 @@
 #include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSPromise.h"
+#include "PythonContextVars.h"
 #include "PythonGenerators.h"
 #include "TopExceptionScope.h"
 
@@ -213,6 +214,20 @@ void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue r
     // Empty: it comes to what it comes to. True: to { value, done }. An object: to that.
     JSValue settlement = iterator->getDirect(vm, names.private_settlement);
 
+    // It runs in a context of its own, which began as a copy of that of what first waited for it. What it sets is there each time that it goes on, and is not seen by anything else.
+    JSValue taskContext = iterator->getDirect(vm, names.private_taskContext);
+    PyNativeObject* context = taskContext ? asNative(taskContext) : nullptr;
+    if (context && !enterContext(globalObject, context)) [[unlikely]] {
+        Exception* exception = scope.exception();
+        if (scope.clearExceptionExceptTermination())
+            promise->reject(vm, exception);
+        return;
+    }
+    auto leave = makeScopeExit([&] {
+        if (context)
+            exitContext(globalObject, context);
+    });
+
     while (true) {
         JSValue returned;
         JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
@@ -267,8 +282,11 @@ JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue se
     if (JSPromise* known = promiseOfAwaitable(vm, iterator.asCell()))
         return known;
     asObject(iterator)->putDirect(vm, names.private_promise, promise);
+    // One turn of an asynchronous generator is not something that goes on by itself. A generator runs in the context of what resumes it, in either language.
     if (settlement)
         asObject(iterator)->putDirect(vm, names.private_settlement, settlement);
+    else
+        asObject(iterator)->putDirect(vm, names.private_taskContext, copyCurrentContext(globalObject));
     resumeAwaitable(globalObject, asObject(iterator), jsUndefined(), false);
     return promise;
 }

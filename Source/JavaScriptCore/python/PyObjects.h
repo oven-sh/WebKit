@@ -266,6 +266,9 @@ public:
         JavaScript, // a: a JavaScript iterator. b: its next
         CodeLines, // a: a tuple of what code.co_lines() gives. index
         CodePositions, // The same, for code.co_positions()
+        ContextKeys, // The same, for what is in a contextvars.Context
+        ContextValues,
+        ContextItems,
     };
 
     static PyIterator* create(JSGlobalObject*, Kind, JSValue a = JSValue(), JSValue b = JSValue(), int64_t index = 0, int64_t stop = 0, int64_t step = 0);

@@ -379,6 +379,8 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createFrameModule(globalObject);
     if (name == "_typing"_s)
         return createTypingModule(globalObject);
+    if (name == "_contextvars"_s)
+        return createContextVarsModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
         return create(globalObject, name);
     return nullptr;

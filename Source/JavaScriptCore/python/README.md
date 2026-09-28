@@ -432,6 +432,25 @@ additions of two operands, and has both do the same things in the same order.
   goes through it, and closes it on the way out. `async for` goes through what `for await` would: what has `[Symbol.asyncIterator]`, or failing that `[Symbol.iterator]`.
 - A program in Python sets a coroutine going with `js.Promise.resolve(main())`. `asyncio` is the library's business.
 
+### Context variables
+
+**What a `contextvars.ContextVar` has is kept where JavaScript keeps the like**: `JSGlobalObject::m_asyncContextData`, which whatever puts something off takes note of, and puts back for as long as that
+runs (`AsyncContextSwapScope`). It is what an embedder's `AsyncLocalStorage` is made out of. So what a variable has follows what is being done from one language to the other and across `await`, by means
+that were there already, and it costs JavaScript nothing that it was not paying. `PythonContextVars.cpp`.
+
+- What is kept there is a chain of frames, `{ storage, value, prev, masked }`, each of which binds something to a value. `AsyncLocalStorage` makes them, and so does whatever else has something to keep there,
+  with no prototype. What goes through them looks for its own `storage`, passes over the rest, and copies what it has to as it is.
+- **Python has one frame, whose value is a map from variables to what they have.** The map is never changed, and setting a variable makes another: a hash array mapped trie, as in CPython. So to take note
+  of how things are is to take note of one pointer, and JavaScript has one frame more to pass over however many variables there are.
+- Not a frame for each variable. `AsyncLocalStorage.getStore()` would have them all to pass over, and `Context()`, which has nothing in it, would have nothing of the embedder's in it either.
+- **Entering a `Context` and leaving it changes Python's frame and no other**, as `AsyncLocalStorage.run()` changes only its own. `AsyncLocalStorage.snapshot()` has Python's variables in it, being a note of the
+  whole chain. `copy_context()` has Python's alone.
+- A coroutine that JavaScript waits for runs in a context of its own, which began as a copy of that of what first waited for it, as a `Task` of asyncio's does.
+- A generator runs in the context of what resumes it, in either language, and so does an asynchronous one. One of Python's that JavaScript goes through with `for await` does with a variable just what one
+  of JavaScript's does with `enterWith()`.
+- What is set where no `Context` has been entered is set for the rest of what is being done, and for what that puts off: `enterWith()`. What was put off before does not see it, as what
+  asyncio's `call_soon()` was given does not.
+
 ### `using` and `with`
 
 **`using x = manager` is `with manager as x`.** For a context manager of Python's, `using` calls `__enter__`, `x` is what that gives, and `__exit__` is told what the block threw, if it

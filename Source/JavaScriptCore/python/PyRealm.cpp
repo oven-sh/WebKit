@@ -30,6 +30,7 @@
 #include "ObjectConstructor.h"
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
+#include "PythonContextVars.h"
 #include "PythonRuntimeFunctions.h"
 
 namespace JSC {
@@ -60,6 +61,8 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_frameLocalsProxyType);
     visitor.append(thisObject->m_exceptionGroupType);
+    visitor.append(thisObject->m_currentContext);
+    visitor.append(thisObject->m_asyncContextFrameStructure);
     visitor.append(thisObject->m_builtinsModule);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_auditHooks);
@@ -180,6 +183,8 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeExceptionGroups(globalObject, builtins);
+    m_asyncContextFrameStructure.set(vm, this, Python::createAsyncContextFrameStructure(vm, globalObject));
+    Python::initializeContextVarTypes(globalObject);
     Python::initializeProperty(globalObject);
     Python::initializeReduce(globalObject);
     Python::initializeStructSequences(globalObject);

@@ -39,13 +39,14 @@
 # where nothing is laid out as in CPython, but programs can see them. And whether they are zero decides what a class derived from it can have: whether
 # instances have a __dict__ already, whether there can be weak references to them already, and whether they can be given __slots__.
 
+import _contextvars
 import _typing
 import builtins
 import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars"]
 
 
 def generator():
@@ -106,6 +107,8 @@ def examples():
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),
         (lambda x: lambda: x)(1).__closure__[0], list[int], iter(list[int]), int | str, generator.__code__.co_lines(), generator.__code__.co_positions(), sys.flags, sys.version_info, sys.float_info, sys.int_info, sys.hash_info,
         sys.implementation, t"{1}", iter(t""), t"{1}".interpolations[0], _typing.NoDefault, _typing.TypeVar("T", default=int).evaluate_default,
+        _contextvars.Context(), _contextvars.ContextVar("v"), _contextvars.Context().run(_contextvars.ContextVar("v").set, 1), _contextvars.Token.MISSING,
+        _contextvars.Context().keys(), _contextvars.Context().values(), _contextvars.Context().items(),
     ]
     yield from awaitables
     for awaitable in awaitables:

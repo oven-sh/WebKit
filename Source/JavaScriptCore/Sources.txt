@@ -765,6 +765,7 @@ python/PythonIterators.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
 python/PythonModules.cpp
+python/PythonContextVars.cpp
 python/PythonExceptionDisplay.cpp
 python/PythonExceptionGroups.cpp
 python/PythonMonitoring.cpp
