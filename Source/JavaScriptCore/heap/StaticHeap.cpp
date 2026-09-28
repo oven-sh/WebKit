@@ -10,6 +10,7 @@
 #include "AOTRuntime.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "BuiltinNames.h"
+#include "BytecodeStructs.h"
 #include "CachedTypes.h"
 #include "FunctionExecutable.h"
 #include "JSCInlines.h"
@@ -17,6 +18,7 @@
 #include "SourceCodeKey.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/BitVector.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/SymbolRegistry.h>
@@ -630,6 +632,88 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         make(codeBlock->functionExpr(i));
 }
 
+// The names in a SymbolTable are for finding a variable by its name when the program runs. Code says which variable it means by
+// where it is, unless it could not tell when it was generated whose the name was; and code that is evaluated when the program runs
+// can name anything it can see.
+struct NamesLookedUp {
+    bool mayBeAny { false };
+    UncheckedKeyHashSet<UniquedStringImpl*> names;
+};
+
+static bool isLookedUpByName(ResolveType type)
+{
+    return type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != ModuleVar && !isStaticClosureVarResolveType(type);
+}
+
+// Adds what the code, and the code of the functions in it, looks up. Nothing else can see the scopes that the code makes.
+static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames)
+{
+    NamesLookedUp own;
+    {
+        Region::AllocationScope notInRegion(false);
+        for (const auto& instruction : codeBlock->instructions()) {
+            switch (instruction->opcodeID()) {
+            case op_call_direct_eval:
+                own.mayBeAny = true;
+                break;
+            case op_resolve_scope:
+                if (auto bytecode = instruction->as<OpResolveScope>(); isLookedUpByName(bytecode.m_resolveType))
+                    own.names.add(codeBlock->identifier(bytecode.m_var).impl());
+                break;
+            case op_get_from_scope:
+                if (auto bytecode = instruction->as<OpGetFromScope>(); isLookedUpByName(bytecode.m_getPutInfo.resolveType()))
+                    own.names.add(codeBlock->identifier(bytecode.m_var).impl());
+                break;
+            case op_put_to_scope:
+                if (auto bytecode = instruction->as<OpPutToScope>(); isLookedUpByName(bytecode.m_getPutInfo.resolveType()))
+                    own.names.add(codeBlock->identifier(bytecode.m_var).impl());
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    auto inside = [&](UnlinkedFunctionExecutable* function) {
+        if (function->features() & EvalFeature)
+            own.mayBeAny = true;
+        bool hasCode = false;
+        for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+            if (auto* nested = function->codeBlockIfThereIsOne(kind)) {
+                hasCode = true;
+                forgetNamesThatNothingLooksUp(nested, own, tables, tablesWithNames);
+            }
+        }
+        // (Then there is no telling.)
+        if (!hasCode)
+            own.mayBeAny = true;
+    };
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
+        inside(codeBlock->functionDecl(i));
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
+        inside(codeBlock->functionExpr(i));
+
+    // The environment of a module is looked in by name by whoever asks the module for what it exports.
+    SymbolTable* ofModule = nullptr;
+    if (auto* moduleCode = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
+        ofModule = dynamicDowncast<SymbolTable>(moduleCode->constantRegister(VirtualRegister(moduleCode->moduleEnvironmentSymbolTableConstantRegisterOffset())).get());
+    for (auto& constant : codeBlock->constantRegisters()) {
+        auto* table = constant.get().isCell() ? dynamicDowncast<SymbolTable>(constant.get().asCell()) : nullptr;
+        if (!table || table == ofModule)
+            continue;
+        ++tables;
+        if (!own.mayBeAny)
+            table->keepOnlyNames(own.names);
+        ConcurrentJSLocker locker(table->m_lock);
+        tablesWithNames += !!table->size(locker);
+    }
+
+    Region::AllocationScope notInRegion(false);
+    lookedUp.mayBeAny |= own.mayBeAny;
+    for (auto* name : own.names)
+        lookedUp.names.add(name);
+    own.names.clear();
+}
+
 std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfFunction(uint32_t index)
 {
     RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
@@ -823,6 +907,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
                 uint64_t numberOfExecutables = 0;
+                uint64_t numberOfSymbolTables = 0;
+                uint64_t numberOfSymbolTablesWithNames = 0;
                 auto reportExecutables = makeScopeExit([&] {
                     if (Options::aotReportStats()) [[unlikely]] {
                         size_t known = 0, cold = 0;
@@ -830,6 +916,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             known += !!info.sites;
                             cold += !!(info.flags & AOT::FunctionInfo::startsCold);
                         }
+                        dataLogLn("StaticHeap: of ", numberOfSymbolTables, " tables of the variables of scopes that are not modules', ", numberOfSymbolTablesWithNames, " have a name in them that may be looked up");
                         dataLogLn("StaticHeap: ", numberOfExecutables, " executables of functions; of the image's ", infosOfFunctions.size(), " functions ", known, " are known, and ", cold, " start cold");
                     }
                 });
@@ -885,6 +972,19 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             // The code of the module itself, but for its executable, which is made when the program runs.
                             if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
                                 fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
+                        }
+                        if (decoder.leavesFunctionCodeInPayload() && Options::staticHeapForgetsNamesOfVariables()) {
+                            NamesLookedUp lookedUp;
+                            if (codeBlock)
+                                forgetNamesThatNothingLooksUp(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
+                            else if (builtinFunction) {
+                                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                                    if (auto* code = builtinFunction->codeBlockIfThereIsOne(kind))
+                                        forgetNamesThatNothingLooksUp(code, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
+                                }
+                            }
+                            Region::AllocationScope notInRegion(false);
+                            lookedUp.names.clear();
                         }
                         if (decoder.leavesFunctionCodeInPayload()) {
                             for (auto& [function, offsets] : functions) {

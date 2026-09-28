@@ -71,7 +71,9 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     function->finishParsing(executable->name(), executable->functionMode());
     function->setPlainInstanceFieldNames(executable->plainInstanceFieldNames());
-    executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
+    // (One that was made when the program was built has been told, and is nobody's to write to.)
+    if (!StaticHeap::contains(executable))
+        executable->recordParse(function->features(), function->lexicallyScopedFeatures(), function->hasCapturedVariables());
 
     bool isClassContext = executable->superBinding() == SuperBinding::Needed || executable->parseMode() == SourceParseMode::ClassFieldInitializerMode;
 

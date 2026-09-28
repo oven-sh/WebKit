@@ -702,6 +702,16 @@ public:
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
     // Code is linked against clones for the sake of what the optimizing compilers infer about one realm's scopes. Where there are no
     // such compilers, one of StaticHeap, which has what a clone has, and infers nothing, does as well, and costs nothing.
+    // Of one that is made when a program is built: nothing is ever going to look up any other. (What is where in a scope of the
+    // table's is known to the code that uses it.)
+    void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
+    {
+        m_map.removeIf([&](auto& entry) {
+            return !names.contains(entry.key.get());
+        });
+        if (m_map.isEmpty())
+            m_map.clear();
+    }
     bool isItsOwnClone() const { return StaticHeap::needsNoLocking(this); }
 
     // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
