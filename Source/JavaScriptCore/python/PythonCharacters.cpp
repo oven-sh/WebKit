@@ -29,6 +29,7 @@
 #include "VM.h"
 #include <unicode/utf16.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/ExtensibleStringImpl.h>
 
 namespace JSC { namespace Python {
 
@@ -41,34 +42,58 @@ static bool isPairAt(std::span<const char16_t> codeUnits, size_t i)
     return U16_IS_LEAD(codeUnits[i]) && i + 1 < codeUnits.size() && U16_IS_TRAIL(codeUnits[i + 1]);
 }
 
-RefPtr<SurrogatePairs> SurrogatePairs::tryCreate(std::span<const char16_t> codeUnits, size_t count)
+SurrogatePairs::~SurrogatePairs()
 {
-    auto characters = MallocSpan<unsigned>::tryMalloc(count * sizeof(unsigned));
-    if (!characters)
-        return nullptr;
-    auto rest = characters.mutableSpan();
-    unsigned character = 0;
-    for (size_t i = 0; i < codeUnits.size(); ++i, ++character) {
-        if (!isPairAt(codeUnits, i))
-            continue;
-        rest[0] = character;
-        rest = rest.subspan(1);
-        ++i;
-    }
-    ASSERT(rest.empty());
-    return adoptRef(*new SurrogatePairs(WTF::move(characters)));
+    fastFree(m_characters);
 }
 
-unsigned SurrogatePairs::countBeforeCharacter(unsigned index) const
+bool SurrogatePairs::tryLookThrough(std::span<const char16_t> codeUnits)
 {
-    auto characters = m_characters.span();
+    if (codeUnits.size() <= m_lengthLookedThrough)
+        return true;
+    // What was last, if it is the first half of a pair, was taken to be by itself. Now there may be something after it.
+    size_t start = m_lengthLookedThrough;
+    if (start && U16_IS_LEAD(codeUnits[start - 1]))
+        --start;
+
+    size_t found = 0;
+    for (size_t i = start; i < codeUnits.size(); ++i) {
+        if (isPairAt(codeUnits, i)) {
+            ++found;
+            ++i;
+        }
+    }
+    if (m_count + found > m_capacity) {
+        // The first time it is as much as is needed, and after that twice as much, since what is added to once is likely to be added to again.
+        size_t capacity = m_capacity ? std::max(m_count + found, 2 * m_capacity) : found;
+        unsigned* characters;
+        if (!WTF::tryFastRealloc(m_characters, capacity * sizeof(unsigned)).getValue(characters))
+            return false;
+        m_characters = characters;
+        m_capacity = capacity;
+    }
+    // All of the pairs so far are before this.
+    unsigned character = start - m_count;
+    for (size_t i = start; i < codeUnits.size(); ++i, ++character) {
+        if (isPairAt(codeUnits, i)) {
+            m_characters[m_count++] = character;
+            ++i;
+        }
+    }
+    m_lengthLookedThrough = codeUnits.size();
+    return true;
+}
+
+unsigned SurrogatePairs::countBeforeCharacter(unsigned index, unsigned limit) const
+{
+    auto characters = this->characters().first(limit);
     return std::ranges::lower_bound(characters, index) - characters.begin();
 }
 
 unsigned SurrogatePairs::countBeforeCodeUnit(unsigned offset) const
 {
-    // The one that has `before` before it begins at the code unit m_characters[before] + before, which goes up with `before`.
-    auto characters = m_characters.span();
+    // The one that has `before` before it begins at the code unit characters[before] + before, which goes up with `before`.
+    auto characters = this->characters();
     unsigned low = 0;
     unsigned high = characters.size();
     while (low < high) {
@@ -84,29 +109,23 @@ unsigned SurrogatePairs::countBeforeCodeUnit(unsigned offset) const
 auto SurrogatePairCache::find(StringImpl& string, RefPtr<SurrogatePairs>& pairs) -> Found
 {
     ASSERT(!string.is8Bit());
-    Entry& entry = m_entries[PtrHash<StringImpl*>::hash(&string) & (size - 1)];
-    if (entry.string == &string) {
-        pairs = entry.pairs;
-        return Found::Some;
+    StringImpl* key = string.isPrefixOfExtensibleBuffer() ? &ExtensibleStringImpl::bufferOf(string) : &string;
+    Entry& entry = m_entries[PtrHash<StringImpl*>::hash(key) & (size - 1)];
+    if (entry.string != key)
+        entry = { key, SurrogatePairs::create() };
+    pairs = entry.pairs;
+    if (!pairs->tryLookThrough(string.span16())) {
+        entry = { };
+        return Found::TooMany;
     }
-
-    auto codeUnits = string.span16();
-    size_t count = 0;
-    for (size_t i = 0; i < codeUnits.size(); ++i) {
-        if (isPairAt(codeUnits, i)) {
-            ++count;
-            ++i;
-        }
-    }
-    if (!count) {
+    // Those that begin before its last code unit, so that both halves are in it.
+    if (!pairs->countBeforeCodeUnit(string.length() - 1)) {
         string.setHasNoSurrogatePairs();
+        // If it is by itself there is nothing more to be found out about it.
+        if (key == &string)
+            entry = { };
         return Found::None;
     }
-
-    pairs = SurrogatePairs::tryCreate(codeUnits, count);
-    if (!pairs)
-        return Found::TooMany;
-    entry = { &string, pairs };
     return Found::Some;
 }
 
@@ -116,23 +135,32 @@ Characters::Characters(VM& vm, const String& string)
     StringImpl* impl = string.impl();
     if (!impl || impl->is8Bit() || impl->hasNoSurrogatePairs())
         return;
-    if (vm.ensurePythonSurrogatePairCache().find(*impl, m_pairs) == SurrogatePairCache::Found::TooMany) {
+    switch (vm.ensurePythonSurrogatePairCache().find(*impl, m_pairs)) {
+    case SurrogatePairCache::Found::None:
+        m_pairs = nullptr;
+        break;
+    case SurrogatePairCache::Found::Some:
+        m_pairCount = m_pairs->countBeforeCodeUnit(m_length - 1);
+        break;
+    case SurrogatePairCache::Found::TooMany:
+        m_pairs = nullptr;
         m_isGoneThrough = true;
         m_codeUnits = impl->span16();
+        break;
     }
 }
 
 unsigned Characters::count() const
 {
     if (m_pairs)
-        return m_length - m_pairs->count();
+        return m_length - m_pairCount;
     return m_isGoneThrough ? characterAt(m_length) : m_length;
 }
 
 unsigned Characters::codeUnitOf(unsigned index) const
 {
     if (m_pairs)
-        return index + m_pairs->countBeforeCharacter(index);
+        return index + m_pairs->countBeforeCharacter(index, m_pairCount);
     if (!m_isGoneThrough)
         return index;
     size_t i = 0;
@@ -144,7 +172,7 @@ unsigned Characters::codeUnitOf(unsigned index) const
 unsigned Characters::characterAt(unsigned offset) const
 {
     if (m_pairs)
-        return offset - m_pairs->countBeforeCodeUnit(offset);
+        return offset - std::min(m_pairs->countBeforeCodeUnit(offset), m_pairCount);
     if (!m_isGoneThrough)
         return offset;
     unsigned character = 0;

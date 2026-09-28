@@ -380,6 +380,24 @@ of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for 
   looked for with `findCharacters()` and the rest is not found in the middle of a pair. That takes looking into only if it begins with a second half or ends with a first half, which is next to never.
   And `strip()` goes by a character at a time, or it would take half of one emoji for half of another.
 
+### Adding to a string
+
+`s += x` in a loop is how a great deal of Python puts a string together, and it looks at what it has so far as it goes: `s[-1]`, `s.endswith(...)`, `len(s)`. CPython adds to the string where it is, if nothing else
+has hold of it, so that takes as long as there is to add. In JavaScriptCore `s + x` is a rope, which is made in no time, and looking at it makes one string of it, which copies all of it. So doing both in turn took
+the square of the length, in JavaScript as well.
+
+Now a rope that is mostly its first string is made into a string in a buffer that it shares with that first string: `ExtensibleStringImpl`, in WTF, and `JSRopeString::tryResolveRopeIntoExtensibleBuffer()`. The
+buffer has room to spare. Each string is an ordinary `StringImpl` that is the first so many characters of it, and does not change. If the first string ends where what has been used of the buffer ends, then what is
+added is written after it, where no string that there is can see it, and the result is a longer piece of the same buffer. If something has been written there already, because the same string was added to twice, it
+is copied as it always was.
+
+- It is for a rope whose first string is at least half of it. If more is added than was there, copying what was there does not change how the time goes up.
+- The first time, the buffer has no room to spare, so adding to a string once costs no memory. It is when what comes of that is added to in its turn that the buffer is made twice as large.
+- A string says that it is such a piece in the low bit of the pointer that it has to the buffer, so it takes none of `StringImpl`'s flags.
+- That there are no surrogate pairs is handed on, by looking through only what was added, and only if the first string was known to have none, so a program that never asks does not pay for looking.
+- Where the pairs are is written down for the buffer, and not for each string, and is added to in the same way. A string may end between the halves of what is a pair to a longer one, so each counts those that are
+  wholly in it.
+
 ### What there is no room for
 
 Nearly everything that is put together here has in it something that is as long as a program makes it, and a program of one line can make that as long as a string can be: `getattr(1, 'a' * (2 ** 31 - 5))` has

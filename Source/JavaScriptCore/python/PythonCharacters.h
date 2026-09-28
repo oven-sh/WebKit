@@ -26,7 +26,6 @@
 #pragma once
 
 #include <array>
-#include <wtf/MallocSpan.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringView.h>
@@ -46,27 +45,37 @@ namespace Python {
 //   - For a string that has pairs, where they are is written down: SurrogatePairs. There is nowhere in a string to keep that, so it is kept for as long as the strings lately asked about, in a cache of the VM's,
 //     as what String.prototype.split() came to is.
 
-// Where the surrogate pairs of a string are.
+// Where the surrogate pairs are in some code units, from the first of them as far as has been looked.
+//
+// That is a string, or a buffer that several strings are the beginning of: see ExtensibleStringImpl.h. A string that is added to over and over is a longer piece of the same buffer each time, so what has been found
+// out about a shorter piece holds for a longer one, and only what has been added is looked through. So this can have more in it than is in the string that is being asked about. `limit` is how many of the pairs are.
 class SurrogatePairs final : public RefCounted<SurrogatePairs> {
     WTF_MAKE_TZONE_ALLOCATED(SurrogatePairs);
 public:
-    // Of a string that has so many of them. Null if there is no room to write them down.
-    static RefPtr<SurrogatePairs> tryCreate(std::span<const char16_t>, size_t count);
+    static Ref<SurrogatePairs> create() { return adoptRef(*new SurrogatePairs); }
+    ~SurrogatePairs();
 
-    unsigned count() const { return m_characters.span().size(); }
-    // How many of them are before the character at an index, and how many begin before a code unit.
-    unsigned countBeforeCharacter(unsigned index) const;
+    // Looks through what has not been looked through. False if there is no room to write down what is there, and then it is as it was.
+    bool tryLookThrough(std::span<const char16_t>);
+    size_t lengthLookedThrough() const { return m_lengthLookedThrough; }
+
+    unsigned count() const { return m_count; }
+    // How many of the first `limit` are before the character at an index.
+    unsigned countBeforeCharacter(unsigned index, unsigned limit) const;
+    // How many begin before a code unit.
     unsigned countBeforeCodeUnit(unsigned offset) const;
 
 private:
-    explicit SurrogatePairs(MallocSpan<unsigned>&& characters)
-        : m_characters(WTF::move(characters))
-    {
-    }
+    SurrogatePairs() = default;
 
-    // Of each, in order, which character of the string it is. The code unit that it begins at is that and one more for each of those before it. So there is as much of this as there are pairs, and nothing to
-    // choose in how it is laid out.
-    MallocSpan<unsigned> m_characters;
+    std::span<const unsigned> characters() const { return unsafeMakeSpan(m_characters, m_count); }
+
+    // Of each, in order, which character it is. The code unit that it begins at is that and one more for each of those before it. So there is as much of this as there are pairs, and nothing to choose in how it
+    // is laid out.
+    unsigned* m_characters { nullptr };
+    size_t m_count { 0 };
+    size_t m_capacity { 0 };
+    size_t m_lengthLookedThrough { 0 };
 };
 
 class SurrogatePairCache {
@@ -87,7 +96,7 @@ public:
 
 private:
     struct Entry {
-        RefPtr<StringImpl> string;
+        RefPtr<StringImpl> string; // Or the buffer that it is the beginning of.
         RefPtr<SurrogatePairs> pairs;
     };
 
@@ -113,6 +122,7 @@ public:
 
 private:
     RefPtr<SurrogatePairs> m_pairs;
+    unsigned m_pairCount { 0 }; // Of those, how many are in this string.
     std::span<const char16_t> m_codeUnits; // Only if it is gone through.
     unsigned m_length { 0 };
     bool m_isGoneThrough { false }; // There are too many pairs to write down, so they are counted each time.

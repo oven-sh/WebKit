@@ -648,3 +648,10 @@ one pair at the end => (100000, 363857063, 241728556, 100000, 309610246, 6098545
 one pair at the start => (100000, 526321645, 781315236, 100000, 560632888, 609854502, 819917860, 33334, 819917860, 363857063, 11112, 0, -1, 99998, True)
 two at once => 50000
 many of them => 5200899960
+---- added to and looked at
+pairs wrong: 0 of the last: 1071 819748575
+pairs and others wrong: 0 of the last: 1014 261670193
+few pairs wrong: 0 of the last: 1101 818186724
+first halves and pairs wrong: 0 of the last: 1063 114086559
+second halves and pairs wrong: 0 of the last: 1021 284701333
+none wrong: 0 of the last: 1062 554158881

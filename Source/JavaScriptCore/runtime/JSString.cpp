@@ -29,6 +29,8 @@
 #include "StringObject.h"
 #include "StrongInlines.h"
 #include "StructureCreateInlines.h"
+#include <unicode/utf16.h>
+#include <wtf/text/ExtensibleStringImpl.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -147,6 +149,84 @@ void JSRopeString::resolveRopeInternalNoSubstring(std::span<CharacterType> buffe
     resolveToBuffer(fiber0(), fiber1(), fiber2(), buffer, stackLimit);
 }
 
+// For a rope that is mostly its first string: something has been appended to a string, as by `s += x`. If that is done over and over,
+// and the result is looked at each time, giving each result a buffer of its own copies the whole string each time. So the results share
+// a buffer with room to spare, and only what was appended is copied. See ExtensibleStringImpl.h.
+//
+// Returns null if it is not that kind of rope, or if there is no memory, and then the caller resolves it in the ordinary way.
+template<typename CharacterType>
+RefPtr<StringImpl> JSRopeString::tryResolveRopeIntoExtensibleBuffer(uint8_t* stackLimit) const
+{
+    // If more is being added than was there, copying what was there does not change how the time taken grows.
+    unsigned length = this->length();
+    JSString* first = fiber0();
+    if (first->length() < length - first->length())
+        return nullptr;
+
+    // Several things may have been appended since it was last resolved: ((s + a) + b) + c.
+    Vector<const JSRopeString*, 8> spine;
+    spine.append(this);
+    while (first->isRope()) {
+        auto* rope = static_cast<const JSRopeString*>(first);
+        if (rope->isSubstring())
+            return nullptr;
+        spine.append(rope);
+        first = rope->fiber0();
+    }
+    unsigned firstLength = first->length();
+    if (firstLength < length - firstLength)
+        return nullptr;
+    StringImpl* firstImpl = first->valueInternal().impl();
+    if (firstImpl->is8Bit() != (sizeof(CharacterType) == 1))
+        return nullptr;
+
+    RefPtr<ExtensibleStringImpl> buffer;
+    unsigned capacity = length;
+    if (firstImpl->isPrefixOfExtensibleBuffer()) {
+        Ref existing = ExtensibleStringImpl::bufferOf(*firstImpl);
+        // Nothing has been written after it, so what is written there now is seen by no other string.
+        if (existing->usedLength() == firstLength && existing->capacity() >= length)
+            buffer = WTF::move(existing);
+        else {
+            // This is at least the second time round, so it is worth leaving room for the next. Until then there is none to spare, so
+            // that appending once costs no memory.
+            capacity = std::max<uint64_t>(length, std::min<uint64_t>(static_cast<uint64_t>(existing->capacity()) * 2, String::MaxLength));
+            if (!StringImpl::isValidLength<CharacterType>(capacity))
+                capacity = length;
+        }
+    }
+    if (!buffer) {
+        buffer = ExtensibleStringImpl::tryCreate<CharacterType>(capacity);
+        if (!buffer && capacity != length)
+            buffer = ExtensibleStringImpl::tryCreate<CharacterType>(length);
+        if (!buffer)
+            return nullptr;
+        StringView(*firstImpl).getCharacters(buffer->unusedCharacters<CharacterType>());
+    }
+
+    // What follows the first string, in each of the ropes that begin with it.
+    auto characters = buffer->unusedCharacters<CharacterType>();
+    unsigned base = buffer->usedLength();
+    for (auto* rope : spine) {
+        unsigned start = rope->fiber0()->length();
+        resolveToBuffer(rope->fiber1(), rope->fiber2(), nullptr, characters.subspan(start - base, rope->length() - start), stackLimit);
+    }
+
+    Ref result = buffer->createPrefix(length);
+    if constexpr (sizeof(CharacterType) == 2) {
+        // Only what asks whether a string has surrogate pairs sets this, so a program that never asks does not pay for looking.
+        if (firstImpl->hasNoSurrogatePairs()) {
+            auto added = result->span16().subspan(firstLength - 1);
+            bool hasPair = false;
+            for (size_t i = 0; i + 1 < added.size(); ++i)
+                hasPair |= U16_IS_LEAD(added[i]) && U16_IS_TRAIL(added[i + 1]);
+            if (!hasPair)
+                result->setHasNoSurrogatePairs();
+        }
+    }
+    return result;
+}
+
 GCOwnedDataScope<AtomStringImpl*> JSRopeString::resolveRopeToAtomString(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
@@ -241,6 +321,15 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         return valueInternal();
     }
 
+    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
+    if (RefPtr extended = is8Bit() ? tryResolveRopeIntoExtensibleBuffer<Latin1Character>(stackLimit) : tryResolveRopeIntoExtensibleBuffer<char16_t>(stackLimit)) {
+        size_t sizeToReport = extended->cost();
+        convertToNonRope(function(extended.releaseNonNull()));
+        if constexpr (reportAllocation)
+            vm.heap.reportExtraMemoryAllocated(this, sizeToReport);
+        return valueInternal();
+    }
+
     if (is8Bit()) {
         std::span<Latin1Character> buffer;
         auto newImpl = StringImpl::tryCreateUninitialized(length(), buffer);
@@ -250,7 +339,6 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
         }
 
         size_t sizeToReport = newImpl->cost();
-        uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
         resolveRopeInternalNoSubstring(buffer, stackLimit);
         convertToNonRope(function(newImpl.releaseNonNull()));
         if constexpr (reportAllocation)
@@ -266,7 +354,6 @@ const String& JSRopeString::resolveRopeWithFunction(JSGlobalObject* nullOrGlobal
     }
 
     size_t sizeToReport = newImpl->cost();
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
     resolveRopeInternalNoSubstring(buffer, stackLimit);
     convertToNonRope(function(newImpl.releaseNonNull()));
     if constexpr (reportAllocation)

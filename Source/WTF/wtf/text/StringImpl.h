@@ -190,6 +190,7 @@ class StringImpl : private StringImplShape, public NoVirtualDestructorBase {
     friend class RegisteredSymbolImpl;
     friend class SymbolImpl;
     friend class ExternalStringImpl;
+    friend class ExtensibleStringImpl;
 
     friend struct WTF::ASCIICaseInsensitiveStringViewHashTranslator;
     friend struct WTF::HashedUTF8CharactersTranslator;
@@ -365,6 +366,9 @@ public:
     bool canBecomeAtom() const { return !(m_hashAndFlags & s_hashFlagNeverAtomize); }
     void setNeverAtomize() { ASSERT(!isAtom()); m_hashAndFlags |= s_hashFlagNeverAtomize; }
 #endif
+
+    // See ExtensibleStringImpl.h.
+    bool isPrefixOfExtensibleBuffer() const;
 
     bool hasNoSurrogatePairs() const { return m_hashAndFlags & s_hashFlagHasNoSurrogatePairs; }
     void setHasNoSurrogatePairs() const
@@ -584,8 +588,10 @@ private:
     bool requiresCopy() const;
     template<typename T> const T* tailPointer() const;
     template<typename T> T* tailPointer();
-    StringImpl* const& substringBuffer() const;
-    StringImpl*& substringBuffer();
+    // The low bit of the stored pointer is set if the base is an ExtensibleStringImpl and this string starts where its buffer does.
+    static constexpr uintptr_t s_substringBufferIsExtensible = 1;
+    StringImpl* substringBuffer() const;
+    void setSubstringBuffer(Ref<StringImpl>&&, uintptr_t flags = 0);
 
     enum class CaseConvertType { Upper, Lower };
     template<CaseConvertType, typename CharacterType> static Ref<StringImpl> convertASCIICase(StringImpl&, std::span<const CharacterType>);
@@ -1054,7 +1060,7 @@ inline StringImpl::StringImpl(std::span<const Latin1Character> characters, Ref<S
     ASSERT(m_length);
     ASSERT(base->bufferOwnership() != BufferSubstring);
 
-    substringBuffer() = &base.leakRef();
+    setSubstringBuffer(WTF::move(base));
 
     STRING_STATS_ADD_8BIT_STRING2(m_length, true);
 }
@@ -1067,7 +1073,7 @@ inline StringImpl::StringImpl(std::span<const char16_t> characters, Ref<StringIm
     ASSERT(m_length);
     ASSERT(base->bufferOwnership() != BufferSubstring);
 
-    substringBuffer() = &base.leakRef();
+    setSubstringBuffer(WTF::move(base));
 
     STRING_STATS_ADD_16BIT_STRING2(m_length, true);
 }
@@ -1331,18 +1337,23 @@ template<typename CharacterType> inline Ref<StringImpl> StringImpl::createUninit
     return constructInternal<CharacterType>(*string, length);
 }
 
-inline StringImpl* const& StringImpl::substringBuffer() const
+inline StringImpl* StringImpl::substringBuffer() const
 {
     ASSERT(bufferOwnership() == BufferSubstring);
 
-    return *tailPointer<StringImpl*>();
+    return std::bit_cast<StringImpl*>(*tailPointer<uintptr_t>() & ~s_substringBufferIsExtensible);
 }
 
-inline StringImpl*& StringImpl::substringBuffer()
+inline void StringImpl::setSubstringBuffer(Ref<StringImpl>&& base, uintptr_t flags)
 {
     ASSERT(bufferOwnership() == BufferSubstring);
 
-    return *tailPointer<StringImpl*>();
+    *tailPointer<uintptr_t>() = std::bit_cast<uintptr_t>(&base.leakRef()) | flags;
+}
+
+inline bool StringImpl::isPrefixOfExtensibleBuffer() const
+{
+    return bufferOwnership() == BufferSubstring && !isSymbol() && (*tailPointer<uintptr_t>() & s_substringBufferIsExtensible);
 }
 
 inline void StringImpl::assertHashIsCorrect() const

@@ -101,3 +101,57 @@ for name, unit in (("ascii", "ab"), ("16 bits", B + "b"), ("pairs", A + "b"), ("
                      checksum(s[::-1][:9]), len(s[::3]), checksum(s[::-7][:9]), checksum(map(ord, reversed(s))), sum(s.startswith(s[i], i) for i in range(0, len(s), 9)), s.count("b", N // 2), s.rfind("b", 0, N // 3), len(s[1:-1]), s[N // 2:][:2] == s[N // 2:N // 2 + 2]))
 t("two at once", lambda: (lambda a, b: sum(a[i] == b[i] for i in range(N)))(A * N, (A + B) * (N // 2)))
 t("many of them", lambda: (lambda strings: sum(len(x) + ord(x[i % 5]) for i in range(20) for x in strings))([A * 2 + str(i) + A * 2 for i in range(5000)]))
+
+print("---- added to and looked at")
+# What is added to over and over is kept in one place, of which each string on the way is the beginning, and what is known of where the pairs are is added to as well. Each is still to be what it was.
+
+
+class Random:
+    def __init__(self, seed):
+        self.state = seed
+
+    def below(self, n):
+        self.state = (self.state * 6364136223846793005 + 1442695040888963407) % (1 << 64)
+        return (self.state >> 33) % n
+
+
+def agrees(s, model, r):
+    if len(s) != len(model):
+        return False
+    for attempt in range(6):
+        i = r.below(len(model))
+        j = i + r.below(len(model) - i + 1)
+        if s[i] != model[i] or s[i - len(model)] != model[i] or list(s[i:j]) != model[i:j] or s.find(model[i], i) != i or s[-1] != model[-1]:
+            return False
+    return True
+
+
+for name, alphabet in (("pairs", [A, C, D]), ("pairs and others", [A, "a", B, C, "b", E]), ("few pairs", ["a"] * 20 + [B] * 5 + [A]), ("first halves and pairs", [HIGH, A, "a", HIGH, C]), ("second halves and pairs", [LOW, A, "a", LOW, D]), ("none", ["a", B, E])):
+    r = Random(len(name))
+    live = [("", [])]
+    wrong = 0
+    for step in range(6000):
+        s, model = live[r.below(len(live))]
+        added = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
+        kind = r.below(8)
+        if kind == 0:
+            # The same one added to twice, of which only one can go after it where it is kept.
+            other = [alphabet[r.below(len(alphabet))] for i in range(1 + r.below(3))]
+            second = (s + "".join(other), model + other)
+            wrong += not agrees(*second, r)
+            live.append(second)
+        if kind == 1:
+            for c in added:
+                s += c
+        else:
+            s += "".join(added)
+        model = model + added
+        wrong += not agrees(s, model, r)
+        live.append((s, model))
+        if len(live) > 30:
+            live = live[r.below(20):]
+        if len(model) > 2500:
+            live = [("", [])]
+    for s, model in live:
+        wrong += list(s) != model or len(s) != len(model) or [s[i] for i in range(len(s))] != model
+    print(name, "wrong:", wrong, "of the last:", len(live[-1][1]), checksum(live[-1][0]))

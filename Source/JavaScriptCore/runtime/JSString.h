@@ -707,6 +707,7 @@ private:
     JS_EXPORT_PRIVATE GCOwnedDataScope<AtomStringImpl*> resolveRopeToAtomString(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE GCOwnedDataScope<AtomStringImpl*> resolveRopeToExistingAtomString(JSGlobalObject*) const;
     template<typename CharacterType> void resolveRopeInternalNoSubstring(std::span<CharacterType>, uint8_t* stackLimit) const;
+    template<typename CharacterType> RefPtr<StringImpl> tryResolveRopeIntoExtensibleBuffer(uint8_t* stackLimit) const;
     Identifier toIdentifier(JSGlobalObject*) const;
     void outOfMemory(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     GCOwnedDataScope<StringView> view(JSGlobalObject*) const;
