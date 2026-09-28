@@ -2273,7 +2273,10 @@ void SpeculativeJIT::checkArgumentTypes()
         
         switch (format) {
         case FlushedInt32: {
-            speculationCheck(BadType, valueSource, node, branch64(Below, addressFor(virtualRegister), GPRInfo::numberTagRegister));
+            if (Options::useStrictInt32Checks())
+                speculationCheck(BadType, valueSource, node, branch32(NotEqual, addressFor(virtualRegister).withOffset(4), TrustedImm32(static_cast<int32_t>(static_cast<uint64_t>(JSValue::NumberTag) >> 32))));
+            else
+                speculationCheck(BadType, valueSource, node, branch64(Below, addressFor(virtualRegister), GPRInfo::numberTagRegister));
             break;
         }
         case FlushedBoolean: {
@@ -2936,7 +2939,7 @@ void SpeculativeJIT::compileDoubleRep(Node* node)
         Jump done = branchIfNotNaN(resultFPR);
         
         DFG_TYPE_CHECK(
-            JSValueSource(op1GPR), node->child1(), SpecBytecodeRealNumber, branchIfNotInt32(op1GPR));
+            JSValueSource(op1GPR), node->child1(), SpecBytecodeRealNumber, branchIfNotStrictInt32(op1GPR));
         convertInt32ToDouble(op1GPR, resultFPR);
         
         done.link(this);
@@ -9269,7 +9272,7 @@ void SpeculativeJIT::compileNewArray(Node* node)
                 GPRReg operandGPR = operand.gpr();
                 DFG_TYPE_CHECK(
                     JSValueSource(operandGPR), use, SpecInt32Only,
-                    branchIfNotInt32(operandGPR));
+                    branchIfNotStrictInt32(operandGPR));
             }
         }
         for (unsigned operandIdx = 0; operandIdx < node->numChildren(); ++operandIdx) {
@@ -11748,7 +11751,7 @@ void SpeculativeJIT::speculateRealNumber(Edge edge)
     
     Jump done = branchIfNotNaN(resultFPR);
 
-    typeCheck(JSValueSource(op1GPR), edge, SpecBytecodeRealNumber, branchIfNotInt32(op1GPR));
+    typeCheck(JSValueSource(op1GPR), edge, SpecBytecodeRealNumber, branchIfNotStrictInt32(op1GPR));
     
     done.link(this);
 }
@@ -16531,8 +16534,8 @@ void SpeculativeJIT::compileTaggedArith(Node* node)
     JumpList haveDoubles;
     JumpList done;
 
-    Jump leftIsNotInt32 = branchIfNotInt32(leftGPR);
-    Jump rightIsNotInt32 = branchIfNotInt32(rightGPR);
+    JumpList leftIsNotInt32 = branchIfNotInt32(leftGPR);
+    JumpList rightIsNotInt32 = branchIfNotInt32(rightGPR);
     switch (node->op()) {
     case TaggedAdd:
         slowCases.append(branchAdd32(Overflow, leftGPR, rightGPR, resultGPR));
@@ -18244,7 +18247,7 @@ void SpeculativeJIT::compileToLength(Node* node)
         GPRReg resultGPR = result.gpr();
 
         flushRegisters();
-        Jump isNotInt32;
+        JumpList isNotInt32;
         Jump done;
         if (mayBeInt32) {
             isNotInt32 = branchIfNotInt32(argumentGPR);

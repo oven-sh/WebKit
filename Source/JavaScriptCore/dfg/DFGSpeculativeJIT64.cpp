@@ -1214,7 +1214,7 @@ GPRReg SpeculativeJIT::fillSpeculateInt32Internal(Edge edge, DataFormat& returnF
         GPRReg gpr = info.gpr();
         m_gprs.lock(gpr);
         if (type & ~SpecInt32Only)
-            speculationCheck(BadType, JSValueSource(gpr), edge, branchIfNotInt32(gpr));
+            speculationCheck(BadType, JSValueSource(gpr), edge, branchIfNotStrictInt32(gpr));
         info.fillJSValue(m_stream, gpr, DataFormatJSInt32);
         // If !strict we're done, return.
         if (!strict) {
@@ -7073,7 +7073,7 @@ void SpeculativeJIT::convertAnyInt(Edge valueEdge, GPRReg resultGPR, bool canIgn
     JumpList failureCases;
 
     failureCases.append(branchIfNotNumber(valueGPR));
-    Jump notInt32 = branchIfNotInt32(valueGPR);
+    JumpList notInt32 = branchIfNotInt32(valueGPR);
     signExtend32ToPtr(valueGPR, resultGPR);
     auto done = jump();
 
@@ -7101,7 +7101,7 @@ void SpeculativeJIT::speculateAnyInt(Edge edge)
 
 void SpeculativeJIT::speculateInt32(Edge edge, GPRReg valueGPR)
 {
-    DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, SpecInt32Only, branchIfNotInt32(valueGPR));
+    DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, SpecInt32Only, branchIfNotStrictInt32(valueGPR));
 }
 
 void SpeculativeJIT::speculateDoubleRepAnyInt(Edge edge)
@@ -8990,7 +8990,7 @@ void SpeculativeJIT::unboxRealNumberDouble(Node* node, FPRReg boxedFPR, FPRReg r
     }
 
     moveDoubleTo64(boxedFPR, scratchGPR);
-    speculationCheck(BadType, JSValueSource { }, node, branchIfNotInt32(scratchGPR));
+    speculationCheck(BadType, JSValueSource { }, node, branchIfNotStrictInt32(scratchGPR));
     convertInt32ToDouble(scratchGPR, resultFPR);
 
     doneCase.link(this);

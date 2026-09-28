@@ -39,6 +39,8 @@ static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticDiv);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticToDouble);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsInt32);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticNewArray);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticMark);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsMarked);
 
 JSC_DEFINE_HOST_FUNCTION(taggedArithmeticAdd, (JSGlobalObject*, CallFrame* callFrame))
 {
@@ -70,6 +72,21 @@ JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsInt32, (JSGlobalObject*, CallFrame* c
     return JSValue::encode(jsBoolean(callFrame->argument(0).isInt32()));
 }
 
+// An experiment: an int32 with bit 48 set. It passes every test for an int32, and its low 32 bits are the same.
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticMark, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(0);
+    if (!value.isInt32())
+        return JSValue::encode(value);
+    return JSValue::encode(value) | (1ll << 48);
+}
+
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsMarked, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(0);
+    return JSValue::encode(jsBoolean(value.isInt32() && (JSValue::encode(value) & (1ll << 48))));
+}
+
 JSC_DEFINE_HOST_FUNCTION(taggedArithmeticNewArray, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -90,6 +107,8 @@ JSObject* createTaggedArithmeticObject(VM& vm, JSGlobalObject* globalObject)
     add("div"_s, 2, taggedArithmeticDiv, TaggedDivIntrinsic);
     add("toDouble"_s, 1, taggedArithmeticToDouble, NoIntrinsic);
     add("isInt32"_s, 1, taggedArithmeticIsInt32, IsInt32Intrinsic);
+    add("mark"_s, 1, taggedArithmeticMark, NoIntrinsic);
+    add("isMarked"_s, 1, taggedArithmeticIsMarked, NoIntrinsic);
     add("newArray"_s, 0, taggedArithmeticNewArray, NewContiguousArrayIntrinsic);
     return object;
 }

@@ -384,7 +384,7 @@ public:
 
                     switch (m_graph.m_argumentFormats[0][i]) {
                     case FlushedInt32:
-                        speculate(BadType, jsValueValue(jsValue), profile, isNotInt32(jsValue));
+                        speculate(BadType, jsValueValue(jsValue), profile, isNotStrictInt32(jsValue));
                         break;
                     case FlushedBoolean:
                         speculate(BadType, jsValueValue(jsValue), profile, isNotBoolean(jsValue));
@@ -2268,7 +2268,7 @@ private:
 
             FTL_TYPE_CHECK(
                 jsValueValue(value), m_node->child1(), SpecBytecodeRealNumber,
-                isNotInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
+                isNotStrictInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
             ValueFromBlock slowResult = m_out.anchor(m_out.intToDouble(unboxInt32(value)));
             m_out.jump(continuation);
 
@@ -2468,7 +2468,7 @@ private:
 
         m_out.appendTo(intCase, continuation);
         LValue boxedJSValue = m_out.bitCast(boxed, Int64);
-        speculate(BadType, noValue(), node, isNotInt32(boxedJSValue));
+        speculate(BadType, noValue(), node, isNotStrictInt32(boxedJSValue));
         ValueFromBlock slowResult = m_out.anchor(m_out.intToDouble(unboxInt32(boxedJSValue)));
         m_out.jump(continuation);
 
@@ -7520,7 +7520,7 @@ IGNORE_CLANG_WARNINGS_END
                 LValue value = lowJSValue(child3, ManualOperandSpeculation);
 
                 if (arrayMode.type() == Array::Int32)
-                    FTL_TYPE_CHECK(jsValueValue(value), child3, SpecInt32Only, isNotInt32(value));
+                    FTL_TYPE_CHECK(jsValueValue(value), child3, SpecInt32Only, isNotStrictInt32(value));
 
                 IndexedAbstractHeap& heap = arrayMode.type() == Array::Int32 ? m_heaps.indexedInt32Properties : m_heaps.indexedContiguousProperties;
                 TypedPointer elementPointer = baseIndexWithProvenValue(heap, storage, index, child2);
@@ -7773,7 +7773,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue index = lowInt32(indexEdge);
         LValue value = lowJSValue(valueEdge, ManualOperandSpeculation);
 
-        FTL_TYPE_CHECK(jsValueValue(value), valueEdge, SpecInt32Only, isNotInt32(value));
+        FTL_TYPE_CHECK(jsValueValue(value), valueEdge, SpecInt32Only, isNotStrictInt32(value));
 
         ArrayMode arrayMode = m_node->arrayMode().modeForPut();
         ArrayModes arrayModes = m_node->arrayModes();
@@ -19705,7 +19705,7 @@ IGNORE_CLANG_WARNINGS_END
                         case ALL_INT32_INDEXING_TYPES:
                             // FIXME: This could use the proven type if we had the Edge for the
                             // value. https://bugs.webkit.org/show_bug.cgi?id=155311
-                            speculate(BadType, noValue(), nullptr, isNotInt32(value));
+                            speculate(BadType, noValue(), nullptr, isNotStrictInt32(value));
                             storeType = Output::Store64;
                             heap = &m_heaps.indexedInt32Properties;
                             break;
@@ -25902,7 +25902,7 @@ IGNORE_CLANG_WARNINGS_END
         if (isValid(value)) {
             LValue boxedResult = value.value();
             FTL_TYPE_CHECK(
-                jsValueValue(boxedResult), edge, SpecInt32Only, isNotInt32(boxedResult));
+                jsValueValue(boxedResult), edge, SpecInt32Only, isNotStrictInt32(boxedResult));
             LValue result = unboxInt32(boxedResult);
             setInt32(edge.node(), result);
             return result;
@@ -26419,12 +26419,25 @@ IGNORE_CLANG_WARNINGS_END
     {
         if (LValue proven = isProvenValue(type, SpecInt32Only))
             return proven;
+        if (Options::useStrictInt32Checks() >= 2)
+            return m_out.equal(m_out.lShr(jsValue, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
         return m_out.aboveOrEqual(jsValue, m_numberTag);
     }
     LValue isNotInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
     {
         if (LValue proven = isProvenValue(type, ~SpecInt32Only))
             return proven;
+        if (Options::useStrictInt32Checks() >= 2)
+            return m_out.notEqual(m_out.lShr(jsValue, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
+        return m_out.below(jsValue, m_numberTag);
+    }
+    // Where what follows may box the int32 again.
+    LValue isNotStrictInt32(LValue jsValue, SpeculatedType type = SpecFullTop)
+    {
+        if (LValue proven = isProvenValue(type, ~SpecInt32Only))
+            return proven;
+        if (Options::useStrictInt32Checks() >= 1)
+            return m_out.notEqual(m_out.lShr(jsValue, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
         return m_out.below(jsValue, m_numberTag);
     }
     LValue unboxInt32(LValue jsValue)
@@ -27757,7 +27770,7 @@ IGNORE_CLANG_WARNINGS_END
 
         typeCheck(
             jsValueValue(value), m_node->child1(), SpecBytecodeRealNumber,
-            isNotInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
+            isNotStrictInt32(value, provenType(m_node->child1()) & ~SpecDoubleReal));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);

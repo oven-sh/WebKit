@@ -229,7 +229,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 break;
 
             case FFI::Type::Bool: {
-                Jump notInt32 = branchIfNotInt32(valueGPR);
+                JumpList notInt32 = branchIfNotInt32(valueGPR);
                 compare32(NotEqual, valueGPR, TrustedImm32(0), scratchGPR);
                 zeroExtend32ToWord(scratchGPR, scratchGPR);
                 store64(scratchGPR, slotAddress);
@@ -247,7 +247,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
             case FFI::Type::Uint64:
             case FFI::Type::Int64Fast:
             case FFI::Type::Uint64Fast: {
-                Jump notInt32 = branchIfNotInt32(valueGPR);
+                JumpList notInt32 = branchIfNotInt32(valueGPR);
                 signExtend32ToPtr(valueGPR, scratchGPR);
                 store64(scratchGPR, slotAddress);
                 stored.append(jump());
@@ -263,7 +263,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
             case FFI::Type::Double:
             case FFI::Type::Float: {
                 slowCases.append(branchIfNotNumber(valueGPR));
-                Jump notInt32 = branchIfNotInt32(valueGPR);
+                JumpList notInt32 = branchIfNotInt32(valueGPR);
                 convertInt32ToDouble(valueGPR, scratchFPR);
                 Jump converted = jump();
                 notInt32.link(this);
@@ -282,7 +282,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
             case FFI::Type::Pointer:
             case FFI::Type::CString:
             case FFI::Type::Function: {
-                Jump notInt32 = branchIfNotInt32(valueGPR);
+                JumpList notInt32 = branchIfNotInt32(valueGPR);
                 signExtend32ToPtr(valueGPR, scratchGPR);
                 store64(scratchGPR, slotAddress);
                 stored.append(jump());
