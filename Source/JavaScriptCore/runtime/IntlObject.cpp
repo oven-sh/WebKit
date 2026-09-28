@@ -71,9 +71,11 @@
 #include <unicode/uloc.h>
 #include <unicode/unumsys.h>
 #include <wtf/Assertions.h>
+#include <wtf/ConcurrentVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Language.h>
+#include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -2017,36 +2019,121 @@ String toPrimaryIanaTimeZoneIdentifier(StringView timeZone)
     return toPrimaryIanaTimeZoneIdentifier(timeZone.span16());
 }
 
-// Combined table of all accepted IANA time zone identifiers (primaries + Backward links),
-// indexed by TimeZoneID. Primaries come first (sorted by code-point order), aliases follow
-// (also sorted). Each entry carries its as-stored, case-normalized identifier and a
-// `primary` field that points back into the table at the entry's primary identifier
-// (entries with `primary == self_index` are themselves primary). This lets ZonedDateTime
-// preserve the alias-shaped identifier in its [[TimeZone]] slot while equality and ICU
-// operations can still reach the canonical primary in O(1).
-struct TimeZoneEntry {
-    String identifier;
-    TimeZoneID primary;
-};
-
-static unsigned primaryTimeZoneCount = 0;
-
-static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
+// Whether the enumeration in TimeZoneTable::addAll() yields a primary identifier spelled exactly like name, decided
+// by asking ICU about that one name. false does not mean that it does not.
+// ICU's enumeration of canonical IDs has an ID if it is a system ID that is its own canonical ID, other than Etc/Unknown.
+static bool isPrimaryTimeZoneIdentifier(StringView name)
 {
-    static LazyNeverDestroyed<Vector<TimeZoneEntry>> entries;
-    static std::once_flag initializeOnce;
-    std::call_once(initializeOnce, [&] {
-        auto createImmortalThreadSafeString = [](StringView view) -> String {
-            if (view.is8Bit())
-                return StringImpl::createStaticStringImpl(view.span8());
-            return StringImpl::createStaticStringImpl(view.span16());
-        };
-        auto reuseOrCreateImmortal = [&](String&& string) -> String {
-            if (string.impl() && string.impl()->isStatic())
-                return WTF::move(string);
-            return createImmortalThreadSafeString(StringView(string));
-        };
+    if (name.isEmpty() || name == "Etc/Unknown"_s)
+        return false;
+    // ICU takes UTF-16, and name is whatever a program passed as a time zone: as long as a string can be.
+    // ICU has no identifier longer than this (ZID_KEY_MAX in its zonemeta.cpp).
+    constexpr unsigned maxIdentifierLength = 128;
+    if (name.length() > maxIdentifierLength)
+        return false;
+    auto upconverted = name.upconvertedCharacters();
+    Vector<char16_t, 32> canonical;
+    UBool isSystemID = false;
+    if (U_FAILURE(callBufferProducingFunction(ucal_getCanonicalTimeZoneID, upconverted.get(), static_cast<int32_t>(name.length()), canonical, &isSystemID)) || !isSystemID)
+        return false;
+    Vector<char16_t, 32> again;
+    if (U_FAILURE(callBufferProducingFunction(ucal_getCanonicalTimeZoneID, canonical.span().data(), static_cast<int32_t>(canonical.size()), again, &isSystemID)) || !isSystemID)
+        return false;
+    if (StringView(again.span()) != StringView(canonical.span()) || StringView(canonical.span()) == "Etc/Unknown"_s)
+        return false;
+    if (!isValidTimeZoneNameFromICUTimeZone(StringView(canonical.span())))
+        return false;
+    auto mapped = canonicalizeTimeZoneNameFromICUTimeZone(toPrimaryIanaTimeZoneIdentifier(canonical.span()));
+    return mapped && StringView(*mapped) == name;
+}
 
+// Table of accepted IANA time zone identifiers (primaries + Backward links), indexed by TimeZoneID.
+// Each entry carries its as-stored, case-normalized identifier and a `primary` field that points
+// back into the table at the entry's primary identifier (entries with `primary == self_index` are
+// themselves primary). This lets ZonedDateTime preserve the alias-shaped identifier in its
+// [[TimeZone]] slot while equality and ICU operations can still reach the canonical primary in O(1).
+//
+// Enumerating every identifier ICU knows takes about a millisecond, and most programs name UTC, the
+// host's time zone and perhaps a few more. So an identifier gets its entry when it is first asked for,
+// if it is a primary identifier in its own spelling. Anything else (a Backward link, another case,
+// something that is no time zone) is decided by adding all of them.
+class TimeZoneTable {
+    WTF_MAKE_NONCOPYABLE(TimeZoneTable);
+public:
+    struct Entry {
+        String identifier;
+        TimeZoneID primary;
+    };
+
+    static TimeZoneTable& singleton()
+    {
+        static LazyNeverDestroyed<TimeZoneTable> table;
+        static std::once_flag initializeOnce;
+        std::call_once(initializeOnce, [&] {
+            table.construct();
+        });
+        return table;
+    }
+
+    TimeZoneTable()
+    {
+        Locker locker { m_lock };
+        TimeZoneID utc = add("UTC"_s, std::nullopt);
+        RELEASE_ASSERT(utc == utcTimeZoneID());
+    }
+
+    // No lock: entries do not move or change, and whoever has a TimeZoneID got it after its entry was written.
+    const Entry& operator[](TimeZoneID id) const { return m_entries[id]; }
+
+    std::optional<TimeZoneID> resolve(StringView name)
+    {
+        Locker locker { m_lock };
+        if (auto entry = m_ids.find<StringViewHashTranslator>(name); entry != m_ids.end())
+            return entry->value;
+        if (!m_hasAll) {
+            if (isPrimaryTimeZoneIdentifier(name))
+                return add(name, std::nullopt);
+            addAll();
+            if (auto entry = m_ids.find<StringViewHashTranslator>(name); entry != m_ids.end())
+                return entry->value;
+        }
+        auto entry = m_idsIgnoringCase.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+        if (entry == m_idsIgnoringCase.end())
+            return std::nullopt;
+        return entry->value;
+    }
+
+    // Sorted by code-point order.
+    Vector<String> primaryIdentifiers()
+    {
+        Locker locker { m_lock };
+        if (!m_hasAll)
+            addAll();
+        return m_sortedPrimaries.map([&](TimeZoneID id) {
+            return m_entries[id].identifier;
+        });
+    }
+
+private:
+    // Identifiers are immortal static strings, so that they can be shared across VM threads.
+    TimeZoneID add(StringView identifier, std::optional<TimeZoneID> primary) WTF_REQUIRES_LOCK(m_lock)
+    {
+        String immortal = identifier.is8Bit() ? StringImpl::createStaticStringImpl(identifier.span8()) : StringImpl::createStaticStringImpl(identifier.span16());
+        TimeZoneID id = static_cast<TimeZoneID>(m_entries.size());
+        m_entries.append(Entry { immortal, primary.value_or(id) });
+        m_ids.add(WTF::move(immortal), id);
+        return id;
+    }
+
+    TimeZoneID ensure(const String& identifier, std::optional<TimeZoneID> primary) WTF_REQUIRES_LOCK(m_lock)
+    {
+        if (auto entry = m_ids.find(identifier); entry != m_ids.end())
+            return entry->value;
+        return add(identifier, primary);
+    }
+
+    void addAll() WTF_REQUIRES_LOCK(m_lock)
+    {
         // Step 1: enumerate IANA primary identifiers (CLDR canonical → IANA primary, then dedup).
         Vector<String> primaryNames;
         {
@@ -2073,8 +2160,7 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
         }
 
         // Step 2: enumerate all known names; classify any non-primary as an alias and
-        // remember its primary's name. We store immortal strings keyed case-sensitively here
-        // because Backward links are themselves canonically cased in ICU's enumeration.
+        // remember its primary's name. Backward links are themselves canonically cased in ICU's enumeration.
         struct AliasRecord {
             String identifier;
             String primaryName;
@@ -2083,6 +2169,11 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
         UncheckedKeyHashSet<String> primaryNameSet;
         for (auto& name : primaryNames)
             primaryNameSet.add(name);
+#if ASSERT_ENABLED
+        // What isPrimaryTimeZoneIdentifier() said.
+        for (auto& id : m_ids.keys())
+            ASSERT(primaryNameSet.contains(id));
+#endif
 
         {
             UErrorCode status = U_ZERO_ERROR;
@@ -2106,7 +2197,7 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
                 String primary = toPrimaryIanaTimeZoneIdentifier(nameSpan);
                 if (primary.isNull() || !primaryNameSet.contains(primary))
                     continue;
-                String aliasIdentifier = createImmortalThreadSafeString(nameView);
+                String aliasIdentifier = nameView.toString();
                 if (!seenAliases.add(aliasIdentifier).isNewEntry)
                     continue;
                 aliases.append({ WTF::move(aliasIdentifier), WTF::move(primary) });
@@ -2116,84 +2207,45 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
             });
         }
 
-        // Step 3: materialize the combined entries vector — primaries first, aliases after,
-        // each region sorted. Build a name→index map so we can resolve each alias's
-        // primary-name reference into a TimeZoneID.
-        Vector<TimeZoneEntry> combined;
-        combined.reserveInitialCapacity(primaryNames.size() + aliases.size());
-        UncheckedKeyHashMap<String, TimeZoneID> nameToIndex;
+        // Step 3: give an entry to each that has none. Of identifiers that differ only in case,
+        // a primary wins over an alias, and then the first in code-point order.
+        m_sortedPrimaries.reserveInitialCapacity(primaryNames.size());
         for (auto& name : primaryNames) {
-            String identifier = reuseOrCreateImmortal(WTF::move(name));
-            TimeZoneID id = static_cast<TimeZoneID>(combined.size());
-            nameToIndex.add(identifier, id);
-            combined.append({ WTF::move(identifier), id });
+            TimeZoneID id = ensure(name, std::nullopt);
+            m_sortedPrimaries.append(id);
+            m_idsIgnoringCase.add(m_entries[id].identifier, id);
         }
-        primaryTimeZoneCount = static_cast<unsigned>(combined.size());
         for (auto& alias : aliases) {
-            auto primaryEntry = nameToIndex.find(alias.primaryName);
-            ASSERT(primaryEntry != nameToIndex.end());
-            combined.append({ WTF::move(alias.identifier), primaryEntry->value });
+            auto primaryEntry = m_ids.find(alias.primaryName);
+            ASSERT(primaryEntry != m_ids.end());
+            TimeZoneID id = ensure(alias.identifier, primaryEntry->value);
+            m_idsIgnoringCase.add(m_entries[id].identifier, id);
         }
+        m_hasAll = true;
+    }
 
-        entries.construct(WTF::move(combined));
-    });
-    return entries;
-}
+    Lock m_lock;
+    ConcurrentVector<Entry, 16> m_entries;
+    UncheckedKeyHashMap<String, TimeZoneID> m_ids WTF_GUARDED_BY_LOCK(m_lock);
+    bool m_hasAll WTF_GUARDED_BY_LOCK(m_lock) { false };
+    // Empty until m_hasAll.
+    Vector<TimeZoneID> m_sortedPrimaries WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash> m_idsIgnoringCase WTF_GUARDED_BY_LOCK(m_lock);
+};
 
 const String& intlTimeZoneIDToString(TimeZoneID id)
 {
-    return intlAvailableTimeZoneEntries()[id].identifier;
+    return TimeZoneTable::singleton()[id].identifier;
 }
 
 TimeZoneID intlPrimaryTimeZoneID(TimeZoneID id)
 {
-    return intlAvailableTimeZoneEntries()[id].primary;
-}
-
-// Index from any accepted time zone string (case-insensitive) to that string's own
-// TimeZoneID. Backward-link aliases like "Asia/Calcutta" map to the alias's TimeZoneID
-// (whose entry's `primary` field points to "Asia/Kolkata"); equality and ICU access
-// resolve the primary via intlPrimaryTimeZoneID. Lazily built; the time zone list is
-// fixed by the linked ICU/CLDR version, so a fixed map is safe. Stored keys are the
-// immortal static strings owned by intlAvailableTimeZoneEntries, so the read-only map
-// can be shared across VM threads.
-static const UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& intlAvailableTimeZoneIndex()
-{
-    static LazyNeverDestroyed<UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>> index;
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [&] {
-        const auto& entries = intlAvailableTimeZoneEntries();
-        UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash> table;
-        for (TimeZoneID i = 0; i < entries.size(); ++i)
-            table.add(entries[i].identifier, i);
-        index.construct(WTF::move(table));
-    });
-    return index.get();
+    return TimeZoneTable::singleton()[id].primary;
 }
 
 std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
 {
-    const auto& entries = intlAvailableTimeZoneEntries();
-    unsigned primaryCount = primaryTimeZoneCount;
-
-    auto findInRegion = [&](unsigned begin, unsigned end) -> std::optional<TimeZoneID> {
-        auto first = entries.begin() + begin;
-        auto last = entries.begin() + end;
-        auto it = std::ranges::lower_bound(first, last, name, WTF::codePointCompareLessThan, &TimeZoneEntry::identifier);
-        if (it != last && StringView(it->identifier) == name)
-            return static_cast<TimeZoneID>(it - entries.begin());
-        return std::nullopt;
-    };
-    if (auto id = findInRegion(0, primaryCount))
-        return id;
-    if (auto id = findInRegion(primaryCount, entries.size()))
-        return id;
-
-    const auto& index = intlAvailableTimeZoneIndex();
-    auto entry = index.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
-    if (entry == index.end())
-        return std::nullopt;
-    return entry->value;
+    return TimeZoneTable::singleton().resolve(name);
 }
 
 std::optional<AvailableNamedTimeZone> intlAvailableNamedTimeZone(StringView name)
@@ -2201,7 +2253,7 @@ std::optional<AvailableNamedTimeZone> intlAvailableNamedTimeZone(StringView name
     auto id = intlResolveTimeZoneID(name);
     if (!id)
         return std::nullopt;
-    return AvailableNamedTimeZone { *id, intlAvailableTimeZoneEntries()[*id].identifier };
+    return AvailableNamedTimeZone { *id, intlTimeZoneIDToString(*id) };
 }
 
 String TimeZone::toString() const
@@ -2225,33 +2277,15 @@ String TimeZone::toICUString() const
     return makeString("GMT"_s, negative ? '-' : '+', pad('0', 2, totalMinutes / 60), pad('0', 2, totalMinutes % 60));
 }
 
-TimeZoneID utcTimeZoneIDStorage { std::numeric_limits<TimeZoneID>::max() };
-TimeZoneID utcTimeZoneIDSlow()
-{
-    static std::once_flag initializeOnce;
-    std::call_once(initializeOnce, [&] {
-        auto id = intlResolveTimeZoneID("UTC"_s);
-        RELEASE_ASSERT(id);
-        utcTimeZoneIDStorage = *id;
-    });
-    return utcTimeZoneIDStorage;
-}
-
 void initializeAvailableTimeZones()
 {
-    utcTimeZoneID();
+    TimeZoneTable::singleton().primaryIdentifiers();
 }
 
 // https://tc39.es/ecma402/#sec-availableprimarytimezoneidentifiers
 static JSArray* availablePrimaryTimeZoneIdentifiers(JSGlobalObject* globalObject)
 {
-    const auto& entries = intlAvailableTimeZoneEntries();
-    unsigned primaryCount = primaryTimeZoneCount;
-    Vector<String> primaries;
-    primaries.reserveInitialCapacity(primaryCount);
-    for (unsigned i = 0; i < primaryCount; ++i)
-        primaries.append(entries[i].identifier);
-    return createArrayFromStringVector(globalObject, primaries);
+    return createArrayFromStringVector(globalObject, TimeZoneTable::singleton().primaryIdentifiers());
 }
 
 // https://tc39.es/proposal-intl-enumeration/#sec-availableunits
