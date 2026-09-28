@@ -29,6 +29,7 @@
 
 #if ENABLE(SAMPLING_PROFILER)
 
+#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "CodeBlockHash.h"
 #include "JITCode.h"
@@ -74,7 +75,7 @@ public:
         const void* cCodePC { nullptr };
         CalleeBits unverifiedCallee;
         CodeBlock* verifiedCodeBlock { nullptr };
-        AOT::Data* aotData { nullptr }; // A frame of code from the static compiler, instead: it has no CodeBlock unless it is asked for one.
+        AOT::FunctionRef aotFunction; // A frame of code from the static compiler, instead: it has no CodeBlock unless it is asked for one.
         CallSiteIndex callSiteIndex;
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)

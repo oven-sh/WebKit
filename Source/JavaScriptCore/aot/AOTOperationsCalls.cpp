@@ -242,6 +242,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    // (Not for a function that has nowhere to keep it.)
+    if (SharedData::contains(cache))
+        return;
     countAttemptToLinkCall(cache);
 
     Data* caller = callerData(callFrame);
@@ -252,25 +255,27 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         return;
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
-    JITCode* codeOfCallee;
+    const void* startOfCallee;
     if (executable->aotEntryFor(kind)) {
         // The call is going to go straight to the code, which takes it that it has been run before.
         DeferGCForAWhile deferGC(vm);
         if (caller->instance != vm.m_aotInstanceOfProgram || !linkStaticFunction(vm, executable, kind, function->scope()))
             return;
-        codeOfCallee = caller->instance->data[executable->aotIndexFor(kind)]->code;
+        const ImageFunction& functionOfCallee = *caller->instance->infos[executable->aotIndexFor(kind)].function;
+        startOfCallee = Image::of(functionOfCallee).codeFor(functionOfCallee);
     } else {
         if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
             return;
-        codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
+        auto* codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
         if (codeOfCallee->instance() != caller->instance)
             return;
+        startOfCallee = codeOfCallee->start();
     }
     auto key = imageKeyFor(executable, kind);
     if (!key || !key->sameFunction(code->knownCallee(knownCallee)))
         return;
     auto [image, record] = Image::find(*key);
-    if (!record || image->codeFor(*record) != codeOfCallee->start())
+    if (!record || image->codeFor(*record) != startOfCallee)
         return;
     fillCallCache(vm, caller, cache, function);
 }
@@ -322,7 +327,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* c
     auto* scope = std::bit_cast<JSScope*>(std::bit_cast<uint8_t*>(instance) - distanceOfEnvironment);
     RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
     RELEASE_ASSERT(linkStaticFunction(vm, executable, kind, scope));
-    return instance->data[index]->code->directEntry();
+    const ImageFunction& function = *instance->infos[index].function;
+    return tagCodePtr<JSEntryPtrTag>(const_cast<uint8_t*>(Image::of(function).codeFor(function)) + function.directEntryOffset);
 }
 
 // For a stub that is about to fill a slot: didFillSlot(), but for the epoch.
@@ -332,9 +338,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
         data->noteFilled();
 }
 
-// The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Data* data))
+// For a stub that has seen slots fail a function that has none of its own once too often.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance* instance, uint32_t index))
 {
+    instance->ensureData(index);
+}
+
+// The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance, uint32_t index))
+{
+    Data* data = instance->ensureData(index);
     VM& vm = *data->instance->vm;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -352,7 +365,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, callerData(callFrame)->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
+    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, caller(callFrame).ensureData()->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
 }
 
 } } // namespace JSC::AOT

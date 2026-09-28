@@ -88,6 +88,7 @@ bool Lowering::run()
         LValue boxed = m_out.load64(addressFor(VirtualRegister(CallFrameSlot::callee)));
         LValue index = m_out.load32(m_out.address(m_heaps.AOTCodeHeader_index, m_out.add(boxed, m_out.constInt64(fromBoxedToIndex)), 0));
         m_data = m_out.loadPtr(m_out.baseIndex(m_heaps.AOTInstance_data, m_instance, m_out.zeroExtPtr(index)));
+        m_info = m_out.add(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), m_out.mul(m_out.zeroExtPtr(index), m_out.constIntPtr(sizeof(FunctionInfo))));
     }
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
@@ -553,7 +554,7 @@ LValue Lowering::lowRaw(Node* node)
 
 LValue Lowering::lowConstantRegister(VirtualRegister reg)
 {
-    LValue constants = m_out.loadPtr(m_data, m_heaps.AOTData_constants);
+    LValue constants = m_graph.startsCold ? m_out.loadPtr(m_info, m_heaps.AOTFunctionInfo_constants) : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
     return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
 }
 

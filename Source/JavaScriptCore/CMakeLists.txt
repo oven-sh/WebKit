@@ -660,6 +660,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/BytecodeDumper.h
     bytecode/BytecodeGeneratorification.h
     bytecode/BytecodeGraph.h
+    aot/AOTFunction.h
+
     bytecode/BytecodeIndex.h
     bytecode/BytecodeIntrinsicRegistry.h
     bytecode/BytecodeLivenessAnalysis.h

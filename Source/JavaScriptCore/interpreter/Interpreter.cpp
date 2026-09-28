@@ -876,10 +876,11 @@ public:
         m_callFrame = visitor->callFrame();
         m_handler.m_valid = false;
 #if ENABLE(FTL_JIT)
-        if (AOT::Data* data = visitor->aotData()) {
+        if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
             if (!m_isTermination) {
-                m_handler = { data->unlinkedCodeBlock->handlerForIndex(m_callFrame->bytecodeIndex().offset(), RequiredHandler::AnyHandler), data };
+                auto* handler = function.unlinkedCodeBlock()->handlerForIndex(m_callFrame->bytecodeIndex().offset(), RequiredHandler::AnyHandler);
+                m_handler = { handler, handler ? function.ensureData() : nullptr };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }

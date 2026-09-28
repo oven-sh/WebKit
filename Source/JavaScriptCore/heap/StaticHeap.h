@@ -23,6 +23,9 @@ class JSCell;
 class JSString;
 class PreciseAllocation;
 class FunctionExecutable;
+namespace AOT {
+struct FunctionInfo;
+}
 class ScriptExecutable;
 class SourceCodeKey;
 class TDZEnvironmentLink;
@@ -109,6 +112,8 @@ public:
     // The function that has this number in the image of code (AOT::CodeHeader::index), and which of its two kinds of code has it.
     static std::pair<FunctionExecutable*, CodeSpecializationKind> executableOfFunction(uint32_t index);
     static bool hasExecutablesOfFunctions(VM&);
+    // What the image's functions are, by that number, as far as that could be told when the program was built. Null: nothing was.
+    static AOT::FunctionInfo* infosOfFunctions(VM&);
     static bool isPlaceOfSourceProvider(const void* pointer)
     {
         uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);

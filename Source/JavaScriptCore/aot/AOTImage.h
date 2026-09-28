@@ -143,6 +143,7 @@ public:
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
 
     static Image* withShapes(); // The image, if it has any.
+    static Image& of(const ImageFunction&); // The one it is in.
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     AtomString nameOfSelector(uint32_t) const;
     uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
@@ -168,6 +169,10 @@ public:
     struct Function {
         void* entry; // That checks the number of arguments.
         uint32_t index; // CodeHeader::index
+        const Site* sites; // Where they are going to be.
+        const ImageFunction* function; // Likewise.
+        uint32_t numSlots;
+        bool startsCold;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
@@ -200,6 +205,9 @@ struct ImageCode {
     explicit operator bool() const { return !!function; }
 };
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
+// Of the module that the scope is in, or is: whether code that takes its imports for what they were when it was compiled
+// (ImageFunction::usesStaticImports) may.
+bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 
 // Options::aotWriteImage(): everything the process compiles goes to Options::aotImagePath() when it exits.

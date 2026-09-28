@@ -172,6 +172,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, useUnboxedFastArrayIteration, true, Normal, "for-of and array destructuring over an Array keep the index in the frame instead of allocating an Array Iterator object"_s) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
+    v(Bool, aotStartFunctionsCold, true, Normal, "A function from an image that can do without gets nothing of its own until it has been run a few times: see AOT::SharedData."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \
     v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \
     v(Bool, reportSoundTypeViolations, false, Normal, "A type check that fails says so, once for each place, instead of throwing. Not for code from the static compiler, which relies on the checks."_s) \

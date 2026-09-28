@@ -391,6 +391,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.numberOfCatchEntrypoints = info.catchEntrypoints.size();
         record.numberOfKnownCallees = info.knownCallees.size();
         record.usesStaticImports = info.usesStaticImports;
+        record.startsCold = info.startsCold;
 
         ImageKey key = function.key;
         key.record = recordAt + 1;
@@ -537,6 +538,17 @@ static Image* imageWithEnvironments()
             return all.images[i];
     }
     return nullptr;
+}
+
+Image& Image::of(const ImageFunction& function)
+{
+    auto& all = registry();
+    for (unsigned i = 0; i < all.images.size(); ++i) {
+        Image* image = all.images[i];
+        if (static_cast<size_t>(reinterpret_cast<const uint8_t*>(&function) - image->m_data.data()) < image->m_data.size())
+            return *image;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 Image* Image::withShapes()
@@ -690,7 +702,9 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
             continue;
         auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
         size_t start = header.codeOffset + function.codeOffset;
-        return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset, reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index };
+        auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
+        return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset, reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index,
+            reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold };
     }
     return std::nullopt;
 }
@@ -776,6 +790,14 @@ static String nameForLogging(ScriptExecutable* executable)
     return "(top level)"_s;
 }
 
+bool moduleIsLinkedAsCompiled(JSScope* scope)
+{
+    while (scope && scope->type() != ModuleEnvironmentType)
+        scope = scope->next();
+    auto* record = scope ? dynamicDowncast<JSModuleRecord>(uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord()) : nullptr;
+    return record && record->isLinkedAsInImage(scope->globalObject());
+}
+
 ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
 {
     static std::once_flag once;
@@ -809,16 +831,13 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     // The code finds what it has of the realm by its own number, so that is for one function of the realm. The same text evaluated
     // a second time is another function: it has constants of its own, for one thing.
     if (Instance* instance = scope->realm()->aotInstance()) {
-        Data* data = instance->data[reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index];
-        if (data && data->executable != executable)
+        uint32_t index = reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index;
+        if (instance->data[index] && FunctionRef { instance, index }.executable() != executable)
             return { };
     }
 
     if (function->usesStaticImports) {
-        while (scope && scope->type() != ModuleEnvironmentType)
-            scope = scope->next();
-        auto* record = scope ? dynamicDowncast<JSModuleRecord>(uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord()) : nullptr;
-        if (!record || !record->isLinkedAsInImage(scope->globalObject())) {
+        if (!moduleIsLinkedAsCompiled(scope)) {
             if (Options::aotVerbose()) [[unlikely]]
                 dataLogLn("AOT: the module of ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " is not linked the way it was compiled for");
             return { };

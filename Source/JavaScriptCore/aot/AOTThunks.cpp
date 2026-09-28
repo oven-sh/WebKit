@@ -111,14 +111,17 @@ void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases
 // One of the calling function's identifiers.
 void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 {
-    // instance->data[the index in the header that the frame has for a callee]
+    // instance->infos[the index in the header that the frame has for a callee]
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), scratch4);
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index)), result);
     jit.load32(BaseIndex(scratch4, result, CCallHelpers::TimesOne), scratch4);
+    static_assert(sizeof(FunctionInfo) == 48);
+    jit.getEffectiveAddress(BaseIndex(scratch4, scratch4, CCallHelpers::TimesTwo), scratch4);
+    jit.lshiftPtr(TrustedImm32(4), scratch4);
     loadInstance(jit, result);
-    jit.addPtr(TrustedImm32(Instance::offsetOfData()), result);
-    jit.loadPtr(BaseIndex(result, scratch4, CCallHelpers::TimesEight), result);
-    jit.loadPtr(Address(result, Data::offsetOfIdentifiers()), result);
+    jit.loadPtr(Address(result, Instance::offsetOfInfos()), result);
+    jit.addPtr(scratch4, result);
+    jit.loadPtr(Address(result, FunctionInfo::offsetOfIdentifiers()), result);
     jit.zeroExtend32ToWord(index, scratch4);
     jit.loadPtr(BaseIndex(result, scratch4, CCallHelpers::TimesEight), result);
 }

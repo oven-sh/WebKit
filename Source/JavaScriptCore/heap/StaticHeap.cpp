@@ -79,7 +79,7 @@ struct StaticHeap::Header {
     uint64_t numberOfModules;
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
-    uint64_t executablesOfFunctions; // By AOT::CodeHeader::index: a FunctionExecutable*, with the low bit set if the code is for construction.
+    uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::CodeHeader::index.
     uint64_t numberOfFunctions;
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
@@ -330,14 +330,32 @@ static void* addressOfSourceProvider(size_t moduleIndex)
     return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfSourceProvidersInBss + moduleIndex * StaticHeap::sizeOfPlaceForSourceProvider);
 }
 
+static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, CodeSpecializationKind kind)
+{
+    // (Its SymbolTables are being made here and now.)
+    bool constantsWillDo = AOT::constantsAreOfNoRealm(codeBlock, AOT::SymbolTablesWillDo::Yes);
+    RELEASE_ASSERT(constantsWillDo || !function.startsCold);
+    info.constants = constantsWillDo ? codeBlock->constantRegisters().span().data() : nullptr;
+    info.identifiers = codeBlock->identifiers().span().data();
+    info.sites = function.sites;
+    info.function = function.function;
+    info.executableAndKind = executable ? std::bit_cast<uintptr_t>(executable) | !isCall(kind) : 0;
+    info.numSlots = function.numSlots;
+    // Twice through most of what it does, more or less.
+    info.missesToPutUpWith = std::min<uint32_t>(function.numSlots + function.numSlots / 2 + 8, std::numeric_limits<uint16_t>::max());
+    // (It takes a Data to say which executable's the code is, if this does not.)
+    info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0);
+}
+
 // The functions of `codeBlock`, whose source is `source`, and theirs.
-static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<uintptr_t> byIndex, uint64_t& made)
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, std::span<AOT::FunctionInfo> byIndex, uint64_t& made)
 {
     auto make = [&](UnlinkedFunctionExecutable* unlinked) {
-        // (The source of a constructor that nobody wrote is one of the engine's own.)
-        if (unlinked->staticExecutable() || unlinked->isBuiltinDefaultClassConstructor())
+        if (unlinked->staticExecutable())
             return;
-        auto functionKey = orderFunctionKey(*unlinked, unlinked->linkedSourceCode(source));
+        // The source of a constructor that nobody wrote is one of the engine's own, so its executable is made when the program runs.
+        bool isDefaultConstructor = unlinked->isBuiltinDefaultClassConstructor();
+        auto functionKey = orderFunctionKey(*unlinked, isDefaultConstructor ? source : unlinked->linkedSourceCode(source));
         if (!functionKey)
             return;
         std::optional<AOT::ImageView::Function> code[2];
@@ -352,12 +370,41 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         }
         if (!code[0] && !code[1])
             return;
-        FunctionExecutable* executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
+        if (isDefaultConstructor) {
+            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                if (auto& function = code[static_cast<unsigned>(kind)]; function && !byIndex[function->index].sites)
+                    fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfThereIsOne(kind), nullptr, kind);
+            }
+            return;
+        }
+        // A function that is compiled both to be called and to construct has the functions inside it twice over. There is one piece
+        // of code for each of those all the same, which is the code of one executable (AOT::FunctionInfo).
+        FunctionExecutable* executable = nullptr;
+        for (auto& function : code) {
+            if (function && byIndex[function->index].executableAndKind)
+                executable = uncheckedDowncast<FunctionExecutable>(byIndex[function->index].executable());
+        }
+        if (executable) {
+            bool hasAllOfIt = true;
+            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                if (auto& function = code[static_cast<unsigned>(kind)])
+                    hasAllOfIt &= byIndex[function->index].executable() == executable && byIndex[function->index].kind() == kind;
+            }
+            if (!hasAllOfIt)
+                return;
+            unlinked->setStaticExecutable(executable);
+            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                if (auto* nested = unlinked->codeBlockIfThereIsOne(kind))
+                    makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, byIndex, made);
+            }
+            return;
+        }
+        executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
         executable->becomeStatic(vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto& function = code[static_cast<unsigned>(kind)]) {
                     executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
-                byIndex[function->index] = std::bit_cast<uintptr_t>(executable) | !isCall(kind);
+                fillInfo(byIndex[function->index], *function, unlinked->codeBlockIfThereIsOne(kind), executable, kind);
             }
         }
         unlinked->setStaticExecutable(executable);
@@ -376,9 +423,14 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
 std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfFunction(uint32_t index)
 {
     RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
-    uintptr_t entry = std::bit_cast<const uintptr_t*>(s_header->executablesOfFunctions)[index];
-    RELEASE_ASSERT(entry);
-    return { std::bit_cast<FunctionExecutable*>(entry & ~static_cast<uintptr_t>(1)), entry & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall };
+    const AOT::FunctionInfo& info = std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index];
+    RELEASE_ASSERT(info.executableAndKind);
+    return { uncheckedDowncast<FunctionExecutable>(info.executable()), info.kind() };
+}
+
+AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM& vm)
+{
+    return hasExecutablesOfFunctions(vm) ? std::bit_cast<AOT::FunctionInfo*>(s_header->infosOfFunctions) : nullptr;
 }
 
 bool StaticHeap::hasExecutablesOfFunctions(VM& vm)
@@ -463,18 +515,25 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 header.modules = std::bit_cast<uint64_t>(modules);
                 header.numberOfModules = sortedOffsets.size();
                 auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
-                std::span<uintptr_t> executablesOfFunctions;
+                std::span<AOT::FunctionInfo> infosOfFunctions;
                 if (imageView) {
-                    size_t size = imageView->numberOfFunctions() * sizeof(uintptr_t);
-                    executablesOfFunctions = { static_cast<uintptr_t*>(Region::allocate(Region::Arena::Data, size, pageSizeOfImage)), imageView->numberOfFunctions() };
-                    memset(executablesOfFunctions.data(), 0, size);
-                    header.executablesOfFunctions = std::bit_cast<uint64_t>(executablesOfFunctions.data());
-                    header.numberOfFunctions = executablesOfFunctions.size();
+                    // (Where it can be written to: what is left blank is filled in if it turns out to be wanted. See AOT::Data::create().)
+                    size_t size = imageView->numberOfFunctions() * sizeof(AOT::FunctionInfo);
+                    infosOfFunctions = { static_cast<AOT::FunctionInfo*>(Region::allocate(Region::Arena::MutableMalloc, size, pageSizeOfImage)), imageView->numberOfFunctions() };
+                    memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
+                    header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
+                    header.numberOfFunctions = infosOfFunctions.size();
                 }
                 uint64_t numberOfExecutables = 0;
                 auto reportExecutables = makeScopeExit([&] {
-                    if (Options::aotReportStats()) [[unlikely]]
-                        dataLogLn("StaticHeap: ", numberOfExecutables, " executables of functions");
+                    if (Options::aotReportStats()) [[unlikely]] {
+                        size_t known = 0, cold = 0;
+                        for (auto& info : infosOfFunctions) {
+                            known += !!info.sites;
+                            cold += !!(info.flags & AOT::FunctionInfo::startsCold);
+                        }
+                        dataLogLn("StaticHeap: ", numberOfExecutables, " executables of functions; of the image's ", infosOfFunctions.size(), " functions ", known, " are known, and ", cold, " start cold");
+                    }
                 });
                 Vector<StaticHeapTDZ> tdz;
                 s_tdzBeingBuilt = &tdz;
@@ -503,7 +562,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             // not kept: once more than it is, or it would be destroyed if the module turns out to have no functions.
                             static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
                             SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
-                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, executablesOfFunctions, numberOfExecutables);
+                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, infosOfFunctions, numberOfExecutables);
+                            // The code of the module itself, but for its executable, which is made when the program runs.
+                            if (auto function = imageView->find(AOT::imageKeyForTopLevelCode(sortedOffsets[i] + 1)))
+                                fillInfo(infosOfFunctions[function->index], *function, codeBlock, nullptr, CodeSpecializationKind::CodeForCall);
                         }
                         modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
                     }

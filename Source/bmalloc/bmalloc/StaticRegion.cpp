@@ -122,7 +122,9 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
     }
     // For finding out who writes to it, which is allowed, and costs a page each time.
     static const bool findWriters = !!getenv("BUN_STATIC_HEAP_READONLY");
-    bool isReadOnly = findWriters && arena != Arena::MutableCells && arena != Arena::MutableMalloc;
+    // (=logall: of what is expected to be written to as well.)
+    static const bool ofAll = findWriters && !strcmp(getenv("BUN_STATIC_HEAP_READONLY"), "logall");
+    bool isReadOnly = findWriters && (ofAll || (arena != Arena::MutableCells && arena != Arena::MutableMalloc));
     void* result = mmap(wanted, size, isReadOnly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_PRIVATE, fileDescriptor, offsetInFile);
     if (result == MAP_FAILED)
         return false;

@@ -95,12 +95,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
     if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
         // All of it is known, so there is no call for a structure for every property on the way.
-        Data* data = callerData(callFrame);
+        FunctionRef function = caller(callFrame);
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
             names.append(identifierOf(i).impl());
-        uint32_t shape = data->siteConstantOf(cache);
-        if (Structure* structure = shape ? data->instance->structureOfKnownShape(shape, names.span()) : data->instance->structureOfLiteral(profile.structure(), names.span())) {
+        uint32_t shape = function.siteConstantOf(cache);
+        if (Structure* structure = shape ? function.instance->structureOfKnownShape(shape, names.span()) : function.instance->structureOfLiteral(profile.structure(), names.span())) {
             DeferGC deferGC(vm);
             unsigned inlineCapacity = structure->inlineCapacity();
             Butterfly* butterfly = nullptr;
@@ -178,7 +178,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
 
     Structure* last = object->structure();
     if (isLaidOutAsPlanned && !last->isDictionary() && count <= last->inlineCapacity()) {
-        if (uint32_t shape = callerData(callFrame)->siteConstantOf(cache)) {
+        if (uint32_t shape = caller(callFrame).siteConstantOf(cache)) {
             last->setKnownShape(vm, safeCast<uint16_t>(shape));
             noteKnownShape(last, 2);
         }
@@ -688,7 +688,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (JSGlobalObj
     JSValue result = found ? slot.getValue(globalObject, ident) : jsUndefined();
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    if (!(Options::aotDisableFastPaths() & 1) && found && base.isCell() && slot.isCacheableValue() && slot.slotBase() == base.asCell()) {
+    if (!(Options::aotDisableFastPaths() & 1) && !SharedData::contains(cache) && found && base.isCell() && slot.isCacheableValue() && slot.slotBase() == base.asCell()) {
         Structure* structure = base.asCell()->structure();
         auto location = locationOfProperty(slot.cachedOffset());
         if (structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->needImpurePropertyWatchpoint() && location) {

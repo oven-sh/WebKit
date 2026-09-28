@@ -94,6 +94,8 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Struct
 
 ASCIILiteral cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
+    if (SharedData::contains(cache))
+        return "the function has no slots yet"_s;
     ASCIILiteral whyNot = tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache);
     if (!whyNot.isEmpty())
         countFailure(cache);
@@ -198,7 +200,7 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
 
 void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset> offset)
 {
-    if ((Options::aotDisableFastPaths() & 1) || !name.isCell())
+    if ((Options::aotDisableFastPaths() & 1) || !name.isCell() || SharedData::contains(cache))
         return;
     Structure* structure = base->structure();
     if (!structure->propertyAccessesAreCacheable() || structure->isDictionary())
@@ -213,6 +215,8 @@ static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* old
 
 void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
+    if (SharedData::contains(cache))
+        return;
     if (!tryCachePutById(globalObject, data, base, oldStructure, ident, slot, isDirect, cache))
         countFailure(cache);
 }
@@ -381,11 +385,15 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
 
 void countAttemptToLinkCall(Slot* cache)
 {
+    if (SharedData::contains(cache))
+        return;
     countFailure(cache);
 }
 
 void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee)
 {
+    if (SharedData::contains(cache))
+        return;
     fill(vm, data, &cache[0], callee->structure(), Slot::pointerIsCell, callee);
 }
 
@@ -393,7 +401,7 @@ void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee)
 
 void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator allocator)
 {
-    if (!allocator || (Options::aotDisableFastPaths() & 2048))
+    if (!allocator || (Options::aotDisableFastPaths() & 2048) || SharedData::contains(cache))
         return;
     cache[0].clear();
     fill(vm, data, &cache[2], first, 0, nullptr);
@@ -402,7 +410,7 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
 
 void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, Allocator allocator, uint32_t payload, JSCell* extra)
 {
-    if (!allocator || (Options::aotDisableFastPaths() & 2048))
+    if (!allocator || (Options::aotDisableFastPaths() & 2048) || SharedData::contains(cache))
         return;
     ASSERT(payload <= Slot::offsetMask);
     cache[1].offset = structure->typeInfoBlob();

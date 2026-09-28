@@ -417,11 +417,26 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
     }
 }
 
+// See CompiledFunctionInfo::startsCold.
+static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
+{
+    // (Nothing takes as many slots as it takes bytes.)
+    if (unlinkedCodeBlock->codeType() != FunctionCode || unlinkedCodeBlock->instructions().size() > SharedData::maxSlots || !constantsAreOfNoRealm(unlinkedCodeBlock, SymbolTablesWillDo::Yes))
+        return false;
+    for (const auto& instruction : unlinkedCodeBlock->instructions()) {
+        if (instruction->opcodeID() == op_loop_hint)
+            return false;
+    }
+    return true;
+}
+
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, bool hasDirectEntry = false)
 {
     Graph graph(vm, unlinkedCodeBlock, scopeChain);
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
+    // (It is code in an image that gets to.)
+    graph.startsCold = (!ownerForLinkBuffer || Options::aotWriteImage()) && mayStartCold(unlinkedCodeBlock);
     auto declined = [&] {
         reason = graph.failureReason();
         reasonOpcode = graph.failureOpcode();
@@ -658,6 +673,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     info.shapes = WTF::move(graph.shapes);
     info.bytecodeHash = hashOfBytecode(unlinkedCodeBlock);
     info.usesStaticImports = graph.usesStaticImports;
+    info.startsCold = graph.startsCold;
+    RELEASE_ASSERT(!info.startsCold || info.numSlots <= SharedData::maxSlots);
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i)
         info.catchEntrypoints.append({ graph.catchEntrypoints[i]->bytecodeBegin, offsetOf(proc.code().entrypointLabel(i + 1)) });

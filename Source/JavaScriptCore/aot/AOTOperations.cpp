@@ -31,6 +31,7 @@ namespace JSC { namespace AOT {
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    countOperationOnBehalfOf(callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
@@ -54,7 +55,7 @@ void noteSlowPathSlow(ASCIILiteral operation, JSValue base, UniquedStringImpl* n
         key.print(structure->isUncacheableDictionary() ? " [uncacheable dictionary]" : structure->isDictionary() ? " [dictionary]" : "", structure->propertyAccessesAreCacheable() ? "" : " [not cacheable]", " ", structure->classInfoForCells()->className);
         VM& vm = base.asCell()->vm();
         if (CallFrame* frame = vm.topCallFrame; frame && frame->isAOTFrame()) {
-            if (auto* executable = dataOf(frame)->executable) {
+            if (auto* executable = FunctionRef::of(frame).executable()) {
                 StringPrintStream caller;
                 caller.print(operation, " ", detail, " IN ");
                 if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
@@ -245,7 +246,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
-        callerData(callFrame)->instance->lookAtObjectPrototype();
+        caller(callFrame).instance->lookAtObjectPrototype();
     ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
     if (Options::aotReportSlowPaths()) [[unlikely]]
@@ -361,7 +362,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     Slot unusedSlot { };
-    if (Options::aotDisableFastPaths() & 32) [[unlikely]]
+    if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
@@ -432,7 +433,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     AOT_OPERATION_PROLOGUE(globalObject);
     bool throwIfNotFound = how & Site::throwsIfNotFound;
     Slot unusedSlot { };
-    if (Options::aotDisableFastPaths() & 32) [[unlikely]]
+    if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
@@ -555,7 +556,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     Slot unusedSlot { };
-    if (Options::aotDisableFastPaths() & 64) [[unlikely]]
+    if ((Options::aotDisableFastPaths() & 64) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
     const Identifier& ident = identifierAt(callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();

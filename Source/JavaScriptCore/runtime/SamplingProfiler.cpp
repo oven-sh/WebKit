@@ -129,7 +129,7 @@ protected:
         if (unsafeCallee.isNativeCallee() && AOT::isCodeHeader(unsafeCallee.asNativeCallee())) {
             // See CallFrame::callee().
             stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame))), m_callFrame->unsafeCallSiteIndex());
-            stackTrace[m_depth].aotData = AOT::dataOf(m_callFrame);
+            stackTrace[m_depth].aotFunction = AOT::FunctionRef::of(m_callFrame);
             m_depth++;
             return;
         }
@@ -722,17 +722,17 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 appendCodeBlockNoInlining();
 #endif
 #if ENABLE(FTL_JIT)
-            } else if (AOT::Data* data = unprocessedStackFrame.aotData) {
+            } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction) {
                 assertIsHeld(m_lock);
-                stackTrace.frames.append(StackFrame(data->executable));
-                m_liveCellPointers.add(data->executable);
+                stackTrace.frames.append(StackFrame(function.executable()));
+                m_liveCellPointers.add(function.executable());
                 auto& location = stackTrace.frames.last().semanticLocation;
                 BytecodeIndex bytecodeIndex = unprocessedStackFrame.callSiteIndex.bytecodeIndex();
-                if (bytecodeIndex.offset() < data->unlinkedCodeBlock->instructions().size()) {
-                    location.lineColumn = data->lineColumnFor(bytecodeIndex);
+                if (bytecodeIndex.offset() < function.unlinkedCodeBlock()->instructions().size()) {
+                    location.lineColumn = function.lineColumnFor(bytecodeIndex);
                     location.bytecodeIndex = bytecodeIndex;
                 }
-                location.codeBlockHash = CodeBlockHash(data->executable->source(), data->unlinkedCodeBlock->isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
+                location.codeBlockHash = CodeBlockHash(function.executable()->source(), function.unlinkedCodeBlock()->isConstructor() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall);
                 location.jitType = JITType::AOTJIT;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {

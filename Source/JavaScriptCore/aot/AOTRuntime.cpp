@@ -155,13 +155,45 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
+    Vector<ScriptExecutable*> executablesWithoutData; // That the collector has to be told of.
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
+    size_t sizeOfInfos { 0 }; // If they are the Instance's own.
+    size_t sizeOfMisses { 0 };
 };
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
+
+static_assert(!(sizeof(Data) % sizeof(uint64_t)) && OBJECT_OFFSETOF(Data, slots) == sizeof(Data));
+static constexpr auto s_sharedData = [] {
+    std::array<uint64_t, SharedData::size / sizeof(uint64_t)> words { };
+    static_assert(!OBJECT_OFFSETOF(Slot, structureID) && OBJECT_OFFSETOF(Slot, offset) == 4 && sizeof(Slot) == 16);
+    for (size_t i = sizeof(Data) / sizeof(uint64_t); i < words.size(); i += 2)
+        words[i] = static_cast<uint64_t>(Slot::attemptsMask) << 32;
+    return words;
+}();
+
+static std::atomic<uint64_t> s_startedCold;
+static std::atomic<uint64_t> s_gotDataLater;
+static void didStartCold()
+{
+    if (!Options::aotReportStats()) [[likely]]
+        return;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        atexit([] {
+            dataLogLn("AOT: ", s_startedCold.load(), " functions started with no Data, of which ", s_gotDataLater.load(), " got one");
+        });
+    });
+    s_startedCold++;
+}
+
+Data* SharedData::get()
+{
+    return std::bit_cast<Data*>(s_sharedData.data());
+}
 
 Instance& Instance::ensure(JSGlobalObject* globalObject)
 {
@@ -189,6 +221,16 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections = new Collections;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
+    // (Addresses, again.)
+    size_t numberOfFunctions = (size - sizeof(Instance)) / sizeof(Data*);
+    instance->infos = environmentsSize ? StaticHeap::infosOfFunctions(vm) : nullptr;
+    if (!instance->infos) {
+        instance->collections->sizeOfInfos = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(FunctionInfo));
+        instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
+    }
+    instance->sharedData = SharedData::get();
+    instance->collections->sizeOfMisses = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(uint16_t));
+    instance->misses = static_cast<uint16_t*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfMisses, OSAllocator::FastMallocPages));
     instance->structureIDBase = JSC::structureIDBase();
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
     // (putDirect() does as it is told.)
@@ -223,6 +265,9 @@ void Instance::destroy(Instance* instance)
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
     size_t size = instance->collections->sizeFromInstance;
+    if (instance->collections->sizeOfInfos)
+        OSAllocator::decommitAndRelease(instance->infos, instance->collections->sizeOfInfos);
+    OSAllocator::decommitAndRelease(instance->misses, instance->collections->sizeOfMisses);
     delete instance->collections;
     fastFree(instance->selectorsOnObjectPrototype);
     if (environmentsSize)
@@ -270,7 +315,7 @@ Data* dataOf(const CallFrame* callFrame)
 
 CodeBlock* codeBlockOf(const CallFrame* callFrame)
 {
-    return dataOf(callFrame)->ensureCodeBlock();
+    return FunctionRef::of(callFrame).ensureData()->ensureCodeBlock();
 }
 
 JSObject* calleeOf(const CallFrame* callFrame)
@@ -287,6 +332,25 @@ VM& vmOf(const CallFrame* callFrame)
 JSGlobalObject* globalObjectOf(const CallFrame* callFrame)
 {
     return std::bit_cast<Instance*>(callFrame->unsafeCodeBlock())->globalObject;
+}
+
+bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWillDo symbolTablesWillDo)
+{
+    auto& constants = unlinkedCodeBlock->constantRegisters();
+    auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
+    for (unsigned i = 0; i < constants.size(); ++i) {
+        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
+            return false;
+        JSValue constant = constants[i].get();
+        if (!constant || !constant.isCell())
+            continue;
+        if (auto* symbolTable = dynamicDowncast<SymbolTable>(constant.asCell())) {
+            if (symbolTablesWillDo == SymbolTablesWillDo::No && !symbolTable->isItsOwnClone())
+                return false;
+        } else if (constant.asCell()->inherits<JSTemplateObjectDescriptor>())
+            return false;
+    }
+    return true;
 }
 
 // The constants of unlinked code are good as they are, but for the ones that are of a realm.
@@ -338,6 +402,18 @@ static bool linkConstants(VM& vm, Data& data)
     return true;
 }
 
+static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, const void* constants)
+{
+    info.constants = constants;
+    info.identifiers = unlinkedCodeBlock->identifiers().span().data();
+    info.sites = code.sites();
+    info.function = code.imageFunction();
+    info.executableAndKind = std::bit_cast<uintptr_t>(executable) | (unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode);
+    info.numSlots = code.numSlots();
+    info.missesToPutUpWith = std::min<uint32_t>(info.numSlots + info.numSlots / 2 + 8, std::numeric_limits<uint16_t>::max());
+    info.flags = code.isFromImage() ? FunctionInfo::hasSiteConstants : 0;
+}
+
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
 {
     VM& vm = *instance.vm;
@@ -370,7 +446,80 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
         destroy(data);
         return nullptr;
     }
+    // (Those of a program that was put together with all it needs say so already, but for what nobody thought would be run.)
+    FunctionInfo& info = instance.infos[code.header().index];
+    if (!info.sites) {
+        if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
+            dataLogLn("AOT: nothing was known of function ", code.header().index, " when the program was built");
+        fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
+    }
+    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && info.numSlots == numSlots && (!info.executableAndKind || info.executable() == executable));
     return data;
+}
+
+Data* Instance::ensureData(uint32_t index)
+{
+    Data* data = this->data[index];
+    RELEASE_ASSERT(data);
+    if (data != sharedData)
+        return data;
+    const FunctionInfo& info = infos[index];
+    auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(info.kind());
+    // (An executable that was made when the program was built has no way of holding on to one.)
+    Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeFromImage({ &Image::of(*info.function), info.function }, unlinkedCodeBlock);
+    RELEASE_ASSERT(code->header().index == index);
+    code->setInstance(*this);
+    this->data[index] = nullptr;
+    s_gotDataLater++;
+    data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
+    RELEASE_ASSERT(data); // Nothing that it is made of is made now.
+    return data;
+}
+
+FunctionRef FunctionRef::of(const CallFrame* callFrame)
+{
+    return { std::bit_cast<Instance*>(callFrame->unsafeCodeBlock()), CodeHeader::fromCallee(callFrame->rawCallee())->index };
+}
+
+Data* FunctionRef::dataIfItHasAny() const
+{
+    Data* data = instance->data[index];
+    return data == instance->sharedData ? nullptr : data;
+}
+
+Data* FunctionRef::ensureData() const
+{
+    return instance->ensureData(index);
+}
+
+ScriptExecutable* FunctionRef::executable() const
+{
+    // (That of the code of a module is made when the program runs, so nothing that was made before says which it is.)
+    if (Data* data = dataIfItHasAny())
+        return data->executable;
+    return info().executable();
+}
+
+CodeBlock* FunctionRef::codeBlockIfThereIsOne() const
+{
+    Data* data = dataIfItHasAny();
+    return data ? data->codeBlock : nullptr;
+}
+
+uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
+{
+    const FunctionInfo& info = this->info();
+    if (!(info.flags & FunctionInfo::hasSiteConstants))
+        return 0;
+    return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots];
+}
+
+UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlock() const
+{
+    if (Data* data = dataIfItHasAny())
+        return data->unlinkedCodeBlock;
+    return uncheckedDowncast<FunctionExecutable>(executable())->unlinkedExecutable()->codeBlockIfThereIsOne(info().kind());
 }
 
 void Data::destroy(Data* data)
@@ -425,8 +574,10 @@ CodeBlock* Data::ensureCodeBlock()
     return result;
 }
 
-LineColumn Data::lineColumnFor(BytecodeIndex bytecodeIndex) const
+LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
 {
+    UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
+    ScriptExecutable* executable = this->executable();
     RELEASE_ASSERT(bytecodeIndex.offset() < unlinkedCodeBlock->instructions().size());
     auto lineColumn = unlinkedCodeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
     lineColumn.column += lineColumn.line ? 1 : executable->startColumn();
@@ -466,16 +617,41 @@ FunctionExecutable* Data::functionExpr(unsigned index)
     return functionOf(*this, unlinkedCodeBlock->numberOfFunctionDecls() + index, unlinkedCodeBlock->functionExpr(index));
 }
 
+FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
+{
+    if (!dataIfItHasAny()) {
+        if (FunctionExecutable* result = unlinkedCodeBlock()->functionDecl(index)->staticExecutable())
+            return result;
+    }
+    return ensureData()->functionDecl(index);
+}
+
+FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
+{
+    if (!dataIfItHasAny()) {
+        if (FunctionExecutable* result = unlinkedCodeBlock()->functionExpr(index)->staticExecutable())
+            return result;
+    }
+    return ensureData()->functionExpr(index);
+}
+
 bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSGlobalObject* globalObject, Ref<JITCode>&& code)
 {
     Instance& instance = Instance::ensure(globalObject);
     code->setInstance(instance);
-    Data* data = instance.data[code->header().index];
-    if (!data) {
-        if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
-            return false;
-    } else
-        RELEASE_ASSERT(data->executable == executable);
+    uint32_t index = code->header().index;
+    if (instance.data[index])
+        RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
+    else if (code->imageFunction() && code->imageFunction()->startsCold && Options::aotStartFunctionsCold() && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
+        if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
+            dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
+        fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
+        instance.infos[index].flags |= FunctionInfo::startsCold;
+        instance.collections->executablesWithoutData.append(executable);
+        instance.data[index] = instance.sharedData;
+        didStartCold();
+    } else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
+        return false;
     executable->installAOTCode(vm, kind, WTF::move(code));
     return true;
 }
@@ -485,8 +661,17 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
     Instance* instance = vm.m_aotInstanceOfProgram;
     if (!instance || scope->realm() != instance->globalObject)
         return false;
-    if (instance->data[executable->aotIndexFor(kind)])
+    uint32_t index = executable->aotIndexFor(kind);
+    if (instance->data[index])
         return true;
+    if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold && Options::aotStartFunctionsCold()) {
+        RELEASE_ASSERT(info.executable() == executable && info.kind() == kind);
+        if (info.function->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
+            return false;
+        instance->data[index] = instance->sharedData;
+        didStartCold();
+        return true;
+    }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind);
     RELEASE_ASSERT(unlinkedCodeBlock);
     ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
@@ -547,6 +732,8 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
     }
     for (Structure* structure : collections->knownShapes.values())
         visitor.appendUnbarriered(structure);
+    for (ScriptExecutable* executable : collections->executablesWithoutData)
+        visitor.appendUnbarriered(executable);
 }
 
 // TEMPORARY-SLOT-STATS
@@ -577,6 +764,28 @@ void Instance::dumpSlotStatistics()
                 withPointer[opcode]++;
         }
         functionsWithNothingFilled += !any;
+    }
+    {
+        // TEMPORARY-SLOT-STATS: who has a Data.
+        uint64_t count[4] = { }, slotsOf[4] = { }, filledOf[4] = { };
+        for (Data* data : collections->all) {
+            const FunctionInfo& info = infos[data->code->header().index];
+            bool hasLoop = false;
+            if (data->unlinkedCodeBlock->codeType() == FunctionCode && !(info.flags & FunctionInfo::startsCold)) {
+                for (const auto& instruction : data->unlinkedCodeBlock->instructions())
+                    hasLoop |= instruction->opcodeID() == op_loop_hint;
+            }
+            unsigned kind = data->unlinkedCodeBlock->codeType() != FunctionCode ? 0 : info.flags & FunctionInfo::startsCold ? 1 : hasLoop ? 2 : 3;
+            count[kind]++;
+            slotsOf[kind] += data->numSlots;
+            for (unsigned i = 0; i < data->numSlots; ++i) {
+                auto* words = reinterpret_cast<uint64_t*>(&data->slots[i]);
+                filledOf[kind] += words[0] || words[1];
+            }
+        }
+        static constexpr ASCIILiteral names[] = { "the code of a module"_s, "started cold"_s, "has a loop"_s, "other"_s };
+        for (unsigned i = 0; i < 4; ++i)
+            dataLogLn("WHOHASDATA ", names[i], ": functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
     }
     dataLogLn("SLOTS functions=", functions, " ofWhichNothingFilled=", functionsWithNothingFilled, " slots=", slots, " bytes=", slots * sizeof(Slot), " knownShapesMade=", collections->knownShapes.size(), " otherLiteralShapes=", collections->shapes.size());
     for (unsigned i = 0; i < numOpcodeIDs; ++i) {

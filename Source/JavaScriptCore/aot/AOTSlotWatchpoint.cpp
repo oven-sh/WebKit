@@ -77,7 +77,7 @@ static bool holdsForGood(const ObjectPropertyCondition& condition)
 
 bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditionSet& conditions)
 {
-    if (!conditions.isValid())
+    if (!conditions.isValid() || SharedData::contains(slot))
         return false;
     unsigned numberToWatch = 0;
     for (const ObjectPropertyCondition& condition : conditions) {

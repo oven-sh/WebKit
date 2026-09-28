@@ -194,12 +194,12 @@ void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOri
 
 #if ENABLE(FTL_JIT)
     if (callFrame->isAOTFrame()) {
-        m_frame.m_aotData = AOT::dataOf(callFrame);
-        m_frame.m_codeBlock = m_frame.m_aotData->codeBlock;
+        m_frame.m_aotFunction = AOT::FunctionRef::of(callFrame);
+        m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
     } else
 #endif
     {
-        m_frame.m_aotData = nullptr;
+        m_frame.m_aotFunction = { };
         m_frame.m_codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
     }
     m_frame.m_bytecodeIndex = !m_frame.hasCode() ? BytecodeIndex(0)
@@ -226,7 +226,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
         m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
         m_frame.m_callee = callFrame->callee();
-        m_frame.m_aotData = nullptr;
+        m_frame.m_aotFunction = { };
         m_frame.m_codeBlock = nullptr;
         m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
         m_frame.m_wasmCallSiteIndexBits = callFrame->callSiteIndex().bits();
@@ -277,7 +277,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
         m_frame.m_isWasmFrame = false;
         m_frame.m_callee = callFrame->callee();
-        m_frame.m_aotData = nullptr;
+        m_frame.m_aotFunction = { };
 #if ENABLE(DFG_JIT)
         m_frame.m_inlineDFGCallFrame = nullptr;
 #endif
@@ -317,7 +317,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
         else
             m_frame.m_argumentCountIncludingThis = inlineCallFrame->argumentCountIncludingThis;
         m_frame.m_codeBlock = inlineCallFrame->baselineCodeBlock.get();
-        m_frame.m_aotData = nullptr;
+        m_frame.m_aotFunction = { };
         m_frame.m_bytecodeIndex = codeOrigin->bytecodeIndex();
 
         JSFunction* callee = inlineCallFrame->calleeForCallFrame(callFrame);
@@ -339,7 +339,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 CodeBlock* StackVisitor::Frame::makeCodeBlock() const
 {
 #if ENABLE(FTL_JIT)
-    m_codeBlock = m_aotData->ensureCodeBlock();
+    m_codeBlock = m_aotFunction.ensureData()->ensureCodeBlock();
 #endif
     return m_codeBlock;
 }
@@ -347,8 +347,8 @@ CodeBlock* StackVisitor::Frame::makeCodeBlock() const
 ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
 {
 #if ENABLE(FTL_JIT)
-    if (m_aotData)
-        return m_aotData->executable;
+    if (m_aotFunction)
+        return m_aotFunction.executable();
 #endif
     return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
 }
@@ -356,8 +356,8 @@ ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
 UnlinkedCodeBlock* StackVisitor::Frame::unlinkedCodeBlock() const
 {
 #if ENABLE(FTL_JIT)
-    if (m_aotData)
-        return m_aotData->unlinkedCodeBlock;
+    if (m_aotFunction)
+        return m_aotFunction.unlinkedCodeBlock();
 #endif
     return m_codeBlock ? m_codeBlock->unlinkedCodeBlock() : nullptr;
 }
@@ -420,8 +420,8 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
     }
 
 #if ENABLE(FTL_JIT)
-    if (m_aotData)
-        return m_aotData->code->calleeSaveRegisters();
+    if (m_aotFunction)
+        return m_aotFunction.ensureData()->code->calleeSaveRegisters();
 #endif
     if (CodeBlock* codeBlock = this->codeBlock())
         return codeBlock->jitCode()->calleeSaveRegisters();
@@ -564,7 +564,7 @@ LineColumn StackVisitor::Frame::computeLineAndColumn() const
 
     ScriptExecutable* executable = ownerExecutable();
 #if ENABLE(FTL_JIT)
-    auto lineColumn = m_aotData ? m_aotData->lineColumnFor(bytecodeIndex()) : m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+    auto lineColumn = m_aotFunction ? m_aotFunction.lineColumnFor(bytecodeIndex()) : m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
 #else
     auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
 #endif

@@ -9,6 +9,7 @@
 
 #include "BytecodeIndex.h"
 #include "LineColumn.h"
+#include "AOTFunction.h"
 #include "AOTOperationsObjects.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
@@ -235,6 +236,35 @@ static_assert(sizeof(CodeHeader) == sizeof(NativeCallee) && alignof(CodeHeader) 
 
 struct Data;
 struct ImageEnvironment;
+struct ImageFunction;
+struct Site;
+
+// What the stubs, and the code itself, want to know about a function that stays as it is for as long as the function is there. By
+// CodeHeader::index: Instance::infos.
+struct FunctionInfo {
+    static constexpr uint16_t hasSiteConstants = 1; // After the last of the sites: ImageFunction::siteConstants().
+    static constexpr uint16_t startsCold = 2; // See CompiledFunctionInfo::startsCold.
+
+    static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(FunctionInfo, constants); }
+    static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(FunctionInfo, identifiers); }
+    static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
+    static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(FunctionInfo, numSlots); }
+    static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
+    static constexpr ptrdiff_t offsetOfMissesToPutUpWith() { return OBJECT_OFFSETOF(FunctionInfo, missesToPutUpWith); }
+
+    ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>(executableAndKind & ~static_cast<uintptr_t>(1)); }
+    CodeSpecializationKind kind() const { return executableAndKind & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
+
+    const void* constants; // const WriteBarrier<Unknown>*. Null: some are of the realm, and the Data has them.
+    const void* identifiers; // const Identifier*
+    const Site* sites; // One for each slot.
+    const ImageFunction* function; // If the code is in an image.
+    uintptr_t executableAndKind; // With the low bit set if the code is for construction.
+    uint32_t numSlots;
+    uint16_t missesToPutUpWith; // startsCold: how often a slot may fail it before it gets a Data. See Instance::misses.
+    uint16_t flags;
+};
+static_assert(sizeof(FunctionInfo) == 48);
 
 // One for each realm that runs code from the static compiler.
 struct Instance {
@@ -249,6 +279,16 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
     static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(Instance, data); }
+    static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
+    static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
+    static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(Instance, misses); }
+    // The function's own Data, which it gets now if it has been doing without (SharedData). It has been linked.
+    JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
+    void countMiss(uint32_t index)
+    {
+        if (++misses[index] == infos[index].missesToPutUpWith)
+            ensureData(index);
+    }
 
     // As many as there could ever be. It is addresses that are set aside, not memory.
     static constexpr size_t maxFunctions = 4 << 20;
@@ -283,6 +323,9 @@ struct Instance {
     VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.
     struct Collections;
     Collections* collections; // Of what there is in data.
+    FunctionInfo* infos; // By CodeHeader::index, like data.
+    Data* sharedData; // SharedData::get()
+    uint16_t* misses; // By CodeHeader::index: how often a slot has failed a function that has no Data of its own.
     uintptr_t structureIDBase; // What a StructureID is added to.
     const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
     const uint32_t* rowsOfSelectors;
@@ -297,6 +340,11 @@ struct Instance {
 // TEMPORARY-SHAPE-STATS: structures whose layout the compiler could have known. 1: of an object literal. 2: what a constructor's stores end in.
 void noteKnownShape(Structure*, uint8_t kind);
 uint8_t kindOfKnownShape(Structure*);
+
+// Whether the constants of the unlinked code will do for any realm as they are. A SymbolTable does if it is one that was made when the
+// program was built (SymbolTable::isItsOwnClone()), which is not for the compiler to say: it comes first.
+enum class SymbolTablesWillDo : bool { No, Yes };
+JS_EXPORT_PRIVATE bool constantsAreOfNoRealm(UnlinkedCodeBlock*, SymbolTablesWillDo = SymbolTablesWillDo::No);
 
 // A number for a function that is compiled in this process. The functions of an image have theirs already, from zero.
 uint32_t allocateFunctionIndex();
@@ -324,7 +372,6 @@ struct Data {
     // What the rest of the engine takes the function's frames to be running, for whoever asks: it is made then. Nothing that the
     // function itself does asks. Not while the collector is at work, and on no thread but the VM's.
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock();
-    JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const; // CodeBlock::lineColumnForBytecodeIndex()
     // For the functions that the function makes closures of: made when the first closure is.
     FunctionExecutable* functionDecl(unsigned);
     FunctionExecutable* functionExpr(unsigned);
@@ -340,7 +387,6 @@ struct Data {
     static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(Data, numSlots); }
     static constexpr ptrdiff_t offsetOfHasSiteConstants() { return OBJECT_OFFSETOF(Data, hasSiteConstants); }
     static constexpr ptrdiff_t offsetOfHasBeenFilledSinceLastCollection() { return OBJECT_OFFSETOF(Data, hasBeenFilledSinceLastCollection); }
-    uint32_t siteConstantOf(const Slot* slot) const { return hasSiteConstants ? reinterpret_cast<const uint32_t*>(sites + numSlots)[slot - slots] : 0; }
 
     CodeBlock* codeBlock; // See ensureCodeBlock().
     Instance* instance;
@@ -364,6 +410,20 @@ struct Data {
     Slot slots[0];
 };
 
+// What a function that starts cold (CompiledFunctionInfo::startsCold) has for a Data until it gets one: the same for all of them,
+// and never written to. Each of its slots has nothing and has given up on ever having anything, so whoever looks in one goes on
+// to what all functions share (the dispatch table, the megamorphic cache) and then to the operation, which leaves it alone.
+//
+// A function that gets its Data while it is running goes on with this until it returns. So whose a slot is is told from where it is.
+struct SharedData {
+    static constexpr unsigned maxSlots = 8192;
+    static constexpr size_t size = sizeof(Data) + maxSlots * sizeof(Slot);
+    JS_EXPORT_PRIVATE static Data* NODELETE get();
+    static bool contains(const Slot* slot) { return std::bit_cast<uintptr_t>(slot) - std::bit_cast<uintptr_t>(get()) < size; }
+};
+
+inline const FunctionInfo& FunctionRef::info() const { return instance->infos[index]; }
+
 // What a compilation produces, other than the code: all of it is plain data, and none of it is an address.
 struct CompiledFunctionInfo {
     unsigned codeSize { 0 };
@@ -376,6 +436,10 @@ struct CompiledFunctionInfo {
     unsigned numSlots { 0 };
     unsigned bytecodeHash { 0 }; // hashOfBytecode() of what it was compiled from.
     bool usesStaticImports { false };
+    // Most functions that are run at all are run once or twice, and what a Data is for is the times after that. Such a function does
+    // without one until it has shown that it is not one of those (SharedData). That takes code that gets at what stays the same
+    // by way of the FunctionInfo, and that does not go round and round in one call.
+    bool startsCold { false };
     RegisterAtOffsetList calleeSaveRegisters;
     Vector<std::pair<unsigned, unsigned>> catchEntrypoints; // Bytecode offset of the op_catch, offset in the code.
     Vector<StubCall> stubCalls; // For whoever moves the code.
@@ -413,6 +477,7 @@ struct ImageFunction {
     uint32_t numberOfKnownCallees;
     uint32_t usesStaticImports; // See Graph::usesStaticImports.
     uint32_t directEntryOffset;
+    uint32_t startsCold; // See CompiledFunctionInfo::startsCold.
 
     const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }
@@ -442,6 +507,7 @@ public:
     const RegisterAtOffsetList* calleeSaveRegisters() const { return m_calleeSaveRegisters; }
     const CompiledFunctionInfo& info() const { return m_owned->info; } // Not of code in an image.
     bool isFromImage() const { return !!m_function; }
+    const ImageFunction* imageFunction() const { return m_function; }
     unsigned codeSize() const { return m_function ? m_function->codeSize : m_owned->info.codeSize; }
     unsigned entryOffset() const { return m_function ? m_function->entryOffset : m_owned->info.entryOffset; }
     unsigned arityCheckOffset() const { return m_function ? m_function->arityCheckOffset : m_owned->info.arityCheckOffset; }

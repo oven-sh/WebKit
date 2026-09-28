@@ -414,6 +414,7 @@ public:
     unsigned extraOfGetFromScope(const OpGetFromScope&);
     void setLinkage(const ModuleLinkage*, const DeclaredNamesLink*);
     bool usesStaticImports { false }; // The code is only good for a module that is linked as its ModuleLinkage says.
+    bool startsCold { false }; // CompiledFunctionInfo::startsCold
     bool m_needsFunctionObject { true };
     bool m_scopeIsEnvironmentOfModule { false };
     BitVector m_homed;

@@ -275,6 +275,7 @@ private:
     LValue m_callFrame { nullptr };
     LValue m_instance { nullptr };
     LValue m_data { nullptr };
+    LValue m_info { nullptr }; // The FunctionInfo.
     LValue m_calleeSlot { nullptr };
     LValue m_vm { nullptr };
     LValue m_globalObject { nullptr };

@@ -45,6 +45,8 @@ namespace JSC::B3 {
     macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
     macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
     macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
+    macro(AOTFunctionInfo_constants, AOT::FunctionInfo::offsetOfConstants(), Mutability::Immutable) \
+    macro(AOTInstance_infos, AOT::Instance::offsetOfInfos(), Mutability::Immutable) \
     macro(AOTCodeHeader_index, 0, Mutability::Immutable) \
     macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
