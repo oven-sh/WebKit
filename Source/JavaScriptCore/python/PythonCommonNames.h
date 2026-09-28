@@ -40,7 +40,7 @@ namespace Python {
 
 // name is __name__.
 #define FOR_EACH_PYTHON_DUNDER_NAME(v) \
-    v(abs) v(abstractmethods) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotate_func) v(annotations) v(annotations_cache) v(args) v(await) v(base) v(bases) v(bool) \
+    v(abs) v(abstractmethods) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotate_func) v(annotations) v(annotations_cache) v(args) v(await) v(base) v(bases) v(bool) v(buffer) \
     v(build_class) v(builtins) v(bytes) v(call) v(cause) v(ceil) v(class) v(class_getitem) v(classcell) v(classdict) v(closure) \
     v(code) v(complex) v(conditional_annotations) v(contains) v(context) v(copy) v(debug) v(deepcopy) v(defaults) v(del) v(delattr) v(delete) v(delitem) v(dict) v(dir) v(divmod) v(doc) \
     v(enter) v(eq) v(exit) v(file) v(firstlineno) v(float) v(floor) v(floordiv) v(format) v(func) v(ge) v(get) v(getattr) v(getattribute) \
@@ -48,7 +48,7 @@ namespace Python {
     v(init_subclass) v(instancecheck) v(int) v(invert) v(ior) v(ipow) v(irshift) v(isub) v(iter) v(itruediv) v(ixor) v(kwdefaults) \
     v(le) v(len) v(length_hint) v(loader) v(lshift) v(lt) v(main) v(match_args) v(matmul) v(missing) v(mod) v(module) v(mro) \
     v(mro_entries) v(mul) v(name) v(ne) v(neg) v(new) v(next) v(notes) v(objclass) v(or) v(orig_bases) v(orig_class) v(origin) v(package) v(parameters) v(path) v(pos) v(pow) \
-    v(prepare) v(qualname) v(radd) v(rand) v(rdivmod) v(reduce) v(reduce_ex) v(repr) v(reversed) v(rfloordiv) v(rlshift) v(rmatmul) \
+    v(prepare) v(qualname) v(radd) v(rand) v(rdivmod) v(reduce) v(reduce_ex) v(release_buffer) v(repr) v(reversed) v(rfloordiv) v(rlshift) v(rmatmul) \
     v(rmod) v(rmul) v(ror) v(round) v(rpow) v(rrshift) v(rshift) v(rsub) v(rtruediv) v(rxor) v(self) v(set) v(set_name) v(setattr) \
     v(setitem) v(sizeof) v(slots) v(spec) v(static_attributes) v(str) v(sub) v(subclasscheck) v(subclasses) v(subclasshook) \
     v(suppress_context) v(traceback) v(truediv) v(trunc) v(type_params) v(typing_is_unpacked_typevartuple) v(typing_prepare_subst) v(typing_subst) v(typing_unpacked_tuple_args) \

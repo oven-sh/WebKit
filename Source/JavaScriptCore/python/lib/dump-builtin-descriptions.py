@@ -70,6 +70,11 @@ class Sequence:
         raise IndexError
 
 
+class Exporter:
+    def __buffer__(self, flags):
+        return memoryview(b"")
+
+
 def examples():
     """One of each of the types that have no name in builtins."""
     a_coroutine = coroutine()
@@ -81,7 +86,7 @@ def examples():
     except ValueError as error:
         traceback = error.__traceback__
     yield from [
-        generator, generator(), a_coroutine, a_coroutine.__await__(), an_async_generator, Class().method, len, str.join, int.__add__, (1).__add__, type.__dict__["__dict__"],
+        memoryview(Exporter()).obj, generator, generator(), a_coroutine, a_coroutine.__await__(), an_async_generator, Class().method, len, str.join, int.__add__, (1).__add__, type.__dict__["__dict__"],
         type(generator).__dict__["__globals__"], dict.__dict__["fromkeys"], generator.__code__, sys._getframe(), sys._getframe().f_locals, sys, None, NotImplemented, ..., Class.__dict__, traceback,
         {}.keys(), {}.values(), {}.items(), iter([]), reversed([]), iter(()), iter(""), iter("ሴ"), iter(b""), iter(bytearray()), iter(range(1)), iter(range(1 << 100)), iter(set()),
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),

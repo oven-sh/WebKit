@@ -1219,7 +1219,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     if (isListCell(cell)) {
         auto* list = uncheckedDowncast<JSArray>(cell);
         if (auto* slice = trySlice(key)) {
-            auto indices = slice->indices(globalObject, list->length());
+            auto indices = slice->indices(globalObject, [&] { return list->length(); });
             RETURN_IF_EXCEPTION(scope, { });
             JSArray* result = newList(globalObject, indices->length);
             RETURN_IF_EXCEPTION(scope, { });
@@ -1349,7 +1349,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
                 return true;
             }
         }
-        auto indices = slice->indices(globalObject, list->length());
+        auto indices = slice->indices(globalObject, [&] { return list->length(); });
         RETURN_IF_EXCEPTION(scope, true);
         if (indices->step == 1) {
             scope.release();

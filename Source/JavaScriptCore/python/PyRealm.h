@@ -106,6 +106,7 @@ namespace JSC {
     v(BytesIterator, "bytes_iterator", Object, Native, 0) \
     v(ByteArrayIterator, "bytearray_iterator", Object, Native, 0) \
     v(MemoryIterator, "memory_iterator", Object, Native, 0) \
+    v(BufferWrapper, "_buffer_wrapper", Object, Native, 0) \
     v(DictKeyIterator, "dict_keyiterator", Object, Native, 0) \
     v(DictValueIterator, "dict_valueiterator", Object, Native, 0) \
     v(DictItemIterator, "dict_itemiterator", Object, Native, 0) \

@@ -1,0 +1,158 @@
+memoryview => (b'xyz', [('get', 284)])
+memoryview, released => (b'xyz', [('get', 284), ('release', b'xyz')])
+bytes => (b'xyz', [('get', 284)])
+bytes, released => (b'xyz', [('get', 284), ('release', b'xyz')])
+bytearray => (bytearray(b'xyz'), [('get', 284)])
+bytearray, released => (bytearray(b'xyz'), [('get', 284), ('release', b'xyz')])
+join => (b'xyz-xyz', [('get', 0), ('get', 0)])
+join, released => (b'xyz-xyz', [('get', 0), ('get', 0), ('release', b'xyz'), ('release', b'xyz')])
+find => (1, [('get', 0)])
+find, released => (1, [('get', 0), ('release', b'xyz')])
+rfind => (1, [('get', 0)])
+rfind, released => (1, [('get', 0), ('release', b'xyz')])
+index => (1, [('get', 0)])
+index, released => (1, [('get', 0), ('release', b'xyz')])
+count => (2, [('get', 0)])
+count, released => (2, [('get', 0), ('release', b'xyz')])
+add => (b'axyz', [('get', 0)])
+add, released => (b'axyz', [('get', 0), ('release', b'xyz')])
+bytearray add => (bytearray(b'axyz'), [('get', 0)])
+bytearray add, released => (bytearray(b'axyz'), [('get', 0), ('release', b'xyz')])
+iadd => (bytearray(b'axyz'), [('get', 0)])
+iadd, released => (bytearray(b'axyz'), [('get', 0), ('release', b'xyz')])
+startswith => (True, [('get', 0)])
+startswith, released => (True, [('get', 0), ('release', b'xyz')])
+endswith => (True, [('get', 0)])
+endswith, released => (True, [('get', 0), ('release', b'xyz')])
+startswith tuple => (True, [('get', 0)])
+startswith tuple, released => (True, [('get', 0), ('release', b'xyz')])
+in => (True, [('get', 0)])
+in, released => (True, [('get', 0), ('release', b'xyz')])
+in bytearray => (True, [('get', 0)])
+in bytearray, released => (True, [('get', 0), ('release', b'xyz')])
+decode => ('xyz', [('get', 0)])
+decode, released => ('xyz', [('get', 0), ('release', b'xyz')])
+split => ([b'1', b'2'], [('get', 0)])
+split, released => ([b'1', b'2'], [('get', 0), ('release', b'xyz')])
+rsplit => ([b'1', b'2'], [('get', 0)])
+rsplit, released => ([b'1', b'2'], [('get', 0), ('release', b'xyz')])
+partition => ((b'1', '_buffer_wrapper', b'2'), [('get', 0)])
+partition, released => ((b'1', '_buffer_wrapper', b'2'), [('get', 0), ('release', b'xyz')])
+rpartition => ((b'1', '_buffer_wrapper', b'2'), [('get', 0)])
+rpartition, released => ((b'1', '_buffer_wrapper', b'2'), [('get', 0), ('release', b'xyz')])
+bytearray partition => ((bytearray(b'1'), bytearray(b'xyz'), bytearray(b'2')), [('get', 284)])
+bytearray partition, released => ((bytearray(b'1'), bytearray(b'xyz'), bytearray(b'2')), [('get', 284), ('release', b'xyz')])
+replace => (b'1-2', [('get', 0)])
+replace, released => (b'1-2', [('get', 0), ('release', b'xyz')])
+replace with => (b'1xyz2', [('get', 0)])
+replace with, released => (b'1xyz2', [('get', 0), ('release', b'xyz')])
+strip => (b'1', [('get', 0)])
+strip, released => (b'1', [('get', 0), ('release', b'xyz')])
+lstrip => (b'1zy', [('get', 0)])
+lstrip, released => (b'1zy', [('get', 0), ('release', b'xyz')])
+removeprefix => (b'1', [('get', 0)])
+removeprefix, released => (b'1', [('get', 0), ('release', b'xyz')])
+removesuffix => (b'1', [('get', 0)])
+removesuffix, released => (b'1', [('get', 0), ('release', b'xyz')])
+translate delete => (b'abc', [('get', 0)])
+translate delete, released => (b'abc', [('get', 0), ('release', b'xyz')])
+maketrans => (b'w123', [('get', 0)])
+maketrans, released => (b'w123', [('get', 0), ('release', b'xyz')])
+extend => (bytearray(b'axyz'), [('get', 0)])
+extend, released => (bytearray(b'axyz'), [('get', 0), ('release', b'xyz')])
+slice assign => (bytearray(b'axyzc'), [('get', 284)])
+slice assign, released => (bytearray(b'axyzc'), [('get', 284), ('release', b'xyz')])
+percent b => (b'<xyz>', [('get', 284)])
+percent b, released => (b'<xyz>', [('get', 284), ('release', b'xyz')])
+percent s => (b'<xyz>', [('get', 284)])
+percent s, released => (b'<xyz>', [('get', 284), ('release', b'xyz')])
+fromhex => (b'ab', [('get', 0)])
+fromhex, released => (b'ab', [('get', 0)])
+eq bytes => (False, [])
+eq bytes, released => (False, [])
+eq bytearray => (True, [('get', 0)])
+eq bytearray, released => (True, [('get', 0), ('release', b'xyz')])
+lt bytearray => (True, [('get', 0)])
+lt bytearray, released => (True, [('get', 0), ('release', b'xyz')])
+eq memoryview => (True, [('get', 284)])
+eq memoryview, released => (True, [('get', 284), ('release', b'xyz')])
+ne memoryview => (False, [('get', 284)])
+ne memoryview, released => (False, [('get', 284), ('release', b'xyz')])
+from_bytes => (7895418, [('get', 284)])
+from_bytes, released => (7895418, [('get', 284), ('release', b'xyz')])
+compile => (2, [('get', 0)])
+compile, released => (2, [('get', 0)])
+exec => (None, [('get', 0)])
+exec, released => (None, [('get', 0)])
+decode error => (b'xyz', [('get', 0)])
+decode error, released => (b'xyz', [('get', 0), ('release', b'xyz')])
+not on the left !! TypeError unsupported operand type(s) for +: 'B' and 'bytes'
+center fill !! TypeError center() argument 2 must be a byte string of length 1, not B
+hex sep !! TypeError object of type 'B' has no len()
+percent c !! TypeError %c requires an integer in range(256) or a single byte, not B
+int => [12, 12, -7, 12, 1000]
+int with base => [255, 3, 31]
+int with base of others !! TypeError int() can't convert non-string with explicit base
+int with base of a program's !! TypeError int() can't convert non-string with explicit base
+int of b'x' !! ValueError invalid literal for int() with base 10: b'x'
+int of b'' !! ValueError invalid literal for int() with base 10: b''
+int of b'1\x002' !! ValueError invalid literal for int() with base 10: b'1\x002'
+int of b'\xff' !! ValueError invalid literal for int() with base 10: b'\xff'
+int of b'1.5' !! ValueError invalid literal for int() with base 10: b'1.5'
+int of b'z' !! ValueError invalid literal for int() with base 10: b'z'
+int of b'111111111111111111 !! ValueError invalid literal for int() with base 10: b'111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111
+int of a program's, bad !! ValueError invalid literal for int() with base 10: b'q'
+float => [1.5, 2.0, -70.0, 1.5, inf, 10.5]
+float of b'x' => ValueError: could not convert string to float: b'x'
+float of b'' => ValueError: could not convert string to float: b''
+float of b'1\x002' => ValueError: could not convert string to float: b'1\x002'
+float of b'\xff' => ValueError: could not convert string to float: b'\xff'
+float of b'1.5.5' => ValueError: could not convert string to float: bytearray(b'1.5.5')
+float of b'z' => ValueError: could not convert string to float: <memory at 0x>
+derived numbers => ('IB', 5, 'FB', 5.0)
+complex !! TypeError complex() argument must be a string or a number, not bytes
+not a memoryview !! TypeError __buffer__ returned non-memoryview object
+not a memoryview, for memoryview !! TypeError __buffer__ returned non-memoryview object
+None !! TypeError __buffer__ returned non-memoryview object
+raises !! ZeroDivisionError division by zero
+raises in find !! ZeroDivisionError division by zero
+raises in eq => (False, False)
+set to None !! TypeError 'NoneType' object is not callable
+on the instance means nothing !! NameError name 'inst' is not defined
+on the instance means nothing !! TypeError cannot convert 'X' object to bytes
+a released one !! ValueError operation forbidden on released memoryview object
+one that skips !! BufferError memoryview: underlying buffer is not C-contiguous
+one that skips, for bytes => b'ace'
+one that skips, for memoryview => [97, 99, 101]
+of another format => ('i', 4, [0, 0], 2, 8)
+inherited => (b'xyz', [('get', 0), ('get', 0), ('get', 0), ('get', 284)])
+partition keeps what it was given => [True, True, True]
+raises in join !! TypeError sequence item 0: expected a bytes-like object, X found
+raises in add !! TypeError can't concat X to bytes
+raises in iadd !! TypeError can't concat X to bytearray
+a class derived from bytes => (b'other', b'other', ['BB', 'BB'])
+a class derived from bytearray => (b'mine', b'mine', ['BA', 'BA'])
+release memoryview => ([('get', 284)], None, [('release', b'xyz')], None, [])
+release with => ([('get', 284)], [('release', b'xyz')])
+the last of them releases => ([('get', 284)], [], [], [('release', b'xyz')])
+cast and toreadonly count => ([('get', 284)], [('release', b'xyz')])
+release after an error => ('TypeError: slice indices must be integers or None or have an __index__ method', [])
+obj => ('_buffer_wrapper', '_buffer_wrapper', b'a')
+wrapper => ('builtins', '_buffer_wrapper', ['__release_buffer__'], "TypeError: cannot create '_buffer_wrapper' instances")
+builtin => (b'ab', 'memoryview', True, False, False, b'ab', False)
+builtin obj => True
+builtin writable !! BufferError Object is not writable.
+builtin writable memoryview !! BufferError memoryview: underlying buffer is not writable
+builtin wrong !! TypeError 'str' object cannot be interpreted as an integer
+builtin big !! OverflowError buffer flags out of range
+builtin huge !! OverflowError cannot fit 'int' into an index-sized integer
+builtin none !! TypeError __buffer__ expected 1 argument, got 0
+builtin released !! ValueError operation forbidden on released memoryview object
+bytearray release !! ValueError memoryview's buffer has already been released
+bytearray release other !! ValueError memoryview's buffer is not this object
+bytearray release wrong !! TypeError expected a memoryview object
+bytearray release none !! TypeError __release_buffer__ expected 1 argument, got 0
+who has => [('bytes', True, False), ('bytearray', True, True), ('memoryview', True, True), ('str', False, False), ('object', False, False)]
+kinds => ('wrapper_descriptor', 'wrapper_descriptor')
+memoryview arguments => ['BufferError: memoryview: underlying buffer is not C-contiguous', 'ValueError: operation forbidden on released memoryview object', 'ValueError: operation forbidden on released memoryview object', 'TypeError: sequence item 0: expected a bytes-like object, memoryview found', "TypeError: can't concat memoryview to bytes", b'ace', bytearray(b'fedcba')]
+survived

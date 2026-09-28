@@ -407,12 +407,13 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
             ++start;
         return makeSource(text.substring(start), SourceOrigin(), filename);
     }
-    if (auto buffer = tryBufferOf(source)) {
+    if (auto buffer = tryBufferOf(globalObject, source)) {
         size_t start = 0;
         while (skipsBlanks && start < buffer->size() && isBlank((*buffer)[start]))
             ++start;
         RELEASE_AND_RETURN(scope, makeSource(globalObject, buffer->subspan(start), SourceOrigin(), filename));
     }
+    RETURN_IF_EXCEPTION(scope, { });
     raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
     return { };
 }

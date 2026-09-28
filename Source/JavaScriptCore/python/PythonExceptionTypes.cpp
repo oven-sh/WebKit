@@ -458,7 +458,7 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue path = given;
-    if (!path.isString() && !tryBufferOf(path)) {
+    if (!path.isString() && !builtinBufferOf(path)) {
         JSValue self;
         JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -481,7 +481,7 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         bytes = encoded->span();
     } else
-        bytes = *tryBufferOf(path);
+        bytes = *builtinBufferOf(path);
     if (WTF::find(bytes, static_cast<uint8_t>(0)) != notFound) {
         raiseValueError(globalObject, scope, path.isString() ? "embedded null character"_s : "embedded null byte"_s);
         return std::nullopt;
@@ -627,9 +627,8 @@ PYTHON_NATIVE(unicodeErrorInit)
         return { };
     if (kind == UnicodeError::Decode && !typeOf(globalObject, object)->hasFlag(PyType::IsBytes)) {
         // What is kept is a copy, that nothing will change.
-        auto buffer = tryBufferOf(object);
-        if (!buffer)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, object), '\'')));
+        auto buffer = bufferOf(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, { });
         object = newBytes(globalObject, *buffer);
     }
     if (hasEncoding)
@@ -677,7 +676,7 @@ PYTHON_NATIVE(unicodeErrorStr)
     if (start < 0 || start >= size || end < 0 || end > size || end != start + 1)
         return JSValue::encode(jsString(vm, makeString(prefix, "can't "_s, verb, isDecode ? " bytes"_s : " characters"_s, " in position "_s, start, '-', end - 1, ": "_s, reason)));
     if (isDecode)
-        return JSValue::encode(jsString(vm, makeString(prefix, "can't decode byte 0x"_s, hex((*tryBufferOf(object))[start], 2, Lowercase), " in position "_s, start, ": "_s, reason)));
+        return JSValue::encode(jsString(vm, makeString(prefix, "can't decode byte 0x"_s, hex((*builtinBufferOf(object))[start], 2, Lowercase), " in position "_s, start, ": "_s, reason)));
     JSValue character = stringGetItem(globalObject, stringIn(object), intFromInt64(globalObject, start));
     RETURN_IF_EXCEPTION(scope, { });
     auto c = static_cast<unsigned>(*asString(character)->view(globalObject)->codePoints().begin());

@@ -150,7 +150,8 @@ PYTHON_NATIVE(strNew)
         if (value) {
             if (value.isString())
                 return JSValue::encode(raiseTypeError(globalObject, scope, "decoding str is not supported"_s));
-            auto buffer = tryBufferOf(value);
+            auto buffer = tryBufferOf(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, { });
             if (!buffer)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
             String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(asString(encodingValue)->value(globalObject)) : String(), errorsValue ? String(asString(errorsValue)->value(globalObject)) : String());

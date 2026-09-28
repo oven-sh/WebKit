@@ -28,6 +28,7 @@
 
 #include "JSBigIntInlines.h"
 #include "ParseInt.h"
+#include "PythonBytes.h"
 #include <wtf/dtoa.h>
 
 // int, float and bool.
@@ -304,6 +305,10 @@ PYTHON_NATIVE(intNew)
         result = jsNumber(0);
     } else if (baseValue || unbox(value).isString()) {
         JSValue string = unbox(value);
+        // What is in a bytes or a bytearray is read as ASCII.
+        JSValue original = string;
+        if (bytesKindOf(string) != BytesKind::None)
+            string = jsString(vm, String(byteCast<Latin1Character>(*builtinBufferOf(string))));
         if (!string.isString())
             return JSValue::encode(raiseTypeError(globalObject, scope, "int() can't convert non-string with explicit base"_s));
         int64_t base = 10;
@@ -318,8 +323,11 @@ PYTHON_NATIVE(intNew)
         RETURN_IF_EXCEPTION(scope, { });
         result = parseInt(globalObject, view, base);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!result)
+        if (!result || (!original.isString() && !view->containsOnlyASCII())) {
+            if (!original.isString())
+                return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfBytes(builtinBufferOf(original)->first(std::min<size_t>(builtinBufferOf(original)->size(), 200))).left(200))));
             return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfString(view))));
+        }
     } else if (Number number = classify(value)) {
         result = toInt(globalObject, scope, number);
         RETURN_IF_EXCEPTION(scope, { });
@@ -331,6 +339,18 @@ PYTHON_NATIVE(intNew)
             RETURN_IF_EXCEPTION(scope, { });
             if (method)
                 break;
+        }
+        if (!method) {
+            // Anything that has bytes to show has them read as ASCII.
+            if (auto buffer = tryBufferOf(globalObject, value)) {
+                String text { byteCast<Latin1Character>(*buffer) };
+                result = text.containsOnlyASCII() ? parseInt(globalObject, text, 10) : JSValue();
+                RETURN_IF_EXCEPTION(scope, { });
+                if (!result)
+                    return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base 10: "_s, reprOfBytes(buffer->first(std::min<size_t>(buffer->size(), 200))).left(200))));
+                RELEASE_AND_RETURN(scope, JSValue::encode(boxIfDerived(globalObject, type, realm->typeInt(), result)));
+            }
+            RETURN_IF_EXCEPTION(scope, { });
         }
         if (!method)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int() argument must be a string, a bytes-like object or a real number, not '"_s, typeName(globalObject, value), '\'')));
@@ -443,7 +463,22 @@ PYTHON_NATIVE(floatNew)
                 return JSValue::encode(raiseValueError(globalObject, scope, makeString("could not convert string to float: "_s, reprOfString(view))));
             result = *parsed;
         } else {
-            if (!classify(value) && !typeOf(globalObject, value)->lookup(vm, names.dunder_float) && !typeOf(globalObject, value)->lookup(vm, names.dunder_index))
+            bool isNumber = classify(value) || typeOf(globalObject, value)->lookup(vm, names.dunder_float) || typeOf(globalObject, value)->lookup(vm, names.dunder_index);
+            if (!isNumber) {
+                // Anything that has bytes to show has them read as ASCII.
+                if (auto buffer = tryBufferOf(globalObject, value)) {
+                    String text { byteCast<Latin1Character>(*buffer) };
+                    auto parsed = text.containsOnlyASCII() ? parseFloat(text) : std::nullopt;
+                    if (!parsed) {
+                        String shown = repr(globalObject, value);
+                        RETURN_IF_EXCEPTION(scope, { });
+                        return JSValue::encode(raiseValueError(globalObject, scope, makeString("could not convert string to float: "_s, shown)));
+                    }
+                    return JSValue::encode(boxIfDerived(globalObject, type, realm->typeFloat(), floatFromDouble(*parsed)));
+                }
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            if (!isNumber)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("float() argument must be a string or a real number, not '"_s, typeName(globalObject, value), '\'')));
             auto converted = toDouble(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });

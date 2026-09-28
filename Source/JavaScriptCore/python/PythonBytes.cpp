@@ -29,6 +29,7 @@
 #include "JSArrayBuffer.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "PythonBuiltins.h"
+#include "TopExceptionScope.h"
 #include <wtf/text/StringBuilder.h>
 
 // bytes, bytearray and memoryview.
@@ -90,9 +91,9 @@ static JSValue newLike(JSGlobalObject* globalObject, JSValue self, std::span<con
     return isBytes(self) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
 }
 
-std::optional<std::span<const uint8_t>> tryBufferOf(JSValue value)
+std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
 {
-    if (!value.isCell())
+    if (!value || !value.isCell())
         return std::nullopt;
     JSCell* cell = value.asCell();
     if (auto* view = dynamicDowncast<JSArrayBufferView>(cell)) {
@@ -107,14 +108,123 @@ std::optional<std::span<const uint8_t>> tryBufferOf(JSValue value)
     return std::nullopt;
 }
 
-std::optional<std::span<const uint8_t>> bufferOf(JSGlobalObject* globalObject, JSValue value)
+// The __buffer__() or __release_buffer__() that a program has given a class. Empty if it has none, or has only what a built-in class gives it.
+static JSValue bufferMethodOfProgram(JSGlobalObject* globalObject, JSValue value, const Identifier& name)
 {
-    auto buffer = tryBufferOf(value);
-    if (!buffer) {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, value), '\''));
+    if (!value.isObject())
+        return { };
+    PyType* type = typeOf(globalObject, value);
+    if (!type->hasFlag(PyType::IsHeapType))
+        return { };
+    JSValue method = type->lookup(globalObject->vm(), name);
+    return method && !dynamicDowncast<PyNativeFunction>(method) ? method : JSValue();
+}
+
+bool hasBuffer(JSGlobalObject* globalObject, JSValue value)
+{
+    return builtinBufferOf(value) || dynamicDowncast<PyMemoryView>(value) || bufferMethodOfProgram(globalObject, value, globalObject->vm().pythonNames().dunder_buffer);
+}
+
+static PyMemoryView* memoryViewOf(JSGlobalObject*, JSValue, int flags);
+
+Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Buffer buffer;
+    if (bufferMethodOfProgram(globalObject, value, vm.pythonNames().dunder_buffer)) [[unlikely]] {
+        PyMemoryView* view = memoryViewOf(globalObject, value, flags);
+        RETURN_IF_EXCEPTION(scope, { });
+        buffer.m_view = view;
+        buffer.m_globalObject = globalObject;
+        value = view;
     }
+
+    if (auto* memory = dynamicDowncast<PyMemoryView>(value)) {
+        if (memory->isReleased()) {
+            raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+            return { };
+        }
+        if ((flags & WritableBuffer) && memory->isReadOnly()) {
+            raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not writable"_s);
+            return { };
+        }
+        if (!memory->isContiguous() && (flags & StridedBuffer) != StridedBuffer) {
+            raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not C-contiguous"_s);
+            return { };
+        }
+        buffer.m_object = value;
+        return buffer;
+    }
+    if (!builtinBufferOf(value))
+        return { };
+    if ((flags & WritableBuffer) && isBytes(value)) {
+        raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s);
+        return { };
+    }
+    buffer.m_object = value;
+    return buffer;
+}
+
+// exporter.__release_buffer__(view). What it raises goes nowhere, and what has been raised already is still raised afterwards.
+void releaseBufferOfProgram(JSGlobalObject* globalObject, JSValue exporter, JSValue view)
+{
+    VM& vm = globalObject->vm();
+    JSValue method = bufferMethodOfProgram(globalObject, exporter, vm.pythonNames().dunder_release_buffer);
+    if (!method)
+        return;
+    Exception* raised;
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        raised = scope.exception();
+        scope.clearException();
+        call(globalObject, method, exporter, view);
+        // FIXME: It is for sys.unraisablehook to be told, when there is one.
+        scope.clearException();
+    }
+    if (raised) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, raised);
+    }
+}
+
+void Buffer::release()
+{
+    if (auto* view = std::exchange(m_view, nullptr))
+        view->release(m_globalObject);
+}
+
+Buffers::~Buffers()
+{
+    for (size_t i = 0; i < m_views.size(); ++i)
+        uncheckedDowncast<PyMemoryView>(m_views.at(i).asCell())->release(m_globalObject);
+}
+
+JSValue Buffer::object() const
+{
+    return m_view ? m_view->exporter() : m_object;
+}
+
+void Buffer::appendTo(ByteVector& result) const
+{
+    auto* memory = dynamicDowncast<PyMemoryView>(m_object);
+    if (!memory || memory->isContiguous()) {
+        result.append(span());
+        return;
+    }
+    for (int64_t i = 0; i < memory->length(); ++i)
+        result.append(memory->item(i));
+}
+
+Buffer bufferOf(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Buffer buffer = tryBufferOf(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!buffer)
+        raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, value), '\''));
     return buffer;
 }
 
@@ -225,7 +335,7 @@ static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, method ""_s, "' requires a bytes-like object but received a '"_s, typeName(globalObject, args.at(0) ? args.at(0) : jsUndefined()), '\''))); \
     JSValue selfValue = args[0]; \
     [[maybe_unused]] JSUint8Array* self = asView(selfValue); \
-    [[maybe_unused]] auto content = spanOf(self);
+    [[maybe_unused]] Buffer content { selfValue };
 
 // One byte, from an int. Nothing if it raised.
 static std::optional<uint8_t> byteFrom(JSGlobalObject* globalObject, JSValue value, ASCIILiteral rangeMessage)
@@ -246,10 +356,11 @@ static bool needleFrom(JSGlobalObject* globalObject, JSValue value, ByteVector& 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto buffer = tryBufferOf(value)) {
+    if (auto buffer = tryBufferOf(globalObject, value)) {
         needle.append(*buffer);
         return true;
     }
+    RETURN_IF_EXCEPTION(scope, false);
     if (!classify(value).isInt() && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index)) {
         raiseTypeError(globalObject, scope, makeString("argument should be integer or bytes-like object, not '"_s, typeName(globalObject, value), '\''));
         return false;
@@ -260,28 +371,43 @@ static bool needleFrom(JSGlobalObject* globalObject, JSValue value, ByteVector& 
     return true;
 }
 
-// The part that optional start and end arguments select. False if it raised.
-static bool rangeFrom(JSGlobalObject* globalObject, size_t length, JSValue startValue, JSValue endValue, size_t& start, size_t& end, bool& isBeyond)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    int64_t size = length;
-    auto resolve = [&] (JSValue value, int64_t whenAbsent) -> int64_t {
-        if (!value || isNone(value))
-            return whenAbsent;
-        auto index = toIndex(globalObject, value, true);
-        RETURN_IF_EXCEPTION(scope, 0);
-        return *index < 0 ? std::max<int64_t>(*index + size, 0) : *index;
-    };
-    int64_t first = resolve(startValue, 0);
-    RETURN_IF_EXCEPTION(scope, false);
-    int64_t last = std::min(resolve(endValue, size), size);
-    RETURN_IF_EXCEPTION(scope, false);
-    isBeyond = first > size;
-    start = std::min(first, size);
-    end = std::max<int64_t>(start, last);
-    return true;
-}
+// Optional start and end arguments. They are looked at first, which can run a program's code, and what they select is worked out last, when it is known how much
+// there is to select from.
+struct RangeArguments {
+    int64_t start { 0 };
+    int64_t end { std::numeric_limits<int64_t>::max() };
+
+    // False if it raised.
+    bool parse(JSGlobalObject* globalObject, JSValue startValue, JSValue endValue)
+    {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        for (auto [value, bound] : { std::pair { startValue, &start }, std::pair { endValue, &end } }) {
+            if (!value || isNone(value))
+                continue;
+            if (!classify(value).isInt() && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index)) {
+                raiseTypeError(globalObject, scope, "slice indices must be integers or None or have an __index__ method"_s);
+                return false;
+            }
+            auto index = toIndex(globalObject, value, true);
+            RETURN_IF_EXCEPTION(scope, false);
+            *bound = *index;
+        }
+        return true;
+    }
+
+    // Nothing if it starts beyond the end, which is not the same as selecting nothing.
+    std::optional<std::span<const uint8_t>> select(std::span<const uint8_t> content, size_t& offset) const
+    {
+        int64_t size = content.size();
+        int64_t last = end > size ? size : end < 0 ? std::max<int64_t>(end + size, 0) : end;
+        int64_t first = start < 0 ? std::max<int64_t>(start + size, 0) : start;
+        if (first > size)
+            return std::nullopt;
+        offset = first;
+        return content.subspan(first, std::max(last, first) - first);
+    }
+};
 
 static size_t findIn(std::span<const uint8_t> haystack, std::span<const uint8_t> needle, size_t from = 0)
 {
@@ -374,15 +500,11 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             return true;
         }
     }
-    if (auto buffer = tryBufferOf(source)) {
-        content.append(*buffer);
+    if (auto buffer = tryBufferOf(globalObject, source, FullReadOnlyBuffer)) {
+        buffer.appendTo(content);
         return true;
     }
-    if (auto* memory = dynamicDowncast<PyMemoryView>(source)) {
-        for (int64_t i = 0; i < memory->length(); ++i)
-            content.append(memory->item(i));
-        return true;
-    }
+    RETURN_IF_EXCEPTION(scope, false);
     // So many zeros.
     if (classify(source).isInt() || typeOf(globalObject, source)->lookup(vm, vm.pythonNames().dunder_index)) {
         auto count = toIndex(globalObject, source);
@@ -451,10 +573,12 @@ PYTHON_NATIVE(bytesFromHex)
     String text;
     if (args[1].isString())
         text = asString(args[1])->value(globalObject);
-    else if (auto buffer = tryBufferOf(args[1]))
+    else if (auto buffer = tryBufferOf(globalObject, args[1]))
         text = String(byteCast<Latin1Character>(*buffer));
-    else
+    else {
+        RETURN_IF_EXCEPTION(scope, { });
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("fromhex() argument must be str or bytes-like, not "_s, typeName(globalObject, args[1]))));
+    }
     ByteVector content;
     unsigned length = text.length();
     for (unsigned i = 0; i < length;) {
@@ -523,9 +647,8 @@ PYTHON_NATIVE(bytesGetItem)
     BYTES_PROLOGUE("__getitem__");
     ASCIILiteral typeText = isBytes(selfValue) ? "byte"_s : "bytearray"_s;
     if (auto* slice = trySlice(args[1])) {
-        auto indices = slice->indices(globalObject, content.size());
+        auto indices = slice->indices(globalObject, [&] { return content.size(); });
         RETURN_IF_EXCEPTION(scope, { });
-        content = spanOf(self);
         if (indices->step == 1)
             RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, content.subspan(indices->start, indices->length))));
         ByteVector selected;
@@ -537,7 +660,6 @@ PYTHON_NATIVE(bytesGetItem)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeText, " indices must be integers or slices, not "_s, typeName(globalObject, args[1]))));
     auto index = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    content = spanOf(self);
     int64_t at = *index < 0 ? *index + static_cast<int64_t>(content.size()) : *index;
     if (at < 0 || at >= static_cast<int64_t>(content.size()))
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, isBytes(selfValue) ? "index out of range"_s : "bytearray index out of range"_s));
@@ -548,9 +670,10 @@ PYTHON_NATIVE(bytesContains)
 {
     BYTES_PROLOGUE("__contains__");
     ByteVector needle;
-    if (auto buffer = tryBufferOf(args[1]))
+    if (auto buffer = tryBufferOf(globalObject, args[1]))
         needle.append(*buffer);
     else {
+        RETURN_IF_EXCEPTION(scope, { });
         if (!classify(args[1]).isInt() && !typeOf(globalObject, args[1])->lookup(vm, names.dunder_index))
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
         auto byte = byteFrom(globalObject, args[1], "byte must be in range(0, 256)"_s);
@@ -567,7 +690,10 @@ PYTHON_NATIVE(bytesCompare)
     // A bytearray is compared with anything that has bytes to show, and bytes with bytes alone.
     if (typeOf(globalObject, selfValue)->hasFlag(PyType::IsBytes) && !typeOf(globalObject, args[1])->hasFlag(PyType::IsBytes))
         RETURN_NOT_IMPLEMENTED();
-    auto other = tryBufferOf(args.at(1));
+    auto other = tryBufferOf(globalObject, args[1]);
+    // What cannot be got at is something that this cannot be compared with.
+    if (scope.exception())
+        catchException(globalObject, BuiltinType::BaseException);
     if (!other)
         RETURN_NOT_IMPLEMENTED();
     size_t common = std::min(content.size(), other->size());
@@ -601,21 +727,24 @@ PYTHON_NATIVE(bytesCompare)
 PYTHON_NATIVE(bytesAdd)
 {
     BYTES_PROLOGUE("__add__");
-    auto other = tryBufferOf(args.at(1));
+    auto other = tryBufferOf(globalObject, args[1]);
+    // Whatever is wrong with it, this is what is said.
+    if (scope.exception())
+        catchException(globalObject, BuiltinType::BaseException);
     if (!other)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
     ByteVector joined;
-    joined.append(content);
+    joined.append(content.span());
     joined.append(*other);
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, joined.span())));
 }
 
-static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> content, JSValue countValue, ByteVector& result)
+static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, const Buffer& content, JSValue countValue, ByteVector& result)
 {
     auto count = toIndex(globalObject, countValue);
     RETURN_IF_EXCEPTION(scope, false);
     for (int64_t i = 0; i < *count; ++i)
-        result.append(content);
+        result.append(content.span());
     return true;
 }
 
@@ -639,16 +768,15 @@ PYTHON_NATIVE(bytesFind)
     bool fromRight = unpack<bool>(callFrame, 0);
     bool raises = unpack<bool>(callFrame, 1);
     BYTES_PROLOGUE("find");
+    RangeArguments range;
+    range.parse(globalObject, args.at(2), args.at(3));
+    RETURN_IF_EXCEPTION(scope, { });
     ByteVector needle;
     needleFrom(globalObject, args[1], needle);
     RETURN_IF_EXCEPTION(scope, { });
-    size_t start;
-    size_t end;
-    bool isBeyond;
-    rangeFrom(globalObject, content.size(), args.at(2), args.at(3), start, end, isBeyond);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto part = spanOf(self).subspan(start, end - start);
-    size_t found = isBeyond ? notFound : fromRight ? reverseFindIn(part, needle.span()) : findIn(part, needle.span());
+    size_t start = 0;
+    auto part = range.select(content, start);
+    size_t found = !part ? notFound : fromRight ? reverseFindIn(*part, needle.span()) : findIn(*part, needle.span());
     if (found == notFound) {
         if (raises)
             return JSValue::encode(raiseValueError(globalObject, scope, "subsection not found"_s));
@@ -660,21 +788,20 @@ PYTHON_NATIVE(bytesFind)
 PYTHON_NATIVE(bytesCount)
 {
     BYTES_PROLOGUE("count");
+    RangeArguments range;
+    range.parse(globalObject, args.at(2), args.at(3));
+    RETURN_IF_EXCEPTION(scope, { });
     ByteVector needle;
     needleFrom(globalObject, args[1], needle);
     RETURN_IF_EXCEPTION(scope, { });
-    size_t start;
-    size_t end;
-    bool isBeyond;
-    rangeFrom(globalObject, content.size(), args.at(2), args.at(3), start, end, isBeyond);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (isBeyond)
+    size_t start = 0;
+    auto part = range.select(content, start);
+    if (!part)
         return JSValue::encode(jsNumber(0));
-    auto part = spanOf(self).subspan(start, end - start);
     if (needle.isEmpty())
-        RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, part.size() + 1)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, part->size() + 1)));
     int64_t count = 0;
-    for (size_t at = findIn(part, needle.span()); at != notFound; at = findIn(part, needle.span(), at + needle.size()))
+    for (size_t at = findIn(*part, needle.span()); at != notFound; at = findIn(*part, needle.span(), at + needle.size()))
         ++count;
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, count)));
 }
@@ -685,16 +812,15 @@ PYTHON_NATIVE(bytesStartsOrEndsWith)
     bool atStart = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("startswith");
     ASCIILiteral method = atStart ? "startswith"_s : "endswith"_s;
-    size_t start;
-    size_t end;
-    bool isBeyond;
-    rangeFrom(globalObject, content.size(), args.at(2), args.at(3), start, end, isBeyond);
+    RangeArguments range;
+    range.parse(globalObject, args.at(2), args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
-    auto part = spanOf(self).subspan(start, end - start);
     auto matches = [&] (std::span<const uint8_t> affix) {
-        if (isBeyond || affix.size() > part.size())
+        size_t start = 0;
+        auto part = range.select(content, start);
+        if (!part || affix.size() > part->size())
             return false;
-        return !affix.size() || !memcmp(atStart ? part.data() : part.data() + part.size() - affix.size(), affix.data(), affix.size());
+        return !affix.size() || !memcmp(atStart ? part->data() : part->data() + part->size() - affix.size(), affix.data(), affix.size());
     };
     if (isTuple(args[1])) {
         for (auto& entry : uncheckedDowncast<PyTuple>(args[1].asCell())->span()) {
@@ -705,7 +831,8 @@ PYTHON_NATIVE(bytesStartsOrEndsWith)
         }
         return JSValue::encode(jsBoolean(false));
     }
-    auto affix = tryBufferOf(args[1]);
+    auto affix = tryBufferOf(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!affix)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, args[1]))));
     return JSValue::encode(jsBoolean(matches(*affix)));
@@ -769,16 +896,21 @@ PYTHON_NATIVE(bytesJoin)
             raiseTypeError(globalObject, scope, "can only join an iterable"_s);
         return { };
     }
-    ByteVector separator;
-    separator.append(spanOf(self));
-    ByteVector result;
+    Buffers buffers(globalObject);
     for (unsigned i = 0; i < items.size(); ++i) {
-        auto item = tryBufferOf(items.at(i));
+        auto item = tryBufferOf(globalObject, items.at(i));
+        // Whatever is wrong with it, this is what is said.
+        if (scope.exception())
+            catchException(globalObject, BuiltinType::BaseException);
         if (!item)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected a bytes-like object, "_s, typeName(globalObject, items.at(i)), " found"_s)));
+        buffers.append(WTF::move(item));
+    }
+    ByteVector result;
+    for (unsigned i = 0; i < buffers.size(); ++i) {
         if (i)
-            result.append(separator.span());
-        result.append(*item);
+            result.append(content.span());
+        result.append(buffers.at(i));
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
 }
@@ -799,10 +931,19 @@ PYTHON_NATIVE(bytesSplit)
     if (limit < 0)
         limit = std::numeric_limits<int64_t>::max();
 
+    Buffer separator;
+    bool splitsAtBlanks = !separatorValue || isNone(separatorValue);
+    if (!splitsAtBlanks) {
+        separator = bufferOf(globalObject, separatorValue);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (separator->empty())
+            return JSValue::encode(raiseValueError(globalObject, scope, "empty separator"_s));
+    }
+
     size_t length = content.size();
     Vector<std::pair<size_t, size_t>, 16> pieces;
     auto count = [&] { return static_cast<int64_t>(pieces.size()); };
-    if (!separatorValue || isNone(separatorValue)) {
+    if (splitsAtBlanks) {
         if (!fromRight) {
             size_t i = 0;
             while (true) {
@@ -838,10 +979,6 @@ PYTHON_NATIVE(bytesSplit)
             pieces.reverse();
         }
     } else {
-        auto separator = bufferOf(globalObject, separatorValue);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (separator->empty())
-            return JSValue::encode(raiseValueError(globalObject, scope, "empty separator"_s));
         if (!fromRight) {
             size_t start = 0;
             while (count() < limit) {
@@ -901,8 +1038,11 @@ PYTHON_NATIVE(bytesPartition)
 {
     bool fromRight = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("partition");
-    auto separator = bufferOf(globalObject, args[1]);
+    // A bytearray makes a bytearray of it, as bytearray() would.
+    auto separator = tryBufferOf(globalObject, args[1], isBytes(selfValue) ? SimpleBuffer : FullReadOnlyBuffer);
     RETURN_IF_EXCEPTION(scope, { });
+    if (!separator)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[1]), '\'')));
     if (separator->empty())
         return JSValue::encode(raiseValueError(globalObject, scope, "empty separator"_s));
     size_t found = fromRight ? reverseFindIn(content, *separator) : findIn(content, *separator);
@@ -910,7 +1050,7 @@ PYTHON_NATIVE(bytesPartition)
     std::span<const uint8_t> nothing;
     if (found == notFound)
         return JSValue::encode(fromRight ? PyTuple::create(globalObject, { make(nothing), make(nothing), make(content) }) : PyTuple::create(globalObject, { make(content), make(nothing), make(nothing) }));
-    return JSValue::encode(PyTuple::create(globalObject, { make(content.first(found)), make(*separator), make(content.subspan(found + separator->size())) }));
+    return JSValue::encode(PyTuple::create(globalObject, { make(content.first(found)), isBytes(selfValue) ? separator.object() : make(*separator), make(content.subspan(found + separator->size())) }));
 }
 
 // ---- Trimming and padding
@@ -950,7 +1090,7 @@ PYTHON_NATIVE(bytesJustify)
     RETURN_IF_EXCEPTION(scope, { });
     uint8_t fill = ' ';
     if (args.size() > 2) {
-        auto given = bytesKindOf(args[2]) == BytesKind::None ? std::nullopt : tryBufferOf(args[2]);
+        auto given = bytesKindOf(args[2]) == BytesKind::None ? std::nullopt : builtinBufferOf(args[2]);
         if (!given || given->size() != 1) {
             if (given)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, "(): argument 2 must be a byte string of length 1, not a "_s, typeName(globalObject, args[2]), " object of length "_s, given->size())));
@@ -963,7 +1103,7 @@ PYTHON_NATIVE(bytesJustify)
     int64_t before = align == '<' ? 0 : align == '>' ? padding : padding / 2 + (padding & *width & 1);
     ByteVector result;
     result.appendUsingFunctor(before, [&] (size_t) { return fill; });
-    result.append(content);
+    result.append(content.span());
     result.appendUsingFunctor(padding - before, [&] (size_t) { return fill; });
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
 }
@@ -1016,7 +1156,7 @@ PYTHON_NATIVE(bytesRemoveAffix)
     BYTES_PROLOGUE("removeprefix");
     auto affix = bufferOf(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    auto result = content;
+    std::span<const uint8_t> result = content;
     if (affix->size() <= content.size() && !affix->empty()) {
         if (isPrefix && !memcmp(content.data(), affix->data(), affix->size()))
             result = content.subspan(affix->size());
@@ -1134,7 +1274,9 @@ static String hexOf(std::span<const uint8_t> content, std::optional<char> separa
 }
 
 // hex(sep=<none>, bytes_per_sep=1). Null if it raised.
-static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, std::span<const uint8_t> content)
+// `content` is asked for what is in it when the arguments have been looked at, since looking at them can change it.
+template<typename Content>
+static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, const Content& content)
 {
     JSValue separatorValue = args.at(1);
     JSValue groupValue = args.at(2);
@@ -1143,7 +1285,7 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
         String text;
         if (separatorValue.isString())
             text = asString(separatorValue)->value(globalObject);
-        else if (auto buffer = bytesKindOf(separatorValue) == BytesKind::None ? std::nullopt : tryBufferOf(separatorValue))
+        else if (auto buffer = bytesKindOf(separatorValue) == BytesKind::None ? std::nullopt : builtinBufferOf(separatorValue))
             text = String(byteCast<Latin1Character>(*buffer));
         else {
             length(globalObject, separatorValue);
@@ -1167,7 +1309,7 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
         RETURN_IF_EXCEPTION(scope, { });
         group = *index;
     }
-    return hexOf(content, separator, group);
+    return hexOf(content.span(), separator, group);
 }
 
 PYTHON_NATIVE(bytesHex)
@@ -1299,14 +1441,15 @@ PYTHON_NATIVE(bytesMakeTranslation)
 // ---- What only a bytearray does
 
 // The bytes of an argument to extend(), += or a slice assignment: anything with bytes in it, or an iterable of ints. False if it raised.
-static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVector& result, ASCIILiteral complaint)
+static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVector& result, ASCIILiteral complaint, int flags = FullReadOnlyBuffer)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto buffer = tryBufferOf(value)) {
-        result.append(*buffer);
+    if (auto buffer = tryBufferOf(globalObject, value, flags)) {
+        buffer.appendTo(result);
         return true;
     }
+    RETURN_IF_EXCEPTION(scope, false);
     if (value.isString() || (!typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_getitem))) {
         raiseTypeError(globalObject, scope, makeString(complaint, typeName(globalObject, value)));
         return false;
@@ -1331,12 +1474,12 @@ PYTHON_NATIVE(byteArraySetItem)
         if (value) {
             if (classify(value).isInt() || value.isString())
                 return JSValue::encode(raiseTypeError(globalObject, scope, "can assign only bytes, buffers, or iterables of ints in range(0, 256)"_s));
-            if (!tryBufferOf(value) && !typeOf(globalObject, value)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, value)->lookup(vm, names.dunder_getitem))
+            if (!hasBuffer(globalObject, value) && !typeOf(globalObject, value)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, value)->lookup(vm, names.dunder_getitem))
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, value), "' object to bytearray"_s)));
             bytesToInsert(globalObject, value, replacement, ""_s);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        auto indices = slice->indices(globalObject, self->length());
+        auto indices = slice->indices(globalObject, [&] { return self->length(); });
         RETURN_IF_EXCEPTION(scope, { });
         if (indices->step == 1) {
             scope.release();
@@ -1401,7 +1544,7 @@ PYTHON_NATIVE(byteArrayExtend)
 {
     BYTES_PROLOGUE("extend");
     ByteVector added;
-    bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s);
+    bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s, SimpleBuffer);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
     replaceRange(globalObject, self, self->length(), 0, added.span());
@@ -1411,7 +1554,10 @@ PYTHON_NATIVE(byteArrayExtend)
 PYTHON_NATIVE(byteArrayInPlaceAdd)
 {
     BYTES_PROLOGUE("__iadd__");
-    auto other = tryBufferOf(args.at(1));
+    auto other = tryBufferOf(globalObject, args[1]);
+    // Whatever is wrong with it, this is what is said.
+    if (scope.exception())
+        catchException(globalObject, BuiltinType::BaseException);
     if (!other)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to bytearray"_s)));
     replaceRange(globalObject, self, self->length(), 0, *other);
@@ -1449,17 +1595,19 @@ PYTHON_NATIVE(byteArrayInsert)
 PYTHON_NATIVE(byteArrayPop)
 {
     BYTES_PROLOGUE("pop");
-    int64_t length = self->length();
-    if (!length)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop from empty bytearray"_s));
-    int64_t at = length - 1;
+    int64_t at = -1;
     if (args.size() > 1) {
         auto index = toIndex(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
-        at = *index < 0 ? *index + length : *index;
-        if (at < 0 || at >= length)
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop index out of range"_s));
+        at = *index;
     }
+    int64_t length = self->length();
+    if (!length)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop from empty bytearray"_s));
+    if (at < 0)
+        at += length;
+    if (at < 0 || at >= length)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop index out of range"_s));
     uint8_t byte = spanOf(self)[at];
     replaceRange(globalObject, self, at, 1, { });
     RETURN_IF_EXCEPTION(scope, { });
@@ -1614,7 +1762,7 @@ PYTHON_NATIVE(intFromBytes)
     RETURN_IF_EXCEPTION(scope, { });
 
     ByteVector content;
-    if (source.isString() || (!tryBufferOf(source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
+    if (source.isString() || (!hasBuffer(globalObject, source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to bytes"_s)));
     bytesToInsert(globalObject, source, content, ""_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1658,6 +1806,7 @@ void PyMemoryView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<PyMemoryView>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_object);
+    visitor.append(thisObject->m_exporter);
 }
 
 DEFINE_VISIT_CHILDREN(PyMemoryView);
@@ -1667,19 +1816,51 @@ Structure* PyMemoryView::createStructure(VM& vm, JSGlobalObject* globalObject, J
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | pythonCellFlags), info());
 }
 
-PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly)
+// What stands between a memoryview and an object whose class has a __buffer__(): the memoryview that that returned, the object, and how many memoryviews there are of
+// it that have not been released. The last of them to be released has __release_buffer__() called.
+namespace BufferWrapperField {
+enum Field : unsigned { View, Object, Count };
+}
+
+PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter)
 {
     VM& vm = globalObject->vm();
-    auto* view = new (NotNull, allocateCell<PyMemoryView>(vm)) PyMemoryView(vm, globalObject->pyRealm()->structureFor(BuiltinType::MemoryView), object, format, itemSize, offset, length, stride, isReadOnly);
+    auto* view = new (NotNull, allocateCell<PyMemoryView>(vm)) PyMemoryView(vm, globalObject->pyRealm()->structureFor(BuiltinType::MemoryView), object, format, itemSize, offset, length, stride, isReadOnly, exporter);
     view->finishCreation(vm);
+    if (exporter) {
+        auto* wrapper = uncheckedDowncast<PyNativeObject>(exporter.asCell());
+        wrapper->setField(vm, BufferWrapperField::Count, jsNumber(wrapper->field(BufferWrapperField::Count).asInt32() + 1));
+    }
     return view;
+}
+
+PyMemoryView* PyMemoryView::derive(JSGlobalObject* globalObject, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly) const
+{
+    return create(globalObject, m_object.get(), format, itemSize, offset, length, stride, isReadOnly, m_exporter.get());
+}
+
+void PyMemoryView::release(JSGlobalObject* globalObject)
+{
+    if (isReleased())
+        return;
+    VM& vm = globalObject->vm();
+    m_object.clear();
+    JSValue exporter = m_exporter.get();
+    if (!exporter)
+        return;
+    m_exporter.clear();
+    auto* wrapper = uncheckedDowncast<PyNativeObject>(exporter.asCell());
+    int32_t left = wrapper->field(BufferWrapperField::Count).asInt32() - 1;
+    wrapper->setField(vm, BufferWrapperField::Count, jsNumber(left));
+    if (!left)
+        Python::releaseBufferOfProgram(globalObject, wrapper->field(BufferWrapperField::Object), wrapper->field(BufferWrapperField::View));
 }
 
 std::optional<std::span<const uint8_t>> PyMemoryView::contiguousSpan() const
 {
     if (isReleased() || !isContiguous())
         return std::nullopt;
-    auto whole = Python::tryBufferOf(m_object.get());
+    auto whole = Python::builtinBufferOf(m_object.get());
     size_t size = static_cast<size_t>(m_length) * m_itemSize;
     if (!whole || static_cast<size_t>(m_offset) + size > whole->size())
         return std::span<const uint8_t>();
@@ -1690,7 +1871,7 @@ std::span<uint8_t> PyMemoryView::item(int64_t index) const
 {
     if (isReleased())
         return { };
-    auto whole = Python::tryBufferOf(m_object.get());
+    auto whole = Python::builtinBufferOf(m_object.get());
     int64_t at = m_offset + index * m_stride;
     if (!whole || at < 0 || static_cast<size_t>(at) + m_itemSize > whole->size())
         return { };
@@ -1835,7 +2016,7 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
         return format == 'f' ? store(static_cast<float>(*real)) : store(*real);
     }
     if (format == 'c') {
-        auto buffer = isBytes(value) ? tryBufferOf(value) : std::nullopt;
+        auto buffer = isBytes(value) ? builtinBufferOf(value) : std::nullopt;
         if (!buffer)
             return invalidType();
         if (buffer->size() != 1)
@@ -1903,37 +2084,122 @@ static ByteVector bytesOfMemory(PyMemoryView* memory)
     return result;
 }
 
-PYTHON_NATIVE(memoryNew)
+// memoryview(object): PyMemoryView_FromObjectAndFlags() of CPython's Objects/memoryobject.c. Null if it raised.
+static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, int flags)
 {
-    NATIVE_PROLOGUE();
-    JSValue object = args.at(1);
-    if (!object)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview() missing required argument 'object' (pos 1)"_s));
-    if (auto* other = dynamicDowncast<PyMemoryView>(object)) {
-        if (other->isReleased())
-            return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
-        return JSValue::encode(PyMemoryView::create(globalObject, other->object(), other->format(), other->itemSize(), other->offset(), other->length(), other->stride(), other->isReadOnly()));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue method = bufferMethodOfProgram(globalObject, object, vm.pythonNames().dunder_buffer)) {
+        JSValue given = call(globalObject, method, object, jsNumber(flags));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        auto* inner = dynamicDowncast<PyMemoryView>(given);
+        if (!inner) {
+            raiseTypeError(globalObject, scope, "__buffer__ returned non-memoryview object"_s);
+            return nullptr;
+        }
+        if (inner->isReleased()) {
+            raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+            return nullptr;
+        }
+        if ((flags & WritableBuffer) && inner->isReadOnly()) {
+            raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not writable"_s);
+            return nullptr;
+        }
+        JSValue wrapper = PyNativeObject::create(globalObject, BuiltinType::BufferWrapper, inner, object, jsNumber(0));
+        return PyMemoryView::create(globalObject, inner->object(), inner->format(), inner->itemSize(), inner->offset(), inner->length(), inner->stride(), inner->isReadOnly(), wrapper);
     }
-    auto buffer = tryBufferOf(object);
-    if (!buffer)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\'')));
+    if (auto* other = dynamicDowncast<PyMemoryView>(object)) {
+        if (other->isReleased()) {
+            raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+            return nullptr;
+        }
+        return other->derive(globalObject, other->format(), other->itemSize(), other->offset(), other->length(), other->stride(), other->isReadOnly());
+    }
+    auto buffer = builtinBufferOf(object);
+    if (!buffer) {
+        raiseTypeError(globalObject, scope, makeString("memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\''));
+        return nullptr;
+    }
+    if ((flags & WritableBuffer) && isBytes(object)) {
+        raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s);
+        return nullptr;
+    }
     char format = 'B';
     if (auto* view = dynamicDowncast<JSArrayBufferView>(object))
         format = formatOf(typedArrayType(view->type()));
     unsigned itemSize = itemSizeOf(format);
-    return JSValue::encode(PyMemoryView::create(globalObject, object, format, itemSize, 0, buffer->size() / itemSize, itemSize, isBytes(object)));
+    return PyMemoryView::create(globalObject, object, format, itemSize, 0, buffer->size() / itemSize, itemSize, isBytes(object));
 }
 
-// memoryview._from_flags(object, flags). What the flags ask for is what there is here in any case, but for whether it can be written to.
+PYTHON_NATIVE(memoryNew)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args.at(1), FullReadOnlyBuffer)));
+}
+
+static std::optional<int> bufferFlagsFrom(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto flags = toIndex(globalObject, value);
+    if (scope.exception()) {
+        if (catchException(globalObject, BuiltinType::IndexError))
+            raise(globalObject, scope, BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+        return std::nullopt;
+    }
+    if (*flags > std::numeric_limits<int>::max() || *flags < std::numeric_limits<int>::min()) {
+        raise(globalObject, scope, BuiltinType::OverflowError, "buffer flags out of range"_s);
+        return std::nullopt;
+    }
+    return static_cast<int>(*flags);
+}
+
+// bytes.__buffer__(flags), and the same of a bytearray and of a memoryview
+PYTHON_NATIVE(builtinGetBuffer)
+{
+    NATIVE_PROLOGUE();
+    auto flags = bufferFlagsFrom(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    // Not what a class derived from it may have put in the way.
+    JSValue self = args[0];
+    if (auto* memory = dynamicDowncast<PyMemoryView>(self)) {
+        if (memory->isReleased())
+            return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+        if ((*flags & WritableBuffer) && memory->isReadOnly())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not writable"_s));
+        return JSValue::encode(memory->derive(globalObject, memory->format(), memory->itemSize(), memory->offset(), memory->length(), memory->stride(), memory->isReadOnly()));
+    }
+    if ((*flags & WritableBuffer) && isBytes(self))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s));
+    return JSValue::encode(PyMemoryView::create(globalObject, self, 'B', 1, 0, builtinBufferOf(self)->size(), 1, isBytes(self)));
+}
+
+// bytearray.__release_buffer__(view), and the same of a memoryview
+PYTHON_NATIVE(builtinReleaseBuffer)
+{
+    NATIVE_PROLOGUE();
+    auto* view = dynamicDowncast<PyMemoryView>(args[1]);
+    if (!view)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "expected a memoryview object"_s));
+    if (view->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "memoryview's buffer has already been released"_s));
+    JSValue self = args[0];
+    if (auto* memory = dynamicDowncast<PyMemoryView>(self))
+        self = memory->object();
+    if (view->object() != self)
+        return JSValue::encode(raiseValueError(globalObject, scope, "memoryview's buffer is not this object"_s));
+    view->release(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_NONE();
+}
+
+// memoryview._from_flags(object, flags)
 PYTHON_NATIVE(memoryFromFlags)
 {
     NATIVE_PROLOGUE();
     auto flags = toIndex(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
-    constexpr int64_t writable = 1;
-    if ((*flags & writable) && isBytes(args[1]))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s));
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, realm->typeMemoryView(), args[1])));
+    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args[1], static_cast<int>(*flags))));
 }
 
 PYTHON_NATIVE(memoryRepr)
@@ -2004,9 +2270,9 @@ PYTHON_NATIVE(memoryGetItem)
     MEMORY_PROLOGUE();
     JSValue key = args.at(1);
     if (auto* slice = trySlice(key)) {
-        auto indices = slice->indices(globalObject, self->length());
+        auto indices = slice->indices(globalObject, [&] { return self->length(); });
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(PyMemoryView::create(globalObject, self->object(), self->format(), self->itemSize(), self->offset() + indices->start * self->stride(), indices->length, self->stride() * indices->step, self->isReadOnly()));
+        return JSValue::encode(self->derive(globalObject, self->format(), self->itemSize(), self->offset() + indices->start * self->stride(), indices->length, self->stride() * indices->step, self->isReadOnly()));
     }
     if (!classify(key).isInt() && !typeOf(globalObject, key)->lookup(vm, names.dunder_index))
         return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: invalid slice key"_s));
@@ -2029,7 +2295,7 @@ PYTHON_NATIVE(memorySetItem)
     if (!value)
         return JSValue::encode(raiseTypeError(globalObject, scope, "cannot delete memory"_s));
     if (auto* slice = trySlice(key)) {
-        auto indices = slice->indices(globalObject, self->length());
+        auto indices = slice->indices(globalObject, [&] { return self->length(); });
         RETURN_IF_EXCEPTION(scope, { });
         ByteVector source;
         unsigned sourceItemSize = 1;
@@ -2057,11 +2323,18 @@ PYTHON_NATIVE(memorySetItem)
     auto index = toIndex(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t at = *index < 0 ? *index + self->length() : *index;
-    auto bytes = at < 0 || at >= self->length() ? std::span<uint8_t>() : self->item(at);
+    if (at < 0 || at >= self->length())
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s));
+    // What is to be written is worked out first, since working it out can run anything, and where it goes is looked up after that.
+    std::array<uint8_t, 8> packed;
+    packItem(globalObject, self->format(), std::span(packed).first(self->itemSize()), value);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (self->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+    auto bytes = self->item(at);
     if (bytes.empty())
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s));
-    scope.release();
-    packItem(globalObject, self->format(), bytes, value);
+    memcpy(bytes.data(), packed.data(), bytes.size());
     RETURN_NONE();
 }
 
@@ -2088,15 +2361,16 @@ PYTHON_NATIVE(memoryToList)
 PYTHON_NATIVE(memoryHex)
 {
     MEMORY_PROLOGUE();
-    String text = hexWithArguments(globalObject, scope, args, bytesOfMemory(self).span());
+    String text = hexWithArguments(globalObject, scope, args, bytesOfMemory(self));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsString(vm, text));
 }
 
 PYTHON_NATIVE(memoryRelease)
 {
-    UNUSED_PARAM(globalObject);
-    asMemory(callFrame->argument(0))->release();
+    NATIVE_PROLOGUE();
+    asMemory(args[0])->release(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
 }
 
@@ -2109,7 +2383,7 @@ PYTHON_NATIVE(memoryEnter)
 PYTHON_NATIVE(memoryToReadOnly)
 {
     MEMORY_PROLOGUE();
-    return JSValue::encode(PyMemoryView::create(globalObject, self->object(), self->format(), self->itemSize(), self->offset(), self->length(), self->stride(), true));
+    return JSValue::encode(self->derive(globalObject, self->format(), self->itemSize(), self->offset(), self->length(), self->stride(), true));
 }
 
 // cast(format): the same bytes, taken as items of another kind. One of the two kinds has to be bytes.
@@ -2134,7 +2408,7 @@ PYTHON_NATIVE(memoryCast)
     int64_t size = self->length() * self->itemSize();
     if (size % itemSize)
         return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: length is not a multiple of itemsize"_s));
-    return JSValue::encode(PyMemoryView::create(globalObject, self->object(), format, itemSize, self->offset(), size / itemSize, itemSize, self->isReadOnly()));
+    return JSValue::encode(self->derive(globalObject, format, itemSize, self->offset(), size / itemSize, itemSize, self->isReadOnly()));
 }
 
 PYTHON_NATIVE(memoryEq)
@@ -2150,11 +2424,25 @@ PYTHON_NATIVE(memoryEq)
         return JSValue::encode(jsBoolean((other == JSValue(self)) == wantsEqual));
     // By value, so that an int and a float that are equal are.
     PyMemoryView* otherMemory = dynamicDowncast<PyMemoryView>(other);
+    struct Releaser {
+        JSGlobalObject* globalObject;
+        PyMemoryView* view { nullptr };
+        ~Releaser()
+        {
+            if (view)
+                view->release(globalObject);
+        }
+    } releaser { globalObject };
     if (!otherMemory) {
-        auto buffer = tryBufferOf(other);
-        if (!buffer)
+        if (!hasBuffer(globalObject, other))
             RETURN_NOT_IMPLEMENTED();
-        otherMemory = PyMemoryView::create(globalObject, other, 'B', 1, 0, buffer->size(), 1, true);
+        otherMemory = memoryViewOf(globalObject, other, FullReadOnlyBuffer);
+        // What cannot be got at is something that this cannot be compared with.
+        if (scope.exception()) {
+            catchException(globalObject, BuiltinType::BaseException);
+            RETURN_NOT_IMPLEMENTED();
+        }
+        releaser.view = otherMemory;
     } else if (otherMemory->isReleased())
         return JSValue::encode(jsBoolean(!wantsEqual));
     bool same = self->length() == otherMemory->length();
@@ -2334,7 +2622,12 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         { "cast"_s, memoryCast },
         { "toreadonly"_s, memoryToReadOnly },
     });
-    addGetSet(globalObject, memory, "obj"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) { return self->object(); }>);
+    addGetSet(globalObject, memory, "obj"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) { return self->exporter() ? self->exporter() : self->object(); }>);
+    realm->typeBufferWrapper()->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, realm->typeBufferWrapper()));
+    for (PyType* type : { realm->typeBytes(), byteArray, memory })
+        addMethods(globalObject, type, { { "__buffer__"_s, builtinGetBuffer } });
+    for (PyType* type : { byteArray, memory, realm->typeBufferWrapper() })
+        addMethods(globalObject, type, { { "__release_buffer__"_s, builtinReleaseBuffer } });
     addGetSet(globalObject, memory, "nbytes"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) { return intFromInt64(globalObject, self->length() * self->itemSize()); }>);
     addGetSet(globalObject, memory, "readonly"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isReadOnly()); }>);
     addGetSet(globalObject, memory, "itemsize"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(self->itemSize()); }>);

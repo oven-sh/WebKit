@@ -1038,7 +1038,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             } else if (!isForBytes)
                 text = str(globalObject, argument);
             else {
-                auto buffer = tryBufferOf(argument);
+                auto buffer = tryBufferOf(globalObject, argument, FullReadOnlyBuffer);
+                RETURN_IF_EXCEPTION(scope, { });
                 if (!buffer && argument.isObject()) {
                     JSValue self;
                     JSValue method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_bytes, self);
@@ -1046,12 +1047,15 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     if (method) {
                         argument = callMethod(globalObject, method, self);
                         RETURN_IF_EXCEPTION(scope, { });
-                        buffer = tryBufferOf(argument);
+                        buffer = tryBufferOf(globalObject, argument);
+                        RETURN_IF_EXCEPTION(scope, { });
                     }
                 }
                 if (!buffer)
                     return raiseTypeError(globalObject, scope, makeString("%b requires a bytes-like object, or an object that implements __bytes__, not '"_s, typeName(globalObject, argument), '\''));
-                text = String(byteCast<Latin1Character>(*buffer));
+                ByteVector all;
+                buffer.appendTo(all);
+                text = String(byteCast<Latin1Character>(all.span()));
             }
             RETURN_IF_EXCEPTION(scope, { });
             specification.sign = '-';
@@ -1062,7 +1066,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         case 'c': {
             String text;
             if (isForBytes) {
-                if (auto buffer = bytesKindOf(argument) == BytesKind::None ? std::nullopt : tryBufferOf(argument)) {
+                if (auto buffer = bytesKindOf(argument) == BytesKind::None ? std::nullopt : builtinBufferOf(argument)) {
                     if (buffer->size() != 1)
                         return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not a "_s, typeName(globalObject, argument), " object of length "_s, buffer->size()));
                     text = String(byteCast<Latin1Character>(*buffer));

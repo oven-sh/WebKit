@@ -134,7 +134,10 @@ class PyMemoryView final : public JSNonFinalObject {
 public:
     PYTHON_CELL_BOILERPLATE(PyMemoryView, pyMemoryViewSpace)
 
-    static PyMemoryView* create(JSGlobalObject*, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly);
+    // `exporter` is for what a class of a program's gave with __buffer__(). See Python::newBufferWrapper().
+    static PyMemoryView* create(JSGlobalObject*, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter = JSValue());
+    // Another of the same bytes, or of some of them.
+    PyMemoryView* derive(JSGlobalObject*, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly) const;
 
     JSValue object() const { return m_object.get(); }
     char format() const { return m_format; }
@@ -143,8 +146,10 @@ public:
     int64_t length() const { return m_length; } // In items.
     int64_t stride() const { return m_stride; } // In bytes, from one item to the next. It can be negative.
     bool isReadOnly() const { return m_isReadOnly; }
+    JSValue exporter() const { return m_exporter.get(); }
     bool isReleased() const { return !m_object; }
-    void release() { m_object.clear(); }
+    // It can run __release_buffer__().
+    void release(JSGlobalObject*);
     bool isContiguous() const { return m_stride == static_cast<int64_t>(m_itemSize) || m_length <= 1; }
 
     // All of it, if its items are one after another and are still there.
@@ -153,9 +158,10 @@ public:
     std::span<uint8_t> item(int64_t index) const;
 
 private:
-    PyMemoryView(VM& vm, Structure* structure, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly)
+    PyMemoryView(VM& vm, Structure* structure, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter)
         : Base(vm, structure)
         , m_object(object, WriteBarrierEarlyInit)
+        , m_exporter(exporter, WriteBarrierEarlyInit)
         , m_offset(offset)
         , m_length(length)
         , m_stride(stride)
@@ -166,6 +172,7 @@ private:
     }
 
     WriteBarrier<Unknown> m_object;
+    WriteBarrier<Unknown> m_exporter;
     int64_t m_offset;
     int64_t m_length;
     int64_t m_stride;
@@ -189,8 +196,26 @@ public:
         int64_t step;
         int64_t length; // How many it selects.
     };
-    // What it selects of a sequence of the length. Nothing if it raised.
-    std::optional<Indices> indices(JSGlobalObject*, int64_t length) const;
+    // What it says, as numbers: PySlice_Unpack(). This is the part that can run a program's code, which can change how long the sequence is. Nothing if it raised.
+    struct Bounds {
+        int64_t start;
+        int64_t stop;
+        int64_t step;
+    };
+    std::optional<Bounds> unpack(JSGlobalObject*) const;
+    // What that selects of a sequence of the length: PySlice_AdjustIndices().
+    static Indices adjust(Bounds, int64_t length);
+    // The two together, for a sequence that cannot change.
+    std::optional<Indices> indices(JSGlobalObject* globalObject, int64_t length) const { return indices(globalObject, [length] { return length; }); }
+    // And for one that can, which is asked how long it is when it can change no more.
+    template<typename Length> requires std::is_invocable_v<Length>
+    std::optional<Indices> indices(JSGlobalObject* globalObject, const Length& length) const
+    {
+        auto bounds = unpack(globalObject);
+        if (!bounds)
+            return std::nullopt;
+        return adjust(*bounds, length());
+    }
     // The same, of something whose length is an int of any size, as ints of any size. False if it raised.
     bool indices(JSGlobalObject*, JSValue length, JSValue& start, JSValue& stop, JSValue& step) const;
 

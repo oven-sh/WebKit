@@ -87,6 +87,16 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
 
+### Where the bytes are is not kept
+
+What is in a `bytearray` moves when it is resized, and JavaScript can give an `ArrayBuffer` away. Either can be done by anything that runs a program's code, and looking at
+an argument does: `__index__()`, `__buffer__()`, going through an iterable. So a `std::span` of what is in something is good only until the next such thing, and is not kept.
+`Buffer`, in `PythonBytes.h`, is what is kept: it holds the object and finds out where its bytes are each time it is asked. It is what stands between CPython's
+`PyObject_GetBuffer()` and `PyBuffer_Release()`, and calls the `__buffer__()` and `__release_buffer__()` of a class that has them. What is written in C++ looks at all its
+arguments first, and only then at how much there is of what it is a method of. A slice is resolved in two steps for the same reason, as in CPython:
+`PySlice::unpack()`, which can run anything, and `PySlice::adjust()`, which is told the length as it is afterwards. The end of `programs/buffer-protocol.py` has every
+method shrink what it is working on from within an argument.
+
 ### A class is the prototype of its instances
 
 `instance.[[Prototype]]` is the class, so `type(x)` is a load from `x`'s structure. `class.[[Prototype]]` is what the instances of its first base have for a
@@ -394,7 +404,8 @@ There is nothing that is per process, nothing that is set after something is mad
 
 - **A `bytearray` can be resized while there is a `memoryview` of it.** CPython raises `BufferError`, and can because the view is released the
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
-  holds no pointer, only where it is looking, and checks each time.
+  holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when
+  the last `memoryview` of it is released, by `release()` or by `with`, and not when it is merely let go of.
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.

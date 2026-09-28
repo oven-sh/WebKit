@@ -524,7 +524,7 @@ PySlice* PySlice::create(JSGlobalObject* globalObject, JSValue start, JSValue st
     return slice;
 }
 
-std::optional<PySlice::Indices> PySlice::indices(JSGlobalObject* globalObject, int64_t length) const
+std::optional<PySlice::Bounds> PySlice::unpack(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -542,7 +542,7 @@ std::optional<PySlice::Indices> PySlice::indices(JSGlobalObject* globalObject, i
         RELEASE_AND_RETURN(scope, Python::toIndex(globalObject, value, true));
     };
 
-    Indices result;
+    Bounds result;
     result.step = 1;
     if (!Python::isNone(step())) {
         auto value = evaluate(step());
@@ -555,29 +555,36 @@ std::optional<PySlice::Indices> PySlice::indices(JSGlobalObject* globalObject, i
         // So that it can be negated.
         result.step = std::max(result.step, -std::numeric_limits<int64_t>::max());
     }
-
     bool isBackwards = result.step < 0;
-    auto clamp = [&] (JSValue value, int64_t whenAbsent) -> std::optional<int64_t> {
-        if (Python::isNone(value))
-            return whenAbsent;
-        auto index = evaluate(value);
+    result.start = isBackwards ? std::numeric_limits<int64_t>::max() : 0;
+    if (!Python::isNone(start())) {
+        auto value = evaluate(start());
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        int64_t i = *index;
+        result.start = *value;
+    }
+    result.stop = isBackwards ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
+    if (!Python::isNone(stop())) {
+        auto value = evaluate(stop());
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        result.stop = *value;
+    }
+    return result;
+}
+
+PySlice::Indices PySlice::adjust(Bounds bounds, int64_t length)
+{
+    bool isBackwards = bounds.step < 0;
+    auto clamp = [&] (int64_t i) {
         if (i < 0) {
             i += length;
-            if (i < 0)
-                i = isBackwards ? -1 : 0;
-        } else if (i >= length)
-            i = isBackwards ? length - 1 : length;
-        return i;
+            return i < 0 ? (isBackwards ? -1 : 0) : i;
+        }
+        return i >= length ? (isBackwards ? length - 1 : length) : i;
     };
-
-    auto first = clamp(start(), isBackwards ? length - 1 : 0);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    auto last = clamp(stop(), isBackwards ? -1 : length);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    result.start = *first;
-    result.stop = *last;
+    Indices result;
+    result.step = bounds.step;
+    result.start = clamp(bounds.start);
+    result.stop = clamp(bounds.stop);
     if (isBackwards)
         result.length = result.stop < result.start ? (result.start - result.stop - 1) / (-result.step) + 1 : 0;
     else

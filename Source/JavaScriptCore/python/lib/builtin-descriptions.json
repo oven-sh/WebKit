@@ -410,6 +410,8 @@
 ["_ConstEvaluator.__call__", "wrapper_descriptor", "($self, /, *args, **kwargs)", "Call self as a function."],
 ["_ConstEvaluator.__repr__", "wrapper_descriptor", "($self, /)", "Return repr(self)."],
 ["_IncompleteInputError", "type", null, "incomplete input.", [144, 0, 16, 0, 1073763586]],
+["_buffer_wrapper", "type", null, null, [32, 0, 0, 0, 20866]],
+["_buffer_wrapper.__release_buffer__", "wrapper_descriptor", "($self, buffer, /)", "Release the buffer object that exposes the underlying memory of the object."],
 ["_typing:", "module", null, "Primitives and accelerators for the typing module.\n"],
 ["_typing:_idfunc", "builtin_function_or_method", "($module, x, /)", null],
 ["anext_awaitable", "type", null, null, [32, 0, 0, 0, 20866]],
