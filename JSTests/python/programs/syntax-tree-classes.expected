@@ -1,0 +1,442 @@
+['AST', 'Add', 'And', 'AnnAssign', 'Assert', 'Assign', 'AsyncFor', 'AsyncFunctionDef', 'AsyncWith', 'Attribute', 'AugAssign', 'Await', 'BinOp', 'BitAnd', 'BitOr', 'BitXor', 'BoolOp', 'Break', 'Call', 'ClassDef', 'Compare', 'Constant', 'Continue', 'Del', 'Delete', 'Dict', 'DictComp', 'Div', 'Eq', 'ExceptHandler', 'Expr', 'Expression', 'FloorDiv', 'For', 'FormattedValue', 'FunctionDef', 'FunctionType', 'GeneratorExp', 'Global', 'Gt', 'GtE', 'If', 'IfExp', 'Import', 'ImportFrom', 'In', 'Interactive', 'Interpolation', 'Invert', 'Is', 'IsNot', 'JoinedStr', 'LShift', 'Lambda', 'List', 'ListComp', 'Load', 'Lt', 'LtE', 'MatMult', 'Match', 'MatchAs', 'MatchClass', 'MatchMapping', 'MatchOr', 'MatchSequence', 'MatchSingleton', 'MatchStar', 'MatchValue', 'Mod', 'Module', 'Mult', 'Name', 'NamedExpr', 'Nonlocal', 'Not', 'NotEq', 'NotIn', 'Or', 'ParamSpec', 'Pass', 'Pow', 'PyCF_ALLOW_TOP_LEVEL_AWAIT', 'PyCF_ONLY_AST', 'PyCF_OPTIMIZED_AST', 'PyCF_TYPE_COMMENTS', 'RShift', 'Raise', 'Return', 'Set', 'SetComp', 'Slice', 'Starred', 'Store', 'Sub', 'Subscript', 'TemplateStr', 'Try', 'TryStar', 'Tuple', 'TypeAlias', 'TypeIgnore', 'TypeVar', 'TypeVarTuple', 'UAdd', 'USub', 'UnaryOp', 'While', 'With', 'Yield', 'YieldFrom', 'alias', 'arg', 'arguments', 'boolop', 'cmpop', 'comprehension', 'excepthandler', 'expr', 'expr_context', 'keyword', 'match_case', 'mod', 'operator', 'pattern', 'stmt', 'type_ignore', 'type_param', 'unaryop', 'withitem']
+[('PyCF_ALLOW_TOP_LEVEL_AWAIT', 8192), ('PyCF_ONLY_AST', 1024), ('PyCF_TYPE_COMMENTS', 4096), ('PyCF_OPTIMIZED_AST', 33792)] _ast None ['AST', 'PyCF_ALLOW_TOP_LEVEL_AWAIT', 'PyCF_ONLY_AST', 'PyCF_TYPE_COMMENTS', 'PyCF_OPTIMIZED_AST', 'mod', 'Module', 'Interactive', 'Expression']
+AST ['AST', 'object'] ast AST () () () ['__delattr__', '__dict__', '__doc__', '__getattribute__', '__init__', '__match_args__', '__module__', '__new__', '__reduce__', '__replace__', '__repr__', '__setattr__', '_attributes', '_fields'] True False
+    None
+    None True {'__doc__': None}
+mod ['mod', 'AST', 'object'] ast mod () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'mod = Module(stmt* body, type_ignore* type_ignores)\n    | Interactive(stmt* body)\n    | Expression(expr body)\n    | FunctionType(expr* argtypes, expr returns)'
+    None True {}
+Module ['Module', 'mod', 'AST', 'object'] ast Module ('body', 'type_ignores') () ('body', 'type_ignores') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Module(stmt* body, type_ignore* type_ignores)'
+    {'body': list[ast.stmt], 'type_ignores': list[ast.type_ignore]} False {}
+Interactive ['Interactive', 'mod', 'AST', 'object'] ast Interactive ('body',) () ('body',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Interactive(stmt* body)'
+    {'body': list[ast.stmt]} False {}
+Expression ['Expression', 'mod', 'AST', 'object'] ast Expression ('body',) () ('body',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Expression(expr body)'
+    {'body': <class 'ast.expr'>} False {}
+FunctionType ['FunctionType', 'mod', 'AST', 'object'] ast FunctionType ('argtypes', 'returns') () ('argtypes', 'returns') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'FunctionType(expr* argtypes, expr returns)'
+    {'argtypes': list[ast.expr], 'returns': <class 'ast.expr'>} False {}
+stmt ['stmt', 'AST', 'object'] ast stmt () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields', 'end_col_offset', 'end_lineno'] True True
+    'stmt = FunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment, type_param* type_params)\n     | AsyncFunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment, type_param* type_params)\n     | ClassDef(identifier name, expr* bases, keyword* keywords, stmt* body, expr* decorator_list, type_param* type_params)\n     | Return(expr? value)\n     | Delete(expr* targets)\n     | Assign(expr* targets, expr value, string? type_comment)\n     | TypeAlias(expr name, type_param* type_params, expr value)\n     | AugAssign(expr target, operator op, expr value)\n     | AnnAssign(expr target, expr annotation, expr? value, int simple)\n     | For(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)\n     | AsyncFor(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)\n     | While(expr test, stmt* body, stmt* orelse)\n     | If(expr test, stmt* body, stmt* orelse)\n     | With(withitem* items, stmt* body, string? type_comment)\n     | AsyncWith(withitem* items, stmt* body, string? type_comment)\n     | Match(expr subject, match_case* cases)\n     | Raise(expr? exc, expr? cause)\n     | Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n     | TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)\n     | Assert(expr test, expr? msg)\n     | Import(alias* names)\n     | ImportFrom(identifier? module, alias* names, int? level)\n     | Global(identifier* names)\n     | Nonlocal(identifier* names)\n     | Expr(expr value)\n     | Pass\n     | Break\n     | Continue'
+    None True {'end_lineno': None, 'end_col_offset': None}
+FunctionDef ['FunctionDef', 'stmt', 'AST', 'object'] ast FunctionDef ('name', 'args', 'body', 'decorator_list', 'returns', 'type_comment', 'type_params') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'args', 'body', 'decorator_list', 'returns', 'type_comment', 'type_params') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'returns', 'type_comment'] True True
+    'FunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment, type_param* type_params)'
+    {'name': <class 'str'>, 'args': <class 'ast.arguments'>, 'body': list[ast.stmt], 'decorator_list': list[ast.expr], 'returns': ast.expr | None, 'type_comment': str | None, 'type_params': list[ast.type_param]} False {'returns': None, 'type_comment': None}
+AsyncFunctionDef ['AsyncFunctionDef', 'stmt', 'AST', 'object'] ast AsyncFunctionDef ('name', 'args', 'body', 'decorator_list', 'returns', 'type_comment', 'type_params') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'args', 'body', 'decorator_list', 'returns', 'type_comment', 'type_params') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'returns', 'type_comment'] True True
+    'AsyncFunctionDef(identifier name, arguments args, stmt* body, expr* decorator_list, expr? returns, string? type_comment, type_param* type_params)'
+    {'name': <class 'str'>, 'args': <class 'ast.arguments'>, 'body': list[ast.stmt], 'decorator_list': list[ast.expr], 'returns': ast.expr | None, 'type_comment': str | None, 'type_params': list[ast.type_param]} False {'returns': None, 'type_comment': None}
+ClassDef ['ClassDef', 'stmt', 'AST', 'object'] ast ClassDef ('name', 'bases', 'keywords', 'body', 'decorator_list', 'type_params') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'bases', 'keywords', 'body', 'decorator_list', 'type_params') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'ClassDef(identifier name, expr* bases, keyword* keywords, stmt* body, expr* decorator_list, type_param* type_params)'
+    {'name': <class 'str'>, 'bases': list[ast.expr], 'keywords': list[ast.keyword], 'body': list[ast.stmt], 'decorator_list': list[ast.expr], 'type_params': list[ast.type_param]} False {}
+Return ['Return', 'stmt', 'AST', 'object'] ast Return ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'value'] True True
+    'Return(expr? value)'
+    {'value': ast.expr | None} False {'value': None}
+Delete ['Delete', 'stmt', 'AST', 'object'] ast Delete ('targets',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('targets',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Delete(expr* targets)'
+    {'targets': list[ast.expr]} False {}
+Assign ['Assign', 'stmt', 'AST', 'object'] ast Assign ('targets', 'value', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('targets', 'value', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'type_comment'] True True
+    'Assign(expr* targets, expr value, string? type_comment)'
+    {'targets': list[ast.expr], 'value': <class 'ast.expr'>, 'type_comment': str | None} False {'type_comment': None}
+TypeAlias ['TypeAlias', 'stmt', 'AST', 'object'] ast TypeAlias ('name', 'type_params', 'value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'type_params', 'value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'TypeAlias(expr name, type_param* type_params, expr value)'
+    {'name': <class 'ast.expr'>, 'type_params': list[ast.type_param], 'value': <class 'ast.expr'>} False {}
+AugAssign ['AugAssign', 'stmt', 'AST', 'object'] ast AugAssign ('target', 'op', 'value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('target', 'op', 'value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'AugAssign(expr target, operator op, expr value)'
+    {'target': <class 'ast.expr'>, 'op': <class 'ast.operator'>, 'value': <class 'ast.expr'>} False {}
+AnnAssign ['AnnAssign', 'stmt', 'AST', 'object'] ast AnnAssign ('target', 'annotation', 'value', 'simple') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('target', 'annotation', 'value', 'simple') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'value'] True True
+    'AnnAssign(expr target, expr annotation, expr? value, int simple)'
+    {'target': <class 'ast.expr'>, 'annotation': <class 'ast.expr'>, 'value': ast.expr | None, 'simple': <class 'int'>} False {'value': None}
+For ['For', 'stmt', 'AST', 'object'] ast For ('target', 'iter', 'body', 'orelse', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('target', 'iter', 'body', 'orelse', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'type_comment'] True True
+    'For(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)'
+    {'target': <class 'ast.expr'>, 'iter': <class 'ast.expr'>, 'body': list[ast.stmt], 'orelse': list[ast.stmt], 'type_comment': str | None} False {'type_comment': None}
+AsyncFor ['AsyncFor', 'stmt', 'AST', 'object'] ast AsyncFor ('target', 'iter', 'body', 'orelse', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('target', 'iter', 'body', 'orelse', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'type_comment'] True True
+    'AsyncFor(expr target, expr iter, stmt* body, stmt* orelse, string? type_comment)'
+    {'target': <class 'ast.expr'>, 'iter': <class 'ast.expr'>, 'body': list[ast.stmt], 'orelse': list[ast.stmt], 'type_comment': str | None} False {'type_comment': None}
+While ['While', 'stmt', 'AST', 'object'] ast While ('test', 'body', 'orelse') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('test', 'body', 'orelse') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'While(expr test, stmt* body, stmt* orelse)'
+    {'test': <class 'ast.expr'>, 'body': list[ast.stmt], 'orelse': list[ast.stmt]} False {}
+If ['If', 'stmt', 'AST', 'object'] ast If ('test', 'body', 'orelse') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('test', 'body', 'orelse') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'If(expr test, stmt* body, stmt* orelse)'
+    {'test': <class 'ast.expr'>, 'body': list[ast.stmt], 'orelse': list[ast.stmt]} False {}
+With ['With', 'stmt', 'AST', 'object'] ast With ('items', 'body', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('items', 'body', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'type_comment'] True True
+    'With(withitem* items, stmt* body, string? type_comment)'
+    {'items': list[ast.withitem], 'body': list[ast.stmt], 'type_comment': str | None} False {'type_comment': None}
+AsyncWith ['AsyncWith', 'stmt', 'AST', 'object'] ast AsyncWith ('items', 'body', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('items', 'body', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'type_comment'] True True
+    'AsyncWith(withitem* items, stmt* body, string? type_comment)'
+    {'items': list[ast.withitem], 'body': list[ast.stmt], 'type_comment': str | None} False {'type_comment': None}
+Match ['Match', 'stmt', 'AST', 'object'] ast Match ('subject', 'cases') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('subject', 'cases') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Match(expr subject, match_case* cases)'
+    {'subject': <class 'ast.expr'>, 'cases': list[ast.match_case]} False {}
+Raise ['Raise', 'stmt', 'AST', 'object'] ast Raise ('exc', 'cause') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('exc', 'cause') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'cause', 'exc'] True True
+    'Raise(expr? exc, expr? cause)'
+    {'exc': ast.expr | None, 'cause': ast.expr | None} False {'exc': None, 'cause': None}
+Try ['Try', 'stmt', 'AST', 'object'] ast Try ('body', 'handlers', 'orelse', 'finalbody') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('body', 'handlers', 'orelse', 'finalbody') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Try(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)'
+    {'body': list[ast.stmt], 'handlers': list[ast.excepthandler], 'orelse': list[ast.stmt], 'finalbody': list[ast.stmt]} False {}
+TryStar ['TryStar', 'stmt', 'AST', 'object'] ast TryStar ('body', 'handlers', 'orelse', 'finalbody') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('body', 'handlers', 'orelse', 'finalbody') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'TryStar(stmt* body, excepthandler* handlers, stmt* orelse, stmt* finalbody)'
+    {'body': list[ast.stmt], 'handlers': list[ast.excepthandler], 'orelse': list[ast.stmt], 'finalbody': list[ast.stmt]} False {}
+Assert ['Assert', 'stmt', 'AST', 'object'] ast Assert ('test', 'msg') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('test', 'msg') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'msg'] True True
+    'Assert(expr test, expr? msg)'
+    {'test': <class 'ast.expr'>, 'msg': ast.expr | None} False {'msg': None}
+Import ['Import', 'stmt', 'AST', 'object'] ast Import ('names',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('names',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Import(alias* names)'
+    {'names': list[ast.alias]} False {}
+ImportFrom ['ImportFrom', 'stmt', 'AST', 'object'] ast ImportFrom ('module', 'names', 'level') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('module', 'names', 'level') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'level', 'module'] True True
+    'ImportFrom(identifier? module, alias* names, int? level)'
+    {'module': str | None, 'names': list[ast.alias], 'level': int | None} False {'module': None, 'level': None}
+Global ['Global', 'stmt', 'AST', 'object'] ast Global ('names',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('names',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Global(identifier* names)'
+    {'names': list[str]} False {}
+Nonlocal ['Nonlocal', 'stmt', 'AST', 'object'] ast Nonlocal ('names',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('names',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Nonlocal(identifier* names)'
+    {'names': list[str]} False {}
+Expr ['Expr', 'stmt', 'AST', 'object'] ast Expr ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Expr(expr value)'
+    {'value': <class 'ast.expr'>} False {}
+Pass ['Pass', 'stmt', 'AST', 'object'] ast Pass () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Pass'
+    {} False {}
+Break ['Break', 'stmt', 'AST', 'object'] ast Break () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Break'
+    {} False {}
+Continue ['Continue', 'stmt', 'AST', 'object'] ast Continue () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Continue'
+    {} False {}
+expr ['expr', 'AST', 'object'] ast expr () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields', 'end_col_offset', 'end_lineno'] True True
+    'expr = BoolOp(boolop op, expr* values)\n     | NamedExpr(expr target, expr value)\n     | BinOp(expr left, operator op, expr right)\n     | UnaryOp(unaryop op, expr operand)\n     | Lambda(arguments args, expr body)\n     | IfExp(expr test, expr body, expr orelse)\n     | Dict(expr?* keys, expr* values)\n     | Set(expr* elts)\n     | ListComp(expr elt, comprehension* generators)\n     | SetComp(expr elt, comprehension* generators)\n     | DictComp(expr key, expr value, comprehension* generators)\n     | GeneratorExp(expr elt, comprehension* generators)\n     | Await(expr value)\n     | Yield(expr? value)\n     | YieldFrom(expr value)\n     | Compare(expr left, cmpop* ops, expr* comparators)\n     | Call(expr func, expr* args, keyword* keywords)\n     | FormattedValue(expr value, int conversion, expr? format_spec)\n     | Interpolation(expr value, constant str, int conversion, expr? format_spec)\n     | JoinedStr(expr* values)\n     | TemplateStr(expr* values)\n     | Constant(constant value, string? kind)\n     | Attribute(expr value, identifier attr, expr_context ctx)\n     | Subscript(expr value, expr slice, expr_context ctx)\n     | Starred(expr value, expr_context ctx)\n     | Name(identifier id, expr_context ctx)\n     | List(expr* elts, expr_context ctx)\n     | Tuple(expr* elts, expr_context ctx)\n     | Slice(expr? lower, expr? upper, expr? step)'
+    None True {'end_lineno': None, 'end_col_offset': None}
+BoolOp ['BoolOp', 'expr', 'AST', 'object'] ast BoolOp ('op', 'values') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('op', 'values') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'BoolOp(boolop op, expr* values)'
+    {'op': <class 'ast.boolop'>, 'values': list[ast.expr]} False {}
+NamedExpr ['NamedExpr', 'expr', 'AST', 'object'] ast NamedExpr ('target', 'value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('target', 'value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'NamedExpr(expr target, expr value)'
+    {'target': <class 'ast.expr'>, 'value': <class 'ast.expr'>} False {}
+BinOp ['BinOp', 'expr', 'AST', 'object'] ast BinOp ('left', 'op', 'right') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('left', 'op', 'right') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'BinOp(expr left, operator op, expr right)'
+    {'left': <class 'ast.expr'>, 'op': <class 'ast.operator'>, 'right': <class 'ast.expr'>} False {}
+UnaryOp ['UnaryOp', 'expr', 'AST', 'object'] ast UnaryOp ('op', 'operand') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('op', 'operand') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'UnaryOp(unaryop op, expr operand)'
+    {'op': <class 'ast.unaryop'>, 'operand': <class 'ast.expr'>} False {}
+Lambda ['Lambda', 'expr', 'AST', 'object'] ast Lambda ('args', 'body') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('args', 'body') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Lambda(arguments args, expr body)'
+    {'args': <class 'ast.arguments'>, 'body': <class 'ast.expr'>} False {}
+IfExp ['IfExp', 'expr', 'AST', 'object'] ast IfExp ('test', 'body', 'orelse') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('test', 'body', 'orelse') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'IfExp(expr test, expr body, expr orelse)'
+    {'test': <class 'ast.expr'>, 'body': <class 'ast.expr'>, 'orelse': <class 'ast.expr'>} False {}
+Dict ['Dict', 'expr', 'AST', 'object'] ast Dict ('keys', 'values') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('keys', 'values') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Dict(expr?* keys, expr* values)'
+    {'keys': list[ast.expr], 'values': list[ast.expr]} False {}
+Set ['Set', 'expr', 'AST', 'object'] ast Set ('elts',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elts',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Set(expr* elts)'
+    {'elts': list[ast.expr]} False {}
+ListComp ['ListComp', 'expr', 'AST', 'object'] ast ListComp ('elt', 'generators') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elt', 'generators') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'ListComp(expr elt, comprehension* generators)'
+    {'elt': <class 'ast.expr'>, 'generators': list[ast.comprehension]} False {}
+SetComp ['SetComp', 'expr', 'AST', 'object'] ast SetComp ('elt', 'generators') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elt', 'generators') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'SetComp(expr elt, comprehension* generators)'
+    {'elt': <class 'ast.expr'>, 'generators': list[ast.comprehension]} False {}
+DictComp ['DictComp', 'expr', 'AST', 'object'] ast DictComp ('key', 'value', 'generators') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('key', 'value', 'generators') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'DictComp(expr key, expr value, comprehension* generators)'
+    {'key': <class 'ast.expr'>, 'value': <class 'ast.expr'>, 'generators': list[ast.comprehension]} False {}
+GeneratorExp ['GeneratorExp', 'expr', 'AST', 'object'] ast GeneratorExp ('elt', 'generators') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elt', 'generators') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'GeneratorExp(expr elt, comprehension* generators)'
+    {'elt': <class 'ast.expr'>, 'generators': list[ast.comprehension]} False {}
+Await ['Await', 'expr', 'AST', 'object'] ast Await ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Await(expr value)'
+    {'value': <class 'ast.expr'>} False {}
+Yield ['Yield', 'expr', 'AST', 'object'] ast Yield ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'value'] True True
+    'Yield(expr? value)'
+    {'value': ast.expr | None} False {'value': None}
+YieldFrom ['YieldFrom', 'expr', 'AST', 'object'] ast YieldFrom ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'YieldFrom(expr value)'
+    {'value': <class 'ast.expr'>} False {}
+Compare ['Compare', 'expr', 'AST', 'object'] ast Compare ('left', 'ops', 'comparators') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('left', 'ops', 'comparators') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Compare(expr left, cmpop* ops, expr* comparators)'
+    {'left': <class 'ast.expr'>, 'ops': list[ast.cmpop], 'comparators': list[ast.expr]} False {}
+Call ['Call', 'expr', 'AST', 'object'] ast Call ('func', 'args', 'keywords') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('func', 'args', 'keywords') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Call(expr func, expr* args, keyword* keywords)'
+    {'func': <class 'ast.expr'>, 'args': list[ast.expr], 'keywords': list[ast.keyword]} False {}
+FormattedValue ['FormattedValue', 'expr', 'AST', 'object'] ast FormattedValue ('value', 'conversion', 'format_spec') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'conversion', 'format_spec') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'format_spec'] True True
+    'FormattedValue(expr value, int conversion, expr? format_spec)'
+    {'value': <class 'ast.expr'>, 'conversion': <class 'int'>, 'format_spec': ast.expr | None} False {'format_spec': None}
+Interpolation ['Interpolation', 'expr', 'AST', 'object'] ast Interpolation ('value', 'str', 'conversion', 'format_spec') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'str', 'conversion', 'format_spec') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'format_spec'] True True
+    'Interpolation(expr value, constant str, int conversion, expr? format_spec)'
+    {'value': <class 'ast.expr'>, 'str': <class 'object'>, 'conversion': <class 'int'>, 'format_spec': ast.expr | None} False {'format_spec': None}
+JoinedStr ['JoinedStr', 'expr', 'AST', 'object'] ast JoinedStr ('values',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('values',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'JoinedStr(expr* values)'
+    {'values': list[ast.expr]} False {}
+TemplateStr ['TemplateStr', 'expr', 'AST', 'object'] ast TemplateStr ('values',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('values',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'TemplateStr(expr* values)'
+    {'values': list[ast.expr]} False {}
+Constant ['Constant', 'expr', 'AST', 'object'] ast Constant ('value', 'kind') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'kind') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'kind'] True True
+    'Constant(constant value, string? kind)'
+    {'value': <class 'object'>, 'kind': str | None} False {'kind': None}
+Attribute ['Attribute', 'expr', 'AST', 'object'] ast Attribute ('value', 'attr', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'attr', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Attribute(expr value, identifier attr, expr_context ctx)'
+    {'value': <class 'ast.expr'>, 'attr': <class 'str'>, 'ctx': <class 'ast.expr_context'>} False {}
+Subscript ['Subscript', 'expr', 'AST', 'object'] ast Subscript ('value', 'slice', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'slice', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Subscript(expr value, expr slice, expr_context ctx)'
+    {'value': <class 'ast.expr'>, 'slice': <class 'ast.expr'>, 'ctx': <class 'ast.expr_context'>} False {}
+Starred ['Starred', 'expr', 'AST', 'object'] ast Starred ('value', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Starred(expr value, expr_context ctx)'
+    {'value': <class 'ast.expr'>, 'ctx': <class 'ast.expr_context'>} False {}
+Name ['Name', 'expr', 'AST', 'object'] ast Name ('id', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('id', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Name(identifier id, expr_context ctx)'
+    {'id': <class 'str'>, 'ctx': <class 'ast.expr_context'>} False {}
+List ['List', 'expr', 'AST', 'object'] ast List ('elts', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elts', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'List(expr* elts, expr_context ctx)'
+    {'elts': list[ast.expr], 'ctx': <class 'ast.expr_context'>} False {}
+Tuple ['Tuple', 'expr', 'AST', 'object'] ast Tuple ('elts', 'ctx') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('elts', 'ctx') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Tuple(expr* elts, expr_context ctx)'
+    {'elts': list[ast.expr], 'ctx': <class 'ast.expr_context'>} False {}
+Slice ['Slice', 'expr', 'AST', 'object'] ast Slice ('lower', 'upper', 'step') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('lower', 'upper', 'step') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'lower', 'step', 'upper'] True True
+    'Slice(expr? lower, expr? upper, expr? step)'
+    {'lower': ast.expr | None, 'upper': ast.expr | None, 'step': ast.expr | None} False {'lower': None, 'upper': None, 'step': None}
+expr_context ['expr_context', 'AST', 'object'] ast expr_context () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'expr_context = Load | Store | Del'
+    None True {}
+Load ['Load', 'expr_context', 'AST', 'object'] ast Load () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Load'
+    {} False {}
+Store ['Store', 'expr_context', 'AST', 'object'] ast Store () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Store'
+    {} False {}
+Del ['Del', 'expr_context', 'AST', 'object'] ast Del () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Del'
+    {} False {}
+boolop ['boolop', 'AST', 'object'] ast boolop () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'boolop = And | Or'
+    None True {}
+And ['And', 'boolop', 'AST', 'object'] ast And () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'And'
+    {} False {}
+Or ['Or', 'boolop', 'AST', 'object'] ast Or () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Or'
+    {} False {}
+operator ['operator', 'AST', 'object'] ast operator () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'operator = Add | Sub | Mult | MatMult | Div | Mod | Pow | LShift | RShift | BitOr | BitXor | BitAnd | FloorDiv'
+    None True {}
+Add ['Add', 'operator', 'AST', 'object'] ast Add () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Add'
+    {} False {}
+Sub ['Sub', 'operator', 'AST', 'object'] ast Sub () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Sub'
+    {} False {}
+Mult ['Mult', 'operator', 'AST', 'object'] ast Mult () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Mult'
+    {} False {}
+MatMult ['MatMult', 'operator', 'AST', 'object'] ast MatMult () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatMult'
+    {} False {}
+Div ['Div', 'operator', 'AST', 'object'] ast Div () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Div'
+    {} False {}
+Mod ['Mod', 'operator', 'AST', 'object'] ast Mod () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Mod'
+    {} False {}
+Pow ['Pow', 'operator', 'AST', 'object'] ast Pow () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Pow'
+    {} False {}
+LShift ['LShift', 'operator', 'AST', 'object'] ast LShift () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'LShift'
+    {} False {}
+RShift ['RShift', 'operator', 'AST', 'object'] ast RShift () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'RShift'
+    {} False {}
+BitOr ['BitOr', 'operator', 'AST', 'object'] ast BitOr () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'BitOr'
+    {} False {}
+BitXor ['BitXor', 'operator', 'AST', 'object'] ast BitXor () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'BitXor'
+    {} False {}
+BitAnd ['BitAnd', 'operator', 'AST', 'object'] ast BitAnd () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'BitAnd'
+    {} False {}
+FloorDiv ['FloorDiv', 'operator', 'AST', 'object'] ast FloorDiv () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'FloorDiv'
+    {} False {}
+unaryop ['unaryop', 'AST', 'object'] ast unaryop () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'unaryop = Invert | Not | UAdd | USub'
+    None True {}
+Invert ['Invert', 'unaryop', 'AST', 'object'] ast Invert () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Invert'
+    {} False {}
+Not ['Not', 'unaryop', 'AST', 'object'] ast Not () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Not'
+    {} False {}
+UAdd ['UAdd', 'unaryop', 'AST', 'object'] ast UAdd () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'UAdd'
+    {} False {}
+USub ['USub', 'unaryop', 'AST', 'object'] ast USub () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'USub'
+    {} False {}
+cmpop ['cmpop', 'AST', 'object'] ast cmpop () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'cmpop = Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn'
+    None True {}
+Eq ['Eq', 'cmpop', 'AST', 'object'] ast Eq () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Eq'
+    {} False {}
+NotEq ['NotEq', 'cmpop', 'AST', 'object'] ast NotEq () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'NotEq'
+    {} False {}
+Lt ['Lt', 'cmpop', 'AST', 'object'] ast Lt () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Lt'
+    {} False {}
+LtE ['LtE', 'cmpop', 'AST', 'object'] ast LtE () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'LtE'
+    {} False {}
+Gt ['Gt', 'cmpop', 'AST', 'object'] ast Gt () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Gt'
+    {} False {}
+GtE ['GtE', 'cmpop', 'AST', 'object'] ast GtE () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'GtE'
+    {} False {}
+Is ['Is', 'cmpop', 'AST', 'object'] ast Is () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'Is'
+    {} False {}
+IsNot ['IsNot', 'cmpop', 'AST', 'object'] ast IsNot () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'IsNot'
+    {} False {}
+In ['In', 'cmpop', 'AST', 'object'] ast In () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'In'
+    {} False {}
+NotIn ['NotIn', 'cmpop', 'AST', 'object'] ast NotIn () () () ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'NotIn'
+    {} False {}
+comprehension ['comprehension', 'AST', 'object'] ast comprehension ('target', 'iter', 'ifs', 'is_async') () ('target', 'iter', 'ifs', 'is_async') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields'] True True
+    'comprehension(expr target, expr iter, expr* ifs, int is_async)'
+    {'target': <class 'ast.expr'>, 'iter': <class 'ast.expr'>, 'ifs': list[ast.expr], 'is_async': <class 'int'>} False {}
+excepthandler ['excepthandler', 'AST', 'object'] ast excepthandler () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields', 'end_col_offset', 'end_lineno'] True True
+    'excepthandler = ExceptHandler(expr? type, identifier? name, stmt* body)'
+    None True {'end_lineno': None, 'end_col_offset': None}
+ExceptHandler ['ExceptHandler', 'excepthandler', 'AST', 'object'] ast ExceptHandler ('type', 'name', 'body') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('type', 'name', 'body') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'name', 'type'] True True
+    'ExceptHandler(expr? type, identifier? name, stmt* body)'
+    {'type': ast.expr | None, 'name': str | None, 'body': list[ast.stmt]} False {'type': None, 'name': None}
+arguments ['arguments', 'AST', 'object'] ast arguments ('posonlyargs', 'args', 'vararg', 'kwonlyargs', 'kw_defaults', 'kwarg', 'defaults') () ('posonlyargs', 'args', 'vararg', 'kwonlyargs', 'kw_defaults', 'kwarg', 'defaults') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'kwarg', 'vararg'] True True
+    'arguments(arg* posonlyargs, arg* args, arg? vararg, arg* kwonlyargs, expr?* kw_defaults, arg? kwarg, expr* defaults)'
+    {'posonlyargs': list[ast.arg], 'args': list[ast.arg], 'vararg': ast.arg | None, 'kwonlyargs': list[ast.arg], 'kw_defaults': list[ast.expr], 'kwarg': ast.arg | None, 'defaults': list[ast.expr]} False {'vararg': None, 'kwarg': None}
+arg ['arg', 'AST', 'object'] ast arg ('arg', 'annotation', 'type_comment') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('arg', 'annotation', 'type_comment') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'annotation', 'end_col_offset', 'end_lineno', 'type_comment'] True True
+    'arg(identifier arg, expr? annotation, string? type_comment)'
+    {'arg': <class 'str'>, 'annotation': ast.expr | None, 'type_comment': str | None} False {'annotation': None, 'type_comment': None, 'end_lineno': None, 'end_col_offset': None}
+keyword ['keyword', 'AST', 'object'] ast keyword ('arg', 'value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('arg', 'value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'arg', 'end_col_offset', 'end_lineno'] True True
+    'keyword(identifier? arg, expr value)'
+    {'arg': str | None, 'value': <class 'ast.expr'>} False {'arg': None, 'end_lineno': None, 'end_col_offset': None}
+alias ['alias', 'AST', 'object'] ast alias ('name', 'asname') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'asname') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'asname', 'end_col_offset', 'end_lineno'] True True
+    'alias(identifier name, identifier? asname)'
+    {'name': <class 'str'>, 'asname': str | None} False {'asname': None, 'end_lineno': None, 'end_col_offset': None}
+withitem ['withitem', 'AST', 'object'] ast withitem ('context_expr', 'optional_vars') () ('context_expr', 'optional_vars') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'optional_vars'] True True
+    'withitem(expr context_expr, expr? optional_vars)'
+    {'context_expr': <class 'ast.expr'>, 'optional_vars': ast.expr | None} False {'optional_vars': None}
+match_case ['match_case', 'AST', 'object'] ast match_case ('pattern', 'guard', 'body') () ('pattern', 'guard', 'body') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_field_types', '_fields', 'guard'] True True
+    'match_case(pattern pattern, expr? guard, stmt* body)'
+    {'pattern': <class 'ast.pattern'>, 'guard': ast.expr | None, 'body': list[ast.stmt]} False {'guard': None}
+pattern ['pattern', 'AST', 'object'] ast pattern () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'pattern = MatchValue(expr value)\n        | MatchSingleton(constant value)\n        | MatchSequence(pattern* patterns)\n        | MatchMapping(expr* keys, pattern* patterns, identifier? rest)\n        | MatchClass(expr cls, pattern* patterns, identifier* kwd_attrs, pattern* kwd_patterns)\n        | MatchStar(identifier? name)\n        | MatchAs(pattern? pattern, identifier? name)\n        | MatchOr(pattern* patterns)'
+    None True {}
+MatchValue ['MatchValue', 'pattern', 'AST', 'object'] ast MatchValue ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatchValue(expr value)'
+    {'value': <class 'ast.expr'>} False {}
+MatchSingleton ['MatchSingleton', 'pattern', 'AST', 'object'] ast MatchSingleton ('value',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('value',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatchSingleton(constant value)'
+    {'value': <class 'object'>} False {}
+MatchSequence ['MatchSequence', 'pattern', 'AST', 'object'] ast MatchSequence ('patterns',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('patterns',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatchSequence(pattern* patterns)'
+    {'patterns': list[ast.pattern]} False {}
+MatchMapping ['MatchMapping', 'pattern', 'AST', 'object'] ast MatchMapping ('keys', 'patterns', 'rest') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('keys', 'patterns', 'rest') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'rest'] True True
+    'MatchMapping(expr* keys, pattern* patterns, identifier? rest)'
+    {'keys': list[ast.expr], 'patterns': list[ast.pattern], 'rest': str | None} False {'rest': None}
+MatchClass ['MatchClass', 'pattern', 'AST', 'object'] ast MatchClass ('cls', 'patterns', 'kwd_attrs', 'kwd_patterns') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('cls', 'patterns', 'kwd_attrs', 'kwd_patterns') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatchClass(expr cls, pattern* patterns, identifier* kwd_attrs, pattern* kwd_patterns)'
+    {'cls': <class 'ast.expr'>, 'patterns': list[ast.pattern], 'kwd_attrs': list[str], 'kwd_patterns': list[ast.pattern]} False {}
+MatchStar ['MatchStar', 'pattern', 'AST', 'object'] ast MatchStar ('name',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'name'] True True
+    'MatchStar(identifier? name)'
+    {'name': str | None} False {'name': None}
+MatchAs ['MatchAs', 'pattern', 'AST', 'object'] ast MatchAs ('pattern', 'name') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('pattern', 'name') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'name', 'pattern'] True True
+    'MatchAs(pattern? pattern, identifier? name)'
+    {'pattern': ast.pattern | None, 'name': str | None} False {'pattern': None, 'name': None}
+MatchOr ['MatchOr', 'pattern', 'AST', 'object'] ast MatchOr ('patterns',) ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('patterns',) ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'MatchOr(pattern* patterns)'
+    {'patterns': list[ast.pattern]} False {}
+type_ignore ['type_ignore', 'AST', 'object'] ast type_ignore () () () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'type_ignore = TypeIgnore(int lineno, string tag)'
+    None True {}
+TypeIgnore ['TypeIgnore', 'type_ignore', 'AST', 'object'] ast TypeIgnore ('lineno', 'tag') () ('lineno', 'tag') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields'] True True
+    'TypeIgnore(int lineno, string tag)'
+    {'lineno': <class 'int'>, 'tag': <class 'str'>} False {}
+type_param ['type_param', 'AST', 'object'] ast type_param () ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') () ['__doc__', '__match_args__', '__module__', '__weakref__', '_attributes', '_fields'] True True
+    'type_param = TypeVar(identifier name, expr? bound, expr? default_value)\n           | ParamSpec(identifier name, expr? default_value)\n           | TypeVarTuple(identifier name, expr? default_value)'
+    None True {}
+TypeVar ['TypeVar', 'type_param', 'AST', 'object'] ast TypeVar ('name', 'bound', 'default_value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'bound', 'default_value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'bound', 'default_value'] True True
+    'TypeVar(identifier name, expr? bound, expr? default_value)'
+    {'name': <class 'str'>, 'bound': ast.expr | None, 'default_value': ast.expr | None} False {'bound': None, 'default_value': None}
+ParamSpec ['ParamSpec', 'type_param', 'AST', 'object'] ast ParamSpec ('name', 'default_value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'default_value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'default_value'] True True
+    'ParamSpec(identifier name, expr? default_value)'
+    {'name': <class 'str'>, 'default_value': ast.expr | None} False {'default_value': None}
+TypeVarTuple ['TypeVarTuple', 'type_param', 'AST', 'object'] ast TypeVarTuple ('name', 'default_value') ('lineno', 'col_offset', 'end_lineno', 'end_col_offset') ('name', 'default_value') ['__annotations_cache__', '__doc__', '__match_args__', '__module__', '_field_types', '_fields', 'default_value'] True True
+    'TypeVarTuple(identifier name, expr? default_value)'
+    {'name': <class 'str'>, 'default_value': ast.expr | None} False {'default_value': None}
+kinds => [('__delattr__', 'wrapper_descriptor'), ('__dict__', 'getset_descriptor'), ('__doc__', 'NoneType'), ('__getattribute__', 'wrapper_descriptor'), ('__init__', 'wrapper_descriptor'), ('__match_args__', 'tuple'), ('__module__', 'str'), ('__new__', 'builtin_function_or_method'), ('__reduce__', 'method_descriptor'), ('__replace__', 'method_descriptor'), ('__repr__', 'wrapper_descriptor'), ('__setattr__', 'wrapper_descriptor'), ('_attributes', 'tuple'), ('_fields', 'tuple')]
+AST() => (ast.AST(), {}, ())
+AST(1) => TypeError: AST constructor takes at most 0 positional arguments
+AST(x=1) => {'x': 1} | ["DeprecationWarning: ast.AST.__init__ got an unexpected keyword argument 'x'. Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15."]
+Name() => {'ctx': Load()} | ["DeprecationWarning: Name.__init__ missing 1 required positional argument: 'id'. This will become an error in Python 3.15."]
+Name('x') => (Name(id='x', ctx=Load()), {'id': 'x', 'ctx': Load()}, True, <class 'ast.Load'>)
+Name('x', Store()) => Name(id='x', ctx=Store())
+Name(id='x') => Name(id='x', ctx=Load())
+Name('x', id='y') => TypeError: Name got multiple values for argument 'id'
+Name too many => TypeError: Name constructor takes at most 2 positional arguments
+Name lineno => {'id': 'x', 'lineno': 3, 'col_offset': 4, 'ctx': Load()}
+Name unknown => {'id': 'x', 'foo': 3, 'ctx': Load()} | ["DeprecationWarning: Name.__init__ got an unexpected keyword argument 'foo'. Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15."]
+Module() => [('body', []), ('type_ignores', [])]
+lists are not shared => False
+Return() => ({}, None, None)
+no lineno => AttributeError: 'Return' object has no attribute 'lineno'
+BinOp() => {} | ["DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'left'. This will become an error in Python 3.15.", "DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'op'. This will become an error in Python 3.15.", "DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'right'. This will become an error in Python 3.15."]
+Constant() => {} | ["DeprecationWarning: Constant.__init__ missing 1 required positional argument: 'value'. This will become an error in Python 3.15."]
+Constant(1) => (Constant(value=1, kind=None), {'value': 1}, None)
+FunctionDef('f') => ['body', 'decorator_list', 'name', 'type_params'] | ["DeprecationWarning: FunctionDef.__init__ missing 1 required positional argument: 'args'. This will become an error in Python 3.15."]
+arguments() => [('args', []), ('defaults', []), ('kw_defaults', []), ('kwonlyargs', []), ('posonlyargs', [])]
+Dict() => [('keys', []), ('values', [])]
+comprehension() => {'ifs': []} | ["DeprecationWarning: comprehension.__init__ missing 1 required positional argument: 'is_async'. This will become an error in Python 3.15.", "DeprecationWarning: comprehension.__init__ missing 1 required positional argument: 'iter'. This will become an error in Python 3.15.", "DeprecationWarning: comprehension.__init__ missing 1 required positional argument: 'target'. This will become an error in Python 3.15."]
+ImportFrom() => [('names', [])]
+MatchSingleton() => {} | ["DeprecationWarning: MatchSingleton.__init__ missing 1 required positional argument: 'value'. This will become an error in Python 3.15."]
+Load() is Load() => (False, False, Load())
+stmt() => (stmt(), {}, None)
+mod(1) => TypeError: mod constructor takes at most 0 positional arguments
+setting anything => (1, {'id': 'x', 'ctx': Load(), 'zzz': 1})
+deleting => ({'ctx': Load()},)
+repr with a field missing => AttributeError: 'Name' object has no attribute 'id'
+repr depth => BinOp(left=BinOp(left=BinOp(left=BinOp(...), op=Add(...), right=Constant(...)), op=Add(), right=Constant(value=4, kind=None)), op=Add(), right=Constant(value=5, kind=None))
+repr lists => (List(elts=[], ctx=Load()), List(elts=[Constant(value=1, kind=None)], ctx=Load()), List(elts=[Constant(value=1, kind=None), Constant(value=2, kind=None)], ctx=Load()), List(elts=[Constant(value=0, kind=None), ..., Constant(value=4, kind=None)], ctx=Load()), List(elts=(Constant(value=1, kind=None), ..., 3), ctx=Load()), List(elts=[1, ..., None], ctx=Load()), Global(names=['a', ..., 'c']))
+repr of itself => 'List(elts=[List(...)], ctx=Load())'
+repr of itself by a field => 'Expr(value=Expr(...))'
+reduce => ((<class 'ast.Name'>, (None, None), {'id': 'x', 'ctx': Load()}), (<class 'ast.AST'>, (), {}), (<class 'ast.Load'>, (), {}), (<class 'ast.Name'>, (), {'ctx': Load()}), (<class 'ast.BinOp'>, (), {'right': 1}), (<class 'ast.Name'>, (None, None), {'id': 'x', 'lineno': 1, 'ctx': Load()})) | ["DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'left'. This will become an error in Python 3.15.", "DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'op'. This will become an error in Python 3.15.", "DeprecationWarning: Name.__init__ missing 1 required positional argument: 'id'. This will become an error in Python 3.15."]
+reduce args => TypeError: AST.__reduce__() takes no arguments (1 given)
+replace => ({'id': 'y', 'ctx': Load(), 'lineno': 1, 'col_offset': 2}, False, {'id': 'x', 'ctx': Load(), 'lineno': 1, 'col_offset': 2}, {'id': 'x', 'ctx': Load(), 'lineno': 9, 'col_offset': 2})
+replace unknown => TypeError: Name.__replace__ got an unexpected keyword argument 'foo'.
+replace positional => TypeError: __replace__() takes no positional arguments
+replace missing => TypeError: BinOp.__replace__ missing 2 keyword arguments: 'op', 'right'. | ["DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'op'. This will become an error in Python 3.15.", "DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'right'. This will become an error in Python 3.15."]
+replace missing one => TypeError: BinOp.__replace__ missing 1 keyword argument: 'right'. | ["DeprecationWarning: BinOp.__init__ missing 1 required positional argument: 'right'. This will become an error in Python 3.15."]
+replace optional missing => {}
+replace attributes missing => {'id': 'z', 'ctx': Load()}
+derived => AttributeError: 'Mine' object has no attribute 'a'
+derived too many => TypeError: Mine constructor takes at most 2 positional arguments
+derived unknown => {'c': 3} | ["DeprecationWarning: Mine.__init__ got an unexpected keyword argument 'c'. Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15."]
+derived with types => [('c', []), ('d', Load())] | ["DeprecationWarning: Field 'e' is missing from Typed._field_types. This will become an error in Python 3.15.", "DeprecationWarning: Typed.__init__ missing 1 required positional argument: 'a'. This will become an error in Python 3.15."]
+derived from Name => AttributeError: 'MyName' object has no attribute 'id' | ["DeprecationWarning: MyName.__init__ missing 1 required positional argument: 'id'. This will become an error in Python 3.15."]
+_fields is no sequence => TypeError: object of type 'int' has no len()
+_fields of ints => TypeError: attribute name must be string, not 'int'
+no _fields => TypeError: Mine constructor takes at most 0 positional arguments
+match => [None]
+patterns => ['x', ('store', 'y'), 'expr', ('add', 1, 2), 'expr', '?']
+isinstance => (True, True, False, True, True)
+classes can be changed => (1, 2)
+hash and eq => (False, True, True)
+bool => True
+weakref slot => (False, True, False, True, False)
+__init__ again => {'id': 'y', 'ctx': Load()}
+__new__ => AttributeError: 'Name' object has no attribute 'id'
+__dict__ set => ('q', {'id': 'q'})

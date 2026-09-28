@@ -225,8 +225,7 @@ PYTHON_NATIVE(numberFormat)
 
 // ---- int
 
-// The int that a string spells, in the base. Empty if it spells none.
-static JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
+JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
 {
     unsigned start = 0;
     unsigned end = text.length();

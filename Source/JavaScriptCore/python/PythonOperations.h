@@ -218,6 +218,8 @@ JSValue call(JSGlobalObject*, JSValue callable, JSValue, JSValue, JSValue);
 // The values of the keywords are the last of the arguments. `keywordNames` may be null.
 // `thisValue` is for a function of JavaScript's: what it was got from, in base.function(...). Python's own make nothing of it.
 JSValue callWithKeywords(JSGlobalObject*, JSValue callable, const ArgList&, KeywordNames* keywordNames, JSValue thisValue = jsUndefined());
+// callable(*arguments, **keywords). The values of the keywords are added to the arguments. `keywords` may be null.
+JSValue callWithKeywordDict(JSGlobalObject*, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords);
 // The value of each parameter of a function written in Python. False if it raised.
 bool bindArguments(JSGlobalObject*, JSFunction*, const FunctionInfo&, const ArgList&, KeywordNames*, MarkedArgumentBuffer& bound);
 // What loadMethod or lookupSpecial gave.
@@ -443,6 +445,7 @@ int64_t hashOfPointer(const void*);
 
 // An int, from what may not fit an int32.
 JSValue intFromInt64(JSGlobalObject*, int64_t);
+JSValue parseInt(JSGlobalObject*, StringView, unsigned base); // The int that a string spells, in the base. Empty if it spells none.
 JSValue intFromDouble(JSGlobalObject*, double); // Truncated.
 JSValue floatFromDouble(double);
 // ---- range

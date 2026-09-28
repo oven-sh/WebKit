@@ -264,7 +264,7 @@ static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* nam
     return !scope.exception();
 }
 
-static JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords)
+JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords)
 {
     VM& vm = globalObject->vm();
     if (!keywords || !keywords->size())

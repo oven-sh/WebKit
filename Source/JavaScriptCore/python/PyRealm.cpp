@@ -55,6 +55,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_notImplemented);
     thisObject->m_monitoring.visit(visitor);
     thisObject->m_warnings.visit(visitor);
+    thisObject->m_ast.visit(visitor);
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_noDefault);
     visitor.append(thisObject->m_boundArgumentsMarker);

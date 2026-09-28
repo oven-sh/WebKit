@@ -388,6 +388,8 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createContextVarsModule(globalObject);
     if (name == "_warnings"_s)
         return createWarningsModule(globalObject);
+    if (name == "_ast"_s)
+        return createASTModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
         return create(globalObject, name);
     return nullptr;

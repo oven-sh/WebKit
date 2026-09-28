@@ -535,15 +535,17 @@ PYTHON_NATIVE(builtinCompile)
         return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode 'func_type' requires flag PyCF_ONLY_AST"_s));
     else if (mode != "func_type"_s)
         return JSValue::encode(raiseValueError(globalObject, scope, flags & onlyAST ? "compile() mode must be 'exec', 'eval', 'single' or 'func_type'"_s : "compile() mode must be 'exec', 'eval' or 'single'"_s));
-    // FIXME: The tree, as objects of the module _ast, which there is none of yet.
-    if (flags & onlyAST)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "compile() cannot give the AST yet"_s));
+    // FIXME: What a function is said to take and to return, in a comment: (int, str) -> bool.
+    if (mode == "func_type"_s)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "compile() cannot parse the type of a function yet"_s));
 
     SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
     unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput);
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
+    if (flags & onlyAST)
+        RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, kind, futureFeatures)));
     // What the interpreter was started with is no optimization.
     FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, std::max(optimize, 0));
     RETURN_IF_EXCEPTION(scope, { });

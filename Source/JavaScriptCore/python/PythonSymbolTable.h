@@ -186,6 +186,8 @@ class SymbolTable {
 public:
     // Null if some use of a name is against the rules, and then the error says which.
     static std::unique_ptr<SymbolTable> build(VM&, Arena&, Module&, unsigned futureFeatures, SyntaxError&);
+    // Whether each `from __future__ import x` at the top names something that there is. That is all of this that is done for a tree that is only to be looked at.
+    static bool checkFutureStatements(VM&, Arena&, Module&, SyntaxError&);
 
     // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
     // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.

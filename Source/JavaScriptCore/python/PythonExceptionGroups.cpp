@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyFrame.h"
+#include "TopExceptionScope.h"
 #include "PythonSequences.h"
 
 // BaseExceptionGroup and ExceptionGroup, and what `except*` is compiled into calls of. It is Objects/exceptions.c of CPython, function for function, and for `except*`

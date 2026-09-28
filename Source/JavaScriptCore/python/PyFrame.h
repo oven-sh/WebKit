@@ -28,6 +28,7 @@
 #include "BytecodeIndex.h"
 #include "JSGenerator.h"
 #include "JSObject.h"
+#include "PyInstance.h"
 #include "PythonFunctionInfo.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

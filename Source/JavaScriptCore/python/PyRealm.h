@@ -28,6 +28,7 @@
 #include "JSObject.h"
 #include "PyType.h"
 #include "PythonMonitoring.h"
+#include "PythonASTModule.h"
 #include "PythonWarnings.h"
 #include "WeakGCMap.h"
 
@@ -335,6 +336,7 @@ public:
     Vector<JSCell*, 16>& objectsBeingWrittenOut() { return m_objectsBeingWrittenOut; }
     Python::MonitoringState& monitoring() { return m_monitoring; }
     Python::WarningsState& warnings() { return m_warnings; }
+    Python::ASTState& ast() { return m_ast; }
 
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
@@ -381,6 +383,7 @@ private:
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
     Python::MonitoringState m_monitoring;
     Python::WarningsState m_warnings;
+    Python::ASTState m_ast;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;
     WriteBarrier<JSArray> m_auditHooks;

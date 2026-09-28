@@ -743,6 +743,7 @@ python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
 python/PythonASTDumper.cpp
+python/PythonASTModule.cpp
 python/PythonAnnotations.cpp
 python/PythonAsync.cpp
 python/PythonBuiltinFunctions.cpp

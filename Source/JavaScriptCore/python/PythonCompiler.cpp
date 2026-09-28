@@ -33,6 +33,7 @@
 #include "ParserError.h"
 #include "PyDict.h"
 #include "PyObjects.h"
+#include "PythonASTModule.h"
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"
@@ -582,6 +583,36 @@ static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const So
             return false;
     }
     return true;
+}
+
+JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, unsigned futureFeatures)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Arena arena;
+    arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
+    arena.usesLessGreater = futureFeatures & FutureBarryAsFLUFL;
+    arena.impliesDedent = !(futureFeatures & DoNotImplyDedent);
+    arena.allowsIncompleteInput = futureFeatures & AllowIncompleteInput;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
+    Module* module = parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
+    if (!issueWarnings(globalObject, warnings, source))
+        return { };
+    if (!module) {
+        raiseSyntaxError(globalObject, scope, error, source, FoundIn::Parsing);
+        return { };
+    }
+    // _PyCompile_AstPreprocess(), where it is only to look for what is wrong
+    if (!SymbolTable::checkFutureStatements(vm, arena, *module, error)) {
+        raiseSyntaxError(globalObject, scope, error, source, FoundIn::WhatWasParsed);
+        return { };
+    }
+    collectControlFlowWarnings(*module, warnings);
+    if (!issueWarnings(globalObject, warnings, source))
+        return { };
+    RELEASE_AND_RETURN(scope, objectFromAST(globalObject, *module));
 }
 
 FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, unsigned optimizationLevel)

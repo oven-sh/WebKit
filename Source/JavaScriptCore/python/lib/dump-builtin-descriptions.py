@@ -39,6 +39,7 @@
 # where nothing is laid out as in CPython, but programs can see them. And whether they are zero decides what a class derived from it can have: whether
 # instances have a __dict__ already, whether there can be weak references to them already, and whether they can be given __slots__.
 
+import _ast
 import _contextvars
 import _typing
 import builtins
@@ -46,7 +47,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast"]
 
 
 def generator():
@@ -120,7 +121,7 @@ types = {}
 
 def add_type(a_type):
     is_heap_type = a_type.__flags__ & (1 << 9)
-    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in ("sys", "typing", "_typing")):
+    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in ("sys", "typing", "_typing") and a_type is not _ast.AST):
         return
     types[a_type.__name__] = a_type
     for base in a_type.__bases__:
@@ -135,6 +136,8 @@ for value in vars(_typing).values():
         add_type(value)
 for example in examples():
     add_type(type(example))
+# What is derived from it has nothing of its own that is written in C.
+add_type(_ast.AST)
 
 entries = []
 

@@ -191,6 +191,7 @@ private:
         return constant && constant->type == Constant::Type::String;
     }
 
+public:
     // Only a docstring and others of their kind may come before them.
     bool findFutureStatements(Module& module)
     {
@@ -218,6 +219,8 @@ private:
         }
         return true;
     }
+
+private:
 
     bool hasFutureAnnotations() const { return m_table.m_futureFeatures & FutureAnnotations; }
     bool allowsTopLevelAwait() const { return (m_table.m_futureFeatures & AllowTopLevelAwait) && m_current->type == BlockType::Module; }
@@ -1451,6 +1454,12 @@ std::unique_ptr<SymbolTable> SymbolTable::build(VM& vm, Arena& arena, Module& mo
     if (!SymbolTableBuilder(vm, arena, *table, error).build(module))
         return nullptr;
     return table;
+}
+
+bool SymbolTable::checkFutureStatements(VM& vm, Arena& arena, Module& module, SyntaxError& error)
+{
+    SymbolTable table;
+    return SymbolTableBuilder(vm, arena, table, error).findFutureStatements(module);
 }
 
 std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested)

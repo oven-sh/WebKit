@@ -181,6 +181,7 @@ void initializeContextVarTypes(JSGlobalObject*);
 JSObject* createContextVarsModule(JSGlobalObject*);
 void initializeWarnings(JSGlobalObject*);
 JSObject* createWarningsModule(JSGlobalObject*);
+JSObject* createASTModule(JSGlobalObject*);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 
