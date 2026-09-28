@@ -87,6 +87,25 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
 
+### Code objects
+
+A code object is a `FunctionExecutable`: a piece of source, and what has to be known to compile it that the source does not say (`FunctionInfo`). Instructions are made from
+that when they are wanted, and can be thrown away and made again.
+
+- **`co_code` is what there is to run, which is that: the source, and what is known about it.** It is not instructions. Two pieces of code are equal if they have the same, are called
+  the same and begin on the same line, as in CPython, where a file that they say they are from does not come into it either. `code(...)` makes a code object out of it again, so what takes a function to pieces to
+  send it somewhere can put it together there.
+- **What a program says is known about some source is believed as far as the source bears it out.** `generateFunctionCodeBlock()` looks at what it parsed before it takes it for a
+  `def`, and so on for whatever it would otherwise read on trust. All of it is compiled at once, so that what is wrong with it is a `ValueError` from `code()`.
+  `JSTests/python/programs/code-constructor-malformed.py` gives it 38,000 that are not quite right.
+- `replace()` can change what a code object says of itself: `co_name`, `co_qualname`, `co_filename`, `co_firstlineno`, and `CO_ITERABLE_COROUTINE` in `co_flags`, which is what
+  `types.coroutine()` sets. It makes another executable for the same source. All else follows from `co_code` and can be given only as what it is.
+- `co_lines()` and `co_positions()` are read out of the engine's `ExpressionInfo`, which has where in the source each instruction is from. Every statement says where it is, `pass` is a `nop`,
+  and a constant that has a line to itself says so.
+- `co_consts` is what is written out in the source and the code of what is defined in it, as they are first come to. It is not CPython's to the last item: it has no tuples that
+  were folded, and has the small ints that CPython has an instruction for.
+- What is never come to, `if 0:` and `while 0:` and what `__debug__` rules out, is compiled, since that is how it is found what is wrong with it, and jumped over. It has no lines and no constants.
+
 ### A function that is made from a code object
 
 A variable that an inner function uses is a variable of a `JSLexicalEnvironment`, and a cell is a view of one: the environment, and where in it. That is what

@@ -77,6 +77,13 @@ void initializeTemplateStrings(JSGlobalObject*);
 void initializeProperty(JSGlobalObject*);
 void initializeReduce(JSGlobalObject*);
 void initializeStructSequences(JSGlobalObject*);
+// Code objects: PythonCode.cpp
+FunctionExecutable* executableOfCode(JSValue code);
+const FunctionInfo& infoOfExecutable(FunctionExecutable*);
+bool isCode(JSGlobalObject*, JSValue);
+Vector<Identifier> sortedFreeVariables(const FunctionInfo&); // In the order of co_freevars.
+void initializeCodeType(JSGlobalObject*);
+
 JSObject* createSysModule(JSGlobalObject*);
 JSValue findOrLoadModule(JSGlobalObject*, const String& name);
 

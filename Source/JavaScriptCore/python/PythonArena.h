@@ -77,6 +77,8 @@ public:
 
     // How long an int can be that is written in decimal, or 0 for any length: sys.set_int_max_str_digits(). It is looked at when the source is first read.
     unsigned maximumDigitsOfIntLiteral { 0 };
+    // Whether `<>` is how it is said that two things differ, and not `!=`: from __future__ import barry_as_FLUFL, in the source or in what compiles it.
+    bool usesLessGreater { false };
 
 private:
     static constexpr size_t alignment = 8;

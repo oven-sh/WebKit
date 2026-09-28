@@ -786,6 +786,10 @@ BuiltinType PyIterator::typeFor(Kind kind)
         return BuiltinType::Filter;
     case Kind::Reversed:
         return BuiltinType::Reversed;
+    case Kind::CodeLines:
+        return BuiltinType::LineIterator;
+    case Kind::CodePositions:
+        return BuiltinType::PositionsIterator;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -836,7 +840,9 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         }
         RELEASE_AND_RETURN(scope, list->getIndex(globalObject, static_cast<unsigned>(m_index--)));
     }
-    case Kind::Tuple: {
+    case Kind::Tuple:
+    case Kind::CodeLines:
+    case Kind::CodePositions: {
         auto* tuple = uncheckedDowncast<PyTuple>(m_a.get().asCell());
         if (m_index >= tuple->length()) {
             finish();

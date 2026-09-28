@@ -34,6 +34,7 @@
 #include "PythonBytes.h"
 #include "PythonCompiler.h"
 #include "PythonGenerators.h"
+#include "PythonSymbolTable.h"
 #include "SourceProvider.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -41,138 +42,6 @@
 // Code objects, cells and frames: what a program sees when it looks into itself. And compile(), exec(), eval() and locals().
 
 namespace JSC { namespace Python {
-
-// ---- Code objects
-
-// A code object is a PyNativeObject whose first field is the FunctionExecutable.
-static FunctionExecutable* executableOf(JSValue code)
-{
-    return uncheckedDowncast<FunctionExecutable>(uncheckedDowncast<PyNativeObject>(code.asCell())->field(0).asCell());
-}
-
-static const FunctionInfo& infoOf(FunctionExecutable* executable)
-{
-    return *executable->unlinkedExecutable()->pythonInfo();
-}
-
-static bool isCode(JSGlobalObject* globalObject, JSValue value)
-{
-    return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->typeCode();
-}
-
-JSObject* codeObjectFor(JSGlobalObject* globalObject, FunctionExecutable* executable)
-{
-    // Of the two functions that a generator is made of, the code is the one that can be called.
-    if (FunctionExecutable* generatorFunction = executable->pythonGeneratorFunction())
-        executable = generatorFunction;
-    if (JSObject* code = executable->pythonCodeObject())
-        return code;
-    JSObject* code = PyNativeObject::create(globalObject, BuiltinType::Code, executable);
-    executable->setPythonCodeObject(globalObject->vm(), code);
-    return code;
-}
-
-static UnlinkedFunctionCodeBlock* unlinkedCodeBlockOf(VM& vm, UnlinkedFunctionExecutable* unlinked, const SourceCode& source)
-{
-    ParserError error;
-    return unlinked->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, unlinked->parseMode());
-}
-
-UnlinkedCodeBlock* unlinkedCodeBlockOf(VM& vm, FunctionExecutable* executable)
-{
-    return unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source());
-}
-
-void ensureCodeDetails(VM& vm, FunctionExecutable* executable)
-{
-    if (!infoOf(executable).details)
-        unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source());
-    RELEASE_ASSERT(infoOf(executable).details);
-}
-
-// What is known once it has been compiled, which it is now if it had not been.
-static const CodeDetails& detailsOf(VM& vm, FunctionExecutable* executable)
-{
-    const FunctionInfo& info = infoOf(executable);
-    if (info.isGenerator || info.isCoroutine) {
-        // What was written is in the function that resumes it, which is the one function that this one makes.
-        UnlinkedFunctionExecutable* body = unlinkedCodeBlockOf(vm, executable->unlinkedExecutable(), executable->source())->functionExpr(0);
-        if (!body->pythonInfo()->details)
-            unlinkedCodeBlockOf(vm, body, body->linkedSourceCode(executable->source()));
-        return *body->pythonInfo()->details;
-    }
-    ensureCodeDetails(vm, executable);
-    return *info.details;
-}
-
-static JSValue tupleOfNames(JSGlobalObject* globalObject, const Vector<Identifier>& names)
-{
-    VM& vm = globalObject->vm();
-    PyTuple* tuple = PyTuple::create(globalObject, names.size());
-    for (unsigned i = 0; i < names.size(); ++i)
-        tuple->initializeAt(vm, i, jsString(vm, names[i].string()));
-    return tuple;
-}
-
-static Vector<Identifier> sortedFreeVariables(const FunctionInfo& info)
-{
-    Vector<Identifier> names = info.freeVariables;
-    std::ranges::sort(names, [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); });
-    return names;
-}
-
-static bool isFunctionKind(CodeKind kind)
-{
-    return kind == CodeKind::Function || kind == CodeKind::Lambda || kind == CodeKind::GeneratorExpression;
-}
-
-static unsigned flagsOf(const FunctionInfo& info)
-{
-    unsigned flags = 0;
-    if (isFunctionKind(info.kind))
-        flags |= 0x1 | 0x2; // CO_OPTIMIZED | CO_NEWLOCALS
-    if (info.hasVariadic)
-        flags |= 0x4; // CO_VARARGS
-    if (info.hasKeywordVariadic)
-        flags |= 0x8; // CO_VARKEYWORDS
-    if (info.isNested)
-        flags |= 0x10; // CO_NESTED
-    if (info.isGenerator && info.isCoroutine)
-        flags |= 0x200; // CO_ASYNC_GENERATOR
-    else if (info.isGenerator)
-        flags |= 0x20; // CO_GENERATOR
-    else if (info.isCoroutine)
-        flags |= 0x80; // CO_COROUTINE
-    if (info.hasDocstring && isFunctionKind(info.kind))
-        flags |= 0x4000000; // CO_HAS_DOCSTRING
-    if (info.isMethod)
-        flags |= 0x8000000; // CO_METHOD
-    return flags | info.futureFeatures;
-}
-
-PYTHON_NATIVE(codeRepr)
-{
-    VM& vm = globalObject->vm();
-    FunctionExecutable* executable = executableOf(callFrame->argument(0));
-    const FunctionInfo& info = infoOf(executable);
-    return JSValue::encode(jsString(vm, makeString("<code object "_s, info.name.string(), " at 0x"_s, hex(std::bit_cast<uintptr_t>(executable), Lowercase), ", file \""_s, executable->source().provider()->sourceURL(), "\", line "_s, info.line, '>')));
-}
-
-PYTHON_NATIVE(codeEq)
-{
-    auto op = unpack<ComparisonOperator>(callFrame, 0);
-    bool wantsEqual = op == ComparisonOperator::Eq;
-    NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    if (!isEquality(op) || !isCode(globalObject, args.at(1)))
-        RETURN_NOT_IMPLEMENTED();
-    return JSValue::encode(jsBoolean((executableOf(args[0])->unlinkedExecutable() == executableOf(args[1])->unlinkedExecutable()) == wantsEqual));
-}
-
-PYTHON_NATIVE(codeHash)
-{
-    return JSValue::encode(intFromInt64(globalObject, static_cast<int64_t>(std::bit_cast<uintptr_t>(executableOf(callFrame->argument(0))->unlinkedExecutable()) >> 4)));
-}
 
 // ---- Cells
 
@@ -303,7 +172,7 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
     JSFunction* function = asFunction(self);
-    const FunctionInfo& info = infoOf(function->jsExecutable());
+    const FunctionInfo& info = infoOfExecutable(function->jsExecutable());
     auto names = sortedFreeVariables(info);
     if (names.isEmpty())
         return jsUndefined();
@@ -324,10 +193,13 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
 // An executable for the code of a code object, for a function that has its free variables as cells.
 static FunctionExecutable* executableTakingCells(JSGlobalObject* globalObject, JSValue code)
 {
-    FunctionExecutable* original = executableOf(code);
-    auto info = infoOf(original).copy();
+    FunctionExecutable* original = executableOfCode(code);
+    auto info = infoOfExecutable(original).copy();
     info->variablesGivenAsCells = info->freeVariables;
-    return cloneExecutable(globalObject, original, WTF::move(info));
+    FunctionExecutable* executable = cloneExecutable(globalObject, original, WTF::move(info));
+    // It is what the function has for its __code__, and a frame of it for its f_code.
+    executable->setPythonCodeObject(globalObject->vm(), asObject(code));
+    return executable;
 }
 
 JSObject* namespaceOf(JSGlobalObject*, PyDict* globals);
@@ -352,7 +224,7 @@ PYTHON_NATIVE(functionNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, "arg 3 (name) must be None or string"_s));
     if (!isNone(defaults) && !isTuple(defaults))
         return JSValue::encode(raiseTypeError(globalObject, scope, "arg 4 (defaults) must be None or tuple"_s));
-    const FunctionInfo& info = infoOf(executableOf(code));
+    const FunctionInfo& info = infoOfExecutable(executableOfCode(code));
     auto freeVariables = sortedFreeVariables(info);
     if (!isTuple(closure)) {
         if (freeVariables.size() && isNone(closure))
@@ -380,8 +252,6 @@ PYTHON_NATIVE(functionNew)
     if (given)
         environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
     JSFunction* function = JSFunction::create(vm, globalObject, executableTakingCells(globalObject, code), environment);
-    // The code that it says it has is the one that it was made from.
-    function->putDirect(vm, vm.pythonNames().private_code, code);
     if (!isNone(name)) {
         setAttribute(globalObject, function, vm.pythonNames().dunder_name, name);
         RETURN_IF_EXCEPTION(scope, { });
@@ -414,7 +284,7 @@ static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue 
     }
     JSValue closure = getFunctionClosure(globalObject, function);
     unsigned has = isNone(closure) ? 0 : asTuple(closure)->length();
-    auto freeVariables = sortedFreeVariables(infoOf(executableOf(value)));
+    auto freeVariables = sortedFreeVariables(infoOfExecutable(executableOfCode(value)));
     if (has != freeVariables.size()) {
         raiseValueError(globalObject, scope, makeString(nameOfFunction(globalObject, function, false), "() requires a code object with "_s, has, " free vars, not "_s, freeVariables.size()));
         return;
@@ -434,7 +304,6 @@ static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue 
         environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
     function->replaceExecutable(vm, executableTakingCells(globalObject, value));
     function->setScope(vm, environment);
-    function->putDirect(vm, names.private_code, value);
     // How the defaults line up with the parameters is worked out again.
     JSCell::deleteProperty(function, globalObject, names.private_alignedDefaults);
 }
@@ -589,26 +458,45 @@ static unsigned futureFeaturesOfCaller(CallFrame* callFrame)
     return info ? info->futureFeatures : 0;
 }
 
-// compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)
+// compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1, *, _feature_version=-1)
 PYTHON_NATIVE(builtinCompile)
 {
     NATIVE_PROLOGUE();
-    static constexpr ASCIILiteral parameters[] = { "source"_s, "filename"_s, "mode"_s, "flags"_s, "dont_inherit"_s, "optimize"_s };
-    JSValue values[6];
-    for (unsigned i = 0; i < 6; ++i) {
-        values[i] = args.at(i);
-        if (!values[i])
-            values[i] = args.keyword(globalObject, parameters[i]);
-        if (!values[i] && i < 3)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() missing required argument '"_s, parameters[i], "' (pos "_s, i + 1, ')')));
-    }
-    if (isCode(globalObject, values[0]))
-        return JSValue::encode(values[0]);
-    String filename = str(globalObject, values[1]);
+    JSValue given = args.at(0);
+    // PyUnicode_FSDecoder()
+    auto path = toFileSystemPath(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!values[2].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, typeName(globalObject, values[2]))));
-    String mode = asString(values[2])->value(globalObject);
+    String filename = String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(path->span()));
+    JSValue modeValue = args.at(2);
+    if (!stringIn(modeValue))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, isNone(modeValue) ? "None"_str : typeName(globalObject, modeValue))));
+    String mode = asString(modeValue)->value(globalObject);
+    auto number = [&] (unsigned index, int otherwise) -> int {
+        JSValue value = args.at(index);
+        if (!value)
+            return otherwise;
+        auto result = toCInt(globalObject, value);
+        return result ? *result : 0;
+    };
+    int flags = number(3, 0);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool inherits = !args.at(4) || !isTrue(globalObject, args.at(4));
+    RETURN_IF_EXCEPTION(scope, { });
+    int optimize = number(5, -1);
+    RETURN_IF_EXCEPTION(scope, { });
+    number(6, -1);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    static constexpr int nested = 0x10; // PyCF_MASK_OBSOLETE
+    static constexpr int doNotImplyDedent = 0x200;
+    static constexpr int onlyAST = 0x400;
+    static constexpr int typeComments = 0x1000;
+    static constexpr int allowIncompleteInput = 0x4000;
+    static constexpr int optimizedAST = 0x8000 | onlyAST;
+    if (flags & ~(static_cast<int>(FutureFeaturesMask) | nested | doNotImplyDedent | onlyAST | typeComments | static_cast<int>(AllowTopLevelAwait) | allowIncompleteInput | optimizedAST))
+        return JSValue::encode(raiseValueError(globalObject, scope, "compile(): unrecognised flags"_s));
+    if (optimize < -1 || optimize > 2)
+        return JSValue::encode(raiseValueError(globalObject, scope, "compile(): invalid optimize value"_s));
     CodeKind kind;
     if (mode == "exec"_s)
         kind = CodeKind::Module;
@@ -616,14 +504,21 @@ PYTHON_NATIVE(builtinCompile)
         kind = CodeKind::Expression;
     else if (mode == "single"_s)
         kind = CodeKind::Interactive;
-    else
-        return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode must be 'exec', 'eval' or 'single'"_s));
-    SourceCode source = sourceOf(globalObject, scope, values[0], filename, "compile"_s);
+    else if (mode == "func_type"_s && !(flags & onlyAST))
+        return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode 'func_type' requires flag PyCF_ONLY_AST"_s));
+    else if (mode != "func_type"_s)
+        return JSValue::encode(raiseValueError(globalObject, scope, flags & onlyAST ? "compile() mode must be 'exec', 'eval', 'single' or 'func_type'"_s : "compile() mode must be 'exec', 'eval' or 'single'"_s));
+    // FIXME: The tree, as objects of the module _ast, which there is none of yet.
+    if (flags & onlyAST)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "compile() cannot give the AST yet"_s));
+
+    SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    bool inherits = !values[4] || !isTrue(globalObject, values[4]);
-    RETURN_IF_EXCEPTION(scope, { });
-    unsigned futureFeatures = inherits ? futureFeaturesOfCaller(callFrame) : 0;
-    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures);
+    unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait);
+    if (inherits)
+        futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
+    // What the interpreter was started with is no optimization.
+    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, std::max(optimize, 0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(codeObjectFor(globalObject, executable));
 }
@@ -676,8 +571,8 @@ PYTHON_NATIVE(builtinExecOrEval)
 
     FunctionExecutable* executable;
     if (isCode(globalObject, args[0])) {
-        executable = executableOf(args[0]);
-        if (!infoOf(executable).usesNamespace || infoOf(executable).kind == CodeKind::Class)
+        executable = executableOfCode(args[0]);
+        if (!infoOfExecutable(executable).usesNamespace || infoOfExecutable(executable).kind == CodeKind::Class)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code object passed to "_s, function, "() may not contain free variables"_s)));
     } else {
         SourceCode source = sourceOf(globalObject, scope, args[0], "<string>"_s, function);
@@ -711,7 +606,7 @@ static JSValue getGeneratorName(JSGlobalObject* globalObject, JSValue self)
     auto& names = vm.pythonNames();
     if (JSValue name = asGenerator(self)->getDirect(vm, qualified ? names.private_qualname : names.private_name))
         return name;
-    const FunctionInfo& info = infoOf(bodyOf(self)->jsExecutable());
+    const FunctionInfo& info = infoOfExecutable(bodyOf(self)->jsExecutable());
     return jsString(vm, qualified ? info.qualifiedName : info.name.string());
 }
 
@@ -772,28 +667,7 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     for (PyType* type : { realm->typeCode(), realm->typeCell() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
 
-    PyType* code = realm->typeCode();
-    addMethods(globalObject, code, {
-        { "__repr__"_s, codeRepr },
-        { "__hash__"_s, codeHash },
-    });
-    addComparisons(globalObject, code, codeEq);
-    addMember(globalObject, code, "co_name"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).name.string()); });
-    addMember(globalObject, code, "co_qualname"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).qualifiedName); });
-    addMember(globalObject, code, "co_filename"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), executableOf(self)->source().provider()->sourceURL()); });
-    addMember(globalObject, code, "co_firstlineno"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(infoOf(executableOf(self)).line); });
-    addMember(globalObject, code, "co_flags"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(flagsOf(infoOf(executableOf(self)))); });
-    addMember(globalObject, code, "co_argcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue {
-        const FunctionInfo& info = infoOf(executableOf(self));
-        return jsNumber(info.usesNamespace ? 0 : info.positionalCount);
-    });
-    addMember(globalObject, code, "co_posonlyargcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(infoOf(executableOf(self)).positionalOnlyCount); });
-    addMember(globalObject, code, "co_kwonlyargcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(infoOf(executableOf(self)).keywordOnlyCount); });
-    addGetSet(globalObject, code, "co_varnames"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).variableNames); });
-    addMember(globalObject, code, "co_nlocals"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsNumber(detailsOf(globalObject->vm(), executableOf(self)).variableNames.size()); });
-    addMember(globalObject, code, "co_names"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).names); });
-    addGetSet(globalObject, code, "co_cellvars"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).cellVariables); });
-    addGetSet(globalObject, code, "co_freevars"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, sortedFreeVariables(infoOf(executableOf(self)))); });
+    initializeCodeType(globalObject);
 
     PyType* cell = realm->typeCell();
     addMethods(globalObject, cell, {

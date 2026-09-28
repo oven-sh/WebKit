@@ -406,7 +406,7 @@ private:
     {
         if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0)) {
             Bracket bracket = m_brackets.last();
-            fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, bracket.column + 1);
+            fail(makeString('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn);
             m_error.isUnclosedBracket = true;
             return false;
         }

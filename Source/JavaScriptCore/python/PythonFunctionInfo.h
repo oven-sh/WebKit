@@ -72,6 +72,18 @@ struct CodeDetails {
     Vector<Identifier> names; // co_names: the globals and attributes, as they are first used.
     Vector<Identifier> cellVariables; // co_cellvars
 
+    // co_consts: what is written out in the source, and the code of what is defined in it, as they are first come to.
+    struct Constant {
+        enum class Kind : uint8_t { None, True, False, Ellipsis, Integer, BigInteger, Float, Imaginary, String, Bytes, Code };
+        Kind kind { Kind::None };
+        uint8_t radix { 10 };
+        bool isNegative { false };
+        uint64_t bits { 0 }; // The integer, the bits of the double, or which of the functions that the code makes.
+        String text; // The digits, the string, or a character for each byte.
+        friend bool operator==(const Constant&, const Constant&) = default;
+    };
+    Vector<Constant> constants;
+
     // What a frame object needs.
     struct FrameVariable {
         Identifier name;
@@ -106,12 +118,21 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     Evaluates evaluates { Evaluates::Value };
     unsigned typeParameterIndex { 0 }; // For an Evaluator of a bound or a default: of which.
     unsigned futureFeatures { 0 };
+    // compile(optimize=...). From 1, __debug__ is False and there are no assert statements. From 2, there are no docstrings.
+    uint8_t optimizationLevel { 0 };
     // Private for what comes with the engine and stands for what in CPython is written in C: it is in no traceback and no stack trace.
     ImplementationVisibility visibility { ImplementationVisibility::Public };
     unsigned line { 1 }; // That the source of it begins on.
+    unsigned firstLine { 1 }; // That it says it begins on, co_firstlineno: the same, or that of the first decorator, which is no part of the source of it.
+    // How much further on it says its lines are: code.replace(co_firstlineno=...). What is defined in it says what it did.
+    int lineDelta { 0 };
+    // A generator that can be awaited: types.coroutine(), which sets CO_ITERABLE_COROUTINE with code.replace(co_flags=...).
+    bool isIterableCoroutine { false };
 
     Identifier name;
     String qualifiedName;
+    // What that was in the source, if it has been changed: code.replace(co_qualname=...). What is defined in it is named after this.
+    String qualifiedNameInSource;
     // For the three kinds that belong to something else. What is in one of them is named as if it were where that is.
     String qualifiedNamePrefix;
     String docstring; // Null if it has none.
@@ -152,10 +173,15 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->evaluates = evaluates;
         result->typeParameterIndex = typeParameterIndex;
         result->futureFeatures = futureFeatures;
+        result->optimizationLevel = optimizationLevel;
         result->visibility = visibility;
         result->line = line;
+        result->firstLine = firstLine;
+        result->lineDelta = lineDelta;
+        result->isIterableCoroutine = isIterableCoroutine;
         result->name = name;
         result->qualifiedName = qualifiedName;
+        result->qualifiedNameInSource = qualifiedNameInSource;
         result->qualifiedNamePrefix = qualifiedNamePrefix;
         result->docstring = docstring;
         result->privateName = privateName;

@@ -315,6 +315,8 @@ JSValue localsOfFrame(JSGlobalObject*, PyFrame*);
 CallFrame* callerOf(CallFrame*);
 // What is in a cell, which is empty if nothing is.
 JSValue contentsOfCell(JSValue cell);
+// Whether it is a generator whose code has CO_ITERABLE_COROUTINE, and so can be awaited.
+bool isIterableCoroutine(JSGlobalObject*, JSValue);
 void setContentsOfCell(VM&, JSValue cell, JSValue);
 WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner); // Where that is, and the cell that a write to it is a write to.
 
@@ -403,6 +405,8 @@ std::optional<int64_t> tryInt64(JSValue);
 int compareInts(JSValue, JSValue); // Negative, zero or positive. Both are ints, of any size.
 // What __index__ gives, as something to index with: clamped to the range of an int64 if `clamp`, or else it raises IndexError.
 std::optional<int64_t> toIndex(JSGlobalObject*, JSValue, bool clamp = false);
+// The same, for what in CPython is an int of C's, and raises OverflowError if it does not fit in one.
+std::optional<int> toCInt(JSGlobalObject*, JSValue);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.
 std::optional<double> toDouble(JSGlobalObject*, JSValue);
 String reprOfDouble(double);

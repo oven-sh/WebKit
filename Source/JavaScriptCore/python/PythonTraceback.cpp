@@ -83,7 +83,8 @@ static int lineOf(JSValue traceback)
     // One that a program made is where the program said.
     if (JSValue line = entry->getDirect(entry->vm(), entry->vm().pythonNames().private_line))
         return line.asInt32();
-    return asFrame(entry->field(TracebackField::Frame))->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line;
+    PyFrame* frame = asFrame(entry->field(TracebackField::Frame));
+    return frame->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line + frame->functionInfo().lineDelta;
 }
 
 template<unsigned field>

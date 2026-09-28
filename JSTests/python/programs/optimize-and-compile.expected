@@ -1,0 +1,53 @@
+__debug__ => (True, [True, True, False, False])
+assert => ['AssertionError: message', 'AssertionError: message', {'x': 1}, {'x': 1}]
+assert has effects => [{'l': [1]}, {'l': []}]
+if __debug__ => [{'x': 'debug'}, {'x': 'not'}, {'x': 'not'}]
+not __debug__ => [{'x': 'b'}, {'x': 'a', 'y': 1}]
+docstrings at 0 => ('module doc', 'f doc', 'C doc', 'm doc', 'a doc', 'g doc', 67108864, True)
+docstrings at 1 => ('module doc', 'f doc', 'C doc', 'm doc', 'a doc', 'g doc', 67108864, True)
+docstrings at 2 => (None, None, None, None, None, None, 0, True)
+nested => [None, False, False]
+in a lambda and a class => [(True, True, [True]), (False, False, [False])]
+exec inherits nothing => True
+optimize wrong => ['ValueError: compile(): invalid optimize value', 'ValueError: compile(): invalid optimize value', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int']
+__debug__ cannot be assigned => ['SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot delete __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)', 'SyntaxError: cannot assign to __debug__ (f, line 1)']
+builtins => True
+dead lines => [1, 2, 4, 7, 8, 9, 12, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+dead constants => [1000, 4000, 5000, 8000, 1200, 1300, 1500]
+dead names run => ['a', 'd', 'e', 'h', 'k', 'n']
+dead functions => ['g', None]
+dead but wrong 'if 0:\n    return' !! SyntaxError 'return' outside function (f, line 2)
+dead but wrong 'if 0:\n    break' !! SyntaxError 'break' outside loop (f, line 2)
+dead but wrong 'if 0:\n    continue' !! SyntaxError 'continue' not properly in loop (f, line 2)
+dead but wrong 'while 0:\n    yield' !! SyntaxError 'yield' outside function (f, line 2)
+dead but wrong 'if 0:\n    await x' !! SyntaxError 'await' outside function (f, line 2)
+dead but wrong 'if 0:\n    x = 1\n    global x' !! SyntaxError name 'x' is assigned to before global declaration (f, line 3)
+dead but wrong 'if 0:\n    nonlocal y' !! SyntaxError nonlocal declaration not allowed at module level (f, line 2)
+dead but wrong 'if 0:\n    from __future__ import nope' !! SyntaxError from __future__ imports must occur at the beginning of the file (f, line 2)
+dead but wrong 'def f():\n    if 0:\n        return\n    x: int = 1\n' => code
+dead but wrong 'if 0:\n    (yield)' !! SyntaxError 'yield' outside function (f, line 2)
+dead but wrong 'if 0:\n    *a = 1' !! SyntaxError starred assignment target must be in a list or tuple (f, line 2)
+dead but wrong 'if 0:\n    f(a=1, a=2)' !! SyntaxError keyword argument repeated: a (f, line 2)
+dead but wrong 'if 0:\n    def f(a, a): pass' !! SyntaxError duplicate argument 'a' in function definition (f, line 2)
+a generator all the same => ('generator', [])
+a local all the same !! UnboundLocalError cannot access local variable 'v' where it is not associated with a value
+while 1 => 7
+while 0 else => else ran
+break in what is dead => no break
+try in what is dead => 2
+flags => ['code', 'code', 'code', 'code', 'code', 'code', 'code', 'code', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags', 'ValueError: compile(): unrecognised flags']
+flags show => ['0x0', '0x20000', '0x40000', '0x80000', '0x100000', '0x200000', '0x400000', '0x800000', '0x1000000', '0x0', '0x0']
+future shows => ['0x1000000', '0x0', '0x0', '0x400000', '0x0', '0x0']
+future in functions => 0x1000003
+future by flag => {'x': 'undefined_name'}
+barry in functions => (True, False)
+barry by flag => (True, "SyntaxError: with Barry as BDFL, use '<>' instead of '!=' (<t>, line 1)", 'SyntaxError: invalid syntax (<t>, line 1)')
+modes => ['code', 'code', 'code', "ValueError: compile() mode 'func_type' requires flag PyCF_ONLY_AST", "ValueError: compile() mode must be 'exec', 'eval' or 'single'", "ValueError: compile() mode must be 'exec', 'eval' or 'single'", "TypeError: compile() argument 'mode' must be str, not int", "TypeError: compile() argument 'mode' must be str, not None", "TypeError: compile() argument 'mode' must be str, not bytes"]
+filenames => ['a.py', 'b.py', '', 'TypeError: expected str, bytes or os.PathLike object, not int', 'TypeError: expected str, bytes or os.PathLike object, not NoneType', 'TypeError: expected str, bytes or os.PathLike object, not list', 'TypeError: expected str, bytes or os.PathLike object, not bytearray']
+path => from fspath
+sources => [1, 2, 3, 4, 'TypeError: compile() arg 1 must be a string, bytes or AST object', 'TypeError: compile() arg 1 must be a string, bytes or AST object', 'TypeError: compile() arg 1 must be a string, bytes or AST object']
+missing => ["TypeError: compile() missing required argument 'source' (pos 1)", "TypeError: compile() missing required argument 'filename' (pos 2)", "TypeError: compile() missing required argument 'mode' (pos 3)"]
+keywords => 7
+feature version positional !! TypeError compile() takes at most 6 positional arguments (7 given)
+code is not source !! TypeError compile() arg 1 must be a string, bytes or AST object
+dont_inherit => ['code', 'code', 'code', 'code', 'code', 'code', 'code']

@@ -317,9 +317,9 @@ unsigned PyFrame::line(VM& vm)
 {
     auto index = bytecodeIndex(vm);
     if (!index)
-        return functionInfo().line;
+        return functionInfo().firstLine + functionInfo().lineDelta;
     const SourceCode& source = executable()->source();
-    return source.provider()->documentLineColumnForOffset(unlinkedCodeBlockOf(vm, executable())->expressionInfoForBytecodeIndex(*index).divot + source.startOffset()).line;
+    return source.provider()->documentLineColumnForOffset(unlinkedCodeBlockOf(vm, executable())->expressionInfoForBytecodeIndex(*index).divot + source.startOffset()).line + functionInfo().lineDelta;
 }
 
 void PyFrame::leave(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)

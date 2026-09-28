@@ -167,10 +167,13 @@ struct Block {
     unsigned comprehensionIterableDepth { 0 };
 };
 
+// The bits are those of co_flags and of the flags of compile().
 enum FutureFeature : unsigned {
-    FutureAnnotations = 1 << 0,
-    FutureBarryAsFLUFL = 1 << 1,
-    AllowTopLevelAwait = 1 << 2,
+    AllowTopLevelAwait = 0x2000, // PyCF_ALLOW_TOP_LEVEL_AWAIT
+    FutureBarryAsFLUFL = 0x400000, // CO_FUTURE_BARRY_AS_BDFL
+    FutureAnnotations = 0x1000000, // CO_FUTURE_ANNOTATIONS
+    // All that code says of itself in co_flags, most of which have long made no difference: PyCF_MASK.
+    FutureFeaturesMask = 0x1FE0000,
 };
 
 class SymbolTable {
@@ -182,7 +185,7 @@ public:
 
     // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
     // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.
-    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope = false);
+    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested);
 
     Block& top() { return *m_top; }
     unsigned futureFeatures() const { return m_futureFeatures; }

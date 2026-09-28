@@ -53,7 +53,7 @@ namespace Python {
 // returned is null.
 JS_EXPORT_PRIVATE SourceCode makeSource(JSGlobalObject*, std::span<const uint8_t>, const SourceOrigin&, const String& sourceURL);
 // The same, from text.
-JS_EXPORT_PRIVATE SourceCode makeSource(const String&, const SourceOrigin&, const String& sourceURL);
+JS_EXPORT_PRIVATE SourceCode makeSource(const String&, const SourceOrigin&, const String& sourceURL, unsigned firstLine = 1);
 
 // The code of a function whose source is Python, made when it is first called. What generateUnlinkedFunctionCodeBlock() does for
 // JavaScript.
@@ -65,7 +65,7 @@ JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, 
 
 // The two halves of that. The first makes the code, of a module, or of what eval() or a prompt is given. With `usesNamespace`, it takes
 // one argument: a mapping in which its names are looked up before the globals, and stored.
-FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public);
+FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, unsigned optimizationLevel = 0);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 // The outermost environment of everything in a module, which is what that gives the function.
 JSScope* environmentForGlobals(JSGlobalObject*, JSObject* namespaceObject);
@@ -74,6 +74,8 @@ JSScope* environmentForCells(JSGlobalObject*, JSScope* next, const Vector<Identi
 // Another executable for the same source, of which something else is known, or that says it is from another file. It is compiled by itself, when it is first
 // called. What has been compiled takes it that every function made from it is in environments of the same shape.
 FunctionExecutable* cloneExecutable(JSGlobalObject*, FunctionExecutable*, Ref<FunctionInfo>&&, const String& sourceURL = { });
+// One for a piece of source, of which a program says what is known: code(...). Null if the source is not Python, or does not bear that out.
+FunctionExecutable* executableFromProgram(JSGlobalObject*, const SourceCode&, Ref<FunctionInfo>&&);
 
 // Runs a file as `python file.py` would, as the module __main__. If an exception gets away it is reported on stderr as Python
 // reports it. Returns what the process should exit with.

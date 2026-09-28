@@ -730,8 +730,11 @@ private:
             return ComparisonOperator::Eq;
         case TokenKind::NotEqual:
             // from __future__ import barry_as_FLUFL
-            if (peek().isLessGreater != m_usesLessGreater)
+            if (peek().isLessGreater != m_arena.usesLessGreater) {
+                if (m_arena.usesLessGreater)
+                    fail("with Barry as BDFL, use '<>' instead of '!='"_s);
                 return std::nullopt;
+            }
             next();
             return ComparisonOperator::NotEq;
         case TokenKind::Less:
@@ -2724,18 +2727,11 @@ private:
                 return nullptr;
         }
 
+        // It changes how what follows is read. Whether there is such a feature, and whether this is a place for it, is for PythonSymbolTable.cpp to say.
         if (!level && module && *module == "__future__"_s) {
             for (Alias* alias : names) {
-                static constexpr ASCIILiteral features[] = { "nested_scopes"_s, "generators"_s, "division"_s, "absolute_import"_s, "with_statement"_s, "print_function"_s, "unicode_literals"_s, "barry_as_FLUFL"_s, "generator_stop"_s, "annotations"_s };
-                bool isFeature = false;
-                for (ASCIILiteral feature : features)
-                    isFeature |= *alias->name == feature;
                 if (*alias->name == "barry_as_FLUFL"_s)
-                    m_usesLessGreater = true;
-                else if (*alias->name == "braces"_s)
-                    return fail("not a chance"_s, *alias);
-                else if (!isFeature)
-                    return fail(makeString("future feature "_s, alias->name->string(), " is not defined"_s), *alias);
+                    m_arena.usesLessGreater = true;
             }
         }
 
@@ -3114,7 +3110,6 @@ private:
     unsigned m_index { 0 };
     unsigned m_furthest { 0 };
     unsigned m_speculationDepth { 0 };
-    bool m_usesLessGreater { false };
 };
 
 } // anonymous namespace

@@ -76,6 +76,12 @@ public:
             if (symbol.scope == NameScope::Cell)
                 m_details->cellVariables.append(*symbol.name);
         }
+        if (m_info.kind == CodeKind::Class) {
+            if (m_block.needsClassClosure)
+                addOnce(m_details->cellVariables, m_names.dunder_class);
+            if (m_block.needsClassDict)
+                addOnce(m_details->cellVariables, m_names.dunder_classdict);
+        }
         auto byCodePoint = [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); };
         std::ranges::sort(m_details->cellVariables, byCodePoint);
         describeFrame(byCodePoint);
@@ -175,7 +181,66 @@ private:
     // Says where in the source what is emitted next comes from, for when it raises.
     void mark(const Node& node)
     {
+        // What is never come to is nowhere.
+        if (m_isNeverComeTo)
+            return;
+        m_lastMarkedLine = node.line;
         g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
+    }
+
+    // For what cannot go wrong, and need only say where it is if that is a line of its own: co_lines().
+    void markIfOnAnotherLine(const Node& node)
+    {
+        if (node.line != m_lastMarkedLine)
+            mark(node);
+    }
+
+    // What a condition comes to, if that is plain from the source.
+    std::optional<bool> constantTruth(Expression* expression)
+    {
+        if (auto* name = expression->tryAs<Name>())
+            return *name->id == m_names.dunder_debug ? std::optional { !m_info.optimizationLevel } : std::nullopt;
+        if (auto* operation = expression->tryAs<UnaryOp>(); operation && operation->op == UnaryOperator::Not) {
+            auto operand = constantTruth(operation->operand);
+            return operand ? std::optional { !*operand } : std::nullopt;
+        }
+        auto* constant = expression->tryAs<Constant>();
+        if (!constant)
+            return std::nullopt;
+        switch (constant->type) {
+        case Constant::Type::None:
+        case Constant::Type::False:
+            return false;
+        case Constant::Type::True:
+        case Constant::Type::Ellipsis:
+            return true;
+        case Constant::Type::Integer:
+            return !!constant->integer;
+        case Constant::Type::BigInteger:
+            return true;
+        case Constant::Type::Float:
+        case Constant::Type::Imaginary:
+            return !!constant->real;
+        case Constant::Type::String:
+        case Constant::Type::Bytes:
+            return !constant->text->isEmpty();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Statements that are never come to, `if 0:` and the like. They are compiled, since that is how it is found out what is wrong with them, and jumped over. They have no
+    // lines and no constants, as in CPython, which takes them out.
+    void emitNeverComeTo(Sequence<Statement*> statements)
+    {
+        if (statements.empty())
+            return;
+        Ref<Label> after = g.newLabel();
+        g.emitJump(after.get());
+        {
+            SetForScope isNeverComeTo(m_isNeverComeTo, true);
+            emit(statements);
+        }
+        g.emitLabel(after.get());
     }
 
     // ---- Registers
@@ -345,6 +410,7 @@ private:
     }
 
     bool isFunctionLike() const { return m_block.isFunctionLike(); }
+    bool keepsDocstrings() const { return m_info.optimizationLevel < 2; }
 
     enum class Where : uint8_t {
         Register, // A local variable of a function, that no other function uses.
@@ -469,6 +535,11 @@ private:
 
     RegisterID* emitLoadName(RegisterID* dst, const Identifier& rawName, const Node& node)
     {
+        // It cannot be assigned to, and is settled when the code is compiled.
+        if (rawName == m_names.dunder_debug) {
+            noteConstant({ m_info.optimizationLevel ? CodeDetails::Constant::Kind::False : CodeDetails::Constant::Kind::True });
+            return g.emitLoad(dst, jsBoolean(!m_info.optimizationLevel));
+        }
         const Identifier& name = mangle(rawName);
         Location location = locateAndNote(name);
         switch (location.where) {
@@ -565,8 +636,60 @@ private:
 
     // ---- Constants
 
+    // For co_consts.
+    void noteConstant(CodeDetails::Constant&& constant)
+    {
+        if (!m_isNeverComeTo && !m_details->constants.contains(constant))
+            m_details->constants.append(WTF::move(constant));
+    }
+
+    // What running off the end comes to. If the last thing was to return or to raise, and nothing jumps to after it, the end is not come to.
+    void emitReturnAtEnd()
+    {
+        OpcodeID last = g.lastOpcodeID();
+        if (last != op_py_ret && last != op_ret && last != op_throw)
+            noteConstant({ CodeDetails::Constant::Kind::None });
+        g.emitReturn(none());
+    }
+
+    // That of a function is the first of them.
+    void noteDocstring()
+    {
+        if (!m_info.docstring.isNull())
+            noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, m_info.docstring });
+    }
+
+    void noteConstant(const Constant& node, bool isNegative = false)
+    {
+        using Kind = CodeDetails::Constant::Kind;
+        switch (node.type) {
+        case Constant::Type::None:
+            return noteConstant({ Kind::None });
+        case Constant::Type::True:
+            return noteConstant({ Kind::True });
+        case Constant::Type::False:
+            return noteConstant({ Kind::False });
+        case Constant::Type::Ellipsis:
+            return noteConstant({ Kind::Ellipsis });
+        case Constant::Type::Integer:
+            return noteConstant({ Kind::Integer, 10, isNegative && node.integer, node.integer });
+        case Constant::Type::BigInteger:
+            return noteConstant({ Kind::BigInteger, node.radix, isNegative, 0, node.text->string() });
+        case Constant::Type::Float:
+            return noteConstant({ Kind::Float, 10, false, std::bit_cast<uint64_t>(isNegative ? -node.real : node.real) });
+        case Constant::Type::Imaginary:
+            return noteConstant({ Kind::Imaginary, 10, false, std::bit_cast<uint64_t>(node.real) });
+        case Constant::Type::String:
+            return noteConstant({ Kind::String, 10, false, 0, node.text->string() });
+        case Constant::Type::Bytes:
+            return noteConstant({ Kind::Bytes, 10, false, 0, node.text->string() });
+        }
+    }
+
     RegisterID* emitConstant(RegisterID* dst, Constant& node)
     {
+        noteConstant(node);
+        markIfOnAnotherLine(node);
         switch (node.type) {
         case Constant::Type::None:
             return g.emitLoad(dst, jsUndefined());
@@ -623,10 +746,14 @@ private:
             auto& node = expression->as<UnaryOp>();
             // -1 is a constant.
             if (auto* operand = node.operand->tryAs<Constant>(); operand && node.op == UnaryOperator::USub) {
-                if (operand->type == Constant::Type::Integer && operand->integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1)
+                if (operand->type == Constant::Type::Integer && operand->integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+                    noteConstant(*operand, true);
                     return g.emitLoad(dst, jsNumber(static_cast<int32_t>(-static_cast<int64_t>(operand->integer))));
-                if (operand->type == Constant::Type::Float)
+                }
+                if (operand->type == Constant::Type::Float) {
+                    noteConstant(*operand, true);
                     return g.emitLoad(dst, jsTaggedFloat(-operand->real));
+                }
             }
             Reg operand = emit(node.operand);
             Reg result = destination(dst);
@@ -1134,6 +1261,8 @@ private:
     bool belongsToSomethingElse() const { return m_info.owner != OwnerKind::None; }
 
     // What comes before the name of what is in this. This is compiler_set_qualname() of CPython's Python/compile.c.
+    const String& qualifiedNameInSource() const { return m_info.qualifiedNameInSource.isNull() ? m_info.qualifiedName : m_info.qualifiedNameInSource; }
+
     String ownQualifiedNamePrefix()
     {
         switch (m_info.kind) {
@@ -1143,9 +1272,9 @@ private:
             return emptyString();
         case CodeKind::Function:
         case CodeKind::Lambda:
-            return makeString(m_info.qualifiedName, ".<locals>."_s);
+            return makeString(qualifiedNameInSource(), ".<locals>."_s);
         default:
-            return makeString(m_info.qualifiedName, '.');
+            return makeString(qualifiedNameInSource(), '.');
         }
     }
 
@@ -1161,10 +1290,19 @@ private:
         info->usesNamespace = kind == CodeKind::Class;
         info->isNested = block.isNested;
         info->isMethod = block.isMethod;
-        info->hasDocstring = block.hasDocstring;
+        info->hasDocstring = block.hasDocstring && keepsDocstrings();
         info->futureFeatures = m_info.futureFeatures;
+        info->optimizationLevel = m_info.optimizationLevel;
         info->visibility = m_info.visibility;
         info->line = node.line;
+        info->firstLine = node.line;
+        if (kind == CodeKind::Function || kind == CodeKind::Class || kind == CodeKind::TypeParameters) {
+            // What has the type parameters of a definition is compiled by itself, and knows where the definition begins.
+            if (m_decoratorLine)
+                info->firstLine = m_decoratorLine;
+            else if (m_info.kind == CodeKind::TypeParameters)
+                info->firstLine = m_info.firstLine;
+        }
         info->name = name;
         info->qualifiedName = qualifiedNameFor(name);
         info->canSeeClassScope = block.canSeeClassScope;
@@ -1278,7 +1416,9 @@ private:
         metadata.finishParsing(SourceCode(parentSource.provider(), node.start, node.end), info->name, FunctionMode::FunctionExpression);
         auto* executable = UnlinkedFunctionExecutable::create(m_vm, parentSource, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
         executable->setPythonInfo(WTF::move(info));
-        OpNewFuncExp::emit(&g, dst, g.scopeRegister(), g.m_codeBlock->addFunctionExpr(executable));
+        unsigned index = g.m_codeBlock->addFunctionExpr(executable);
+        noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, index });
+        OpNewFuncExp::emit(&g, dst, g.scopeRegister(), index);
         return dst;
     }
 
@@ -1323,7 +1463,7 @@ private:
         RELEASE_ASSERT(block);
         Reg function = temporaryDestination(dst);
         auto info = makeInfo(kind, name, arguments, *block, node);
-        if (block->hasDocstring && kind == CodeKind::Function)
+        if (block->hasDocstring && kind == CodeKind::Function && keepsDocstrings())
             info->docstring = docstringOf(static_cast<const FunctionDef&>(node).body);
         emitNewFunction(function.get(), WTF::move(info), node);
         if (Block* annotations = kind == CodeKind::Function ? m_table.blockFor(arguments) : nullptr; annotations && annotations->usesAnnotations) {
@@ -1577,8 +1717,9 @@ private:
             if (m_block.scopeOf(name) == NameScope::Cell)
                 emitStoreClosure(name, parameterRegister(i), node);
         }
+        noteDocstring();
         emitBody();
-        g.emitReturn(none());
+        emitReturnAtEnd();
     }
 
     // ---- Generators
@@ -1614,8 +1755,9 @@ private:
         g.emitThrow(g.generatorValueRegister());
         g.emitLabel(start.get());
 
+        noteDocstring();
         emitBody();
-        g.emitReturn(none());
+        emitReturnAtEnd();
     }
 
     RegisterID* emitYield(RegisterID* dst, Yield& node)
@@ -1702,7 +1844,7 @@ private:
         Reg iterator = g.newTemporary();
         {
             Reg iterable = emit(node.value);
-            emitRuntimeCall(iterator.get(), "getYieldFromIterator"_s, { iterable.get() }, node);
+            emitRuntimeCall(iterator.get(), "getYieldFromIterator"_s, { iterable.get(), constant(jsBoolean(m_info.isIterableCoroutine)) }, node);
         }
         return emitDelegate(dst, iterator.get(), node);
     }
@@ -2114,6 +2256,17 @@ private:
         if (!m_vm.isSafeToRecurse()) [[unlikely]]
             return fail("maximum recursion depth exceeded during compilation"_s, statement);
 
+        // Whatever comes first in it is on its line, so that every line that does something is the line of some instruction: co_lines(). The generator takes back an
+        // instruction that the next one makes pointless, and where this says the next one is would then be wrong.
+        g.disablePeepholeOptimization();
+        // What is decorated begins with its decorators, which say where they are.
+        auto isDecorated = [&] {
+            if (statement.is<FunctionDef>())
+                return !statement.as<FunctionDef>().decorators.empty();
+            return statement.is<ClassDef>() && !statement.as<ClassDef>().decorators.empty();
+        };
+        if (!isDecorated())
+            mark(statement);
         switch (statement.kind) {
         case Statement::Kind::Expr: {
             Expression* value = statement.as<Expr>().value;
@@ -2123,9 +2276,11 @@ private:
                 emitRuntimeCall(nullptr, "displayHook"_s, { result.get() }, statement);
                 return;
             }
-            // A docstring, or some other constant that does nothing.
-            if (value->is<Constant>())
+            // A docstring, or some other constant that does nothing. It is passed through all the same.
+            if (value->is<Constant>()) {
+                OpNop::emit(&g);
                 return;
+            }
             Reg ignored = emit(value);
             return;
         }
@@ -2165,11 +2320,20 @@ private:
                 emitDelete(target);
             return;
         case Statement::Kind::Pass:
+            // It is passed through, as whoever is following the lines will want to know.
+            OpNop::emit(&g);
+            return;
         case Statement::Kind::Global:
         case Statement::Kind::Nonlocal:
             return;
         case Statement::Kind::If: {
             auto& node = statement.as<If>();
+            if (auto truth = constantTruth(node.test)) {
+                OpNop::emit(&g);
+                emitNeverComeTo(*truth ? node.orElse : node.body);
+                emit(*truth ? node.body : node.orElse);
+                return;
+            }
             Ref<Label> otherwise = g.newLabel();
             emitBranch(node.test, otherwise.get(), false);
             emit(node.body);
@@ -2189,9 +2353,20 @@ private:
             Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
             SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
             Ref<Label> otherwise = g.newLabel();
+            auto truth = constantTruth(node.test);
+            if (truth && !*truth) {
+                OpNop::emit(&g);
+                emitNeverComeTo(node.body);
+                emit(node.orElse);
+                g.emitLabel(scope->breakTarget());
+                return;
+            }
             g.emitLabel(*scope->continueTarget());
             g.emitLoopHint();
-            emitBranch(node.test, otherwise.get(), false);
+            if (truth)
+                OpNop::emit(&g);
+            else
+                emitBranch(node.test, otherwise.get(), false);
             emit(node.body);
             g.emitJump(*scope->continueTarget());
             g.emitLabel(otherwise.get());
@@ -2247,6 +2422,8 @@ private:
             return emitWith(statement.as<With>(), 0);
         case Statement::Kind::Assert: {
             auto& node = statement.as<Assert>();
+            if (m_info.optimizationLevel)
+                return;
             Ref<Label> holds = g.newLabel();
             emitBranch(node.test, holds.get(), true);
             Reg message = node.message ? Reg(emit(node.message)) : Reg(marker());
@@ -2673,13 +2850,18 @@ private:
         for (Expression* decorator : decorators)
             functions.append(emitToTemporary(decorator));
         Reg value = g.newTemporary();
-        emitDefinition(value.get());
+        mark(node);
+        {
+            SetForScope decoratorLine(m_decoratorLine, decorators.empty() ? 0 : decorators[0]->line);
+            emitDefinition(value.get());
+        }
         for (unsigned i = functions.size(); i--;) {
             CallArguments call(g, nullptr, 1);
             g.emitLoad(call.thisRegister(), jsUndefined());
             g.move(call.argumentRegister(0), value.get());
             emitRawCall(value.get(), functions[i].get(), call, 1, *decorators[i]);
         }
+        mark(node);
         emitStoreName(name, value.get(), node);
     }
 
@@ -2979,6 +3161,7 @@ private:
             info->positionalOnlyCount = 1;
             Reg body = g.newTemporary();
             emitNewFunction(body.get(), WTF::move(info), node);
+            noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, node.name->string() });
 
             Reg bases = g.newTemporary();
             emitListWithStarred(bases.get(), node.bases, node);
@@ -3030,22 +3213,26 @@ private:
             g.emitLoad(environment.get(), jsUndefined());
 
         auto store = [&] (const Identifier& name, RegisterID* value) {
+            addOnce(m_details->names, name);
             OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
         };
         {
+            addOnce(m_details->names, m_names.dunder_name);
             Reg moduleName = g.newTemporary();
             mark(node);
             OpPyLoadGlobal::emit(&g, moduleName.get(), m_globals.get(), m_builtins.get(), g.addConstant(m_names.dunder_name), g.nextValueProfileIndex());
             store(m_names.dunder_module, moduleName.get());
         }
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));
-        store(m_names.dunder_firstlineno, constant(jsNumber(node.line)));
+        store(m_names.dunder_firstlineno, constant(jsNumber(m_info.firstLine)));
         if (!node.typeParameters.empty()) {
             Reg typeParameters = emitLoadClosure(nullptr, Identifier::fromString(m_vm, ".type_params"_s), node);
             store(m_names.dunder_type_params, typeParameters.get());
         }
-        if (m_block.hasDocstring)
+        if (m_block.hasDocstring && keepsDocstrings()) {
+            noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, docstringOf(node.body) });
             store(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(node.body))));
+        }
 
         emitSetUpAnnotations(node);
         collectDeferredAnnotations(node.body, OwnerKind::Class);
@@ -3066,6 +3253,11 @@ private:
             emitNewTuple(tuple.get(), items);
             store(m_names.dunder_static_attributes, tuple.get());
         }
+        // What type() is handed the cells by, which here is what this returns.
+        if (m_block.needsClassDict)
+            addOnce(m_details->names, Identifier::fromString(m_vm, "__classdictcell__"_s));
+        if (m_block.needsClassClosure)
+            addOnce(m_details->names, Identifier::fromString(m_vm, "__classcell__"_s));
         g.emitReturn(environment.get());
     }
 
@@ -3549,10 +3741,12 @@ private:
         collectDeferredAnnotations(module.body, kind);
         if (Reg annotate = emitAnnotateFunctionForBody(kind, whole))
             emitStoreName(m_names.dunder_annotate, annotate.get(), whole);
-        if (m_block.hasDocstring)
+        if (m_block.hasDocstring && keepsDocstrings()) {
+            noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, docstringOf(module.body) });
             emitStoreName(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(module.body))), *module.body[0]);
+        }
         emit(module.body);
-        g.emitReturn(none());
+        emitReturnAtEnd();
     }
 
     using ComprehensionScope = HashMap<UniquedStringImpl*, Reg>; // Null for a variable of an environment.
@@ -3562,6 +3756,9 @@ private:
     std::unique_ptr<CodeDetails> m_details;
     bool m_isInExceptStar { false };
     bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.
+    bool m_isNeverComeTo { false }; // In `if 0:` or the like.
+    unsigned m_lastMarkedLine { 0 };
+    unsigned m_decoratorLine { 0 }; // Of the first decorator of the definition that is being made, if it has any.
     CommonNames& m_names;
     Arena& m_arena;
     SymbolTable& m_table;

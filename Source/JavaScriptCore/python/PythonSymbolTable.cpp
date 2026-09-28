@@ -101,7 +101,8 @@ public:
 
     bool build(Module& module)
     {
-        findFutureStatements(module);
+        if (!findFutureStatements(module))
+            return false;
 
         if (!enterBlock(m_top, BlockType::Module, &module, { }))
             return false;
@@ -127,13 +128,14 @@ public:
         return analyzeBlock(*m_table.m_top, nullptr, free, global, typeParameters, nullptr);
     }
 
-    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope)
+    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope, bool isNested)
     {
         // As if it were in a function whose only variables are those.
         if (!enterBlock(m_top, BlockType::Function, &m_table, { }))
             return false;
         Block& top = *m_current;
         top.canSeeClassScope = canSeeClassScope;
+        top.isNested = isNested;
         m_table.m_top = &top;
         m_private = privateName;
         m_fragmentTop = &top;
@@ -190,25 +192,31 @@ private:
     }
 
     // Only a docstring and others of their kind may come before them.
-    void findFutureStatements(Module& module)
+    bool findFutureStatements(Module& module)
     {
         if (module.kind == Module::Kind::Expression)
-            return;
+            return true;
         for (size_t i = hasDocstring(module.body) ? 1 : 0; i < module.body.size(); ++i) {
             Statement& statement = *module.body[i];
             if (!statement.is<ImportFrom>())
-                return;
+                return true;
             auto& import = statement.as<ImportFrom>();
             if (import.level || !import.module || *import.module != "__future__"_s)
-                return;
+                return true;
             for (Alias* alias : import.names) {
+                static constexpr ASCIILiteral thatMakeNoDifference[] = { "nested_scopes"_s, "generators"_s, "division"_s, "absolute_import"_s, "with_statement"_s, "print_function"_s, "unicode_literals"_s, "generator_stop"_s };
                 if (*alias->name == "annotations"_s)
                     m_table.m_futureFeatures |= FutureAnnotations;
                 else if (*alias->name == "barry_as_FLUFL"_s)
                     m_table.m_futureFeatures |= FutureBarryAsFLUFL;
+                else if (*alias->name == "braces"_s)
+                    return fail("not a chance"_s, *alias);
+                else if (std::ranges::none_of(thatMakeNoDifference, [&] (ASCIILiteral feature) { return *alias->name == feature; }))
+                    return fail(makeString("future feature "_s, alias->name->string(), " is not defined"_s), *alias);
             }
             m_lastFutureStatement = &statement;
         }
+        return true;
     }
 
     bool hasFutureAnnotations() const { return m_table.m_futureFeatures & FutureAnnotations; }
@@ -227,7 +235,8 @@ private:
         block->type = type;
         block->location = location;
         if (m_current) {
-            block->isNested = m_current->isNested || m_current->isFunctionLike();
+            // What a fragment is taken to be in stands for whatever it is in, which need be no function.
+            block->isNested = m_current->isNested || (m_current != m_fragmentTop && m_current->isFunctionLike());
             block->isMethod = m_current->type == BlockType::Class && type == BlockType::Function;
         }
         return block;
@@ -1443,12 +1452,12 @@ std::unique_ptr<SymbolTable> SymbolTable::build(VM& vm, Arena& arena, Module& mo
     return table;
 }
 
-std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope)
+std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested)
 {
     std::unique_ptr<SymbolTable> table { new SymbolTable };
     table->m_futureFeatures = futureFeatures;
     SyntaxError error;
-    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope))
+    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope, isNested))
         return nullptr;
     return table;
 }

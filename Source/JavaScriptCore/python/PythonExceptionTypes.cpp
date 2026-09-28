@@ -458,7 +458,7 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue path = given;
-    if (!path.isString() && !builtinBufferOf(path)) {
+    if (!path.isString() && bytesKindOf(path) != BytesKind::Bytes) {
         JSValue self;
         JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);

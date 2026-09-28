@@ -474,7 +474,7 @@ PYTHON_NATIVE(returnZero)
 
 // ---- Limits and settings
 
-static std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
+std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

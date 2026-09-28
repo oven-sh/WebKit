@@ -1,0 +1,48 @@
+round trip => (True, False, True, True, (1, 2, 3, (), 5, {}), 'doc')
+how many => 34
+what they say of themselves => [('<module>', 0, 0, 0, '0x1000000', (), 1), ('plain', 2, 0, 0, '0x1000003', (), 5), ('documented', 0, 0, 0, '0x5000003', (), 6), ('closure', 1, 0, 0, '0x1000003', (), 8), ('inner', 0, 0, 0, '0x1000013', ('v',), 9), ('gen', 1, 0, 0, '0x1000023', (), 11), ('co', 0, 0, 0, '0x1000083', (), 13), ('agen', 0, 0, 0, '0x1000203', (), 14), ('<lambda>', 1, 0, 0, '0x100000f', (), 16), ('<genexpr>', 1, 0, 0, '0x1000023', (), 18), ('K', 0, 0, 0, '0x1000000', (), 19), ('method', 1, 0, 0, '0x9000003', ('__class__',), 22), ('__private', 1, 0, 0, '0x9000003', (), 23), ('s', 0, 0, 0, '0x9000003', (), 24), ('Inner', 0, 0, 0, '0x1000000', (), 26), ('deep', 1, 0, 0, '0x9000003', (), 27), ('__annotate__', 1, 1, 0, '0x1000003', (), 28), ('annotated', 2, 0, 0, '0x1000003', (), 28), ('<generic parameters of generic>', 1, 0, 0, '0x1000003', (), 29), ('T', 1, 1, 0, '0x1000013', (), 29), ('__annotate__', 1, 1, 0, '0x1000013', (), 29), ('generic', 1, 0, 0, '0x1000013', (), 29), ('<generic parameters of G>', 0, 0, 0, '0x1000003', (), 30), ('G', 0, 0, 0, '0x1000000', ('.type_params',), 30), ('T', 1, 1, 0, '0x1000013', (), 30), ('__annotate__', 1, 1, 0, '0x1000013', (), 31), ('m', 2, 0, 0, '0x9000013', (), 31), ('<generic parameters of Alias>', 0, 0, 0, '0x1000003', (), 32), ('Alias', 1, 1, 0, '0x1000013', ('T',), 32), ('decorated', 1, 0, 0, '0x1000003', (), 33), ('with_decorator', 0, 0, 0, '0x1000003', (), 34), ('multi', 2, 0, 0, '0x1000003', (), 36), ('wide', 0, 0, 0, '0x1000003', (), 42), ('tries', 0, 0, 0, '0x1000003', (), 43)]
+all round trip => []
+runs the same !! AttributeError module 'typing' has no attribute '_GenericAlias'
+runs !! AttributeError module 'typing' has no attribute '_GenericAlias'
+lines the same => True
+traceback => ((2, True, 'raising'), (2, True, 'raising'))
+elsewhere => ('e.py', 'n', 'q.n', 100, [100, 101, 102], False)
+with a closure => c
+optimized => [(False, (False, 'doc')), (False, (False, None))]
+eval and single => (3, '<module>')
+without the last two => True
+without the last one => True
+no arguments !! TypeError code expected at least 16 arguments, got 0
+too few !! TypeError code expected at least 16 arguments, got 15
+too many !! TypeError code expected at most 18 arguments, got 19
+keywords !! TypeError code() takes no keyword arguments
+argument 1 'a' !! TypeError 'str' object cannot be interpreted as an integer
+argument 1 None !! TypeError 'NoneType' object cannot be interpreted as an integer
+argument 1 1099511627776 !! OverflowError Python int too large to convert to C int
+argument 2 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+argument 6 'f' !! TypeError 'str' object cannot be interpreted as an integer
+argument 7 's' !! TypeError code() argument 7 must be bytes, not str
+argument 7 None !! TypeError code() argument 7 must be bytes, not None
+argument 7 bytearray(b'') !! TypeError code() argument 7 must be bytes, not bytearray
+argument 8 [1] !! TypeError code() argument 8 must be tuple, not list
+argument 9 None !! TypeError code() argument 9 must be tuple, not None
+argument 10 'ab' !! TypeError code() argument 10 must be tuple, not str
+argument 11 b'f' !! TypeError code() argument 11 must be str, not bytes
+argument 12 1 !! TypeError code() argument 12 must be str, not int
+argument 13 None !! TypeError code() argument 13 must be str, not None
+argument 14 'l' !! TypeError 'str' object cannot be interpreted as an integer
+argument 15 't' !! TypeError code() argument 15 must be bytes, not str
+argument 16 1 !! TypeError code() argument 16 must be bytes, not int
+argument 17 [1] !! TypeError code() argument 17 must be tuple, not list
+argument 18 None !! TypeError code() argument 18 must be tuple, not None
+negative co_argcount !! ValueError code: argcount must not be negative
+negative co_posonlyargcount !! ValueError code: posonlyargcount must not be negative
+negative co_kwonlyargcount !! ValueError code: kwonlyargcount must not be negative
+negative co_nlocals !! ValueError code: nlocals must not be negative
+not names co_names !! TypeError name tuples must contain only strings, not 'int'
+not names co_varnames !! TypeError name tuples must contain only strings, not 'int'
+not names co_freevars !! TypeError name tuples must contain only strings, not 'int'
+not names co_cellvars !! TypeError name tuples must contain only strings, not 'int'
+odd !! ValueError code: co_code is malformed
+audited => ('raising', [('code.__new__', True, 'raising', (0, 0, 0))])
+derived !! TypeError type 'code' is not an acceptable base type

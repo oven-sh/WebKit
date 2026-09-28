@@ -54,11 +54,20 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     unsigned end = source.endOffset();
 
     Arena arena;
+    arena.usesLessGreater = info->futureFeatures & FutureBarryAsFLUFL;
     SyntaxError syntaxError;
     std::unique_ptr<SymbolTable> table;
     void* root = nullptr;
     const void* blockKey = nullptr;
     const Identifier* privateName = info->privateName.isNull() ? nullptr : &info->privateName;
+    auto disagrees = [&] {
+        syntaxError.message = makeString("what is said of '"_s, info->name.string(), "' is not so of its source"_s);
+        error = ParserError(syntaxError);
+        return nullptr;
+    };
+    bool belongsToSomethingElse = info->kind == CodeKind::Annotations || info->kind == CodeKind::TypeParameters || info->kind == CodeKind::Evaluator;
+    if (belongsToSomethingElse != (info->owner != OwnerKind::None))
+        return disagrees();
     // What belongs to something else is compiled from the source of that.
     CodeKind sourceKind = info->kind;
     switch (info->owner) {
@@ -102,7 +111,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         const Identifier* outerPrivateName = sourceKind == CodeKind::Class ? nullptr : privateName;
         Statement* statement = parseDefinition(vm, arena, text, start, end, info->line);
         if (statement)
-            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope);
+            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope, info->isNested);
         root = statement;
         blockKey = statement;
         break;
@@ -112,7 +121,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Comprehension: {
         Expression* expression = parseExpression(vm, arena, text, start, end, info->line);
         if (expression)
-            table = SymbolTable::buildFragment(vm, arena, nullptr, expression, info->freeVariables, privateName, info->futureFeatures);
+            table = SymbolTable::buildFragment(vm, arena, nullptr, expression, info->freeVariables, privateName, info->futureFeatures, false, info->isNested);
         root = expression;
         blockKey = expression;
         break;
@@ -140,6 +149,80 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
             RELEASE_ASSERT_NOT_REACHED();
         }
     };
+    // What is known about the code may be what a program has said of it, code(...), and not what was found when what it is in was compiled. It is believed as far as the
+    // source bears it out, where to be wrong about it would be to read what is not there.
+    auto isBorneOut = [&] {
+        bool isModule = info->kind == CodeKind::Module || info->kind == CodeKind::Expression || info->kind == CodeKind::Interactive;
+        if (info->parameterNames.size() != info->parameterCount() || info->positionalOnlyCount > info->positionalCount)
+            return false;
+        Arguments* arguments = nullptr;
+        switch (sourceKind) {
+        case CodeKind::Function: {
+            auto* statement = static_cast<Statement*>(root);
+            if (info->owner == OwnerKind::TypeAlias ? !statement->is<TypeAlias>() : !statement->is<FunctionDef>())
+                return false;
+            if (info->kind == CodeKind::Function)
+                arguments = statement->as<FunctionDef>().arguments;
+            break;
+        }
+        case CodeKind::Class:
+            if (!static_cast<Statement*>(root)->is<ClassDef>())
+                return false;
+            break;
+        case CodeKind::Lambda:
+            if (!static_cast<Expression*>(root)->is<Lambda>())
+                return false;
+            arguments = static_cast<Expression*>(root)->as<Lambda>().arguments;
+            break;
+        case CodeKind::GeneratorExpression:
+            if (!static_cast<Expression*>(root)->is<GeneratorExp>())
+                return false;
+            break;
+        case CodeKind::Comprehension: {
+            auto* expression = static_cast<Expression*>(root);
+            if (!expression->is<ListComp>() && !expression->is<SetComp>() && !expression->is<DictComp>())
+                return false;
+            break;
+        }
+        default:
+            break;
+        }
+        if (arguments) {
+            if (info->positionalOnlyCount != arguments->positionalOnly.size() || info->positionalCount != arguments->positionalOnly.size() + arguments->positional.size() || info->keywordOnlyCount != arguments->keywordOnly.size()
+                || info->hasVariadic != !!arguments->variadic || info->hasKeywordVariadic != !!arguments->keywordVariadic)
+                return false;
+        }
+        // These are called by what comes with the engine, with the one argument.
+        bool takesOneArgument = info->usesNamespace || info->kind == CodeKind::Class || info->kind == CodeKind::Annotations || info->kind == CodeKind::Evaluator || info->kind == CodeKind::Comprehension || info->kind == CodeKind::GeneratorExpression;
+        if (takesOneArgument && (info->positionalCount != 1 || info->parameterCount() != 1))
+            return false;
+        if (!isModule && info->usesNamespace != (info->kind == CodeKind::Class))
+            return false;
+        if (info->canSeeClassScope && !belongsToSomethingElse)
+            return false;
+        bool hasTypeParameters = info->owner == OwnerKind::Function || info->owner == OwnerKind::Class || info->owner == OwnerKind::TypeAlias;
+        switch (info->kind) {
+        case CodeKind::Annotations:
+            return info->owner != OwnerKind::TypeAlias;
+        case CodeKind::TypeParameters:
+            return hasTypeParameters && !typeParametersOf().empty();
+        case CodeKind::Evaluator: {
+            if (!hasTypeParameters)
+                return false;
+            if (info->evaluates == Evaluates::Value)
+                return info->owner == OwnerKind::TypeAlias;
+            if (info->typeParameterIndex >= typeParametersOf().size())
+                return false;
+            TypeParameter* parameter = typeParametersOf()[info->typeParameterIndex];
+            return info->evaluates == Evaluates::Bound ? !!parameter->bound : !!parameter->defaultValue;
+        }
+        default:
+            return true;
+        }
+    };
+    if (!isBorneOut())
+        return disagrees();
+
     bool wantsAnnotationBlock = false;
     switch (info->kind) {
     case CodeKind::Annotations:
@@ -163,11 +246,14 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         break;
     }
     Block* block = table->blockFor(blockKey);
-    RELEASE_ASSERT(block);
-    if (wantsAnnotationBlock) {
+    if (block && wantsAnnotationBlock)
         block = block->annotationBlock;
-        RELEASE_ASSERT(block);
-    }
+    if (!block)
+        return disagrees();
+    // Only a function is a generator or a coroutine. A `yield` where there is no function is found when it is come to, and said to be that.
+    bool isFunctionLike = block->isFunctionLike();
+    if (info->isGenerator != (isFunctionLike && block->isGenerator) || info->isCoroutine != (isFunctionLike && block->isCoroutine))
+        return disagrees();
 
     executable->recordParse(NoFeatures, StrictModeLexicallyScopedFeature, false);
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), false, executable->constructorKind(), executable->scriptMode(), executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, false, executable->evalContextType(), false), codeGenerationMode);
@@ -240,7 +326,7 @@ static void appendTranslatingNewlines(auto& output, std::span<const Character> i
     }
 }
 
-SourceCode makeSource(const String& given, const SourceOrigin& origin, const String& sourceURL)
+SourceCode makeSource(const String& given, const SourceOrigin& origin, const String& sourceURL, unsigned firstLine)
 {
     String text = given;
     if (text.contains('\r')) {
@@ -251,7 +337,7 @@ SourceCode makeSource(const String& given, const SourceOrigin& origin, const Str
             appendTranslatingNewlines(builder, text.span16());
         text = builder.toString();
     }
-    return SourceCode(StringSourceProvider::create(text, origin, String(sourceURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Python));
+    return SourceCode(StringSourceProvider::create(text, origin, String(sourceURL), SourceTaintedOrigin::Untainted, TextPosition(OrdinalNumber::fromOneBasedInt(firstLine), OrdinalNumber()), SourceProviderSourceType::Python));
 }
 
 // The two encodings that the tokenizer knows by all their names.
@@ -432,7 +518,7 @@ static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const So
     return true;
 }
 
-FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility)
+FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, unsigned optimizationLevel)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -443,6 +529,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     {
         Arena arena;
         arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
+        arena.usesLessGreater = inheritedFutureFeatures & FutureBarryAsFLUFL;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
@@ -461,8 +548,9 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     auto info = adoptRef(*new FunctionInfo);
     info->kind = kind;
     info->futureFeatures = futureFeatures;
+    info->optimizationLevel = optimizationLevel;
     info->visibility = visibility;
-    info->hasDocstring = hasDocstring;
+    info->hasDocstring = hasDocstring && optimizationLevel < 2;
     info->name = Identifier::fromString(vm, "<module>"_s);
     info->qualifiedName = "<module>"_s;
     if (usesNamespace) {
@@ -504,6 +592,17 @@ static JSObject* builtinsFor(JSGlobalObject* globalObject, JSObject* globals)
     return globalObject->pyRealm()->builtinsModule();
 }
 
+static FunctionExecutable* executableFor(VM& vm, const SourceCode& source, Ref<FunctionInfo>&& info)
+{
+    SourceCode whole(*source.provider());
+    unsigned start = source.startOffset();
+    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), start, start, start, info->visibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, info->parameterCount(), SourceParseMode::MethodMode, false);
+    metadata.finishParsing(source, info->name, FunctionMode::FunctionExpression);
+    auto* unlinked = UnlinkedFunctionExecutable::create(vm, whole, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    unlinked->setPythonInfo(WTF::move(info));
+    return unlinked->link(vm, nullptr, whole);
+}
+
 FunctionExecutable* cloneExecutable(JSGlobalObject* globalObject, FunctionExecutable* original, Ref<FunctionInfo>&& info, const String& sourceURL)
 {
     VM& vm = globalObject->vm();
@@ -512,13 +611,16 @@ FunctionExecutable* cloneExecutable(JSGlobalObject* globalObject, FunctionExecut
     // The name of the file goes with the source. The text is the same text and not a copy.
     if (!sourceURL.isNull() && sourceURL != provider->sourceURL())
         provider = makeSource(provider->source().toString(), provider->sourceOrigin(), sourceURL).provider();
-    SourceCode whole(*provider);
-    unsigned start = source.startOffset();
-    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), start, start, start, info->visibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, info->parameterCount(), original->unlinkedExecutable()->parseMode(), false);
-    metadata.finishParsing(SourceCode(*provider, start, source.endOffset()), info->name, FunctionMode::FunctionExpression);
-    auto* unlinked = UnlinkedFunctionExecutable::create(vm, whole, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
-    unlinked->setPythonInfo(WTF::move(info));
-    return unlinked->link(vm, nullptr, whole);
+    return executableFor(vm, SourceCode(*provider, source.startOffset(), source.endOffset()), WTF::move(info));
+}
+
+FunctionExecutable* executableFromProgram(JSGlobalObject* globalObject, const SourceCode& source, Ref<FunctionInfo>&& info)
+{
+    VM& vm = globalObject->vm();
+    FunctionExecutable* executable = executableFor(vm, source, WTF::move(info));
+    // All of it is compiled now, to find out whether it can be.
+    ParserError error;
+    return generateAll(vm, executable->unlinkedExecutable(), SourceCode(*source.provider()), error) ? executable : nullptr;
 }
 
 JSScope* environmentForCells(JSGlobalObject* globalObject, JSScope* next, const Vector<Identifier>& names, PyTuple* cells)

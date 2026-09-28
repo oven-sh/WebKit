@@ -274,6 +274,15 @@ JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue se
 
 // ---- await
 
+bool isIterableCoroutine(JSGlobalObject* globalObject, JSValue value)
+{
+    if (typeOf(globalObject, value) != globalObject->pyRealm()->typeGenerator())
+        return false;
+    JSValue body = asGenerator(value)->internalField(static_cast<unsigned>(JSGenerator::Field::Next)).get();
+    auto* function = dynamicDowncast<JSFunction>(body);
+    return function && function->jsExecutable()->unlinkedExecutable()->pythonInfo()->isIterableCoroutine;
+}
+
 JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned context)
 {
     VM& vm = globalObject->vm();
@@ -293,6 +302,9 @@ JSValue getAwaitable(JSGlobalObject* globalObject, JSValue value, unsigned conte
             return raise(globalObject, scope, BuiltinType::RuntimeError, "coroutine is being awaited already"_s);
         return value;
     }
+    // A generator that types.coroutine() has been at.
+    if (isIterableCoroutine(globalObject, value))
+        return value;
     JSValue self;
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_await, self);
     RETURN_IF_EXCEPTION(scope, { });

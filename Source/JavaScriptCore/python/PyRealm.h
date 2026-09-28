@@ -109,6 +109,8 @@ namespace JSC {
     v(ListIterator, "list_iterator", Object, Native, 0) \
     v(ListReverseIterator, "list_reverseiterator", Object, Native, 0) \
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \
+    v(LineIterator, "line_iterator", Object, Native, 0) \
+    v(PositionsIterator, "positions_iterator", Object, Native, 0) \
     v(RangeIterator, "range_iterator", Object, Native, 0) \
     v(LongRangeIterator, "longrange_iterator", Object, Native, 0) \
     v(StrAsciiIterator, "str_ascii_iterator", Object, Native, 0) \

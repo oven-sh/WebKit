@@ -656,8 +656,12 @@ PYTHON_RUNTIME_FUNCTION(runtimeGetAsyncNext)
 PYTHON_RUNTIME_FUNCTION(getYieldFromIterator)
 {
     PROLOGUE();
-    if (typeOf(globalObject, argument(0)) == realm->typeCoroutine())
+    if (typeOf(globalObject, argument(0)) == realm->typeCoroutine()) {
+        // A generator that can itself be awaited can hand on to one.
+        if (argument(1).asBoolean())
+            return JSValue::encode(argument(0));
         return JSValue::encode(raiseTypeError(globalObject, scope, "cannot 'yield from' a coroutine object in a non-coroutine generator"_s));
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(getIterator(globalObject, argument(0))));
 }
 

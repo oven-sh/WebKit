@@ -914,7 +914,7 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
     using Kind = PyNativeFunction::Kind;
     for (BuiltinType builtin : { BuiltinType::ListIterator, BuiltinType::ListReverseIterator, BuiltinType::TupleIterator, BuiltinType::RangeIterator, BuiltinType::LongRangeIterator, BuiltinType::StrAsciiIterator, BuiltinType::StrIterator, BuiltinType::BytesIterator, BuiltinType::ByteArrayIterator, BuiltinType::MemoryIterator,
         BuiltinType::DictKeyIterator, BuiltinType::DictValueIterator, BuiltinType::DictItemIterator, BuiltinType::DictReverseKeyIterator, BuiltinType::DictReverseValueIterator, BuiltinType::DictReverseItemIterator, BuiltinType::SetIterator, BuiltinType::SequenceIterator,
-        BuiltinType::CallableIterator, BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed }) {
+        BuiltinType::CallableIterator, BuiltinType::Enumerate, BuiltinType::Zip, BuiltinType::Map, BuiltinType::Filter, BuiltinType::Reversed, BuiltinType::LineIterator, BuiltinType::PositionsIterator }) {
         PyType* type = realm->type(builtin);
         type->setInstanceStructure(vm, PyIterator::createStructure(vm, globalObject, type));
         addMethods(globalObject, type, {
