@@ -44,6 +44,8 @@ namespace AOT {
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
     /* pointer. Clobbers only T0-T3. */ \
     v(Prologue) \
+    /* See generateEnter(). */ \
+    v(Enter) \
     /* On entry to a function that may have been passed too few arguments, before anything else. T9 = numParameters, */ \
     /* T10 = the link register as it was on entry. Comes back, with the link register as it was, once the frame has them all. */ \
     /* Clobbers only T0-T7, T11. */ \
@@ -225,6 +227,27 @@ struct StubBlob {
     void* inJITMemory; // A copy that code in the JIT's memory can call.
 };
 const StubBlob& stubBlob();
+
+// Where whoever finds that there is no room for a function's frame is told which function: what its frames have for a callee.
+static constexpr GPRReg boxedHeaderGPR = GPRInfo::regT12;
+
+// The places in a function's code that refer to the CodeHeader in front of it, by how far away it is: which is not known until the
+// code is where it is going to be.
+class HeaderReferences {
+public:
+    // What a frame of the function has for a callee: CalleeBits::boxNativeCallee() of the header.
+    void moveBoxedHeader(CCallHelpers&, GPRReg);
+    void loadIndex(CCallHelpers&, GPRReg); // CodeHeader::index
+    void link(LinkBuffer&, CCallHelpers::Label header);
+
+private:
+    struct Reference {
+        CCallHelpers::Label instruction;
+        GPRReg reg;
+        bool isLoadOfIndex;
+    };
+    Vector<Reference, 4> m_references;
+};
 
 // The calls of one compilation.
 class StubCalls {

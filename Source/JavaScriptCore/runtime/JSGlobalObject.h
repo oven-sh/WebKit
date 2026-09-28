@@ -236,11 +236,16 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+namespace AOT {
+struct Instance;
+}
+
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+    AOT::Instance* m_aotInstance { nullptr }; // What code from the static compiler has of this realm. Made when there is such code.
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -1148,6 +1153,9 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }

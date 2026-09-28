@@ -572,7 +572,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
 }
 
 // The jump offset, relative to the switch; 0 for the default.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, CodeBlock* codeBlock, EncodedJSValue encodedValue, uint32_t tableIndex))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -584,7 +584,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalOb
     auto string = asString(value)->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return INT32_MIN; // Out of memory resolving a rope: the caller checks.
-    const UnlinkedStringJumpTable& table = codeBlock->unlinkedStringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = callerCodeBlock(callFrame)->unlinkedStringSwitchJumpTable(tableIndex);
     return table.offsetForValue(string.data.impl());
 }
 

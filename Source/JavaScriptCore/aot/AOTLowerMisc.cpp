@@ -201,7 +201,7 @@ void Lowering::lowerSwitch(Node* node)
         auto bytecode = node->as<OpSwitchString>();
         const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
         callPreflight(node);
-        LValue offset = plainCall(Int32, Entry::operationAOTSwitchString, m_globalObject, m_codeBlock, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex));
+        LValue offset = plainCall(Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex));
         LBasicBlock ok = m_out.newBlock();
         m_out.branch(m_out.equal(offset, m_out.constInt32(INT32_MIN)), rarely(m_handleExceptions), usually(ok));
         m_out.appendTo(ok);
@@ -365,7 +365,7 @@ bool Lowering::tryLowerMisc(Node* node)
         lowerCatch(node);
         return true;
     case op_get_scope:
-        setJSValue(node, m_out.loadPtr(m_out.load64(addressFor(VirtualRegister(CallFrameSlot::callee))), m_heaps.JSCallee_scope));
+        setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));
         return true;
     case op_get_parent_scope:
         setJSValue(node, m_out.loadPtr(lowCell(node->use(node->as<OpGetParentScope>().m_scope)), m_heaps.JSScope_next));

@@ -22,21 +22,25 @@ namespace JSC {
 
 class CodeBlock;
 class JSGlobalObject;
+class CallFrame;
 class UnlinkedCodeBlock;
 class VM;
 
 namespace AOT {
 
-// Code from the static compiler has no address in it: not of the VM, not of a C++ function, not of a thunk, not of itself.
-// Everything it needs that is not in its frame it finds from the CodeBlock in its frame, whose m_jitData is a Data.
+// Code from the static compiler has no address in it: not of the VM, not of a C++ function, not of a thunk. Everything it needs
+// that is not in its frame it finds from the Instance, which is where a frame of the interpreter's has its CodeBlock, as a frame
+// of WebAssembly's has its instance there.
 //
-//     frame -> CodeBlock -> Data -> runtimeTable[Entry]    C++ operations and thunks: one table per VM
-//                                -> vm, globalObject
-//                                -> constants[i]            the CodeBlock's constant registers
-//                                -> identifiers[i]          the UnlinkedCodeBlock's identifiers
-//                                -> slots[i]                the function's inline caches
+//     frame -> Instance -> runtimeTable[Entry]              C++ operations and thunks: one table per VM
+//                       -> vm, globalObject
+//                       -> data[index of the function] -> constants[i]
+//                                                      -> identifiers[i]
+//                                                      -> slots[i]      the function's inline caches
 //
-// So the same bytes run wherever they are mapped, in any VM of any process.
+// And where such a frame has its callee is what says which function it is a frame of: the CodeHeader in front of the function's
+// code, which the function finds from where it is itself. So the same bytes run wherever they are mapped, in any realm of any VM
+// of any process.
 
 #define FOR_EACH_AOT_OPERATION(v) \
     v(operationAOTValueAdd) \
@@ -210,6 +214,51 @@ struct Slot {
 };
 static_assert(sizeof(Slot) == 16);
 
+// What comes right before the code of a function. To whoever finds it in a frame it is a NativeCallee.
+struct alignas(16) CodeHeader {
+    uint64_t refCount { 3 }; // ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr: one strong reference, nothing else. Stays that way.
+    NativeCallee::Category category { NativeCallee::Category::AOT };
+    ImplementationVisibility visibility { ImplementationVisibility::Public };
+    int16_t calleeSlot { 0 }; // Where in its frames the function keeps the object it was called as: which Register, from the frame pointer.
+    uint32_t index { 0 }; // Which function: see Instance::data.
+
+    static const CodeHeader* fromCallee(CalleeBits bits) { return std::bit_cast<const CodeHeader*>(bits.asNativeCallee()); }
+};
+static_assert(sizeof(CodeHeader) == sizeof(NativeCallee) && alignof(CodeHeader) == alignof(NativeCallee));
+
+struct Data;
+
+// One for each realm that runs code from the static compiler.
+struct Instance {
+    static Instance& ensure(JSGlobalObject*);
+    static void destroy(Instance*);
+
+    static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
+    static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
+    static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
+    static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(Instance, data); }
+
+    // As many as there could ever be. It is addresses that are set aside, not memory.
+    static constexpr size_t maxFunctions = 4 << 20;
+
+    void** runtimeTable;
+    JSGlobalObject* globalObject;
+    VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.
+    void* unused;
+    Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
+};
+
+// A number for a function that is compiled in this process. The functions of an image have theirs already, from zero.
+uint32_t allocateFunctionIndex();
+bool reserveFunctionIndicesForImage(uint32_t count); // False: too late.
+
+// Whether something that may have been read out of a frame at any moment at all is one. Any thread.
+JS_EXPORT_PRIVATE bool isCodeHeader(const void*);
+// About a frame whose callee is a CodeHeader.
+JS_EXPORT_PRIVATE Data* dataOf(const CallFrame*);
+JS_EXPORT_PRIVATE CodeBlock* codeBlockOf(const CallFrame*);
+JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*);
+
 struct Data {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Data);
 
@@ -219,18 +268,13 @@ struct Data {
     // Structures do not keep their IDs to themselves when they die.
     void finalizeUnconditionally(VM&);
 
-    static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Data, runtimeTable); }
-    static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Data, vm); }
-    static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Data, globalObject); }
     static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(Data, constants); }
     static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(Data, identifiers); }
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(Data, sites); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
 
-    void** runtimeTable;
-    VM* vm;
-    JSGlobalObject* globalObject;
+    CodeBlock* codeBlock; // For the time being: what the rest of the engine takes the function's frames to be running.
     const void* constants; // const WriteBarrier<Unknown>*
     const void* identifiers; // const Identifier*
     const Site* sites; // One for each slot. The code's, not this CodeBlock's.
@@ -325,6 +369,9 @@ public:
             functor(bytecodeOffset, codeOffset);
     }
     const void* start() const { return m_code; }
+    const CodeHeader& header() const { return *static_cast<const CodeHeader*>(m_code); }
+    // Where a caller that has put the Instance in the frame goes. Checks the number of arguments.
+    static constexpr ptrdiff_t offsetOfEntry() { return OBJECT_OFFSETOF(JITCode, m_entry); }
 
 private:
     struct Owned {
@@ -334,6 +381,7 @@ private:
     };
 
     void* m_code;
+    void* m_entry;
     const ImageFunction* m_function { nullptr };
     const RegisterAtOffsetList* m_calleeSaveRegisters;
     std::unique_ptr<Owned> m_owned;

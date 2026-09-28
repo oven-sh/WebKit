@@ -73,6 +73,7 @@ private:
     LValue lowDouble(Node*);
     LValue lowBoolean(Node*);
     LValue lowCell(Node* node) { return lowJSValue(node); }
+    LValue callee() { return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot)); } // The object the function was called as.
     LValue lowConstantRegister(VirtualRegister); // For an operand that BytecodeUseDef does not count among the uses.
     LValue convert(LValue, Rep from, Type fromType, Rep to);
     void setJSValue(Node*, LValue);
@@ -259,8 +260,9 @@ private:
     FTL::Output m_out;
 
     LValue m_callFrame { nullptr };
-    LValue m_codeBlock { nullptr };
+    LValue m_instance { nullptr };
     LValue m_data { nullptr };
+    LValue m_calleeSlot { nullptr };
     LValue m_vm { nullptr };
     LValue m_globalObject { nullptr };
     LValue m_table { nullptr };

@@ -40,6 +40,8 @@ uint64_t imageStamp()
         stamp ^= stamp >> 29;
     };
     mix(numberOfEntries);
+    mix(lowestAccessibleAddress()); // How a frame says which function it is a frame of.
+    mix(Instance::offsetOfData());
     mix(numberOfStubs);
     mix(numOpcodeIDs);
     mix(sizeof(VM));
@@ -65,6 +67,8 @@ void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
     // Where they pointed depends on where the code was when it was compiled, which is nothing to do with the code.
     for (auto& call : code.info.stubCalls)
         memset(code.bytes.mutableSpan().data() + call.offset, 0, sizeof(uint32_t));
+    // Nor has the number it went by.
+    memset(code.bytes.mutableSpan().data() + OBJECT_OFFSETOF(CodeHeader, index), 0, sizeof(uint32_t));
     Locker locker { m_lock };
     m_functions.append(Function { key, rank, WTF::move(code) });
 }
@@ -187,6 +191,8 @@ Vector<uint8_t> ImageBuilder::finish()
         recordAt += info.knownCallees.size() * sizeof(ImageKey);
 
         memcpy(code + codeAt, function.code.bytes.span().data(), function.code.bytes.size());
+        uint32_t indexInProgram = index;
+        memcpy(code + codeAt + OBJECT_OFFSETOF(CodeHeader, index), &indexInProgram, sizeof(indexInProgram));
         for (auto& call : info.stubCalls)
             retargetStubCall(code, codeAt + call.offset, stubsForThis + stubs.offsets[static_cast<unsigned>(call.stub)], call.isTailCall);
     }
@@ -247,6 +253,9 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         || static_cast<uint64_t>(header.recordsOffset) + header.recordsSize > header.codeOffset
         || header.codeOffset + header.codeSize > header.size)
         return nullptr;
+    // Its functions know what their numbers are.
+    if (!reserveFunctionIndicesForImage(header.numberOfFunctions))
+        return nullptr;
 
     auto* image = new Image(data, code);
     auto& all = registry();
@@ -254,6 +263,20 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     all.images.append(image);
     all.hasAny.store(true, std::memory_order_release);
     return image;
+}
+
+bool Image::containsCode(const void* pointer)
+{
+    auto& all = registry();
+    if (!all.hasAny.load(std::memory_order_acquire))
+        return false;
+    // (Nothing is ever taken out, and this may be asked while the thread that has the lock is stopped.)
+    for (unsigned i = 0; i < all.images.size(); ++i) {
+        Image* image = all.images[i];
+        if (static_cast<const uint8_t*>(pointer) - static_cast<const uint8_t*>(image->m_code) < static_cast<ptrdiff_t>(image->header().codeSize) && pointer >= image->m_code)
+            return true;
+    }
+    return false;
 }
 
 Image* Image::registerImageFromFile(const char* path)
@@ -414,6 +437,14 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         if (Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") bytecode ", unlinkedCodeBlock->instructionsSize());
         return { };
+    }
+
+    // The code finds what it has of the realm by its own number, so that is for one function of the realm. The same text evaluated
+    // a second time is another function: it has constants of its own, for one thing.
+    if (Instance* instance = scope->realm()->aotInstance()) {
+        Data* data = instance->data[reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index];
+        if (data && data->codeBlock->ownerExecutable() != executable)
+            return { };
     }
 
     if (function->usesStaticImports) {

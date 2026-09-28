@@ -28,6 +28,7 @@
 #include "CallFrame.h"
 #include "HeapCellInlines.h"
 #include "JSCalleeInlines.h"
+#include "NativeCallee.h"
 #include "RegisterInlines.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -47,21 +48,42 @@ ALWAYS_INLINE VM& CallFrame::deprecatedVM() const
     return callee->vm();
 }
 
+inline bool CallFrame::isAOTFrame() const
+{
+#if ENABLE(FTL_JIT)
+    CalleeBits bits = rawCallee();
+    return bits.isNativeCallee() && bits.asNativeCallee()->category() == NativeCallee::Category::AOT;
+#else
+    return false;
+#endif
+}
+
+inline CalleeBits CallFrame::callee() const
+{
+    if (isAOTFrame()) [[unlikely]]
+        return CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(this)));
+    return rawCallee();
+}
+
 inline JSValue CallFrame::guaranteedJSValueCallee() const
 {
     ASSERT(!callee().isNativeCallee());
-    return this[static_cast<int>(CallFrameSlot::callee)].jsValue();
+    return jsCallee();
 }
 
 inline JSObject* CallFrame::jsCallee() const
 {
     ASSERT(!callee().isNativeCallee());
+    if (isAOTFrame()) [[unlikely]]
+        return AOT::calleeOf(this);
     return this[static_cast<int>(CallFrameSlot::callee)].object();
 }
 
 inline CodeBlock* CallFrame::codeBlock() const
 {
     ASSERT(!callee().isNativeCallee());
+    if (isAOTFrame()) [[unlikely]]
+        return AOT::codeBlockOf(this);
     return this[static_cast<int>(CallFrameSlot::codeBlock)].Register::codeBlock();
 }
 

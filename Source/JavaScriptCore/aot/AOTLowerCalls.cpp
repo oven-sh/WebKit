@@ -52,6 +52,7 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
     static_assert(BaselineJITRegisters::Call::calleeGPR == GPRInfo::argumentGPR0);
     patchpoint->append(ConstrainedValue(callee, ValueRep::reg(GPRInfo::argumentGPR0)));
     patchpoint->append(ConstrainedValue(m_data, ValueRep::reg(GPRInfo::argumentGPR1)));
+    patchpoint->append(ConstrainedValue(m_instance, ValueRep::reg(GPRInfo::argumentGPR2)));
     patchpoint->appendVector(inFrame);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
@@ -68,11 +69,9 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
         CCallHelpers::JumpList slow;
         jit.loadPtr(CCallHelpers::Address(data, offsetOfSlot + OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::regT9);
         slow.append(jit.branchPtr(CCallHelpers::NotEqual, GPRInfo::regT9, callee));
-        // The collector lets go of either without a thought for the other.
-        jit.loadPtr(CCallHelpers::Address(data, offsetOfSlot + sizeof(Slot) + OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::regT9);
-        slow.append(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT9));
+        // It is a function of this realm (operationAOTLinkCall()).
         static_assert(static_cast<int>(CallFrameSlot::callee) == static_cast<int>(CallFrameSlot::codeBlock) + 1);
-        jit.storePair64(GPRInfo::regT9, callee, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
+        jit.storePair64(GPRInfo::argumentGPR2, callee, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
         jit.store32(CCallHelpers::TrustedImm32(argc), slotOfNewFrame(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
         jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
         stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, skipsArityCheck);

@@ -123,22 +123,6 @@ void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
     vm.writeBarrier(cell);
 }
 
-void StaticHeap::initializeVTables()
-{
-    auto copy = [](VTable which, const void* object) {
-        auto* table = *static_cast<void* const* const*>(object);
-        // What comes before the first function is two words. How many functions there are is not written anywhere.
-        memcpy(static_cast<void**>(addressOfVTable(which)) - 2, table - 2, bytesForVTable);
-    };
-#if ENABLE(FTL_JIT)
-    {
-        AOT::ImageFunction function { };
-        AOT::JITCode code(nullptr, function);
-        copy(VTable::AOTJITCode, &code);
-    }
-#endif
-}
-
 void* StaticHeap::tryAllocateCellSlow(size_t size)
 {
     if (void* place = std::exchange(s_placeOfNextCell, nullptr)) {

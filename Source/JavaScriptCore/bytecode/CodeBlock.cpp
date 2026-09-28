@@ -1083,7 +1083,15 @@ void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
                 handler.nativeCode = CodeLocationLabel<ExceptionHandlerPtrTag>(tagCodePtr<ExceptionHandlerPtrTag>(jitCode->executableAddressAtOffset(codeOffset)));
         });
     }
-    AOT::Data* data = AOT::Data::create(vm(), this, jitCode->numSlots(), jitCode->sites());
+    // There is one Data to a function and a realm, and it is the code that says where. A function may come to have a second
+    // CodeBlock in the same realm (it is inside one that has code both for a call and for `new`, say): that shares the Data of the
+    // first, which is what the frames of either are taken to be running, and which stays for that reason.
+    AOT::Instance& instance = AOT::Instance::ensure(globalObject());
+    AOT::Data*& data = instance.data[jitCode->header().index];
+    if (!data) {
+        data = AOT::Data::create(vm(), this, jitCode->numSlots(), jitCode->sites());
+        vm().heap.protect(this);
+    }
     setJITCode(WTF::move(jitCode));
     WTF::storeStoreFence();
     m_jitData = data;
@@ -1095,9 +1103,11 @@ void CodeBlock::releaseAOTData()
     // The collector looks at it, from its own threads. It does not start doing so behind the back of code that allocates nothing.
     if (vm().heap.collectionScope())
         return;
-    if (auto* data = aotData()) {
+    if (auto* data = aotData(); data && data->codeBlock == this) {
+        globalObject()->aotInstance()->data[static_cast<AOT::JITCode*>(m_jitCode.get())->header().index] = nullptr;
         m_jitData = nullptr;
         AOT::Data::destroy(data);
+        vm().heap.unprotect(this);
     }
 }
 #endif
@@ -1195,7 +1205,9 @@ CodeBlock::~CodeBlock()
 #if ENABLE(FTL_JIT)
     if (auto* data = aotData()) {
         m_jitData = nullptr;
-        AOT::Data::destroy(data);
+        // (The one whose it is only goes when everything does.)
+        if (data->codeBlock == this)
+            AOT::Data::destroy(data);
     }
 #endif
 #if ENABLE(JIT)

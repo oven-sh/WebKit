@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "JSWebAssemblyInstance.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AOTImage.h"
@@ -144,13 +146,76 @@ RuntimeTable& runtimeTable(VM& vm)
     return *vm.m_aotRuntimeTable;
 }
 
+static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
+
+Instance& Instance::ensure(JSGlobalObject* globalObject)
+{
+    if (Instance* instance = globalObject->aotInstance())
+        return *instance;
+#if ENABLE(WEBASSEMBLY)
+    RELEASE_ASSERT(Instance::offsetOfVM() == JSWebAssemblyInstance::offsetOfVM());
+#endif
+    size_t size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*));
+    auto* instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
+    VM& vm = globalObject->vm();
+    instance->runtimeTable = AOT::runtimeTable(vm).entries();
+    instance->globalObject = globalObject;
+    instance->vm = &vm;
+    globalObject->setAOTInstance(instance);
+    return *instance;
+}
+
+void Instance::destroy(Instance* instance)
+{
+    OSAllocator::decommitAndRelease(instance, roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*)));
+}
+
+static std::atomic<uint32_t> s_nextFunctionIndex { 0 };
+
+uint32_t allocateFunctionIndex()
+{
+    uint32_t index = s_nextFunctionIndex++;
+    RELEASE_ASSERT(index < Instance::maxFunctions);
+    return index;
+}
+
+bool reserveFunctionIndicesForImage(uint32_t count)
+{
+    uint32_t expected = 0;
+    return count < Instance::maxFunctions && s_nextFunctionIndex.compare_exchange_strong(expected, count);
+}
+
+bool isCodeHeader(const void* pointer)
+{
+    if (std::bit_cast<uintptr_t>(pointer) % alignof(CodeHeader))
+        return false;
+    if (!Image::containsCode(pointer) && !isJITPC(const_cast<void*>(pointer)))
+        return false;
+    return static_cast<const CodeHeader*>(pointer)->category == NativeCallee::Category::AOT;
+}
+
+Data* dataOf(const CallFrame* callFrame)
+{
+    auto* instance = std::bit_cast<Instance*>(callFrame->unsafeCodeBlock());
+    return instance->data[CodeHeader::fromCallee(callFrame->rawCallee())->index];
+}
+
+CodeBlock* codeBlockOf(const CallFrame* callFrame)
+{
+    return dataOf(callFrame)->codeBlock;
+}
+
+JSObject* calleeOf(const CallFrame* callFrame)
+{
+    return callFrame->registers()[CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot].object();
+}
+
 Data* Data::create(VM& vm, CodeBlock* codeBlock, unsigned numSlots, const Site* sites)
 {
     size_t size = sizeof(Data) + numSlots * sizeof(Slot);
+    UNUSED_PARAM(vm);
     Data* data = static_cast<Data*>(fastZeroedMalloc(size));
-    data->runtimeTable = AOT::runtimeTable(vm).entries();
-    data->vm = &vm;
-    data->globalObject = codeBlock->globalObject();
+    data->codeBlock = codeBlock;
     data->constants = codeBlock->constantRegisters().span().data();
     data->identifiers = codeBlock->unlinkedCodeBlock()->identifiers().span().data();
     data->sites = sites;
@@ -202,8 +267,9 @@ void Data::finalizeUnconditionally(VM& vm)
 }
 
 JITCode::JITCode(void* code, RefPtr<ExecutableMemoryHandle>&& handle, CompiledFunctionInfo&& info)
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + info.entryOffset)), handle ? ShareAttribute::NotShared : ShareAttribute::Shared)
+    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter))), handle ? ShareAttribute::NotShared : ShareAttribute::Shared)
     , m_code(code)
+    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + info.arityCheckOffset))
     , m_owned(makeUnique<Owned>(WTF::move(handle), WTF::move(info)))
 {
     m_calleeSaveRegisters = &m_owned->info.calleeSaveRegisters;
@@ -250,8 +316,9 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
 
 JITCode::JITCode(void* code, const ImageFunction& function)
     // Code in an image is nobody's memory: the collector, which paces itself by what the heap holds on to, is not to count it.
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.entryOffset)), ShareAttribute::Shared)
+    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter))), ShareAttribute::Shared)
     , m_code(code)
+    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.arityCheckOffset))
     , m_function(&function)
     , m_calleeSaveRegisters(calleeSaveRegistersOf(function))
 {
@@ -259,10 +326,10 @@ JITCode::JITCode(void* code, const ImageFunction& function)
 
 JITCode::~JITCode() = default;
 
-CodePtr<JSEntryPtrTag> JITCode::addressForCall(ArityCheckMode arity)
+CodePtr<JSEntryPtrTag> JITCode::addressForCall(ArityCheckMode)
 {
-    unsigned offset = arity == ArityCheckMode::ArityCheckNotRequired ? entryOffset() : arityCheckOffset();
-    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(m_code) + offset));
+    // Whoever asks makes frames the way the interpreter wants them.
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::Enter)));
 }
 
 void* JITCode::executableAddressAtOffset(size_t offset) { return static_cast<uint8_t*>(m_code) + offset; }

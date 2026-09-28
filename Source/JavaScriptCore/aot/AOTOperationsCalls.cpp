@@ -251,7 +251,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
     CodeBlock* codeBlock = executable->codeBlockFor(kind);
-    if (!codeBlock || codeBlock->jitType() != JITType::AOTJIT)
+    if (!codeBlock || codeBlock->jitType() != JITType::AOTJIT || codeBlock->globalObject() != globalObject)
         return;
     auto key = imageKeyFor(executable, kind);
     if (!key || !key->sameFunction(code->knownCallee(knownCallee)))

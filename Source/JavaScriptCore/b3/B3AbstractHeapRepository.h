@@ -43,11 +43,11 @@ namespace JSC::B3 {
 // macro(name, offset, mutability)
 #define FOR_EACH_ABSTRACT_FIELD(macro) \
     macro(AOTData_constants, AOT::Data::offsetOfConstants(), Mutability::Immutable) \
-    macro(AOTData_globalObject, AOT::Data::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTData_identifiers, AOT::Data::offsetOfIdentifiers(), Mutability::Immutable) \
-    macro(AOTData_runtimeTable, AOT::Data::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
-    macro(AOTData_vm, AOT::Data::offsetOfVM(), Mutability::Immutable) \
+    macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
+    macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
+    macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \

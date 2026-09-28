@@ -32,6 +32,8 @@
 #include "config.h"
 #include "JSGlobalObject.h"
 
+#include "AOTRuntime.h"
+
 #include "AggregateError.h"
 #include "SuppressedError.h"
 #include "InternalFieldTuple.h"
@@ -990,6 +992,10 @@ JSGlobalObject::~JSGlobalObject()
 
     if (m_debugger)
         m_debugger->detach(this, Debugger::GlobalObjectIsDestructing);
+#if ENABLE(FTL_JIT)
+    if (m_aotInstance)
+        AOT::Instance::destroy(m_aotInstance);
+#endif
 }
 
 void JSGlobalObject::destroy(JSCell* cell)

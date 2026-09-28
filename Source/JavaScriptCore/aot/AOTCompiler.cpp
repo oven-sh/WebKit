@@ -53,15 +53,14 @@ Statistics& statistics()
     return stats;
 }
 
-void loadData(CCallHelpers& jit, CCallHelpers::Address codeBlockSlot, GPRReg dataGPR)
+void loadInstance(CCallHelpers& jit, CCallHelpers::Address codeBlockSlot, GPRReg instanceGPR)
 {
-    jit.loadPtr(codeBlockSlot, dataGPR);
-    jit.loadPtr(CCallHelpers::Address(dataGPR, CodeBlock::offsetOfJITData()), dataGPR);
+    jit.loadPtr(codeBlockSlot, instanceGPR);
 }
 
 void jumpToThunk(CCallHelpers& jit, GPRReg dataGPR, Entry entry)
 {
-    jit.loadPtr(CCallHelpers::Address(dataGPR, Data::offsetOfRuntimeTable()), dataGPR);
+    jit.loadPtr(CCallHelpers::Address(dataGPR, Instance::offsetOfRuntimeTable()), dataGPR);
     jit.loadPtr(CCallHelpers::Address(dataGPR, static_cast<unsigned>(entry) * sizeof(void*)), dataGPR);
     jit.farJump(dataGPR, JITThunkPtrTag);
 }
@@ -178,9 +177,18 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
 
     StubCalls& stubCalls = graph.stubCalls;
     bool makesCalls = graph.makesCalls;
-    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, makesCalls](CCallHelpers& jit, B3::Air::Code& code) {
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph, makesCalls](CCallHelpers& jit, B3::Air::Code& code) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
+        // The frame has the Instance where a CodeBlock would be, and the object that was called for a callee. Once there is known to
+        // be room for the frame that is put aside, and what says which function this is takes its place. Until then nobody looks,
+        // and if there is no room, whoever says so wants to know which function (generateThrowStackOverflowAtPrologue()).
+        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
+        auto becomeFrameOfThisFunction = makeScopeExit([&] {
+            jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT9);
+            jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
+            jit.store64(GPRInfo::regT9, CCallHelpers::Address(GPRInfo::callFrameRegister, graph.calleeSlot->offsetFromFP()));
+        });
         // The limit leaves room for the runtime to do what it has to when the stack is used up, which is a great deal more than this.
         // However deep the calls go, whatever made the last of them has checked.
         constexpr unsigned frameSizeThatNeedsNoCheck = 256;
@@ -195,8 +203,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
             jit.emitSave(code.calleeSaveRegisterAtOffsetList());
             return;
         }
-        loadData(jit, CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT0);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, Data::offsetOfVM()), GPRInfo::regT1);
+        loadInstance(jit, CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT0);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, Instance::offsetOfVM()), GPRInfo::regT1);
         jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), GPRInfo::callFrameRegister, GPRInfo::regT2);
         auto ok = jit.branchPtr(CCallHelpers::BelowOrEqual, CCallHelpers::Address(GPRInfo::regT1, VM::offsetOfSoftStackLimit()), GPRInfo::regT2);
         jumpToThunk(jit, GPRInfo::regT0, Entry::ThrowStackOverflowAtPrologue);
@@ -214,6 +222,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
 
     B3::prepareForGeneration(proc);
     CCallHelpers jit;
+    // The CodeHeader. What is in it is filled in when it is known.
+    CCallHelpers::Label header = jit.label();
+    for (unsigned i = 0; i < sizeof(CodeHeader) / sizeof(uint32_t); ++i)
+        jit.m_assembler.buffer().putInt(0);
     unsigned numParameters = unlinkedCodeBlock->numParameters();
     bool checksArity = unlinkedCodeBlock->codeType() == FunctionCode && numParameters != 1;
     CCallHelpers::Label arityCheckWithStub;
@@ -239,6 +251,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         else
             RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, entryLabel));
         tooFewArguments.link(&jit);
+        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
         jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
         jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
         stubCalls.call(jit, Stub::ArityCheck);
@@ -253,7 +266,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         jit.load32(slotBeforePrologue(CallFrameSlot::argumentCountIncludingThis).withOffset(LowWordOffset), GPRInfo::argumentGPR2);
         jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::argumentGPR2, CCallHelpers::TrustedImm32(numParameters)).linkTo(entryLabel, &jit);
 
-        loadData(jit, slotBeforePrologue(CallFrameSlot::codeBlock), GPRInfo::regT5);
+        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
+        loadInstance(jit, slotBeforePrologue(CallFrameSlot::codeBlock), GPRInfo::regT5);
         static_assert(stackAlignmentRegisters() == 2);
         unsigned aligned = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), numParameters + CallFrame::headerSizeInRegisters) == numParameters + CallFrame::headerSizeInRegisters ? numParameters : numParameters + 1;
         jit.move(CCallHelpers::TrustedImm32(aligned), GPRInfo::argumentGPR0);
@@ -262,10 +276,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         jit.and32(CCallHelpers::TrustedImm32(~1U), GPRInfo::argumentGPR1);
         jit.lshiftPtr(CCallHelpers::TrustedImm32(3), GPRInfo::argumentGPR1);
         jit.subPtr(CCallHelpers::stackPointerRegister, GPRInfo::argumentGPR1, GPRInfo::argumentGPR3);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Data::offsetOfVM()), GPRInfo::argumentGPR1);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Instance::offsetOfVM()), GPRInfo::argumentGPR1);
         auto stackOverflow = jit.branchPtr(CCallHelpers::Above, CCallHelpers::Address(GPRInfo::argumentGPR1, VM::offsetOfSoftStackLimit()), GPRInfo::argumentGPR3);
 
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Data::offsetOfRuntimeTable()), GPRInfo::regT5);
+        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Instance::offsetOfRuntimeTable()), GPRInfo::regT5);
         jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, static_cast<unsigned>(Entry::ArityFixup) * sizeof(void*)), GPRInfo::regT5);
         jit.tagPtr(NoPtrTag, CCallHelpers::linkRegister);
         jit.move(CCallHelpers::linkRegister, GPRInfo::argumentGPR1);
@@ -283,6 +297,16 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     if (linkBuffer.didFailToAllocate()) {
         graph.fail("out of executable memory"_s);
         return declined();
+    }
+
+    graph.headerReferences.link(linkBuffer, header);
+    {
+        CodeHeader contents;
+        contents.visibility = unlinkedCodeBlock->codeType() == FunctionCode && unlinkedCodeBlock->isBuiltinFunction() ? ImplementationVisibility::Private : ImplementationVisibility::Public;
+        contents.calleeSlot = safeCast<int16_t>(graph.calleeSlot->offsetFromFP() / static_cast<int>(sizeof(Register)));
+        // (Whoever puts it in an image gives it another.)
+        contents.index = ownerForLinkBuffer ? allocateFunctionIndex() : 0;
+        performJITMemcpy<jitMemcpyRepatch>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr(), &contents, sizeof(contents));
     }
 
     CompiledFunctionInfo info;

@@ -89,6 +89,7 @@ public:
     static Image* registerImageFromFile(const char* path);
 
     static bool hasAny();
+    static bool containsCode(const void*); // Any image's.
     static const void* addressOfStub(Stub); // In any image. Null if there is none.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
 

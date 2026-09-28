@@ -117,7 +117,6 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
         }
         Options::finalize();
-        StaticHeap::initializeVTables();
 
 #if BUSE(LIBPAS)
         if (Options::libpasScavengeContinuously())

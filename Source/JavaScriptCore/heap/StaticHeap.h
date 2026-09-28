@@ -102,19 +102,11 @@ public:
     JS_EXPORT_PRIVATE static void placeNextCell(void* address);
     JS_EXPORT_PRIVATE static void didPlaceCell(VM&, JSCell*);
 
-    // An object of a class that has virtual functions starts with the address of a table that is in the executable, which is not
-    // where it was when the program was built. There is a copy of the table at an address that does not change.
-    enum class VTable : unsigned { AOTJITCode, Count };
-    static void* addressOfVTable(VTable which) { return reinterpret_cast<void*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfVTablesInBss + static_cast<unsigned>(which) * bytesForVTable + 2 * sizeof(void*)); }
-    static void initializeVTables(); // JSC::initialize().
-
 private:
     JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(size_t);
 
     struct Header;
     static void makeContainer(VM&);
-
-    static constexpr size_t bytesForVTable = 512;
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
     JS_EXPORT_PRIVATE static bool s_interceptsAllocation;

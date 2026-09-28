@@ -32,7 +32,7 @@ using TrustedImm32 = CCallHelpers::TrustedImm32;
 
 static void jumpToEntry(CCallHelpers& jit, GPRReg data, Entry entry)
 {
-    jit.loadPtr(Address(data, Data::offsetOfRuntimeTable()), data);
+    jit.loadPtr(Address(data, Instance::offsetOfRuntimeTable()), data);
     jit.loadPtr(Address(data, static_cast<unsigned>(entry) * sizeof(void*)), data);
     jit.farJump(data, JITThunkPtrTag);
 }
@@ -40,8 +40,7 @@ static void jumpToEntry(CCallHelpers& jit, GPRReg data, Entry entry)
 static void generatePrologue(CCallHelpers& jit)
 {
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT0);
-    jit.loadPtr(Address(GPRInfo::regT0, CodeBlock::offsetOfJITData()), GPRInfo::regT0);
-    jit.loadPtr(Address(GPRInfo::regT0, Data::offsetOfVM()), GPRInfo::regT1);
+    jit.loadPtr(Address(GPRInfo::regT0, Instance::offsetOfVM()), GPRInfo::regT1);
     jit.subPtr(GPRInfo::callFrameRegister, GPRInfo::regT9, GPRInfo::regT2);
     jit.loadPtr(Address(GPRInfo::regT1, VM::offsetOfSoftStackLimit()), GPRInfo::regT3);
     Jump overflow = jit.branchPtr(CCallHelpers::Above, GPRInfo::regT3, GPRInfo::regT2);
@@ -83,8 +82,7 @@ static void generateArityCheck(CCallHelpers& jit)
     jit.lshiftPtr(TrustedImm32(3), GPRInfo::regT3);
     jit.subPtr(CCallHelpers::stackPointerRegister, GPRInfo::regT3, GPRInfo::regT3);
     jit.loadPtr(slot(CallFrameSlot::codeBlock), GPRInfo::regT5);
-    jit.loadPtr(Address(GPRInfo::regT5, CodeBlock::offsetOfJITData()), GPRInfo::regT5);
-    jit.loadPtr(Address(GPRInfo::regT5, Data::offsetOfVM()), GPRInfo::regT6);
+    jit.loadPtr(Address(GPRInfo::regT5, Instance::offsetOfVM()), GPRInfo::regT6);
     Jump overflow = jit.branchPtr(CCallHelpers::Above, Address(GPRInfo::regT6, VM::offsetOfSoftStackLimit()), GPRInfo::regT3);
 
     // From here on, what LLInt::arityFixupThunk() does.
@@ -134,10 +132,31 @@ constexpr GPRReg T11 = GPRInfo::regT11;
 constexpr GPRReg T12 = GPRInfo::regT12;
 constexpr GPRReg T13 = GPRInfo::regT13;
 
-static void loadData(CCallHelpers& jit, GPRReg result)
+static void loadInstance(CCallHelpers& jit, GPRReg result)
 {
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), result);
-    jit.loadPtr(Address(result, CodeBlock::offsetOfJITData()), result);
+}
+
+// boxed: what a frame has for a callee. Leaves the function's Data in `result`.
+static void loadDataOf(CCallHelpers& jit, GPRReg boxed, GPRReg instance, GPRReg result)
+{
+    ASSERT(boxed != instance && result != instance);
+    // CalleeBits::asNativeCallee(), and the tag is what it is short of the index.
+    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index)), result);
+    jit.load32(CCallHelpers::BaseIndex(boxed, result, CCallHelpers::TimesOne), result);
+    jit.lshiftPtr(TrustedImm32(3), result);
+    jit.addPtr(instance, result);
+    jit.loadPtr(Address(result, Instance::offsetOfData()), result);
+}
+
+// The Data of the function whose frame this is. Leaves its Instance in `instance`.
+static void loadInstanceAndData(CCallHelpers& jit, GPRReg instance, GPRReg data)
+{
+    loadInstance(jit, instance);
+    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), data);
+    // (loadDataOf() wants them apart.)
+    jit.move(data, CCallHelpers::memoryTempRegister);
+    loadDataOf(jit, CCallHelpers::memoryTempRegister, instance, data);
 }
 
 static void storeCallSite(CCallHelpers& jit, GPRReg bits)
@@ -163,24 +182,24 @@ static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns re
         exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
         break;
     case Returns::Double:
-        loadData(jit, T9);
-        jit.loadPtr(Address(T9, Data::offsetOfVM()), T9);
+        loadInstance(jit, T9);
+        jit.loadPtr(Address(T9, Instance::offsetOfVM()), T9);
         exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(T9, VM::exceptionOffset()));
         break;
     }
     jit.ret();
     exception.link(&jit);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jumpToEntry(jit, T9, Entry::HandleException);
 }
 
 static void generateOperation(CCallHelpers& jit, Returns returns, bool withGlobalObject)
 {
     storeCallSite(jit, T10);
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     if (withGlobalObject)
-        jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+        jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     callAndCheckException(jit, T11, returns);
 }
@@ -194,17 +213,17 @@ static void generateOperationDoubleWithGlobalObject(CCallHelpers& jit) { generat
 
 static void generatePlain(CCallHelpers& jit, std::optional<ptrdiff_t> firstArgument)
 {
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     if (firstArgument)
         jit.loadPtr(Address(T11, *firstArgument), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     jit.farJump(T11, OperationPtrTag);
 }
 
 static void generatePlainOperation(CCallHelpers& jit) { generatePlain(jit, std::nullopt); }
-static void generatePlainOperationWithGlobalObject(CCallHelpers& jit) { generatePlain(jit, Data::offsetOfGlobalObject()); }
-static void generatePlainOperationWithVM(CCallHelpers& jit) { generatePlain(jit, Data::offsetOfVM()); }
+static void generatePlainOperationWithGlobalObject(CCallHelpers& jit) { generatePlain(jit, Instance::offsetOfGlobalObject()); }
+static void generatePlainOperationWithVM(CCallHelpers& jit) { generatePlain(jit, Instance::offsetOfVM()); }
 
 // Calls an operation that does not throw and does not look at the stack, and returns from the stub, with every register as it was
 // (but for the return value register, if the result is wanted). For what is rare, so that the code that calls the stub need not
@@ -228,9 +247,9 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
         else
             jit.storeDouble(registers[i].fpr(), address);
     }
-    loadData(jit, T10);
+    loadInstance(jit, T10);
     setUp();
-    jit.loadPtr(Address(T10, Data::offsetOfRuntimeTable()), T10);
+    jit.loadPtr(Address(T10, Instance::offsetOfRuntimeTable()), T10);
     jit.loadPtr(Address(T10, static_cast<unsigned>(operation) * sizeof(void*)), T10);
     jit.call(T10, OperationPtrTag);
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -248,8 +267,8 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
 static void generateWriteBarrier(CCallHelpers& jit)
 {
     jit.load8(Address(A0, JSCell::cellStateOffset()), T9);
-    loadData(jit, T10);
-    jit.loadPtr(Address(T10, Data::offsetOfVM()), T11);
+    loadInstance(jit, T10);
+    jit.loadPtr(Address(T10, Instance::offsetOfVM()), T11);
     jit.load32(Address(T11, VM::offsetOfHeapBarrierThreshold()), T11);
     Jump slow = jit.branch32(CCallHelpers::BelowOrEqual, T9, T11);
     jit.ret();
@@ -257,7 +276,7 @@ static void generateWriteBarrier(CCallHelpers& jit)
     slow.link(&jit);
     callPreservingRegistersAndReturn(jit, Entry::operationAOTWriteBarrier, false, [&] {
         jit.move(A0, A1);
-        jit.loadPtr(Address(T10, Data::offsetOfVM()), A0);
+        jit.loadPtr(Address(T10, Instance::offsetOfVM()), A0);
     });
 }
 
@@ -315,7 +334,7 @@ static void generateToBoolean(CCallHelpers& jit)
     slow.link(&jit);
     callPreservingRegistersAndReturn(jit, Entry::operationAOTToBoolean, true, [&] {
         jit.move(A0, A1);
-        jit.loadPtr(Address(T10, Data::offsetOfGlobalObject()), A0);
+        jit.loadPtr(Address(T10, Instance::offsetOfGlobalObject()), A0);
     });
 }
 
@@ -338,11 +357,11 @@ static void generateEqual(CCallHelpers& jit, Entry operation)
     differ.link(&jit);
     isNumber.link(&jit);
     storeCallSite(jit, T10);
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
@@ -354,11 +373,11 @@ static void generateLooseEqual(CCallHelpers& jit) { generateEqual(jit, Entry::op
 static void callBinaryOperation(CCallHelpers& jit, Entry operation)
 {
     storeCallSite(jit, T10);
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Value);
 }
@@ -686,9 +705,9 @@ static void generatePutByVal(CCallHelpers& jit)
     jit.store64(A2, CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight));
 
     Jump notCell = jit.branchIfNotCell(A2, DoNotHaveTagRegisters);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
     jit.load32(Address(T12, VM::offsetOfHeapBarrierThreshold()), T13);
     Jump barrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, T13);
     notCell.link(&jit);
@@ -697,19 +716,19 @@ static void generatePutByVal(CCallHelpers& jit)
     barrier.link(&jit);
     jit.move(A0, A1);
     jit.move(T12, A0);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
 
     slow.link(&jit);
     storeCallSite(jit, T10);
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     jit.move(A3, A4);
     jit.move(A2, A3);
     jit.move(A1, A2);
     jit.move(A0, A1);
-    jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByVal) * sizeof(void*)), T11);
     callAndCheckException(jit, T11, Returns::Void);
 }
@@ -737,9 +756,9 @@ static void prepareMissAtSite(CCallHelpers& jit, Entry operation, unsigned numbe
     RELEASE_ASSERT(numberOfOperands >= 1 && numberOfOperands <= 3);
     constexpr GPRReg arguments[] = { A0, A1, A2, A3, A4, A5, GPRInfo::argumentGPR6 };
     GPRReg site = arguments[numberOfOperands];
-    loadData(jit, T9);
-    siteOfSlot(jit, T9, site, T13);
-    jit.loadPtr(Address(T9, Data::offsetOfSites()), T11);
+    loadInstanceAndData(jit, T9, T10);
+    siteOfSlot(jit, T10, site, T13);
+    jit.loadPtr(Address(T10, Data::offsetOfSites()), T11);
     static_assert(sizeof(Site) == 8);
     jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Site, callSiteBits)), T10);
     storeCallSite(jit, T10);
@@ -754,8 +773,8 @@ static void prepareMissAtSite(CCallHelpers& jit, Entry operation, unsigned numbe
     jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12, identifier);
     jit.urshift32(T12, TrustedImm32(Site::identifierBits), extra);
     jit.move(T11, slot);
-    jit.loadPtr(Address(T9, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(operation) * sizeof(void*)), T9);
 }
 
@@ -819,7 +838,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     jit.store64(A0, slotOfFrameBeingMade(CallFrameSlot::thisArgument));
     jit.store64(T12, slotOfFrameBeingMade(CallFrameSlot::callee));
     jit.store32(TrustedImm32(1), slotOfFrameBeingMade(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
-    loadData(jit, T9);
+    loadInstanceAndData(jit, T11, T9);
     siteOfSlot(jit, T9, A1, T10);
     jit.loadPtr(Address(T9, Data::offsetOfSites()), T11);
     jit.load32(CCallHelpers::BaseIndex(T11, T10, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Site, callSiteBits)), T11);
@@ -846,9 +865,9 @@ static void generatePutById(CCallHelpers& jit)
     sameStructure.link(&jit);
 
     Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
     jit.load32(Address(T12, VM::offsetOfHeapBarrierThreshold()), T13);
     Jump barrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, T13);
     notCell.link(&jit);
@@ -857,7 +876,7 @@ static void generatePutById(CCallHelpers& jit)
     barrier.link(&jit);
     jit.move(A0, A1);
     jit.move(T12, A0);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
 
@@ -907,9 +926,9 @@ static void generatePutPrivateName(CCallHelpers& jit)
     jit.store64(A2, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight));
 
     Jump notCell = jit.branchIfNotCell(A2, DoNotHaveTagRegisters);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
     jit.load32(Address(T12, VM::offsetOfHeapBarrierThreshold()), T13);
     Jump barrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, T13);
     notCell.link(&jit);
@@ -918,7 +937,7 @@ static void generatePutPrivateName(CCallHelpers& jit)
     barrier.link(&jit);
     jit.move(A0, A1);
     jit.move(T12, A0);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
 
@@ -943,9 +962,9 @@ static Jump walkOutIfResolvedByDepth(CCallHelpers& jit)
 static void generateResolveScope(CCallHelpers& jit)
 {
     // See operationAOTResolveScope().
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load32(slotWord(A1, 0).withOffset(sizeof(uint32_t)), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfGlobalObject()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfGlobalObject()), T12);
     jit.load32(Address(T12, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch()), T12);
     jit.add32(TrustedImm32(1), T12);
     Jump notThatOne = jit.branch32(CCallHelpers::NotEqual, T11, T12);
@@ -1022,9 +1041,9 @@ static void generatePutToScope(CCallHelpers& jit)
     jit.store64(A1, CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight, JSLexicalEnvironment::offsetOfVariables()));
 
     Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
     jit.load32(Address(T12, VM::offsetOfHeapBarrierThreshold()), T13);
     Jump barrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, T13);
     notCell.link(&jit);
@@ -1033,7 +1052,7 @@ static void generatePutToScope(CCallHelpers& jit)
     barrier.link(&jit);
     jit.move(A0, A1);
     jit.move(T12, A0);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
 
@@ -1044,9 +1063,9 @@ static void generatePutToScope(CCallHelpers& jit)
 static void generateGetGlobal(CCallHelpers& jit)
 {
     static_assert(sizeof(Slot) == 2 * sizeof(void*));
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jit.load32(slotWord(A1, 0).withOffset(sizeof(uint32_t)), T11);
-    jit.loadPtr(Address(T9, Data::offsetOfGlobalObject()), T12);
+    jit.loadPtr(Address(T9, Instance::offsetOfGlobalObject()), T12);
     jit.load32(Address(T12, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch()), T12);
     jit.add32(TrustedImm32(1), T12);
     Jump notThatOne = jit.branch32(CCallHelpers::NotEqual, T11, T12);
@@ -1074,7 +1093,7 @@ static void generateGetGlobal(CCallHelpers& jit)
     jit.loadPtr(Address(CCallHelpers::stackPointerRegister), CCallHelpers::linkRegister);
     jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 8), A1);
     jit.addPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, T11);
     jit.jump().linkTo(resolved, &jit);
 
@@ -1136,26 +1155,31 @@ static void unwind(CCallHelpers& jit, GPRReg vm, GPRReg lookUp)
 
 static void generateHandleException(CCallHelpers& jit)
 {
-    loadData(jit, T9);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T10);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    loadInstance(jit, T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T10);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::LookupExceptionHandler) * sizeof(void*)), T11);
     unwind(jit, T10, T11);
 }
 
 static void generateThrowStackOverflowAtPrologue(CCallHelpers& jit)
 {
+    constexpr GPRReg keptInstance = GPRInfo::regCS0; // Nothing returns from here to anyone who minds.
     // The first call site of any function is its beginning.
     jit.store32(TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-    loadData(jit, T9);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    loadInstance(jit, T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::ThrowStackOverflowError) * sizeof(void*)), T9);
-    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), A0);
+    // The frame is not yet one of the function's (see compile()), and is about to be nobody's.
+    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), T10);
+    jit.move(T10, keptInstance);
+    loadDataOf(jit, boxedHeaderGPR, T10, A0);
+    jit.loadPtr(Address(A0, OBJECT_OFFSETOF(Data, codeBlock)), A0);
     jit.call(T9, OperationPtrTag);
 
-    loadData(jit, T9);
-    jit.loadPtr(Address(T9, Data::offsetOfVM()), T10);
-    jit.loadPtr(Address(T9, Data::offsetOfRuntimeTable()), T9);
+    jit.move(keptInstance, T9);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T10);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::LookupExceptionHandlerFromCallerFrame) * sizeof(void*)), T11);
     unwind(jit, T10, T11);
 }
@@ -1189,6 +1213,19 @@ static void generateCatch(CCallHelpers& jit)
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), Address(vm, VM::callFrameForCatchOffset()));
     jit.loadPtr(Address(vm, OBJECT_OFFSETOF(VM, targetMachinePCAfterCatch)), GPRInfo::regT1);
     jit.farJump(GPRInfo::regT1, ExceptionHandlerPtrTag);
+}
+
+// Where whoever calls a function the way any function is called ends up: the interpreter, C++, a stub that was given an object to
+// call. The frame is made, nothing has been pushed, and it has the function's CodeBlock, as a frame of the interpreter's would.
+static void generateEnter(CCallHelpers& jit)
+{
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::codeBlock), T9);
+    jit.loadPtr(Address(T9, CodeBlock::offsetOfGlobalObject()), T10);
+    jit.loadPtr(Address(T9, CodeBlock::jitCodeOffset()), T9);
+    jit.loadPtr(Address(T10, JSGlobalObject::offsetOfAOTInstance()), T10);
+    jit.loadPtr(Address(T9, JITCode::offsetOfEntry()), T9);
+    jit.storePtr(T10, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
+    jit.farJump(T9, JSEntryPtrTag);
 }
 
 // ---- Calls
@@ -1258,8 +1295,8 @@ static void generateCallTo(CCallHelpers& jit, Entry callLinkInfo, CodeSpecializa
     jit.store32(T9, slotOfFrameBeingMade(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
     storeCallSite(jit, T10);
     dispatchCall(jit, kind, [&] {
-        loadData(jit, T11);
-        jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+        loadInstance(jit, T11);
+        jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(callLinkInfo) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
     });
 }
@@ -1286,8 +1323,8 @@ static void generateCallAndLinkTo(CCallHelpers& jit, Entry callLinkInfo, CodeSpe
     gaveUp.link(&jit);
 
     dispatchCall(jit, kind, [&] {
-        loadData(jit, T11);
-        jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+        loadInstance(jit, T11);
+        jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(callLinkInfo) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
     });
 }
@@ -1298,8 +1335,8 @@ static void generateConstructAndLink(CCallHelpers& jit) { generateCallAndLinkTo(
 static void generateCallFarFunctionTo(CCallHelpers& jit, Entry callLinkInfo, CodeSpecializationKind kind)
 {
     dispatchCall(jit, kind, [&] {
-        loadData(jit, T11);
-        jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+        loadInstance(jit, T11);
+        jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(callLinkInfo) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
     });
 }
@@ -1335,10 +1372,10 @@ static void generateTailCallPrepare(CCallHelpers& jit)
 
     // While there still is a frame to say who is calling.
     slow.link(&jit);
-    loadData(jit, T11);
+    loadInstance(jit, T11);
     jit.move(callee, A1);
-    jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-    jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPrepareTailCall) * sizeof(void*)), T11);
     jit.pushPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
     jit.call(T11, OperationPtrTag);
@@ -1354,7 +1391,7 @@ static void generateTailCallPrepare(CCallHelpers& jit)
     jit.ret();
 
     exception.link(&jit);
-    loadData(jit, T9);
+    loadInstance(jit, T9);
     jumpToEntry(jit, T9, Entry::HandleException);
 }
 
@@ -1384,10 +1421,10 @@ static void generateIteratorNext(CCallHelpers& jit)
         jit.subPtr(TrustedImm32(32), CCallHelpers::stackPointerRegister);
         jit.storePtr(CCallHelpers::linkRegister, Address(CCallHelpers::stackPointerRegister));
         jit.store64(kept, Address(CCallHelpers::stackPointerRegister, 8));
-        loadData(jit, T11);
+        loadInstance(jit, T11);
         setUp();
-        jit.loadPtr(Address(T11, Data::offsetOfGlobalObject()), A0);
-        jit.loadPtr(Address(T11, Data::offsetOfRuntimeTable()), T11);
+        jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+        jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
         jit.loadPtr(Address(T11, static_cast<unsigned>(operation) * sizeof(void*)), T11);
         jit.call(T11, OperationPtrTag);
         jit.loadPtr(Address(CCallHelpers::stackPointerRegister), CCallHelpers::linkRegister);
@@ -1398,7 +1435,7 @@ static void generateIteratorNext(CCallHelpers& jit)
         doneIfEmpty(A1);
         handled();
         exception.link(&jit);
-        loadData(jit, T9);
+        loadInstance(jit, T9);
         jumpToEntry(jit, T9, Entry::HandleException);
     };
 
@@ -1508,6 +1545,45 @@ void StubCalls::callFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCa
 void StubCalls::tailCall(CCallHelpers& jit, Stub stub)
 {
     m_pending.append({ jit.nearTailCall(), stub, true });
+}
+
+void HeaderReferences::moveBoxedHeader(CCallHelpers& jit, GPRReg reg)
+{
+    m_references.append({ jit.label(), reg, false });
+    jit.nop(); // adr reg, header + NativeCalleeTag
+    jit.move(CCallHelpers::TrustedImm64(lowestAccessibleAddress()), CCallHelpers::dataTempRegister);
+    jit.subPtr(CCallHelpers::dataTempRegister, reg);
+}
+
+void HeaderReferences::loadIndex(CCallHelpers& jit, GPRReg reg)
+{
+    m_references.append({ jit.label(), reg, true });
+    jit.nop(); // ldr reg, header.index
+}
+
+void HeaderReferences::link(LinkBuffer& linkBuffer, CCallHelpers::Label header)
+{
+#if CPU(ARM64)
+    auto* target = static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr());
+    for (auto& reference : m_references) {
+        auto* instruction = static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(reference.instruction).untaggedPtr());
+        uint32_t encoded;
+        if (reference.isLoadOfIndex) {
+            int64_t delta = (target + OBJECT_OFFSETOF(CodeHeader, index) - instruction) / 4;
+            RELEASE_ASSERT(delta >= -(1 << 18) && delta < (1 << 18));
+            encoded = 0x18000000u | (static_cast<uint32_t>(delta) & 0x7ffffu) << 5 | static_cast<uint32_t>(reference.reg);
+        } else {
+            int64_t delta = target + JSValue::NativeCalleeTag - instruction;
+            RELEASE_ASSERT(delta >= -(1 << 20) && delta < (1 << 20));
+            encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3u) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffffu) << 5 | static_cast<uint32_t>(reference.reg);
+        }
+        performJITMemcpy<jitMemcpyRepatch>(instruction, &encoded, sizeof(encoded));
+    }
+#else
+    UNUSED_PARAM(linkBuffer);
+    UNUSED_PARAM(header);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)

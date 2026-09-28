@@ -29,6 +29,9 @@ class UnlinkedCodeBlock;
 namespace B3 {
 class Value;
 class BasicBlock;
+namespace Air {
+class StackSlot;
+}
 }
 
 namespace AOT {
@@ -386,6 +389,8 @@ public:
     unsigned numICSlots { 0 };
     Vector<Site> sites; // Of the slots that have one; the rest are past the end, or blank.
     StubCalls stubCalls;
+    HeaderReferences headerReferences;
+    B3::Air::StackSlot* calleeSlot { nullptr }; // Where the object the function was called as is kept: see CodeHeader::calleeSlot.
 
 private:
     VM& m_vm;

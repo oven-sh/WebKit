@@ -26,6 +26,8 @@
 #include "config.h"
 #include "SamplingProfiler.h"
 
+#include "AOTRuntime.h"
+
 #if ENABLE(SAMPLING_PROFILER)
 
 #include "CodeBlock.h"
@@ -122,6 +124,13 @@ protected:
         CallSiteIndex callSiteIndex;
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
+#if ENABLE(FTL_JIT)
+        if (unsafeCallee.isNativeCallee() && AOT::isCodeHeader(unsafeCallee.asNativeCallee())) {
+            // See CallFrame::callee().
+            codeBlock = AOT::codeBlockOf(m_callFrame);
+            unsafeCallee = CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame)));
+        }
+#endif
         if (unsafeCallee.isNativeCallee())
             codeBlock = nullptr;
         if (codeBlock) {
@@ -157,6 +166,7 @@ protected:
 #endif
                     break;
                 }
+                case NativeCallee::Category::AOT:
                 case NativeCallee::Category::InlineCache: {
                     break;
                 }

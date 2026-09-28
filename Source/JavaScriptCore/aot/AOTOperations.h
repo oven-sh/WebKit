@@ -59,7 +59,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, Encoded
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject*, CodeBlock*, EncodedJSValue, uint32_t tableIndex));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject*, EncodedJSValue, uint32_t tableIndex));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double, double));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPow, double, (double, double));

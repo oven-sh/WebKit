@@ -80,11 +80,31 @@ bool Lowering::run()
     m_notCellMask = m_out.constInt64(JSValue::NotCellMask);
     m_proc.addFastConstant(m_numberTag->key());
     m_proc.addFastConstant(m_notCellMask->key());
-    m_codeBlock = m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::codeBlock)));
-    m_data = m_out.loadPtr(m_codeBlock, m_heaps.CodeBlock_jitData);
-    m_vm = m_out.loadPtr(m_data, m_heaps.AOTData_vm);
-    m_globalObject = m_out.loadPtr(m_data, m_heaps.AOTData_globalObject);
-    m_table = m_out.loadPtr(m_data, m_heaps.AOTData_runtimeTable);
+    m_instance = m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::codeBlock)));
+    {
+        // instance->data[the index in the header]
+        PatchpointValue* patchpoint = m_out.patchpoint(pointerType());
+        patchpoint->append(ConstrainedValue(m_instance, ValueRep::SomeRegister));
+        patchpoint->effects = B3::Effects::none();
+        patchpoint->setGenerator([references = &m_graph.headerReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg result = params[0].gpr();
+            references->loadIndex(jit, result);
+            jit.addPtr(CCallHelpers::TrustedImm32(Instance::offsetOfData()), params[1].gpr(), CCallHelpers::dataTempRegister);
+            jit.loadPtr(CCallHelpers::BaseIndex(CCallHelpers::dataTempRegister, result, CCallHelpers::TimesEight), result);
+        });
+        patchpoint->resultConstraints = { ValueRep::SomeEarlyRegister };
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        m_data = patchpoint;
+    }
+    m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
+    m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
+    m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
+    {
+        B3::SlotBaseValue* slot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
+        m_graph.calleeSlot = slot->slot();
+        m_calleeSlot = slot;
+    }
 
     unsigned scratchWords = 0;
     for (BasicBlock* block : m_graph.m_rpo) {
@@ -735,6 +755,10 @@ void Lowering::lowerNode(Node* node)
         // The guard that the block ends in sees to these.
         return;
     case NodeKind::Argument:
+        if (node->reg == VirtualRegister(CallFrameSlot::callee)) {
+            setJSValue(node, callee());
+            return;
+        }
         setJSValue(node, m_out.load64(addressFor(node->reg)));
         return;
     case NodeKind::GetStack:
