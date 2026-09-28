@@ -46,21 +46,6 @@ namespace TemplateIterField {
 enum Field : unsigned { Strings, Interpolations, IsFromStrings };
 }
 
-// What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
-static String fullyQualifiedTypeName(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    PyType* type = typeOf(globalObject, value);
-    String name = qualifiedNameWithoutModule(globalObject, type);
-    if (String module = type->moduleOfBuiltin(); !module.isNull())
-        return makeString(module, '.', name);
-    JSValue module = type->lookupOwn(vm, vm.pythonNames().dunder_module);
-    if (!module || !module.isString())
-        return name;
-    String moduleName = asString(module)->value(globalObject);
-    return moduleName == "builtins"_s || moduleName == "__main__"_s ? name : makeString(moduleName, '.', name);
-}
-
 // ---- Interpolation
 
 JSValue newInterpolation(JSGlobalObject* globalObject, JSValue value, JSValue expression, JSValue conversion, JSValue formatSpecification)

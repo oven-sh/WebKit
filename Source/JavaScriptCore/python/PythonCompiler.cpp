@@ -442,6 +442,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     bool hasDocstring = false;
     {
         Arena arena;
+        arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
@@ -528,21 +529,6 @@ JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source
     return bindToGlobals(globalObject, executable, namespaceObject);
 }
 
-static void reportException(JSGlobalObject* globalObject, JSValue exception)
-{
-    // To sys.stderr, if there is one and it can be written to.
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    String text = formatException(globalObject, exception);
-    JSValue file = sysAttribute(globalObject, "stderr"_s);
-    if (!file || isNone(file))
-        return;
-    JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
-    if (!scope.exception())
-        call(globalObject, write, jsString(vm, text));
-    scope.clearException();
-}
-
 int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& sourceURL)
 {
     VM& vm = globalObject->vm();
@@ -583,7 +569,7 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
         scope.clearException();
         return 1;
     }
-    reportException(globalObject, value);
+    reportUncaughtException(globalObject, value);
     return 1;
 }
 

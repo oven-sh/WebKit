@@ -45,35 +45,24 @@
 
 namespace JSC { namespace Python {
 
-// What is in the middle of being written out, so that a list that contains itself comes out as [[...]].
-static Vector<JSCell*, 16>& reprStack()
-{
-    static thread_local Vector<JSCell*, 16> stack;
-    return stack;
-}
-
-class ReprGuard {
-public:
-    explicit ReprGuard(JSCell* cell)
-        : m_isRecursive(reprStack().contains(cell))
-    {
-        if (!m_isRecursive)
-            reprStack().append(cell);
-    }
-    ~ReprGuard()
-    {
-        if (!m_isRecursive)
-            reprStack().removeLast();
-    }
-    bool isRecursive() const { return m_isRecursive; }
-
-private:
-    bool m_isRecursive;
-};
-
 String addressOf(const void* cell)
 {
     return makeString("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
+}
+
+// What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
+String fullyQualifiedTypeName(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    PyType* type = typeOf(globalObject, value);
+    String name = qualifiedNameWithoutModule(globalObject, type);
+    if (String module = type->moduleOfBuiltin(); !module.isNull())
+        return makeString(module, '.', name);
+    JSValue module = type->lookupOwn(vm, vm.pythonNames().dunder_module);
+    if (!module || !module.isString())
+        return name;
+    String moduleName = asString(module)->value(globalObject);
+    return moduleName == "builtins"_s || moduleName == "__main__"_s ? name : makeString(moduleName, '.', name);
 }
 
 String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
@@ -177,7 +166,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         RELEASE_AND_RETURN(scope, builtinRepr(globalObject, uncheckedDowncast<PyBoxedValue>(cell)->value()));
     case PyTupleType: {
         auto* tuple = uncheckedDowncast<PyTuple>(cell);
-        ReprGuard guard(cell);
+        ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
             return "(...)"_s;
         builder.append('(');
@@ -188,7 +177,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyDictType: {
         auto* dict = uncheckedDowncast<PyDict>(cell);
-        ReprGuard guard(cell);
+        ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
             return "{...}"_s;
         builder.append('{');
@@ -212,7 +201,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         auto* set = uncheckedDowncast<PySet>(cell);
         String name = type->nameString(globalObject);
         bool isPlainSet = type == realm->typeSet();
-        ReprGuard guard(cell);
+        ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
             return makeString(name, "(...)"_s);
         if (!set->size())
@@ -239,9 +228,16 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyRangeType: {
         auto* range = uncheckedDowncast<PyRange>(cell);
-        builder.append("range("_s, reprOfInt(globalObject, classify(range->start()), 10), ", "_s, reprOfInt(globalObject, classify(range->stop()), 10));
-        if (!range->step().isInt32() || range->step().asInt32() != 1)
-            builder.append(", "_s, reprOfInt(globalObject, classify(range->step()), 10));
+        String start = reprOfInt(globalObject, classify(range->start()), 10);
+        RETURN_IF_EXCEPTION(scope, { });
+        String stop = reprOfInt(globalObject, classify(range->stop()), 10);
+        RETURN_IF_EXCEPTION(scope, { });
+        builder.append("range("_s, start, ", "_s, stop);
+        if (!range->step().isInt32() || range->step().asInt32() != 1) {
+            String step = reprOfInt(globalObject, classify(range->step()), 10);
+            RETURN_IF_EXCEPTION(scope, { });
+            builder.append(", "_s, step);
+        }
         builder.append(')');
         return builder.toString();
     }
@@ -292,7 +288,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
 
     if (isListCell(cell)) {
         auto* list = uncheckedDowncast<JSArray>(cell);
-        ReprGuard guard(cell);
+        ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
             return "[...]"_s;
         builder.append('[');

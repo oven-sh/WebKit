@@ -555,6 +555,13 @@ static void appendException(JSGlobalObject* globalObject, StringBuilder& builder
     }
 }
 
+String formatTraceback(JSGlobalObject* globalObject, JSValue traceback)
+{
+    StringBuilder builder;
+    appendTraceback(globalObject, builder, traceback);
+    return builder.toString();
+}
+
 String formatException(JSGlobalObject* globalObject, JSValue exception)
 {
     StringBuilder builder;

@@ -75,6 +75,9 @@ public:
 
     IdentifierArena& identifiers() { return m_identifiers; }
 
+    // How long an int can be that is written in decimal, or 0 for any length: sys.set_int_max_str_digits(). It is looked at when the source is first read.
+    unsigned maximumDigitsOfIntLiteral { 0 };
+
 private:
     static constexpr size_t alignment = 8;
     static constexpr size_t chunkSize = 16 * KB;

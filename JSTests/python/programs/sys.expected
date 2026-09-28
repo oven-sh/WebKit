@@ -1,0 +1,158 @@
+limit => (4300, 4300, 640)
+str => (4300, 4301, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit')
+format => ['ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 3572, 3574, 4764, 14287, 3572, 4300, 48]
+int => (True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit', True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit')
+other bases => [True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit', True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit', True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit', True, True, 'ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits; use sys.set_int_max_str_digits() to increase the limit']
+containers => ['ValueError: Exceeds the limit (4300 digits) for integer stri', 'ValueError: Exceeds the limit (4300 digits) for integer stri', 'ValueError: Exceeds the limit (4300 digits) for integer stri', 'ValueError: Exceeds the limit (4300 digits) for integer stri', 'ValueError: Exceeds the limit (4300 digits) for integer stri', 'ValueError: Exceeds the limit (4300 digits) for integer stri']
+literal => (True, 'SyntaxError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (<string>, line 1)', True, 'SyntaxError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (<string>, line 1)', 'SyntaxError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (f, line 2)')
+literal error => (2, 0, 2, 0, 'f', 4306)
+float and others are not limited => (inf, 6, 1, 14285, 10, 2000, True)
+set 0 => (None, 0)
+set 640 => (None, 640)
+set 639 !! ValueError maxdigits must be >= 640 or 0 for unlimited
+set 1 !! ValueError maxdigits must be >= 640 or 0 for unlimited
+set -1 !! ValueError maxdigits must be >= 640 or 0 for unlimited
+set 5000 => (None, 5000)
+set 'a' !! TypeError 'str' object cannot be interpreted as an integer
+set 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+set None !! TypeError 'NoneType' object cannot be interpreted as an integer
+set 1099511627776 !! OverflowError Python int too large to convert to C int
+set True !! ValueError maxdigits must be >= 640 or 0 for unlimited
+lower => (700, 'ValueError: Exceeds the limit (700 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit', 'ValueError: Exceeds the limit (700 digits) for integer string conversion: value has 701 digits; use sys.set_int_max_str_digits() to increase the limit', 'SyntaxError: Exceeds the limit (700 digits) for integer string conversion: value has 701 digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits. (<string>, line 1)')
+none => (20001, True, True)
+set keyword => None
+set nothing !! TypeError set_int_max_str_digits() missing required argument 'maxdigits' (pos 1)
+flags do not follow => 4300
+audit without hooks => (None, None, None)
+audit nothing !! TypeError audit expected at least 1 argument, got 0
+audit => (None, None, [('test.a', ()), ('test.b', (1, 'x'))], None)
+audit not a str !! TypeError audit() argument 1 must be str, not int
+audit keywords !! TypeError sys.audit() takes no keyword arguments
+hook raises !! ValueError from the hook
+refused => (None, None, [('test.c', ())], None)
+refused hard !! KeyboardInterrupt no more
+add nothing !! TypeError addaudithook() missing required argument 'hook' (pos 1)
+add keyword => None
+excepthook => (True, 'builtin_function_or_method', 'excepthook')
+excepthook prints => Traceback (most recent call last):
+  File "FILE", line 71, in raised
+    raise ValueError("boom")
+ValueError: boom
+
+excepthook without a traceback => ValueError: x
+
+excepthook gives a traceback => Traceback (most recent call last):
+  File "FILE", line 71, in raised
+    raise ValueError("boom")
+ValueError: x
+
+excepthook of what is not one => TypeError: print_exception(): Exception expected for value, int found
+
+excepthook of None => NoneType: None
+
+excepthook wrong !! TypeError excepthook expected 3 arguments, got 1
+unraisable => ('UnraisableHookArgs', 'builtins', 5, <class 'KeyError'>, "KeyError('in release')", 'traceback', 'Exception ignored in __release_buffer__ of R', None, ('exc_type', 'exc_value', 'exc_traceback', 'err_msg', 'object'))
+unraisable default => Exception ignored in __release_buffer__ of R:
+Traceback (most recent call last):
+  File "FILE", line 86, in __release_buffer__
+    raise KeyError("in release")
+KeyError: 'in release'
+
+unraisable made => ValueError: v
+
+unraisable with a message => the message:
+ValueError: v
+
+unraisable with an object => Exception ignored in: [1, 2]
+ValueError: v
+
+unraisable with both => the message: [1, 2]
+ValueError: v
+
+unraisable without a value => ValueError
+
+unraisable without a type !! SystemError <built-in function unraisablehook> returned NULL without setting an exception
+unraisable that cannot be shown => Exception ignored in: <object repr() failed>
+BadStr: <exception str() failed>
+
+unraisable from a module => some.where.Mine: m
+
+unraisable wrong !! TypeError sys.unraisablehook argument type must be UnraisableHookArgs
+hook fails => Exception ignored in sys.unraisablehook: <function failing at 0x>
+Traceback (most recent call last):
+  File "FILE", line 110, in failing
+    raise OSError("hook failed")
+OSError: hook failed
+
+hook is None => Exception ignored in __release_buffer__ of R:
+Traceback (most recent call last):
+  File "FILE", line 86, in __release_buffer__
+    raise KeyError("in release")
+KeyError: 'in release'
+
+hook is gone => Exception ignored in __release_buffer__ of R:
+Traceback (most recent call last):
+  File "FILE", line 86, in __release_buffer__
+    raise KeyError("in release")
+KeyError: 'in release'
+
+breakpoint => ('returned', 'returned', [((), {}), ((1, 2), {'x': 3})])
+breakpoint lost !! RuntimeError lost sys.breakpointhook
+breakpoint kinds => ('builtin_function_or_method', 'breakpoint', 'builtins', 'breakpointhook')
+intern => ('abc', True, True)
+intern wrong => ['TypeError: intern() argument must be str, not int', 'TypeError: intern() argument must be str, not None', 'TypeError: intern() argument must be str, not bytes', "TypeError: can't intern S"]
+is_interned wrong !! TypeError _is_interned() argument must be str, not int
+getsizeof => [28, 36, 41, 44, 33, 48, 64, 56, 64, 64, 216, 16, 24, 16, 48, 40, 416, 1720, 48, 32, 36, 58, 216]
+getsizeof default => ('d', 28, 5, 28, 7)
+getsizeof of 'x' !! TypeError an integer is required
+getsizeof of -1 !! ValueError __sizeof__() should return >= 0
+getsizeof of 1.5 !! TypeError an integer is required
+getsizeof of 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+getsizeof of None !! TypeError an integer is required
+getsizeof of True => True
+getsizeof -1 with a default !! ValueError __sizeof__() should return >= 0
+getsizeof None method !! TypeError 'NoneType' object is not callable
+getsizeof nothing !! TypeError getsizeof() missing required argument 'object' (pos 1)
+refcount => ('int', True, True)
+recursion limit => (1000, None, 2000, None)
+recursion limit 0 !! ValueError recursion limit must be greater or equal than 1
+recursion limit -1 !! ValueError recursion limit must be greater or equal than 1
+recursion limit 'a' !! TypeError 'str' object cannot be interpreted as an integer
+recursion limit 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+recursion limit 1099511627776 !! OverflowError Python int too large to convert to C int
+switch interval => (0.005, None, 0.5, None, 1.0, None)
+switch interval 0 !! ValueError switch interval must be strictly positive
+switch interval -1 !! ValueError switch interval must be strictly positive
+switch interval 'a' !! TypeError must be real number, not str
+encodings => ('utf-8', 'utf-8', 'surrogateescape')
+odds => (False, False, None, True, -1, 'int', (3, 1), True, False, False, None, None)
+call_tracing wrong !! TypeError call_tracing() argument 2 must be tuple, not list
+current => (1, ['frame'], [None])
+current while handling => ["ZeroDivisionError('division by zero')"]
+data => (9223372036854775807, 1114111, 'little', 'short', 1013, '', 'lib', [], {}, None, True, 'list', 'Copyright (c) 2001 Python Software Foundation.')
+origin off !! NameError name 'close' is not defined
+origin off => (0, None)
+origin 1 => (('FILE', 'make'),)
+origin 2 => (('FILE', 'make'), ('FILE', 'outer'))
+origin 3 => (('FILE', 'make'), ('FILE', 'outer'), ('FILE', '<lambda>'))
+origin 100 => (('FILE', 'make'), ('FILE', 'outer'), ('FILE', '<lambda>'), ('FILE', 'show'))
+origin line => 1
+origin depth -1 !! ValueError depth must be >= 0
+origin depth 'a' !! TypeError 'str' object cannot be interpreted as an integer
+origin depth 1099511627776 !! OverflowError Python int too large to convert to C int
+origin keyword => None
+hooks => (asyncgen_hooks(firstiter=None, finalizer=None), None, 2)
+hooks set => (True, True)
+first iteration => ([], ('value', 1), [('first', 'async_generator')], [('first', 'async_generator')])
+first by asend => [('first', 'async_generator')]
+first by athrow => [('first', 'async_generator')]
+first by aclose => [('first', 'async_generator')]
+first by anext => [('first', 'async_generator')]
+one unset => (None, True)
+both unset => asyncgen_hooks(firstiter=None, finalizer=None)
+hooks nothing => (None, asyncgen_hooks(firstiter=None, finalizer=None))
+hooks wrong !! TypeError callable firstiter expected, got int
+hooks wrong 2 !! TypeError callable finalizer expected, got int
+hooks wrong both !! TypeError callable finalizer expected, got int
+hooks too many !! TypeError function takes at most 2 arguments (3 given)
+first fails !! ValueError first failed

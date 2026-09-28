@@ -713,14 +713,40 @@ PYTHON_NATIVE(athrowClose)
     return finishClose(globalObject, scope, result);
 }
 
+// The first time that anything is asked of one, whoever is running things is told of it: sys.set_asyncgen_hooks(). False if it raised.
+static bool initializeHooks(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyRealm* realm = globalObject->pyRealm();
+    auto* generator = uncheckedDowncast<JSGenerator>(self.asCell());
+    if (flag(generator, names.private_hasHooks))
+        return true;
+    setFlag(generator, names.private_hasHooks, true);
+    // FIXME: It is to be called when the generator is let go of without having finished. See "What is not decided" in README.md.
+    if (JSValue finalizer = realm->asyncGeneratorFinalizerHook())
+        generator->putDirect(vm, names.private_finalizer, finalizer);
+    JSValue firstIteration = realm->asyncGeneratorFirstIterationHook();
+    if (!firstIteration)
+        return true;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    call(globalObject, firstIteration, generator);
+    return !scope.exception();
+}
+
 PYTHON_NATIVE(asyncGeneratorANext)
 {
-    return JSValue::encode(newASend(globalObject, callFrame->argument(0), jsUndefined()));
+    NATIVE_PROLOGUE();
+    initializeHooks(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(newASend(globalObject, args[0], jsUndefined()));
 }
 
 PYTHON_NATIVE(asyncGeneratorASend)
 {
     NATIVE_PROLOGUE();
+    initializeHooks(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(newASend(globalObject, args[0], args[1]));
 }
 
@@ -729,12 +755,17 @@ PYTHON_NATIVE(asyncGeneratorAThrow)
     NATIVE_PROLOGUE();
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
+    initializeHooks(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], exception, jsNumber(AwaitableState::Init)));
 }
 
 PYTHON_NATIVE(asyncGeneratorAClose)
 {
-    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, callFrame->argument(0), JSValue(), jsNumber(AwaitableState::Init)));
+    NATIVE_PROLOGUE();
+    initializeHooks(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], JSValue(), jsNumber(AwaitableState::Init)));
 }
 
 // ---- aiter() and anext()

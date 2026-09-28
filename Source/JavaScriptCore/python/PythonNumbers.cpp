@@ -711,7 +711,25 @@ String reprOfInt(JSGlobalObject* globalObject, const Number& number, unsigned ra
             return String::number(number.small);
         return JSBigInt::createFrom(globalObject, number.small)->toString(globalObject, radix);
     }
-    return number.big->toString(globalObject, radix);
+    // Writing a long int in decimal takes time that goes up as the square of its length, and a program can be given one by someone who means it harm. So there is a limit,
+    // sys.set_int_max_str_digits(), and it is looked at before the work is done wherever the answer is plain from how many bits there are.
+    int limit = globalObject->pyRealm()->maximumDigitsOfIntAsString;
+    if (radix != 10 || !limit)
+        return number.big->toString(globalObject, radix);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto raiseTooLong = [&] {
+        raiseValueError(globalObject, scope, makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"_s));
+        return String();
+    };
+    constexpr double digitsPerBit = 0.30102999566398114; // log10(2), rounded down
+    if (static_cast<double>(bitLengthOfInt(number) - 1) * digitsPerBit >= limit)
+        return raiseTooLong();
+    String digits = number.big->toString(globalObject, 10);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (static_cast<int>(digits.length() - number.big->sign()) > limit)
+        return raiseTooLong();
+    return digits;
 }
 
 // The shortest digits that give the same float back, as for JavaScript, but laid out as Python does: 1e+16 and 1e-05, and always

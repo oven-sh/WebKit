@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PyDict.h"
+#include "PyFrame.h"
 #include "PyNativeFunction.h"
 #include "PyInstance.h"
 #include "PyObjects.h"
@@ -599,7 +600,21 @@ PYTHON_RUNTIME_FUNCTION(takeReturnValue)
 
 PYTHON_RUNTIME_FUNCTION(runtimeNewCoroutine)
 {
-    return JSValue::encode(newCoroutine(globalObject, callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1).asBoolean()));
+    bool isAsyncGenerator = callFrame->uncheckedArgument(1).asBoolean();
+    JSGenerator* coroutine = newCoroutine(globalObject, callFrame->uncheckedArgument(0), isAsyncGenerator);
+    int depth = globalObject->pyRealm()->coroutineOriginTrackingDepth;
+    if (!depth || isAsyncGenerator) [[likely]]
+        return JSValue::encode(coroutine);
+
+    // sys.set_coroutine_origin_tracking_depth(): where it was made, for whoever finds that it was never awaited. Not the frame of the function itself, which has not begun.
+    VM& vm = globalObject->vm();
+    MarkedArgumentBuffer origin;
+    for (CallFrame* frame = callerOf(callFrame); frame && depth; frame = callerOf(frame), --depth) {
+        PyFrame* object = PyFrame::forCallFrame(vm, frame);
+        origin.append(PyTuple::create(globalObject, { jsString(vm, object->executable()->source().provider()->sourceURL()), jsNumber(object->line(vm)), jsString(vm, object->functionInfo().name.string()) }));
+    }
+    coroutine->putDirect(vm, vm.pythonNames().private_origin, PyTuple::createFromArguments(globalObject, origin));
+    return JSValue::encode(coroutine);
 }
 
 PYTHON_RUNTIME_FUNCTION(runtimeWrapAsyncYield)

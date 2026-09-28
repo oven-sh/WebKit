@@ -1,0 +1,57 @@
+float_info => (sys.float_info(max=1.7976931348623157e+308, max_exp=1024, max_10_exp=308, min=2.2250738585072014e-308, min_exp=-1021, min_10_exp=-307, dig=15, mant_dig=53, epsilon=2.220446049250313e-16, radix=2, rounds=1), 11, 1.7976931348623157e+308, 1.7976931348623157e+308, 1, (1024, 308), (1.7976931348623157e+308, 1024))
+int_info => sys.int_info(bits_per_digit=30, sizeof_digit=4, default_max_str_digits=4300, str_digits_check_threshold=640)
+version => ((3, 14), 3, True, True, 'tuple', 782, '3.14')
+flags => (18, 21, 18, 0, 0, False, 4300, 1, 1, ('debug', 'inspect', 'interactive', 'optimize', 'dont_write_bytecode', 'no_user_site', 'no_site', 'ignore_environment', 'verbose', 'bytes_warning', 'quiet', 'hash_randomization', 'isolated', 'dev_mode', 'utf8_mode', 'warn_default_encoding', 'safe_path', 'int_max_str_digits'))
+names => [('float_info', 'float_info', 'sys', "<class 'sys.float_info'>"), ('version_info', 'version_info', 'sys', "<class 'sys.version_info'>"), ('flags', 'flags', 'sys', "<class 'sys.flags'>"), ('asyncgen_hooks', 'asyncgen_hooks', 'builtins', "<class 'asyncgen_hooks'>"), ('int_info', 'int_info', 'sys', "<class 'sys.int_info'>")]
+bases => [('tuple', True, True), ('tuple', True, True)]
+class attributes => (4, 4, 0, ('bits_per_digit', 'sizeof_digit', 'default_max_str_digits', 'str_digits_check_threshold'), ['__match_args__', '__new__', '__reduce__', '__replace__', '__repr__', 'bits_per_digit', 'default_max_str_digits', 'n_fields', 'n_sequence_fields', 'n_unnamed_fields', 'sizeof_digit', 'str_digits_check_threshold'])
+kinds => ['member_descriptor', 'builtin_function_or_method', 'wrapper_descriptor', 'method_descriptor', 'method_descriptor', 'int', 'tuple']
+new => (sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4), sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4), sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4), sys.int_info(bits_per_digit='a', sizeof_digit='b', default_max_str_digits='c', str_digits_check_threshold='d'), sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4), 1)
+new() !! TypeError structseq() missing required argument 'sequence' (pos 1)
+new((1, 2, 3),) !! TypeError sys.int_info() takes a 4-sequence (3-sequence given)
+new((1, 2, 3, 4, 5),) !! TypeError sys.int_info() takes a 4-sequence (5-sequence given)
+new(1,) !! TypeError constructor requires a sequence
+new((1, 2, 3, 4), 5) !! TypeError sys.int_info() takes a dict as second arg, if any
+new((1, 2, 3, 4), {}) => sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4)
+new((1, 2, 3, 4), {'x': 1}) !! TypeError sys.int_info() got duplicate or unexpected field name(s)
+new((1, 2, 3, 4), {'bits_per_digit': 1}) !! TypeError sys.int_info() got duplicate or unexpected field name(s)
+new((1, 2, 3, 4), {}, 1) !! TypeError structseq() takes at most 2 arguments (3 given)
+new(None,) !! TypeError constructor requires a sequence
+new keyword => sys.int_info(bits_per_digit=1, sizeof_digit=2, default_max_str_digits=3, str_digits_check_threshold=4)
+new bad keyword !! TypeError structseq() got an unexpected keyword argument 'nope'
+cannot be made => ["TypeError: cannot create 'sys.flags' instances", "TypeError: cannot create 'sys.version_info' instances"]
+cannot be derived from => ["TypeError: type 'sys.float_info' is not an acceptable base type", "TypeError: type 'sys.flags' is not an acceptable base type", "TypeError: type 'sys.version_info' is not an acceptable base type"]
+read only => ['AttributeError: readonly attribute', 'AttributeError: readonly attribute', "AttributeError: 'sys.int_info' object has no attribute 'other' and no __dict__ for setting new attributes", "AttributeError: 'sys.int_info' object has no attribute '__setitem__'", "TypeError: cannot set 'x' attribute of immutable type 'sys.int_info'"]
+reduce => ((<class 'sys.int_info'>, ((30, 4, 4300, 640), {})), True, ((1, 2), {}))
+flags reduce => (True, 18, ['context_aware_warnings', 'gil', 'thread_inherit_context'])
+replace => (sys.int_info(bits_per_digit=30, sizeof_digit=4, default_max_str_digits=4300, str_digits_check_threshold=640), sys.int_info(bits_per_digit=1, sizeof_digit=4, default_max_str_digits=4300, str_digits_check_threshold=640), sys.int_info(bits_per_digit=8, sizeof_digit=9, default_max_str_digits=4300, str_digits_check_threshold=640), 'int_info', False)
+replace hidden => (7, 5, 18)
+replace wrong !! TypeError Got unexpected field name(s): ['nope']
+replace wrong two !! TypeError Got unexpected field name(s): ['nope', 'other']
+replace positional !! TypeError __replace__() takes no positional arguments
+as a tuple => (True, True, (30, 4, 4300, 640, 1), True, True, 1, 1, [640, 4300, 4, 30], 4300)
+match => (('positional', 30, 4, 4300, 640), ('by name', 4), ('sequence', 30, [4, 4300, 640]))
+unpacked => (30, 4, 4300, 640)
+str and format => ('sys.int_info(bits_per_digit=30, sizeof_digit=4, default_max_str_digits=4300, str_digits_check_threshold=640)', '30 4 4300 640', '30')
+docs => ("sys.int_info\n\nA named tuple that holds information about Python's\ninternal representation of integers.  The attributes are read only.", 'size of a digit in bits', 'sys.float_info', '($type, *args, **kwargs)')
+thread_info => ('thread_info', 3, 'no _fields')
+hash_info => (64, 2305843009213693951, 314159, 0, 1000003, 9, 'str')
+namespace => (namespace(), namespace(a=1, b='x'), namespace(a=1), namespace(a=1), namespace(a=2, b=3), 'SimpleNamespace', 'SimpleNamespace', 'types', "<class 'types.SimpleNamespace'>")
+namespace attributes => (1, None, 2, {'b': 2}, None, namespace(b=2), {'b': 2})
+namespace missing !! AttributeError 'types.SimpleNamespace' object has no attribute 'x'
+namespace compare !! TypeError '<' not supported between instances of 'dict' and 'dict'
+namespace order !! TypeError '<' not supported between instances of 'dict' and 'dict'
+namespace hash !! TypeError unhashable type: 'types.SimpleNamespace'
+namespace two !! TypeError SimpleNamespace expected at most 1 argument, got 2
+namespace bad !! TypeError 'int' object is not iterable
+namespace bad keys !! TypeError keywords must be strings
+namespace reduce => ((<class 'types.SimpleNamespace'>, (), {'a': 1}), True)
+namespace replace => (namespace(a=5, b=2, c=6), namespace(a=1), True)
+namespace replace positional !! TypeError __replace__() takes no positional arguments
+namespace recursive => namespace(me=namespace(...))
+derived namespace => (SN(a=1), 'SN', True, True)
+replace of the wrong kind !! TypeError expect types.SimpleNamespace type, but BadNew() returned 'int' object
+odd names => (None, 'namespace(ok=4)')
+dict read only !! AttributeError readonly attribute
+namespace own => ['__dict__', '__eq__', '__ge__', '__gt__', '__hash__', '__init__', '__le__', '__lt__', '__ne__', '__new__', '__reduce__', '__replace__', '__repr__']
+implementation => ('str', True, True, True)

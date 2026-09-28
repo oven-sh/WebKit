@@ -27,6 +27,7 @@
 
 #include "JSObject.h"
 #include "PyType.h"
+#include "WeakGCMap.h"
 
 namespace JSC {
 
@@ -66,6 +67,15 @@ namespace JSC {
     v(ClassMethod, "classmethod", Object, Native, PyType::IsBaseType) \
     v(Super, "super", Object, Native, PyType::IsBaseType) \
     v(Module, "module", Object, Object, PyType::IsBaseType) \
+    v(SimpleNamespace, "types.SimpleNamespace", Object, Object, PyType::IsBaseType) \
+    v(SysFlags, "sys.flags", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysFloatInfo, "sys.float_info", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysIntInfo, "sys.int_info", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysHashInfo, "sys.hash_info", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysVersionInfo, "sys.version_info", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysThreadInfo, "sys.thread_info", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(SysAsyncGeneratorHooks, "asyncgen_hooks", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
+    v(UnraisableHookArgs, "UnraisableHookArgs", Tuple, Tuple, PyType::MatchesSelf | PyType::IsSequence) \
     v(Generator, "generator", Object, Native, 0) \
     v(Coroutine, "coroutine", Object, Native, 0) \
     v(AsyncGenerator, "async_generator", Object, Native, 0) \
@@ -215,6 +225,8 @@ static constexpr unsigned numberOfBuiltinTypes = static_cast<unsigned>(BuiltinTy
 class PyRealm final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
+    static void destroy(JSCell*);
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -285,6 +297,25 @@ public:
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
     // The module builtins.
     JSObject* builtinsModule() const { return m_builtinsModule.get(); }
+    // sys.intern(): the one str that stands for all that are equal to it, for as long as anything refers to it. As the engine has one Symbol for a SymbolImpl.
+    JSString* intern(JSGlobalObject*, JSString*);
+    bool isInterned(JSGlobalObject*, JSString*);
+
+    // What sys gets and sets.
+    JSArray* auditHooks() const { return m_auditHooks.get(); } // Null until there is one.
+    void setAuditHooks(VM& vm, JSArray* hooks) { m_auditHooks.set(vm, this, hooks); }
+    JSValue asyncGeneratorFirstIterationHook() const { return m_asyncGeneratorFirstIterationHook.get(); } // Empty if there is none.
+    JSValue asyncGeneratorFinalizerHook() const { return m_asyncGeneratorFinalizerHook.get(); }
+    void setAsyncGeneratorFirstIterationHook(VM& vm, JSValue hook) { m_asyncGeneratorFirstIterationHook.set(vm, this, hook); }
+    void setAsyncGeneratorFinalizerHook(VM& vm, JSValue hook) { m_asyncGeneratorFinalizerHook.set(vm, this, hook); }
+    int maximumDigitsOfIntAsString { 4300 }; // 0 for as many as there are.
+    int recursionLimit { 1000 };
+    int coroutineOriginTrackingDepth { 0 };
+    double switchInterval { 0.005 };
+
+    // What is in the middle of being written out. See Python::ReprGuard. Each is on the stack besides, and so is not visited.
+    Vector<JSCell*, 16>& objectsBeingWrittenOut() { return m_objectsBeingWrittenOut; }
+
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
 
@@ -306,6 +337,7 @@ public:
 private:
     PyRealm(VM& vm, Structure* structure)
         : Base(vm, structure)
+        , m_internedStrings(vm)
     {
     }
 
@@ -323,6 +355,12 @@ private:
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<PyType> m_frameLocalsProxyType;
     WriteBarrier<JSObject> m_builtinsModule;
+    Vector<JSCell*, 16> m_objectsBeingWrittenOut;
+    // By the string in the table of atoms, which the str keeps there.
+    WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;
+    WriteBarrier<JSArray> m_auditHooks;
+    WriteBarrier<Unknown> m_asyncGeneratorFirstIterationHook;
+    WriteBarrier<Unknown> m_asyncGeneratorFinalizerHook;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Exception> m_handledException;
     WriteBarrier<Exception> m_outerHandledException;

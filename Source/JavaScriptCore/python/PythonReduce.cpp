@@ -29,6 +29,7 @@
 
 #include "PyTuple.h"
 #include "PythonBytes.h"
+#include "PythonNumbers.h"
 #include "PythonSequences.h"
 #include "PythonStrings.h"
 
@@ -267,7 +268,11 @@ PYTHON_NATIVE(objectGetState)
     RELEASE_AND_RETURN(scope, JSValue::encode(defaultState(globalObject, args[0], false)));
 }
 
-// What CPython would say. Nothing here is laid out as it is there, but the number is one that programs add up.
+// ---- __sizeof__()
+//
+// What CPython would say. Nothing here is laid out as it is there, but the number is one that programs add up, so it is worked out as it is there wherever it follows from
+// what the object is. Where it depends on how the object came to be so, it is what it would be had it been added to one thing at a time, or for a list made all at once.
+
 PYTHON_NATIVE(objectSizeOf)
 {
     NATIVE_PROLOGUE();
@@ -279,6 +284,84 @@ PYTHON_NATIVE(objectSizeOf)
             size += static_cast<int64_t>(type->itemSize()) * asTuple(args[0])->length();
         else if (auto* bytes = dynamicDowncast<JSUint8Array>(args[0]))
             size += static_cast<int64_t>(type->itemSize()) * bytes->length();
+    }
+    return JSValue::encode(intFromInt64(globalObject, size));
+}
+
+// The table of a dict that has had so many keys put in it: _PyDict_KeysSize() of CPython's Objects/dictobject.c, and what insertion_resize() comes to.
+static int64_t sizeOfDictKeys(uint64_t used, bool areAllStrings)
+{
+    auto usable = [] (unsigned log2) { return ((uint64_t { 1 } << log2) << 1) / 3; };
+    unsigned log2 = 3;
+    // It is full at `filled`, and is then made big enough for three times that.
+    for (uint64_t filled = usable(log2); filled < used; filled = usable(log2)) {
+        while ((uint64_t { 1 } << log2) < filled * 3)
+            ++log2;
+    }
+    unsigned log2OfIndexBytes = log2 < 8 ? log2 : log2 < 16 ? log2 + 1 : log2 < 32 ? log2 + 2 : log2 + 3;
+    return 32 + (int64_t { 1 } << log2OfIndexBytes) + usable(log2) * (areAllStrings ? 16 : 24);
+}
+
+// The table of a set that has had so many things added to it: set_add_entry() and set_table_resize() of Objects/setobject.c. Nothing if they fit in the set itself.
+static int64_t sizeOfSetTable(uint64_t used)
+{
+    uint64_t slots = 8;
+    for (uint64_t filled = 1; filled <= used; ++filled) {
+        if (filled * 5 < (slots - 1) * 3)
+            continue;
+        uint64_t wanted = filled > 50000 ? filled * 2 : filled * 4;
+        while (slots <= wanted)
+            slots <<= 1;
+    }
+    return slots == 8 ? 0 : slots * 16;
+}
+
+PYTHON_NATIVE(builtinSizeOf)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    JSValue self = args[0];
+    PyType* type = typeOf(globalObject, self);
+    int64_t size = type->basicSize();
+    if (Number number = classify(self); number.isInt()) {
+        // Thirty bits to a digit, and never fewer than one.
+        int64_t digits = std::max<int64_t>((bitLengthOfInt(number) + 29) / 30, 1);
+        size += digits * 4;
+    } else if (JSString* string = stringIn(self)) {
+        // As narrow as its widest character allows, and a zero at the end.
+        auto view = string->view(globalObject);
+        char32_t widest = 0;
+        int64_t length = 0;
+        for (char32_t character : view->codePoints()) {
+            widest = std::max(widest, character);
+            ++length;
+        }
+        // A str itself does without some of what the class allows for.
+        if (self.isString())
+            size = widest < 0x80 ? 40 : 56;
+        size += (length + 1) * (widest < 0x100 ? 1 : widest < 0x10000 ? 2 : 4);
+    } else if (isList(self))
+        size += static_cast<int64_t>(asList(self)->length()) * sizeof(void*);
+    else if (auto* bytes = dynamicDowncast<JSUint8Array>(self))
+        size += bytes->length() ? bytes->length() + 1 : 0;
+    else if (isSet(self))
+        size += sizeOfSetTable(uncheckedDowncast<PySet>(self.asCell())->size());
+    else if (isDict(self)) {
+        PyDict* dict = asDict(self);
+        if (dict->size()) {
+            bool areAllStrings = true;
+            dict->forEach(globalObject, [&] (JSValue key, JSValue) {
+                areAllStrings = key.isString();
+                return areAllStrings;
+            });
+            size += sizeOfDictKeys(dict->size(), areAllStrings);
+        }
+    } else if (isClass(self)) {
+        // One that is built in is a smaller thing than one that a program makes, which has besides room for the names of its instances' attributes.
+        PyType* ofClass = asType(self);
+        constexpr int64_t sizeOfStaticType = 416;
+        constexpr unsigned long hasInlineValues = 1ul << 2;
+        size = !ofClass->hasFlag(PyType::IsHeapType) ? sizeOfStaticType : size + (ofClass->flagsForPython() & hasInlineValues ? 32 + 64 + 42 * 16 : 0);
     }
     return JSValue::encode(intFromInt64(globalObject, size));
 }
@@ -526,6 +609,12 @@ void initializeReduce(JSGlobalObject* globalObject)
     addMethods(globalObject, realm->typeByteArray(), { { "__reduce__"_s, byteArrayReduce, Kind::Method, pack(false) }, { "__reduce_ex__"_s, byteArrayReduce, Kind::Method, pack(true) } });
     addMethods(globalObject, realm->typeMethod(), { { "__reduce__"_s, methodReduce } });
     addMethods(globalObject, realm->typeMemberDescriptor(), { { "__reduce__"_s, memberReduce } });
+
+#define ADD_SIZE_OF(name, pythonName, base, layout, flags) \
+    if (realm->type##name() != realm->typeObject()) \
+        addMethodsThatCPythonHas(globalObject, realm->type##name(), { { "__sizeof__"_s, builtinSizeOf } });
+    FOR_EACH_PYTHON_BUILTIN_TYPE(ADD_SIZE_OF)
+#undef ADD_SIZE_OF
 
     PyType* object = realm->typeObject();
     addMethods(globalObject, object, {

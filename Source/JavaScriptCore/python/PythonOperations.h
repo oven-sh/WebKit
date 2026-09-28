@@ -320,6 +320,13 @@ void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeI
 void leaveFrame(VM&, CallFrame*, BytecodeIndex);
 // What Python prints when an exception gets away: the traceback, and those of what led to it.
 String formatException(JSGlobalObject*, JSValue exception);
+String formatTraceback(JSGlobalObject*, JSValue traceback); // "Traceback (most recent call last):" and what follows, or nothing if it is not a traceback.
+// What has been raised has nowhere to go: sys.unraisablehook is told of it, and nothing is raised any longer. PyErr_FormatUnraisable() and PyErr_WriteUnraisable().
+void reportUnraisable(JSGlobalObject*, const String& message, JSValue object = JSValue());
+// sys.audit(event, *arguments). False if a hook raised. It costs nothing to speak of while there are no hooks.
+bool auditSlow(JSGlobalObject*, ASCIILiteral event, const ArgList& arguments);
+// What has been raised and not caught by a program that is being run: sys.excepthook is given it. PyErr_Print(), but for SystemExit.
+void reportUncaughtException(JSGlobalObject*, JSValue exception);
 
 // ---- Operators
 
@@ -356,6 +363,7 @@ JSValue newTuple(JSGlobalObject*, Register* first, unsigned count);
 String repr(JSGlobalObject*, JSValue);
 String str(JSGlobalObject*, JSValue);
 String addressOf(const void*); // 0x..., as in <object object at 0x...>
+String fullyQualifiedTypeName(JSGlobalObject*, JSValue); // What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
 JSValue format(JSGlobalObject*, JSValue, const String& specification);
 // Never -1, unless it raised.
 int64_t hash(JSGlobalObject*, JSValue);

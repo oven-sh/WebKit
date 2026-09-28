@@ -242,6 +242,9 @@ private:
 
     // ---- Results
 
+    // For an error that is of a line and of nowhere in it. What Python sees is one more than this, which is 0.
+    static constexpr unsigned noColumn = std::numeric_limits<unsigned>::max();
+
     bool fail(String&& message, unsigned line, unsigned column, unsigned endLine, unsigned endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError)
     {
         m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
@@ -750,6 +753,10 @@ private:
             token.numberKind = NumberKind::Integer;
             token.integer = value;
             return true;
+        }
+        if (unsigned limit = m_arena.maximumDigitsOfIntLiteral; limit && radix == 10 && digits.size() > limit) {
+            // Which line is enough. Nobody overlooks such a thing once they are told that.
+            return fail(makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."_s), m_line, noColumn, m_line, noColumn);
         }
         token.numberKind = NumberKind::BigInteger;
         token.radix = radix;

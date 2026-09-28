@@ -45,7 +45,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "math", "time", "posix", "_typing"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing"]
 
 
 def generator():
@@ -75,6 +75,16 @@ class Exporter:
         return memoryview(b"")
 
 
+class Finalized:
+    attribute = None
+
+    def __delattr__(self, name):
+        pass
+
+    def __del__(self):
+        raise ValueError
+
+
 def examples():
     """One of each of the types that have no name in builtins."""
     a_coroutine = coroutine()
@@ -85,8 +95,12 @@ def examples():
         raise ValueError
     except ValueError as error:
         traceback = error.__traceback__
+    unraisable = []
+    hook, sys.unraisablehook = sys.unraisablehook, unraisable.append
+    del Finalized().attribute
+    sys.unraisablehook = hook
     yield from [
-        memoryview(Exporter()).obj, generator, generator(), a_coroutine, a_coroutine.__await__(), an_async_generator, Class().method, len, str.join, int.__add__, (1).__add__, type.__dict__["__dict__"],
+        unraisable[0], sys.thread_info, sys.get_asyncgen_hooks(), memoryview(Exporter()).obj, generator, generator(), a_coroutine, a_coroutine.__await__(), an_async_generator, Class().method, len, str.join, int.__add__, (1).__add__, type.__dict__["__dict__"],
         type(generator).__dict__["__globals__"], dict.__dict__["fromkeys"], generator.__code__, sys._getframe(), sys._getframe().f_locals, sys, None, NotImplemented, ..., Class.__dict__, traceback,
         {}.keys(), {}.values(), {}.items(), iter([]), reversed([]), iter(()), iter(""), iter("ሴ"), iter(b""), iter(bytearray()), iter(range(1)), iter(range(1 << 100)), iter(set()),
         iter({}), iter({}.values()), iter({}.items()), reversed({}), reversed({}.values()), reversed({}.items()), iter(memoryview(b"")), iter(lambda: 1, 2), iter(Sequence()),
@@ -139,7 +153,9 @@ for name, a_type in types.items():
             entries.append([name + "." + attribute, kind, None, text(value.__doc__)])
 
 for name in MODULES:
-    module = __import__(name)
+    module = __import__(name.partition(".")[0])
+    for part in name.split(".")[1:]:
+        module = getattr(module, part)
     entries.append([name + ":", "module", None, text(module.__doc__)])
     for attribute, value in vars(module).items():
         if type(value).__name__ == "builtin_function_or_method":

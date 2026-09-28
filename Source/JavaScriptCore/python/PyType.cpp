@@ -513,6 +513,10 @@ unsigned PyType::hooks(JSGlobalObject* globalObject)
 
 bool PyType::cannotBeInstantiated(VM& vm) const
 {
+    // CPython says so of those that it has. One that it does not have is like those of its own that have no __new__ and are derived from nothing that has.
+    constexpr unsigned long disallowsInstantiation = 1ul << 7;
+    if (m_flagsForPython & disallowsInstantiation)
+        return true;
     return !hasFlag(IsHeapType) && base() && !base()->base() && !getDirect(vm, vm.pythonNames().dunder_new);
 }
 

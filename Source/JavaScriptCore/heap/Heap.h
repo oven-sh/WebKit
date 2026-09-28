@@ -296,7 +296,7 @@ class Heap;
     v(pyNativeFunctionSpace, cellHeapCellType, PyNativeFunction) \
     v(pyNativeObjectSpace, cellHeapCellType, PyNativeObject) \
     v(pyRangeSpace, cellHeapCellType, PyRange) \
-    v(pyRealmSpace, cellHeapCellType, PyRealm) \
+    v(pyRealmSpace, pyRealmHeapCellType, PyRealm) \
     v(pySetSpace, cellHeapCellType, PySet) \
     v(pyTypingObjectSpace, cellHeapCellType, PyTypingObject) \
     v(pySliceSpace, cellHeapCellType, PySlice) \
@@ -1192,6 +1192,7 @@ public:
     IsoHeapCellType syntheticModuleRecordHeapCellType;
     IsoHeapCellType moduleNamespaceObjectHeapCellType;
     IsoHeapCellType nativeStdFunctionHeapCellType;
+    IsoHeapCellType pyRealmHeapCellType;
     IsoHeapCellType pyTypeHeapCellType;
     IsoInlinedHeapCellType<JSString> stringHeapCellType;
     IsoInlinedHeapCellType<JSRopeString> ropeStringHeapCellType;

@@ -59,12 +59,52 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_frameLocalsProxyType);
     visitor.append(thisObject->m_builtinsModule);
     visitor.append(thisObject->m_modules);
+    visitor.append(thisObject->m_auditHooks);
+    visitor.append(thisObject->m_asyncGeneratorFirstIterationHook);
+    visitor.append(thisObject->m_asyncGeneratorFinalizerHook);
     visitor.append(thisObject->m_handledException);
     visitor.append(thisObject->m_outerHandledException);
     visitor.append(thisObject->m_returnValue);
 }
 
 DEFINE_VISIT_CHILDREN(PyRealm);
+
+void PyRealm::destroy(JSCell* cell)
+{
+    static_cast<PyRealm*>(cell)->PyRealm::~PyRealm();
+}
+
+JSString* PyRealm::intern(JSGlobalObject* globalObject, JSString* string)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The engine has one of each of these already.
+    if (string->length() <= 1) {
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!view->length())
+            return jsEmptyString(vm);
+        if (view[0] <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(view[0]);
+    }
+    auto atom = string->toAtomString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (JSString* interned = m_internedStrings.get(atom.data))
+        return interned;
+    // It is made of the atom now, having been asked for it, and so keeps it in the table for as long as it lasts.
+    m_internedStrings.set(atom.data, string);
+    return string;
+}
+
+bool PyRealm::isInterned(JSGlobalObject* globalObject, JSString* string)
+{
+    if (string->length() <= 1)
+        return intern(globalObject, string) == string;
+    if (string->isRope())
+        return false;
+    StringImpl* impl = string->getValueImpl();
+    return impl->isAtom() && m_internedStrings.get(impl) == string;
+}
 
 Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
@@ -122,6 +162,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeProperty(globalObject);
     Python::initializeReduce(globalObject);
+    Python::initializeStructSequences(globalObject);
     Python::initializeAnnotations(globalObject);
     Python::initializeTemplateStrings(globalObject);
     Python::initializeGenericAliasAndUnion(globalObject);

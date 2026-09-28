@@ -76,6 +76,40 @@ void initializeTypeParameters(JSGlobalObject*);
 void initializeTemplateStrings(JSGlobalObject*);
 void initializeProperty(JSGlobalObject*);
 void initializeReduce(JSGlobalObject*);
+void initializeStructSequences(JSGlobalObject*);
+JSObject* createSysModule(JSGlobalObject*);
+JSValue findOrLoadModule(JSGlobalObject*, const String& name);
+
+// While something is being written out, so that a list that contains itself comes out as [[...]]: Py_ReprEnter() and Py_ReprLeave().
+class ReprGuard {
+    WTF_MAKE_NONCOPYABLE(ReprGuard);
+public:
+    ReprGuard(JSGlobalObject* globalObject, JSCell* cell)
+        : m_stack(globalObject->pyRealm()->objectsBeingWrittenOut())
+        , m_isRecursive(m_stack.contains(cell))
+    {
+        if (!m_isRecursive)
+            m_stack.append(cell);
+    }
+    ~ReprGuard()
+    {
+        if (!m_isRecursive)
+            m_stack.removeLast();
+    }
+    bool isRecursive() const { return m_isRecursive; }
+
+private:
+    Vector<JSCell*, 16>& m_stack;
+    bool m_isRecursive;
+};
+
+// A struct sequence: a tuple whose items have names, and which can have more that have names and are not among its items. sys.float_info is one.
+// This makes one of a class, which is a tuple-like built-in class that has no attributes yet. A field with no name is one that can only be got at by where it is.
+void makeStructSequenceType(JSGlobalObject*, PyType*, std::span<const ASCIILiteral> fields, unsigned countInSequence);
+// As many values as the class has fields.
+JSValue newStructSequence(JSGlobalObject*, PyType*, const ArgList& values);
+// types.SimpleNamespace(), with nothing in it
+JSObject* newSimpleNamespace(JSGlobalObject*);
 void initializeDictViews(JSGlobalObject*);
 void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __reduce__() and __setstate__(), those of them that it has in CPython
 JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there

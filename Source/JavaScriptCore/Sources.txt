@@ -778,7 +778,9 @@ python/PythonSequences.cpp
 python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
+python/PythonStructSequence.cpp
 python/PythonSymbolTable.cpp
+python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp

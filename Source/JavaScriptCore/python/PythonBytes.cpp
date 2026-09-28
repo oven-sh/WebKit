@@ -180,8 +180,8 @@ void releaseBufferOfProgram(JSGlobalObject* globalObject, JSValue exporter, JSVa
         raised = scope.exception();
         scope.clearException();
         call(globalObject, method, exporter, view);
-        // FIXME: It is for sys.unraisablehook to be told, when there is one.
-        scope.clearException();
+        if (scope.exception())
+            reportUnraisable(globalObject, makeString("Exception ignored in __release_buffer__ of "_s, typeName(globalObject, exporter)));
     }
     if (raised) {
         auto scope = DECLARE_THROW_SCOPE(vm);

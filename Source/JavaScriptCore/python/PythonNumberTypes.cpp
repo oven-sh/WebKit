@@ -277,6 +277,13 @@ static JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned 
     if (previousWasUnderscore)
         return { };
 
+    // As for writing one. A base that is a power of two takes no time to speak of.
+    if (int limit = globalObject->pyRealm()->maximumDigitsOfIntAsString; limit && !hasOneBitSet(base) && digits.size() > static_cast<size_t>(limit)) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return raiseValueError(globalObject, scope, makeString("Exceeds the limit ("_s, limit, " digits) for integer string conversion: value has "_s, digits.size(), " digits; use sys.set_int_max_str_digits() to increase the limit"_s));
+    }
+
     JSValue magnitude = JSBigInt::parseInt(globalObject, globalObject->vm(), StringView(digits.span()), base, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
     if (!magnitude)
         return { };

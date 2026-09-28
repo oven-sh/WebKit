@@ -660,7 +660,10 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     addGetSet(globalObject, coroutine, "cr_suspended"_s, getGeneratorSuspended);
     addGetSet(globalObject, coroutine, "cr_await"_s, getGeneratorYieldFrom);
     addGetSet(globalObject, coroutine, "cr_frame"_s, getGeneratorFrame);
-    addMember(globalObject, coroutine, "cr_origin"_s, [] (JSGlobalObject*, JSValue) -> JSValue { return jsUndefined(); });
+    addMember(globalObject, coroutine, "cr_origin"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        JSValue origin = asGenerator(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_origin);
+        return origin ? origin : jsUndefined();
+    });
     PyType* asyncGenerator = realm->typeAsyncGenerator();
     addGetSet(globalObject, asyncGenerator, "ag_code"_s, getGeneratorCode);
     addGetSet(globalObject, asyncGenerator, "ag_suspended"_s, getGeneratorSuspended);

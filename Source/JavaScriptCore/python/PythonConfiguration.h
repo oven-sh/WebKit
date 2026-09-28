@@ -36,6 +36,7 @@ struct Configuration {
     Vector<String> arguments; // sys.argv
     Vector<String> moduleSearchPaths; // sys.path
     String executable; // sys.executable
+    String implementationName { "javascriptcore"_s }; // sys.implementation.name
 };
 
 } } // namespace JSC::Python
