@@ -101,6 +101,7 @@ public:
     PyFrame* back(VM&);
     unsigned line(VM&);
     unsigned lineAt(VM&, BytecodeIndex); // The line that some instruction of its code is from.
+    std::optional<std::pair<unsigned, unsigned>> sourceRangeAt(VM&, BytecodeIndex); // And what part of the source, if it says.
     JSValue namespaceArgument(VM&, CallFrame*);
     // Where it has got to in the bytecode. Nothing if it has not started.
     std::optional<BytecodeIndex> bytecodeIndex(VM&);

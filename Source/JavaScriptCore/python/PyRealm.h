@@ -294,6 +294,9 @@ public:
     JSObject* runtimeFunctions() const { return m_runtimeFunctions.get(); }
     // What frame.f_locals is an instance of. It is written in Python.
     PyType* frameLocalsProxyType() const { return m_frameLocalsProxyType.get(); }
+    // It has two bases, and so is not among the types that are made from a table.
+    PyType* exceptionGroupType() const { return m_exceptionGroupType.get(); }
+    void setExceptionGroupType(VM& vm, PyType* type) { m_exceptionGroupType.set(vm, this, type); }
     void setFrameLocalsProxyType(VM& vm, PyType* type) { m_frameLocalsProxyType.set(vm, this, type); }
     // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
     JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
@@ -358,6 +361,7 @@ private:
     WriteBarrier<JSObject> m_runtimeFunctions;
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<PyType> m_frameLocalsProxyType;
+    WriteBarrier<PyType> m_exceptionGroupType;
     WriteBarrier<JSObject> m_builtinsModule;
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
     Python::MonitoringState m_monitoring;

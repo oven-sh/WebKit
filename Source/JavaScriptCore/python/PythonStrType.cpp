@@ -36,7 +36,7 @@
 
 namespace JSC { namespace Python {
 
-static bool isSpace(char32_t c)
+bool isSpace(char32_t c)
 {
     if (c < 0x80)
         return c == ' ' || (c >= '\t' && c <= '\r') || (c >= 0x1C && c <= 0x1F);

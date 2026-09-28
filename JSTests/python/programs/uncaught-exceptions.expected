@@ -1,0 +1,665 @@
+===== name
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 23, in name
+    def name(): return undefined_name
+                       ^^^^^^^^^^^^^^
+NameError: name 'undefined_name' is not defined
+  positions [('name', 0, 0, 19, 33)]
+===== attribute
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 24, in attribute
+    def attribute(): return x.missing
+                            ^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'missing'
+  positions [('attribute', 0, 0, 24, 33)]
+===== chain_attr
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 25, in chain_attr
+    def chain_attr(): return d.keys().nothing.more
+                             ^^^^^^^^^^^^^^^^
+AttributeError: 'dict_keys' object has no attribute 'nothing'
+  positions [('chain_attr', 0, 0, 25, 41)]
+===== subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 26, in subscript
+    def subscript(): return d["k"]
+                            ~^^^^^
+KeyError: 'k'
+  positions [('subscript', 0, 0, 24, 30)]
+===== nested_subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 27, in nested_subscript
+    def nested_subscript(): return l[0][1]
+                                   ~~~~^^^
+TypeError: 'int' object is not subscriptable
+  positions [('nested_subscript', 0, 0, 31, 38)]
+===== binop
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 28, in binop
+    def binop(): return 1 + x
+                        ~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+  positions [('binop', 0, 0, 20, 25)]
+===== binop_long
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 29, in binop_long
+    def binop_long(): return (1 + 2) * x + 3
+                             ~~~~~~~~^~~
+TypeError: unsupported operand type(s) for *: 'int' and 'NoneType'
+  positions [('binop_long', 0, 0, 25, 36)]
+===== division
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 30, in division
+    def division(): return 1 / z
+                           ~~^~~
+ZeroDivisionError: division by zero
+  positions [('division', 0, 0, 23, 28)]
+===== call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 31, in call
+    def call(): return x()
+                       ~^^
+TypeError: 'NoneType' object is not callable
+  positions [('call', 0, 0, 19, 22)]
+===== call_args
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 32, in call_args
+    def call_args(): return len(1, 2)
+                            ~~~^^^^^^
+TypeError: len() takes exactly one argument (2 given)
+  positions [('call_args', 0, 0, 24, 33)]
+===== method_call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 33, in method_call
+    def method_call(): return l.append(1, 2)
+                              ~~~~~~~~^^^^^^
+TypeError: list.append() takes exactly one argument (2 given)
+  positions [('method_call', 0, 0, 26, 40)]
+===== calls_inner
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 35, in calls_inner
+    def calls_inner(): return inner()
+                              ~~~~~^^
+  File "uncaught-exceptions.py", line 34, in inner
+    def inner(): raise ValueError("inner")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: inner
+  positions [('calls_inner', 0, 0, 26, 33), ('inner', 0, 0, 13, 38)]
+===== in_expression
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 36, in in_expression
+    def in_expression(): return 1 + inner() + 2
+                                    ~~~~~^^
+  File "uncaught-exceptions.py", line 34, in inner
+    def inner(): raise ValueError("inner")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: inner
+  positions [('in_expression', 0, 0, 32, 39), ('inner', 0, 0, 13, 38)]
+===== multi_line
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 38, in multi_line
+    return (1 +
+            ~~^
+            x +
+            ~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+  positions [('multi_line', 1, 2, 12, 13)]
+===== multi_line_call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 42, in multi_line_call
+    return len(
+        1,
+        2,
+    )
+TypeError: len() takes exactly one argument (2 given)
+  positions [('multi_line_call', 1, 4, 11, 5)]
+===== unary
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 46, in unary
+    def unary(): return -x
+                        ^^
+TypeError: bad operand type for unary -: 'NoneType'
+  positions [('unary', 0, 0, 20, 22)]
+===== compare
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 47, in compare
+    def compare(): return 1 < x
+                          ^^^^^
+TypeError: '<' not supported between instances of 'int' and 'NoneType'
+  positions [('compare', 0, 0, 22, 27)]
+===== contains
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 48, in contains
+    def contains(): return 1 in x
+                           ^^^^^^
+TypeError: argument of type 'NoneType' is not a container or iterable
+  positions [('contains', 0, 0, 23, 29)]
+===== unpack
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 49, in unpack
+    def unpack(): a, b = l
+                  ^^^^
+ValueError: not enough values to unpack (expected 2, got 1)
+  positions [('unpack', 0, 0, 14, 18)]
+===== star_call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 50, in star_call
+    def star_call(): return len(*x)
+                            ~~~^^^^
+TypeError: len() argument after * must be an iterable, not NoneType
+  positions [('star_call', 0, 0, 24, 31)]
+===== assign_sub
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 51, in assign_sub
+    def assign_sub(): x[0] = 1
+                      ~^^^
+TypeError: 'NoneType' object does not support item assignment
+  positions [('assign_sub', 0, 0, 18, 22)]
+===== assign_attr
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 52, in assign_attr
+    def assign_attr(): x.a = 1
+                       ^^^
+AttributeError: 'NoneType' object has no attribute 'a' and no __dict__ for setting new attributes
+  positions [('assign_attr', 0, 0, 19, 22)]
+===== del_sub
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 53, in del_sub
+    def del_sub(): del d["k"]
+                       ~^^^^^
+KeyError: 'k'
+  positions [('del_sub', 0, 0, 19, 25)]
+===== aug
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 56, in aug
+    y += 1
+TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'
+  positions [('aug', 2, 2, 4, 10)]
+===== raise_stmt
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 57, in raise_stmt
+    def raise_stmt(): raise KeyError("k")
+                      ^^^^^^^^^^^^^^^^^^^
+KeyError: 'k'
+  positions [('raise_stmt', 0, 0, 18, 37)]
+===== raise_from
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 59, in raise_from
+    try: 1 / z
+         ~~^~~
+ZeroDivisionError: division by zero
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 60, in raise_from
+    except ZeroDivisionError as e: raise ValueError("second") from e
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: second
+  positions [('raise_from', 2, 2, 35, 68)]
+===== raise_during
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 62, in raise_during
+    try: 1 / z
+         ~~^~~
+ZeroDivisionError: division by zero
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 63, in raise_during
+    except ZeroDivisionError: raise ValueError("second")
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: second
+  positions [('raise_during', 2, 2, 30, 56)]
+===== raise_from_none
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 66, in raise_from_none
+    except ZeroDivisionError: raise ValueError("second") from None
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: second
+  positions [('raise_from_none', 2, 2, 30, 66)]
+===== notes
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 68, in notes
+    e = ValueError("noted"); e.add_note("one"); e.add_note("two\nlines"); raise e
+                                                                          ^^^^^^^
+ValueError: noted
+one
+two
+lines
+  positions [('notes', 1, 1, 74, 81)]
+===== recursion
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 69, in recursion
+    def recursion(n=0): return recursion(n + 1)
+                               ~~~~~~~~~^^^^^^^
+  File "uncaught-exceptions.py", line 69, in recursion
+    def recursion(n=0): return recursion(n + 1)
+                               ~~~~~~~~~^^^^^^^
+  File "uncaught-exceptions.py", line 69, in recursion
+    def recursion(n=0): return recursion(n + 1)
+                               ~~~~~~~~~^^^^^^^
+  [Previous line repeated 995 more times]
+RecursionError: maximum recursion depth exceeded
+===== few_repeats
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 70, in few_repeats
+    def few_repeats(n=5): return few_repeats(n - 1) if n else 1 / z
+                                 ~~~~~~~~~~~^^^^^^^
+  File "uncaught-exceptions.py", line 70, in few_repeats
+    def few_repeats(n=5): return few_repeats(n - 1) if n else 1 / z
+                                 ~~~~~~~~~~~^^^^^^^
+  File "uncaught-exceptions.py", line 70, in few_repeats
+    def few_repeats(n=5): return few_repeats(n - 1) if n else 1 / z
+                                 ~~~~~~~~~~~^^^^^^^
+  [Previous line repeated 3 more times]
+ZeroDivisionError: division by zero
+  positions [('few_repeats', 0, 0, 29, 47), ('few_repeats', 0, 0, 29, 47), ('few_repeats', 0, 0, 29, 47), ('few_repeats', 0, 0, 29, 47), ('few_repeats', 0, 0, 29, 47), ('few_repeats', 0, 0, 58, 63)]
+===== group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions.py", line 71, in group
+  |     def group(): raise ExceptionGroup("g", [ValueError(1), TypeError(2)])
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +---------------- 2 ----------------
+    | TypeError: 2
+    +------------------------------------
+  positions [('group', 0, 0, 13, 69)]
+===== nested_group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions.py", line 75, in nested_group
+  |     raise ExceptionGroup("outer", [ExceptionGroup("inner", [inner_error, KeyError("k")]), ValueError("v")])
+  | ExceptionGroup: outer (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: inner (2 sub-exceptions)
+    +-+---------------- 1 ----------------
+      | Traceback (most recent call last):
+      |   File "uncaught-exceptions.py", line 73, in nested_group
+      |     try: 1 / z
+      |          ~~^~~
+      | ZeroDivisionError: division by zero
+      +---------------- 2 ----------------
+      | KeyError: 'k'
+      +------------------------------------
+    +---------------- 2 ----------------
+    | ValueError: v
+    +------------------------------------
+  positions [('nested_group', 3, 3, 4, 107)]
+===== group_with_cause
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions.py", line 77, in group_with_cause
+  |     try: raise ExceptionGroup("first", [ValueError(1)])
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: first (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +------------------------------------
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 78, in group_with_cause
+    except ExceptionGroup as e: raise TypeError("second") from e
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: second
+  positions [('group_with_cause', 2, 2, 32, 64)]
+===== unicode_line
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 79, in unicode_line
+    def unicode_line(): return "é" + "日本語" + x
+                               ~~~~~~~~~~~~~~~^~~
+TypeError: can only concatenate str (not "NoneType") to str
+  positions [('unicode_line', 0, 0, 27, 49)]
+===== tabs
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 81, in tabs
+    return	1 +	x
+           ~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+  positions [('tabs', 1, 1, 8, 13)]
+===== assertion
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 82, in assertion
+    def assertion(): assert z, "message"
+                            ^
+AssertionError: message
+  positions [('assertion', 0, 0, 24, 25)]
+===== assertion_bare
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 83, in assertion_bare
+    def assertion_bare(): assert z == 1
+                                 ^^^^^^
+AssertionError
+  positions [('assertion_bare', 0, 0, 29, 35)]
+===== fstring
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 84, in fstring
+    def fstring(): return f"{x.missing}"
+                             ^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'missing'
+  positions [('fstring', 0, 0, 25, 34)]
+===== comprehension
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 85, in comprehension
+    def comprehension(): return [1 / i for i in (1, 0)]
+                                 ~~^~~
+ZeroDivisionError: division by zero
+  positions [('comprehension', 0, 0, 29, 34)]
+===== lambda_
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 86, in lambda_
+    def lambda_(): return (lambda: 1 / z)()
+                          ~~~~~~~~~~~~~~~^^
+  File "uncaught-exceptions.py", line 86, in <lambda>
+    def lambda_(): return (lambda: 1 / z)()
+                                   ~~^~~
+ZeroDivisionError: division by zero
+  positions [('lambda_', 0, 0, 22, 39), ('<lambda>', 0, 0, 31, 36)]
+===== with_stmt
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 88, in with_stmt
+    with x: pass
+         ^
+TypeError: 'NoneType' object does not support the context manager protocol (missed __exit__ method)
+  positions [('with_stmt', 1, 1, 9, 10)]
+===== for_stmt
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 90, in for_stmt
+    for i in x: pass
+             ^
+TypeError: 'NoneType' object is not iterable
+  positions [('for_stmt', 1, 1, 13, 14)]
+===== import_stmt
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 91, in import_stmt
+    def import_stmt(): import nothing_by_this_name
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'nothing_by_this_name'
+  positions [('import_stmt', 0, 0, 19, 46)]
+===== import_from
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 92, in import_from
+    def import_from(): from sys import nothing_by_this_name
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'nothing_by_this_name' from 'sys' (unknown location)
+  positions [('import_from', 0, 0, 19, 55)]
+===== no_message
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 93, in no_message
+    def no_message(): raise ValueError
+                      ^^^^^^^^^^^^^^^^
+ValueError
+  positions [('no_message', 0, 0, 18, 34)]
+===== multi_arg
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 94, in multi_arg
+    def multi_arg(): raise ValueError(1, 2)
+                     ^^^^^^^^^^^^^^^^^^^^^^
+ValueError: (1, 2)
+  positions [('multi_arg', 0, 0, 17, 39)]
+===== custom
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 97, in custom
+    raise MyError("mine")
+custom.<locals>.MyError: mine
+  positions [('custom', 2, 2, 4, 25)]
+===== bad_str
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 101, in bad_str
+    raise Bad()
+bad_str.<locals>.Bad: <exception str() failed>
+  positions [('bad_str', 3, 3, 4, 15)]
+===== system_exit
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 102, in system_exit
+    def system_exit(): raise SystemExit(3)
+                       ^^^^^^^^^^^^^^^^^^^
+SystemExit: 3
+  positions [('system_exit', 0, 0, 19, 38)]
+===== keyboard
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 103, in keyboard
+    def keyboard(): raise KeyboardInterrupt
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+  positions [('keyboard', 0, 0, 16, 39)]
+===== syntax
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 104, in syntax
+    def syntax(): compile("a b", "<s>", "exec")
+                  ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<s>", line 1
+    a b
+      ^
+SyntaxError: invalid syntax
+  positions [('syntax', 0, 0, 14, 43)]
+===== exec_error
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 105, in exec_error
+    def exec_error(): exec("1 / 0")
+                      ~~~~^^^^^^^^^
+  File "<string>", line 1, in <module>
+ZeroDivisionError: division by zero
+  positions [('exec_error', 0, 0, 18, 31), ('<module>', 0, 0, 0, 5)]
+===== semicolons
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 106, in semicolons
+    def semicolons(): a = 1; b = a / z; return b
+                                 ~~^~~
+ZeroDivisionError: division by zero
+  positions [('semicolons', 0, 0, 29, 34)]
+===== long_line
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 107, in long_line
+    def long_line(): return                                                                       1 / z
+                                                                                                  ~~^~~
+ZeroDivisionError: division by zero
+  positions [('long_line', 0, 0, 94, 99)]
+===== call_of_call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 108, in call_of_call
+    def call_of_call(): return (lambda: None)()()
+                               ~~~~~~~~~~~~~~~~^^
+TypeError: 'NoneType' object is not callable
+  positions [('call_of_call', 0, 0, 27, 45)]
+===== await_like
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 109, in await_like
+    def await_like(): return l[0](1)[2]
+                             ~~~~^^^
+TypeError: 'int' object is not callable
+  positions [('await_like', 0, 0, 25, 32)]
+===== slice_
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 110, in slice_
+    def slice_(): return x[1:2]
+                         ~^^^^^
+TypeError: 'NoneType' object is not subscriptable
+  positions [('slice_', 0, 0, 21, 27)]
+===== kw_call
+Traceback (most recent call last):
+  File "uncaught-exceptions.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions.py", line 111, in kw_call
+    def kw_call(): return len(a=1)
+                          ~~~^^^^^
+TypeError: len() takes no keyword arguments
+  positions [('kw_call', 0, 0, 22, 30)]

@@ -59,6 +59,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_runtimeFunctions);
     visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_frameLocalsProxyType);
+    visitor.append(thisObject->m_exceptionGroupType);
     visitor.append(thisObject->m_builtinsModule);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_auditHooks);
@@ -84,7 +85,11 @@ Structure* PyRealm::nativeFunctionStructure(BuiltinType type) const
 
 void PyRealm::destroy(JSCell* cell)
 {
-    static_cast<PyRealm*>(cell)->PyRealm::~PyRealm();
+    auto* realm = static_cast<PyRealm*>(cell);
+    // The VM counts the realms in which something is being told of what is run, and this is one no longer.
+    if (realm->m_monitoring.isWatching)
+        realm->vm().removePythonWatcher();
+    realm->PyRealm::~PyRealm();
 }
 
 JSString* PyRealm::intern(JSGlobalObject* globalObject, JSString* string)
@@ -174,6 +179,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeBuiltinFunctions(globalObject, builtins);
     Python::initializeCodeTypes(globalObject, builtins);
     Python::initializeAsyncTypes(globalObject, builtins);
+    Python::initializeExceptionGroups(globalObject, builtins);
     Python::initializeProperty(globalObject);
     Python::initializeReduce(globalObject);
     Python::initializeStructSequences(globalObject);

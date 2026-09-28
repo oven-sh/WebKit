@@ -318,10 +318,15 @@ PYTHON_NATIVE(codePositions)
     UNUSED_PARAM(scope);
     CompiledCode compiled = compiledCodeOf(vm, executableOf(args[0]));
     SourceProvider& provider = *compiled.source.provider();
-    MarkedArgumentBuffer positions;
+    // What wants to know where an instruction is from takes what comes at half its offset, CPython's instructions being made of units of two bytes: traceback.py does with tb_lasti, and
+    // dis. So there is one for each two bytes. Where two instructions begin in the same two, the first is a byte long, and it is the second that can be somewhere of its own.
+    MarkedArgumentBuffer distinct;
+    Vector<unsigned> indices;
     JSValue last;
     std::optional<std::pair<unsigned, unsigned>> lastRange;
-    forEachInstruction(compiled, [&] (unsigned, std::optional<std::pair<unsigned, unsigned>> range) {
+    forEachInstruction(compiled, [&] (unsigned offset, std::optional<std::pair<unsigned, unsigned>> range) {
+        while (indices.size() < offset / 2)
+            indices.append(distinct.size() - 1);
         if (!last || range != lastRange) {
             if (range) {
                 Place start = placeOf(provider, range->first, compiled.info->lineDelta);
@@ -330,9 +335,18 @@ PYTHON_NATIVE(codePositions)
             } else
                 last = PyTuple::create(globalObject, { jsNumber(firstLineOf(*compiled.info)), jsNumber(firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
             lastRange = range;
+            distinct.append(last);
         }
-        positions.append(last);
+        if (indices.size() == offset / 2)
+            indices.append(distinct.size() - 1);
+        else
+            indices.last() = distinct.size() - 1;
     });
+    while (indices.size() < (compiled.codeBlock->instructions().size() + 1) / 2)
+        indices.append(distinct.size() - 1);
+    MarkedArgumentBuffer positions;
+    for (unsigned index : indices)
+        positions.append(distinct.at(index));
     return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::CodePositions, PyTuple::createFromArguments(globalObject, positions)));
 }
 

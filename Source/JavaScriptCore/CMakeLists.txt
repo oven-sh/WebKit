@@ -2158,7 +2158,6 @@ add_custom_command(
 
 # GENERATOR: "PythonLibrarySources.h": the parts of Python's library that are written in Python
 set(JavaScriptCore_PYTHON_LIBRARY
-    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_exceptiongroup.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_framelocals.py
 )
 add_custom_command(

@@ -28,6 +28,7 @@
 
 #include "JSCInlines.h"
 #include "PyInstance.h"
+#include "PyObjects.h"
 #include "TopExceptionScope.h"
 
 namespace JSC { namespace Python {

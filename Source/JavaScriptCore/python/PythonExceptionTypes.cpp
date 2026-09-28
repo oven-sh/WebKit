@@ -751,6 +751,7 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
             type->putDirect(vm, Identifier::fromString(vm, attribute), createMemberDescriptor(globalObject, type, jsString(vm, attribute), field, jsUndefined()));
         }
     };
+    addMethods(globalObject, realm->typeBaseExceptionGroup(), { { "__init__"_s, exceptionInit } });
     addMethods(globalObject, realm->typeStopIteration(), { { "__init__"_s, stopIterationInit } });
     addFields(realm->typeStopIteration(), { &names.field_value });
     addMethods(globalObject, realm->typeSystemExit(), { { "__init__"_s, systemExitInit } });

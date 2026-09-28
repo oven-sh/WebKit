@@ -331,6 +331,7 @@ void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeI
 // A frame of Python code is about to be no more. If it has a frame object, that outlives it. The unwinder calls it, and op_py_ret.
 void leaveFrame(VM&, CallFrame*, BytecodeIndex);
 // The slow path of op_py_enter: either it is too deep, and RecursionError is raised, or something is to be told that a frame has begun or been resumed.
+void raiseRecursionError(JSGlobalObject*);
 void enterFrame(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isResume);
 // Those of op_py_line, op_py_ret and op_py_leave, which are only come to if something is to be told.
 enum class LineKind : uint8_t {
@@ -368,6 +369,13 @@ enum class ExceptionProgress : uint8_t {
 Exception* tellOfException(VM&, CallFrame*, BytecodeIndex, JSValue thrown, ExceptionProgress);
 // What Python prints when an exception gets away: the traceback, and those of what led to it.
 String formatException(JSGlobalObject*, JSValue exception);
+bool isSequence(JSGlobalObject*, JSValue); // PySequence_Check()
+// For `except*`.
+JSValue matchExceptionGroup(JSGlobalObject*, CallFrame*, JSValue exception, JSValue pattern);
+JSValue prepareReraiseStar(JSGlobalObject*, JSValue original, JSArray* exceptions);
+void forEachTracebackEntry(JSGlobalObject*, JSValue traceback, const ScopedLambda<void(PyFrame*, unsigned bytecodeOffset, unsigned line)>&); // From the outermost frame in.
+String appendSyntaxErrorLocation(JSGlobalObject*, StringBuilder&, JSValue exception);
+bool isSpace(char32_t); // str.isspace()
 String formatTraceback(JSGlobalObject*, JSValue traceback); // "Traceback (most recent call last):" and what follows, or nothing if it is not a traceback.
 // What has been raised has nowhere to go: sys.unraisablehook is told of it, and nothing is raised any longer. PyErr_FormatUnraisable() and PyErr_WriteUnraisable().
 void reportUnraisable(JSGlobalObject*, const String& message, JSValue object = JSValue());

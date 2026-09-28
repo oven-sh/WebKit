@@ -1853,6 +1853,14 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_enter)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyEnter>();
+    if (vm.pythonDepth() > vm.pythonRecursionLimit()) [[unlikely]] {
+        // It is one too many, and does not begin, or go on if it is a generator. So it is not counted, and is where it was before there was anything to be seen of it: it is in no traceback,
+        // nothing is told of it, and nothing in it catches this. What went wrong is the call.
+        vm.leavePythonFrame();
+        callFrame->setCurrentVPC(codeBlock->instructions().at(0).ptr());
+        Python::raiseRecursionError(globalObject);
+        CHECK_EXCEPTION();
+    }
     Python::enterFrame(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), bytecode.m_isResume);
     END();
 }

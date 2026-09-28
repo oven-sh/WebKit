@@ -409,33 +409,18 @@ JSObject* createFrameModule(JSGlobalObject* globalObject)
 
 // ---- What is printed when an exception gets away
 
-static void appendTraceback(JSGlobalObject* globalObject, StringBuilder& builder, JSValue traceback)
+void forEachTracebackEntry(JSGlobalObject* globalObject, JSValue traceback, const ScopedLambda<void(PyFrame*, unsigned bytecodeOffset, unsigned line)>& function)
 {
     if (!traceback || !isTraceback(globalObject, traceback))
         return;
-    builder.append("Traceback (most recent call last):\n"_s);
-    for (JSValue cursor = traceback; cursor && !isNone(cursor); cursor = asNative(cursor)->field(TracebackField::Next)) {
-        PyFrame* frame = asFrame(asNative(cursor)->field(TracebackField::Frame));
-        SourceProvider* provider = frame->executable()->source().provider();
-        builder.append("  File \""_s, provider->sourceURL(), "\", line "_s, lineOf(cursor), ", in "_s, frame->functionInfo().name.string(), '\n');
-        // The line itself, without its indentation.
-        StringView text = provider->source();
-        unsigned start = std::min<unsigned>(asNative(cursor)->field(TracebackField::SourceOffset).asInt32(), text.length());
-        while (start && text[start - 1] != '\n')
-            --start;
-        unsigned end = start;
-        while (end < text.length() && text[end] != '\n')
-            ++end;
-        StringView content = text.substring(start, end - start).trim([] (char16_t c) { return c == ' ' || c == '\t' || c == '\f' || c == '\r'; });
-        if (!content.isEmpty())
-            builder.append("    "_s, content, '\n');
-    }
+    for (JSValue cursor = traceback; cursor && !isNone(cursor); cursor = asNative(cursor)->field(TracebackField::Next))
+        function(asFrame(asNative(cursor)->field(TracebackField::Frame)), asNative(cursor)->field(TracebackField::BytecodeOffset).asInt32(), lineOf(cursor));
 }
 
 // For a SyntaxError, where in the source it is, which is not where it was raised: the file and the line, the text of the line, and under that what part
 // of it. This is TracebackException._format_syntax_error() of CPython's Lib/traceback.py. What is left to say is then its message alone, with the name
 // of the file if there was no line to give with it, which this returns. Null if it is not a SyntaxError.
-static String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& builder, JSValue exception)
+String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& builder, JSValue exception)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -531,72 +516,6 @@ static String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuil
     }
     JSValue message = attribute("msg"_s);
     return makeString(isTruthy(message) ? text(message) : String("<no detail available>"_s), suffix);
-}
-
-static void appendException(JSGlobalObject* globalObject, StringBuilder& builder, JSValue exception, Vector<JSCell*, 8>& seen)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto& names = vm.pythonNames();
-    JSObject* object = exception.isObject() ? asObject(exception) : nullptr;
-    if (object) {
-        seen.append(object);
-        // What led to it comes first.
-        JSValue cause = object->getDirect(vm, names.private_cause);
-        JSValue context = object->getDirect(vm, names.private_context);
-        JSValue suppress = object->getDirect(vm, names.private_suppressContext);
-        if (cause && cause.isObject() && !seen.contains(cause.asCell())) {
-            appendException(globalObject, builder, cause, seen);
-            builder.append("\nThe above exception was the direct cause of the following exception:\n\n"_s);
-        } else if (context && context.isObject() && !(suppress && suppress.isTrue()) && !seen.contains(context.asCell())) {
-            appendException(globalObject, builder, context, seen);
-            builder.append("\nDuring handling of the above exception, another exception occurred:\n\n"_s);
-        }
-        appendTraceback(globalObject, builder, object->getDirect(vm, names.private_traceback));
-    }
-
-    PyType* type = typeOf(globalObject, exception);
-    String name = qualifiedNameOfType(globalObject, type);
-    String message = object ? appendSyntaxErrorLocation(globalObject, builder, exception) : String();
-    if (message.isNull())
-        message = str(globalObject, exception);
-    if (scope.exception()) {
-        scope.clearException();
-        message = "<exception str() failed>"_s;
-    }
-    builder.append(name);
-    if (!message.isEmpty())
-        builder.append(": "_s, message);
-    builder.append('\n');
-
-    JSValue notes = object ? getAttributeIfPresent(globalObject, exception, names.dunder_notes) : JSValue();
-    scope.clearException();
-    if (notes && isList(notes)) {
-        for (unsigned i = 0; i < asList(notes)->length(); ++i) {
-            JSValue item = listGet(globalObject, asList(notes), i);
-            String note = scope.exception() ? String() : str(globalObject, item);
-            if (scope.exception()) {
-                scope.clearException();
-                continue;
-            }
-            builder.append(note, '\n');
-        }
-    }
-}
-
-String formatTraceback(JSGlobalObject* globalObject, JSValue traceback)
-{
-    StringBuilder builder;
-    appendTraceback(globalObject, builder, traceback);
-    return builder.toString();
-}
-
-String formatException(JSGlobalObject* globalObject, JSValue exception)
-{
-    StringBuilder builder;
-    Vector<JSCell*, 8> seen;
-    appendException(globalObject, builder, exception, seen);
-    return builder.toString();
 }
 
 // ---- Setting them up

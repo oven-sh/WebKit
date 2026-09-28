@@ -1042,6 +1042,18 @@ PYTHON_RUNTIME_FUNCTION(displayHook)
 
 // ---- Classes and modules
 
+PYTHON_RUNTIME_FUNCTION(runtimeMatchExceptionGroup)
+{
+    PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(matchExceptionGroup(globalObject, callerOf(callFrame), argument(0), argument(1))));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimePrepareReraiseStar)
+{
+    PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(prepareReraiseStar(globalObject, argument(0), asList(argument(1)))));
+}
+
 // LOAD_BUILD_CLASS
 PYTHON_RUNTIME_FUNCTION(loadBuildClass)
 {
@@ -1083,10 +1095,65 @@ PYTHON_RUNTIME_FUNCTION(importFrom)
     // A module of the package that has not been made an attribute of it yet, as when packages import each other.
     JSValue packageName = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_name);
     RETURN_IF_EXCEPTION(scope, { });
-    String package = packageName && packageName.isString() ? asString(packageName)->value(globalObject).data : "<unknown module name>"_str;
-    if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, makeString(package, '.', name.string())))
-        return JSValue::encode(module);
-    return JSValue::encode(raise(globalObject, scope, BuiltinType::ImportError, makeString("cannot import name '"_s, name.string(), "' from '"_s, package, "' (unknown location)"_s)));
+    // A name that is no string is no name.
+    if (packageName && !packageName.isString())
+        packageName = { };
+    if (packageName) {
+        String package = asString(packageName)->value(globalObject);
+        if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, makeString(package, '.', name.string())))
+            return JSValue::encode(module);
+    }
+
+    // What follows is the rest of _PyEval_ImportFrom(), which is all about what to say.
+    // FIXME: If the module is in the way of one of the standard library's, or may be of some other, it says so. That goes by sys.path, the working directory and
+    // sys.stdlib_module_names, and comes with the rest of importing.
+    String shownName = repr(globalObject, argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    String shownPackage = repr(globalObject, packageName ? packageName : JSValue(jsString(vm, String("<unknown module name>"_s))));
+    RETURN_IF_EXCEPTION(scope, { });
+    auto attribute = [&] (JSValue object, ASCIILiteral attributeName) { return getAttributeIfPresent(globalObject, object, Identifier::fromString(vm, attributeName)); };
+    JSValue spec = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_spec);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue origin;
+    bool isInitializing = false;
+    if (spec) {
+        // _PyModuleSpec_GetFileOrigin()
+        JSValue hasLocation = attribute(spec, "has_location"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isLocated = hasLocation && isTrue(globalObject, hasLocation);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isLocated) {
+            origin = attribute(spec, "origin"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (origin && !origin.isString())
+                origin = { };
+        }
+        // PyModule_GetFilenameObject()
+        if (!origin && isInstance(globalObject, argument(0), realm->typeModule())) {
+            origin = getStoredAttribute(vm, asObject(argument(0)), vm.pythonNames().dunder_file);
+            if (origin && !origin.isString())
+                origin = { };
+        }
+        // _PyModuleSpec_IsInitializing()
+        JSValue initializing = attribute(spec, "_initializing"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        isInitializing = initializing && isTrue(globalObject, initializing);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    String location = origin ? makeString(" ("_s, asString(origin)->value(globalObject).data, ')') : String();
+    String message = isInitializing
+        ? makeString("cannot import name "_s, shownName, " from partially initialized module "_s, shownPackage, " (most likely due to a circular import)"_s, location)
+        : makeString("cannot import name "_s, shownName, " from "_s, shownPackage, origin ? location : String(" (unknown location)"_s));
+
+    // _PyErr_SetImportErrorWithNameFrom()
+    JSValue error = call(globalObject, realm->typeImportError(), jsString(vm, message));
+    RETURN_IF_EXCEPTION(scope, { });
+    auto& names = vm.pythonNames();
+    asObject(error)->putDirect(vm, names.field_name, packageName ? packageName : jsUndefined());
+    asObject(error)->putDirect(vm, names.field_path, origin ? origin : jsUndefined());
+    asObject(error)->putDirect(vm, names.field_nameFrom, argument(1));
+    throwException(globalObject, scope, error);
+    return { };
 }
 
 // from module import *
@@ -1168,6 +1235,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("takeReturnValue"_s, takeReturnValue);
     add("newCoroutine"_s, runtimeNewCoroutine);
     add("loadBuildClass"_s, loadBuildClass);
+    add("matchExceptionGroup"_s, runtimeMatchExceptionGroup);
+    add("prepareReraiseStar"_s, runtimePrepareReraiseStar);
     add("cellGet"_s, runtimeCellGet);
     add("cellSet"_s, runtimeCellSet);
     add("wrapAsyncYield"_s, runtimeWrapAsyncYield);

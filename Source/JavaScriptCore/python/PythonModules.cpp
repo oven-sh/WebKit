@@ -694,19 +694,11 @@ void initializeLibrary(JSGlobalObject* globalObject)
     auto attribute = [&] (JSValue module, ASCIILiteral name) {
         return asObject(module)->getDirect(vm, Identifier::fromString(vm, name));
     };
-    JSValue groups = findOrLoad(globalObject, "_exceptiongroup"_s, JSValue());
-    RELEASE_ASSERT(groups);
-    for (ASCIILiteral name : { "BaseExceptionGroup"_s, "ExceptionGroup"_s })
-        realm->builtinsModule()->putDirect(vm, Identifier::fromString(vm, name), attribute(groups, name));
     JSValue frameLocals = findOrLoad(globalObject, "_framelocals"_s, JSValue());
     RELEASE_ASSERT(frameLocals);
     auto* proxy = asType(attribute(frameLocals, "FrameLocalsProxy"_s));
     proxy->setFlag(PyType::IsMapping);
     realm->setFrameLocalsProxyType(vm, proxy);
-
-    // Compiled code calls these as it calls what is written in C++.
-    realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "matchExceptionGroup"_s), attribute(groups, "match_exception_group"_s));
-    realm->runtimeFunctions()->putDirect(vm, Identifier::fromString(vm, "prepareReraiseStar"_s), attribute(groups, "prepare_reraise_star"_s));
 }
 
 JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const String& givenName, JSValue fromList, unsigned level, bool wantsLeaf)
@@ -754,7 +746,7 @@ JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const Stri
             JSObject* error = createException(globalObject, globalObject->pyRealm()->typeModuleNotFoundError(), module && !getAttributeIfPresent(globalObject, module, names.dunder_path)
                 ? makeString("No module named '"_s, fullName, "'; '"_s, name.left(position - 1), "' is not a package"_s)
                 : makeString("No module named '"_s, fullName, '\''));
-            error->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, fullName));
+            error->putDirect(vm, vm.pythonNames().field_name, jsString(vm, fullName));
             throwException(globalObject, scope, error);
             return { };
         }

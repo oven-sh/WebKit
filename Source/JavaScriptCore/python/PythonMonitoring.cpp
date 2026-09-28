@@ -480,14 +480,16 @@ static JumpTargets jumpTargetsAfter(Block* codeBlock, unsigned offset, unsigned 
 
 // ---- What the code calls, when it finds that something is to be told
 
+void raiseRecursionError(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded"_s);
+}
+
 void enterFrame(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, bool isResume)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (vm.pythonDepth() > vm.pythonRecursionLimit()) {
-        raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded"_s);
-        return;
-    }
     if (!stateOf(globalObject).isWatching)
         return;
     auto site = siteOf(globalObject, callFrame, index);

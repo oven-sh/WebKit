@@ -346,6 +346,15 @@ unsigned PyFrame::lineAt(VM& vm, BytecodeIndex givenIndex)
     return source.provider()->documentLineColumnForOffset(unlinkedCodeBlockOf(vm, executable())->expressionInfoForBytecodeIndex(*index).divot + source.startOffset()).line + functionInfo().lineDelta;
 }
 
+std::optional<std::pair<unsigned, unsigned>> PyFrame::sourceRangeAt(VM& vm, BytecodeIndex index)
+{
+    auto entry = unlinkedCodeBlockOf(vm, executable())->expressionInfoForBytecodeIndex(index);
+    if (!entry.startOffset && !entry.endOffset)
+        return std::nullopt;
+    unsigned divot = entry.divot + executable()->source().startOffset();
+    return std::pair { divot - entry.startOffset, divot + entry.endOffset };
+}
+
 void PyFrame::leave(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
 {
     ASSERT(!m_isOver);

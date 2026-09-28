@@ -176,6 +176,7 @@ void initializeComplexType(JSGlobalObject*);
 void initializeFunctionTypes(JSGlobalObject*);
 void initializeCodeTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
+void initializeExceptionGroups(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 

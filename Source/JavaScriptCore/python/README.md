@@ -261,6 +261,21 @@ A frame object is a `PyFrame`. There is at most one for each time that a piece o
 frame is on the stack it reads and writes the registers. What leaves a frame says so (`py_ret`, and the unwinder), and the variables are
 copied then. So a local variable is copied when it is loaded for later use: anything that is called may change it.
 
+**A frame that is one too deep does not begin.** When `op_py_enter` finds that, the frame is put back where it was before there was anything to be seen of it, at its first instruction.
+So it is in no traceback, nothing is told of it, and nothing in it catches the `RecursionError`, which matters for a generator that is resumed inside a `try`. What went wrong is the call.
+
+**What is printed when an exception gets away** (`PythonExceptionDisplay.cpp`) is `TracebackException` of CPython's `Lib/traceback.py`, function for function, which is what CPython prints one with:
+what part of a line to point at, and with what; lines that are the same over and over; what led to it, without going round for ever; notes; groups; and the name that may have been meant.
+
+- Where that has the `ast` module parse a piece of a line, to find the operator or the brackets, this has the parser.
+- It counts in code points, as Python does, and in columns of a terminal where it lines things up.
+- It goes by where each instruction says that it is from, which is what `co_positions()` gives. That has one for each *two bytes* of code, because what wants to know where an instruction is from
+  takes what comes at half its offset: `traceback.py` does with `tb_lasti`, and so does `dis`.
+- When the standard library is there, `sys.excepthook` can go to its `traceback` module as CPython's does, and will find what it needs.
+
+**`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
+`ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
+
 ### `__dict__` is the object
 
 The attributes of an instance and the globals of a module are properties, which is what lets them be cached inline. `obj.__dict__`,

@@ -1,0 +1,13 @@
+TypeError: list.append() takes no keyword arguments
+TypeError: list.append() takes exactly one argument (0 given)
+TypeError: list.extend() takes no keyword arguments
+TypeError: list.clear() takes no keyword arguments
+TypeError: list.pop() takes no keyword arguments
+TypeError: dict.get() takes no keyword arguments
+TypeError: dict.keys() takes no keyword arguments
+TypeError: str.upper() takes no keyword arguments
+TypeError: str.startswith() takes no keyword arguments
+TypeError: BaseException.add_note() takes no keyword arguments
+TypeError: BaseException.with_traceback() takes no keyword arguments
+TypeError: list.append() takes no keyword arguments
+TypeError: list.append() takes no keyword arguments

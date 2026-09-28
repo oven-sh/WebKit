@@ -1,0 +1,1457 @@
+===== wide_before
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 15, in wide_before
+    def wide_before(): return "日本語" + x
+                              ~~~~~~~~~^~~
+TypeError: can only concatenate str (not "NoneType") to str
+===== wide_name
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 18, in wide_name
+    return 変数.属性
+           ^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute '属性'
+===== emoji
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 19, in emoji
+    def emoji(): return "😀😀" + x + "😀"
+                        ~~~~~~~^~~
+TypeError: can only concatenate str (not "NoneType") to str
+===== combining
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 20, in combining
+    def combining(): return "é" + x
+                            ~~~~^~~
+TypeError: can only concatenate str (not "NoneType") to str
+===== wide_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 21, in wide_call
+    def wide_call(): return len("日本", "語")
+                            ~~~^^^^^^^^^^^^^^
+TypeError: len() takes exactly one argument (2 given)
+===== wide_subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 22, in wide_subscript
+    def wide_subscript(): return {"日本": 1}["語"]
+                                 ~~~~~~~~~~~^^^^^^
+KeyError: '語'
+===== astral_name
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 25, in astral_name
+    return 1 + 𝐱
+           ~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== two_lines
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 29, in two_lines
+    .missing)
+     ^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'missing'
+===== many_lines
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 31, in many_lines
+    return len(
+        1,
+    ...<4 lines>...
+        6,
+    )
+TypeError: len() takes exactly one argument (6 given)
+===== binop_far_apart
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 40, in binop_far_apart
+    return (1
+            ~
+    ...<3 lines>...
+            3
+            ~
+            +
+            ^
+            x)
+            ~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== subscript_lines
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 48, in subscript_lines
+    return d[
+           ~^
+        "a"
+        ^^^
+        "b"
+        ^^^
+    ]
+    ^
+KeyError: 'ab'
+===== call_of_multiline_function
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 53, in call_of_multiline_function
+    return (lambda:
+           ~~~~~~~~
+            None)(
+            ~~~~~^
+        1)
+        ^^
+TypeError: call_of_multiline_function.<locals>.<lambda>() takes 0 positional arguments but 1 was given
+===== string_lines
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 57, in string_lines
+        return """a
+               ~~~~
+    b""" + x
+    ~~~~~^~~
+TypeError: can only concatenate str (not "NoneType") to str
+===== comment_between
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 60, in comment_between
+    return (1 + # a comment
+            ~~^~~~~~~~~~~~~
+            x)
+            ~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== backslash
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 63, in backslash
+    return 1 + \
+           ~~^~~
+        x
+        ~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== indented_more
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 68, in indented_more
+        return (x +
+                ~~^
+    1)
+    ~
+TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+===== blank_line_inside
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 71, in blank_line_inside
+    return (1 +
+            ~~^
+    
+    
+            x)
+            ~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== two_character_operator
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 75, in two_character_operator
+    def two_character_operator(): return 1 // z
+                                         ~~^^~~
+ZeroDivisionError: division by zero
+===== shift
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 76, in shift
+    def shift(): return 1 << x
+                        ~~^^~~
+TypeError: unsupported operand type(s) for <<: 'int' and 'NoneType'
+===== power
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 77, in power
+    def power(): return 2 ** x
+                        ~~^^~~
+TypeError: unsupported operand type(s) for ** or pow(): 'int' and 'NoneType'
+===== matmul
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 78, in matmul
+    def matmul(): return 1 @ 2
+                         ~~^~~
+TypeError: unsupported operand type(s) for @: 'int' and 'int'
+===== no_spaces
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 79, in no_spaces
+    def no_spaces(): return 1+x
+                            ~^~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== parenthesized_left
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 80, in parenthesized_left
+    def parenthesized_left(): return (1) + x
+                                     ~~~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== nested_parentheses
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 81, in nested_parentheses
+    def nested_parentheses(): return ((1 + 2)) * x
+                                     ~~~~~~~~~~^~~
+TypeError: unsupported operand type(s) for *: 'int' and 'NoneType'
+===== unary_in_binop
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 82, in unary_in_binop
+    def unary_in_binop(): return -1 + x
+                                 ~~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== compare_chain
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 83, in compare_chain
+    def compare_chain(): return 1 < 2 < x
+                                ^^^^^^^^^
+TypeError: '<' not supported between instances of 'int' and 'NoneType'
+===== boolean
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 84, in boolean
+    def boolean(): return (1 and x.a)
+                                 ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== call_in_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 85, in call_in_call
+    def call_in_call(): return len(len(1))
+                                   ~~~^^^
+TypeError: object of type 'int' has no len()
+===== subscript_of_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 86, in subscript_of_call
+    def subscript_of_call(): return len([])[0]
+                                    ~~~~~~~^^^
+TypeError: 'int' object is not subscriptable
+===== call_of_subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 87, in call_of_subscript
+    def call_of_subscript(): return l[0]()
+                                    ~~~~^^
+TypeError: 'int' object is not callable
+===== attribute_of_subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 88, in attribute_of_subscript
+    def attribute_of_subscript(): return l[0].nothing
+                                         ^^^^^^^^^^^^
+AttributeError: 'int' object has no attribute 'nothing'
+===== method_with_keywords
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 89, in method_with_keywords
+    def method_with_keywords(): return l.append(a=1)
+                                       ~~~~~~~~^^^^^
+TypeError: list.append() takes no keyword arguments
+===== slice_of_none
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 90, in slice_of_none
+    def slice_of_none(): return x[1:2, 3]
+                                ~^^^^^^^^
+TypeError: 'NoneType' object is not subscriptable
+===== await_free
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 91, in await_free
+    def await_free(): return [i for i in x]
+                                         ^
+TypeError: 'NoneType' object is not iterable
+===== dict_display
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 92, in dict_display
+    def dict_display(): return {**x}
+                               ^^^^^
+TypeError: 'NoneType' object is not a mapping
+===== list_display
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 93, in list_display
+    def list_display(): return [*x]
+                               ^^^^
+TypeError: Value after * must be an iterable, not NoneType
+===== conditional
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 94, in conditional
+    def conditional(): return 1 if x.a else 2
+                                   ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== lambda_body
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 95, in lambda_body
+    def lambda_body(): return (lambda a: a + x)(1)
+                              ~~~~~~~~~~~~~~~~~^^^
+  File "uncaught-exceptions-more.py", line 95, in <lambda>
+    def lambda_body(): return (lambda a: a + x)(1)
+                                         ~~^~~
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+===== return_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 96, in return_call
+    def return_call(): return int("a")
+                              ~~~^^^^^
+ValueError: invalid literal for int() with base 10: 'a'
+===== assign_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 98, in assign_call
+    v = int("a")
+ValueError: invalid literal for int() with base 10: 'a'
+===== assign_call_attribute
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 100, in assign_call_attribute
+    v = str.nothing("a")
+        ^^^^^^^^^^^
+AttributeError: type object 'str' has no attribute 'nothing'
+===== return_method_call
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 101, in return_method_call
+    def return_method_call(): return "a".nothing()
+                                     ^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'nothing'
+===== expression_statement
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 102, in expression_statement
+    def expression_statement(): int("a")
+                                ~~~^^^^^
+ValueError: invalid literal for int() with base 10: 'a'
+===== whole_line_raise
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 103, in whole_line_raise
+    def whole_line_raise(): raise ValueError("whole")
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: whole
+===== with_as
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 105, in with_as
+    with x as y: pass
+         ^
+TypeError: 'NoneType' object does not support the context manager protocol (missed __exit__ method)
+===== for_target
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 107, in for_target
+    for a, b in [1]: pass
+        ^^^^
+TypeError: cannot unpack non-iterable int object
+===== decorator
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 109, in decorator
+    @x
+     ^
+TypeError: 'NoneType' object is not callable
+===== default_argument
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 112, in default_argument
+    def f(a=1 / z): pass
+            ~~^~~
+ZeroDivisionError: division by zero
+===== class_body
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 114, in class_body
+    class C:
+        v = 1 / z
+  File "uncaught-exceptions-more.py", line 115, in C
+    v = 1 / z
+        ~~^~~
+ZeroDivisionError: division by zero
+===== class_base
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 117, in class_base
+    class C(x): pass
+TypeError: NoneType takes no arguments
+===== global_del
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 118, in global_del
+    def global_del(): del undefined_global
+                          ^^^^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'undefined_global' where it is not associated with a value
+===== star_assign
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 119, in star_assign
+    def star_assign(): a, *b = x
+                       ^^^^^
+TypeError: cannot unpack non-iterable NoneType object
+===== augmented_subscript
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 120, in augmented_subscript
+    def augmented_subscript(): d["k"] += 1
+                               ~^^^^^
+KeyError: 'k'
+===== augmented_attribute
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 121, in augmented_attribute
+    def augmented_attribute(): x.a += 1
+                               ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== format_spec
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 122, in format_spec
+    def format_spec(): return f"{1:{x.a}}"
+                                    ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== match_statement
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 124, in match_statement
+    match x.a:
+          ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== yield_expression
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 128, in yield_expression
+    return list(g())
+  File "uncaught-exceptions-more.py", line 127, in g
+    def g(): yield 1 / z
+                   ~~^~~
+ZeroDivisionError: division by zero
+===== generator_expression
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 129, in generator_expression
+    def generator_expression(): return list(1 / i for i in [0])
+                                       ~~~~^^^^^^^^^^^^^^^^^^^^
+  File "uncaught-exceptions-more.py", line 129, in <genexpr>
+    def generator_expression(): return list(1 / i for i in [0])
+                                            ~~^~~
+ZeroDivisionError: division by zero
+===== name_close
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 133, in name_close
+    return somethin
+           ^^^^^^^^
+NameError: name 'somethin' is not defined. Did you mean: 'something'?
+===== name_global
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 134, in name_global
+    def name_global(): return sho
+                              ^^^
+NameError: name 'sho' is not defined. Did you mean: 'show'?
+===== name_builtin
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 135, in name_builtin
+    def name_builtin(): return lenn
+                               ^^^^
+NameError: name 'lenn' is not defined. Did you mean: 'len'?
+===== name_far
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 136, in name_far
+    def name_far(): return qqqqqqqqqq
+                           ^^^^^^^^^^
+NameError: name 'qqqqqqqqqq' is not defined
+===== name_self
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 141, in name_self
+    C().m()
+    ~~~~~^^
+  File "uncaught-exceptions-more.py", line 140, in m
+    def m(self): return value
+                        ^^^^^
+NameError: name 'value' is not defined. Did you mean: 'self.value'?
+===== name_case
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 144, in name_case
+    return value
+           ^^^^^
+NameError: name 'value' is not defined. Did you mean: 'Value'?
+===== attribute_close
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 145, in attribute_close
+    def attribute_close(): return l.appendd
+                                  ^^^^^^^^^
+AttributeError: 'list' object has no attribute 'appendd'. Did you mean: 'append'?
+===== attribute_far
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 146, in attribute_far
+    def attribute_far(): return l.qqqqqqqq
+                                ^^^^^^^^^^
+AttributeError: 'list' object has no attribute 'qqqqqqqq'
+===== attribute_private
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 150, in attribute_private
+    return C().hidden
+           ^^^^^^^^^^
+AttributeError: 'C' object has no attribute 'hidden'
+===== attribute_private_from_method
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 155, in attribute_private_from_method
+    return C().m()
+           ~~~~~^^
+  File "uncaught-exceptions-more.py", line 154, in m
+    def m(self): return self.hidden
+                        ^^^^^^^^^^^
+AttributeError: 'C' object has no attribute 'hidden'. Did you mean: '_hidden'?
+===== attribute_underscore
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 159, in attribute_underscore
+    return C()._hiden
+           ^^^^^^^^^^
+AttributeError: 'C' object has no attribute '_hiden'. Did you mean: '_hidden'?
+===== attribute_of_class
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 160, in attribute_of_class
+    def attribute_of_class(): return list.appendd
+                                     ^^^^^^^^^^^^
+AttributeError: type object 'list' has no attribute 'appendd'. Did you mean: 'append'?
+===== attribute_of_module
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 161, in attribute_of_module
+    def attribute_of_module(): return sys.versio
+                                      ^^^^^^^^^^
+AttributeError: module 'sys' has no attribute 'versio'. Did you mean: 'version'?
+===== attribute_of_none
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 162, in attribute_of_none
+    def attribute_of_none(): return x.appendd
+                                    ^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'appendd'
+===== import_from_close
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 163, in import_from_close
+    def import_from_close(): from sys import versio
+                             ^^^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'versio' from 'sys' (unknown location). Did you mean: 'version'?
+===== import_from_far
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 164, in import_from_far
+    def import_from_far(): from sys import qqqqqqqqq
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'qqqqqqqqq' from 'sys' (unknown location)
+===== unbound_local
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 166, in unbound_local
+    print(later); later = 1
+          ^^^^^
+UnboundLocalError: cannot access local variable 'later' where it is not associated with a value
+===== name_deleted
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 168, in name_deleted
+    v = 1; del v; return v
+                         ^
+UnboundLocalError: cannot access local variable 'v' where it is not associated with a value
+===== note_kinds
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 171, in note_kinds
+    e = ValueError("v"); e.__notes__ = ["a", 1, None, "two\nlines", ""]; raise e
+                                                                         ^^^^^^^
+ValueError: v
+a
+1
+None
+two
+lines
+
+===== notes_tuple
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 173, in notes_tuple
+    e = ValueError("v"); e.__notes__ = ("t",); raise e
+                                               ^^^^^^^
+ValueError: v
+t
+===== notes_string
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 175, in notes_string
+    e = ValueError("v"); e.__notes__ = "string"; raise e
+                                                 ^^^^^^^
+ValueError: v
+'string'
+===== notes_number
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 177, in notes_number
+    e = ValueError("v"); e.__notes__ = 5; raise e
+                                          ^^^^^^^
+ValueError: v
+5
+===== notes_none
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 179, in notes_none
+    e = ValueError("v"); e.__notes__ = None; raise e
+                                             ^^^^^^^
+ValueError: v
+===== notes_empty
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 181, in notes_empty
+    e = ValueError("v"); e.__notes__ = []; raise e
+                                           ^^^^^^^
+ValueError: v
+===== note_bad_str
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 185, in note_bad_str
+    e = ValueError("v"); e.__notes__ = [B()]; raise e
+                                              ^^^^^^^
+ValueError: v
+<note str() failed>
+===== notes_raise
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 190, in notes_raise
+    raise E("v")
+notes_raise.<locals>.E: v
+Ignored error getting __notes__: RuntimeError('no notes')
+===== module_other
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 194, in module_other
+    E.__module__ = "some.where"; raise E("m")
+                                 ^^^^^^^^^^^^
+some.where.module_other.<locals>.E: m
+===== module_none
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 197, in module_none
+    E.__module__ = None; raise E("m")
+                         ^^^^^^^^^^^^
+<unknown>.module_none.<locals>.E: m
+===== module_builtins
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 200, in module_builtins
+    E.__module__ = "builtins"; raise E("m")
+                               ^^^^^^^^^^^^
+module_builtins.<locals>.E: m
+===== qualname_set
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 203, in qualname_set
+    E.__qualname__ = "Other.Name"; raise E("m")
+                                   ^^^^^^^^^^^^
+Other.Name: m
+===== message_lines
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 204, in message_lines
+    def message_lines(): raise ValueError("first\nsecond")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: first
+second
+===== message_empty
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 205, in message_empty
+    def message_empty(): raise ValueError("")
+                         ^^^^^^^^^^^^^^^^^^^^
+ValueError
+===== message_none
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 206, in message_none
+    def message_none(): raise ValueError(None)
+                        ^^^^^^^^^^^^^^^^^^^^^^
+ValueError: None
+===== key_error
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 207, in key_error
+    def key_error(): raise KeyError("k")
+                     ^^^^^^^^^^^^^^^^^^^
+KeyError: 'k'
+===== os_error
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 208, in os_error
+    def os_error(): raise OSError(2, "No such file", "name")
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file: 'name'
+===== stop_iteration
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 209, in stop_iteration
+    def stop_iteration(): raise StopIteration(5)
+                          ^^^^^^^^^^^^^^^^^^^^^^
+StopIteration: 5
+===== cycle_context
+ValueError: b
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 212, in cycle_context
+    a = ValueError("a"); b = ValueError("b"); a.__context__ = b; b.__context__ = a; raise a
+                                                                                    ^^^^^^^
+ValueError: a
+===== cycle_cause
+ValueError: b
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 214, in cycle_cause
+    a = ValueError("a"); b = ValueError("b"); a.__cause__ = b; b.__cause__ = a; raise a
+                                                                                ^^^^^^^
+ValueError: a
+===== self_cause
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 216, in self_cause
+    a = ValueError("a"); a.__cause__ = a; raise a
+                                          ^^^^^^^
+ValueError: a
+===== cause_and_context
+KeyError: 'cause'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 218, in cause_and_context
+    a = ValueError("a"); a.__cause__ = KeyError("cause"); a.__context__ = TypeError("context"); raise a
+                                                                                                ^^^^^^^
+ValueError: a
+===== cause_is_context
+KeyError: 'both'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 220, in cause_is_context
+    c = KeyError("both"); a = ValueError("a"); a.__cause__ = c; a.__context__ = c; raise a
+                                                                                   ^^^^^^^
+ValueError: a
+===== suppressed
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 222, in suppressed
+    a = ValueError("a"); a.__context__ = TypeError("context"); a.__suppress_context__ = True; raise a
+                                                                                              ^^^^^^^
+ValueError: a
+===== long_chain
+ValueError: 0
+
+During handling of the above exception, another exception occurred:
+
+ValueError: 1
+
+During handling of the above exception, another exception occurred:
+
+ValueError: 2
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 227, in long_chain
+    raise e
+ValueError: 3
+===== chain_with_tracebacks
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 230, in chain_with_tracebacks
+    try: 1 / z
+         ~~^~~
+ZeroDivisionError: division by zero
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 231, in chain_with_tracebacks
+    except ZeroDivisionError: d["k"]
+                              ~^^^^^
+KeyError: 'k'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 232, in chain_with_tracebacks
+    except KeyError: x.a
+                     ^^^
+AttributeError: 'NoneType' object has no attribute 'a'
+===== group_of_raised
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 238, in group_of_raised
+  |     def group_of_raised(): raise EG("g", [raised(ValueError(1)), raised(TypeError(2))])
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 236, in raised
+    |     try: raise e
+    |          ^^^^^^^
+    | ValueError: 1
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 236, in raised
+    |     try: raise e
+    |          ^^^^^^^
+    | TypeError: 2
+    +------------------------------------
+===== group_wide
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 239, in group_wide
+  |     def group_wide(): raise EG("wide", [ValueError(i) for i in range(17)])
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: wide (17 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: 0
+    +---------------- 2 ----------------
+    | ValueError: 1
+    +---------------- 3 ----------------
+    | ValueError: 2
+    +---------------- 4 ----------------
+    | ValueError: 3
+    +---------------- 5 ----------------
+    | ValueError: 4
+    +---------------- 6 ----------------
+    | ValueError: 5
+    +---------------- 7 ----------------
+    | ValueError: 6
+    +---------------- 8 ----------------
+    | ValueError: 7
+    +---------------- 9 ----------------
+    | ValueError: 8
+    +---------------- 10 ----------------
+    | ValueError: 9
+    +---------------- 11 ----------------
+    | ValueError: 10
+    +---------------- 12 ----------------
+    | ValueError: 11
+    +---------------- 13 ----------------
+    | ValueError: 12
+    +---------------- 14 ----------------
+    | ValueError: 13
+    +---------------- 15 ----------------
+    | ValueError: 14
+    +---------------- ... ----------------
+    | and 2 more exceptions
+    +------------------------------------
+===== group_just_wide_enough
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 240, in group_just_wide_enough
+  |     def group_just_wide_enough(): raise EG("wide", [ValueError(i) for i in range(15)])
+  |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: wide (15 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: 0
+    +---------------- 2 ----------------
+    | ValueError: 1
+    +---------------- 3 ----------------
+    | ValueError: 2
+    +---------------- 4 ----------------
+    | ValueError: 3
+    +---------------- 5 ----------------
+    | ValueError: 4
+    +---------------- 6 ----------------
+    | ValueError: 5
+    +---------------- 7 ----------------
+    | ValueError: 6
+    +---------------- 8 ----------------
+    | ValueError: 7
+    +---------------- 9 ----------------
+    | ValueError: 8
+    +---------------- 10 ----------------
+    | ValueError: 9
+    +---------------- 11 ----------------
+    | ValueError: 10
+    +---------------- 12 ----------------
+    | ValueError: 11
+    +---------------- 13 ----------------
+    | ValueError: 12
+    +---------------- 14 ----------------
+    | ValueError: 13
+    +---------------- 15 ----------------
+    | ValueError: 14
+    +------------------------------------
+===== group_one_too_wide
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 241, in group_one_too_wide
+  |     def group_one_too_wide(): raise EG("wide", [ValueError(i) for i in range(16)])
+  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: wide (16 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: 0
+    +---------------- 2 ----------------
+    | ValueError: 1
+    +---------------- 3 ----------------
+    | ValueError: 2
+    +---------------- 4 ----------------
+    | ValueError: 3
+    +---------------- 5 ----------------
+    | ValueError: 4
+    +---------------- 6 ----------------
+    | ValueError: 5
+    +---------------- 7 ----------------
+    | ValueError: 6
+    +---------------- 8 ----------------
+    | ValueError: 7
+    +---------------- 9 ----------------
+    | ValueError: 8
+    +---------------- 10 ----------------
+    | ValueError: 9
+    +---------------- 11 ----------------
+    | ValueError: 10
+    +---------------- 12 ----------------
+    | ValueError: 11
+    +---------------- 13 ----------------
+    | ValueError: 12
+    +---------------- 14 ----------------
+    | ValueError: 13
+    +---------------- 15 ----------------
+    | ValueError: 14
+    +---------------- ... ----------------
+    | and 1 more exception
+    +------------------------------------
+===== group_deep
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 245, in group_deep
+  |     raise e
+  | ExceptionGroup: level 11 (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: level 10 (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | ExceptionGroup: level 9 (1 sub-exception)
+      +-+---------------- 1 ----------------
+        | ExceptionGroup: level 8 (1 sub-exception)
+        +-+---------------- 1 ----------------
+          | ExceptionGroup: level 7 (1 sub-exception)
+          +-+---------------- 1 ----------------
+            | ExceptionGroup: level 6 (1 sub-exception)
+            +-+---------------- 1 ----------------
+              | ExceptionGroup: level 5 (1 sub-exception)
+              +-+---------------- 1 ----------------
+                | ExceptionGroup: level 4 (1 sub-exception)
+                +-+---------------- 1 ----------------
+                  | ExceptionGroup: level 3 (1 sub-exception)
+                  +-+---------------- 1 ----------------
+                    | ExceptionGroup: level 2 (1 sub-exception)
+                    +-+---------------- 1 ----------------
+                      | ... (max_group_depth is 10)
+                      +------------------------------------
+===== group_notes
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 247, in group_notes
+  |     e = EG("g", [ValueError(1)]); e.add_note("of the group"); e.exceptions[0].add_note("of the member\nin two lines"); raise e
+  |                                                                                                                        ^^^^^^^
+  | ExceptionGroup: g (1 sub-exception)
+  | of the group
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    | of the member
+    | in two lines
+    +------------------------------------
+===== group_member_has_cause
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 249, in group_member_has_cause
+  |     m = ValueError("member"); m.__cause__ = raised(KeyError("cause")); raise EG("g", [m, TypeError(2)])
+  |                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 236, in raised
+    |     try: raise e
+    |          ^^^^^^^
+    | KeyError: 'cause'
+    | 
+    | The above exception was the direct cause of the following exception:
+    | 
+    | ValueError: member
+    +---------------- 2 ----------------
+    | TypeError: 2
+    +------------------------------------
+===== group_member_is_chained_group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 251, in group_member_is_chained_group
+  |     inner = EG("inner", [ValueError(1)]); inner.__context__ = EG("before", [KeyError(2)]); raise EG("outer", [inner, TypeError(3)])
+  |                                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: outer (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: before (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | KeyError: 2
+      +------------------------------------
+    | 
+    | During handling of the above exception, another exception occurred:
+    | 
+    | ExceptionGroup: inner (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | ValueError: 1
+      +------------------------------------
+    +---------------- 2 ----------------
+    | TypeError: 3
+    +------------------------------------
+===== group_is_context
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 253, in group_is_context
+  |     try: raise EG("first", [ValueError(1)])
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: first (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +------------------------------------
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 10, in show
+    try: f(*a)
+         ~^^^^
+  File "uncaught-exceptions-more.py", line 254, in group_is_context
+    except EG: raise TypeError("second")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: second
+===== group_after_plain
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 256, in group_after_plain
+    try: 1 / z
+         ~~^~~
+ZeroDivisionError: division by zero
+
+During handling of the above exception, another exception occurred:
+
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 257, in group_after_plain
+  |     except ZeroDivisionError: raise EG("second", [ValueError(1)])
+  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: second (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +------------------------------------
+===== group_last_is_group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 258, in group_last_is_group
+  |     def group_last_is_group(): raise EG("outer", [ValueError(1), EG("inner", [TypeError(2), EG("innermost", [KeyError(3)])])])
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: outer (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +---------------- 2 ----------------
+    | ExceptionGroup: inner (2 sub-exceptions)
+    +-+---------------- 1 ----------------
+      | TypeError: 2
+      +---------------- 2 ----------------
+      | ExceptionGroup: innermost (1 sub-exception)
+      +-+---------------- 1 ----------------
+        | KeyError: 3
+        +------------------------------------
+===== group_first_is_group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 259, in group_first_is_group
+  |     def group_first_is_group(): raise EG("outer", [EG("inner", [TypeError(2)]), ValueError(1)])
+  |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: outer (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ExceptionGroup: inner (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | TypeError: 2
+      +------------------------------------
+    +---------------- 2 ----------------
+    | ValueError: 1
+    +------------------------------------
+===== group_same_member_twice
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 261, in group_same_member_twice
+  |     v = ValueError("twice"); raise EG("g", [v, v])
+  |                              ^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | ValueError: twice
+    +---------------- 2 ----------------
+    | ValueError: twice
+    +------------------------------------
+===== group_syntax_error
+Traceback (most recent call last):
+  File "uncaught-exceptions-more.py", line 263, in group_syntax_error
+    try: compile("a b", "<s>", "exec")
+         ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "<s>", line 1
+    a b
+      ^
+SyntaxError: invalid syntax
+
+During handling of the above exception, another exception occurred:
+
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 264, in group_syntax_error
+  |     except SyntaxError as s: raise EG("g", [s])
+  |                              ^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 263, in group_syntax_error
+    |     try: compile("a b", "<s>", "exec")
+    |          ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+    |   File "<s>", line 1
+    |     a b
+    |       ^
+    | SyntaxError: invalid syntax
+    +------------------------------------
+===== group_message_lines
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 265, in group_message_lines
+  |     def group_message_lines(): raise EG("two\nlines", [ValueError("also\ntwo")])
+  |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: two
+  | lines (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ValueError: also
+    | two
+    +------------------------------------
+===== base_group
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 266, in base_group
+  |     def base_group(): raise BaseExceptionGroup("b", [KeyboardInterrupt()])
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | BaseExceptionGroup: b (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | KeyboardInterrupt
+    +------------------------------------
+===== group_subclass
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 269, in group_subclass
+  |     raise MyGroup("mine", [ValueError(1)])
+  | group_subclass.<locals>.MyGroup: mine (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | ValueError: 1
+    +------------------------------------
+===== star_leftover
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  |   File "uncaught-exceptions-more.py", line 271, in star_leftover
+  |     try: raise EG("g", [ValueError(1), TypeError(2)])
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  | ExceptionGroup: g (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | TypeError: 2
+    +------------------------------------
+===== star_raises
+  + Exception Group Traceback (most recent call last):
+  |   File "uncaught-exceptions-more.py", line 10, in show
+  |     try: f(*a)
+  |          ~^^^^
+  | ExceptionGroup:  (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 274, in star_raises
+    |     try: raise EG("g", [ValueError(1), TypeError(2)])
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | ExceptionGroup: g (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | ValueError: 1
+      +------------------------------------
+    | 
+    | During handling of the above exception, another exception occurred:
+    | 
+    | Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 275, in star_raises
+    |     except* ValueError: raise KeyError("new")
+    |                         ^^^^^^^^^^^^^^^^^^^^^
+    | KeyError: 'new'
+    +---------------- 2 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "uncaught-exceptions-more.py", line 274, in star_raises
+    |     try: raise EG("g", [ValueError(1), TypeError(2)])
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    | ExceptionGroup: g (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | TypeError: 2
+      +------------------------------------

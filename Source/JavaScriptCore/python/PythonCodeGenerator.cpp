@@ -126,6 +126,9 @@ public:
     void emitEnter()
     {
         m_details->enterOffset = g.instructions().size();
+        // Until it has got this far there is no frame to be told of, nor to be seen in a traceback.
+        if (m_details->firstTraceableOffset < m_details->enterOffset)
+            m_details->firstTraceableOffset = m_details->enterOffset;
         OpPyEnter::emit(&g, false);
         m_isArtificial = false;
     }
@@ -1051,7 +1054,7 @@ private:
         for (size_t i = plain; i < elements.size(); ++i) {
             if (auto* starred = elements[i]->tryAs<Starred>()) {
                 Reg iterable = emit(starred->value);
-                emitRuntimeCall(nullptr, "listExtend"_s, { dst, iterable.get(), callee && elements.size() == 1 ? callee : marker() }, *starred);
+                emitRuntimeCall(nullptr, "listExtend"_s, { dst, iterable.get(), callee && elements.size() == 1 ? callee : marker() }, node);
             } else {
                 Reg value = emit(elements[i]);
                 emitRuntimeCall(nullptr, "listAppend"_s, { dst, value.get() }, node);
@@ -1113,7 +1116,7 @@ private:
         for (size_t i = 0; i < node.keys.size(); ++i) {
             if (!node.keys[i]) {
                 Reg mapping = emit(node.values[i]);
-                emitRuntimeCall(nullptr, "dictUpdate"_s, { dict.get(), mapping.get() }, *node.values[i]);
+                emitRuntimeCall(nullptr, "dictUpdate"_s, { dict.get(), mapping.get() }, node);
                 continue;
             }
             Reg key = emit(node.keys[i]);
@@ -1312,17 +1315,8 @@ private:
 
         // base.function(...): the helpers are given base as their own `this`, to pass on.
         Reg base = g.newTemporary();
-        Reg function;
-        if (node.function->kind == Expression::Kind::Attribute) {
-            auto& attribute = node.function->as<Attribute>();
-            emitInto(base.get(), attribute.value);
-            function = g.newTemporary();
-            mark(attribute);
-            emitGetAttribute(function.get(), base.get(), mangle(*attribute.attribute));
-        } else {
-            g.emitLoad(base.get(), jsUndefined());
-            function = emitToTemporary(node.function);
-        }
+        Reg function = g.newTemporary();
+        auto* attribute = node.function->tryAs<Attribute>();
         bool hasMappings = false;
         for (Keyword* keyword : node.keywords)
             hasMappings |= !keyword->name;
@@ -1330,21 +1324,63 @@ private:
         if (!hasMappings && !hasStarred(node.arguments)) {
             // callKeywords(function, names, positional..., values of the keywords...)
             Reg helper = g.newTemporary();
-            g.emitGetById(helper.get(), runtime(), Identifier::fromString(m_vm, "callKeywords"_s));
             unsigned count = node.arguments.size() + node.keywords.size();
-            CallArguments call(g, nullptr, count + 2);
+            // As without keywords: if it is a method of base's class, base goes in front of the arguments and no bound method is made.
+            unsigned first = attribute ? 3 : 2;
+            CallArguments call(g, nullptr, count + first);
+            if (attribute) {
+                emitInto(base.get(), attribute->value);
+                mark(locationOf(*attribute));
+                addOnce(m_details->names, mangle(*attribute->attribute));
+                OpPyLoadMethod::emit(&g, function.get(), call.argumentRegister(2), base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
+            } else {
+                g.emitLoad(base.get(), jsUndefined());
+                emitInto(function.get(), node.function);
+            }
+            g.emitGetById(helper.get(), runtime(), Identifier::fromString(m_vm, "callKeywords"_s));
             g.move(call.thisRegister(), base.get());
             g.move(call.argumentRegister(0), function.get());
             g.move(call.argumentRegister(1), keywordNamesConstant(node.keywords));
-            unsigned i = 2;
+            unsigned i = first;
             for (Expression* argument : node.arguments)
                 emitInto(call.argumentRegister(i++), argument);
             for (Keyword* keyword : node.keywords)
                 emitInto(call.argumentRegister(i++), keyword->value);
             markIfOnAnotherLine(node);
-            // The first that is given, by name if none is given by position.
-            emitTellOfCall(function.get(), count ? call.argumentRegister(2) : nullptr, count ? ToldArgument::First : ToldArgument::None);
-            return emitRawCall(destination(dst).get(), helper.get(), call, count + 2, node, Told::No);
+            auto emitWithoutSelf = [&] (RegisterID* result) {
+                // The first that is given, by name if none is given by position.
+                emitTellOfCall(function.get(), count ? call.argumentRegister(2) : nullptr, count ? ToldArgument::First : ToldArgument::None);
+                return emitRawCall(result, helper.get(), call, count + 2, node, Told::No);
+            };
+            if (!attribute)
+                return emitWithoutSelf(destination(dst).get());
+
+            Reg result = temporaryDestination(dst);
+            Ref<Label> isNotMethod = g.newLabel();
+            Ref<Label> done = g.newLabel();
+            Reg isEmpty = g.newTemporary();
+            g.emitIsEmpty(isEmpty.get(), call.argumentRegister(2));
+            g.emitJumpIfTrue(isEmpty.get(), isNotMethod.get());
+            emitTellOfCall(function.get(), call.argumentRegister(2), ToldArgument::First);
+            emitRawCall(result.get(), helper.get(), call, count + 3, node, Told::No);
+            g.emitJump(done.get());
+            emitLabel(isNotMethod.get());
+            for (unsigned i = 0; i < count; ++i)
+                g.move(call.argumentRegister(2 + i), call.argumentRegister(3 + i));
+            markIfOnAnotherLine(node);
+            emitWithoutSelf(result.get());
+            emitLabel(done.get());
+            return finish(dst, result.get());
+        }
+
+        // With those it is got as any attribute is.
+        if (attribute) {
+            emitInto(base.get(), attribute->value);
+            mark(locationOf(*attribute));
+            emitGetAttribute(function.get(), base.get(), mangle(*attribute->attribute));
+        } else {
+            g.emitLoad(base.get(), jsUndefined());
+            emitInto(function.get(), node.function);
         }
 
         // callSpread(function, a list of the positional arguments, a dict of the keywords or None)
@@ -2595,7 +2631,8 @@ private:
             Ref<Label> holds = g.newLabel();
             emitBranch(node.test, holds.get(), true);
             Reg message = node.message ? Reg(emit(node.message)) : Reg(marker());
-            emitRuntimeCall(nullptr, "raiseAssertionError"_s, { message.get() }, node);
+            // It is what does not hold that is pointed at.
+            emitRuntimeCall(nullptr, "raiseAssertionError"_s, { message.get() }, *node.test);
             emitLabel(holds.get());
             return;
         }
@@ -3880,17 +3917,17 @@ private:
         for (Alias* alias : node.names) {
             Reg module = g.newTemporary();
             // import a.b.c gives a, and import a.b.c as d gives c.
-            emitRuntimeCall(module.get(), "importName"_s, { m_globals.get(), stringConstant(*alias->name), none(), constant(jsNumber(0)), constant(jsBoolean(!!alias->asName)) }, *alias);
+            emitRuntimeCall(module.get(), "importName"_s, { m_globals.get(), stringConstant(*alias->name), none(), constant(jsNumber(0)), constant(jsBoolean(!!alias->asName)) }, node);
             if (alias->asName) {
-                emitStoreName(*alias->asName, module.get(), *alias);
+                emitStoreName(*alias->asName, module.get(), node);
                 continue;
             }
             StringView name = alias->name->string();
             size_t dot = name.find('.');
             if (dot == notFound)
-                emitStoreName(*alias->name, module.get(), *alias);
+                emitStoreName(*alias->name, module.get(), node);
             else
-                emitStoreName(Identifier::fromString(m_vm, name.left(dot).toString()), module.get(), *alias);
+                emitStoreName(Identifier::fromString(m_vm, name.left(dot).toString()), module.get(), node);
         }
     }
 
