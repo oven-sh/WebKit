@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "GeneratorPrototype.h"
 #include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSPromise.h"
@@ -861,8 +862,10 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
-    for (PyType* type : { realm->typeCoroutine(), realm->typeAsyncGenerator() })
+    for (PyType* type : { realm->typeGenerator(), realm->typeCoroutine(), realm->typeAsyncGenerator() })
         type->setInstanceStructure(vm, JSGenerator::createStructure(vm, globalObject, type));
+    // What JavaScript can do with a generator it can do with one of Python's.
+    realm->typeGenerator()->setPrototypeDirect(vm, globalObject->generatorPrototype());
     for (PyType* type : { realm->typeCoroutineWrapper(), realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow(), realm->typePromiseAwaiter(), realm->typeAsyncGeneratorWrappedValue(), realm->typeANextAwaitable() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
 
@@ -871,7 +874,6 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "send"_s, coroutineSend },
         { "throw"_s, coroutineThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, coroutineClose },
-        { "__repr__"_s, nativeRepr },
     });
     addMethods(globalObject, realm->typeCoroutineWrapper(), {
         { "__iter__"_s, nativeSelf },
@@ -886,7 +888,6 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "asend"_s, asyncGeneratorASend },
         { "athrow"_s, asyncGeneratorAThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "aclose"_s, asyncGeneratorAClose },
-        { "__repr__"_s, nativeRepr },
     });
     addMethods(globalObject, realm->typeAsyncGeneratorASend(), {
         { "__await__"_s, nativeSelf },

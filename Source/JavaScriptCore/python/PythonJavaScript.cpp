@@ -474,6 +474,22 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncReturn, (JSGlobalObject* globalObject, C
     return stepAsyncIterator(globalObject, callFrame, AsyncStep::Return);
 }
 
+// generator.return(value), of a generator that is written in Python: generator.close(). So it is what `break` in a `for (... of ...)` does, and whatever else has done with an iterator
+// before it has finished. GeneratorExit is raised in it, so that `with` in it is left as it is when something has gone wrong, and not as if all were well.
+static JSC_DECLARE_HOST_FUNCTION(javaScriptGeneratorReturn);
+JSC_DEFINE_HOST_FUNCTION(javaScriptGeneratorReturn, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* generator = dynamicDowncast<JSGenerator>(callFrame->thisValue());
+    if (!generator)
+        return throwVMTypeError(globalObject, scope, "|this| should be a generator"_s);
+    JSValue returned = generatorClose(globalObject, generator);
+    RETURN_IF_EXCEPTION(scope, { });
+    // What it returns on being told to stop, if it returns anything, and otherwise what it was told to.
+    return JSValue::encode(createIteratorResultObject(globalObject, isNone(returned) ? callFrame->argument(0) : returned, true));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(javaScriptAsyncThrow);
 JSC_DEFINE_HOST_FUNCTION(javaScriptAsyncThrow, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -541,6 +557,7 @@ JSObject* createJavaScriptFunctions(VM& vm, JSGlobalObject* globalObject)
     add("asyncIterator"_s, javaScriptAsyncIterator);
     add("asyncNext"_s, javaScriptAsyncNext);
     add("asyncReturn"_s, javaScriptAsyncReturn);
+    add("generatorReturn"_s, javaScriptGeneratorReturn);
     add("asyncThrow"_s, javaScriptAsyncThrow);
     add("disposeAndWait"_s, javaScriptDisposeAndWait);
     add("toPrimitive"_s, javaScriptToPrimitive);
@@ -571,6 +588,15 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = typeOf(globalObject, receiver);
     auto function = [&] (ASCIILiteral which) { return realm->javaScriptFunctions()->getDirect(vm, Identifier::fromString(vm, which)); };
+
+    // A generator is one to JavaScript already, and inherits what it does with one. All but how it is told to stop.
+    bool isGenerator = type == realm->typeGenerator() && !isClass(receiver);
+    if (isGenerator) {
+        if (name == vm.propertyNames->returnKeyword)
+            return function("generatorReturn"_s);
+        if (name == vm.propertyNames->next || name == vm.propertyNames->throwKeyword || name == vm.propertyNames->iteratorSymbol)
+            return { };
+    }
 
     if (name.isSymbol()) {
         if (name == vm.propertyNames->iteratorSymbol && !isClass(receiver) && (type->lookup(vm, names.dunder_iter) || type->lookup(vm, names.dunder_getitem)))

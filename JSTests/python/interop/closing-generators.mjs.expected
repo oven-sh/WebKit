@@ -1,0 +1,23 @@
+break => ["GeneratorExit","finally"]
+return() => [{"value":5,"done":true},["GeneratorExit","finally"]]
+return() before it begins => [{"value":5,"done":true},[],{"done":true}]
+destructuring => [1,["GeneratorExit","finally"]]
+throw() => ["Error: e",["finally"]]
+ignores !! RuntimeError: generator ignored GeneratorExit
+returns a value => {"value":"value","done":true}
+typeof => ["function","function","function","function","function"]
+a transaction that is left early => ["rolled back on GeneratorExit"]
+a transaction that is gone through => ["committed"]
+a transaction that JavaScript throws out of => ["rolled back on GeneratorExit"]
+closed by Python => [true,["finally"],{"done":true}]
+closed by Python before it begins => [true,[],{"done":true}]
+left early by Python => [1,[]]
+gone through by Python => [[1,2],["finally"]]
+thrown into by Python => ["RangeError: r",["caught RangeError: r","finally"]]
+one that yields on being told to stop !! RuntimeError: generator ignored GeneratorExit
+what they are to Python => ["('generator', True)","('generator', True)"]
+send => ["ready",5,6,7]
+attributes => ["gen",false,false,"object","gen","<generator object gen at 0x>",true,true]
+still a generator to JavaScript => ["[object Generator]",true,[1,2],[1,2],2]
+attributes of JavaScript's => ["('__name__', 'str'),('__qualname__', 'str'),('gi_code', 'NoneType'),('gi_frame', 'NoneType'),('gi_running', 'bool'),('gi_suspended', 'bool'),('gi_yieldfrom', 'NoneType'),<generator object js",true,true]
+hot => [20000,40000]

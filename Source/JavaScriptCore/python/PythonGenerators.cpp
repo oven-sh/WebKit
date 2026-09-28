@@ -204,6 +204,12 @@ JSValue generatorThrow(JSGlobalObject* globalObject, JSGenerator* generator, JSV
     return raiseStopIteration(globalObject, scope, returned);
 }
 
+bool isWrittenInPython(JSGenerator* generator)
+{
+    auto* body = dynamicDowncast<JSFunction>(generator->internalField(static_cast<unsigned>(JSGenerator::Field::Next)).get());
+    return body && !body->isHostOrBuiltinFunction() && body->jsExecutable()->isPython();
+}
+
 JSValue generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
 {
     VM& vm = globalObject->vm();
@@ -215,8 +221,16 @@ JSValue generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
         generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).set(vm, generator, jsNumber(static_cast<int32_t>(JSGenerator::State::Completed)));
         return jsUndefined();
     }
-    JSObject* exit = createException(globalObject, globalObject->pyRealm()->typeGeneratorExit(), JSValue());
     JSValue returned;
+    // How it is told to stop is up to the language that it is written in, whichever asks. One of JavaScript's is made to return where it is.
+    if (!isWrittenInPython(generator)) {
+        JSValue yielded = resumeGenerator(globalObject, generator, jsUndefined(), JSGenerator::ResumeMode::ReturnMode, returned);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (yielded)
+            return raise(globalObject, scope, BuiltinType::RuntimeError, "generator ignored GeneratorExit"_s);
+        return jsUndefined();
+    }
+    JSObject* exit = createException(globalObject, globalObject->pyRealm()->typeGeneratorExit(), JSValue());
     JSValue yielded = resumeGenerator(globalObject, generator, exit, JSGenerator::ResumeMode::ThrowMode, returned);
     if (scope.exception()) {
         if (!catchException(globalObject, BuiltinType::GeneratorExit))

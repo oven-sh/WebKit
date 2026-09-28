@@ -51,6 +51,8 @@ JSValue stepIterator(JSGlobalObject*, JSValue iterator, JSValue received, bool w
 // A coroutine and an asynchronous generator are generators too. They differ in their class, which is their prototype.
 enum class GeneratorKind : uint8_t { Generator, Coroutine, AsyncGenerator };
 GeneratorKind generatorKindOf(JSGlobalObject*, JSGenerator*);
+// Any generator is a generator to either language. This is about what is in it.
+bool isWrittenInPython(JSGenerator*);
 JSGenerator* newCoroutine(JSGlobalObject*, JSValue body, bool isAsyncGenerator);
 
 // What `await value` iterates. `context` is 1 if the value is what __aenter__ gave and 2 if it is what __aexit__ gave, for the message.

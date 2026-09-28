@@ -659,8 +659,20 @@ static JSValue getGeneratorName(JSGlobalObject* globalObject, JSValue self)
     auto& names = vm.pythonNames();
     if (JSValue name = asGenerator(self)->getDirect(vm, qualified ? names.private_qualname : names.private_name))
         return name;
+    // One that is written in JavaScript goes by the name of its function.
+    if (!isWrittenInPython(asGenerator(self)))
+        return jsString(vm, bodyOf(self)->jsExecutable()->ecmaName().string());
     const FunctionInfo& info = infoOfExecutable(bodyOf(self)->jsExecutable());
     return jsString(vm, qualified ? info.qualifiedName : info.name.string());
+}
+
+// <generator object f at 0x...>
+PYTHON_NATIVE(generatorRepr)
+{
+    NATIVE_PROLOGUE();
+    String name = asString(getGeneratorName<true>(globalObject, args[0]))->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, makeString('<', typeName(globalObject, args[0]), " object "_s, name, " at "_s, addressOf(args[0].asCell()), '>')));
 }
 
 template<bool qualified>
@@ -675,8 +687,11 @@ static void setGeneratorName(JSGlobalObject* globalObject, JSValue self, JSValue
     asGenerator(self)->putDirect(vm, qualified ? vm.pythonNames().private_qualname : vm.pythonNames().private_name, value);
 }
 
+// There is no code object for what is written in JavaScript, nor a frame object.
 static JSValue getGeneratorCode(JSGlobalObject* globalObject, JSValue self)
 {
+    if (!isWrittenInPython(asGenerator(self)))
+        return jsUndefined();
     return codeObjectFor(globalObject, bodyOf(self)->jsExecutable());
 }
 
@@ -698,7 +713,7 @@ static JSValue getGeneratorYieldFrom(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue getGeneratorFrame(JSGlobalObject* globalObject, JSValue self)
 {
-    if (stateOf(self) == static_cast<int32_t>(JSGenerator::State::Completed))
+    if (stateOf(self) == static_cast<int32_t>(JSGenerator::State::Completed) || !isWrittenInPython(asGenerator(self)))
         return jsUndefined();
     return PyFrame::forGenerator(globalObject, asGenerator(self));
 }
@@ -741,6 +756,7 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     for (PyType* generator : { realm->typeGenerator(), realm->typeCoroutine(), realm->typeAsyncGenerator() }) {
         addGetSet(globalObject, generator, "__name__"_s, getGeneratorName<false>, setGeneratorName<false>);
         addGetSet(globalObject, generator, "__qualname__"_s, getGeneratorName<true>, setGeneratorName<true>);
+        addMethods(globalObject, generator, { { "__repr__"_s, generatorRepr } });
     }
     PyType* generator = realm->typeGenerator();
     addGetSet(globalObject, generator, "gi_code"_s, getGeneratorCode);

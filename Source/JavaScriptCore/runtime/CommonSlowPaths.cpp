@@ -272,7 +272,9 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_generator)
 {
     BEGIN();
     auto bytecode = pc->as<OpNewGenerator>();
-    JSGenerator* result = JSGenerator::create(vm, globalObject->generatorStructure());
+    // One of Python's inherits from the class `generator`, and from %GeneratorPrototype% by way of that.
+    Structure* structure = codeBlock->ownerExecutable()->isPython() ? globalObject->pyRealm()->structureFor(BuiltinType::Generator) : globalObject->generatorStructure();
+    JSGenerator* result = JSGenerator::create(vm, structure);
     RETURN(result);
 }
 
