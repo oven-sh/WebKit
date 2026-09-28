@@ -46,6 +46,7 @@ CommonNames::CommonNames(VM& vm)
     FOR_EACH_PYTHON_EXCEPTION_FIELD(INITIALIZE)
 #undef INITIALIZE
     globals(Identifier::fromString(vm, ".globals"_s))
+    , builtins(Identifier::fromString(vm, ".builtins"_s))
     , m_binaryMethods { &dunder_add, &dunder_sub, &dunder_mul, &dunder_matmul, &dunder_truediv, &dunder_mod, &dunder_pow, &dunder_lshift, &dunder_rshift, &dunder_or, &dunder_xor, &dunder_and, &dunder_floordiv }
     , m_reflectedMethods { &dunder_radd, &dunder_rsub, &dunder_rmul, &dunder_rmatmul, &dunder_rtruediv, &dunder_rmod, &dunder_rpow, &dunder_rlshift, &dunder_rrshift, &dunder_ror, &dunder_rxor, &dunder_rand, &dunder_rfloordiv }
     , m_inPlaceMethods { &dunder_iadd, &dunder_isub, &dunder_imul, &dunder_imatmul, &dunder_itruediv, &dunder_imod, &dunder_ipow, &dunder_ilshift, &dunder_irshift, &dunder_ior, &dunder_ixor, &dunder_iand, &dunder_ifloordiv }

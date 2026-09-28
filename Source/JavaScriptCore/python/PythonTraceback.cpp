@@ -129,9 +129,9 @@ static JSValue getFrameGlobals(JSGlobalObject* globalObject, JSValue self)
     return PyDict::backedBy(globalObject, asFrame(self)->globals(globalObject->vm()));
 }
 
-static JSValue getFrameBuiltins(JSGlobalObject* globalObject, JSValue)
+static JSValue getFrameBuiltins(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsNamespace());
+    return PyDict::backedBy(globalObject, builtinsOfScope(globalObject->vm(), asFrame(self)->function()->scope()));
 }
 
 // The variables of a function are seen through a proxy, which reads and writes them where they are. Other code keeps its names in a mapping,
@@ -334,11 +334,11 @@ PYTHON_NATIVE(frameExtraLocals)
     return JSValue::encode(frame->extraLocals() ? JSValue(frame->extraLocals()) : jsUndefined());
 }
 
-PyModule* createFrameModule(JSGlobalObject* globalObject)
+JSObject* createFrameModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    PyModule* module = PyModule::create(globalObject, "_frame"_s);
-    JSObject* ns = module->namespaceObject();
+    JSObject* module = newModule(globalObject, "_frame"_s);
+    JSObject* ns = module;
     ns->putDirect(vm, Identifier::fromString(vm, "frame"_s), globalObject->pyRealm()->typeFrame());
     addFunction(globalObject, ns, "variable_names"_s, frameVariableNames);
     addFunction(globalObject, ns, "get_variable"_s, frameGetVariable);

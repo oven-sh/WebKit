@@ -443,8 +443,8 @@ PYTHON_NATIVE(objectDir)
     JSValue self = args.at(0);
     PySet* found = PySet::create(globalObject);
     PyType* type = isType(self) ? uncheckedDowncast<PyType>(self.asCell()) : typeOf(globalObject, self);
-    if (auto* module = tryModule(self))
-        collectAttributeNames(globalObject, module->namespaceObject(), found);
+    if (JSObject* module = tryModule(globalObject, self))
+        collectAttributeNames(globalObject, module, found);
     else {
         if (self.isObject() && !isType(self) && (self.asCell()->type() == PyInstanceType || type->hasFlag(PyType::IsHeapType)))
             collectAttributeNames(globalObject, asObject(self), found);
@@ -482,9 +482,7 @@ static JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
-    if (auto* module = tryModule(self))
-        return PyDict::backedBy(globalObject, module->namespaceObject());
-    bool hasDict = self.isObject() && !type->hasFlag(PyType::HasNoInstanceDict) && (type->hasFlag(PyType::IsHeapType) || type->isExceptionType() || (self.asCell()->type() == JSFunctionType && !self.asCell()->inherits<PyNativeFunction>()));
+    bool hasDict = self.isObject() && !type->hasFlag(PyType::HasNoInstanceDict) && (type->hasFlag(PyType::IsHeapType) || type->isExceptionType() || type == globalObject->pyRealm()->typeModule() || (self.asCell()->type() == JSFunctionType && !self.asCell()->inherits<PyNativeFunction>()));
     if (!hasDict)
         return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '__dict__'"_s));
     return PyDict::backedBy(globalObject, asObject(self));
@@ -966,9 +964,20 @@ PYTHON_NATIVE(superGetAttribute)
 PYTHON_NATIVE(moduleNew)
 {
     NATIVE_PROLOGUE();
-    if (args.size() < 2 || !args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, "module() argument 'name' must be str"_s));
-    return JSValue::encode(PyModule::create(globalObject, asString(args[1])->value(globalObject)));
+    if (args.size() < 2)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "module() missing required argument 'name' (pos 1)"_s));
+    if (!args[1].isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module() argument 'name' must be str, not "_s, typeName(globalObject, args[1]))));
+    return JSValue::encode(newModule(globalObject, asString(args[1])->value(globalObject), asType(args[0])));
+}
+
+PYTHON_NATIVE(moduleRepr)
+{
+    NATIVE_PROLOGUE();
+    JSValue name = asObject(args[0])->getDirect(vm, names.dunder_name);
+    String text = repr(globalObject, name ? name : jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, makeString("<module "_s, text, '>')));
 }
 
 // ---- Generators
@@ -1197,10 +1206,9 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     });
 
     PyType* module = realm->typeModule();
-    module->setInstanceStructure(vm, PyModule::createStructure(vm, globalObject, module));
     addMethods(globalObject, module, {
         { "__new__"_s, moduleNew, Kind::New },
-        { "__repr__"_s, nativeRepr },
+        { "__repr__"_s, moduleRepr },
         { "__dir__"_s, objectDir },
     });
 

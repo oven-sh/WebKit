@@ -1807,6 +1807,24 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_method)
     RETURN_PROFILED(result);
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_global)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyLoadGlobal>();
+    auto& metadata = bytecode.metadata(codeBlock);
+    Python::GlobalLocation location;
+    JSValue result = Python::loadGlobal(globalObject, asObject(GET(bytecode.m_globals).jsValue()), asObject(GET(bytecode.m_builtins).jsValue()), codeBlock->identifier(bytecode.m_property), location);
+    CHECK_EXCEPTION();
+    {
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        metadata.m_globalsStructureID = location.globalsStructure ? location.globalsStructure->id() : StructureID();
+        metadata.m_builtinsStructureID = location.builtinsStructure ? location.builtinsStructure->id() : StructureID();
+        metadata.m_offset = location.offset;
+    }
+    vm.writeBarrier(codeBlock);
+    RETURN_PROFILED(result);
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_leave_frame)
 {
     BEGIN();

@@ -2655,6 +2655,29 @@ llintOp(op_ret, OpRet, macro (size, get, dispatch)
 end)
 
 
+llintOpWithMetadata(op_py_load_global, OpPyLoadGlobal, macro (size, get, dispatch, metadata, return)
+    metadata(t2, t0)
+    get(m_globals, t0)
+    loadq [cfr, t0, 8], t3
+    loadi OpPyLoadGlobal::Metadata::m_globalsStructureID[t2], t1
+    bineq JSCell::m_structureID[t3], t1, .opPyLoadGlobalSlow
+    loadi OpPyLoadGlobal::Metadata::m_builtinsStructureID[t2], t1
+    btiz t1, .opPyLoadGlobalLoad
+    get(m_builtins, t0)
+    loadq [cfr, t0, 8], t3
+    bineq JSCell::m_structureID[t3], t1, .opPyLoadGlobalSlow
+.opPyLoadGlobalLoad:
+    loadi OpPyLoadGlobal::Metadata::m_offset[t2], t1
+    loadPropertyAtVariableOffset(t1, t3, t0)
+    valueProfile(size, OpPyLoadGlobal, m_valueProfile, t0, t2)
+    return(t0)
+
+.opPyLoadGlobalSlow:
+    callSlowPath(_slow_path_py_load_global)
+    dispatch()
+end)
+
+
 llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
     get(m_frame, t1)
     loadq [cfr, t1, 8], t0

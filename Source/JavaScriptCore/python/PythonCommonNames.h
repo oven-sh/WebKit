@@ -78,7 +78,10 @@ struct CommonNames {
     FOR_EACH_PYTHON_EXCEPTION_FIELD(DECLARE)
 #undef DECLARE
 
-    const Identifier globals; // ".globals": the variable that a function finds its module's namespace in.
+    // The variables of the outermost environment of any code: the object whose properties are its global variables, which for the code of a module is
+    // the module, and the one where a name that is not among them is looked for, which is nearly always the module builtins.
+    const Identifier globals; // ".globals"
+    const Identifier builtins; // ".builtins"
 
     // Goes up whenever an attribute of any class is set or deleted. What is remembered about a class is good for as long as it stays.
     unsigned typeEpoch { 1 };

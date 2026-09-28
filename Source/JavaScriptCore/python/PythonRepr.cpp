@@ -268,18 +268,6 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
             name = nameOfFunction(globalObject, function, true);
         return makeString("<bound method "_s, name, " of "_s, self, '>');
     }
-    case PyModuleType: {
-        JSValue name = uncheckedDowncast<PyModule>(cell)->namespaceObject()->getDirect(vm, vm.pythonNames().dunder_name);
-        String text = repr(globalObject, name ? name : jsUndefined());
-        RETURN_IF_EXCEPTION(scope, { });
-        return makeString("<module "_s, text, '>');
-    }
-    case JSGeneratorType:
-    {
-        JSValue name = getAttribute(globalObject, value, vm.pythonNames().dunder_qualname);
-        RETURN_IF_EXCEPTION(scope, { });
-        return makeString('<', type->nameString(globalObject), " object "_s, asString(name)->value(globalObject).data, " at "_s, addressOf(cell), '>');
-    }
     default:
         break;
     }

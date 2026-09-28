@@ -55,6 +55,23 @@ void JIT::emit_op_ret(const JSInstruction* currentInstruction)
     jumpThunk(CodeLocationLabel { vm().getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
 }
 
+void JIT::emit_op_py_load_global(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpPyLoadGlobal>();
+    emitGetVirtualRegister(bytecode.m_globals, regT0);
+    load32FromMetadata(bytecode, OpPyLoadGlobal::Metadata::offsetOfGlobalsStructureID(), regT1);
+    addSlowCase(branch32(NotEqual, Address(regT0, JSCell::structureIDOffset()), regT1));
+    load32FromMetadata(bytecode, OpPyLoadGlobal::Metadata::offsetOfBuiltinsStructureID(), regT1);
+    Jump isInGlobals = branchTest32(Zero, regT1);
+    emitGetVirtualRegister(bytecode.m_builtins, regT0);
+    addSlowCase(branch32(NotEqual, Address(regT0, JSCell::structureIDOffset()), regT1));
+    isInGlobals.link(this);
+    load32FromMetadata(bytecode, OpPyLoadGlobal::Metadata::offsetOfOffset(), regT1);
+    loadProperty(regT0, regT1, regT2);
+    emitValueProfilingSite(bytecode, regT2);
+    emitPutVirtualRegister(bytecode.m_dst, regT2);
+}
+
 void JIT::emit_op_py_ret(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpPyRet>();

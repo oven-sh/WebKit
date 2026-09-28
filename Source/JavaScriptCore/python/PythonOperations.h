@@ -145,6 +145,26 @@ bool classComesBeforeInstance(JSGlobalObject*, PyType*, PropertyName, AttributeA
 // Whether it has __set__ or __delete__.
 bool isDataDescriptor(JSGlobalObject*, JSValue);
 
+// ---- Modules
+
+// A module is an instance of the class `module`, or of one derived from it, like any other instance. Its attributes, which are its properties, are
+// the global variables of the code in it.
+JS_EXPORT_PRIVATE JSObject* newModule(JSGlobalObject*, const String& name, PyType* = nullptr);
+// The value, if it is a module. Otherwise null.
+JSObject* tryModule(JSGlobalObject*, JSValue);
+
+// ---- Global variables
+
+// Where a global variable was found, for whoever wants to remember: it is there for as long as the objects have these structures. If it was in
+// `globals`, there is no `builtinsStructure`. If it is not something that can be relied on, there is no `globalsStructure` either.
+struct GlobalLocation {
+    Structure* globalsStructure { nullptr };
+    Structure* builtinsStructure { nullptr };
+    PropertyOffset offset { 0 };
+};
+// The value of a global variable: what `globals` has by that name, or failing that `builtins`. Otherwise it raises NameError.
+JSValue loadGlobal(JSGlobalObject*, JSObject* globals, JSObject* builtins, PropertyName, GlobalLocation&);
+
 // ---- Calls
 
 JSValue call(JSGlobalObject*, JSValue callable, const ArgList&);

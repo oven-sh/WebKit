@@ -48,7 +48,6 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(function);
     visitor.append(thisObject->m_tupleStructure);
     visitor.append(thisObject->m_nativeFunctionStructure);
-    visitor.append(thisObject->m_namespaceStructure);
     visitor.append(thisObject->m_hashStorageStructure);
     visitor.append(thisObject->m_emptyTuple);
     visitor.append(thisObject->m_notImplemented);
@@ -57,7 +56,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_runtimeFunctions);
     visitor.append(thisObject->m_javaScriptFunctions);
     visitor.append(thisObject->m_frameLocalsProxyType);
-    visitor.append(thisObject->m_builtinsNamespace);
+    visitor.append(thisObject->m_builtinsModule);
     visitor.append(thisObject->m_modules);
     visitor.append(thisObject->m_handledException);
     visitor.append(thisObject->m_outerHandledException);
@@ -111,10 +110,8 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeIteratorTypes(globalObject);
     Python::initializeExceptionTypes(globalObject);
 
-    // A module's namespace, then the builtins', then what raises NameError.
-    auto* builtins = PyNamespace::create(vm, PyNamespace::createStructure(vm, globalObject, PyNameErrorRaiser::create(vm, globalObject)));
-    m_builtinsNamespace.set(vm, this, builtins);
-    m_namespaceStructure.set(vm, this, PyNamespace::createStructure(vm, globalObject, builtins));
+    JSObject* builtins = Python::newModule(globalObject, "builtins"_s);
+    m_builtinsModule.set(vm, this, builtins);
 
     Python::initializeBuiltinFunctions(globalObject, builtins);
     Python::initializeCodeTypes(globalObject, builtins);
@@ -142,6 +139,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     builtins->putDirect(vm, vm.pythonNames().dunder_name, jsNontrivialString(vm, "builtins"_s));
 
     m_modules.set(vm, this, PyDict::create(globalObject));
+    Python::registerModule(globalObject, "builtins"_s, builtins);
     m_runtimeFunctions.set(vm, this, Python::createRuntimeFunctions(vm, globalObject));
     m_javaScriptFunctions.set(vm, this, Python::createJavaScriptFunctions(vm, globalObject));
     // To JavaScript an exception is an Error, and one of a class that JavaScript has too is one of those. It is the other way about in typeOf().

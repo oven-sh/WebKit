@@ -170,6 +170,8 @@ public:
 
     // The dict that is backed by the object. There is one, which the object remembers.
     static PyDict* backedBy(JSGlobalObject*, JSObject*);
+    // The object that it is backed by, which is made now if it had none: a bare object, that is nothing but somewhere to keep properties.
+    JSObject* ensureBacking(JSGlobalObject*);
     // Moves what has strings for keys to the object, which is to have no properties yet.
     void becomeBackedBy(JSGlobalObject*, JSObject*);
     // Takes what is in the object for its own, and has no more to do with it. The object is left with no such properties.

@@ -312,7 +312,6 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
     case PySetType:
     case PyTypeType:
     case PyBoundMethodType:
-    case PyModuleType:
         return { };
     default:
         break;
@@ -401,8 +400,6 @@ JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* 
     switch (object->type()) {
     case PyInstanceType:
         return type->hasFlag(PyType::HasNoInstanceDict) ? nullptr : object;
-    case PyModuleType:
-        return uncheckedDowncast<PyModule>(object)->namespaceObject();
     case JSFunctionType:
         // One of JavaScript's is a JavaScript object, whose attributes are its properties as JavaScript finds them.
         return !object->inherits<PyNativeFunction>() && isPythonFunction(uncheckedDowncast<JSFunction>(object)) ? object : nullptr;
@@ -487,8 +484,8 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     String message;
     if (isType(value))
         message = makeString("type object '"_s, uncheckedDowncast<PyType>(value.asCell())->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
-    else if (auto* module = tryModule(value)) {
-        JSValue moduleName = module->namespaceObject()->getDirect(vm, vm.pythonNames().dunder_name);
+    else if (JSObject* module = tryModule(globalObject, value)) {
+        JSValue moduleName = module->getDirect(vm, vm.pythonNames().dunder_name);
         if (moduleName && moduleName.isString())
             message = makeString("module '"_s, asString(moduleName)->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
     }
@@ -518,6 +515,28 @@ JSValue genericGetAttribute(JSGlobalObject* globalObject, JSValue value, Propert
     return getObjectAttribute(globalObject, value, typeOf(globalObject, value), name);
 }
 
+// module.__getattr__(name), for a module that defines such a function (PEP 562), which is asked when the module has no such attribute. Empty, with
+// nothing raised, if it defines none. If it says AttributeError, that is what is raised, unless there is someone else to ask.
+enum class IfModuleSaysNo : uint8_t { Raise, GoOn };
+static JSValue askModuleForAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, IfModuleSaysNo ifNo)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* module = tryModule(globalObject, value);
+    if (!module)
+        return { };
+    JSValue hook = getStoredAttribute(vm, module, vm.pythonNames().dunder_getattr);
+    if (!hook)
+        return { };
+    JSValue result = call(globalObject, hook, nameAsString(vm, name));
+    if (scope.exception()) [[unlikely]] {
+        if (ifNo == IfModuleSaysNo::GoOn)
+            catchException(globalObject, BuiltinType::AttributeError);
+        return { };
+    }
+    return result;
+}
+
 JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();
@@ -538,6 +557,10 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
             return { };
         result = { };
     }
+    if (result)
+        return result;
+    result = askModuleForAttribute(globalObject, value, name, IfModuleSaysNo::GoOn);
+    RETURN_IF_EXCEPTION(scope, { });
     if (result || !(hooks & PyType::HasGetAttr))
         return result;
 
@@ -569,6 +592,10 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
         result = { };
     }
     if (result) [[likely]]
+        return result;
+    result = askModuleForAttribute(globalObject, value, name, hooks & PyType::HasGetAttr ? IfModuleSaysNo::GoOn : IfModuleSaysNo::Raise);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
         return result;
     if (hooks & PyType::HasGetAttr)
         RELEASE_AND_RETURN(scope, call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));

@@ -304,62 +304,6 @@ private:
     WriteBarrier<JSString> m_name;
 };
 
-// Where the global variables of a module are: they are its properties. Its prototype is the builtins' namespace, and that one's is
-// one that raises NameError, so that looking up a global is get_by_id. No Python code ever sees one.
-class PyNamespace final : public JSNonFinalObject {
-public:
-    PYTHON_CELL_BOILERPLATE(PyNamespace)
-
-    static PyNamespace* create(VM&, Structure*);
-
-private:
-    PyNamespace(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-// The last in that chain. It has every property, and to get any of them raises NameError.
-class PyNameErrorRaiser final : public JSNonFinalObject {
-public:
-    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotMayBeWrongAboutDontEnum | GetOwnPropertySlotIsImpureForPropertyAbsence;
-    PYTHON_CELL_BOILERPLATE(PyNameErrorRaiser)
-
-    static PyNameErrorRaiser* create(VM&, JSGlobalObject*);
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-
-private:
-    PyNameErrorRaiser(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-// To JavaScript, the properties of a module are its global variables: those of its namespace, and not what the namespace inherits, which is
-// there for Python's sake.
-class PyModule final : public JSNonFinalObject {
-public:
-    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | GetOwnPropertySlotIsImpureForPropertyAbsence;
-    PYTHON_CELL_BOILERPLATE(PyModule)
-
-    static PyModule* create(JSGlobalObject*, const String& name);
-    JSObject* namespaceObject() const { return m_namespace.get(); }
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-
-private:
-    PyModule(VM& vm, Structure* structure, JSObject* namespaceObject)
-        : Base(vm, structure)
-        , m_namespace(namespaceObject, WriteBarrierEarlyInit)
-    {
-    }
-
-    WriteBarrier<JSObject> m_namespace;
-};
-
 // An instance of a class derived from list. A list is an Array, and so is this, made and worked on as one. It differs only in what its Structure
 // says are its methods, since unlike a list it can have attributes, about which its class may have something to say.
 class PyDerivedList final : public JSArray {
@@ -424,7 +368,6 @@ inline PyBoundMethod* tryBoundMethod(JSValue value) { return tryCell<PyBoundMeth
 inline PyRange* tryRange(JSValue value) { return tryCell<PyRange, PyRangeType>(value); }
 inline PySlice* trySlice(JSValue value) { return tryCell<PySlice, PySliceType>(value); }
 inline PyIterator* tryIterator(JSValue value) { return tryCell<PyIterator, PyIteratorType>(value); }
-inline PyModule* tryModule(JSValue value) { return tryCell<PyModule, PyModuleType>(value); }
 inline PyBoxedValue* tryBoxedValue(JSValue value) { return tryCell<PyBoxedValue, PyBoxedValueType>(value); }
 inline PyNativeObject* tryNativeObject(JSValue value) { return tryCell<PyNativeObject, PyNativeObjectType>(value); }
 

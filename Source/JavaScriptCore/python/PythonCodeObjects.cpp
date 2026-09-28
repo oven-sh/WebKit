@@ -283,9 +283,16 @@ static JSValue getFunctionGlobals(JSGlobalObject* globalObject, JSValue self)
     return PyDict::backedBy(globalObject, globalsOfScope(globalObject->vm(), asFunction(self)->scope()));
 }
 
-static JSValue getFunctionBuiltins(JSGlobalObject* globalObject, JSValue)
+JSObject* builtinsOfScope(VM& vm, JSScope* scope)
 {
-    return PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsNamespace());
+    ScopeOffset offset;
+    JSLexicalEnvironment* environment = findVariable(scope, vm.pythonNames().builtins.impl(), offset);
+    return environment ? asObject(environment->variableAt(offset).get()) : nullptr;
+}
+
+static JSValue getFunctionBuiltins(JSGlobalObject* globalObject, JSValue self)
+{
+    return PyDict::backedBy(globalObject, builtinsOfScope(globalObject->vm(), asFunction(self)->scope()));
 }
 
 // ---- Frames
@@ -453,27 +460,9 @@ PYTHON_NATIVE(builtinCompile)
 // The object whose properties are the items of a dict that is to be the globals of some code.
 static JSObject* namespaceOf(JSGlobalObject* globalObject, PyDict* globals)
 {
-    VM& vm = globalObject->vm();
-    PyRealm* realm = globalObject->pyRealm();
-    if (!globals->backing())
-        globals->becomeBackedBy(globalObject, PyNamespace::create(vm, realm->namespaceStructure()));
-    JSObject* object = globals->backing();
-    JSValue builtins = globals->getString(globalObject, "__builtins__"_s);
-    if (!builtins) {
-        globals->setString(globalObject, "__builtins__"_s, PyDict::backedBy(globalObject, realm->builtinsNamespace()));
-        return object;
-    }
-    // What is not found among the globals is looked for in whatever that is, by way of the prototype.
-    JSObject* fallback = realm->builtinsNamespace();
-    if (auto* module = tryModule(builtins))
-        fallback = module->namespaceObject();
-    else if (isDict(builtins)) {
-        if (!asDict(builtins)->backing())
-            asDict(builtins)->becomeBackedBy(globalObject, PyNamespace::create(vm, PyNamespace::createStructure(vm, globalObject, realm->builtinsNamespace()->getPrototypeDirect())));
-        fallback = asDict(builtins)->backing();
-    }
-    if (object->getPrototypeDirect() != JSValue(fallback))
-        object->setPrototypeDirect(vm, fallback);
+    JSObject* object = globals->ensureBacking(globalObject);
+    if (!globals->getString(globalObject, "__builtins__"_s))
+        globals->setString(globalObject, "__builtins__"_s, PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsModule()));
     return object;
 }
 

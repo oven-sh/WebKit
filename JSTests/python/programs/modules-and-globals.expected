@@ -1,0 +1,39 @@
+one dict => (True, True, True, 'module')
+attribute is global => (1, 1)
+global is attribute => (2, 2)
+builtin => 2
+shadowed => shadowed
+revealed => 2
+shadowed by dict => by dict
+shadowed by attribute => by attribute
+builtins changed => builtins changed
+builtins restored => 2
+added to builtins => everywhere
+removed from builtins !! NameError name 'brand_new' is not defined
+store => (3000, 3000)
+not yet !! NameError name 'late' is not defined
+now => now
+gone !! NameError name 'late' is not defined
+None is a value => None
+many => (0, 699, 3, 350, True)
+many changed => changed
+many deleted !! NameError name 'g350' is not defined
+many shadow => shadow in a big module
+many reveal => 1
+own builtins => mine
+only those !! NameError name 'abs' is not defined
+__builtins__ of function => (['len'], True)
+added to own builtins => added
+exec adds __builtins__ => (['__builtins__', 'x'], True, 2)
+main has module => module
+frame => (True, True)
+new module => ('fresh', ['__doc__', '__loader__', '__name__', '__package__', '__spec__'], "<module 'fresh'>", True)
+module needs a name !! TypeError module() missing required argument 'name' (pos 1)
+derived => ('computed z', '<Lazy>', True, ['__doc__', '__loader__'])
+missing !! AttributeError module 'sys' has no attribute 'nothing_here'
+PEP 562 => ('from __getattr__', False)
+PEP 562 is not for globals !! NameError name 'magic' is not defined
+truth and hash => (True, True, True, True)
+dir => ['__doc__', '__loader__', '__name__', '__package__', '__spec__']
+builtins module => ('builtins', True, True, True)
+PEP 562 says why !! AttributeError module '__main__' has no attribute 'other'

@@ -413,16 +413,35 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     return unlinked->link(vm, nullptr, source);
 }
 
-JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* namespaceObject)
+// Where a name that is not among the globals is looked for is settled when code is given its globals: it is what they have as __builtins__, a module
+// or a dict, and the module builtins if that is neither or they have none.
+static JSObject* builtinsFor(JSGlobalObject* globalObject, JSObject* globals)
 {
     VM& vm = globalObject->vm();
-    // The outermost environment of everything in the module. Its one variable is the namespace.
+    JSValue builtins = getStoredAttribute(vm, globals, Identifier::fromString(vm, "__builtins__"_s));
+    if (builtins) {
+        if (JSObject* module = tryModule(globalObject, builtins))
+            return module;
+        if (isDict(builtins))
+            return uncheckedDowncast<PyDict>(builtins.asCell())->ensureBacking(globalObject);
+    }
+    return globalObject->pyRealm()->builtinsModule();
+}
+
+JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* globals)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    // The outermost environment of everything in the module.
     JSC::SymbolTable* symbolTable = JSC::SymbolTable::create(vm);
     symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
-    ScopeOffset offset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
-    symbolTable->set(NoLockingNecessary, vm.pythonNames().globals.impl(), SymbolTableEntry(VarOffset(offset)));
+    ScopeOffset globalsOffset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+    symbolTable->set(NoLockingNecessary, names.globals.impl(), SymbolTableEntry(VarOffset(globalsOffset)));
+    ScopeOffset builtinsOffset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+    symbolTable->set(NoLockingNecessary, names.builtins.impl(), SymbolTableEntry(VarOffset(builtinsOffset)));
     JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), globalObject->globalScope(), symbolTable, jsUndefined());
-    environment->variableAt(offset).set(vm, environment, namespaceObject);
+    environment->variableAt(globalsOffset).set(vm, environment, globals);
+    environment->variableAt(builtinsOffset).set(vm, environment, builtinsFor(globalObject, globals));
     return JSFunction::create(vm, globalObject, executable, environment);
 }
 
@@ -455,12 +474,14 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
 
-    PyModule* module = PyModule::create(globalObject, "__main__"_s);
-    module->namespaceObject()->putDirect(vm, vm.pythonNames().dunder_file, jsString(vm, sourceURL));
+    JSObject* module = newModule(globalObject, "__main__"_s);
+    module->putDirect(vm, Identifier::fromString(vm, "__builtins__"_s), realm->builtinsModule());
+    module->putDirect(vm, vm.pythonNames().dunder_file, jsString(vm, sourceURL));
+    module->putDirect(vm, Identifier::fromString(vm, "__cached__"_s), jsUndefined());
     registerModule(globalObject, "__main__"_s, module);
 
     SourceCode source = makeSource(globalObject, bytes, origin, sourceURL);
-    JSFunction* function = source.isNull() ? nullptr : compileModule(globalObject, source, module->namespaceObject());
+    JSFunction* function = source.isNull() ? nullptr : compileModule(globalObject, source, module);
     if (function)
         call(globalObject, function);
 

@@ -105,7 +105,7 @@ void initializeFunctionTypes(JSGlobalObject*);
 void initializeCodeTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeTracebackTypes(JSGlobalObject*);
-PyModule* createFrameModule(JSGlobalObject*);
+JSObject* createFrameModule(JSGlobalObject*);
 
 inline JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }
 
@@ -118,6 +118,7 @@ bool isFrameToPython(CallFrame*, BytecodeIndex);
 // The environment that has a variable of the name, going outward from the scope, and where in it. Null if there is none.
 JSLexicalEnvironment* findVariable(JSScope*, UniquedStringImpl* name, ScopeOffset&);
 JSObject* globalsOfScope(VM&, JSScope*);
+JSObject* builtinsOfScope(VM&, JSScope*);
 // What is only known about code once it has been compiled, which it is now if it had not been.
 void ensureCodeDetails(VM&, FunctionExecutable*);
 // The bytecode, which is generated again if it has been thrown away. It comes out the same.

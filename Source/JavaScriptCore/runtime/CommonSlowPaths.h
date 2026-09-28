@@ -341,6 +341,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_del_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_method);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_leave_frame);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_load_global);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_item);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_item);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_del_item);

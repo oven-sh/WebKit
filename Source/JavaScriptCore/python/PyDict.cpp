@@ -27,6 +27,7 @@
 #include "PyDict.h"
 
 #include "JSCInlines.h"
+#include "ObjectConstructor.h"
 #include "PyTuple.h"
 #include "PythonOperations.h"
 
@@ -374,6 +375,13 @@ unsigned PyDict::backingSize() const
         return true;
     });
     return size;
+}
+
+JSObject* PyDict::ensureBacking(JSGlobalObject* globalObject)
+{
+    if (!m_backing)
+        becomeBackedBy(globalObject, constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure()));
+    return m_backing.get();
 }
 
 PyTuple* PyDict::backingKeys(JSGlobalObject* globalObject)

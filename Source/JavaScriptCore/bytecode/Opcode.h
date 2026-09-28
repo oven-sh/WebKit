@@ -119,6 +119,7 @@ static constexpr unsigned bitWidthForMaxBytecodeStructLength = WTF::getMSBSet(ma
     macro(OpPyCompareOp) \
     macro(OpPyGetAttr) \
     macro(OpPyLoadMethod) \
+    macro(OpPyLoadGlobal) \
     macro(OpPyGetItem) \
     macro(OpPyIterNext) \
 

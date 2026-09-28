@@ -41,6 +41,59 @@ namespace JSC { namespace Python {
 
 static PyDict* modulesOf(JSGlobalObject* globalObject) { return uncheckedDowncast<PyDict>(globalObject->pyRealm()->modules()); }
 
+JSObject* newModule(JSGlobalObject* globalObject, const String& name, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    JSObject* module = PyInstance::create(vm, (type ? type : globalObject->pyRealm()->typeModule())->instanceStructure());
+    module->putDirect(vm, names.dunder_name, jsString(vm, name));
+    module->putDirect(vm, names.dunder_doc, jsUndefined());
+    module->putDirect(vm, names.dunder_package, jsUndefined());
+    module->putDirect(vm, names.dunder_loader, jsUndefined());
+    module->putDirect(vm, names.dunder_spec, jsUndefined());
+    return module;
+}
+
+JSObject* tryModule(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != PyInstanceType)
+        return nullptr;
+    return typeOf(globalObject, value)->isSubtypeOf(globalObject->pyRealm()->typeModule()) ? asObject(value) : nullptr;
+}
+
+JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* builtins, PropertyName name, GlobalLocation& location)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What is not enumerable is no variable: see getStoredAttribute().
+    auto find = [&] (JSObject* object, PropertyOffset& offset) -> JSValue {
+        unsigned attributes;
+        offset = object->structure()->get(vm, name, attributes);
+        if (!isValidOffset(offset) || (attributes & PropertyAttribute::DontEnum))
+            return { };
+        return object->getDirect(offset);
+    };
+
+    PropertyOffset offset;
+    Structure* globalsStructure = globals->structure();
+    if (JSValue value = find(globals, offset)) {
+        if (globalsStructure->propertyAccessesAreCacheable())
+            location = { globalsStructure, nullptr, offset };
+        return value;
+    }
+    if (JSValue value = find(builtins, offset)) {
+        // That it is not among the globals goes with their structure, unless that is a dictionary, which can be added to and stay the same. One that has
+        // been added to a great deal is likely to have settled down, so it is given one chance to be made an ordinary structure again.
+        if (globalsStructure->isDictionary() && !globalsStructure->hasBeenFlattenedBefore())
+            globalsStructure = globalsStructure->flattenDictionaryStructure(vm, globals);
+        Structure* builtinsStructure = builtins->structure();
+        if (!globalsStructure->isDictionary() && builtinsStructure->propertyAccessesAreCacheable())
+            location = { globalsStructure, builtinsStructure, offset };
+        return value;
+    }
+    return raiseNameError(globalObject, scope, String(name.uid()));
+}
+
 void registerModule(JSGlobalObject* globalObject, const String& name, JSValue module)
 {
     modulesOf(globalObject)->setString(globalObject, name, module);
@@ -246,11 +299,11 @@ PYTHON_NATIVE(mathIsqrt)
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, root)));
 }
 
-static PyModule* createMathModule(JSGlobalObject* globalObject)
+static JSObject* createMathModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    PyModule* module = PyModule::create(globalObject, "math"_s);
-    JSObject* ns = module->namespaceObject();
+    JSObject* module = newModule(globalObject, "math"_s);
+    JSObject* ns = module;
     auto add = [&] (ASCIILiteral name, NativeFunction function, unsigned data = 0) { addFunction(globalObject, ns, name, function, data); };
     auto constant = [&] (ASCIILiteral name, double value) { ns->putDirect(vm, Identifier::fromString(vm, name), floatFromDouble(value)); };
     constant("pi"_s, std::numbers::pi);
@@ -303,10 +356,10 @@ PYTHON_NATIVE(timeMonotonicNanoseconds)
     return JSValue::encode(intFromInt64(globalObject, static_cast<int64_t>(MonotonicTime::now().secondsSinceEpoch().nanoseconds())));
 }
 
-static PyModule* createTimeModule(JSGlobalObject* globalObject)
+static JSObject* createTimeModule(JSGlobalObject* globalObject)
 {
-    PyModule* module = PyModule::create(globalObject, "time"_s);
-    JSObject* ns = module->namespaceObject();
+    JSObject* module = newModule(globalObject, "time"_s);
+    JSObject* ns = module;
     addFunction(globalObject, ns, "time"_s, timeTime);
     addFunction(globalObject, ns, "monotonic"_s, timeMonotonic);
     addFunction(globalObject, ns, "perf_counter"_s, timeMonotonic);
@@ -399,7 +452,7 @@ PYTHON_NATIVE(sysDisplayHook)
     if (isNone(args[0]))
         RETURN_NONE();
     // It is unset meanwhile, so that showing it cannot come back here with it.
-    JSObject* builtins = realm->builtinsNamespace();
+    JSObject* builtins = realm->builtinsModule();
     auto underscore = Identifier::fromString(vm, "_"_s);
     builtins->putDirect(vm, underscore, jsUndefined());
     JSValue file = sysAttribute(globalObject, "stdout"_s);
@@ -417,12 +470,12 @@ PYTHON_NATIVE(sysDisplayHook)
     RETURN_NONE();
 }
 
-static PyModule* createSysModule(JSGlobalObject* globalObject)
+static JSObject* createSysModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
-    PyModule* module = PyModule::create(globalObject, "sys"_s);
-    JSObject* ns = module->namespaceObject();
+    JSObject* module = newModule(globalObject, "sys"_s);
+    JSObject* ns = module;
     auto set = [&] (ASCIILiteral name, JSValue value) { ns->putDirect(vm, Identifier::fromString(vm, name), value); };
     set("modules"_s, realm->modules());
     Configuration configuration;
@@ -466,19 +519,6 @@ static PyModule* createSysModule(JSGlobalObject* globalObject)
     return module;
 }
 
-static PyModule* createBuiltinsModule(JSGlobalObject* globalObject)
-{
-    // FIXME: It should be the namespace itself, so that what is set here is seen everywhere.
-    VM& vm = globalObject->vm();
-    PyModule* module = PyModule::create(globalObject, "builtins"_s);
-    JSObject* builtins = globalObject->pyRealm()->builtinsNamespace();
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    builtins->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-    for (auto& name : properties)
-        module->namespaceObject()->putDirect(vm, name, builtins->getDirect(vm, name));
-    return module;
-}
-
 static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& name)
 {
     if (name == "sys"_s)
@@ -487,8 +527,6 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createMathModule(globalObject);
     if (name == "time"_s)
         return createTimeModule(globalObject);
-    if (name == "builtins"_s)
-        return createBuiltinsModule(globalObject);
     if (name == "_frame"_s)
         return createFrameModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
@@ -530,7 +568,7 @@ JSValue sysAttribute(JSGlobalObject* globalObject, ASCIILiteral name)
         sys = createSysModule(globalObject);
         registerModule(globalObject, "sys"_s, sys);
     }
-    return uncheckedDowncast<PyModule>(sys.asCell())->namespaceObject()->getDirect(vm, Identifier::fromString(vm, name));
+    return getStoredAttribute(vm, asObject(sys), Identifier::fromString(vm, name));
 }
 
 // Runs the source of a module. Empty if it raised.
@@ -541,8 +579,8 @@ static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& full
     auto& names = vm.pythonNames();
 
     const String& path = source.provider()->sourceURL();
-    PyModule* module = PyModule::create(globalObject, fullName);
-    JSObject* ns = module->namespaceObject();
+    JSObject* module = newModule(globalObject, fullName);
+    JSObject* ns = module;
     ns->putDirect(vm, names.dunder_file, jsString(vm, path));
     size_t lastDot = fullName.reverseFind('.');
     if (isPackage) {
@@ -552,6 +590,8 @@ static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& full
         ns->putDirect(vm, names.dunder_package, jsString(vm, fullName));
     } else
         ns->putDirect(vm, names.dunder_package, lastDot == notFound ? jsEmptyString(vm) : jsString(vm, fullName.left(lastDot)));
+
+    ns->putDirect(vm, Identifier::fromString(vm, "__builtins__"_s), PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsModule()));
 
     // It is there to be found while it runs, in case what it imports imports it.
     registerModule(globalObject, fullName, module);
@@ -786,12 +826,12 @@ void initializeLibrary(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     auto attribute = [&] (JSValue module, ASCIILiteral name) {
-        return uncheckedDowncast<PyModule>(module.asCell())->namespaceObject()->getDirect(vm, Identifier::fromString(vm, name));
+        return asObject(module)->getDirect(vm, Identifier::fromString(vm, name));
     };
     JSValue groups = findOrLoad(globalObject, "_exceptiongroup"_s, JSValue());
     RELEASE_ASSERT(groups);
     for (ASCIILiteral name : { "BaseExceptionGroup"_s, "ExceptionGroup"_s })
-        realm->builtinsNamespace()->putDirect(vm, Identifier::fromString(vm, name), attribute(groups, name));
+        realm->builtinsModule()->putDirect(vm, Identifier::fromString(vm, name), attribute(groups, name));
     JSValue frameLocals = findOrLoad(globalObject, "_framelocals"_s, JSValue());
     RELEASE_ASSERT(frameLocals);
     auto* proxy = asType(attribute(frameLocals, "FrameLocalsProxy"_s));

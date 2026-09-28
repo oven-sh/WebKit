@@ -442,10 +442,11 @@ private:
         case Where::Global: {
             Reg result = destination(dst);
             mark(node);
-            return g.emitGetById(result.get(), m_globals.get(), name);
+            OpPyLoadGlobal::emit(&g, result.get(), m_globals.get(), m_builtins.get(), g.addConstant(name), g.nextValueProfileIndex());
+            return result.get();
         }
         case Where::Namespace:
-            return emitRuntimeCall(dst, "loadName"_s, { m_namespace.get(), m_globals.get(), stringConstant(name) }, node);
+            return emitRuntimeCall(dst, "loadName"_s, { m_namespace.get(), m_globals.get(), m_builtins.get(), stringConstant(name) }, node);
         case Where::NamespaceOrClosure: {
             Reg result = temporaryDestination(dst);
             emitRuntimeCall(result.get(), "loadFromNamespace"_s, { m_namespace.get(), stringConstant(name) }, node);
@@ -1281,10 +1282,12 @@ private:
 
     void emitLoadGlobals()
     {
-        m_globals = g.addVar();
-        Variable variable = g.variable(m_names.globals);
-        Reg scope = g.emitResolveScope(nullptr, variable);
-        g.emitGetFromScope(m_globals.get(), scope.get(), variable, ThrowIfNotFound);
+        for (auto [target, name] : { std::pair { &m_globals, &m_names.globals }, std::pair { &m_builtins, &m_names.builtins } }) {
+            *target = g.addVar();
+            Variable variable = g.variable(*name);
+            Reg scope = g.emitResolveScope(nullptr, variable);
+            g.emitGetFromScope(target->get(), scope.get(), variable, ThrowIfNotFound);
+        }
     }
 
     // An environment for the variables of this block that other functions use.
@@ -2834,7 +2837,7 @@ private:
         {
             Reg moduleName = g.newTemporary();
             mark(node);
-            g.emitGetById(moduleName.get(), m_globals.get(), m_names.dunder_name);
+            OpPyLoadGlobal::emit(&g, moduleName.get(), m_globals.get(), m_builtins.get(), g.addConstant(m_names.dunder_name), g.nextValueProfileIndex());
             store(m_names.dunder_module, moduleName.get());
         }
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));
@@ -2935,6 +2938,7 @@ private:
     Vector<std::unique_ptr<VariableEnvironment>> m_environments;
     Vector<RegisterID*, 4> m_handledExceptions;
     Reg m_globals;
+    Reg m_builtins;
     Reg m_namespace;
     bool m_hasNamedExpressions { false };
 };

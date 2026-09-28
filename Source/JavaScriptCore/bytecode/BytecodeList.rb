@@ -776,6 +776,22 @@ op :to_this,
         toThisStatus: ToThisStatus,
     }
 
+# A global variable: a property that `globals` has of its own, or failing that one that `builtins` has, or failing that NameError. What is
+# remembered is the structure that `globals` had, the structure that `builtins` had if that is where it was, and where in the one or the other.
+op :py_load_global,
+    args: {
+        dst: VirtualRegister,
+        globals: VirtualRegister,
+        builtins: VirtualRegister,
+        property: unsigned,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        globalsStructureID: StructureID,
+        builtinsStructureID: StructureID,
+        offset: unsigned,
+    }
+
 op :enumerator_get_by_val,
     args: {
         dst: VirtualRegister,

@@ -73,14 +73,15 @@ static JSValue lookUpInNamespace(JSGlobalObject* globalObject, JSValue namespace
 PYTHON_RUNTIME_FUNCTION(loadName)
 {
     PROLOGUE();
-    JSString* name = asString(argument(2));
+    JSString* name = asString(argument(3));
     JSValue value = lookUpInNamespace(globalObject, argument(0), name);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
         return JSValue::encode(value);
     auto identifier = name->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(asObject(argument(1))->get(globalObject, identifier)));
+    GlobalLocation location;
+    RELEASE_AND_RETURN(scope, JSValue::encode(loadGlobal(globalObject, asObject(argument(1)), asObject(argument(2)), identifier, location)));
 }
 
 PYTHON_RUNTIME_FUNCTION(loadFromNamespace)
@@ -102,9 +103,9 @@ PYTHON_RUNTIME_FUNCTION(deleteGlobal)
     JSObject* globals = asObject(argument(0));
     auto identifier = asString(argument(1))->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!globals->getDirect(vm, identifier))
+    if (!getStoredAttribute(vm, globals, identifier))
         return JSValue::encode(raiseNameError(globalObject, scope, asString(argument(1))));
-    globals->deleteProperty(globalObject, identifier);
+    deleteStoredAttribute(globalObject, globals, identifier);
     return JSValue::encode(jsUndefined());
 }
 
@@ -957,17 +958,17 @@ PYTHON_RUNTIME_FUNCTION(importStar)
         }
         return JSValue::encode(jsUndefined());
     }
-    auto* module = tryModule(argument(0));
+    JSObject* module = tryModule(globalObject, argument(0));
     if (!module)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::ImportError, "from-import-* object has no __dict__ and no __all__"_s));
     // Everything whose name does not begin with an underscore.
     PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    module->namespaceObject()->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
+    module->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, { });
     for (auto& name : properties) {
         if (name.string().startsWith('_'))
             continue;
-        globals->putDirect(vm, name, module->namespaceObject()->getDirect(vm, name));
+        globals->putDirect(vm, name, module->getDirect(vm, name));
     }
     return JSValue::encode(jsUndefined());
 }

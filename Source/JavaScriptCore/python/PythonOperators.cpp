@@ -402,7 +402,6 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
     case JSFunctionType:
     case PyTypeType:
     case PyBoundMethodType:
-    case PyModuleType:
         return true;
     default:
         break;
@@ -916,7 +915,6 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
     case HeapBigIntType:
         return hashOfNumber(globalObject, classify(value));
     case JSFunctionType:
-    case PyModuleType:
     case SymbolType:
         return hashOfPointer(cell);
     default:

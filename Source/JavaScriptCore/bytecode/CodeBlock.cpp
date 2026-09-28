@@ -1907,6 +1907,17 @@ void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
             clearIfNeeded(metadata.m_modeMetadata, "get length"_s);
         });
 
+        m_metadata->forEach<OpPyLoadGlobal>([&] (auto& metadata) {
+            StructureID globalsStructureID = metadata.m_globalsStructureID;
+            StructureID builtinsStructureID = metadata.m_builtinsStructureID;
+            if (!globalsStructureID || (vm.heap.isMarked(globalsStructureID.decode()) && (!builtinsStructureID || vm.heap.isMarked(builtinsStructureID.decode()))))
+                return;
+            dataLogLnIf(Options::verboseOSR(), "Clearing py_load_global LLInt property access.");
+            metadata.m_globalsStructureID = StructureID();
+            metadata.m_builtinsStructureID = StructureID();
+            metadata.m_offset = 0;
+        });
+
         m_metadata->forEach<OpGetByIdDirect>([&] (auto& metadata) {
             StructureID oldStructureID = metadata.m_structureID;
             if (!oldStructureID || vm.heap.isMarked(oldStructureID.decode()))

@@ -63,7 +63,7 @@ namespace JSC {
     v(StaticMethod, "staticmethod", Object, Native, PyType::IsBaseType) \
     v(ClassMethod, "classmethod", Object, Native, PyType::IsBaseType) \
     v(Super, "super", Object, Native, PyType::IsBaseType) \
-    v(Module, "module", Object, Native, PyType::IsBaseType) \
+    v(Module, "module", Object, Object, PyType::IsBaseType) \
     v(Generator, "generator", Object, Native, 0) \
     v(Coroutine, "coroutine", Object, Native, 0) \
     v(AsyncGenerator, "async_generator", Object, Native, 0) \
@@ -209,7 +209,6 @@ public:
 
     Structure* tupleStructure() const { return m_tupleStructure.get(); }
     Structure* nativeFunctionStructure() const { return m_nativeFunctionStructure.get(); }
-    Structure* namespaceStructure() const { return m_namespaceStructure.get(); }
     Structure* hashStorageStructure() const { return m_hashStorageStructure.get(); }
     // Of what a cell class makes for the built-in type it is the cell of. They are made by the class when the type is set up.
     Structure* structureFor(BuiltinType type) const { return this->type(type)->instanceStructure(); }
@@ -250,7 +249,8 @@ public:
     // The functions behind the names that JavaScript uses for what Python calls something else. See PythonJavaScript.cpp.
     JSObject* javaScriptFunctions() const { return m_javaScriptFunctions.get(); }
     // The namespace of the builtins module, which is where a global name is looked for after the module's own.
-    JSObject* builtinsNamespace() const { return m_builtinsNamespace.get(); }
+    // The module builtins.
+    JSObject* builtinsModule() const { return m_builtinsModule.get(); }
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
 
@@ -279,7 +279,6 @@ private:
     WriteBarrier<JSObject> m_functions[static_cast<unsigned>(WellKnownFunction::Count)];
     WriteBarrier<Structure> m_tupleStructure;
     WriteBarrier<Structure> m_nativeFunctionStructure;
-    WriteBarrier<Structure> m_namespaceStructure;
     WriteBarrier<Structure> m_hashStorageStructure;
     WriteBarrier<PyTuple> m_emptyTuple;
     WriteBarrier<JSObject> m_notImplemented;
@@ -288,7 +287,7 @@ private:
     WriteBarrier<JSObject> m_runtimeFunctions;
     WriteBarrier<JSObject> m_javaScriptFunctions;
     WriteBarrier<PyType> m_frameLocalsProxyType;
-    WriteBarrier<JSObject> m_builtinsNamespace;
+    WriteBarrier<JSObject> m_builtinsModule;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<Exception> m_handledException;
     WriteBarrier<Exception> m_outerHandledException;
