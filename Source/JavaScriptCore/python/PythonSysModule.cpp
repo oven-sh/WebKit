@@ -99,16 +99,6 @@ bool auditSlow(JSGlobalObject* globalObject, ASCIILiteral event, const ArgList& 
     return true;
 }
 
-template<typename... Arguments>
-static bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments... arguments)
-{
-    if (!globalObject->pyRealm()->auditHooks()) [[likely]]
-        return true;
-    MarkedArgumentBuffer buffer;
-    (buffer.append(arguments), ...);
-    return auditSlow(globalObject, event, buffer);
-}
-
 PYTHON_NATIVE(sysAddAuditHook)
 {
     NATIVE_PROLOGUE();

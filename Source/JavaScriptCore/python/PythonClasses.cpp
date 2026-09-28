@@ -253,7 +253,13 @@ static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* nam
         if (!method)
             return true;
         callMethod(globalObject, method, self, type, key);
-        return !scope.exception();
+        if (scope.exception()) [[unlikely]] {
+            addNoteToRaised(globalObject, [&] {
+                return makeString("Error calling __set_name__ on '"_s, typeName(globalObject, value), "' instance "_s, repr(globalObject, key), " in '"_s, type->nameString(globalObject), '\'');
+            });
+            return false;
+        }
+        return true;
     });
     return !scope.exception();
 }

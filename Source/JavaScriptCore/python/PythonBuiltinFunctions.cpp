@@ -162,7 +162,11 @@ PYTHON_NATIVE(builtinId)
     NATIVE_PROLOGUE();
     // What is not a cell has no address, so its bits will have to do.
     int64_t identity = args[0].isCell() ? static_cast<int64_t>(std::bit_cast<uintptr_t>(args[0].asCell())) : static_cast<int64_t>(JSValue::encode(args[0]) & 0x7FFFFFFFFFFFFFFFLL);
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, identity)));
+    JSValue result = intFromInt64(globalObject, identity);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!audit(globalObject, "builtins.id"_s, result))
+        return { };
+    return JSValue::encode(result);
 }
 
 PYTHON_NATIVE(builtinCallable)

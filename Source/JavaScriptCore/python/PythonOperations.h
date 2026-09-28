@@ -91,6 +91,10 @@ inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, 
 void throwUnboundVariable(JSGlobalObject*, CodeBlock*, JSString* name);
 // Whether what has been thrown is an instance of the type. If so it is caught, and no longer thrown.
 bool catchException(JSGlobalObject*, BuiltinType);
+// _PyErr_FormatNote(): adds a note to what has been thrown, which goes on being thrown. It is what exception.add_note() does.
+void addNoteToRaised(JSGlobalObject*, const String& note);
+// The same, where working out what to say may run something. It is worked out with nothing thrown.
+void addNoteToRaised(JSGlobalObject*, const ScopedLambda<String()>& note);
 // The Python exception for whatever was thrown, which may have been thrown by JavaScript.
 JSValue exceptionValue(JSGlobalObject*, JSValue thrown);
 

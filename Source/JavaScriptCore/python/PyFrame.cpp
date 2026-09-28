@@ -264,11 +264,24 @@ void PyFrame::setVariable(VM& vm, unsigned index, JSValue value)
         slot->set(vm, owner, value);
 }
 
+// What the code was called with. If it is a coroutine, that is a variable of the function that made it.
+JSValue PyFrame::namespaceArgument(VM& vm, CallFrame* callFrame)
+{
+    const auto& info = functionInfo();
+    if (!info.isGeneratorBody)
+        return callFrame->argument(0);
+    ScopeOffset offset;
+    JSLexicalEnvironment* environment = findVariable(m_function->scope(), info.parameterNames[0].impl(), offset);
+    return environment ? environment->variableAt(offset).get() : JSValue();
+}
+
 JSValue PyFrame::namespaceMapping(VM& vm)
 {
     if (!functionInfo().usesNamespace)
         return { };
-    return m_isOver ? m_namespace.get() : callFrame(vm)->argument(0);
+    if (m_isOver)
+        return m_namespace.get();
+    return namespaceArgument(vm, callFrame(vm));
 }
 
 JSObject* PyFrame::globals(VM& vm)
@@ -332,7 +345,7 @@ void PyFrame::leave(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
     }
     m_scope.set(vm, this, callFrame->scope(details.scopeRegister.offset()));
     if (functionInfo().usesNamespace)
-        m_namespace.set(vm, this, callFrame->argument(0));
+        m_namespace.set(vm, this, namespaceArgument(vm, callFrame));
     // What resumed a generator is not what called it, and is forgotten each time that it stops.
     if (CallFrame* caller = m_generator ? nullptr : callerOf(callFrame))
         m_back.set(vm, this, forCallFrame(vm, caller));

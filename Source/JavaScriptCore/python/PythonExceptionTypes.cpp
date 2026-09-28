@@ -84,6 +84,51 @@ PYTHON_NATIVE(exceptionWithTraceback)
     return JSValue::encode(args[0]);
 }
 
+// False if it raised.
+static bool addNote(JSGlobalObject* globalObject, JSValue exception, JSValue note)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSValue notes = getAttributeIfPresent(globalObject, exception, names.dunder_notes);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!notes) {
+        notes = newList(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        setAttribute(globalObject, exception, names.dunder_notes, notes);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else if (!isList(notes)) {
+        raiseTypeError(globalObject, scope, "Cannot add note: __notes__ is not a list"_s);
+        return false;
+    }
+    listAppend(globalObject, asList(notes), note);
+    return true;
+}
+
+void addNoteToRaised(JSGlobalObject* globalObject, const String& note)
+{
+    addNoteToRaised(globalObject, [&] { return note; });
+}
+
+void addNoteToRaised(JSGlobalObject* globalObject, const ScopedLambda<String()>& makeNote)
+{
+    VM& vm = globalObject->vm();
+    Exception* raised;
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        raised = scope.exception();
+        if (!raised || vm.isTerminationException(raised) || !isInstance(globalObject, raised->value(), globalObject->pyRealm()->typeBaseException()))
+            return;
+        scope.clearException();
+    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What goes wrong with that is raised in its stead.
+    String note = makeNote();
+    RETURN_IF_EXCEPTION(scope, void());
+    if (addNote(globalObject, raised->value(), jsString(vm, note)))
+        throwException(globalObject, scope, raised);
+}
+
 PYTHON_NATIVE(exceptionAddNote)
 {
     NATIVE_PROLOGUE();
@@ -91,16 +136,8 @@ PYTHON_NATIVE(exceptionAddNote)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseException.add_note() takes exactly one argument ("_s, args.size() - 1, " given)"_s)));
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("add_note() argument must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
-    JSValue notes = getAttributeIfPresent(globalObject, args[0], names.dunder_notes);
+    addNote(globalObject, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!notes) {
-        notes = newList(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        setAttribute(globalObject, args[0], names.dunder_notes, notes);
-        RETURN_IF_EXCEPTION(scope, { });
-    } else if (!isList(notes))
-        return JSValue::encode(raiseTypeError(globalObject, scope, "Cannot add note: __notes__ is not a list"_s));
-    listAppend(globalObject, asList(notes), args[1]);
     RETURN_NONE();
 }
 

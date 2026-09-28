@@ -1,0 +1,64 @@
+derived dict => ([('set', 'a', 1), ('get', 'a'), ('get', 'g'), ('set', 'b', 11), ('del', 'a')], {'b': 11})
+made up => (None, 'made zz', 'made zebra')
+__missing__ => ('missing nowhere', 'missing nowhere')
+no dict at all => (None, ['set a', 'get a', 'get len', 'set b', 'del a', 'set s', 'set f', 'set C', 'set i', 'set i'], ['C', 'b', 'f', 'i', 's'])
+eval in it => (None, 10, [5, 5], 1)
+KeyError goes on to the globals => global
+LookupError does not !! LookupError g
+nor ValueError !! ValueError g
+set raises !! ValueError set a
+del of what is not there !! NameError name 'a' is not defined
+functions do not see it => (None, "NameError: name 'v' is not defined")
+classes do !! NameError name 'v' is not defined
+global statement => (None, {'x': 1}, {'y': 2})
+locals() => (None, True)
+sequences => [1, 1, 1, 1, 1, 'TypeError: locals must be a mapping', 'TypeError: locals must be a mapping', 'TypeError: locals must be a mapping', 'TypeError: locals must be a mapping']
+sequences for exec => [None, None, None, 'TypeError: locals must be a mapping or None, not int', 'TypeError: locals must be a mapping or None, not object', 'TypeError: locals must be a mapping or None, not set']
+globals => ['TypeError: globals must be a real dict; try eval(expr, {}, mapping)', 'TypeError: globals must be a real dict; try eval(expr, {}, mapping)', 'TypeError: globals must be a dict', 'TypeError: globals must be a real dict; try eval(expr, {}, mapping)', 1]
+globals for exec => ['TypeError: exec() globals must be a dict, not list', 'TypeError: exec() globals must be a dict, not Mapping', 'TypeError: exec() globals must be a dict, not int', 'TypeError: exec() globals must be a dict, not str', None]
+keywords => (3, 3, (None, {'z': 1}), (None, {'z': 1}))
+source by keyword !! TypeError eval() takes at least 1 positional argument (0 given)
+exec source by keyword !! TypeError exec() takes at least 1 positional argument (0 given)
+closure positional !! TypeError exec() takes at most 3 positional arguments (4 given)
+eval closure !! TypeError eval() got an unexpected keyword argument 'closure'
+nothing => ('TypeError: eval() takes at least 1 positional argument (0 given)', 'TypeError: exec() takes at least 1 positional argument (0 given)')
+too many => ('TypeError: eval() takes at most 3 arguments (4 given)', 'TypeError: exec() takes at most 4 arguments (5 given)')
+None => (1, None)
+the caller's => ('local', 'local', 'local', 'given', "NameError: name 'v' is not defined", ['v'])
+does not write to the caller => (1, False)
+builtins are put in => (1, ['__builtins__'])
+builtins of one's own => ('mine', "NameError: name 'len' is not defined")
+sources => [1, 2, 3, 4, 5, 1, 1, 'TypeError: eval() arg 1 must be a string, bytes or code object', 'TypeError: eval() arg 1 must be a string, bytes or code object', 'SyntaxError: invalid syntax (<string>, line 1)', 'SyntaxError: invalid syntax (<string>, line 1)']
+null bytes => ('SyntaxError: source code string cannot contain null bytes', 'SyntaxError: source code string cannot contain null bytes')
+a function's code => (None, ('ran', 2))
+that takes arguments => TypeError: takes() missing 1 required positional argument: 'a'
+with free variables => ('TypeError: code object requires a closure of exactly length 2', 'TypeError: code object passed to eval() may not contain free variables')
+closure => (None, [('in a cell', 'G')])
+closure None !! TypeError code object requires a closure of exactly length 2
+closure short !! TypeError code object requires a closure of exactly length 2
+closure long !! TypeError code object requires a closure of exactly length 2
+closure a list !! TypeError code object requires a closure of exactly length 2
+closure not cells !! TypeError code object requires a closure of exactly length 2
+closure an int !! TypeError code object requires a closure of exactly length 2
+closure derived !! TypeError code object requires a closure of exactly length 2
+closure not wanted !! TypeError cannot use a closure with this code object
+closure empty !! TypeError cannot use a closure with this code object
+closure with a string !! TypeError closure can only be used when source is a code object
+closure is written => (None, None, 12)
+a generator's code => generator
+the body of a class => (None, [('__firstlineno__', 1), ('__module__', 'm'), ('__qualname__', 'K'), ('__static_attributes__', ()), ('a', 1), ('b', 11)])
+exec of a string => [('compile', (b'a = 1', '<string>')), ('exec', ('code',))]
+eval of a string => [('compile', (b'1', '<string>')), ('exec', ('code',))]
+eval of bytes => [('compile', (b'2', '<string>')), ('exec', ('code',))]
+compile => [('compile', (b'\xc3\xa9', 'file.py'))]
+exec of code => [('compile', (b'1', 'f')), ('exec', ('code',))]
+bad source => [('compile', (b'(', '<string>'))]
+id => ['builtins.id']
+_getframe => [('sys._getframe', ('frame',))]
+__code__ => [('object.__getattr__', ('function', '__code__'))]
+refused => ("RuntimeError: no compile of b'1'", 'RuntimeError: no exec', "RuntimeError: no compile of b'2'")
+taken from as a dict => ({'a': 1}, {'a': 1}, {'a': 1}, {'a': 1}, {'a': 1}, {'a': 1})
+gone through its own way => ({'k': 'item k'}, {'k': 'item k'}, {'k': 'item k'}, {'k': 'item k'}, {'k': 'item k'})
+|= takes what update() does => ({'a': 1}, {'z': 0, 'a': 1}, {'k': 'item k'}, {'b': 2}, "TypeError: 'int' object is not iterable", 'TypeError: object is not iterable', "TypeError: unsupported operand type(s) for |: 'dict' and 'list'", "TypeError: unsupported operand type(s) for |: 'list' and 'dict'", {'c': 3}, NotImplemented)
+update note => (('TypeError', 'object is not iterable', ['Cannot convert dictionary update sequence element #0 to a sequence']), ('TypeError', 'object is not iterable', ['Cannot convert dictionary update sequence element #1 to a sequence']), ('ValueError', 'dictionary update sequence element #0 has length 3; 2 is required', None), ('TypeError', "'int' object is not iterable", None))
+__set_name__ note => ('ValueError', 'no attr', ["Error calling __set_name__ on 'BadName' instance 'attr' in 'Owner'"])

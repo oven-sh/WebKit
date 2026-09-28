@@ -77,6 +77,22 @@ void initializeTemplateStrings(JSGlobalObject*);
 void initializeProperty(JSGlobalObject*);
 void initializeReduce(JSGlobalObject*);
 void initializeStructSequences(JSGlobalObject*);
+// PySys_Audit(): tells the hooks of sys.addaudithook(), if there are any, that something is about to be done. False if one of them raised, and then it is not done.
+template<typename... Arguments>
+inline bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments... arguments)
+{
+    if (!globalObject->pyRealm()->auditHooks()) [[likely]]
+        return true;
+    MarkedArgumentBuffer buffer;
+    (buffer.append(arguments), ...);
+    return auditSlow(globalObject, event, buffer);
+}
+
+// Whether what is in it can be taken straight out of it: it is a dict, of a class that may be derived from dict but goes through it as dict does. As in dict_merge(), a
+// __getitem__() or a keys() of its own is not asked.
+bool isGoneThroughAsDict(JSGlobalObject*, JSValue);
+void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
+
 // Code objects: PythonCode.cpp
 FunctionExecutable* executableOfCode(JSValue code);
 const FunctionInfo& infoOfExecutable(FunctionExecutable*);

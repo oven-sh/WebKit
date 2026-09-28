@@ -100,6 +100,7 @@ public:
 
     PyFrame* back(VM&);
     unsigned line(VM&);
+    JSValue namespaceArgument(VM&, CallFrame*);
     // Where it has got to in the bytecode. Nothing if it has not started.
     std::optional<BytecodeIndex> bytecodeIndex(VM&);
 

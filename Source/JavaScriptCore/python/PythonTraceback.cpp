@@ -292,7 +292,10 @@ PYTHON_NATIVE(sysGetFrame)
         frame = callerOf(frame);
     if (!frame)
         return JSValue::encode(raiseValueError(globalObject, scope, "call stack is not deep enough"_s));
-    return JSValue::encode(PyFrame::forCallFrame(vm, frame));
+    PyFrame* result = PyFrame::forCallFrame(vm, frame);
+    if (!audit(globalObject, "sys._getframe"_s, result))
+        return { };
+    return JSValue::encode(result);
 }
 
 // ---- _frame: what FrameLocalsProxy, which is written in Python, is written in terms of

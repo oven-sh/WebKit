@@ -356,18 +356,24 @@ PYTHON_NATIVE(dictNew)
     return JSValue::encode(PyDict::create(vm, asType(args.at(0))->instanceStructure()));
 }
 
-// What dict(source, **keywords) and dict.update(source, **keywords) do.
-static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeArguments& args, ASCIILiteral method)
+bool isGoneThroughAsDict(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!isDict(value))
+        return false;
+    PyRealm* realm = globalObject->pyRealm();
+    if (value.asCell()->structure() == realm->structureFor(BuiltinType::Dict)) [[likely]]
+        return true;
+    VM& vm = globalObject->vm();
+    return typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) == realm->typeDict()->lookup(vm, vm.pythonNames().dunder_iter);
+}
+
+// dict_update_arg(): from a mapping, or from what gives pairs.
+void updateDictFrom(JSGlobalObject* globalObject, PyDict* dict, JSValue source)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (args.size() > 2) {
-        raiseTypeError(globalObject, scope, makeString(method, " expected at most 1 argument, got "_s, args.size() - 1));
-        return;
-    }
-    if (args.size() == 2) {
-        JSValue source = args[1];
-        if (isDict(source) && !typeOf(globalObject, source)->hasFlag(PyType::IsHeapType)) {
+    {
+        if (isGoneThroughAsDict(globalObject, source)) {
             asDict(source)->forEach(globalObject, [&] (JSValue key, JSValue value) {
                 return dict->set(globalObject, key, value);
             });
@@ -395,8 +401,10 @@ static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeA
                     MarkedArgumentBuffer parts;
                     collect(globalObject, pair, parts);
                     if (scope.exception()) {
-                        if (catchException(globalObject, BuiltinType::TypeError))
-                            raiseTypeError(globalObject, scope, makeString("cannot convert dictionary update sequence element #"_s, position, " to a sequence"_s));
+                        if (catchException(globalObject, BuiltinType::TypeError)) {
+                            raiseTypeError(globalObject, scope, "object is not iterable"_s);
+                            addNoteToRaised(globalObject, makeString("Cannot convert dictionary update sequence element #"_s, position, " to a sequence"_s));
+                        }
                         return false;
                     }
                     if (parts.size() != 2) {
@@ -409,6 +417,21 @@ static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeA
                 RETURN_IF_EXCEPTION(scope, void());
             }
         }
+    }
+}
+
+// What dict(source, **keywords) and dict.update(source, **keywords) do.
+static void updateDict(JSGlobalObject* globalObject, PyDict* dict, const NativeArguments& args, ASCIILiteral method)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (args.size() > 2) {
+        raiseTypeError(globalObject, scope, makeString(method, " expected at most 1 argument, got "_s, args.size() - 1));
+        return;
+    }
+    if (args.size() == 2) {
+        updateDictFrom(globalObject, dict, args[1]);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         dict->set(globalObject, args.keywordName(i), args.keywordValue(i));

@@ -189,15 +189,14 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
     case BinaryOperator::Sub:
         if (isSet(left) && isSet(right))
             RELEASE_AND_RETURN(scope, setOperation(globalObject, op, inPlace, uncheckedDowncast<PySet>(left.asCell()), uncheckedDowncast<PySet>(right.asCell())));
-        if (op == BinaryOperator::BitOr && isDict(left) && isDict(right)) {
+        // d |= x takes whatever d.update(x) does.
+        if (op == BinaryOperator::BitOr && isDict(left) && (inPlace || isDict(right))) {
             auto* result = uncheckedDowncast<PyDict>(left.asCell());
             if (!inPlace) {
                 result = PyDict::create(globalObject);
                 result->copyFrom(globalObject, *asDict(left));
             }
-            asDict(right)->forEach(globalObject, [&] (JSValue key, JSValue value) {
-                return result->set(globalObject, key, value);
-            });
+            updateDictFrom(globalObject, result, right);
             RETURN_IF_EXCEPTION(scope, { });
             return result;
         }

@@ -61,9 +61,10 @@ static JSValue lookUpInNamespace(JSGlobalObject* globalObject, JSValue namespace
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isDict(namespaceValue))
+    // A class derived from dict can have a __getitem__() of its own.
+    if (isDict(namespaceValue) && namespaceValue.asCell()->structure() == globalObject->pyRealm()->structureFor(BuiltinType::Dict))
         RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(namespaceValue.asCell())->get(globalObject, name));
-    // What __prepare__ gave can be any mapping.
+    // What __prepare__ gave, or exec() was given, can be any mapping.
     JSValue value = getItem(globalObject, namespaceValue, name);
     if (scope.exception()) {
         catchException(globalObject, BuiltinType::KeyError);
@@ -320,7 +321,7 @@ static bool forEachItem(JSGlobalObject* globalObject, JSValue mapping, const Fun
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isDict(mapping) && !typeOf(globalObject, mapping)->hasFlag(PyType::IsHeapType)) {
+    if (isGoneThroughAsDict(globalObject, mapping)) {
         asDict(mapping)->forEach(globalObject, [&] (JSValue key, JSValue value) {
             function(key, value);
             return !scope.exception();

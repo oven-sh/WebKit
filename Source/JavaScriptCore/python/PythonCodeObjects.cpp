@@ -162,6 +162,8 @@ static JSValue getFunctionCode(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
     JSFunction* function = asFunction(self);
+    if (!audit(globalObject, "object.__getattr__"_s, function, jsNontrivialString(vm, "__code__"_s)))
+        return { };
     auto& name = vm.pythonNames().private_code;
     if (JSValue code = function->getDirect(vm, name))
         return code;
@@ -241,12 +243,8 @@ PYTHON_NATIVE(functionNew)
         if (!isCell(globalObject, asTuple(closure)->at(i)))
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("arg 5 (closure) expected cell, found "_s, typeName(globalObject, asTuple(closure)->at(i)))));
     }
-    if (realm->auditHooks()) {
-        MarkedArgumentBuffer audited;
-        audited.append(code);
-        auditSlow(globalObject, "function.__new__"_s, audited);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    if (!audit(globalObject, "function.__new__"_s, code))
+        return { };
 
     JSScope* environment = environmentForGlobals(globalObject, namespaceOf(globalObject, asDict(globals)));
     if (given)
@@ -274,14 +272,8 @@ static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseTypeError(globalObject, scope, "__code__ must be set to a code object"_s);
         return;
     }
-    if (globalObject->pyRealm()->auditHooks()) {
-        MarkedArgumentBuffer audited;
-        audited.append(function);
-        audited.append(jsNontrivialString(vm, "__code__"_s));
-        audited.append(value);
-        auditSlow(globalObject, "object.__setattr__"_s, audited);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    if (!audit(globalObject, "object.__setattr__"_s, function, jsNontrivialString(vm, "__code__"_s), value))
+        return;
     JSValue closure = getFunctionClosure(globalObject, function);
     unsigned has = isNone(closure) ? 0 : asTuple(closure)->length();
     auto freeVariables = sortedFreeVariables(infoOfExecutable(executableOfCode(value)));
@@ -427,6 +419,7 @@ PYTHON_NATIVE(builtinGlobals)
 // The source that compile(), exec() and eval() are given, which may be a str or bytes. Null if it raised.
 static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSValue source, const String& filename, ASCIILiteral function)
 {
+    VM& vm = globalObject->vm();
     // eval() does not mind what it is given being indented.
     bool skipsBlanks = function == "eval"_s;
     auto isBlank = [] (auto c) { return c == ' ' || c == '\t'; };
@@ -439,13 +432,23 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
         unsigned start = 0;
         while (skipsBlanks && start < text.length() && isBlank(text[start]))
             ++start;
+        if (globalObject->pyRealm()->auditHooks()) {
+            auto encoded = encodeString(globalObject, jsString(vm, text.substring(start)), "utf-8"_s, "surrogatepass"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!audit(globalObject, "compile"_s, newBytes(globalObject, encoded->span()), jsString(vm, filename)))
+                return { };
+        }
         return makeSource(text.substring(start), SourceOrigin(), filename);
     }
     if (auto buffer = tryBufferOf(globalObject, source)) {
         size_t start = 0;
         while (skipsBlanks && start < buffer->size() && isBlank((*buffer)[start]))
             ++start;
-        RELEASE_AND_RETURN(scope, makeSource(globalObject, buffer->subspan(start), SourceOrigin(), filename));
+        // What a hook does could change what is in it.
+        ByteVector bytes(buffer->subspan(start));
+        if (!audit(globalObject, "compile"_s, newBytes(globalObject, bytes.span()), jsString(vm, filename)))
+            return { };
+        RELEASE_AND_RETURN(scope, makeSource(globalObject, bytes.span(), SourceOrigin(), filename));
     }
     RETURN_IF_EXCEPTION(scope, { });
     raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
@@ -538,49 +541,88 @@ PYTHON_NATIVE(builtinExecOrEval)
     bool isEval = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
     ASCIILiteral function = isEval ? "eval"_s : "exec"_s;
-    if (!args.size() || args.size() > 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, args.size() ? makeString(function, "() takes at most 3 arguments ("_s, args.size(), " given)"_s) : makeString(function, "() takes at least 1 positional argument (0 given)"_s)));
+    JSValue source = args.at(0);
     JSValue globalsValue = args.at(1);
     JSValue localsValue = args.at(2);
+    JSValue closure = isEval ? JSValue() : args.at(3);
     bool hasGlobals = globalsValue && !isNone(globalsValue);
     bool hasLocals = localsValue && !isNone(localsValue);
+    bool hasClosure = closure && !isNone(closure);
+    // PyMapping_Check()
+    auto isMapping = [&] (JSValue value) { return !!typeOf(globalObject, value)->lookup(vm, names.dunder_getitem) && !isList(value) && !isTuple(value) && !value.isString() && !builtinBufferOf(value); };
+    auto hasItems = [&] (JSValue value) { return !!typeOf(globalObject, value)->lookup(vm, names.dunder_getitem); };
 
-    if (hasGlobals && !isDict(globalsValue)) {
-        if (!isEval)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("exec() globals must be a dict, not "_s, typeName(globalObject, globalsValue))));
-        bool isMapping = typeOf(globalObject, globalsValue)->lookup(vm, names.dunder_getitem) && !isList(globalsValue) && !isTuple(globalsValue) && !globalsValue.isString();
-        return JSValue::encode(raiseTypeError(globalObject, scope, isMapping ? "globals must be a real dict; try eval(expr, {}, mapping)"_s : "globals must be a dict"_s));
+    if (isEval) {
+        if (hasLocals && !hasItems(localsValue))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "locals must be a mapping"_s));
+        if (hasGlobals && !isDict(globalsValue))
+            return JSValue::encode(raiseTypeError(globalObject, scope, hasItems(globalsValue) ? "globals must be a real dict; try eval(expr, {}, mapping)"_s : "globals must be a dict"_s));
     }
-    if (hasLocals && !typeOf(globalObject, localsValue)->lookup(vm, names.dunder_getitem))
-        return JSValue::encode(raiseTypeError(globalObject, scope, isEval ? "locals must be a mapping"_str : makeString("exec() locals must be a mapping or None, not "_s, typeName(globalObject, localsValue))));
+    UNUSED_VARIABLE(isMapping);
 
     // What is not given is the caller's.
-    JSObject* globals;
-    if (hasGlobals) {
-        globals = namespaceOf(globalObject, asDict(globalsValue));
-        if (!hasLocals)
-            localsValue = globalsValue;
-    } else {
-        CallFrame* caller = callerOf(callFrame);
-        globals = globalsOfFrame(globalObject, caller);
+    CallFrame* caller = hasGlobals ? nullptr : callerOf(callFrame);
+    JSObject* globals = nullptr;
+    if (!hasGlobals) {
+        globals = caller ? globalsOfFrame(globalObject, caller) : nullptr;
         if (!globals)
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "globals and locals cannot be NULL"_s));
-        if (!hasLocals)
-            localsValue = localsOfFrame(globalObject, caller);
+            return JSValue::encode(isEval ? raiseTypeError(globalObject, scope, "eval must be given globals and locals when called without a frame"_s) : raise(globalObject, scope, BuiltinType::SystemError, "globals and locals cannot be NULL"_s));
+    }
+    if (!hasLocals) {
+        localsValue = hasGlobals ? globalsValue : localsOfFrame(globalObject, caller);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!isEval) {
+        if (hasGlobals && !isDict(globalsValue))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("exec() globals must be a dict, not "_s, typeName(globalObject, globalsValue))));
+        if (!hasItems(localsValue))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("locals must be a mapping or None, not "_s, typeName(globalObject, localsValue))));
+    }
+    if (hasGlobals)
+        globals = namespaceOf(globalObject, asDict(globalsValue));
+
+    JSValue code = source;
+    if (isCode(globalObject, source)) {
+        unsigned freeVariableCount = infoOfExecutable(executableOfCode(source)).freeVariables.size();
+        if (isEval) {
+            if (!audit(globalObject, "exec"_s, source))
+                return { };
+            if (freeVariableCount)
+                return JSValue::encode(raiseTypeError(globalObject, scope, "code object passed to eval() may not contain free variables"_s));
+        } else {
+            if (!freeVariableCount && hasClosure)
+                return JSValue::encode(raiseTypeError(globalObject, scope, "cannot use a closure with this code object"_s));
+            if (freeVariableCount) {
+                bool isRight = hasClosure && isTuple(closure) && typeOf(globalObject, closure) == realm->typeTuple() && asTuple(closure)->length() == freeVariableCount;
+                for (unsigned i = 0; isRight && i < freeVariableCount; ++i)
+                    isRight = isCell(globalObject, asTuple(closure)->at(i));
+                if (!isRight)
+                    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code object requires a closure of exactly length "_s, freeVariableCount)));
+            }
+            if (!audit(globalObject, "exec"_s, source))
+                return { };
+        }
+    } else {
+        if (hasClosure)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "closure can only be used when source is a code object"_s));
+        SourceCode text = sourceOf(globalObject, scope, source, "<string>"_s, function);
+        RETURN_IF_EXCEPTION(scope, { });
+        FunctionExecutable* compiled = compileSource(globalObject, text, isEval ? CodeKind::Expression : CodeKind::Module, true, futureFeaturesOfCaller(callFrame) & FutureFeaturesMask);
+        RETURN_IF_EXCEPTION(scope, { });
+        code = codeObjectFor(globalObject, compiled);
+        if (!audit(globalObject, "exec"_s, code))
+            return { };
     }
 
-    FunctionExecutable* executable;
-    if (isCode(globalObject, args[0])) {
-        executable = executableOfCode(args[0]);
-        if (!infoOfExecutable(executable).usesNamespace || infoOfExecutable(executable).kind == CodeKind::Class)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code object passed to "_s, function, "() may not contain free variables"_s)));
-    } else {
-        SourceCode source = sourceOf(globalObject, scope, args[0], "<string>"_s, function);
-        RETURN_IF_EXCEPTION(scope, { });
-        executable = compileSource(globalObject, source, isEval ? CodeKind::Expression : CodeKind::Module, true, futureFeaturesOfCaller(callFrame));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    JSValue result = call(globalObject, bindToGlobals(globalObject, executable, globals), localsValue);
+    // What compile() makes is in nothing but its globals wherever it is run. Anything else was compiled to be in what it was written in, and is compiled again to be here.
+    FunctionExecutable* executable = executableOfCode(code);
+    const FunctionInfo& info = infoOfExecutable(executable);
+    bool isWhatCompileMakes = info.kind == CodeKind::Module || info.kind == CodeKind::Expression || info.kind == CodeKind::Interactive;
+    JSScope* environment = environmentForGlobals(globalObject, globals);
+    if (hasClosure)
+        environment = environmentForCells(globalObject, environment, sortedFreeVariables(info), asTuple(closure));
+    JSFunction* toRun = JSFunction::create(vm, globalObject, isWhatCompileMakes ? executable : executableTakingCells(globalObject, code), environment);
+    JSValue result = info.usesNamespace ? call(globalObject, toRun, localsValue) : call(globalObject, toRun);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(isEval ? result : jsUndefined());
 }

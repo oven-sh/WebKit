@@ -250,9 +250,11 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         block = block->annotationBlock;
     if (!block)
         return disagrees();
-    // Only a function is a generator or a coroutine. A `yield` where there is no function is found when it is come to, and said to be that.
+    // Only a function is a generator or a coroutine, and a module that has been allowed an `await`. A `yield` where there is no function is found when it is come to, and
+    // said to be that.
     bool isFunctionLike = block->isFunctionLike();
-    if (info->isGenerator != (isFunctionLike && block->isGenerator) || info->isCoroutine != (isFunctionLike && block->isCoroutine))
+    bool canAwait = isFunctionLike || (block->type == BlockType::Module && (info->futureFeatures & AllowTopLevelAwait));
+    if (info->isGenerator != (isFunctionLike && block->isGenerator) || info->isCoroutine != (canAwait && block->isCoroutine))
         return disagrees();
 
     executable->recordParse(NoFeatures, StrictModeLexicallyScopedFeature, false);
@@ -526,6 +528,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
 
     unsigned futureFeatures = inheritedFutureFeatures;
     bool hasDocstring = false;
+    bool isCoroutine = false;
     {
         Arena arena;
         arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
@@ -543,6 +546,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         }
         futureFeatures = table->futureFeatures();
         hasDocstring = table->blockFor(module)->hasDocstring;
+        isCoroutine = table->blockFor(module)->isCoroutine;
     }
 
     auto info = adoptRef(*new FunctionInfo);
@@ -551,6 +555,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     info->optimizationLevel = optimizationLevel;
     info->visibility = visibility;
     info->hasDocstring = hasDocstring && optimizationLevel < 2;
+    info->isCoroutine = isCoroutine;
     info->name = Identifier::fromString(vm, "<module>"_s);
     info->qualifiedName = "<module>"_s;
     if (usesNamespace) {

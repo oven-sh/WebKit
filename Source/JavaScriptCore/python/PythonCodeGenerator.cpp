@@ -3718,9 +3718,23 @@ private:
 
     void generateModule(Module& module)
     {
+        // With an `await` in it that is in no function, which compile() can be told to allow, running it makes a coroutine.
+        if (m_info.isCoroutine) {
+            generateFunction([&] {
+                if (m_info.usesNamespace)
+                    m_namespace = emitLoadClosure(nullptr, m_info.parameterNames[0], m_block.location);
+                emitModuleBody(module);
+            });
+            return;
+        }
         if (m_info.usesNamespace)
             m_namespace = parameterRegister(0);
         emitLoadGlobals();
+        emitModuleBody(module);
+    }
+
+    void emitModuleBody(Module& module)
+    {
         if (module.kind == Module::Kind::Expression) {
             Reg value = emit(module.expression);
             g.emitReturn(value.get());
