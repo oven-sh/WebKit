@@ -612,6 +612,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
 #if OS(DARWIN)
     if (getenv("BUN_STATIC_HEAP_AUDIT")) [[unlikely]]
         reportWhatMayPointOut();
+    Region::dumpMallocAudit(); // TEMPORARY-MALLOC-AUDIT
 #endif
 
     // Cells are as they would be in the VM that is going to have them, after a collection that found them.
@@ -651,6 +652,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         });
     }
 
+    Region::forgetWhatIsFree();
     Vector<uint8_t> image;
     if (ok) {
         size_t size = pageSizeOfImage;

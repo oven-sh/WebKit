@@ -533,8 +533,9 @@ static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, ui
         return AtomStringImpl::add(characters).releaseNonNull();
 #endif
     // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
+    // (In a static heap all do: the blob is in it, so a copy is the same characters in the same file a second time.)
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
-    if (characters.size() >= 48) {
+    if (characters.size() >= 48 || StaticHeap::isBuilding()) {
 #if USE(BUN_JSC_ADDITIONS)
         return AtomStringImpl::addWithoutCopying(hashed); // probes with the stored hash; allocates (a header only) just for a new atom
 #else
@@ -786,6 +787,9 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     // The impl's bytes belong to the table (or the executable), not the GC heap.
     JSString* string = JSString::createHasOtherOwner(vm, value.releaseNonNull());
     slot = std::bit_cast<uintptr_t>(string) | cellTag;
+    // (Which are cells is for the collector to know, which has nothing to do with those of a static heap.)
+    if (StaticHeap::isBuilding())
+        return string;
     Locker locker { m_cellsLock };
     m_cellOrdinals.append(ordinal);
     return string;
