@@ -712,6 +712,18 @@ bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode&
     // Out of the JIT's memory, which goes back to the JIT.
     result.info = jitCode->info();
     result.bytes.append(std::span { static_cast<const uint8_t*>(jitCode->dataAddressAtOffset(0)), jitCode->size() });
+#if CPU(ARM64)
+    // What the JIT's allocator rounds a size up with.
+    constexpr uint32_t breakpoint = 0xd4200000;
+    while (result.bytes.size() > sizeof(CodeHeader) + sizeof(uint32_t)) {
+        uint32_t last;
+        memcpy(&last, result.bytes.span().data() + result.bytes.size() - sizeof(last), sizeof(last));
+        if (last != breakpoint)
+            break;
+        result.bytes.shrink(result.bytes.size() - sizeof(last));
+    }
+    result.info.codeSize = result.bytes.size();
+#endif
     return true;
 }
 

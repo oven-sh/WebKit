@@ -425,7 +425,15 @@ bool Lowering::tryLowerMisc(Node* node)
 
         m_out.appendTo(slowPath, continuation);
         vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, jsValue, m_out.constInt32(mask));
-        m_out.jump(continuation);
+        // Where the tests leave nothing open, what gets here is not coming back: and then nothing has to be kept for when it does,
+        // which is what would have everything that is in use in a register that has to be saved.
+        Type admitted = value->type & typeAdmittedByMask(mask);
+        Type candidates = value->type & typeProvingMask(mask);
+        bool everyObjectPasses = isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject);
+        if (isSubtype(admitted, everyObjectPasses ? TPrimitive | TAnyObject : TPrimitive) && isSubtype(admitted, candidates))
+            m_out.unreachable();
+        else
+            m_out.jump(continuation);
 
         m_out.appendTo(continuation);
         setJSValue(node, jsValue);
