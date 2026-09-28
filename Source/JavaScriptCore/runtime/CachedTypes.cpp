@@ -5907,13 +5907,75 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
+        // Every store there is to a variable of a module is in the module.
+        for (auto& function : functionsToCompile) {
+            if (!hints[function.module])
+                continue;
+            if (function.forCall)
+                hints[function.module]->noteStoresIn(function.forCall);
+            if (function.forConstruct)
+                hints[function.module]->noteStoresIn(function.forConstruct);
+        }
+        unsigned variables = 0;
+        unsigned proven = 0;
+        for (auto& hintsOfModule : hints) {
+            if (!hintsOfModule)
+                continue;
+            hintsOfModule->prove();
+            variables += hintsOfModule->numberOfVariables();
+            proven += hintsOfModule->numberProven();
+        }
+        UncheckedKeyHashSet<UnlinkedCodeBlock*> calledDirectly;
+        for (auto& hintsOfModule : hints) {
+            if (!hintsOfModule)
+                continue;
+            hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                if (function.forCall)
+                    calledDirectly.add(function.forCall);
+                if (function.forConstruct)
+                    calledDirectly.add(function.forConstruct);
+            });
+        }
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that hold one or are stored to");
+
         auto linkages = linkModules(hints);
         AOT::ImageBuilder builder;
         std::atomic<size_t> next { 0 };
+        // TEMPORARY-PROVABILITY-STATS: whose code each function is, by the comment the bundler puts in front of each file's.
+        Vector<Vector<std::pair<unsigned, ASCIILiteral>>> origins(modules.size());
+        if (Options::aotReportStats()) [[unlikely]] {
+            for (unsigned index = 0; index < modules.size(); ++index) {
+                StringView text = modules[index].source.provider()->source();
+                for (size_t at = text.find("\n// "_s); at != notFound; at = text.find("\n// "_s, at + 1)) {
+                    size_t end = text.find('\n', at + 1);
+                    if (end == notFound)
+                        break;
+                    StringView path = text.substring(at + 4, end - at - 4);
+                    if (path.contains(' ') || !(path.endsWith(".ts"_s) || path.endsWith(".tsx"_s) || path.endsWith(".js"_s) || path.endsWith(".mjs"_s) || path.endsWith(".cjs"_s) || path.endsWith(".jsx"_s)))
+                        continue;
+                    bool isTypeScript = path.endsWith(".ts"_s) || path.endsWith(".tsx"_s);
+                    origins[index].append({ static_cast<unsigned>(at), path.contains("node_modules"_s) ? (isTypeScript ? "dep-ts"_s : "dep-js"_s) : (isTypeScript ? "own-ts"_s : "own-js"_s) });
+                }
+            }
+        }
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
+                if (Options::aotReportStats()) [[unlikely]] {
+                    ASCIILiteral origin = "unknown"_s;
+                    if (!(jobs[index].rank & 2))
+                        origin = "module-body"_s;
+                    else {
+                        for (auto& [offset, name] : origins[jobs[index].module]) {
+                            if (offset > jobs[index].key.start)
+                                break;
+                            origin = name;
+                        }
+                    }
+                    AOT::setOriginForStatistics(origin);
+                }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get()))
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock)))
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
             }
         };

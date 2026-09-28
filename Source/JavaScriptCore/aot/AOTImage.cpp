@@ -141,6 +141,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.codeSize = function.code.bytes.size();
         record.entryOffset = info.entryOffset;
         record.arityCheckOffset = info.arityCheckOffset;
+        record.directEntryOffset = info.directEntryOffset;
         record.frameSizeInBytes = info.frameSizeInBytes;
         record.numSlots = info.numSlots;
         record.bytecodeHash = info.bytecodeHash;
@@ -211,7 +212,9 @@ Vector<uint8_t> ImageBuilder::finish()
                     continue;
                 size_t target = functionInBucket[bucket];
                 auto& targetInfo = m_functions[target].code.info;
-                size_t targetAt = placement[target].first + (call.skipsArityCheck ? targetInfo.entryOffset : targetInfo.arityCheckOffset);
+                if (call.isDirect && !targetInfo.directEntryOffset)
+                    break;
+                size_t targetAt = placement[target].first + (call.isDirect ? targetInfo.directEntryOffset : call.skipsArityCheck ? targetInfo.entryOffset : targetInfo.arityCheckOffset);
                 size_t from = codeAt + call.offset;
                 if ((from > targetAt ? from - targetAt : targetAt - from) <= reachOfStubCall)
                     retargetStubCall(code, from, targetAt, false);

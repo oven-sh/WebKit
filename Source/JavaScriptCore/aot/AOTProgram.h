@@ -29,6 +29,9 @@ struct KnownFunction {
     UnlinkedFunctionCodeBlock* forCall { nullptr }; // Either may be missing.
     UnlinkedFunctionCodeBlock* forConstruct { nullptr };
     ImageKey key; // Of the code for a call. That for construction is the same but for the bit that says so.
+    // The variable it was found in holds a closure of it from when it is initialized, and never anything else: see
+    // ModuleHints::prove(). Then a call of what is read from that variable needs no check that this is the callee.
+    bool isProven { false };
 
     ImageKey keyFor(bool isConstruct) const
     {
@@ -63,12 +66,29 @@ public:
 
     const KnownFunction* find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const final;
 
+    // What is a hint until the whole of the module has been looked at. Nobody but the module's own code can store to its variables.
+    void noteStoresIn(UnlinkedCodeBlock* functionOfModule); // Every function there is in the module, however deep.
+    void prove(); // After that.
+    unsigned numberOfVariables() const { return m_variables.size(); }
+    unsigned numberProven() const;
+    template<typename Functor> void forEachProven(const Functor& functor) const
+    {
+        for (auto& entry : m_variables) {
+            if (entry.value.function.isProven)
+                functor(entry.value.function);
+        }
+    }
+
 private:
     struct Variable {
         unsigned scopeOffset { 0 };
         bool isAmbiguous { false };
+        bool isInitializedInPlainSight { false }; // Declared as a function, or stored once, with a function made just before, in a straight line.
+        bool isStoredToOtherwise { false };
         KnownFunction function;
     };
+    void noteStore(UniquedStringImpl*);
+    bool m_hasEval { false };
     void add(UniquedStringImpl*, unsigned scopeOffset, UnlinkedFunctionExecutable*, const Describe&);
 
     UncheckedKeyHashMap<UniquedStringImpl*, Variable> m_variables;

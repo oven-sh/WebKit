@@ -220,6 +220,7 @@ struct StubCall {
     // A call that is better made straight to a function, if the function's code ends up within reach: which of the caller's known
     // callees (CompiledFunctionInfo::knownCallees). The stub does the same thing the long way.
     bool skipsArityCheck { false };
+    bool isDirect { false }; // To CompiledFunctionInfo::directEntryOffset: nobody has seen to it that the function has been called before.
     uint32_t function { noFunction };
 };
 
@@ -239,12 +240,14 @@ class HeaderReferences {
 public:
     // What a frame of the function has for a callee: CalleeBits::boxNativeCallee() of the header.
     void moveBoxedHeader(CCallHelpers&, GPRReg);
+    void loadIndex(CCallHelpers&, GPRReg); // CodeHeader::index
     void link(LinkBuffer&, CCallHelpers::Label header);
 
 private:
     struct Reference {
         CCallHelpers::Label instruction;
         GPRReg reg;
+        bool isLoadOfIndex;
     };
     Vector<Reference, 4> m_references;
 };
@@ -254,7 +257,7 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub);
-    void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck);
+    void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false);
     // Links them to the copy in the JIT's memory, and says where they are.
     Vector<StubCall> link(LinkBuffer&);
 
@@ -264,6 +267,7 @@ private:
         Stub stub;
         bool isTailCall;
         bool skipsArityCheck { false };
+        bool isDirect { false };
         uint32_t function { StubCall::noFunction };
     };
     Vector<Pending, 8> m_pending;

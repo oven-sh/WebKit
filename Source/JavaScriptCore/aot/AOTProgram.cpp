@@ -10,10 +10,13 @@
 
 #include "AOTImage.h"
 #include "BytecodeStructs.h"
+#include "BytecodeUseDef.h"
 #include "JSCInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
+#include "PreciseJumpTargets.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
@@ -78,17 +81,33 @@ ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, const Describe& describe)
             for (unsigned i = 0; i < slots->size() && i < module->numberOfFunctionDecls(); ++i) {
                 UnlinkedFunctionExecutable* executable = module->functionDecl(i);
                 add(executable->name().impl(), slots->at(i).offset(), executable, describe);
+                m_variables.find(executable->name().impl())->value.isInitializedInPlainSight = true;
             }
         }
     }
 
     // const f = function () { }, const g = () => { }, class C { }: a function is made and, sooner or later, put in a variable.
-    UncheckedKeyHashMap<int, unsigned, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> functionInRegister;
+    using Registers = UncheckedKeyHashMap<int, unsigned, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>>;
+    Registers functionInRegister; // Probably.
+    Registers functionCertainlyInRegister; // Nothing else has been written there since, and there is no other way to get here.
+    Vector<JSInstructionStream::Offset, 32> jumpTargets;
+    computePreciseJumpTargets(codeBlock, jumpTargets);
+    unsigned nextJumpTarget = 0;
     for (const auto& instruction : codeBlock->instructions()) {
-        switch (instruction->opcodeID()) {
+        while (nextJumpTarget < jumpTargets.size() && jumpTargets[nextJumpTarget] < instruction.offset())
+            ++nextJumpTarget;
+        if (nextJumpTarget < jumpTargets.size() && jumpTargets[nextJumpTarget] == instruction.offset())
+            functionCertainlyInRegister.clear();
+
+        OpcodeID opcode = instruction->opcodeID();
+        if (opcode == op_call_direct_eval)
+            m_hasEval = true;
+        std::optional<std::pair<int, unsigned>> certain;
+        switch (opcode) {
         case op_new_func_exp: {
             auto bytecode = instruction->as<OpNewFuncExp>();
             functionInRegister.set(bytecode.m_dst.offset(), bytecode.m_functionDecl);
+            certain = { bytecode.m_dst.offset(), bytecode.m_functionDecl };
             break;
         }
         case op_mov: {
@@ -99,24 +118,103 @@ ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, const Describe& describe)
                 functionInRegister.set(bytecode.m_dst.offset(), function);
             } else
                 functionInRegister.remove(bytecode.m_dst.offset());
+            if (auto known = functionCertainlyInRegister.find(bytecode.m_src.offset()); known != functionCertainlyInRegister.end())
+                certain = { bytecode.m_dst.offset(), known->value };
             break;
         }
         case op_put_to_scope: {
             auto bytecode = instruction->as<OpPutToScope>();
-            if (bytecode.m_getPutInfo.resolveType() != ResolvedClosureVar)
-                break;
             UniquedStringImpl* name = codeBlock->identifier(bytecode.m_var).impl();
+            if (bytecode.m_getPutInfo.resolveType() != ResolvedClosureVar) {
+                noteStore(name);
+                break;
+            }
             auto it = functionInRegister.find(bytecode.m_value.offset());
-            if (it != functionInRegister.end() && it->value < codeBlock->numberOfFunctionExprs())
+            bool isNew = !m_variables.contains(name);
+            if (it != functionInRegister.end() && it->value < codeBlock->numberOfFunctionExprs()) {
                 add(name, bytecode.m_offset, codeBlock->functionExpr(it->value), describe);
-            else if (auto variable = m_variables.find(name); variable != m_variables.end() && variable->value.scopeOffset == bytecode.m_offset)
-                variable->value.isAmbiguous = true;
+                auto known = functionCertainlyInRegister.find(bytecode.m_value.offset());
+                if (isNew && known != functionCertainlyInRegister.end() && known->value == it->value)
+                    m_variables.find(name)->value.isInitializedInPlainSight = true;
+                else
+                    noteStore(name);
+            } else {
+                if (auto variable = m_variables.find(name); variable != m_variables.end() && variable->value.scopeOffset == bytecode.m_offset)
+                    variable->value.isAmbiguous = true;
+                noteStore(name);
+            }
             break;
         }
         default:
             break;
         }
+
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+            computeDefsForBytecodeIndexImpl(codeBlock->numVars(), instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                functionCertainlyInRegister.remove(reg.offset());
+            });
+        }
+        if (certain)
+            functionCertainlyInRegister.set(certain->first, certain->second);
+        if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode))
+            functionCertainlyInRegister.clear();
     }
+}
+
+// A store that comes before the variable is known to be one of these is remembered all the same.
+void ModuleHints::noteStore(UniquedStringImpl* name)
+{
+    auto result = m_variables.add(name, Variable { });
+    if (result.isNewEntry)
+        result.iterator->value.isAmbiguous = true;
+    result.iterator->value.isStoredToOtherwise = true;
+}
+
+void ModuleHints::noteStoresIn(UnlinkedCodeBlock* codeBlock)
+{
+    const DeclaredNamesLink* declaredNames = declaredNamesFor(codeBlock);
+    for (const auto& instruction : codeBlock->instructions()) {
+        if (instruction->opcodeID() == op_call_direct_eval)
+            m_hasEval = true;
+        if (instruction->opcodeID() != op_put_to_scope)
+            continue;
+        auto bytecode = instruction->as<OpPutToScope>();
+        // (It may be a variable of the function's own that has the same name. Then this errs on the safe side.)
+        UniquedStringImpl* name = codeBlock->identifier(bytecode.m_var).impl();
+        if (declaredNames) {
+            auto resolution = declaredNames->resolve(name);
+            switch (resolution.kind) {
+            case DeclaredNamesLink::Resolution::Slot:
+                if (!resolution.isInOutermostEnvironment)
+                    continue; // Something nearer has the name.
+                break;
+            case DeclaredNamesLink::Resolution::Stable: // Storing to an import throws.
+            case DeclaredNamesLink::Resolution::Global:
+                continue;
+            case DeclaredNamesLink::Resolution::Dynamic:
+                break;
+            }
+        }
+        noteStore(name);
+    }
+}
+
+void ModuleHints::prove()
+{
+    if (m_hasEval)
+        return;
+    for (auto& entry : m_variables) {
+        Variable& variable = entry.value;
+        variable.function.isProven = !variable.isAmbiguous && variable.isInitializedInPlainSight && !variable.isStoredToOtherwise;
+    }
+}
+
+unsigned ModuleHints::numberProven() const
+{
+    unsigned result = 0;
+    for (auto& entry : m_variables)
+        result += entry.value.function.isProven;
+    return result;
 }
 
 const KnownFunction* ModuleHints::find(UniquedStringImpl* name, std::optional<unsigned> scopeOffset) const

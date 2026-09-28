@@ -87,6 +87,7 @@ public:
         unsigned hops { 0 };
         unsigned offset { 0 };
         bool isLazyFunctionSlot { false };
+        bool isInOutermostEnvironment { false }; // Slot: it is a variable of the module (or the program) itself.
     };
 
     // Resolve |name| as seen from a function created at this point (i.e. starting from that function's [[Scope]]).
@@ -99,7 +100,7 @@ public:
                     return { };
                 auto it = frame->slots.find(name);
                 if (it != frame->slots.end())
-                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag) };
+                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next };
                 ++hops;
             }
             // The link that has names is a module's, and the last of its frames the module's environment.

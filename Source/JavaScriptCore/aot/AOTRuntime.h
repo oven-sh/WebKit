@@ -319,6 +319,9 @@ struct CompiledFunctionInfo {
     unsigned codeSize { 0 };
     unsigned entryOffset { 0 };
     unsigned arityCheckOffset { 0 };
+    // For a caller that knows, without looking, that this is the function it is calling: which may then be the first call there ever
+    // was, with nothing of what the function has of the realm made yet. Zero: there is no such way in.
+    unsigned directEntryOffset { 0 };
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
     unsigned bytecodeHash { 0 }; // hashOfBytecode() of what it was compiled from.
@@ -353,7 +356,7 @@ struct ImageFunction {
     uint32_t bytecodeHash;
     uint32_t numberOfKnownCallees;
     uint32_t usesStaticImports; // See Graph::usesStaticImports.
-    uint32_t unused;
+    uint32_t directEntryOffset;
 
     const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }

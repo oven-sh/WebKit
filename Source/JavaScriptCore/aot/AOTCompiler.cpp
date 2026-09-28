@@ -128,10 +128,17 @@ static void estimateFrequencies(B3::Procedure& proc)
 }
 
 // TEMPORARY-PROVABILITY-STATS: how much there is to know about the program without running it.
+static thread_local ASCIILiteral t_originForStatistics = ""_s;
+void setOriginForStatistics(ASCIILiteral origin) { t_originForStatistics = origin; }
+
 static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>& counters)
 {
     UnlinkedCodeBlock* codeBlock = graph.codeBlock();
-    auto count = [&](const String& what) { counters.add(what, 0).iterator->value++; };
+    auto count = [&](const String& what) {
+        counters.add(what, 0).iterator->value++;
+        counters.add(makeString("BY "_s, t_originForStatistics, ' ', what), 0).iterator->value++;
+    };
+    count("FUNCTIONS"_s);
     auto strip = [&](Node* node) {
         for (;;) {
             if (node->kind == NodeKind::Narrow)
@@ -323,8 +330,11 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                 continue;
             if (auto calleeRegister = calleeRegisterOf(node)) {
                 Node* callee = strip(node->use(*calleeRegister));
-                if (graph.knownCallee(node))
+                if (graph.knownCallee(node)) {
                     count("CALL known callee"_s);
+                    count(graph.calleeIsProven(node) ? "PROOF proven"_s : "PROOF only a hint"_s);
+                    count(makeString("KNOWNCALLRESULT "_s, typeName(node->type)));
+                }
                 else if (callee->isBytecode(op_get_by_id)) {
                     count("CALL method"_s);
                     count(makeString("METHODBASE "_s, origin(callee->use(callee->as<OpGetById>().m_base)), ", "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
@@ -341,7 +351,11 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                 continue;
             }
             switch (node->opcode) {
+            case op_check_type:
+                count(makeString("CHECK of "_s, origin(node->use(node->as<OpCheckType>().m_value)), " gives "_s, typeName(node->type)));
+                break;
             case op_get_by_id:
+                count(makeString("GETRESULT "_s, typeName(node->type)));
                 count(makeString("GET base is "_s, origin(node->use(node->as<OpGetById>().m_base)), ", "_s, typeName(node->use(node->as<OpGetById>().m_base)->type)));
                 break;
             case op_put_by_id:
@@ -386,7 +400,7 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
     }
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, bool hasDirectEntry = false)
 {
     Graph graph(vm, unlinkedCodeBlock, scopeChain);
     graph.setCalleeHints(hints);
@@ -491,15 +505,33 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     CCallHelpers::Label arityCheckWithStub;
     CCallHelpers::Jump arityChecked;
     CCallHelpers::Jump arityFixed;
+    CCallHelpers::Label tooFewArguments;
     if (usesStubs && checksArity) {
         // What is done about too few comes first: it refers to the header, which has to be within reach.
-        CCallHelpers::Label tooFewArguments = jit.label();
+        tooFewArguments = jit.label();
         graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
         jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
         jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
         stubCalls.call(jit, Stub::ArityCheck);
         arityFixed = jit.jump();
-
+    }
+    CCallHelpers::Label directEntry;
+    CCallHelpers::Jump directlyEntered;
+    if (usesStubs && hasDirectEntry) {
+        // The frame is made, with the Instance in it, and the callee is where every call has it. If the function has nothing of the
+        // realm yet, it is called the way a function nobody knows anything about is, which sees to that.
+        CCallHelpers::Label noData = jit.label();
+        stubCalls.tailCall(jit, unlinkedCodeBlock->isConstructor() ? Stub::ConstructFarFunction : Stub::CallFarFunction);
+        directEntry = jit.label();
+        graph.headerReferences.loadIndex(jit, GPRInfo::regT9);
+        jit.loadPtr(CCallHelpers::calleeFrameSlot(CallFrameSlot::codeBlock).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::regT10);
+        jit.addPtr(CCallHelpers::TrustedImm32(Instance::offsetOfData()), GPRInfo::regT10);
+        jit.loadPtr(CCallHelpers::BaseIndex(GPRInfo::regT10, GPRInfo::regT9, CCallHelpers::TimesEight), GPRInfo::regT10);
+        jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT10).linkTo(noData, &jit);
+        if (!checksArity && !graph.catchEntrypoints.isEmpty())
+            directlyEntered = jit.jump();
+    }
+    if (usesStubs && checksArity) {
         // Nothing has been pushed: the frame's slots are found from the stack pointer.
         arityCheckWithStub = jit.label();
         jit.load32(CCallHelpers::calleeFrameSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta() + LowWordOffset), GPRInfo::regT9);
@@ -513,6 +545,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
 
     CCallHelpers::Label entryLabel = proc.code().entrypointLabel(0);
     CCallHelpers::Label arityCheckLabel = entryLabel;
+    if (directlyEntered.isSet())
+        directlyEntered.linkTo(entryLabel, &jit);
     if (usesStubs && checksArity) {
         if (arityChecked.isSet())
             arityChecked.linkTo(entryLabel, &jit);
@@ -581,6 +615,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     };
     info.entryOffset = offsetOf(entryLabel);
     info.arityCheckOffset = offsetOf(arityCheckLabel);
+    if (directEntry.isSet())
+        info.directEntryOffset = offsetOf(directEntry);
     info.frameSizeInBytes = proc.frameSize();
     info.numSlots = graph.numICSlots;
     info.sites = WTF::move(graph.sites);
@@ -652,13 +688,13 @@ static void recordStatistics(bool ok, size_t codeBytes, size_t bytecodeBytes, Se
     }
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage)
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, bool hasDirectEntry)
 {
     MonotonicTime before = MonotonicTime::now();
     RefPtr<JITCode> jitCode;
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    bool ok = compile(vm, unlinkedCodeBlock, unknownScopeChain(), hints, linkage, nullptr, jitCode, reason, reasonOpcode);
+    bool ok = compile(vm, unlinkedCodeBlock, unknownScopeChain(), hints, linkage, nullptr, jitCode, reason, reasonOpcode, hasDirectEntry);
     if (Options::aotReportStats()) [[unlikely]]
         recordStatistics(ok, ok ? jitCode->size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
     if (!ok)

@@ -209,6 +209,8 @@ void Lowering::emitGuard(Node* guard)
         return;
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
+        if (m_graph.calleeIsProven(guard))
+            return;
         unsigned slot = siteOfKnownCall(guard, m_graph.indexOfKnownCallee(known->keyFor(false)), false);
         exitUnless(m_out.equal(loadSlotWord(slot, 1), lowJSValue(guard->uses[0].node)));
         return;

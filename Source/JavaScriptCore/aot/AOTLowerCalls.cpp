@@ -37,10 +37,11 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
     if (!target)
         return false;
     unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
-    if (!Site::fits(index, isConstruct))
+    bool isProven = m_graph.calleeIsProven(node);
+    if (!isProven && !Site::fits(index, isConstruct))
         return false;
     bool skipsArityCheck = argc >= target->numParameters();
-    unsigned slot = siteOfKnownCall(node, index, isConstruct);
+    unsigned slot = isProven ? 0 : siteOfKnownCall(node, index, isConstruct);
 
     Vector<ConstrainedValue> inFrame;
     int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
@@ -51,20 +52,31 @@ bool Lowering::lowerCallToKnownFunction(Node* node, LValue callee, unsigned argc
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     static_assert(BaselineJITRegisters::Call::calleeGPR == GPRInfo::argumentGPR0);
     patchpoint->append(ConstrainedValue(callee, ValueRep::reg(GPRInfo::argumentGPR0)));
-    patchpoint->append(ConstrainedValue(m_data, ValueRep::reg(GPRInfo::argumentGPR1)));
+    if (!isProven)
+        patchpoint->append(ConstrainedValue(m_data, ValueRep::reg(GPRInfo::argumentGPR1)));
     patchpoint->append(ConstrainedValue(m_instance, ValueRep::reg(GPRInfo::argumentGPR2)));
     patchpoint->appendVector(inFrame);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck, isProven](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         constexpr GPRReg callee = GPRInfo::argumentGPR0;
         constexpr GPRReg data = GPRInfo::argumentGPR1;
         auto slotOfNewFrame = [](CallFrameSlot slot, ptrdiff_t offset = 0) {
             return CCallHelpers::Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
         };
+        if (isProven) {
+            // There is nothing to check, and so nothing else that this could come to. It is a function of this realm: the variable
+            // it was read from is one of a module of this realm.
+            jit.storePair64(GPRInfo::argumentGPR2, callee, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
+            jit.store32(CCallHelpers::TrustedImm32(argc), slotOfNewFrame(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
+            jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+            stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, false, true);
+            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+            return;
+        }
         ptrdiff_t offsetOfSlot = Data::offsetOfSlots() + slot * sizeof(Slot);
         CCallHelpers::JumpList slow;
         jit.loadPtr(CCallHelpers::Address(data, offsetOfSlot + OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::regT9);

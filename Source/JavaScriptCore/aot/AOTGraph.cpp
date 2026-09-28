@@ -286,7 +286,13 @@ std::pair<Node*, Node*> Graph::arrayAndElementStored(const Node* node) const
     return { nullptr, nullptr };
 }
 
-const KnownFunction* Graph::knownCallee(const Node* node) const
+bool Graph::calleeIsProven(const Node* node) const
+{
+    bool isProven = false;
+    return knownCallee(node, &isProven) && isProven;
+}
+
+const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
 {
     if (!m_hints)
         return nullptr;
@@ -327,12 +333,28 @@ const KnownFunction* Graph::knownCallee(const Node* node) const
     auto bytecode = callee->as<OpGetFromScope>();
     UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
     ResolveType type = bytecode.m_getPutInfo.resolveType();
-    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
-        return m_hints->find(name, bytecode.m_offset);
+    // (Through a phi it is a hint like any other.)
+    bool isReadDirectly = callee == node->use(calleeRegister);
+    if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+        const KnownFunction* known = m_hints->find(name, bytecode.m_offset);
+        if (known && known->isProven && isProven && isReadDirectly && m_declaredNames) {
+            // The hint goes by the name and the offset. Is it the module's variable? Not one of the function's own, which is read from
+            // a scope that the function has at hand, without looking for it; and not one of a scope in between.
+            Node* scope = callee->use(bytecode.m_scope);
+            if (scope->isBytecode(op_resolve_scope) && scope->as<OpResolveScope>().m_var == bytecode.m_var) {
+                auto resolution = m_declaredNames->resolve(name);
+                *isProven = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset;
+            }
+        }
+        return known;
+    }
     if (type == Dynamic)
         return nullptr;
-    if (auto variable = const_cast<Graph*>(this)->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == StaticVariable::Import)
+    if (auto variable = const_cast<Graph*>(this)->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == StaticVariable::Import) {
+        if (isProven && variable.import.function)
+            *isProven = variable.import.function->isProven && isReadDirectly;
         return variable.import.function;
+    }
     return m_hints->find(name, std::nullopt);
 }
 

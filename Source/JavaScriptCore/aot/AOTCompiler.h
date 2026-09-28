@@ -23,11 +23,13 @@ RefPtr<JITCode> tryCompile(VM&, ScriptExecutable*, CodeSpecializationKind, Unlin
 
 // The same compilation, for an image. Any thread, as long as nothing else is done with the VM's heap meanwhile.
 struct CompiledCode;
-JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr);
+// hasDirectEntry: see CompiledFunctionInfo::directEntryOffset.
+JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, bool hasDirectEntry = false);
 
 ScopeChain scopeChainFor(JSScope*);
 
 void reportStatistics();
+JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS
 
 } } // namespace JSC::AOT
 

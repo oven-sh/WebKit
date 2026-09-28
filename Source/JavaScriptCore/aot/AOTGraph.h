@@ -318,7 +318,8 @@ public:
     // An array that the function makes itself: what it puts in it is a good guess at what is in it.
     static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construction is probably of, if there is any telling.
-    const KnownFunction* knownCallee(const Node*) const;
+    const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
+    bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned indexOfKnownCallee(const ImageKey&);
