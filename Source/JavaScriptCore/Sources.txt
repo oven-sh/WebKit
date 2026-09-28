@@ -747,6 +747,7 @@ python/PythonBuiltinTypes.cpp
 python/PythonBytes.cpp
 python/PythonClasses.cpp
 python/PythonCodeGenerator.cpp
+python/PythonCodeObjects.cpp
 python/PythonCodecs.cpp
 python/PythonCommonNames.cpp
 python/PythonCompiler.cpp

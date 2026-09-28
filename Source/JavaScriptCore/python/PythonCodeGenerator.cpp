@@ -64,8 +64,28 @@ public:
 
     void generate(void* root)
     {
+        m_details = makeUnique<CodeDetails>();
+        for (auto& name : m_info.parameterNames) {
+            if (!name.string().startsWith('.'))
+                m_details->variableNames.append(name);
+        }
+        generateKind(root);
+        for (auto& [name, local] : m_locals)
+            m_details->registers.append({ Identifier::fromUid(m_vm, name), local->index() });
+        for (Symbol& symbol : m_block.symbols) {
+            if (symbol.scope == NameScope::Cell)
+                m_details->cellVariables.append(*symbol.name);
+        }
+        std::ranges::sort(m_details->cellVariables, [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); });
+        m_info.details = WTF::move(m_details);
+    }
+
+    void generateKind(void* root)
+    {
         switch (m_info.kind) {
         case CodeKind::Module:
+        case CodeKind::Expression:
+        case CodeKind::Interactive:
             generateModule(*static_cast<Module*>(root));
             break;
         case CodeKind::Function: {
@@ -189,12 +209,14 @@ private:
 
     RegisterID* emitGetAttribute(RegisterID* dst, RegisterID* base, const Identifier& name)
     {
+        addOnce(m_details->names, name);
         OpPyGetAttr::emit(&g, dst, base, g.addConstant(name), g.nextValueProfileIndex());
         return dst;
     }
 
     void emitSetAttribute(RegisterID* base, const Identifier& name, RegisterID* value)
     {
+        addOnce(m_details->names, name);
         OpPySetAttr::emit(&g, base, g.addConstant(name), value);
     }
 
@@ -284,6 +306,32 @@ private:
         bool isAlwaysBound { false };
     };
 
+    static void addOnce(Vector<Identifier>& names, const Identifier& name)
+    {
+        if (!names.contains(name))
+            names.append(name);
+    }
+
+    // Where the name is, noting that it has been used, for co_varnames and co_names.
+    Location locateAndNote(const Identifier& name)
+    {
+        Location location = locate(name);
+        switch (location.where) {
+        case Where::Register:
+            if (m_locals.contains(name.impl()))
+                addOnce(m_details->variableNames, name);
+            break;
+        case Where::Closure:
+            break;
+        case Where::Global:
+        case Where::Namespace:
+        case Where::NamespaceOrClosure:
+            addOnce(m_details->names, name);
+            break;
+        }
+        return location;
+    }
+
     Location locate(const Identifier& name)
     {
         // The variables of a comprehension hide whatever else has their names.
@@ -295,7 +343,7 @@ private:
                 return { Where::Register, iterator->value.get(), false };
             return { Where::Closure };
         }
-        bool isClass = m_block.type == BlockType::Class;
+        bool isClass = m_info.usesNamespace;
         switch (m_block.scopeOf(name)) {
         case NameScope::Local:
             if (isClass)
@@ -345,7 +393,7 @@ private:
     RegisterID* emitLoadName(RegisterID* dst, const Identifier& rawName, const Node& node)
     {
         const Identifier& name = mangle(rawName);
-        Location location = locate(name);
+        Location location = locateAndNote(name);
         switch (location.where) {
         case Where::Register:
             if (!location.isAlwaysBound)
@@ -379,7 +427,7 @@ private:
     void emitStoreName(const Identifier& rawName, RegisterID* value, const Node& node)
     {
         const Identifier& name = mangle(rawName);
-        Location location = locate(name);
+        Location location = locateAndNote(name);
         switch (location.where) {
         case Where::Register:
             if (location.local != value)
@@ -402,7 +450,7 @@ private:
     void emitDeleteName(const Identifier& rawName, const Node& node)
     {
         const Identifier& name = mangle(rawName);
-        Location location = locate(name);
+        Location location = locateAndNote(name);
         switch (location.where) {
         case Where::Register:
             emitCheckBound(location.local, name, node);
@@ -432,7 +480,10 @@ private:
         if (!name)
             return nullptr;
         Location location = locate(mangle(*name->id));
-        return location.where == Where::Register ? location.local : nullptr;
+        if (location.where != Where::Register)
+            return nullptr;
+        locateAndNote(mangle(*name->id));
+        return location.local;
     }
 
     // ---- Constants
@@ -850,6 +901,7 @@ private:
         CallArguments call(g, nullptr, count + 1);
         RegisterID* self = call.argumentRegister(0);
         mark(*attribute);
+        addOnce(m_details->names, mangle(*attribute->attribute));
         OpPyLoadMethod::emit(&g, function.get(), self, base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
         base = nullptr;
         g.emitLoad(call.thisRegister(), jsUndefined());
@@ -951,6 +1003,10 @@ private:
         info->kind = kind;
         info->isGenerator = block.isGenerator;
         info->isCoroutine = block.isCoroutine;
+        info->usesNamespace = kind == CodeKind::Class;
+        info->isNested = block.isNested;
+        info->isMethod = block.isMethod;
+        info->hasDocstring = block.hasDocstring;
         info->futureFeatures = m_info.futureFeatures;
         info->line = node.line;
         info->name = name;
@@ -984,6 +1040,70 @@ private:
             }
         }
         return info;
+    }
+
+    // A docstring with the indentation of the source taken out, as CPython's compiler takes it out.
+    static String cleanDocstring(const String& original)
+    {
+        // Tabs are expanded first, to columns of eight.
+        StringBuilder expanded;
+        unsigned column = 0;
+        for (char16_t c : StringView(original).codeUnits()) {
+            if (c == '\t') {
+                unsigned spaces = 8 - column % 8;
+                for (unsigned i = 0; i < spaces; ++i)
+                    expanded.append(' ');
+                column += spaces;
+                continue;
+            }
+            expanded.append(c);
+            column = c == '\n' || c == '\r' ? 0 : column + 1;
+        }
+        String doc = expanded.toString();
+        unsigned length = doc.length();
+
+        // The least indentation of any line after the first that is not blank.
+        unsigned p = 0;
+        while (p < length && doc[p++] != '\n') { }
+        unsigned margin = UINT_MAX;
+        while (p < length) {
+            unsigned start = p;
+            while (p < length && doc[p] == ' ')
+                ++p;
+            if (p < length && doc[p] != '\n')
+                margin = std::min(margin, p - start);
+            while (p < length && doc[p++] != '\n') { }
+        }
+        if (margin == UINT_MAX)
+            margin = 0;
+
+        p = 0;
+        while (p < length && doc[p] == ' ')
+            ++p;
+        if (!p && !margin)
+            return doc.isNull() ? emptyString() : doc;
+        StringBuilder result;
+        auto copyLine = [&] {
+            while (p < length) {
+                char16_t c = doc[p++];
+                result.append(c);
+                if (c == '\n')
+                    break;
+            }
+        };
+        copyLine();
+        while (p < length) {
+            for (unsigned i = 0; i < margin && p < length && doc[p] == ' '; ++i)
+                ++p;
+            copyLine();
+        }
+        String cleaned = result.toString();
+        return cleaned.isNull() ? emptyString() : cleaned;
+    }
+
+    static String docstringOf(Sequence<Statement*> body)
+    {
+        return cleanDocstring(body[0]->as<Expr>().value->as<Constant>().text->string());
     }
 
     // The function object for a piece of code, which is compiled when it is first called.
@@ -1027,7 +1147,10 @@ private:
         }
 
         Reg function = temporaryDestination(dst);
-        emitNewFunction(function.get(), makeInfo(kind, name, arguments, *block, node), node);
+        auto info = makeInfo(kind, name, arguments, *block, node);
+        if (block->hasDocstring && kind == CodeKind::Function)
+            info->docstring = docstringOf(static_cast<const FunctionDef&>(node).body);
+        emitNewFunction(function.get(), WTF::move(info), node);
         if (defaults)
             g.emitDirectPutById(function.get(), m_names.private_defaults, defaults.get());
         if (keywordDefaults)
@@ -1338,7 +1461,7 @@ private:
         Ref<Label> done = g.newLabel();
         g.emitLabel(loop.get());
         g.emitLoopHint();
-        emitRuntimeCall(yielded.get(), "yieldFromStep"_s, { iterator.get(), received.get(), wasThrown.get() }, node);
+        emitRuntimeCall(yielded.get(), "yieldFromStep"_s, { iterator.get(), received.get(), wasThrown.get(), g.generatorRegister() }, node);
         OpJeqPtr::emit(&g, yielded.get(), marker(), done->bind(&g));
 
         Ref<Label> catchLabel = g.newLabel();
@@ -1673,6 +1796,12 @@ private:
         switch (statement.kind) {
         case Statement::Kind::Expr: {
             Expression* value = statement.as<Expr>().value;
+            if (m_info.kind == CodeKind::Interactive) {
+                // At a prompt, what an expression comes to is shown.
+                Reg result = emit(value);
+                emitRuntimeCall(nullptr, "displayHook"_s, { result.get() }, statement);
+                return;
+            }
             // A docstring, or some other constant that does nothing.
             if (value->is<Constant>())
                 return;
@@ -2460,7 +2589,7 @@ private:
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));
         store(m_names.dunder_firstlineno, constant(jsNumber(node.line)));
         if (m_block.hasDocstring)
-            store(m_names.dunder_doc, stringConstant(*node.body[0]->as<Expr>().value->as<Constant>().text));
+            store(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(node.body))));
 
         emit(node.body);
         g.emitReturn(environment.get());
@@ -2519,9 +2648,16 @@ private:
     void generateModule(Module& module)
     {
         m_hasNamedExpressions = true;
+        if (m_info.usesNamespace)
+            m_namespace = parameterRegister(0);
         emitLoadGlobals();
+        if (module.kind == Module::Kind::Expression) {
+            Reg value = emit(module.expression);
+            g.emitReturn(value.get());
+            return;
+        }
         if (m_block.hasDocstring)
-            g.emitDirectPutById(m_globals.get(), m_names.dunder_doc, stringConstant(*module.body[0]->as<Expr>().value->as<Constant>().text));
+            emitStoreName(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(module.body))), *module.body[0]);
         emit(module.body);
         g.emitReturn(none());
     }
@@ -2530,6 +2666,7 @@ private:
 
     BytecodeGenerator& g;
     VM& m_vm;
+    std::unique_ptr<CodeDetails> m_details;
     CommonNames& m_names;
     Arena& m_arena;
     SymbolTable& m_table;

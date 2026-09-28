@@ -27,6 +27,7 @@
 
 #include "Identifier.h"
 #include "PythonOperators.h"
+#include "PythonToken.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -52,7 +53,7 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(dict) v(capacity) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(dict) v(capacity) v(code) v(yieldFrom) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
 
 struct CommonNames {
@@ -71,6 +72,9 @@ struct CommonNames {
 
     // Goes up whenever an attribute of any class is set or deleted. What is remembered about a class is good for as long as it stays.
     unsigned typeEpoch { 1 };
+
+    // What was wrong with the last piece of code that would not compile. JavaScriptCore's own way of saying so has no room for all of it.
+    SyntaxError lastSyntaxError;
 
     // __add__, __radd__ and __iadd__ for Add.
     const Identifier& method(BinaryOperator op) const { return *m_binaryMethods[static_cast<unsigned>(op)]; }

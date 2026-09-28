@@ -135,6 +135,8 @@ public:
         Block& top = *m_current;
         m_table.m_top = &top;
         m_private = privateName;
+        m_fragmentTop = &top;
+        m_fragmentFreeVariables = &freeVariables;
         if (statement ? !visit(statement) : !visit(expression))
             return false;
         exitBlock();
@@ -645,6 +647,13 @@ private:
                 if ((flags & DefComprehensionIteration) && (flags & DefLocal))
                     return fail(makeString("assignment expression cannot rebind comprehension iteration variable '"_s, name.string(), '\''), target);
                 continue;
+            }
+            // What stands in for whatever a fragment is in has the variables that the fragment is known to use of it. Any other is a global.
+            if (&block == m_fragmentTop && !m_fragmentFreeVariables->contains(name)) {
+                if (!addDefinition(name, DefGlobal, target))
+                    return false;
+                recordDirective(name, target);
+                return true;
             }
             switch (block.type) {
             case BlockType::Function:
@@ -1371,6 +1380,8 @@ private:
 
     Block* m_current { nullptr };
     Vector<Block*, 16> m_stack;
+    Block* m_fragmentTop { nullptr };
+    const Vector<Identifier>* m_fragmentFreeVariables { nullptr };
     const Identifier* m_private { nullptr }; // The class that names are mangled for.
     Statement* m_lastFutureStatement { nullptr };
 

@@ -595,10 +595,64 @@ static void setFunctionName(JSGlobalObject* globalObject, JSValue self, JSValue 
         JSCell::deleteProperty(asFunction(self), globalObject, vm.pythonNames().private_alignedDefaults); \
     }
 
-FUNCTION_PROPERTY(getFunctionDefaults, setFunctionDefaults, private_defaults)
-FUNCTION_PROPERTY(getFunctionKeywordDefaults, setFunctionKeywordDefaults, private_kwdefaults)
-FUNCTION_PROPERTY(getFunctionDoc, setFunctionDoc, private_doc)
-FUNCTION_PROPERTY(getFunctionModule, setFunctionModule, private_module)
+FUNCTION_PROPERTY(getFunctionDefaults, setFunctionDefaultsUnchecked, private_defaults)
+FUNCTION_PROPERTY(getFunctionKeywordDefaults, setFunctionKeywordDefaultsUnchecked, private_kwdefaults)
+
+static void setFunctionDefaults(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value && !isNone(value) && !isTuple(value)) {
+        raiseTypeError(globalObject, scope, "__defaults__ must be set to a tuple object"_s);
+        return;
+    }
+    setFunctionDefaultsUnchecked(globalObject, self, value);
+}
+
+static void setFunctionKeywordDefaults(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value && !isNone(value) && !isDict(value)) {
+        raiseTypeError(globalObject, scope, "__kwdefaults__ must be set to a dict object"_s);
+        return;
+    }
+    setFunctionKeywordDefaultsUnchecked(globalObject, self, value);
+}
+
+// __doc__ and __module__ are what the source and the module say until they are set to something else, None included.
+static JSValue getFunctionDoc(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    if (JSValue value = asFunction(self)->getDirect(vm, vm.pythonNames().private_doc))
+        return value;
+    const FunctionInfo* info = infoOf(self);
+    return info && !info->docstring.isNull() ? JSValue(jsString(vm, info->docstring)) : jsUndefined();
+}
+
+static void setFunctionDoc(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    asFunction(self)->putDirect(vm, vm.pythonNames().private_doc, value ? value : jsUndefined());
+}
+
+static JSValue getFunctionModule(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    if (JSValue value = asFunction(self)->getDirect(vm, vm.pythonNames().private_module))
+        return value;
+    if (!infoOf(self))
+        return jsUndefined();
+    JSValue globals = getAttribute(globalObject, self, Identifier::fromString(vm, "__globals__"_s));
+    JSValue name = asDict(globals)->getString(globalObject, "__name__"_s);
+    return name ? name : jsUndefined();
+}
+
+static void setFunctionModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    asFunction(self)->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
+}
 
 PYTHON_NATIVE(functionGet)
 {
@@ -980,7 +1034,6 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, function, "__defaults__"_s, getFunctionDefaults, setFunctionDefaults);
     addGetSet(globalObject, function, "__kwdefaults__"_s, getFunctionKeywordDefaults, setFunctionKeywordDefaults);
     addGetSet(globalObject, function, "__module__"_s, getFunctionModule, setFunctionModule);
-    UNUSED_PARAM(infoOf);
 
     PyType* method = realm->typeMethod();
     method->setInstanceStructure(vm, PyBoundMethod::createStructure(vm, globalObject, method));

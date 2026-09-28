@@ -68,6 +68,7 @@ String typeName(JSGlobalObject*, JSValue);
 
 JSObject* createException(JSGlobalObject*, PyType*, const String& message);
 JSObject* createNotCallableError(JSGlobalObject*, JSValue callee);
+String nameOfFunction(JSGlobalObject*, JSFunction*, bool qualified);
 JSObject* createException(JSGlobalObject*, PyType*, JSValue argument);
 // These throw, and return an empty value for the caller to return.
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, const String& message);
@@ -139,6 +140,15 @@ using SourceReader = bool (*)(const String& path, String& source);
 JS_EXPORT_PRIVATE void setSourceReader(SourceReader);
 void flushStandardOutput(JSGlobalObject*);
 void writeToStandardOutput(StringView);
+
+// ---- Looking into code that is running
+
+// The namespace of the module that the code of a frame is in. Null if it is not Python's.
+JSObject* globalsOfFrame(JSGlobalObject*, CallFrame*);
+// What locals() gives there: the namespace itself for a module or the body of a class, and for a function a new dict of its variables.
+JSValue localsOfFrame(JSGlobalObject*, CallFrame*);
+// The frame of the Python code that called a function written in C++.
+CallFrame* callerOf(CallFrame*);
 
 // ---- Operators
 

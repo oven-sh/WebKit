@@ -114,6 +114,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     m_namespaceStructure.set(vm, this, PyNamespace::createStructure(vm, globalObject, builtins));
 
     Python::initializeBuiltinFunctions(globalObject, builtins);
+    Python::initializeCodeTypes(globalObject, builtins);
     static constexpr BuiltinType publicTypes[] = {
         BuiltinType::Object, BuiltinType::Type, BuiltinType::Int, BuiltinType::Bool, BuiltinType::Float, BuiltinType::Complex, BuiltinType::Str, BuiltinType::Bytes, BuiltinType::ByteArray, BuiltinType::MemoryView, BuiltinType::List, BuiltinType::Tuple, BuiltinType::Dict,
         BuiltinType::Set, BuiltinType::FrozenSet, BuiltinType::Range, BuiltinType::Slice, BuiltinType::Property, BuiltinType::StaticMethod, BuiltinType::ClassMethod, BuiltinType::Super,

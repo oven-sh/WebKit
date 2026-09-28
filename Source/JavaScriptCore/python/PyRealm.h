@@ -69,6 +69,7 @@ namespace JSC {
     v(AsyncGenerator, "async_generator", Object, Native, 0) \
     v(Cell, "cell", Object, Native, 0) \
     v(Code, "code", Object, Native, 0) \
+    v(Frame, "frame", Object, Native, 0) \
     v(MappingProxy, "mappingproxy", Object, Native, PyType::IsMapping) \
     v(ListIterator, "list_iterator", Object, Native, 0) \
     v(ListReverseIterator, "list_reverseiterator", Object, Native, 0) \

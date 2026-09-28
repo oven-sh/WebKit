@@ -803,7 +803,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
     unsigned given = arguments.size() - keywordCount;
     unsigned positionalCount = info.positionalCount;
     unsigned namedCount = positionalCount + info.keywordOnlyCount;
-    const String& functionName = info.qualifiedName;
+    String functionName = nameOfFunction(globalObject, function, true);
 
     // Everything that goes in here is also in `arguments`, in the function's defaults, or in a local variable.
     Vector<JSValue, 16> bound(info.parameterCount());

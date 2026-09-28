@@ -206,6 +206,62 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
     RETURN_NONE();
 }
 
+// SyntaxError(msg, (filename, lineno, offset, text, end_lineno, end_offset))
+PYTHON_NATIVE(syntaxErrorInit)
+{
+    NATIVE_PROLOGUE();
+    if (args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+    JSObject* self = asObject(args[0]);
+    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
+    if (args.size() >= 2)
+        self->putDirect(vm, Identifier::fromString(vm, "msg"_s), args[1]);
+    if (args.size() == 3) {
+        MarkedArgumentBuffer details;
+        collect(globalObject, args[2], details);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (details.size() < 4 || details.size() > 7)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes "_s, details.size() < 4 ? "at least 4"_s : "at most 7"_s, " arguments ("_s, details.size(), " given)"_s)));
+        if (details.size() == 5)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "end_offset must be provided when end_lineno is provided"_s));
+        static constexpr ASCIILiteral attributes[] = { "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s };
+        for (unsigned i = 0; i < std::min<unsigned>(details.size(), 6); ++i)
+            self->putDirect(vm, Identifier::fromString(vm, attributes[i]), details.at(i));
+    }
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(syntaxErrorStr)
+{
+    NATIVE_PROLOGUE();
+    auto get = [&] (ASCIILiteral name) -> JSValue {
+        JSValue value = getAttributeIfPresent(globalObject, args.at(0), Identifier::fromString(vm, name));
+        return value ? value : jsUndefined();
+    };
+    JSValue message = get("msg"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue filename = get("filename"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue line = get("lineno"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    String text = str(globalObject, message);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool hasLine = classify(line).isInt() && !line.isBoolean();
+    String lineText = hasLine ? str(globalObject, line) : String();
+    if (filename.isString()) {
+        String path = asString(filename)->value(globalObject);
+        size_t slash = path.reverseFind('/');
+        if (slash != notFound)
+            path = path.substring(slash + 1);
+        if (hasLine)
+            return JSValue::encode(jsString(vm, makeString(text, " ("_s, path, ", line "_s, lineText, ')')));
+        return JSValue::encode(jsString(vm, makeString(text, " ("_s, path, ')')));
+    }
+    if (hasLine)
+        return JSValue::encode(jsString(vm, makeString(text, " (line "_s, lineText, ')')));
+    return JSValue::encode(jsString(vm, text));
+}
+
 // UnicodeEncodeError(encoding, object, start, end, reason), and UnicodeDecodeError the same.
 PYTHON_NATIVE(unicodeErrorInit)
 {
@@ -287,6 +343,12 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         { "__init__"_s, osErrorInit },
         { "__str__"_s, osErrorStr },
     });
+    addMethods(globalObject, realm->typeSyntaxError(), {
+        { "__init__"_s, syntaxErrorInit },
+        { "__str__"_s, syntaxErrorStr },
+    });
+    for (ASCIILiteral name : { "msg"_s, "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s, "print_file_and_line"_s })
+        realm->typeSyntaxError()->putDirect(vm, Identifier::fromString(vm, name), jsUndefined());
     addMethods(globalObject, realm->typeUnicodeEncodeError(), {
         { "__init__"_s, unicodeErrorInit, Kind::Method, pack(false) },
         { "__str__"_s, unicodeErrorStr, Kind::Method, pack(false) },
@@ -550,8 +612,18 @@ PYTHON_NATIVE(builtinIsSubclass)
 PYTHON_NATIVE(builtinDir)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "dir"_s, 1, 1))
+    if (!args.check(globalObject, scope, "dir"_s, 0, 1))
         return { };
+    if (!args.size()) {
+        JSValue locals = localsOfFrame(globalObject, callerOf(callFrame));
+        MarkedArgumentBuffer keys;
+        collect(globalObject, locals, keys);
+        RETURN_IF_EXCEPTION(scope, { });
+        MarkedArgumentBuffer sortedKeys;
+        sortValues(globalObject, keys, JSValue(), false, sortedKeys);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sortedKeys)));
+    }
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_dir, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -569,43 +641,15 @@ PYTHON_NATIVE(builtinDir)
 PYTHON_NATIVE(builtinVars)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "vars"_s, 1, 1))
+    if (!args.check(globalObject, scope, "vars"_s, 0, 1))
         return { };
+    if (!args.size())
+        return JSValue::encode(localsOfFrame(globalObject, callerOf(callFrame)));
     JSValue dict = getAttributeIfPresent(globalObject, args[0], names.dunder_dict);
     RETURN_IF_EXCEPTION(scope, { });
     if (!dict)
         return JSValue::encode(raiseTypeError(globalObject, scope, "vars() argument must have __dict__ attribute"_s));
     return JSValue::encode(dict);
-}
-
-// The namespace of the module that the function that called this one is in.
-static JSObject* globalsOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame)
-{
-    VM& vm = globalObject->vm();
-    CallFrame* caller = callFrame->callerFrame();
-    if (!caller || caller->isNativeCalleeFrame())
-        return nullptr;
-    auto* function = dynamicDowncast<JSFunction>(caller->jsCallee());
-    if (!function)
-        return nullptr;
-    for (JSScope* scope = function->scope(); scope; scope = scope->next()) {
-        auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope);
-        if (!environment)
-            continue;
-        SymbolTableEntry::Fast entry = environment->symbolTable()->get(vm.pythonNames().globals.impl());
-        if (!entry.isNull())
-            return asObject(environment->variableAt(entry.scopeOffset()).get());
-    }
-    return nullptr;
-}
-
-PYTHON_NATIVE(builtinGlobals)
-{
-    NATIVE_PROLOGUE();
-    JSObject* globals = globalsOfCaller(globalObject, callFrame);
-    if (!globals)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "globals(): no current frame"_s));
-    return JSValue::encode(PyDict::backedBy(globalObject, globals));
 }
 
 // ---- Iteration
@@ -886,7 +930,7 @@ PYTHON_NATIVE(builtinImport)
     if (!levelValue)
         levelValue = args.keyword(globalObject, "level"_s);
     unsigned level = levelValue && levelValue.isInt32() ? levelValue.asInt32() : 0;
-    JSObject* globals = globalsOfCaller(globalObject, callFrame);
+    JSObject* globals = globalsOfFrame(globalObject, callerOf(callFrame));
     RELEASE_AND_RETURN(scope, JSValue::encode(importModule(globalObject, globals, asString(args[0])->value(globalObject), fromList ? fromList : jsUndefined(), level, false)));
 }
 
@@ -909,7 +953,6 @@ void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespac
     add("issubclass"_s, builtinIsSubclass);
     add("dir"_s, builtinDir);
     add("vars"_s, builtinVars);
-    add("globals"_s, builtinGlobals);
     add("iter"_s, builtinIter);
     add("next"_s, builtinNext);
     add("any"_s, builtinAnyOrAll, pack(true));

@@ -63,9 +63,12 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     const Identifier* privateName = info->privateName.isNull() ? nullptr : &info->privateName;
 
     switch (info->kind) {
-    case CodeKind::Module: {
+    case CodeKind::Module:
+    case CodeKind::Expression:
+    case CodeKind::Interactive: {
         Vector<SyntaxWarning> warnings;
-        Module* module = parse(vm, arena, text, Module::Kind::Module, warnings, syntaxError);
+        Module::Kind moduleKind = info->kind == CodeKind::Module ? Module::Kind::Module : info->kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
+        Module* module = parse(vm, arena, text, moduleKind, warnings, syntaxError);
         if (module)
             table = SymbolTable::build(vm, arena, *module, info->futureFeatures, syntaxError);
         root = module;
@@ -97,8 +100,9 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     if (!table) {
         // Only a module can fail here. All that is in it was parsed along with it.
         if (!syntaxError)
-            syntaxError.message = "internal error: what was Python is Python no more"_s;
+            syntaxError.message = makeString("internal error: '"_s, info->name.string(), "' on line "_s, info->line, " was Python and is Python no more"_s);
         error = toParserError(syntaxError);
+        vm.pythonNames().lastSyntaxError = syntaxError;
         return nullptr;
     }
     Block* block = table->blockFor(blockKey);
@@ -110,8 +114,10 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     ParserArena parserArena;
     auto node = makeUnique<ScopeNode>(parserArena, source, arena, *table, *block, *info, root);
     error = BytecodeGenerator::generate(vm, node.get(), source, result, codeGenerationMode, nullptr, nullptr, nullptr);
-    if (node->error())
+    if (node->error()) {
         error = toParserError(node->error());
+        vm.pythonNames().lastSyntaxError = node->error();
+    }
     if (error.isValid())
         return nullptr;
     return result;
@@ -121,53 +127,96 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
 {
     VM& vm = globalObject->vm();
     BuiltinType type = error.kind == SyntaxError::Kind::SyntaxError ? BuiltinType::SyntaxError : error.kind == SyntaxError::Kind::IndentationError ? BuiltinType::IndentationError : BuiltinType::TabError;
-    JSObject* exception = createException(globalObject, globalObject->pyRealm()->type(type), error.message);
-    exception->putDirect(vm, Identifier::fromString(vm, "msg"_s), jsString(vm, error.message));
-    exception->putDirect(vm, Identifier::fromString(vm, "filename"_s), jsString(vm, source.provider()->sourceURL()));
-    exception->putDirect(vm, Identifier::fromString(vm, "lineno"_s), jsNumber(error.line));
-    exception->putDirect(vm, Identifier::fromString(vm, "offset"_s), jsNumber(error.column + 1));
-    exception->putDirect(vm, Identifier::fromString(vm, "end_lineno"_s), jsNumber(error.endLine));
-    exception->putDirect(vm, Identifier::fromString(vm, "end_offset"_s), jsNumber(error.endColumn + 1));
+    // The line that it is on, as it is in the source.
+    StringView text = source.provider()->source();
+    unsigned lineStart = 0;
+    for (unsigned line = 1; line < error.line && lineStart < text.length(); ++lineStart) {
+        if (text[lineStart] == '\n')
+            ++line;
+    }
+    unsigned lineEnd = lineStart;
+    while (lineEnd < text.length() && text[lineEnd] != '\n')
+        ++lineEnd;
+    if (lineEnd < text.length())
+        ++lineEnd;
+    JSValue lineText = error.line ? JSValue(jsString(vm, text.substring(lineStart, lineEnd - lineStart).toString())) : jsUndefined();
+
+    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, source.provider()->sourceURL()), jsNumber(error.line), jsNumber(error.column + 1), lineText, jsNumber(error.endLine), jsNumber(error.endColumn + 1) });
+    JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), jsString(vm, error.message), details);
+    RETURN_IF_EXCEPTION(scope, { });
     throwException(globalObject, scope, exception);
     return { };
 }
 
-JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject)
+// Compiles a function and all that is in it. Python says what is wrong anywhere in a file before it runs any of it, and some of what can be
+// wrong is only found by generating code. False if something is, and then it is in lastSyntaxError.
+static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource)
+{
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    ParserError error;
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
+    if (!codeBlock)
+        return false;
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i) {
+        if (!generateAll(vm, codeBlock->functionExpr(i), source))
+            return false;
+    }
+    return true;
+}
+
+FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(source.provider()->language() == SourceLanguage::Python);
 
-    // Python says what is wrong anywhere in a file before it runs any of it.
-    // FIXME: What only the code generator finds wrong in a function is not found until the function is called.
-    unsigned futureFeatures = 0;
+    unsigned futureFeatures = inheritedFutureFeatures;
+    bool hasDocstring = false;
     {
         Arena arena;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
-        Module* module = parse(vm, arena, source.provider()->source(), Module::Kind::Module, warnings, error);
+        Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
+        Module* module = parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
         std::unique_ptr<SymbolTable> table;
         if (module)
-            table = SymbolTable::build(vm, arena, *module, 0, error);
+            table = SymbolTable::build(vm, arena, *module, inheritedFutureFeatures, error);
         if (!table) {
             raiseSyntaxError(globalObject, scope, error, source);
             return nullptr;
         }
         futureFeatures = table->futureFeatures();
+        hasDocstring = table->blockFor(module)->hasDocstring;
     }
 
     auto info = adoptRef(*new FunctionInfo);
-    info->kind = CodeKind::Module;
+    info->kind = kind;
     info->futureFeatures = futureFeatures;
+    info->hasDocstring = hasDocstring;
     info->name = Identifier::fromString(vm, "<module>"_s);
     info->qualifiedName = "<module>"_s;
+    if (usesNamespace) {
+        info->usesNamespace = true;
+        info->parameterNames.append(Identifier::fromString(vm, ".namespace"_s));
+        info->positionalCount = 1;
+    }
+    unsigned parameterCount = info->parameterCount();
 
-    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), source.startOffset(), source.startOffset(), source.startOffset(), ImplementationVisibility::Public, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, 0, SourceParseMode::MethodMode, false);
+    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), source.startOffset(), source.startOffset(), source.startOffset(), ImplementationVisibility::Public, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, parameterCount, SourceParseMode::MethodMode, false);
     metadata.finishParsing(source, info->name, FunctionMode::FunctionExpression);
     auto* unlinked = UnlinkedFunctionExecutable::create(vm, source, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     unlinked->setPythonInfo(WTF::move(info));
-    FunctionExecutable* executable = unlinked->link(vm, nullptr, source);
 
+    if (!generateAll(vm, unlinked, source)) {
+        raiseSyntaxError(globalObject, scope, vm.pythonNames().lastSyntaxError, source);
+        return nullptr;
+    }
+    return unlinked->link(vm, nullptr, source);
+}
+
+JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* namespaceObject)
+{
+    VM& vm = globalObject->vm();
     // The outermost environment of everything in the module. Its one variable is the namespace.
     JSC::SymbolTable* symbolTable = JSC::SymbolTable::create(vm);
     symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
@@ -175,8 +224,15 @@ JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source
     symbolTable->set(NoLockingNecessary, vm.pythonNames().globals.impl(), SymbolTableEntry(VarOffset(offset)));
     JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), globalObject->globalScope(), symbolTable, jsUndefined());
     environment->variableAt(offset).set(vm, environment, namespaceObject);
-
     return JSFunction::create(vm, globalObject, executable, environment);
+}
+
+JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject)
+{
+    FunctionExecutable* executable = compileSource(globalObject, source, CodeKind::Module, false, 0);
+    if (!executable)
+        return nullptr;
+    return bindToGlobals(globalObject, executable, namespaceObject);
 }
 
 static void reportException(JSGlobalObject* globalObject, JSValue exception)

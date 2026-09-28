@@ -33,11 +33,23 @@ namespace JSC { namespace Python {
 
 // What kind of thing a piece of Python code is the code of. All of it is function code to JavaScriptCore.
 enum class CodeKind : uint8_t {
-    Module,
+    Module, // A file, or what is given to exec().
+    Expression, // What is given to eval().
+    Interactive, // What is typed at a prompt: compile(..., 'single').
     Function, // def
     Lambda,
     Class, // The body of a class statement. It is called once, with the namespace to fill in.
     GeneratorExpression,
+};
+
+// What is only known about a piece of code once it has been compiled, and is only wanted by what looks into it: a code object, and locals().
+struct CodeDetails {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CodeDetails);
+    Vector<Identifier> variableNames; // co_varnames: the parameters, and then the other local variables as they are first used.
+    Vector<Identifier> names; // co_names: the globals and attributes, as they are first used.
+    Vector<Identifier> cellVariables; // co_cellvars
+    // Which register each local variable is in, of those that are in one. The rest are in environments.
+    Vector<std::pair<Identifier, int>> registers;
 };
 
 // What has to be known about a piece of Python code before it is compiled, to call it and to compile it. It is worked out when what
@@ -49,11 +61,18 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     bool isGeneratorBody { false }; // Of the two functions that a generator is made of, the one that is resumed.
     bool hasVariadic { false };
     bool hasKeywordVariadic { false };
+    // Its names are looked up in a mapping that it is called with, before the globals. So it is for the body of a class, and for what
+    // compile() makes, since exec() can be given any mapping for the local variables.
+    bool usesNamespace { false };
+    bool isNested { false }; // In a function.
+    bool isMethod { false }; // Directly in a class.
+    bool hasDocstring { false };
     unsigned futureFeatures { 0 };
     unsigned line { 1 }; // That the source of it begins on.
 
     Identifier name;
     String qualifiedName;
+    String docstring; // Null if it has none.
     Identifier privateName; // The class that names like __x are mangled for, if it is in one.
 
     // Its names, and those of what is in it, that are variables of functions it is in. All other names that it does not bind are global.
@@ -66,6 +85,9 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     unsigned positionalCount { 0 }; // Including those.
     unsigned keywordOnlyCount { 0 };
 
+    // Filled in when it is compiled.
+    mutable std::unique_ptr<CodeDetails> details;
+
     Ref<FunctionInfo> copy() const
     {
         auto result = adoptRef(*new FunctionInfo);
@@ -75,10 +97,15 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->isGeneratorBody = isGeneratorBody;
         result->hasVariadic = hasVariadic;
         result->hasKeywordVariadic = hasKeywordVariadic;
+        result->usesNamespace = usesNamespace;
+        result->isNested = isNested;
+        result->isMethod = isMethod;
+        result->hasDocstring = hasDocstring;
         result->futureFeatures = futureFeatures;
         result->line = line;
         result->name = name;
         result->qualifiedName = qualifiedName;
+        result->docstring = docstring;
         result->privateName = privateName;
         result->freeVariables = freeVariables;
         result->parameterNames = parameterNames;

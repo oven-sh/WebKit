@@ -457,6 +457,8 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
     JSValue received = argument(1);
     bool wasThrown = argument(2).asBoolean();
     auto* generator = iterator.isCell() && iterator.asCell()->type() == JSGeneratorType ? uncheckedDowncast<JSGenerator>(iterator.asCell()) : nullptr;
+    // So that gi_yieldfrom can say what this generator is waiting on.
+    asObject(argument(3))->putDirect(vm, vm.pythonNames().private_yieldFrom, iterator);
 
     auto finish = [&] (JSValue returned) {
         realm->setReturnValue(vm, returned);
@@ -803,6 +805,19 @@ PYTHON_RUNTIME_FUNCTION(runtimeLength)
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
 }
 
+// What is done with what an expression comes to at a prompt. FIXME: sys.displayhook
+PYTHON_RUNTIME_FUNCTION(displayHook)
+{
+    PROLOGUE();
+    if (isNone(argument(0)))
+        return JSValue::encode(jsUndefined());
+    String text = repr(globalObject, argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    writeToStandardOutput(makeString(text, '\n'));
+    realm->builtinsNamespace()->putDirect(vm, Identifier::fromString(vm, "_"_s), argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
 // ---- Classes and modules
 
 PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
@@ -923,6 +938,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("matchRest"_s, matchRest);
     add("matchClass"_s, matchClass);
     add("length"_s, runtimeLength);
+    add("displayHook"_s, displayHook);
     add("buildClass"_s, runtimeBuildClass);
     add("importName"_s, importName);
     add("importFrom"_s, importFrom);

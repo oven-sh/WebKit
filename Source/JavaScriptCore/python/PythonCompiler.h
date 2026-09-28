@@ -33,6 +33,7 @@
 
 namespace JSC {
 
+class FunctionExecutable;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
@@ -51,6 +52,11 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM&, UnlinkedFunctionExecut
 // A function of no arguments that runs the body of a module, whose global variables are the properties of `namespaceObject`. All
 // of the source is checked first. Null, with SyntaxError raised, if it is not Python.
 JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, JSObject* namespaceObject);
+
+// The two halves of that. The first makes the code, of a module, or of what eval() or a prompt is given. With `usesNamespace`, it takes
+// one argument: a mapping in which its names are looked up before the globals, and stored.
+FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures);
+JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 
 // Runs a file as `python file.py` would, as the module __main__. If an exception gets away it is reported on stderr as Python
 // reports it. Returns what the process should exit with.
