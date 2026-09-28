@@ -389,9 +389,9 @@ void SpeculativeJIT::compileNeitherDoubleNorHeapBigIntToNotDoubleStrictEquality(
     Jump notEqual = branch64(NotEqual, leftGPR, rightGPR);
     // We cannot use speculateNeitherDoubleNorHeapBigInt here, because it updates the interpreter state, and we can skip over it.
     // So we would always skip the speculateNotDouble that follows.
-    if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecFullDouble)) {
+    if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~(SpecFullDouble | SpecWholeFloat))) {
         if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecInt32Only))
-            trueCase.append(branchIfInt32(leftGPR));
+            trueCase.append(branchIfPlainInt32(leftGPR));
         speculationCheck(BadType, JSValueSource(leftGPR), leftNeitherDoubleNorHeapBigIntChild.node(), branchIfNumber(leftGPR));
     }
     if (needsTypeCheck(leftNeitherDoubleNorHeapBigIntChild, ~SpecHeapBigInt)) {
@@ -485,6 +485,9 @@ void SpeculativeJIT::nonSpeculativePeepholeStrictEq(Node* node, Node* branchNode
         slowPathCases.append(branch64(AboveOrEqual, resultGPR, TrustedImm64(nextLowestOfHighBits)));
 
         branch64(Equal, arg1GPR, arg2GPR, invert ? notTaken : taken);
+
+        // A whole float is equal to the Int32 with its value. Of what is left, only it has this bit after the addition above.
+        slowPathCases.append(branchTest64(NonZero, resultGPR, TrustedImm64(JSValue::WholeFloatMark)));
         
         // If we support BigInt32 we must go to a slow path if at least one operand is a cell (for HeapBigInt === BigInt32)
         // If we don't support BigInt32, we only have to go to a slow path if both operands are cells (for HeapBigInt === HeapBigInt and String === String)
@@ -568,12 +571,15 @@ void SpeculativeJIT::genericJSValueNonPeepholeStrictEq(Node* node, bool invert)
     move(arg2GPR, scratch.gpr());
     add64(TrustedImm64(JSValue::LowestOfHighBits), resultGPR);
     add64(TrustedImm64(JSValue::LowestOfHighBits), scratch.gpr());
-    or64(scratch.gpr(), resultGPR, resultGPR);
+    or64(resultGPR, scratch.gpr(), scratch.gpr());
     constexpr uint64_t nextLowestOfHighBits = JSValue::LowestOfHighBits << 1;
-    slowPathCases.append(branch64(AboveOrEqual, resultGPR, TrustedImm64(nextLowestOfHighBits)));
+    slowPathCases.append(branch64(AboveOrEqual, scratch.gpr(), TrustedImm64(nextLowestOfHighBits)));
 
     compare64(Equal, arg1GPR, arg2GPR, resultGPR);
     Jump done = branchTest64(NonZero, resultGPR);
+
+    // A whole float is equal to the Int32 with its value. Of what is left, only it has this bit after the addition above.
+    slowPathCases.append(branchTest64(NonZero, scratch.gpr(), TrustedImm64(JSValue::WholeFloatMark)));
 
     // If we support BigInt32 we must go to a slow path if at least one operand is a cell (for HeapBigInt === BigInt32)
     // If we don't support BigInt32, we only have to go to a slow path if both operands are cells (for HeapBigInt === HeapBigInt and String === String)
@@ -1214,7 +1220,7 @@ GPRReg SpeculativeJIT::fillSpeculateInt32Internal(Edge edge, DataFormat& returnF
         GPRReg gpr = info.gpr();
         m_gprs.lock(gpr);
         if (type & ~SpecInt32Only)
-            speculationCheck(BadType, JSValueSource(gpr), edge, branchIfNotStrictInt32(gpr));
+            speculationCheck(BadType, JSValueSource(gpr), edge, branchIfNotPlainInt32(gpr));
         info.fillJSValue(m_stream, gpr, DataFormatJSInt32);
         // If !strict we're done, return.
         if (!strict) {
@@ -2330,9 +2336,11 @@ void SpeculativeJIT::emitUntypedBranch(Edge nodeUse, BasicBlock* taken, BasicBlo
         branch64(Equal, valueGPR, TrustedImm64(JSValue::encode(jsBoolean(true))), taken);
     }
 
-    if (needsTypeCheck(nodeUse, ~SpecInt32Only)) {
-        branch64(Above, valueGPR, GPRInfo::numberTagRegister, taken);
-        branch64(Equal, valueGPR, GPRInfo::numberTagRegister, notTaken);
+    if (needsTypeCheck(nodeUse, ~(SpecInt32Only | SpecWholeFloat))) {
+        Jump notInt32 = branchIfNotInt32(valueGPR);
+        branchTest32(NonZero, valueGPR, taken);
+        jump(notTaken, ForceJump);
+        notInt32.link(this);
     }
 
     if (needsTypeCheck(nodeUse, ~SpecFullDouble)) {
@@ -6302,12 +6310,20 @@ void SpeculativeJIT::compile(Node* node)
         compileTaggedArith(node);
         break;
 
-    case IsInt32:
-        compileIsInt32(node);
+    case IsTaggedInt:
+        compileIsTaggedInt(node);
         break;
 
-    case CheckNotInt32:
-        compileCheckNotInt32(node);
+    case CheckNotWholeFloat:
+        compileCheckNotWholeFloat(node);
+        break;
+
+    case CheckTaggedFloat:
+        compileCheckTaggedFloat(node);
+        break;
+
+    case BoxTaggedFloat:
+        compileBoxTaggedFloat(node);
         break;
 
     case ExtractCatchLocal: {
@@ -7073,7 +7089,8 @@ void SpeculativeJIT::convertAnyInt(Edge valueEdge, GPRReg resultGPR, bool canIgn
     JumpList failureCases;
 
     failureCases.append(branchIfNotNumber(valueGPR));
-    JumpList notInt32 = branchIfNotInt32(valueGPR);
+    Jump notInt32 = branchIfNotInt32(valueGPR);
+    failureCases.append(branchIfInt32IsWholeFloat(valueGPR));
     signExtend32ToPtr(valueGPR, resultGPR);
     auto done = jump();
 
@@ -7101,7 +7118,7 @@ void SpeculativeJIT::speculateAnyInt(Edge edge)
 
 void SpeculativeJIT::speculateInt32(Edge edge, GPRReg valueGPR)
 {
-    DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, SpecInt32Only, branchIfNotStrictInt32(valueGPR));
+    DFG_TYPE_CHECK(JSValueSource(valueGPR), edge, SpecInt32Only, branchIfNotPlainInt32(valueGPR));
 }
 
 void SpeculativeJIT::speculateDoubleRepAnyInt(Edge edge)
@@ -8983,14 +9000,8 @@ void SpeculativeJIT::unboxRealNumberDouble(Node* node, FPRReg boxedFPR, FPRReg r
     sub64(boxedFPR, resultFPR, resultFPR);
     auto doneCase = branchIfNotNaN(resultFPR);
 
-    if (Options::keepNumberEncodings(5)) {
-        speculationCheck(BadType, JSValueSource { }, node, jump());
-        doneCase.link(this);
-        return;
-    }
-
     moveDoubleTo64(boxedFPR, scratchGPR);
-    speculationCheck(BadType, JSValueSource { }, node, branchIfNotStrictInt32(scratchGPR));
+    speculationCheck(BadType, JSValueSource { }, node, Options::guardsWholeFloats(5) ? branchIfNotPlainInt32(scratchGPR) : JumpList(branchIfNotInt32(scratchGPR)));
     convertInt32ToDouble(scratchGPR, resultFPR);
 
     doneCase.link(this);

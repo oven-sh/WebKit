@@ -45,8 +45,9 @@ void JITBitOrGenerator::generateFastPath(CCallHelpers& jit)
 
         if (constOpr.asConstInt32()) {
             jit.or64(CCallHelpers::TrustedImm64(static_cast<uint64_t>(static_cast<uint32_t>(constOpr.asConstInt32()))), var, m_result);
+            jit.makeInt32Plain(m_result, m_result);
         } else
-            jit.move(var, m_result);
+            jit.makeInt32Plain(var, m_result);
         return;
     }
 
@@ -64,6 +65,7 @@ void JITBitOrGenerator::generateFastPath(CCallHelpers& jit)
     m_slowPathJumpList.append(jit.branchIfNotInt32(m_right));
 
     jit.or64(m_right, m_left, m_result);
+    jit.makeInt32Plain(m_result, m_result);
 }
 
 } // namespace JSC

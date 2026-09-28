@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--keepNumberEncodings=1")
+//@ requireOptions("--useDollarVM=1")
 load("./resources/tagged-arithmetic.js", "caller relative");
 
 // That a number which is only carried from one place to another arrives as it left: an int32 as an int32 and a double as a

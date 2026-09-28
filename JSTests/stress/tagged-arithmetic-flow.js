@@ -3,14 +3,14 @@ load("./resources/tagged-arithmetic.js", "caller relative");
 
 // That a number stays what it is on its way from one operation to the next, however the code is compiled.
 
-const add = $vm.tagged.add, sub = $vm.tagged.sub, mul = $vm.tagged.mul, div = $vm.tagged.div, isInt32 = $vm.tagged.isInt32;
+const add = $vm.tagged.add, sub = $vm.tagged.sub, mul = $vm.tagged.mul, div = $vm.tagged.div, isInt = $vm.tagged.isInt;
 
 // Not [a, b]: an array of an int and a float is an array of two floats.
 const list = $vm.tagged.newArray;
 const F0 = float(0), F1 = float(1), F2 = float(2), F4 = float(4), H = float(0.5);
 
 const cases = {
-    "constants": [() => list(add(1, 2), add(1, F2), add(F1, F1), mul(F2, F2), div(4, 2), sub(F2, F2), mul(0, -1), mul(F0, -1), add(2147483647, 1), float(2), float(F2), isInt32(2), isInt32(F2), isInt32(float(2)), isInt32("2")),
+    "constants": [() => list(add(1, 2), add(1, F2), add(F1, F1), mul(F2, F2), div(4, 2), sub(F2, F2), mul(0, -1), mul(F0, -1), add(2147483647, 1), float(2), float(F2), isInt(2), isInt(F2), isInt(float(2)), isInt("2")),
         "int 3, float 3, float 2, float 4, float 2, float 0, int 0, float -0, none, float 2, float 2, other, other, other, other"],
     "chain of floats with integral values": [(i, o, t) => add(mul(t, t), sub(t, F1)), "float 5"],
     "chain of ints": [(i, o, t) => add(mul(o, 3), sub(o, 5)), "int -1"],
@@ -29,8 +29,8 @@ const cases = {
     "through a closure": [(i, o, t) => { let x = mul(t, t), y = add(o, o); return (() => list(x, y))(); }, "float 4, int 2"],
     "through a call": [(i, o, t) => ((a, b) => list(b, a, add(a, b)))(add(o, o), mul(t, t)), "float 4, int 2, float 6"],
     "chosen by a condition": [(i, o, t) => { let x = i % 3 ? mul(t, t) : add(o, 3); return i % 3 ? x : F4; }, "float 4"],
-    "compared": [(i, o, t) => [t === 2, t == add(o, o), t > o, isInt32(t), isInt32(add(o, o)), isInt32(mul(t, o))].map(Number).join(""), "other"],
-    "branching on which it is": [(i, o, t) => { let x = i & 1 ? o : t; return isInt32(x) === !!(i & 1) ? "right" : "wrong"; }, "other"],
+    "compared": [(i, o, t) => [t === 2, t == add(o, o), t > o, isInt(t), isInt(add(o, o)), isInt(mul(t, o))].map(Number).join(""), "other"],
+    "branching on which it is": [(i, o, t) => { let x = i & 1 ? o : t; return isInt(x) === !!(i & 1) ? "right" : "wrong"; }, "other"],
     "not a number, sometimes": [(i, o, t) => { let x = i % 5 ? t : "s"; let r = add(x, o); return i % 5 ? r : add(t, o); }, "float 3"],
 };
 

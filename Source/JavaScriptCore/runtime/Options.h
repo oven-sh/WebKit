@@ -146,8 +146,8 @@ public: \
     FOR_EACH_JSC_OPTION(DECLARE_OPTION_ACCESSORS)
 #undef DECLARE_OPTION_ACCESSORS
 
-    // Each thing that is done for keepNumberEncodings has a number, by which a test can have it left undone.
-    ALWAYS_INLINE static bool keepNumberEncodings(unsigned check) { return keepNumberEncodings() && !(numberEncodingChecksToSkip() & (1u << check)); }
+    // Each thing that is done so that a whole float stays one has a number, by which a test can have it left undone.
+    ALWAYS_INLINE static bool guardsWholeFloats(unsigned guard) { return !(wholeFloatGuardsToSkip() & (1u << guard)); }
 
     static bool NODELETE isAvailable(ID, Availability);
     JS_EXPORT_PRIVATE static SandboxPolicy machExceptionHandlerSandboxPolicy;

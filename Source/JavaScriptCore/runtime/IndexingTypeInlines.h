@@ -31,22 +31,28 @@
 
 namespace JSC {
 
+// What is loaded from an array of int32s or of doubles is boxed anew, so that a whole float would come out a plain number.
+// Given one, such an array becomes a contiguous one.
+ALWAYS_INLINE bool isInt32ForInt32Shape(JSValue value)
+{
+    return Options::guardsWholeFloats(21) ? value.isPlainInt32() : value.isInt32();
+}
+
+// (NaN cannot be put there either, which is for whoever asks to see to: it is what a hole looks like.)
+ALWAYS_INLINE bool isNumberForDoubleShape(JSValue value)
+{
+    return value.isNumber() && !(value.isWholeFloat() && Options::guardsWholeFloats(22));
+}
+
 inline IndexingType indexingTypeForValue(JSValue value)
 {
-    if (value.isInt32())
+    if (isInt32ForInt32Shape(value))
         return Int32Shape;
 
-    if (value.isNumber() && value.asNumber() == value.asNumber() && Options::allowDoubleShape())
+    if (isNumberForDoubleShape(value) && value.asNumber() == value.asNumber() && Options::allowDoubleShape())
         return DoubleShape;
 
     return ContiguousShape;
-}
-
-// Whether a value can be put in an array of doubles. An int32 can, as far as JavaScript can tell, but it comes out a double.
-// (NaN cannot either, which is for whoever asks to see to: it is what a hole looks like.)
-ALWAYS_INLINE bool isNumberForDoubleShape(JSValue value)
-{
-    return value.isNumber() && !(value.isInt32() && Options::keepNumberEncodings(21));
 }
 
 } // namespace JSC

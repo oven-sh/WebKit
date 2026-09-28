@@ -1133,7 +1133,7 @@ ALWAYS_INLINE void JSObject::initializeIndex(ObjectInitializationScope& scope, u
     case ALL_INT32_INDEXING_TYPES: {
         ASSERT(i < butterfly->publicLength());
         ASSERT(i < butterfly->vectorLength());
-        if (!v.isInt32()) {
+        if (!isInt32ForInt32Shape(v)) {
             convertInt32ToDoubleOrContiguousWhilePerformingSetIndex(vm, i, v);
             break;
         }
@@ -1188,7 +1188,7 @@ ALWAYS_INLINE void JSObject::initializeIndexWithoutBarrier(ObjectInitializationS
     case ALL_INT32_INDEXING_TYPES: {
         ASSERT(i < butterfly->publicLength());
         ASSERT(i < butterfly->vectorLength());
-        RELEASE_ASSERT(v.isInt32());
+        RELEASE_ASSERT(v.isPlainInt32());
         [[fallthrough]];
     }
     case ALL_CONTIGUOUS_INDEXING_TYPES: {
@@ -1449,7 +1449,7 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
     case ALL_WRITABLE_INT32_INDEXING_TYPES: {
         if (i >= butterfly->vectorLength())
             return false;
-        if (!v.isInt32()) {
+        if (!isInt32ForInt32Shape(v)) {
             convertInt32ToDoubleOrContiguousWhilePerformingSetIndex(vm, i, v);
             return true;
         }
@@ -1516,7 +1516,7 @@ inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
     switch (indexingType()) {
     case ALL_INT32_INDEXING_TYPES: {
         ASSERT(i < butterfly->vectorLength());
-        if (!v.isInt32()) {
+        if (!isInt32ForInt32Shape(v)) {
             convertInt32ToDoubleOrContiguousWhilePerformingSetIndex(vm, i, v);
             return;
         }

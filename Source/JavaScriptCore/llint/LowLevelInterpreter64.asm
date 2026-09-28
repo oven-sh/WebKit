@@ -1039,6 +1039,9 @@ macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
         cqeq t0, t1, t5
         btqnz t5, t5, .done #is there a better way of checking t5 != 0 ?
 
+        # A whole float is equal to the Int32 with its value. Of what is left, only it has this bit after the addition above.
+        btqnz t3, WholeFloatMark, .slow
+
         # Pointer-equal failed. Doubles were filtered above, so any non-cell here is
         # Int32 / Null / Undefined / true / false, and a non-cell on either side means
         # strict equality is already known to be false.
@@ -1100,6 +1103,9 @@ macro strictEqualityJumpOp(opcodeName, opcodeStruct, jumpIfEqual, jumpIfNotEqual
         bqaeq t3, t5, .slow
 
         bqeq t0, t1, .equal
+
+        # A whole float is equal to the Int32 with its value. Of what is left, only it has this bit after the addition above.
+        btqnz t3, WholeFloatMark, .slow
 
         # Pointer-equal failed. Doubles were filtered above, so any non-cell here is
         # Int32 / Null / Undefined / true / false, and a non-cell on either side means
@@ -2062,6 +2068,7 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
             macro (operand, scratch, address)
                 loadConstantOrVariable(size, operand, scratch)
                 bqb scratch, numberTag, .opPutByValSlow
+                btqnz scratch, WholeFloatMark, .opPutByValSlow
                 storeq scratch, address
                 writeBarrierOnOperands(size, get, m_base, m_value)
             end)
@@ -2071,11 +2078,15 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
         contiguousPutByVal(
             macro (operand, scratch, address)
                 loadConstantOrVariable(size, operand, scratch)
-                # Whether an int32 may be stored as a double is for the slow path to say (Options::keepNumberEncodings).
-                bqaeq scratch, numberTag, .opPutByValSlow
+                bqb scratch, numberTag, .notInt
+                btqnz scratch, WholeFloatMark, .opPutByValSlow
+                ci2ds scratch, ft0
+                jmp .ready
+            .notInt:
                 addq numberTag, scratch
                 fq2d scratch, ft0
                 bdnequn ft0, ft0, .opPutByValSlow
+            .ready:
                 stored ft0, address
                 writeBarrierOnOperands(size, get, m_base, m_value)
             end)

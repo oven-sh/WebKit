@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--keepNumberEncodings=1")
+//@ requireOptions("--useDollarVM=1")
 load("./resources/tagged-arithmetic.js", "caller relative");
 
 // A number that is only carried is left alone by the compilers. It is one that is also looked at as a number that they
@@ -83,7 +83,7 @@ for (let i = 0; i < testLoopCount * 2; ++i) {
 }
 
 // Optimized code that is left because of a surprise, and entered again at the head of the loop that was being run.
-for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5))]) {
+for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5)), list(float(0.5), float(2)), list(float(2), float(0.5)), list(intAsDouble(1), float(2))]) {
     let f = eval(freshSource("x, n", "{ let y = x; for (let k = 0; k < n; ++k) { if (y < k * 0.25) sink = k; } return y; }"));
     noInline(f);
     for (let i = 0; i < 4; ++i)
@@ -97,7 +97,7 @@ for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)
 // The same, of a number that is not an argument: those are looked at on the way in, before any local is.
 const source = { v: 0.5 };
 for (let comparison of ["y < k * 0.25", "y < k"]) {
-    for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5))]) {
+    for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5)), list(float(0.5), float(2)), list(float(2), float(0.5)), list(intAsDouble(1), float(2))]) {
         let f = eval(freshSource("n", "{ let y = source.v; for (let k = 0; k < n; ++k) { if (" + comparison + ") sink = k; } return y; }"));
         noInline(f);
         for (let i = 0; i < 4; ++i) {
@@ -114,7 +114,7 @@ for (let comparison of ["y < k * 0.25", "y < k"]) {
 }
 
 // Copied from one property to another, and used as a number, by code that hands it to nothing else.
-for (let [trained, surprise] of [list(float(0.5), int(1)), list(float(2), int(1))]) {
+for (let [trained, surprise] of [list(float(0.5), int(1)), list(float(2), int(1)), list(float(0.5), float(2)), list(int(1), float(2)), list(float(2), float(0.5))]) {
     let copy = eval(freshSource("", "{ let y = source.v; results.last = y; sink = y * 1.5; }"));
     noInline(copy);
     for (let i = 0; i < testLoopCount * 2; ++i) {
@@ -151,7 +151,8 @@ for (let i = 0; i < testLoopCount; ++i) {
     for (let f of [storedOnTheWay, storedOnTheWayByJavaScript]) {
         f(5, float(0.5));
         expect("what the loop variable was at first", results.first, "int 0");
-        expect("what the loop variable was at last", results.last, "float 2");
+        // What JavaScript computes is what its value says it is.
+        expect("what the loop variable was at last", results.last, f === storedOnTheWay ? "float 2" : "int 2");
     }
 }
 

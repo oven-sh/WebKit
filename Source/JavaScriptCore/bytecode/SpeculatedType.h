@@ -89,6 +89,8 @@ static constexpr SpeculatedType SpecBoolInt32                         = 1ull << 
 static constexpr SpeculatedType SpecNonBoolInt32                      = 1ull << 38; // It's definitely an Int32 with value other than 0 or 1.
 static constexpr SpeculatedType SpecInt32Only                         = SpecBoolInt32 | SpecNonBoolInt32; // It's definitely an Int32.
 
+static constexpr SpeculatedType SpecWholeFloat                        = 1ull << 51; // It's definitely an Int32 that has JSValue::WholeFloatMark. It's a number, and never unboxed but to compute with.
+
 static constexpr SpeculatedType SpecInt32AsInt52                      = 1ull << 39; // It's an Int52 and it can fit in an int32.
 static constexpr SpeculatedType SpecNonInt32AsInt52                   = 1ull << 40; // It's an Int52 and it can't fit in an int32.
 static constexpr SpeculatedType SpecInt52Any                          = SpecInt32AsInt52 | SpecNonInt32AsInt52; // It's any kind of Int52.
@@ -103,8 +105,8 @@ static constexpr SpeculatedType SpecBytecodeDouble                    = SpecDoub
 static constexpr SpeculatedType SpecFullDouble                        = SpecDoubleReal | SpecDoubleNaN; // It's either a non-NaN or a NaN double.
 static constexpr SpeculatedType SpecBytecodeRealNumber                = SpecInt32Only | SpecDoubleReal; // It's either an Int32 or a DoubleReal.
 static constexpr SpeculatedType SpecFullRealNumber                    = SpecInt32Only | SpecInt52Any | SpecDoubleReal; // It's either an Int32 or a DoubleReal, or an Int52.
-static constexpr SpeculatedType SpecBytecodeNumber                    = SpecInt32Only | SpecBytecodeDouble; // It's either an Int32 or a Double, and the Double cannot be an impure NaN.
-static constexpr SpeculatedType SpecIntAnyFormat                      = SpecInt52Any | SpecInt32Only | SpecAnyIntAsDouble;
+static constexpr SpeculatedType SpecBytecodeNumber                    = SpecInt32Only | SpecWholeFloat | SpecBytecodeDouble; // It's either an Int32 or a Double, and the Double cannot be an impure NaN.
+static constexpr SpeculatedType SpecIntAnyFormat                      = SpecInt52Any | SpecInt32Only | SpecWholeFloat | SpecAnyIntAsDouble;
 
 static constexpr SpeculatedType SpecFullNumber                        = SpecIntAnyFormat | SpecFullDouble; // It's either an Int32, Int52, or a Double, and the Double can be impure NaN.
 static constexpr SpeculatedType SpecBoolean                           = 1ull << 45; // It's definitely a Boolean.
@@ -379,12 +381,12 @@ inline bool isInt32OrBooleanSpeculation(SpeculatedType value)
 
 inline bool isInt32SpeculationForArithmetic(SpeculatedType value)
 {
-    return !(value & (SpecFullDouble | SpecNonInt32AsInt52 | SpecBigInt));
+    return !(value & (SpecFullDouble | SpecWholeFloat | SpecNonInt32AsInt52 | SpecBigInt));
 }
 
 inline bool isInt32OrBooleanSpeculationForArithmetic(SpeculatedType value)
 {
-    return !(value & (SpecFullDouble | SpecNonInt32AsInt52 | SpecBigInt));
+    return !(value & (SpecFullDouble | SpecWholeFloat | SpecNonInt32AsInt52 | SpecBigInt));
 }
 
 inline bool isInt32OrOtherSpeculation(SpeculatedType value)
@@ -479,17 +481,17 @@ inline bool isNotBooleanSpeculation(SpeculatedType value)
 
 inline bool isNotDoubleSpeculation(SpeculatedType type)
 {
-    return !(type & SpecFullDouble);
+    return !(type & (SpecFullDouble | SpecWholeFloat));
 }
 
 inline bool isNeitherDoubleNorHeapBigIntNorStringSpeculation(SpeculatedType type)
 {
-    return !(type & (SpecFullDouble | SpecHeapBigInt | SpecString));
+    return !(type & (SpecFullDouble | SpecWholeFloat | SpecHeapBigInt | SpecString));
 }
 
 inline bool isNeitherDoubleNorHeapBigIntSpeculation(SpeculatedType type)
 {
-    return !(type & (SpecFullDouble | SpecHeapBigInt));
+    return !(type & (SpecFullDouble | SpecWholeFloat | SpecHeapBigInt));
 }
 
 inline bool isOtherSpeculation(SpeculatedType value)

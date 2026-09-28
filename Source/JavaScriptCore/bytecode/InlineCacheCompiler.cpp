@@ -2591,9 +2591,9 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
             switch (accessCase.m_type) {
             case AccessCase::IndexedDoubleStore: {
                 RELEASE_ASSERT(m_scratchFPR != InvalidFPRReg);
-                if (Options::keepNumberEncodings(27))
-                    failAndRepatch.append(jit.branchIfInt32(valueGPR));
                 auto notInt = jit.branchIfNotInt32(valueGPR);
+                if (Options::guardsWholeFloats(27))
+                    failAndRepatch.append(jit.branchIfInt32IsWholeFloat(valueGPR));
                 jit.convertInt32ToDouble(valueGPR, m_scratchFPR);
                 auto ready = jit.jump();
                 notInt.link(&jit);
@@ -2608,6 +2608,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
             case AccessCase::IndexedInt32Store:
                 jit.zeroExtend32ToWord(propertyGPR, scratch2GPR);
                 failAndRepatch.append(jit.branchIfNotInt32(valueGPR));
+                if (Options::guardsWholeFloats(27))
+                    failAndRepatch.append(jit.branchIfInt32IsWholeFloat(valueGPR));
                 jit.storeValue(valueGPR, CCallHelpers::BaseIndex(scratchGPR, scratch2GPR, CCallHelpers::TimesEight));
                 break;
             case AccessCase::IndexedContiguousStore:

@@ -43,9 +43,6 @@ JSValue ValueRecovery::recover(CallFrame* callFrame) const
     case StrictInt52DisplacedInJSStack:
         return jsNumber(callFrame->r(virtualRegister()).unboxedStrictInt52());
     case DoubleDisplacedInJSStack:
-        // It was a double before it was unboxed, whatever its value.
-        if (Options::keepNumberEncodings(31))
-            return jsDoubleNumber(purifyNaN(callFrame->r(virtualRegister()).unboxedDouble()));
         return jsNumber(purifyNaN(callFrame->r(virtualRegister()).unboxedDouble()));
     case CellDisplacedInJSStack:
         return callFrame->r(virtualRegister()).unboxedCell();

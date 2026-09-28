@@ -169,7 +169,7 @@ namespace JSC {
     macro(TaggedSubIntrinsic) \
     macro(TaggedMulIntrinsic) \
     macro(TaggedDivIntrinsic) \
-    macro(IsInt32Intrinsic) \
+    macro(IsTaggedIntIntrinsic) \
     macro(NewContiguousArrayIntrinsic) \
     macro(RandomIntrinsic) \
     macro(FRoundIntrinsic) \

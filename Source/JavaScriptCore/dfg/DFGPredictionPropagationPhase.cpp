@@ -340,7 +340,7 @@ private:
                 changed |= mergePrediction(SpecInt32Only);
                 break;
             case Graph::TaggedArithMode::Double:
-                changed |= mergePrediction(SpecBytecodeDouble);
+                changed |= mergePrediction(SpecWholeFloat | SpecBytecodeDouble);
                 break;
             case Graph::TaggedArithMode::Generic:
                 changed |= mergePrediction(node->getHeapPrediction());
@@ -1064,7 +1064,7 @@ private:
         switch (m_currentNode->op()) {
         case JSConstant: {
             SpeculatedType type = speculationFromValue(m_currentNode->asJSValue());
-            if (type == SpecAnyIntAsDouble && !Options::keepNumberEncodings(1))
+            if (type == SpecAnyIntAsDouble)
                 type = int52AwareSpeculationFromValue(m_currentNode->asJSValue());
             setPrediction(type);
             break;
@@ -1400,7 +1400,7 @@ private:
         case IsNumber:
         case IsBigInt:
         case NumberIsInteger:
-        case IsInt32:
+        case IsTaggedInt:
         case GlobalIsNaN:
         case NumberIsNaN:
         case GlobalIsFinite:
@@ -1437,7 +1437,8 @@ private:
 
         case CheckJSCast:
         case CheckNotJSCast:
-        case CheckNotInt32:
+        case CheckNotWholeFloat:
+        case CheckTaggedFloat:
             break;
 
         case SkipScope:

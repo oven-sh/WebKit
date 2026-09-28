@@ -166,6 +166,8 @@ public:
     bool operator==(const JSValue&) const;
 
     bool isInt32() const;
+    bool isPlainInt32() const;
+    bool isWholeFloat() const;
     bool isUInt32() const;
     bool isDouble() const;
     bool isTrue() const;
@@ -394,6 +396,14 @@ public:
     // If all bits in the mask are set, this indicates an integer number,
     // if any but not all are set this value is a double precision number.
     static constexpr int64_t NumberTag = 0xfffe000000000000ll;
+    // An int32 leaves the 17 bits between its tag and its value zero. With the highest of them set it is a whole float: to
+    // JavaScript the same number, which isInt32() and asInt32() say it is. What it adds is for a language that has two kinds
+    // of number. There, a number that could be encoded as an int32 is an integer, however it is encoded, and JavaScript
+    // may go on encoding it as it likes. A float that has such a value is encoded like this, and only that language's
+    // arithmetic makes one. It stays as it is for as long as it is only moved. What is computed from it is a plain number.
+    static constexpr int64_t WholeFloatMark = 1ll << 48;
+    static constexpr unsigned WholeFloatMarkBit = 48;
+    static constexpr int64_t WholeFloatTag = NumberTag | WholeFloatMark;
     // The following constant is used for a trick in the implementation of strictEq, to detect if either of the arguments is a double
     static constexpr int64_t LowestOfHighBits = 1ULL << 49;
     static_assert(LowestOfHighBits & NumberTag);
@@ -732,6 +742,21 @@ inline bool JSValue::isInt32() const
     return (u.asInt64 & NumberTag) == NumberTag;
 }
 
+ALWAYS_INLINE JSValue jsWholeFloat(int32_t value)
+{
+    return JSValue::decode(JSValue::WholeFloatTag | static_cast<uint32_t>(value));
+}
+
+inline bool JSValue::isPlainInt32() const
+{
+    return (u.asInt64 & WholeFloatTag) == NumberTag;
+}
+
+inline bool JSValue::isWholeFloat() const
+{
+    return (u.asInt64 & WholeFloatTag) == WholeFloatTag;
+}
+
 inline int64_t reinterpretDoubleToInt64(double value)
 {
     return std::bit_cast<int64_t>(value);
@@ -1030,7 +1055,7 @@ ALWAYS_INLINE bool JSValue::getUInt32(uint32_t& v) const
 inline bool JSValue::equal(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     if (v1.isInt32() && v2.isInt32())
-        return v1 == v2;
+        return v1.asInt32() == v2.asInt32();
 
     return equalSlowCase(globalObject, v1, v2);
 }

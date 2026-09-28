@@ -277,7 +277,7 @@ void JSValue::dumpInContextAssumingStructure(
     if (!*this)
         out.print("<JSValue()>");
     else if (isInt32())
-        out.printf("Int32: %d", asInt32());
+        out.printf(isWholeFloat() ? "WholeFloat: %d" : "Int32: %d", asInt32());
     else if (isDouble()) {
         out.printf("Double: %lld, %lf", (long long)reinterpretDoubleToInt64(asDouble()), asDouble());
     } else if (isCell()) {

@@ -535,6 +535,80 @@ public:
         return branch64(Below, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
+    // Of what is known to be an int32.
+    Jump branchIfInt32IsWholeFloat(GPRReg gpr)
+    {
+        return branchTest64(NonZero, gpr, TrustedImm64(JSValue::WholeFloatMark));
+    }
+
+    Jump branchIfInt32IsPlain(GPRReg gpr)
+    {
+        return branchTest64(Zero, gpr, TrustedImm64(JSValue::WholeFloatMark));
+    }
+
+    // What is computed is a plain number. This is for where the result is an operand, or is made from the boxed operands.
+    void makeInt32Plain(GPRReg src, GPRReg dest)
+    {
+        and64(TrustedImm64(~JSValue::WholeFloatMark), src, dest);
+    }
+
+    // TaggedArithmetic.h: jsTaggedFloat().
+    void boxTaggedFloat(FPRReg fpr, GPRReg dest, GPRReg scratchGPR, FPRReg scratchFPR)
+    {
+        ASSERT(dest != scratchGPR);
+        moveDoubleTo64(fpr, dest);
+        truncateDoubleToInt32(fpr, scratchGPR);
+        convertInt32ToDouble(scratchGPR, scratchFPR);
+        JumpList notWhole;
+        notWhole.append(branchDouble(DoubleNotEqualOrUnordered, fpr, scratchFPR));
+        Jump notZero = branchTest32(NonZero, scratchGPR);
+        notWhole.append(branchTest64(NonZero, dest)); // -0.0
+        notZero.link(this);
+        zeroExtend32ToWord(scratchGPR, scratchGPR);
+        or64(TrustedImm64(JSValue::WholeFloatTag), scratchGPR, dest);
+        Jump done = jump();
+        notWhole.link(this);
+        sub64(GPRInfo::numberTagRegister, dest);
+        done.link(this);
+    }
+
+    // TaggedArithmetic.h: tryConvertToTaggedInteger(). Leaves the integer in scratchGPR.
+    JumpList branchIfDoubleIsNotTaggedInteger(FPRReg fpr, GPRReg scratchGPR, FPRReg scratchFPR)
+    {
+        JumpList result;
+        truncateDoubleToInt32(fpr, scratchGPR);
+        convertInt32ToDouble(scratchGPR, scratchFPR);
+        result.append(branchDouble(DoubleNotEqualOrUnordered, fpr, scratchFPR));
+        Jump notZero = branchTest32(NonZero, scratchGPR);
+        moveDoubleTo64(fpr, scratchGPR);
+        result.append(branchTest64(NonZero, scratchGPR)); // -0.0. Otherwise it is 0, and so is scratchGPR.
+        notZero.link(this);
+        return result;
+    }
+
+    // Of any value.
+    Jump branchIfWholeFloat(GPRReg gpr)
+    {
+        return branch64(AboveOrEqual, gpr, TrustedImm64(JSValue::WholeFloatTag));
+    }
+
+    // For where the int32 may be boxed again afterwards, or is put where it will be taken for a plain one.
+    JumpList branchIfNotPlainInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
+    {
+        JumpList result;
+        result.append(branchIfNotInt32(gpr, mode));
+        result.append(branchIfInt32IsWholeFloat(gpr));
+        return result;
+    }
+
+    Jump branchIfPlainInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
+    {
+        Jump notInt32 = branchIfNotInt32(gpr, mode);
+        Jump isPlain = branchIfInt32IsPlain(gpr);
+        notInt32.link(this);
+        return isPlain;
+    }
+
     Jump branchIfNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)

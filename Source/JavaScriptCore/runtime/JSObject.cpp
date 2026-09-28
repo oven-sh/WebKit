@@ -1056,7 +1056,7 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
     }
         
     case ALL_INT32_INDEXING_TYPES: {
-        if (!value.isInt32()) {
+        if (!isInt32ForInt32Shape(value)) {
             thisObject->convertInt32ForValue(vm, value);
             return putByIndex(cell, globalObject, propertyName, value, shouldThrow);
         }
@@ -1791,7 +1791,7 @@ void JSObject::convertUndecidedForValue(VM& vm, JSValue value)
 
 void JSObject::createInitialForValueAndSet(VM& vm, unsigned index, JSValue value)
 {
-    if (value.isInt32()) {
+    if (isInt32ForInt32Shape(value)) {
         createInitialInt32(vm, index + 1).at(this, index).set(vm, this, value);
         return;
     }
@@ -1809,10 +1809,9 @@ void JSObject::createInitialForValueAndSet(VM& vm, unsigned index, JSValue value
 
 void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 {
-    ASSERT(!value.isInt32());
+    ASSERT(!isInt32ForInt32Shape(value));
     
-    // The int32s that are in it would be doubles from then on.
-    if (value.isDouble() && !std::isnan(value.asDouble()) && Options::allowDoubleShape() && !Options::keepNumberEncodings(22)) {
+    if (value.isDouble() && !std::isnan(value.asDouble()) && Options::allowDoubleShape()) {
         convertInt32ToDouble(vm);
         return;
     }
@@ -1868,14 +1867,14 @@ void JSObject::setIndexQuicklyToUndecided(VM& vm, unsigned index, JSValue value)
 
 void JSObject::convertInt32ToDoubleOrContiguousWhilePerformingSetIndex(VM& vm, unsigned index, JSValue value)
 {
-    ASSERT(!value.isInt32());
+    ASSERT(!isInt32ForInt32Shape(value));
     convertInt32ForValue(vm, value);
     setIndexQuickly(vm, index, value);
 }
 
 void JSObject::convertDoubleToContiguousWhilePerformingSetIndex(VM& vm, unsigned index, JSValue value)
 {
-    ASSERT(!value.isNumber() || value.asNumber() != value.asNumber());
+    ASSERT(!isNumberForDoubleShape(value) || value.asNumber() != value.asNumber());
     convertDoubleToContiguous(vm);
     setIndexQuickly(vm, index, value);
 }
@@ -1944,8 +1943,6 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
         return convertUndecidedToDouble(vm);
         
     case ALL_INT32_INDEXING_TYPES:
-        if (Options::keepNumberEncodings(23))
-            return ContiguousDoubles();
         return convertInt32ToDouble(vm);
         
     case ALL_CONTIGUOUS_INDEXING_TYPES:
@@ -3297,7 +3294,7 @@ bool JSObject::putByIndexBeyondVectorLengthWithoutAttributes(JSGlobalObject* glo
     RELEASE_ASSERT(i < butterfly->vectorLength());
     switch (indexingShape) {
     case Int32Shape:
-        ASSERT(value.isInt32());
+        ASSERT(value.isPlainInt32());
         butterfly->contiguous().at(this, i).setWithoutWriteBarrier(value);
         return true;
         
@@ -3601,7 +3598,7 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
         ASSERT(!indexingShouldBeSparse());
         if (attributes)
             return putDirectIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, attributes, mode, ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm));
-        if (!value.isInt32()) {
+        if (!isInt32ForInt32Shape(value)) {
             convertInt32ForValue(vm, value);
             return putDirectIndexSlowOrBeyondVectorLength(globalObject, i, value, attributes, mode);
         }

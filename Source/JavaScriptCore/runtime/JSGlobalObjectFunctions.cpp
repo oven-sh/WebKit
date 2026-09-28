@@ -532,7 +532,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, Call
     if (value.isNumber()) {
         if (radixValue.isUndefinedOrNull() || (radixValue.isInt32() && radixValue.asInt32() == 10)) {
             if (value.isInt32())
-                return JSValue::encode(value);
+                return JSValue::encode(jsNumber(value.asInt32()));
             if (auto result = parseIntDouble(value.asDouble()))
                 return JSValue::encode(jsNumber(result.value()));
         }

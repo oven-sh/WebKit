@@ -1789,7 +1789,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case IsNumber:
     case IsBigInt:
     case NumberIsInteger:
-    case IsInt32:
+    case IsTaggedInt:
     case IsObject:
     case IsCallable:
     case IsConstructor:
@@ -1838,8 +1838,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             case NumberIsInteger:
                 setConstant(node, jsBoolean(NumberConstructor::isIntegerImpl(child.value())));
                 break;
-            case IsInt32:
-                setConstant(node, jsBoolean(child.value().isInt32()));
+            case IsTaggedInt:
+                setConstant(node, jsBoolean(!!taggedInteger(child.value())));
                 break;
             case IsObject:
                 setConstant(node, jsBoolean(child.value().isObject()));
@@ -2023,13 +2023,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             // FIXME: if the SpeculatedType informs us that we won't have a BigInt32 (or that we won't have a HeapBigInt), then we can transform this node into a IsCellWithType(HeapBigIntType) (or a hypothetical IsBigInt32 node).
 
             break;
-        case IsInt32:
+        case IsTaggedInt:
             if (!(child.m_type & ~SpecInt32Only)) {
                 setConstant(node, jsBoolean(true));
                 constantWasSet = true;
                 break;
             }
-            if (!(child.m_type & SpecInt32Only)) {
+            if (!(child.m_type & (SpecInt32Only | SpecAnyIntAsDouble))) {
                 setConstant(node, jsBoolean(false));
                 constantWasSet = true;
                 break;
@@ -4837,8 +4837,28 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
-    case CheckNotInt32: {
-        filter(node->child1(), ~SpecInt32Only);
+    case CheckNotWholeFloat: {
+        filter(node->child1(), ~SpecWholeFloat);
+        break;
+    }
+
+    case CheckTaggedFloat: {
+        filter(node->child1(), SpecWholeFloat | SpecBytecodeDouble);
+        break;
+    }
+
+    case BoxTaggedFloat: {
+        JSValue child = forNode(node->child1()).value();
+        if (child && child.isNumber()) {
+            setConstant(node, jsTaggedFloat(child.asNumber()));
+            break;
+        }
+        SpeculatedType type = forNode(node->child1()).m_type & SpecFullDouble;
+        if (type & SpecDoubleImpureNaN)
+            type = (type & ~SpecDoubleImpureNaN) | SpecDoublePureNaN;
+        if (type & SpecAnyIntAsDouble)
+            type |= SpecWholeFloat;
+        setNonCellTypeForNode(node, type);
         break;
     }
 
@@ -4852,7 +4872,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setConstant(node, node->op() == TaggedAdd ? taggedAdd(left, right) : node->op() == TaggedSub ? taggedSub(left, right) : node->op() == TaggedMul ? taggedMul(left, right) : taggedDiv(left, right));
             break;
         }
-        setNonCellTypeForNode(node, SpecInt32Only | SpecBytecodeDouble | SpecOther);
+        setNonCellTypeForNode(node, SpecBytecodeNumber | SpecOther);
         break;
     }
 

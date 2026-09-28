@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--keepNumberEncodings=1")
+//@ requireOptions("--useDollarVM=1")
 load("./resources/tagged-arithmetic.js", "caller relative");
 
 // That what is put in an ordinary array comes out as it went in. An array may hold only int32s, or only doubles, for as long

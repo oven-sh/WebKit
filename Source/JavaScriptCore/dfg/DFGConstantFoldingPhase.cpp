@@ -333,8 +333,18 @@ private:
                 break;
             }
 
-            case CheckNotInt32: {
-                if (!(m_state.forNode(node->child1()).m_type & SpecInt32Only)) {
+            case CheckNotWholeFloat: {
+                if (!(m_state.forNode(node->child1()).m_type & SpecWholeFloat)) {
+                    m_interpreter.execute(indexInBlock);
+                    node->remove(m_graph);
+                    eliminated = true;
+                }
+                break;
+            }
+
+            case CheckTaggedFloat: {
+                // A double with a whole value may be an integer.
+                if (!(m_state.forNode(node->child1()).m_type & ~(SpecWholeFloat | SpecNonIntAsDouble | SpecDoublePureNaN))) {
                     m_interpreter.execute(indexInBlock);
                     node->remove(m_graph);
                     eliminated = true;

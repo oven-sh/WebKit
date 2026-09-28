@@ -123,8 +123,6 @@ inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType
         if ((type == ArrayWithInt32 || type == ArrayWithDouble) && (other == ArrayWithInt32 || other == ArrayWithDouble)) {
             if (type == other)
                 return type;
-            if (Options::keepNumberEncodings(26))
-                return NonArray;
             return ArrayWithDouble;
         }
     }
@@ -257,7 +255,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     }
 
     case ArrayWithInt32: {
-        if (!value.isInt32()) {
+        if (!isInt32ForInt32Shape(value)) {
             convertInt32ForValue(vm, value);
             scope.release();
             push(globalObject, value);

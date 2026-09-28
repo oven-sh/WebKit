@@ -1014,7 +1014,7 @@ public:
      
     bool isInt32Constant()
     {
-        return isConstant() && constant()->value().isInt32();
+        return isConstant() && constant()->value().isPlainInt32();
     }
      
     int32_t asInt32()
@@ -1044,7 +1044,7 @@ public:
      
     bool isAnyIntConstant()
     {
-        return isConstant() && constant()->value().isAnyInt();
+        return isConstant() && constant()->value().isAnyInt() && !constant()->value().isWholeFloat();
     }
      
     int64_t asAnyInt()
@@ -3264,17 +3264,11 @@ public:
         // However, we only emit such an add if both inputs can be Int52, and Int32
         // can trivially become Int52.
         //
-        // What comes of arithmetic on Int52s is encoded as an int32 if it fits one. The other tiers, which had doubles to
-        // work with, give a double.
-        if (Options::useEncodingDirectedArithmetic())
-            return false;
         return isInt32OrInt52Speculation(prediction());
     }
 
     bool shouldSpeculateInt52OrOther()
     {
-        if (Options::useEncodingDirectedArithmetic())
-            return false;
         return isInt32OrInt52OrOtherSpeculation(prediction());
     }
 

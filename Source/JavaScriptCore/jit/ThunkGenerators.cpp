@@ -1716,6 +1716,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> maxThunkGenerator(VM& vm)
         auto notInt32RHS = jit.branchIfNotInt32(GPRInfo::regT2);
 
         jit.moveConditionally32(CCallHelpers::LessThan, GPRInfo::regT0, GPRInfo::regT2, GPRInfo::regT2, GPRInfo::regT0, GPRInfo::regT0);
+        jit.makeInt32Plain(GPRInfo::regT0, GPRInfo::regT0);
         jit.returnJSValue(GPRInfo::regT0);
 
         notInt32RHS.link(&jit);
@@ -1767,6 +1768,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> minThunkGenerator(VM& vm)
         auto notInt32RHS = jit.branchIfNotInt32(GPRInfo::regT2);
 
         jit.moveConditionally32(CCallHelpers::GreaterThan, GPRInfo::regT0, GPRInfo::regT2, GPRInfo::regT2, GPRInfo::regT0, GPRInfo::regT0);
+        jit.makeInt32Plain(GPRInfo::regT0, GPRInfo::regT0);
         jit.returnJSValue(GPRInfo::regT0);
 
         notInt32RHS.link(&jit);

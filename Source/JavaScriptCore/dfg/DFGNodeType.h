@@ -166,13 +166,17 @@ namespace JSC { namespace DFG {
     macro(ArithNegate, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMul, NodeResultNumber | NodeMustGenerate) \
     macro(ArithIMul, NodeResultInt32) \
-    /* Arithmetic in which the encoding of a number is its type: see TaggedArithmetic.h. Fixup makes these the nodes above */\
-    /* where it can say which the operands are. */\
+    /* Arithmetic on integers and floats: see TaggedArithmetic.h. Where fixup can say which the operands are, it makes these */\
+    /* the nodes above: on Int32s, or on doubles with the result in BoxTaggedFloat. What wants that as a double again takes */\
+    /* what went in. */\
     macro(TaggedAdd, NodeResultJS) \
     macro(TaggedSub, NodeResultJS) \
     macro(TaggedMul, NodeResultJS) \
     macro(TaggedDiv, NodeResultJS) \
-    macro(CheckNotInt32, NodeMustGenerate) \
+    macro(BoxTaggedFloat, NodeResultJS) \
+    macro(CheckTaggedFloat, NodeMustGenerate) \
+    /* Before a number is unboxed only to be put somewhere, from where it will be boxed again as a plain one. */\
+    macro(CheckNotWholeFloat, NodeMustGenerate) \
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \
@@ -509,7 +513,7 @@ namespace JSC { namespace DFG {
     macro(GlobalIsFinite, NodeMustGenerate | NodeResultBoolean) \
     macro(NumberIsFinite, NodeResultBoolean) \
     macro(NumberIsInteger, NodeResultBoolean) \
-    macro(IsInt32, NodeResultBoolean) \
+    macro(IsTaggedInt, NodeResultBoolean) \
     macro(NumberIsSafeInteger, NodeResultBoolean) \
     macro(IsObject, NodeResultBoolean) \
     macro(IsCallable, NodeResultBoolean) \

@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--keepNumberEncodings=1")
+//@ requireOptions("--useDollarVM=1")
 load("./resources/tagged-arithmetic.js", "caller relative");
 
 // Loops whose variables the compiler would like to keep unboxed, abandoned part of the way through.

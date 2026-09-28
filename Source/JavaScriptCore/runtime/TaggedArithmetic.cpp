@@ -36,11 +36,11 @@ static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticAdd);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticSub);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticMul);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticDiv);
-static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticToDouble);
-static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsInt32);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticToFloat);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsInt);
 static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticNewArray);
-static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticMark);
-static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsMarked);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticIsWholeFloat);
+static JSC_DECLARE_HOST_FUNCTION(taggedArithmeticEncodeAsDouble);
 
 JSC_DEFINE_HOST_FUNCTION(taggedArithmeticAdd, (JSGlobalObject*, CallFrame* callFrame))
 {
@@ -62,29 +62,29 @@ JSC_DEFINE_HOST_FUNCTION(taggedArithmeticDiv, (JSGlobalObject*, CallFrame* callF
     return JSValue::encode(taggedDiv(callFrame->argument(0), callFrame->argument(1)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(taggedArithmeticToDouble, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticToFloat, (JSGlobalObject*, CallFrame* callFrame))
 {
-    return JSValue::encode(toTaggedDouble(callFrame->argument(0)));
+    return JSValue::encode(toTaggedFloat(callFrame->argument(0)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsInt32, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsInt, (JSGlobalObject*, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(callFrame->argument(0).isInt32()));
+    return JSValue::encode(jsBoolean(!!taggedInteger(callFrame->argument(0))));
 }
 
-// An experiment: an int32 with bit 48 set. It passes every test for an int32, and its low 32 bits are the same.
-JSC_DEFINE_HOST_FUNCTION(taggedArithmeticMark, (JSGlobalObject*, CallFrame* callFrame))
+// For tests.
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsWholeFloat, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(callFrame->argument(0).isWholeFloat()));
+}
+
+// For tests: what JavaScript may make of a number at any time.
+JSC_DEFINE_HOST_FUNCTION(taggedArithmeticEncodeAsDouble, (JSGlobalObject*, CallFrame* callFrame))
 {
     JSValue value = callFrame->argument(0);
-    if (!value.isInt32())
+    if (!value.isNumber() || value.isWholeFloat())
         return JSValue::encode(value);
-    return JSValue::encode(value) | (1ll << 48);
-}
-
-JSC_DEFINE_HOST_FUNCTION(taggedArithmeticIsMarked, (JSGlobalObject*, CallFrame* callFrame))
-{
-    JSValue value = callFrame->argument(0);
-    return JSValue::encode(jsBoolean(value.isInt32() && (JSValue::encode(value) & (1ll << 48))));
+    return JSValue::encode(jsDoubleNumber(value.asNumber()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(taggedArithmeticNewArray, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -105,10 +105,10 @@ JSObject* createTaggedArithmeticObject(VM& vm, JSGlobalObject* globalObject)
     add("sub"_s, 2, taggedArithmeticSub, TaggedSubIntrinsic);
     add("mul"_s, 2, taggedArithmeticMul, TaggedMulIntrinsic);
     add("div"_s, 2, taggedArithmeticDiv, TaggedDivIntrinsic);
-    add("toDouble"_s, 1, taggedArithmeticToDouble, NoIntrinsic);
-    add("isInt32"_s, 1, taggedArithmeticIsInt32, IsInt32Intrinsic);
-    add("mark"_s, 1, taggedArithmeticMark, NoIntrinsic);
-    add("isMarked"_s, 1, taggedArithmeticIsMarked, NoIntrinsic);
+    add("toFloat"_s, 1, taggedArithmeticToFloat, NoIntrinsic);
+    add("isInt"_s, 1, taggedArithmeticIsInt, IsTaggedIntIntrinsic);
+    add("isWholeFloat"_s, 1, taggedArithmeticIsWholeFloat, NoIntrinsic);
+    add("encodeAsDouble"_s, 1, taggedArithmeticEncodeAsDouble, NoIntrinsic);
     add("newArray"_s, 0, taggedArithmeticNewArray, NewContiguousArrayIntrinsic);
     return object;
 }

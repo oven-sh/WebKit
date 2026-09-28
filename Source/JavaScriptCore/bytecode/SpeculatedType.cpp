@@ -300,6 +300,11 @@ void dumpSpeculation(PrintStream& outStream, SpeculatedType value)
             isTop = false;
     }
 
+    if (value & SpecWholeFloat)
+        strOut.print("WholeFloat");
+    else
+        isTop = false;
+
     if ((value & SpecBytecodeDouble) == SpecBytecodeDouble)
         strOut.print("BytecodeDouble");
     else {
@@ -642,6 +647,8 @@ static ALWAYS_INLINE SpeculatedType speculationFromValueImpl(JSValue value)
     if (value.isEmpty())
         return SpecEmpty;
     if (value.isInt32()) {
+        if (value.isWholeFloat())
+            return SpecWholeFloat;
         if (value.asInt32() & ~1)
             return SpecNonBoolInt32;
         return SpecBoolInt32;
@@ -676,7 +683,7 @@ SpeculatedType speculationFromValueForProfiling(JSValue value)
 
 SpeculatedType int52AwareSpeculationFromValue(JSValue value)
 {
-    if (!value.isAnyInt())
+    if (!value.isAnyInt() || value.isWholeFloat())
         return speculationFromValue(value);
 
     int64_t intValue = value.asAnyInt();
@@ -974,6 +981,7 @@ SpeculatedType speculationFromString(StringView speculation)
         { "SpecBigInt64Array"_s, SpecBigInt64Array },
         { "SpecBigUint64Array"_s, SpecBigUint64Array },
         { "SpecBoolInt32"_s, SpecBoolInt32 },
+        { "SpecWholeFloat"_s, SpecWholeFloat },
         { "SpecBoolean"_s, SpecBoolean },
         { "SpecBytecodeDouble"_s, SpecBytecodeDouble },
         { "SpecBytecodeNumber"_s, SpecBytecodeNumber },

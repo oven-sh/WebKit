@@ -41,6 +41,7 @@
 #include "JITScannable.h"
 #include "JumpTable.h"
 #include "MethodOfGettingAValueProfile.h"
+#include "TaggedArithmetic.h"
 #include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
 #include <wtf/GenericHashKey.h>
@@ -378,6 +379,31 @@ public:
         return addSpeculationMode(add, pass) != DontSpeculateInt32;
     }
     
+    // What an operand of TaggedAdd and its like is expected to be.
+    enum class TaggedKind : uint8_t {
+        Unknown, // Or not a number.
+        Integer,
+        Float,
+        Either,
+    };
+    TaggedKind taggedKind(Node* operand)
+    {
+        if (operand->isNumberConstant())
+            return taggedInteger(operand->asJSValue()) ? TaggedKind::Integer : TaggedKind::Float;
+        if (operand->op() == BoxTaggedFloat)
+            return TaggedKind::Float;
+        SpeculatedType prediction = operand->prediction();
+        if (!prediction || (prediction & ~SpecBytecodeNumber))
+            return TaggedKind::Unknown;
+        if (isInt32Speculation(prediction))
+            return TaggedKind::Integer;
+        // It may have been a double with a whole value, and so an integer that JavaScript has had its hands on. That is rare
+        // enough to be found out by CheckTaggedFloat.
+        if (!(prediction & SpecInt32Only))
+            return TaggedKind::Float;
+        return TaggedKind::Either;
+    }
+
     // How TaggedAdd and its like are to be compiled. Prediction and fixup both go by this.
     enum class TaggedArithMode : uint8_t {
         Generic, // Finds out when it runs.
@@ -386,23 +412,16 @@ public:
     };
     TaggedArithMode taggedArithMode(Node* node)
     {
-        constexpr SpeculatedType taggedNumber = SpecInt32Only | SpecFullDouble;
-        // A constant is predicted to be what it could be made into: 2.0 is an Int52. Here it is what it is.
-        auto encodingOf = [] (Node* operand) -> SpeculatedType {
-            if (operand->isNumberConstant())
-                return operand->asJSValue().isInt32() ? SpecInt32Only : SpecBytecodeDouble;
-            return operand->prediction();
-        };
-        SpeculatedType left = encodingOf(node->child1().node());
-        SpeculatedType right = encodingOf(node->child2().node());
-        if (!left || !right || (left & ~taggedNumber) || (right & ~taggedNumber))
+        TaggedKind left = taggedKind(node->child1().node());
+        TaggedKind right = taggedKind(node->child2().node());
+        if (left == TaggedKind::Unknown || right == TaggedKind::Unknown)
             return TaggedArithMode::Generic;
         if (node->op() == TaggedDiv)
             return TaggedArithMode::Double;
         // A float comes of it if either operand is one.
-        if (!(left & SpecInt32Only) || !(right & SpecInt32Only))
-            return TaggedArithMode::Double;
-        if (isInt32Speculation(left) && isInt32Speculation(right) && !hasExitSite(node, Overflow))
+        if (left == TaggedKind::Float || right == TaggedKind::Float)
+            return hasExitSite(node, BadType) ? TaggedArithMode::Generic : TaggedArithMode::Double;
+        if (left == TaggedKind::Integer && right == TaggedKind::Integer && !hasExitSite(node, Overflow))
             return TaggedArithMode::Int32;
         return TaggedArithMode::Generic;
     }
@@ -454,9 +473,6 @@ public:
         // The reason is double mod is so costly, so it is worth trying with much more aggressively compared to addShouldSpeculateInt52.
         Node* left = node->child1().node();
         Node* right = node->child2().node();
-
-        if (Options::useEncodingDirectedArithmetic())
-            return false;
 
         if (hasExitSite(node, Int52Overflow))
             return false;

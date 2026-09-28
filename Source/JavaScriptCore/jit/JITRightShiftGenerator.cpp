@@ -52,7 +52,7 @@ void JITRightShiftGenerator::generateFastPath(CCallHelpers& jit)
                 jit.urshift32(m_left, CCallHelpers::Imm32(shiftAmount), m_result);
             jit.boxInt32(m_result, m_result);
         } else
-            jit.move(m_left, m_result);
+            jit.makeInt32Plain(m_left, m_result);
         m_endJumpList.append(jit.jump()); // Terminate the above case before emitting more code.
 
         // Try to do (doubleVar >> intConstant).

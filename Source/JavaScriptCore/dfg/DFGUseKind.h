@@ -208,11 +208,11 @@ inline SpeculatedType typeFilterFor(UseKind useKind)
     case NotCellNorBigIntUse:
         return ~SpecCellCheck & ~SpecBigInt;
     case NotDoubleUse:
-        return ~SpecFullDouble;
+        return ~(SpecFullDouble | SpecWholeFloat);
     case NeitherDoubleNorHeapBigIntUse:
-        return ~SpecFullDouble & ~SpecHeapBigInt;
+        return ~(SpecFullDouble | SpecWholeFloat) & ~SpecHeapBigInt;
     case NeitherDoubleNorHeapBigIntNorStringUse:
-        return ~(SpecFullDouble | SpecHeapBigInt | SpecString);
+        return ~(SpecFullDouble | SpecWholeFloat | SpecHeapBigInt | SpecString);
     case KnownOtherUse:
     case OtherUse:
         return SpecOther;

@@ -13,8 +13,8 @@ function makers() {
     };
 }
 
-const groups = { ints, floats, others };
-const small = { ints: [1, 2, 3].map(int), floats: [1, 2, 0.5].map(float), others: [undefined, "1"] };
+const groups = { ints, intsAsDoubles, floats, others };
+const small = { ints: [1, 2, 3].map(int), intsAsDoubles: [1, 2, 3].map(intAsDouble), floats: [1, 2, 0.5].map(float), others: [undefined, "1"] };
 
 for (let trainedLeft in groups) {
     for (let trainedRight in groups) {
@@ -28,8 +28,8 @@ for (let trainedLeft in groups) {
             }
             // Then everything, twice, so that what is compiled after the surprise is tried too.
             for (let round = 0; round < 2; ++round) {
-                for (let left of [...ints, ...floats, ...others]) {
-                    for (let right of [...ints, ...floats, ...others])
+                for (let left of [...ints, ...intsAsDoubles, ...floats, ...others]) {
+                    for (let right of [...ints, ...intsAsDoubles, ...floats, ...others])
                         check(`${name}(${show(left)}, ${show(right)}) after ${trainedLeft}, ${trainedRight}`, f(left, right), expected(name, left, right));
                 }
             }

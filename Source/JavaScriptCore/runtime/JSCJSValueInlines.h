@@ -365,7 +365,7 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
             RETURN_IF_EXCEPTION(scope, false);
             v1 = p1;
             if (v1.isInt32() && v2.isInt32())
-                return v1 == v2;
+                return v1.asInt32() == v2.asInt32();
             continue;
         }
 
@@ -374,7 +374,7 @@ ALWAYS_INLINE bool JSValue::equalSlowCaseInline(JSGlobalObject* globalObject, JS
             RETURN_IF_EXCEPTION(scope, false);
             v2 = p2;
             if (v1.isInt32() && v2.isInt32())
-                return v1 == v2;
+                return v1.asInt32() == v2.asInt32();
             continue;
         }
 
@@ -468,7 +468,7 @@ ALWAYS_INLINE bool JSValue::strictEqualForCells(JSGlobalObject* globalObject, JS
 inline bool JSValue::strictEqual(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
 {
     if (v1.isInt32() && v2.isInt32())
-        return v1 == v2;
+        return v1.asInt32() == v2.asInt32();
 
     if (v1.isNumber() && v2.isNumber())
         return v1.asNumber() == v2.asNumber();
@@ -489,7 +489,7 @@ inline bool JSValue::strictEqual(JSGlobalObject* globalObject, JSValue v1, JSVal
 inline TriState JSValue::pureStrictEqual(JSValue v1, JSValue v2)
 {
     if (v1.isInt32() && v2.isInt32())
-        return triState(v1 == v2);
+        return triState(v1.asInt32() == v2.asInt32());
 
     if (v1.isNumber() && v2.isNumber())
         return triState(v1.asNumber() == v2.asNumber());

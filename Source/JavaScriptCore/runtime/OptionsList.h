@@ -462,10 +462,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, quickFTLTierUpThresholdFactor, defaultQuickFTLTierUpThresholdFactor(), Normal, "Threshold factor for quick FTL tier-up"_s) \
     \
     v(Double, doubleVoteRatioForDoubleFormat, 2, Normal, nullptr) \
-    v(Bool, keepNumberEncodings, false, Normal, "A number that is encoded as an int32, or as a double, stays that way wherever it is carried, in every tier."_s) \
-    v(Unsigned, numberEncodingChecksToSkip, 0, Normal, "For testing: a bit for each of the things that keepNumberEncodings does, to leave it undone."_s) \
-    v(Unsigned, useStrictInt32Checks, 0, Normal, "An experiment, to see what it costs: a test for an int32 in the DFG and the FTL also looks at bit 48, which is always zero. 1: where the value is speculated to be one. 2: everywhere."_s) \
-    v(Bool, useEncodingDirectedArithmetic, false, Normal, "How the result of JavaScript's arithmetic is encoded is decided by how the operands are, the same in every tier. Needs keepNumberEncodings."_s) \
+    v(Unsigned, wholeFloatGuardsToSkip, 0, Normal, "For testing: a bit for each of the things that are done so that a whole float stays one while it is moved. With its bit set, that one is left undone."_s) \
     v(Double, structureCheckVoteRatioForHoisting, 1, Normal, nullptr) \
     v(Double, checkArrayVoteRatioForHoisting, 1, Normal, nullptr) \
     \

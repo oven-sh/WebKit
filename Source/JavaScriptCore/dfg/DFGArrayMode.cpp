@@ -169,10 +169,9 @@ ArrayMode ArrayMode::fromObserved(ArrayProfile profile, Array::Action action, bo
             type = Array::ArrayStorage;
         else if (shouldUseContiguous(observed))
             type = Array::Contiguous;
-        else if (shouldUseDouble(observed)) {
-            // This is with Array::Convert: an array of int32s would be made one of doubles, if only for being read.
-            type = shouldUseInt32(observed) && Options::keepNumberEncodings(29) ? Array::Contiguous : Array::Double;
-        } else if (shouldUseInt32(observed))
+        else if (shouldUseDouble(observed))
+            type = Array::Double;
+        else if (shouldUseInt32(observed))
             type = Array::Int32;
         else
             type = Array::SelectUsingArguments;
@@ -252,7 +251,7 @@ ArrayMode ArrayMode::refine(
             return withType(Array::ForceExit);
         if (isInt32Speculation(value))
             return withTypeAndConversion(Array::Int32, Array::Convert);
-        if (isFullNumberSpeculation(value) && !((value & SpecInt32Only) && Options::keepNumberEncodings(30)))
+        if (isFullNumberSpeculation(value) && !((value & SpecWholeFloat) && Options::guardsWholeFloats(30)))
             return withTypeAndConversion(Array::Double, Array::Convert);
         return withTypeAndConversion(Array::Contiguous, Array::Convert);
     case Array::Undecided: {
@@ -272,12 +271,12 @@ ArrayMode ArrayMode::refine(
     case Array::Int32:
         if (!value || isInt32Speculation(value))
             return *this;
-        if (isFullNumberSpeculation(value) && !Options::keepNumberEncodings(30))
+        if (isFullNumberSpeculation(value) && !((value & SpecWholeFloat) && Options::guardsWholeFloats(30)))
             return withTypeAndConversion(Array::Double, Array::Convert);
         return withTypeAndConversion(Array::Contiguous, Array::Convert);
         
     case Array::Double:
-        if (!value || (isFullNumberSpeculation(value) && !((value & SpecInt32Only) && Options::keepNumberEncodings(30))))
+        if (!value || (isFullNumberSpeculation(value) && !((value & SpecWholeFloat) && Options::guardsWholeFloats(30))))
             return *this;
         return withTypeAndConversion(Array::Contiguous, Array::Convert);
         

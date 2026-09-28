@@ -242,8 +242,10 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetExecutable:
     case CheckJSCast:
     case CheckNotJSCast:
-    case CheckNotInt32:
-    case IsInt32:
+    case CheckNotWholeFloat:
+    case CheckTaggedFloat:
+    case BoxTaggedFloat:
+    case IsTaggedInt:
     case TaggedAdd:
     case TaggedSub:
     case TaggedMul:

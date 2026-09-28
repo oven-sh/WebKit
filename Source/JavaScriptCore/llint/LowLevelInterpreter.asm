@@ -193,6 +193,7 @@ if BIGINT32
     const MaskBigInt32 = constexpr JSValue::BigInt32Mask
 end
 const LowestOfHighBits = constexpr JSValue::LowestOfHighBits
+const WholeFloatMark = constexpr JSValue::WholeFloatMark
 
 if LARGE_TYPED_ARRAYS
     const SmallTypedArrayMaxLength = constexpr ArrayProfile::s_smallTypedArrayMaxLength

@@ -74,36 +74,6 @@ class SpeculativeJIT : public JITCompiler {
     using Base = JITCompiler;
     WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(SpeculativeJIT);
     friend struct OSRExit;
-public:
-    // Options::useStrictInt32Checks: an int32 whose bit 48 is set is not one.
-    JumpList branchIfNotInt32(GPRReg gpr)
-    {
-        JumpList result;
-        result.append(Base::branchIfNotInt32(gpr));
-        if (Options::useStrictInt32Checks() >= 2)
-            result.append(branchTest64(NonZero, gpr, TrustedImm64(1ull << 48)));
-        return result;
-    }
-
-    // Where what follows may box the int32 again.
-    JumpList branchIfNotStrictInt32(GPRReg gpr)
-    {
-        JumpList result;
-        result.append(Base::branchIfNotInt32(gpr));
-        if (Options::useStrictInt32Checks() >= 1)
-            result.append(branchTest64(NonZero, gpr, TrustedImm64(1ull << 48)));
-        return result;
-    }
-
-    Jump branchIfInt32(GPRReg gpr)
-    {
-        if (Options::useStrictInt32Checks() < 2)
-            return Base::branchIfInt32(gpr);
-        Jump notInt32 = Base::branchIfNotInt32(gpr);
-        Jump isInt32 = branchTest64(Zero, gpr, TrustedImm64(1ull << 48));
-        notInt32.link(this);
-        return isInt32;
-    }
 private:
     typedef JITCompiler::TrustedImm32 TrustedImm32;
     typedef JITCompiler::Imm32 Imm32;
@@ -1421,8 +1391,10 @@ public:
     void compileGetWebAssemblyInstanceExports(Node*);
     void compileIdentity(Node*);
     void compileTaggedArith(Node*);
-    void compileIsInt32(Node*);
-    void compileCheckNotInt32(Node*);
+    void compileIsTaggedInt(Node*);
+    void compileCheckNotWholeFloat(Node*);
+    void compileCheckTaggedFloat(Node*);
+    void compileBoxTaggedFloat(Node*);
     
     void compileContiguousPutByVal(Node*);
     void compileDoublePutByVal(Node*);

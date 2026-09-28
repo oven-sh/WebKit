@@ -57,7 +57,7 @@ ALWAYS_INLINE JSValue normalizeMapKey(JSValue key)
     }
 
     if (key.isInt32())
-        return key;
+        return jsNumber(key.asInt32()); // A whole float is the same key as the integer, as a double with that value is.
 
     double d = key.asDouble();
     if (std::isnan(d))

@@ -51,8 +51,10 @@ void JITBitAndGenerator::generateFastPath(CCallHelpers& jit)
             jit.and64(CCallHelpers::Imm32(constOpr.asConstInt32()), var, m_result);
             if (constOpr.asConstInt32() >= 0)
                 jit.boxInt32(m_result, m_result);
+            else
+                jit.makeInt32Plain(m_result, m_result);
         } else
-            jit.move(var, m_result);
+            jit.makeInt32Plain(var, m_result);
         return;
     }
 
@@ -68,7 +70,7 @@ void JITBitAndGenerator::generateFastPath(CCallHelpers& jit)
     // Try to do intVar & intVar.
     jit.and64(m_left, m_right, m_scratchGPR);
     m_slowPathJumpList.append(jit.branchIfNotInt32(m_scratchGPR));
-    jit.move(m_scratchGPR, m_result);
+    jit.makeInt32Plain(m_scratchGPR, m_result);
 }
 
 } // namespace JSC

@@ -3592,20 +3592,22 @@ private:
             case Graph::TaggedArithMode::Double: {
                 if (node->op() != TaggedDiv) {
                     // A float comes of it if either operand is one, so it is enough to be sure of one of them.
-                    auto isKnownDouble = [] (Edge edge) {
-                        return edge->hasDoubleResult() || (edge->isNumberConstant() && edge->asJSValue().isDouble());
+                    auto isKnownFloat = [&] (Edge edge) {
+                        return edge->op() == BoxTaggedFloat || (edge->isNumberConstant() && m_graph.taggedKind(edge.node()) == Graph::TaggedKind::Float);
                     };
-                    if (!isKnownDouble(node->child1()) && !isKnownDouble(node->child2()) && !(Options::numberEncodingChecksToSkip() & (1u << 20))) {
-                        // Neither is a constant that is a double, so both are what they are predicted to be.
-                        bool leftMayBeInt32 = node->child1()->isNumberConstant() || (node->child1()->prediction() & SpecInt32Only);
-                        Edge checked = leftMayBeInt32 ? node->child2() : node->child1();
-                        m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckNotInt32, node->origin, Edge(checked.node(), UntypedUse));
+                    if (!isKnownFloat(node->child1()) && !isKnownFloat(node->child2()) && Options::guardsWholeFloats(20)) {
+                        Edge checked = m_graph.taggedKind(node->child1().node()) == Graph::TaggedKind::Float ? node->child1() : node->child2();
+                        m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckTaggedFloat, node->origin, Edge(checked.node(), UntypedUse));
                     }
                 }
                 fixEdge<DoubleRepUse>(node->child1());
                 fixEdge<DoubleRepUse>(node->child2());
-                node->setOpAndDefaultFlags(arithOp);
-                node->setResult(NodeResultDouble);
+                Node* arith = m_insertionSet.insertNode(m_indexInBlock, SpecBytecodeDouble, arithOp, node->origin, node->child1(), node->child2());
+                arith->setResult(NodeResultDouble);
+                arith->clearFlags(NodeMustGenerate);
+                node->setOpAndDefaultFlags(BoxTaggedFloat);
+                node->child1() = Edge(arith, DoubleRepUse);
+                node->child2() = Edge();
                 break;
             }
             case Graph::TaggedArithMode::Generic:
@@ -3614,20 +3616,27 @@ private:
             break;
         }
 
-        case IsInt32:
+        case IsTaggedInt: {
             if (node->child1()->shouldSpeculateInt32()) {
                 insertCheck<Int32Use>(node->child1().node());
                 m_graph.convertToConstant(node, jsBoolean(true));
                 break;
             }
-            if (node->child1()->prediction() && !(node->child1()->prediction() & SpecInt32Only)) {
-                m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckNotInt32, node->origin, Edge(node->child1().node(), UntypedUse));
+            SpeculatedType prediction = node->child1()->prediction();
+            if (prediction && !(prediction & ~(SpecWholeFloat | SpecNonIntAsDouble | SpecDoublePureNaN)) && !m_graph.hasExitSite(node, BadType)) {
+                m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckTaggedFloat, node->origin, Edge(node->child1().node(), UntypedUse));
                 m_graph.convertToConstant(node, jsBoolean(false));
                 break;
             }
             break;
+        }
 
-        case CheckNotInt32:
+        case CheckNotWholeFloat:
+        case CheckTaggedFloat:
+            break;
+
+        case BoxTaggedFloat:
+            fixEdge<DoubleRepUse>(node->child1());
             break;
 
         case NumberIsInteger:
@@ -4288,7 +4297,7 @@ private:
                 return;
             }
 
-            if (node->child1()->shouldSpeculateNumber() && Options::keepNumberEncodings(8)) {
+            if (node->child1()->shouldSpeculateNumber() && (node->child1()->prediction() & SpecWholeFloat) && Options::guardsWholeFloats(8)) {
                 insertCheck<NumberUse>(node->child1().node());
                 node->convertToIdentity();
                 return;
@@ -4462,7 +4471,7 @@ private:
         }
 
         // If the prediction of the child is Number, we attempt to convert ToNumber to Identity.
-        if (node->child1()->shouldSpeculateNumber() && Options::keepNumberEncodings(9)) {
+        if (node->child1()->shouldSpeculateNumber() && (node->child1()->prediction() & SpecWholeFloat) && Options::guardsWholeFloats(9)) {
             insertCheck<NumberUse>(node->child1().node());
             node->convertToIdentity();
             return;
@@ -4479,6 +4488,8 @@ private:
 
                 // The another case is that the predicted type of the child is Int32, but the heap prediction tell the users that this will produce non Int32 values.
                 // In that case, let's receive the child value as a Double value and convert it to Int32. This case happens in misc-bugs-847389-jpeg2000.
+                if (Options::guardsWholeFloats(9))
+                    m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckNotWholeFloat, node->origin, Edge(node->child1().node(), UntypedUse));
                 fixEdge<DoubleRepUse>(node->child1());
                 node->setOp(DoubleAsInt32);
                 if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
@@ -5037,7 +5048,7 @@ private:
 
         NodeFlags flags = NodeResultJS;
         if (!node->arrayMode().isOutOfBounds()) {
-            if (!(arrayModes & ~preferDoubleResult) && !Options::keepNumberEncodings(10))
+            if (!(arrayModes & ~preferDoubleResult))
                 flags = NodeResultDouble;
         }
 
@@ -5581,8 +5592,8 @@ private:
         // FTL has object allocation sinking, and keeping this node non-double-result makes that phase much simpler.
         // So FTL will do conversion of this in ValueRepReduction phase instead.
         UNUSED_PARAM(node);
-        // An int32 would be taken for a double, so none is expected, and to find one is to be wrong (unboxRealNumberDouble).
-        if (Options::keepNumberEncodings(3) && (node->prediction() & SpecInt32Only))
+        // A whole float would be taken for a double, so none is expected, and to find one is to be wrong (unboxRealNumberDouble).
+        if (Options::guardsWholeFloats(3) && (node->prediction() & SpecWholeFloat))
             return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
@@ -5603,8 +5614,8 @@ private:
         // So FTL will do conversion of this in ValueRepReduction phase instead.
         UNUSED_PARAM(node);
         UNUSED_PARAM(edge);
-        // An int32 would be stored as a double, so none is expected, and there is a check where the conversion is put in.
-        if (Options::keepNumberEncodings(4) && (edge->prediction() & SpecInt32Only))
+        // A whole float would be stored as a double, so none is expected, and there is a check where the conversion is put in.
+        if (Options::guardsWholeFloats(4) && (edge->prediction() & SpecWholeFloat))
             return false;
         if (!m_graph.m_plan.isFTL()) {
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
@@ -6083,6 +6094,17 @@ private:
                     case DoubleRepAnyIntUse: {
                         if (edge->hasDoubleResult())
                             break;
+
+                        // DoubleRep makes a double of a whole float. That does for arithmetic, but not for what is only being
+                        // put away, to be taken out again as what it was.
+                        // (DoubleRepRealUse is what is stored in an array of doubles.)
+                        bool isOnlyMoved = (Options::guardsWholeFloats(2) && (node->op() == SetLocal || node->op() == PutByOffset || node->op() == PutClosureVar || node->op() == PutGlobalVariable || node->op() == Identity))
+                            || (Options::guardsWholeFloats(28) && edge.useKind() == DoubleRepRealUse);
+
+                        if (edge->op() == BoxTaggedFloat && !isOnlyMoved) {
+                            edge.setNode(edge->child1().node());
+                            break;
+                        }
             
                         ASSERT(indexForChecks != UINT_MAX);
                         if (edge->isNumberConstant()) {
@@ -6100,12 +6122,8 @@ private:
                             else
                                 useKind = NotCellNorBigIntUse;
 
-                            // DoubleRep makes a double of an int32. That does for arithmetic, but this is only being put
-                            // away, to be taken out again as what it was.
-                            // (DoubleRepRealUse is what is stored in an array of doubles.)
-                            if ((Options::keepNumberEncodings(2) && (node->op() == SetLocal || node->op() == PutByOffset || node->op() == PutClosureVar || node->op() == PutGlobalVariable))
-                                || (Options::keepNumberEncodings(28) && edge.useKind() == DoubleRepRealUse))
-                                m_insertionSet.insertNode(indexForChecks, SpecNone, CheckNotInt32, originForChecks, Edge(edge.node(), UntypedUse));
+                            if (isOnlyMoved)
+                                m_insertionSet.insertNode(indexForChecks, SpecNone, CheckNotWholeFloat, originForChecks, Edge(edge.node(), UntypedUse));
 
                             result = m_insertionSet.insertNode(
                                 indexForChecks, SpecBytecodeDouble, DoubleRep, originForChecks,
