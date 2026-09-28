@@ -181,7 +181,7 @@ static void loadInstanceAndDataOfSlot(CCallHelpers& jit, GPRReg slot, GPRReg ins
 }
 
 // After that. A slot has failed the function. If it is one of nobody's, that is counted, and a function it has happened to often
-// enough (FunctionInfo::missesToPutUpWith) is run often enough to have slots of its own: the next time it is called. Leaves all but
+// enough (Instance::missesToPutUpWithFor()) is run often enough to have slots of its own: the next time it is called. Leaves all but
 // T11 to T13 as they are. (This is for what may yet be found without an operation. Those count for themselves.)
 static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
 {
@@ -200,7 +200,13 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     jit.lshiftPtr(TrustedImm32(4), T12);
     jit.loadPtr(Address(instance, Instance::offsetOfInfos()), CCallHelpers::memoryTempRegister);
     jit.addPtr(CCallHelpers::memoryTempRegister, T12);
-    jit.load16(Address(T12, FunctionInfo::offsetOfMissesToPutUpWith()), T12);
+    // Instance::missesToPutUpWithFor(). (What is too many to count is never reached, and such a function is not one that starts so.)
+    jit.load32(Address(T12, FunctionInfo::offsetOfNumSlots()), T12);
+    jit.load32(Address(instance, Instance::offsetOfMissesForEightSlots()), CCallHelpers::memoryTempRegister);
+    jit.mul32(CCallHelpers::memoryTempRegister, T12, T12);
+    jit.urshift32(TrustedImm32(3), T12);
+    jit.load32(Address(instance, Instance::offsetOfMissesToSpare()), CCallHelpers::memoryTempRegister);
+    jit.add32(CCallHelpers::memoryTempRegister, T12);
     // (Once. Whoever is in the middle of it goes on counting.)
     Jump notYet = jit.branch32(CCallHelpers::NotEqual, T13, T12);
     jit.subPtr(TrustedImm32(80), CCallHelpers::stackPointerRegister);

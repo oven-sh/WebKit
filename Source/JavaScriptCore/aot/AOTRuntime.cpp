@@ -229,6 +229,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
     }
     instance->sharedData = SharedData::get();
+    instance->missesForEightSlots = Options::aotMissesForEightSlots();
+    instance->missesToSpare = Options::aotMissesToSpare();
     instance->collections->sizeOfMisses = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(uint16_t));
     instance->misses = static_cast<uint16_t*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfMisses, OSAllocator::FastMallocPages));
     instance->structureIDBase = JSC::structureIDBase();
@@ -410,7 +412,6 @@ static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedC
     info.function = code.imageFunction();
     info.executableAndKind = std::bit_cast<uintptr_t>(executable) | (unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode);
     info.numSlots = code.numSlots();
-    info.missesToPutUpWith = std::min<uint32_t>(info.numSlots + info.numSlots / 2 + 8, std::numeric_limits<uint16_t>::max());
     info.flags = code.isFromImage() ? FunctionInfo::hasSiteConstants : 0;
 }
 

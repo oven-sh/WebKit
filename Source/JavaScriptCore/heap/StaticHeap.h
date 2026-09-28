@@ -60,6 +60,15 @@ public:
     // `image` is what build() returned, and is at `offsetInFile`, a multiple of the size of a page, of the file. On the thread that
     // is going to have the VM, before that thread has made an atom. False if it is not for this engine, or there is no room.
     JS_EXPORT_PRIVATE static bool map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile);
+    // An image has copies of the table of strings and of the bytecode it was built from, which what is in it refers to. Where they
+    // are in it, for whoever puts it in a file that would otherwise have them twice.
+    struct Copies {
+        size_t offsetOfStrings;
+        size_t sizeOfStrings;
+        size_t offsetOfPayload;
+        size_t sizeOfPayload;
+    };
+    JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
     // From now on the static cells are this VM's: the first of the process, on the thread that called map().
     JS_EXPORT_PRIVATE static void install(VM&);
     static VM* vm() { return s_vm; }

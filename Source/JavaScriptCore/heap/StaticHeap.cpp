@@ -341,8 +341,6 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.function = function.function;
     info.executableAndKind = executable ? std::bit_cast<uintptr_t>(executable) | !isCall(kind) : 0;
     info.numSlots = function.numSlots;
-    // Twice through most of what it does, more or less.
-    info.missesToPutUpWith = std::min<uint32_t>(function.numSlots + function.numSlots / 2 + 8, std::numeric_limits<uint16_t>::max());
     // (It takes a Data to say which executable's the code is, if this does not.)
     info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0);
 }
@@ -678,6 +676,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_vm = vmBefore;
     Region::endBuilding();
     return image;
+}
+
+std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> image)
+{
+    if (image.size() < sizeof(Header))
+        return std::nullopt;
+    auto& header = *reinterpret_cast<const Header*>(image.data());
+    if (header.magic != Header::expectedMagic || header.size > image.size())
+        return std::nullopt;
+    constexpr unsigned data = static_cast<unsigned>(Region::Arena::Data);
+    auto offsetOf = [&](uint64_t address, uint64_t size) -> std::optional<size_t> {
+        uint64_t inArena = address - Region::startOf(Region::Arena::Data);
+        if (!address || inArena > header.arenaSize[data] || size > header.arenaSize[data] - inArena)
+            return std::nullopt;
+        return header.arenaOffset[data] + inArena;
+    };
+    auto strings = offsetOf(header.strings, header.stringsSize);
+    auto payload = offsetOf(header.payload, header.payloadSize);
+    if (!strings || !payload)
+        return std::nullopt;
+    return Copies { *strings, static_cast<size_t>(header.stringsSize), *payload, static_cast<size_t>(header.payloadSize) };
 }
 
 bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile)

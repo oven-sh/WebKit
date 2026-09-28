@@ -250,7 +250,6 @@ struct FunctionInfo {
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
     static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(FunctionInfo, numSlots); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
-    static constexpr ptrdiff_t offsetOfMissesToPutUpWith() { return OBJECT_OFFSETOF(FunctionInfo, missesToPutUpWith); }
 
     ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>(executableAndKind & ~static_cast<uintptr_t>(1)); }
     CodeSpecializationKind kind() const { return executableAndKind & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
@@ -261,7 +260,7 @@ struct FunctionInfo {
     const ImageFunction* function; // If the code is in an image.
     uintptr_t executableAndKind; // With the low bit set if the code is for construction.
     uint32_t numSlots;
-    uint16_t missesToPutUpWith; // startsCold: how often a slot may fail it before it gets a Data. See Instance::misses.
+    uint16_t unused;
     uint16_t flags;
 };
 static_assert(sizeof(FunctionInfo) == 48);
@@ -286,9 +285,13 @@ struct Instance {
     JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
     void countMiss(uint32_t index)
     {
-        if (++misses[index] == infos[index].missesToPutUpWith)
+        if (++misses[index] == static_cast<uint16_t>(missesToPutUpWithFor(infos[index].numSlots)))
             ensureData(index);
     }
+    // How often a slot may fail a function that has that many before it gets a Data.
+    uint32_t missesToPutUpWithFor(uint32_t numSlots) const { return std::min<uint32_t>((numSlots * missesForEightSlots >> 3) + missesToSpare, std::numeric_limits<uint16_t>::max()); }
+    static constexpr ptrdiff_t offsetOfMissesForEightSlots() { return OBJECT_OFFSETOF(Instance, missesForEightSlots); }
+    static constexpr ptrdiff_t offsetOfMissesToSpare() { return OBJECT_OFFSETOF(Instance, missesToSpare); }
 
     // As many as there could ever be. It is addresses that are set aside, not memory.
     static constexpr size_t maxFunctions = 4 << 20;
@@ -326,6 +329,8 @@ struct Instance {
     FunctionInfo* infos; // By CodeHeader::index, like data.
     Data* sharedData; // SharedData::get()
     uint16_t* misses; // By CodeHeader::index: how often a slot has failed a function that has no Data of its own.
+    uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
+    uint32_t missesToSpare;
     uintptr_t structureIDBase; // What a StructureID is added to.
     const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
     const uint32_t* rowsOfSelectors;
