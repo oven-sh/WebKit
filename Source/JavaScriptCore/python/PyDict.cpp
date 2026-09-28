@@ -436,7 +436,7 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
         return Base::remove(globalObject, key);
     JSValue value = m_backing->getDirect(globalObject->vm(), name);
     if (value)
-        JSCell::deleteProperty(m_backing.get(), globalObject, name);
+        Python::deleteStoredAttribute(globalObject, m_backing.get(), name);
     return value;
 }
 

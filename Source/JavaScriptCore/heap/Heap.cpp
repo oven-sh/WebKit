@@ -396,6 +396,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , syntheticModuleRecordHeapCellType(IsoHeapCellType::Args<SyntheticModuleRecord>())
     , moduleNamespaceObjectHeapCellType(IsoHeapCellType::Args<JSModuleNamespaceObject>())
     , nativeStdFunctionHeapCellType(IsoHeapCellType::Args<JSNativeStdFunction>())
+    , pyTypeHeapCellType(IsoHeapCellType::Args<PyType>())
     , weakMapHeapCellType(IsoHeapCellType::Args<JSWeakMap>())
     , weakSetHeapCellType(IsoHeapCellType::Args<JSWeakSet>())
 #if JSC_OBJC_API_ENABLED

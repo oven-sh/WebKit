@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSObject.h"
+#include "PyInstance.h"
 
 namespace JSC {
 
@@ -33,7 +34,7 @@ namespace JSC {
 class PyTuple final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | OverridesGetOwnPropertyNames;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | OverridesGetOwnPropertyNames;
 
     static size_t allocationSize(Checked<size_t> length)
     {
@@ -72,7 +73,7 @@ public:
     std::span<WriteBarrier<Unknown>> span() { return { values(), m_length }; }
 
     // To JavaScript it is like an array that cannot be changed.
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    PYTHON_DECLARE_EXOTIC_METHODS
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
 

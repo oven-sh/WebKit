@@ -36,6 +36,11 @@ namespace JSC {
 
 const ClassInfo PyType::s_info = { "type"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyType) };
 
+void PyType::destroy(JSCell* cell)
+{
+    static_cast<PyType*>(cell)->PyType::~PyType();
+}
+
 template<typename Visitor>
 void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -69,7 +74,7 @@ Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject,
     case Layout::Set:
         return PySet::createStructure(vm, globalObject, prototype);
     case Layout::List:
-        return JSArray::createStructure(vm, globalObject, prototype, ArrayWithUndecided);
+        return PyDerivedList::createStructure(vm, globalObject, prototype);
     case Layout::Boxed:
         return PyBoxedValue::createStructure(vm, globalObject, prototype);
     case Layout::Type:
@@ -107,13 +112,12 @@ void PyType::finishBuiltin(VM& vm, JSGlobalObject* globalObject, PyType* metatyp
     // int's, float's, str's and list's own instances are JavaScript's values.
     if (m_layout != Layout::Boxed && m_layout != Layout::List)
         m_instanceStructure.setMayBeNull(vm, this, createInstanceStructure(vm, globalObject, m_layout, this));
-    // So that `x instanceof C` is true in JavaScript.
-    putDirect(vm, vm.propertyNames->prototype, this, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    if (base)
+        base->addSubclass(this);
 }
 
 PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyType* base, PyTuple* mro)
 {
-    // FIXME: With more than one base, JavaScript sees only what comes by the first.
     auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, createStructure(vm, globalObject, bases->length() ? bases->at(0) : JSValue(base)));
     type->finishCreation(vm);
     type->m_metatype.set(vm, type, metatype);
@@ -137,10 +141,15 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     type->m_mro.set(vm, type, fullOrder);
     Structure* instanceStructure = createInstanceStructure(vm, globalObject, type->m_layout, type);
     // The same kind of cell as the base's instances, whatever that is.
-    if (!instanceStructure && type->m_layout == Layout::Native && base->instanceStructure())
-        instanceStructure = Structure::create(vm, globalObject, type, base->instanceStructure()->typeInfo(), base->instanceStructure()->classInfoForCells());
+    if (!instanceStructure && type->m_layout == Layout::Native && base->instanceStructure()) {
+        if (base->instanceStructure()->typeInfo().type() == Uint8ArrayType)
+            instanceStructure = PyDerivedBytes::createStructure(vm, globalObject, type);
+        else
+            instanceStructure = Structure::create(vm, globalObject, type, base->instanceStructure()->typeInfo(), base->instanceStructure()->classInfoForCells());
+    }
     type->m_instanceStructure.setMayBeNull(vm, type, instanceStructure);
-    type->putDirect(vm, vm.propertyNames->prototype, type, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    for (auto& direct : bases->span())
+        asType(direct.get())->addSubclass(type);
     return type;
 }
 
@@ -182,10 +191,38 @@ bool PyType::isSubtypeOf(const PyType* other) const
     return false;
 }
 
+void PyType::addSubclass(PyType* subclass)
+{
+    m_subclasses.removeAllMatching([] (auto& weak) { return !weak; });
+    m_subclasses.append(Weak<PyType>(subclass));
+}
+
+Vector<PyType*> PyType::subclasses() const
+{
+    Vector<PyType*> result;
+    for (auto& weak : m_subclasses) {
+        if (PyType* subclass = weak.get())
+            result.append(subclass);
+    }
+    return result;
+}
+
+void PyType::instanceAccessMayHaveChanged(VM& vm)
+{
+    if (!m_instanceAccessIsAsFound->isStillValid())
+        return;
+    m_instanceAccessIsAsFound->fireAll(vm, "A class was given something that comes before the attributes of its instances");
+    for (PyType* subclass : subclasses())
+        subclass->instanceAccessMayHaveChanged(vm);
+}
+
 void PyType::setAttribute(VM& vm, PropertyName name, JSValue value)
 {
+    auto& names = vm.pythonNames();
     putDirect(vm, name, value);
-    ++vm.pythonNames().typeEpoch;
+    ++names.typeEpoch;
+    if (name == names.dunder_getattribute || name == names.dunder_setattr || name == names.dunder_delattr || Python::isDataDescriptor(globalObject(), value))
+        instanceAccessMayHaveChanged(vm);
 }
 
 bool PyType::deleteAttribute(VM& vm, JSGlobalObject* globalObject, PropertyName name)
@@ -193,7 +230,7 @@ bool PyType::deleteAttribute(VM& vm, JSGlobalObject* globalObject, PropertyName 
     if (!getDirect(vm, name))
         return false;
     ++vm.pythonNames().typeEpoch;
-    return JSObject::deleteProperty(globalObject, name);
+    return Python::deleteStoredAttribute(globalObject, this, name);
 }
 
 unsigned PyType::hooks(JSGlobalObject* globalObject)
@@ -255,9 +292,22 @@ bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* type = uncheckedDowncast<PyType>(object);
     JSValue receiver = slot.thisValue();
-    // The engine asking for its own purposes is not to run anything, and C.prototype is JavaScript's business.
-    if (slot.isVMInquiry() || name.isPrivateName() || name == vm.propertyNames->prototype || !receiver.isObject())
-        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(object, globalObject, name, slot));
+
+    // C.prototype is C, since a class is the prototype of its instances. That is JavaScript's way of putting it, and no attribute.
+    if (name == vm.propertyNames->prototype) {
+        slot.setValue(object, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, type);
+        return true;
+    }
+    // What it has of its own is what it has. So is what the engine asks about for its own purposes, which is not to run anything.
+    bool isGetOrHas = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty;
+    if (!isGetOrHas || name.isPrivateName() || !receiver.isObject()) {
+        bool found = Base::getOwnPropertySlot(object, globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        // As with what is defined in a class of JavaScript's, it is not gone through by `for (name in instance)`.
+        if (found && !slot.isVMInquiry() && slot.isValue())
+            slot.setValue(object, slot.attributes() | PropertyAttribute::DontEnum, slot.getPureResult());
+        return found;
+    }
 
     // In Python, what an attribute is is settled when it is got: a function of the class becomes a method bound to the instance, a property is
     // computed, __getattr__ is asked. So the class of the receiver answers with what getattr() would give. The classes beyond it have
@@ -271,6 +321,44 @@ bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, 
         return false;
     slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), value);
     return true;
+}
+
+void PyType::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
+{
+    if (mode == DontEnumPropertiesMode::Include)
+        object->getOwnNonIndexPropertyNames(globalObject, names, mode);
+}
+
+bool PyType::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    // This is come to for the class itself, and for anything that has the class for a prototype and has no such property of its own yet.
+    JSValue receiver = slot.thisValue();
+    if (name.isSymbol() || !receiver.isObject())
+        return Base::put(cell, globalObject, name, value, slot);
+    return Python::setPropertyFromJavaScript(globalObject, receiver, name, value, slot);
+}
+
+bool PyType::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+{
+    if (name.isSymbol())
+        return Base::deleteProperty(cell, globalObject, name, slot);
+    return Python::deletePropertyFromJavaScript(globalObject, cell, name);
+}
+
+bool PyType::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    return Python::definePropertyFromJavaScript(globalObject, object, name, descriptor, shouldThrow);
+}
+
+bool PyType::preventExtensions(JSObject*, JSGlobalObject*)
+{
+    // Whether attributes can be set is for Python to say, one at a time.
+    return false;
+}
+
+bool PyType::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
+{
+    return Python::isInstanceOf(globalObject, value, object);
 }
 
 CallData PyType::getCallData(JSCell*)

@@ -974,6 +974,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     if (Options::useLLIntICs()
         && baseValue.isCell()
         && slot.isCacheable()
+        && !slot.watchpointSet() // What is remembered here has no way to be forgotten when it fires.
         && !slot.isUnset()) {
         {
             StructureID oldStructureID;

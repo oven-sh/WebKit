@@ -332,6 +332,21 @@ JSObject* createJavaScriptFunctions(VM& vm, JSGlobalObject* globalObject)
     return object;
 }
 
+// Whether it is one of the kinds of cell that has the methods of PYTHON_DECLARE_EXOTIC_METHODS.
+static bool asksClassFirst(JSCell* cell)
+{
+    switch (cell->type()) {
+    case PyInstanceType:
+    case PyDictType:
+    case PySetType:
+    case PyTupleType:
+    case PyBoxedValueType:
+        return true;
+    default:
+        return cell->inherits<PyDerivedList>() || cell->inherits<PyDerivedBytes>();
+    }
+}
+
 JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver, PropertyName name)
 {
     VM& vm = globalObject->vm();
@@ -347,10 +362,14 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
         return { };
     }
 
-    JSValue value = getAttributeIfPresent(globalObject, receiver, name);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (value)
-        return value;
+    // If the class comes before the instance, it was asked before what the instance has was looked at, and is not asked twice.
+    bool wasAsked = asksClassFirst(receiver.asCell()) && classComesBeforeInstance(globalObject, type, name, AttributeAccess::Get);
+    if (!wasAsked) {
+        JSValue value = getAttributeIfPresent(globalObject, receiver, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value)
+            return value;
+    }
     if (isType(receiver))
         return { };
 
@@ -381,6 +400,88 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
             return jsString(vm, formatException(globalObject, receiver));
     }
     return { };
+}
+
+// Whether what JavaScript is working on is Python's: a class, or something whose prototype is one. Something of JavaScript's can have a class
+// further up, if it was made to.
+static bool isPythonObject(JSValue value)
+{
+    return isType(value) || isType(asObject(value)->getPrototypeDirect());
+}
+
+bool getOwnPropertySlotFromJavaScript(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot, bool (*ordinary)(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isGetOrHas = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty;
+    JSValue prototype = object->getPrototypeDirect();
+    if (!isGetOrHas || slot.thisValue() != JSValue(object) || !isType(prototype))
+        RELEASE_AND_RETURN(scope, ordinary(object, globalObject, name, slot));
+
+    // If the class has something to say about the attribute, it is asked here, before what the instance has is looked at.
+    PyType* type = asType(prototype);
+    if (classComesBeforeInstance(globalObject, type, name, AttributeAccess::Get)) {
+        JSValue value = getAttributeIfPresent(globalObject, object, name);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value)
+            return false;
+        slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
+        return true;
+    }
+
+    bool found = ordinary(object, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (found) {
+        // That it has nothing to say can be relied on until it is given something.
+        if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get && type->instanceAccessIsAsFound().isStillValid())
+            slot.setWatchpointSet(type->instanceAccessIsAsFound());
+        else
+            slot.disableCaching();
+    }
+    return found;
+}
+
+bool setPropertyFromJavaScript(JSGlobalObject* globalObject, JSValue receiver, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // FIXME: Setting an attribute that the class has nothing to say about could be remembered, if a PutPropertySlot could say what has to hold,
+    // as a PropertySlot can.
+    slot.disableCaching();
+    if (!isPythonObject(receiver))
+        RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));
+    setAttribute(globalObject, receiver, name, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+bool deletePropertyFromJavaScript(JSGlobalObject* globalObject, JSValue receiver, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasOwnWay = typeOf(globalObject, receiver)->hooks(globalObject) & PyType::HasCustomSetAttr;
+    deleteAttribute(globalObject, receiver, name);
+    if (!scope.exception())
+        return true;
+    // To JavaScript, deleting what is not there is done as soon as it is asked for. What a __delattr__ of the class's own means by
+    // AttributeError is not for us to say.
+    return !hasOwnWay && catchException(globalObject, BuiltinType::AttributeError);
+}
+
+bool definePropertyFromJavaScript(JSGlobalObject* globalObject, JSObject* receiver, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (name.isSymbol())
+        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(receiver, globalObject, name, descriptor, shouldThrow));
+    // An attribute is a value, that can be seen, set and deleted unless the class says otherwise. There is nowhere to keep anything else about it.
+    if (descriptor.isAccessorDescriptor())
+        return typeError(globalObject, scope, shouldThrow, "An attribute of a Python object cannot be an accessor. A property is defined by its class."_s);
+    if (!descriptor.writable() || !descriptor.enumerable() || !descriptor.configurable())
+        return typeError(globalObject, scope, shouldThrow, "An attribute of a Python object cannot be made read-only, hidden or permanent"_s);
+    setAttribute(globalObject, receiver, name, descriptor.value() ? descriptor.value() : jsUndefined());
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
 } } // namespace JSC::Python

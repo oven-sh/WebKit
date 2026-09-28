@@ -273,7 +273,7 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         break;
     }
 
-    if (isJSArray(cell)) {
+    if (isListCell(cell)) {
         auto* list = uncheckedDowncast<JSArray>(cell);
         ReprGuard guard(cell);
         if (guard.isRecursive())

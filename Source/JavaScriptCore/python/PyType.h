@@ -27,14 +27,21 @@
 
 #include "JSObject.h"
 #include "PyTuple.h"
+#include "Watchpoint.h"
+#include "Weak.h"
 
 namespace JSC {
 
 // A class. Its attributes are its properties. It is the prototype of its instances, and its own prototype is its first base.
+//
+// To JavaScript it is an exotic object, and so are its instances: getting, setting and deleting a property, and asking whether there is one,
+// are getattr(), setattr(), delattr() and hasattr(). "The two languages" in README.md says why.
 class PyType final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | ImplementsHasInstance | ImplementsDefaultHasInstance | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | GetOwnPropertySlotMayBeWrongAboutDontEnum;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | ImplementsHasInstance | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | GetOwnPropertySlotIsImpureForPropertyAbsence;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
+    static void destroy(JSCell*);
 
     // What kind of cell an instance is. A class has the layout of its bases, of which only one may be other than Object.
     enum class Layout : uint8_t {
@@ -67,10 +74,10 @@ public:
     };
     static constexpr unsigned hookFlags = HasCustomGetAttribute | HasGetAttr | HasCustomSetAttr;
 
-    template<typename CellType, SubspaceAccess>
-    static CompleteSubspace* subspaceFor(VM& vm)
+    template<typename CellType, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
-        return &vm.cellSpace();
+        return vm.pyTypeSpace<mode>();
     }
 
     DECLARE_EXPORT_INFO;
@@ -118,6 +125,15 @@ public:
     // Which of hookFlags it has.
     unsigned hooks(JSGlobalObject*);
 
+    // The classes that are derived from it directly and are still there, in the order that they were made.
+    Vector<PyType*> subclasses() const;
+
+    // An attribute that an instance has of its own is what getattr() gives, and setattr() sets it, unless the class has something to say about
+    // it: a descriptor of that name with __set__ or __delete__, or its own __getattribute__, __setattr__ or __delattr__. Whether it has is
+    // looked into when the attribute is first asked for, and what is found holds for as long as this does. It stops holding when the class,
+    // or one that it is derived from, is given such a thing after it was made, which hardly ever happens.
+    WatchpointSet& instanceAccessIsAsFound() { return m_instanceAccessIsAsFound.get(); }
+
     // The structure that instances of a class with this layout and this class for a prototype have.
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, PyType* prototype);
 
@@ -125,13 +141,24 @@ public:
     // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
     // "What JavaScript sees" in README.md.
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
+    static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
+    // x instanceof C is isinstance(x, C).
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
     static CallData getConstructData(JSCell*);
 
 private:
     PyType(VM& vm, Structure* structure)
         : Base(vm, structure)
+        , m_instanceAccessIsAsFound(WatchpointSet::create(IsWatched))
     {
     }
+
+    void addSubclass(PyType*);
+    void instanceAccessMayHaveChanged(VM&);
 
     WriteBarrier<PyType> m_metatype;
     WriteBarrier<PyType> m_base;
@@ -139,6 +166,8 @@ private:
     WriteBarrier<PyTuple> m_mro;
     WriteBarrier<JSString> m_name;
     WriteBarrier<Structure> m_instanceStructure;
+    Vector<Weak<PyType>> m_subclasses;
+    const Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
     unsigned m_flags { 0 };
     unsigned m_hooksEpoch { 0 }; // CommonNames::typeEpoch when hookFlags were worked out.

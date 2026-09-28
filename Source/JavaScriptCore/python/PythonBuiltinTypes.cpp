@@ -575,8 +575,11 @@ PYTHON_NATIVE(typeMro)
 PYTHON_NATIVE(typeSubclasses)
 {
     NATIVE_PROLOGUE();
-    // FIXME: A class does not know what is derived from it.
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject)));
+    UNUSED_PARAM(scope);
+    MarkedArgumentBuffer subclasses;
+    for (PyType* subclass : asType(args[0])->subclasses())
+        subclasses.append(subclass);
+    return JSValue::encode(newList(globalObject, subclasses));
 }
 
 PYTHON_NATIVE(typePrepare)

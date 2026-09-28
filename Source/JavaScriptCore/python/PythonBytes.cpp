@@ -2185,7 +2185,9 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
     // the class JavaScript finds what all Uint8Arrays have.
     Structure* plain = globalObject->typedArrayStructure(TypeUint8, false);
     byteArray->setInstanceStructure(vm, plain);
+    // What JavaScript can do with a Uint8Array it can do with these, and with instances of classes derived from them.
     bytes->setPrototypeDirect(vm, plain->storedPrototype());
+    byteArray->setPrototypeDirect(vm, plain->storedPrototype());
     bytes->setInstanceStructure(vm, JSUint8Array::createStructure(vm, globalObject, bytes));
 
     for (PyType* type : { bytes, byteArray }) {

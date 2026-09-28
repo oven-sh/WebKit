@@ -25,7 +25,10 @@
 
 #pragma once
 
+#include "JSArray.h"
 #include "JSObject.h"
+#include "JSTypedArrays.h"
+#include "PyInstance.h"
 #include "PyRealm.h"
 
 namespace JSC {
@@ -356,10 +359,31 @@ private:
     WriteBarrier<JSObject> m_namespace;
 };
 
+// An instance of a class derived from list. A list is an Array, and so is this, made and worked on as one. It differs only in what its Structure
+// says are its methods, since unlike a list it can have attributes, about which its class may have something to say.
+class PyDerivedList final : public JSArray {
+public:
+    using Base = JSArray;
+    DECLARE_EXPORT_INFO;
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    PYTHON_DECLARE_EXOTIC_METHODS
+};
+
+// The same, for a class derived from bytes or bytearray.
+class PyDerivedBytes final : public JSUint8Array {
+public:
+    using Base = JSUint8Array;
+    DECLARE_EXPORT_INFO;
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    PYTHON_DECLARE_EXOTIC_METHODS
+};
+
 // An instance of a class derived from int, float or str. Those types' own instances are not cells, so it holds one.
 class PyBoxedValue final : public JSNonFinalObject {
 public:
+    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut;
     PYTHON_CELL_BOILERPLATE(PyBoxedValue)
+    PYTHON_DECLARE_EXOTIC_METHODS
 
     static PyBoxedValue* create(VM&, Structure*, JSValue);
     JSValue value() const { return m_value.get(); }

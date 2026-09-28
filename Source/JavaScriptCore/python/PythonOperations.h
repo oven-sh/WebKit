@@ -61,6 +61,8 @@ inline bool isNone(JSValue value) { return value.isUndefinedOrNull(); }
 bool isInt(JSValue);
 bool isFloat(JSValue);
 inline bool isStr(JSValue value) { return value.isString(); }
+// A list, or an instance of a class derived from list: an Array, or what JavaScriptCore calls a derived array. isJSArray() is only the first.
+inline bool isListCell(JSCell* cell) { return cell->type() == ArrayType || cell->type() == DerivedArrayType; }
 bool isList(JSValue);
 
 PyType* typeOf(JSGlobalObject*, JSValue);
@@ -114,6 +116,22 @@ JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name,
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
 JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+// Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's
+// `delete` does to something of Python's, which is delattr().
+bool deleteStoredAttribute(JSGlobalObject*, JSObject*, PropertyName);
+// Getting a property of something of Python's, or asking whether it has one, as far as that is up to what it has of its own. `ordinary` is what
+// finds that.
+bool getOwnPropertySlotFromJavaScript(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&, bool (*ordinary)(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&));
+// receiver.name = value, delete receiver.name and Object.defineProperty(receiver, name, descriptor) in JavaScript, of something of Python's.
+bool setPropertyFromJavaScript(JSGlobalObject*, JSValue receiver, PropertyName, JSValue, PutPropertySlot&);
+bool deletePropertyFromJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+bool definePropertyFromJavaScript(JSGlobalObject*, JSObject* receiver, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+// Whether a class has something to say about an attribute of its instances that comes before what the instance itself has: see
+// PyType::instanceAccessIsAsFound().
+enum class AttributeAccess : uint8_t { Get, Set };
+bool classComesBeforeInstance(JSGlobalObject*, PyType*, PropertyName, AttributeAccess);
+// Whether it has __set__ or __delete__.
+bool isDataDescriptor(JSGlobalObject*, JSValue);
 
 // ---- Calls
 

@@ -1020,6 +1020,8 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     auto makeUnhashable = [&] (PyType* type) { type->putDirect(vm, names.dunder_hash, jsUndefined()); };
 
     PyType* list = realm->typeList();
+    // What JavaScript can do with an Array it can do with an instance of a class derived from list.
+    list->setPrototypeDirect(vm, globalObject->arrayPrototype());
     addMethods(globalObject, list, {
         { "__new__"_s, listNew, Kind::New },
         { "__init__"_s, listInit },

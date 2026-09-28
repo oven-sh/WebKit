@@ -108,6 +108,7 @@
 #include "PropertyTable.h"
 #include "ProxyRevoke.h"
 #include "PyNativeFunction.h"
+#include "PyType.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ShadowRealmObject.h"

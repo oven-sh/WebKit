@@ -418,7 +418,7 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
         case PyRangeType:
             return uncheckedDowncast<PyRange>(cell)->length();
         default:
-            if (isJSArray(cell))
+            if (isListCell(cell))
                 return uncheckedDowncast<JSArray>(cell)->length();
             break;
         }
@@ -779,7 +779,7 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             break;
         }
         default:
-            if (isJSArray(cell)) {
+            if (isListCell(cell)) {
                 auto* list = uncheckedDowncast<JSArray>(cell);
                 for (unsigned i = 0; i < list->length(); ++i) {
                     bool same = isEqual(globalObject, listGet(list, i), value);
@@ -1064,7 +1064,7 @@ int64_t builtinLength(JSGlobalObject* globalObject, JSValue value)
     case PyRangeType:
         return uncheckedDowncast<PyRange>(cell)->length();
     default:
-        return isJSArray(cell) ? static_cast<int64_t>(uncheckedDowncast<JSArray>(cell)->length()) : -1;
+        return isListCell(cell) ? static_cast<int64_t>(uncheckedDowncast<JSArray>(cell)->length()) : -1;
     }
 }
 
@@ -1128,7 +1128,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         return { };
     JSCell* cell = base.asCell();
 
-    if (isJSArray(cell)) {
+    if (isListCell(cell)) {
         auto* list = uncheckedDowncast<JSArray>(cell);
         if (auto* slice = trySlice(key)) {
             auto indices = slice->indices(globalObject, list->length());
@@ -1251,7 +1251,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
             raise(globalObject, scope, BuiltinType::KeyError, key);
         return true;
     }
-    if (!isJSArray(cell))
+    if (!isListCell(cell))
         return false;
 
     auto* list = uncheckedDowncast<JSArray>(cell);
@@ -1369,7 +1369,7 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
         // Not a coroutine, nor an asynchronous generator.
         return generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(cell)) == GeneratorKind::Generator ? value : JSValue();
     default:
-        if (isJSArray(cell))
+        if (isListCell(cell))
             return PyIterator::create(globalObject, Kind::List, value);
         return { };
     }

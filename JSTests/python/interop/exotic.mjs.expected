@@ -1,0 +1,59 @@
+own => 1 true true x
+class attribute => plain true false plain
+bound method => ["method",1] function
+classmethod => 5 6
+staticmethod => 2 3
+missing =>  false
+set and python sees => [["x",10],["y",2]]
+delete => true true [["x",10]]
+shadow class attribute => mine plain true plain
+prototype => true true true false
+property get over own => 20 ["get"]
+property set over own => ["set"] 77
+setter raises !! ValueError: too cold
+no setter !! undefined: property 'fahrenheit' of 'Temperature' object has no setter
+getter says gone =>  false
+own keys => celsius
+frozen set !! undefined: cannot assign to field 'x'
+frozen new !! undefined: cannot assign to field 'z'
+frozen delete !! undefined: cannot delete field 'x'
+frozen still => 1
+slot => 5 0 true
+no dict !! undefined: 'Slotted' object has no attribute 'b' and no __dict__ for setting new attributes
+__getattr__ => hello  true
+__getattribute__ => 1 [["spy","real"]]
+__getattribute__ asked once =>  [["spy","hidden"]]
+mro => BCA c
+instanceof => true true true true false false
+__instancecheck__ => true false true
+dict subclass => 1 1 1
+class set from JS => 7 7
+JS function in a class => 8
+class delete from JS => true 
+builtin class is immutable !! TypeError: cannot set 'extra' attribute of immutable type 'object'
+defineProperty data => 3
+defineProperty accessor !! TypeError: An attribute of a Python object cannot be an accessor. A property is defined by its class.
+defineProperty hidden !! TypeError: An attribute of a Python object cannot be made read-only, hidden or permanent
+freeze !! TypeError: Unable to prevent extension in Object.freeze
+isExtensible => true
+assign and spread => {"x":3}{"x":4}
+for in => x
+Reflect => 10 true true x,dp
+hot => 19999 19999 19999 19999
+late property => from property [["prop set",5]] [["x",19999]]
+late __setattr__ => 19999 [["late setattr","x",5]]
+late __getattribute__ => intercepted
+late property on a base => from property
+others are as they were => 11 19999
+Guardedlist => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardeddict => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedset => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedtuple => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedint => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedstr => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedfloat => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedbytes => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedbytearray => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+Guardedfrozenset => own  computed [["guarded set","tag"],["guarded set","fresh"]] tag
+still an array => true 1 1 true
+still a Uint8Array => true 0 0

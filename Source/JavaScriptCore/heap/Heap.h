@@ -288,6 +288,7 @@ class Heap;
     v(nativeStdFunctionSpace, nativeStdFunctionHeapCellType, JSNativeStdFunction) \
     v(proxyObjectSpace, cellHeapCellType, ProxyObject) \
     v(pyNativeFunctionSpace, cellHeapCellType, PyNativeFunction) \
+    v(pyTypeSpace, pyTypeHeapCellType, PyType) \
     v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
     v(rawJSONObjectSpace, cellHeapCellType, JSRawJSONObject) \
     v(remoteFunctionSpace, cellHeapCellType, JSRemoteFunction) \
@@ -1187,6 +1188,7 @@ public:
     IsoHeapCellType syntheticModuleRecordHeapCellType;
     IsoHeapCellType moduleNamespaceObjectHeapCellType;
     IsoHeapCellType nativeStdFunctionHeapCellType;
+    IsoHeapCellType pyTypeHeapCellType;
     IsoInlinedHeapCellType<JSString> stringHeapCellType;
     IsoInlinedHeapCellType<JSRopeString> ropeStringHeapCellType;
     IsoHeapCellType weakMapHeapCellType;

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSObject.h"
+#include "PyInstance.h"
 
 namespace JSC {
 
@@ -91,6 +92,7 @@ private:
 class PyHashTable : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut;
 
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm)
@@ -157,6 +159,7 @@ private:
 class PyDict final : public PyHashTable {
 public:
     using Base = PyHashTable;
+    PYTHON_DECLARE_EXOTIC_METHODS
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -220,6 +223,7 @@ private:
 class PySet final : public PyHashTable {
 public:
     using Base = PyHashTable;
+    PYTHON_DECLARE_EXOTIC_METHODS
 
     DECLARE_EXPORT_INFO;
 

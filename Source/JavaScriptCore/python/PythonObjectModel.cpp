@@ -47,7 +47,7 @@ namespace JSC { namespace Python {
 
 bool isList(JSValue value)
 {
-    return value.isCell() && isJSArray(value.asCell());
+    return value.isCell() && isListCell(value.asCell());
 }
 
 static PyType* typeOfError(PyRealm* realm, ErrorInstance* error)
@@ -107,7 +107,7 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
         JSValue prototype = cell->structure()->storedPrototype(asObject(cell));
         if (isType(prototype))
             return uncheckedDowncast<PyType>(prototype.asCell());
-        if (isJSArray(cell))
+        if (isListCell(cell))
             return realm->typeList();
         if (cell->type() == Uint8ArrayType)
             return realm->typeByteArray();
@@ -538,8 +538,10 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
         return result;
 
     result = call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name));
-    if (scope.exception())
+    if (scope.exception()) [[unlikely]] {
         catchException(globalObject, BuiltinType::AttributeError);
+        return { };
+    }
     return result;
 }
 
@@ -567,6 +569,26 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     if (hooks & PyType::HasGetAttr)
         RELEASE_AND_RETURN(scope, call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));
     return raiseNoAttribute(globalObject, scope, value, name);
+}
+
+bool deleteStoredAttribute(JSGlobalObject* globalObject, JSObject* object, PropertyName name)
+{
+    DeletePropertySlot slot;
+    return JSObject::deleteProperty(object, globalObject, name, slot);
+}
+
+bool isDataDescriptor(JSGlobalObject* globalObject, JSValue value)
+{
+    return classifyDescriptor(globalObject, value).isData;
+}
+
+bool classComesBeforeInstance(JSGlobalObject* globalObject, PyType* type, PropertyName name, AttributeAccess access)
+{
+    unsigned hooks = type->hooks(globalObject);
+    if (access == AttributeAccess::Get ? hooks & PyType::HasCustomGetAttribute : (hooks & PyType::HasCustomSetAttr) || type->hasFlag(PyType::HasNoInstanceDict))
+        return true;
+    JSValue attribute = type->lookup(globalObject->vm(), name);
+    return attribute && isDataDescriptor(globalObject, attribute);
 }
 
 // descriptor.__set__(value, newValue), or __delete__ if `newValue` is empty, for a descriptor that has such a thing. False if it has not.
@@ -687,7 +709,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             return;
         }
         scope.release();
-        storage->deleteProperty(globalObject, name);
+        deleteStoredAttribute(globalObject, storage, name);
         return;
     }
 

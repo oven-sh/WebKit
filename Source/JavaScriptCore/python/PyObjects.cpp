@@ -85,6 +85,30 @@ JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame*
     RELEASE_AND_RETURN(scope, JSValue::encode(Python::callWithKeywords(globalObject, function, arguments, given.keywordNames())));
 }
 
+static bool nothingIsOrdinary(VM&, PropertyName) { return false; }
+static bool indicesAreOrdinary(VM&, PropertyName name) { return !!parseIndex(name); }
+static bool indicesAndLengthAreOrdinary(VM& vm, PropertyName name) { return name == vm.propertyNames->length || parseIndex(name); }
+
+PYTHON_DEFINE_EXOTIC_METHODS(PyInstance, nothingIsOrdinary)
+PYTHON_DEFINE_EXOTIC_METHODS(PyBoxedValue, nothingIsOrdinary)
+PYTHON_DEFINE_EXOTIC_METHODS(PyDict, nothingIsOrdinary)
+PYTHON_DEFINE_EXOTIC_METHODS(PySet, nothingIsOrdinary)
+PYTHON_DEFINE_EXOTIC_METHODS(PyDerivedList, indicesAndLengthAreOrdinary)
+PYTHON_DEFINE_EXOTIC_METHODS(PyDerivedBytes, indicesAreOrdinary)
+
+const ClassInfo PyDerivedList::s_info = { "list"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyDerivedList) };
+const ClassInfo PyDerivedBytes::s_info = { "bytes"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyDerivedBytes) };
+
+Structure* PyDerivedList::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(DerivedArrayType, StructureFlags), info(), ArrayWithUndecided);
+}
+
+Structure* PyDerivedBytes::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(Uint8ArrayType, StructureFlags), info(), NonArray);
+}
+
 CallData PyInstance::getCallData(JSCell* cell)
 {
     // It can be called if its class has __call__.
@@ -199,7 +223,38 @@ bool PyTuple::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     }
     if (std::optional<uint32_t> index = parseIndex(propertyName))
         return getOwnPropertySlotByIndex(object, globalObject, *index, slot);
-    return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    if (propertyName.isSymbol())
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    return Python::getOwnPropertySlotFromJavaScript(object, globalObject, propertyName, slot, Base::getOwnPropertySlot);
+}
+
+bool PyTuple::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    if (name.isSymbol() || slot.thisValue() != JSValue(cell))
+        return Base::put(cell, globalObject, name, value, slot);
+    // Its items and its length are not to be set, which Python says in its own way.
+    return Python::setPropertyFromJavaScript(globalObject, cell, name, value, slot);
+}
+
+bool PyTuple::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+{
+    if (name.isSymbol())
+        return Base::deleteProperty(cell, globalObject, name, slot);
+    if (indicesAndLengthAreOrdinary(globalObject->vm(), name))
+        return false;
+    return Python::deletePropertyFromJavaScript(globalObject, cell, name);
+}
+
+bool PyTuple::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    if (name.isSymbol())
+        return Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    return Python::definePropertyFromJavaScript(globalObject, object, name, descriptor, shouldThrow);
+}
+
+bool PyTuple::preventExtensions(JSObject*, JSGlobalObject*)
+{
+    return false;
 }
 
 bool PyTuple::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject*, unsigned index, PropertySlot& slot)

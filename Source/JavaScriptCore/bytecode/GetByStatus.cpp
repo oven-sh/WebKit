@@ -328,6 +328,10 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
             if (access.usesPolyProto())
                 return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
+            // It holds only for as long as something that a variant has no way to say holds. An inline cache can.
+            if (access.additionalSet())
+                return GetByStatus(JSC::slowVersion(summary), propertyCache);
+
             if (!access.requiresIdentifierNameMatch()) {
                 // FIXME: We could use this for indexed loads in the future. This is pretty solid profiling
                 // information, and probably better than ArrayProfile when it's available.
