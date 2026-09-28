@@ -69,9 +69,60 @@ JSValue boxIfDerived(JSGlobalObject* globalObject, PyType* type, PyType* builtin
     return PyBoxedValue::create(globalObject->vm(), type->instanceStructure(), value);
 }
 
+bool checkFirstArgument(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
+    PyNativeFunction::Kind kind = function->kind();
+    if (kind == PyNativeFunction::Kind::Function)
+        return true;
+    auto* owner = uncheckedDowncast<PyType>(function->owner());
+    NativeArguments args(callFrame);
+    JSValue first = args.at(0);
+    if (kind == PyNativeFunction::Kind::Method) {
+        if (first) [[likely]] {
+            PyType* type = typeOf(globalObject, first);
+            if (type == owner || type->isSubtypeOf(owner)) [[likely]]
+                return true;
+        }
+    } else if (first && isType(first) && asType(first)->isSubtypeOf(owner))
+        return true;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String ownerName = owner->nameString(globalObject);
+    String name = function->name(vm);
+    switch (kind) {
+    case PyNativeFunction::Kind::Method:
+        if (!first)
+            raiseTypeError(globalObject, scope, makeString("unbound method "_s, ownerName, '.', name, "() needs an argument"_s));
+        else
+            raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name, "' for '"_s, ownerName, "' objects doesn't apply to a '"_s, typeName(globalObject, first), "' object"_s));
+        break;
+    case PyNativeFunction::Kind::ClassMethod:
+        if (!first)
+            raiseTypeError(globalObject, scope, makeString("unbound method "_s, ownerName, '.', name, "() needs an argument"_s));
+        else if (!isType(first))
+            raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name, "' for type '"_s, ownerName, "' needs a type, not a '"_s, typeName(globalObject, first), "' as arg 2"_s));
+        else
+            raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name, "' requires a subtype of '"_s, ownerName, "' but received '"_s, asType(first)->nameString(globalObject), '\''));
+        break;
+    case PyNativeFunction::Kind::New:
+        if (!first)
+            raiseTypeError(globalObject, scope, makeString(ownerName, ".__new__(): not enough arguments"_s));
+        else if (!isType(first))
+            raiseTypeError(globalObject, scope, makeString(ownerName, ".__new__(X): X is not a type object ("_s, typeName(globalObject, first), ')'));
+        else
+            raiseTypeError(globalObject, scope, makeString(ownerName, ".__new__("_s, asType(first)->nameString(globalObject), "): "_s, asType(first)->nameString(globalObject), " is not a subtype of "_s, ownerName));
+        break;
+    case PyNativeFunction::Kind::Function:
+        break;
+    }
+    return false;
+}
+
 // ---- What is the same for every built-in type
 
-JSC_DEFINE_HOST_FUNCTION(nativeRepr, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeRepr)
 {
     NATIVE_PROLOGUE();
     String text = builtinRepr(globalObject, args.at(0));
@@ -79,7 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeRepr, (JSGlobalObject* globalObject, CallFrame* c
     return JSValue::encode(jsString(vm, text));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeHash, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeHash)
 {
     NATIVE_PROLOGUE();
     int64_t hash = builtinHash(globalObject, args.at(0));
@@ -87,7 +138,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeHash, (JSGlobalObject* globalObject, CallFrame* c
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, hash)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeLen, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeLen)
 {
     NATIVE_PROLOGUE();
     int64_t length = builtinLength(globalObject, args.at(0));
@@ -95,7 +146,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeLen, (JSGlobalObject* globalObject, CallFrame* ca
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, length)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeGetItem, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeGetItem)
 {
     NATIVE_PROLOGUE();
     if (!args.check(globalObject, scope, "__getitem__"_s, 2, 2))
@@ -103,7 +154,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeGetItem, (JSGlobalObject* globalObject, CallFrame
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinGetItem(globalObject, args[0], args[1])));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeSetItem, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeSetItem)
 {
     NATIVE_PROLOGUE();
     if (!args.check(globalObject, scope, "__setitem__"_s, 3, 3))
@@ -113,7 +164,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeSetItem, (JSGlobalObject* globalObject, CallFrame
     RETURN_NONE();
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeDelItem, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeDelItem)
 {
     NATIVE_PROLOGUE();
     if (!args.check(globalObject, scope, "__delitem__"_s, 2, 2))
@@ -123,7 +174,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeDelItem, (JSGlobalObject* globalObject, CallFrame
     RETURN_NONE();
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeContains, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeContains)
 {
     NATIVE_PROLOGUE();
     if (!args.check(globalObject, scope, "__contains__"_s, 2, 2))
@@ -133,14 +184,14 @@ JSC_DEFINE_HOST_FUNCTION(nativeContains, (JSGlobalObject* globalObject, CallFram
     return JSValue::encode(jsBoolean(result.value_or(false)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeIter, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeIter)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
     return JSValue::encode(builtinGetIterator(globalObject, args.at(0)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeNext)
 {
     NATIVE_PROLOGUE();
     JSValue value = iteratorNext(globalObject, args.at(0));
@@ -150,8 +201,9 @@ JSC_DEFINE_HOST_FUNCTION(nativeNext, (JSGlobalObject* globalObject, CallFrame* c
     return JSValue::encode(value);
 }
 
-JSC_DEFINE_HOST_FUNCTION(nativeSelf, (JSGlobalObject*, CallFrame* callFrame))
+PYTHON_SHARED_NATIVE(nativeSelf)
 {
+    UNUSED_PARAM(globalObject);
     return JSValue::encode(callFrame->argument(0));
 }
 
@@ -237,8 +289,12 @@ PYTHON_NATIVE(objectNew)
         if (type->lookup(vm, names.dunder_init).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit))
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), "() takes no arguments"_s)));
     }
-    if (type->layout() != PyType::Layout::Object)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, type->base()->nameString(globalObject), ".__new__()"_s)));
+    if (type->layout() != PyType::Layout::Object) {
+        PyType* builtin = type;
+        while (builtin->hasFlag(PyType::IsHeapType))
+            builtin = builtin->base();
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
+    }
     return JSValue::encode(PyInstance::create(vm, type->instanceStructure()));
 }
 
@@ -925,7 +981,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
 
     PyType* object = realm->typeObject();
     addMethods(globalObject, object, {
-        { "__new__"_s, objectNew, Kind::Function },
+        { "__new__"_s, objectNew, Kind::New },
         { "__init__"_s, objectInit },
         { "__repr__"_s, nativeRepr },
         { "__str__"_s, objectStr },
@@ -960,7 +1016,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
 
     PyType* type = realm->typeType();
     addMethods(globalObject, type, {
-        { "__new__"_s, typeNew, Kind::Function },
+        { "__new__"_s, typeNew, Kind::New },
         { "__init__"_s, typeInit },
         { "__call__"_s, typeCall },
         { "__getattribute__"_s, objectGetAttribute },
@@ -1035,7 +1091,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     PyType* method = realm->typeMethod();
     method->setInstanceStructure(vm, PyBoundMethod::createStructure(vm, globalObject, method));
     addMethods(globalObject, method, {
-        { "__new__"_s, methodNew, Kind::Function },
+        { "__new__"_s, methodNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "__call__"_s, callableCall },
         { "__eq__"_s, methodEq },
@@ -1046,7 +1102,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
 
     PyType* property = realm->typeProperty();
     addMethods(globalObject, property, {
-        { "__new__"_s, nativeObjectNew, Kind::Function },
+        { "__new__"_s, nativeObjectNew, Kind::New },
         { "__init__"_s, propertyInit },
         { "__get__"_s, descriptorGet },
         { "__set__"_s, propertySet },
@@ -1062,7 +1118,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
 
     for (PyType* type : { realm->typeStaticMethod(), realm->typeClassMethod() }) {
         addMethods(globalObject, type, {
-            { "__new__"_s, nativeObjectNew, Kind::Function },
+            { "__new__"_s, nativeObjectNew, Kind::New },
             { "__init__"_s, wrapperInit },
             { "__get__"_s, descriptorGet },
         });
@@ -1072,7 +1128,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addMethods(globalObject, realm->typeStaticMethod(), { { "__call__"_s, staticMethodCall } });
 
     addMethods(globalObject, realm->typeSuper(), {
-        { "__new__"_s, nativeObjectNew, Kind::Function },
+        { "__new__"_s, nativeObjectNew, Kind::New },
         { "__init__"_s, superInit },
         { "__getattribute__"_s, superGetAttribute },
     });
@@ -1080,7 +1136,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     PyType* module = realm->typeModule();
     module->setInstanceStructure(vm, PyModule::createStructure(vm, globalObject, module));
     addMethods(globalObject, module, {
-        { "__new__"_s, moduleNew, Kind::Function },
+        { "__new__"_s, moduleNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "__dir__"_s, objectDir },
     });

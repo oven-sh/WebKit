@@ -762,7 +762,7 @@ void initializeComplexType(JSGlobalObject* globalObject)
         type->putDirect(vm, names.reflectedMethod(op), PyNativeFunction::create(vm, globalObject, 1, names.reflectedMethod(op).string(), complexBinary, Kind::Method, type, pack(op, true)));
     }
     addMethods(globalObject, type, {
-        { "__new__"_s, complexNew, Kind::Function },
+        { "__new__"_s, complexNew, Kind::New },
         { "__eq__"_s, complexEquality, Kind::Method, pack(true) },
         { "__ne__"_s, complexEquality, Kind::Method, pack(false) },
         { "__neg__"_s, complexNegative },

@@ -1021,7 +1021,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
 
     PyType* list = realm->typeList();
     addMethods(globalObject, list, {
-        { "__new__"_s, listNew, Kind::Function },
+        { "__new__"_s, listNew, Kind::New },
         { "__init__"_s, listInit },
         { "__repr__"_s, nativeRepr },
         { "__len__"_s, nativeLen },
@@ -1050,7 +1050,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
 
     PyType* tuple = realm->typeTuple();
     addMethods(globalObject, tuple, {
-        { "__new__"_s, tupleNew, Kind::Function },
+        { "__new__"_s, tupleNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "__hash__"_s, nativeHash },
         { "__len__"_s, nativeLen },
@@ -1066,7 +1066,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
 
     PyType* dict = realm->typeDict();
     addMethods(globalObject, dict, {
-        { "__new__"_s, dictNew, Kind::Function },
+        { "__new__"_s, dictNew, Kind::New },
         { "__init__"_s, dictInit },
         { "__repr__"_s, nativeRepr },
         { "__len__"_s, nativeLen },
@@ -1119,7 +1119,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     }
 
     addMethods(globalObject, realm->typeMappingProxy(), {
-        { "__new__"_s, proxyNew, Kind::Function },
+        { "__new__"_s, proxyNew, Kind::New },
         { "__getitem__"_s, proxyGetItem },
         { "__contains__"_s, proxyContains },
         { "__len__"_s, proxyLen },
@@ -1153,7 +1153,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         addBinaryOperators(globalObject, set, { BinaryOperator::BitOr, BinaryOperator::BitAnd, BinaryOperator::Sub, BinaryOperator::BitXor }, true, set == realm->typeSet());
     }
     addMethods(globalObject, realm->typeSet(), {
-        { "__new__"_s, setNew, Kind::Function },
+        { "__new__"_s, setNew, Kind::New },
         { "__init__"_s, setInit },
         { "add"_s, setAddMethod },
         { "remove"_s, setRemove, PyNativeFunction::Kind::Method, pack(true) },
@@ -1167,14 +1167,14 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     });
     makeUnhashable(realm->typeSet());
     addMethods(globalObject, realm->typeFrozenSet(), {
-        { "__new__"_s, frozenSetNew, Kind::Function },
+        { "__new__"_s, frozenSetNew, Kind::New },
         { "__hash__"_s, nativeHash },
     });
 
     PyType* range = realm->typeRange();
     range->setInstanceStructure(vm, PyRange::createStructure(vm, globalObject, range));
     addMethods(globalObject, range, {
-        { "__new__"_s, rangeNew, Kind::Function },
+        { "__new__"_s, rangeNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "__hash__"_s, nativeHash },
         { "__len__"_s, nativeLen },
@@ -1193,7 +1193,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     PyType* slice = realm->typeSlice();
     slice->setInstanceStructure(vm, PySlice::createStructure(vm, globalObject, slice));
     addMethods(globalObject, slice, {
-        { "__new__"_s, sliceNew, Kind::Function },
+        { "__new__"_s, sliceNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "indices"_s, sliceIndices },
     });
@@ -1218,11 +1218,11 @@ void initializeIteratorTypes(JSGlobalObject* globalObject)
             { "__length_hint__"_s, iteratorLengthHint },
         });
     }
-    addMethods(globalObject, realm->typeEnumerate(), { { "__new__"_s, enumerateNew, Kind::Function } });
-    addMethods(globalObject, realm->typeZip(), { { "__new__"_s, zipNew, Kind::Function } });
-    addMethods(globalObject, realm->typeMap(), { { "__new__"_s, mapNew, Kind::Function } });
-    addMethods(globalObject, realm->typeFilter(), { { "__new__"_s, filterNew, Kind::Function } });
-    addMethods(globalObject, realm->typeReversed(), { { "__new__"_s, reversedNew, Kind::Function } });
+    addMethods(globalObject, realm->typeEnumerate(), { { "__new__"_s, enumerateNew, Kind::New } });
+    addMethods(globalObject, realm->typeZip(), { { "__new__"_s, zipNew, Kind::New } });
+    addMethods(globalObject, realm->typeMap(), { { "__new__"_s, mapNew, Kind::New } });
+    addMethods(globalObject, realm->typeFilter(), { { "__new__"_s, filterNew, Kind::New } });
+    addMethods(globalObject, realm->typeReversed(), { { "__new__"_s, reversedNew, Kind::New } });
 }
 
 } } // namespace JSC::Python

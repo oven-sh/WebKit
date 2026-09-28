@@ -68,9 +68,24 @@ void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 PyNativeFunction* addFunction(JSGlobalObject*, JSObject* namespaceObject, ASCIILiteral name, NativeFunction, unsigned data = 0);
 
-#define PYTHON_NATIVE(name) \
-    static JSC_DECLARE_HOST_FUNCTION(name); \
-    JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// Whether a function written in C++ has been given a first argument that it can work on: for a method, an instance of the class that it is a
+// method of, and for __new__, a class derived from that one. If not, TypeError has been raised. What follows can then take it for what it is.
+bool checkFirstArgument(JSGlobalObject*, CallFrame*);
+
+#define PYTHON_NATIVE_WITH_LINKAGE(linkage, name) \
+    static EncodedJSValue name##Checked(JSGlobalObject*, CallFrame*); \
+    linkage JSC_DECLARE_HOST_FUNCTION(name); \
+    JSC_DEFINE_HOST_FUNCTION(name, (JSGlobalObject* globalObject, CallFrame* callFrame)) \
+    { \
+        if (!checkFirstArgument(globalObject, callFrame)) [[unlikely]] \
+            return { }; \
+        return name##Checked(globalObject, callFrame); \
+    } \
+    static EncodedJSValue name##Checked(JSGlobalObject* globalObject, CallFrame* callFrame)
+
+#define PYTHON_NATIVE(name) PYTHON_NATIVE_WITH_LINKAGE(static, name)
+// One that other files use.
+#define PYTHON_SHARED_NATIVE(name) PYTHON_NATIVE_WITH_LINKAGE(, name)
 
 #define NATIVE_PROLOGUE() \
     VM& vm = globalObject->vm(); \

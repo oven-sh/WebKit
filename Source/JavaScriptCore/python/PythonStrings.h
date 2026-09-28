@@ -43,17 +43,20 @@ struct FormatSpecification {
     char32_t fill { ' ' };
     char align { 0 }; // '<', '>', '=', '^', or 0 for what the type does by default.
     char sign { '-' };
+    bool hasSign { false }; // It was given, even if it is the '-' that it would have been anyway.
     bool noNegativeZero { false };
     bool alternate { false };
     bool hasWidth { false };
     unsigned width { 0 };
     char grouping { 0 }; // ',' or '_'
     int precision { -1 };
+    char fractionGrouping { 0 }; // The same, of the digits after the point.
     char32_t type { 0 };
 };
 
 // Nothing if it makes no sense, and then ValueError has been raised. `typeName` is what it was meant for.
-std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject*, StringView, const String& typeName);
+// A string is put to the left of its field unless told otherwise, and that changes what a 0 before the width means.
+std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject*, StringView, const String& typeName, bool isForString = false);
 
 // What int.__format__, float.__format__ and str.__format__ do. Null if they raised.
 String formatInt(JSGlobalObject*, JSValue, const FormatSpecification&);

@@ -36,6 +36,7 @@
 #include "PythonGenerators.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
+#include "PythonStrings.h"
 #include "UnlinkedFunctionExecutable.h"
 
 namespace JSC { namespace Python {
@@ -261,10 +262,10 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
         break;
     }
     case 'r':
-    case 'a': { // FIXME: ascii()
+    case 'a': {
         String text = repr(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        value = jsString(vm, text);
+        value = jsString(vm, argument(1).asInt32() == 'a' ? escapeNonASCII(text) : text);
         break;
     }
     default:

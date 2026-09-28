@@ -304,7 +304,9 @@ static Digits significantDigits(double value, int count)
     Digits shortest = toDigits(value, Converter::SHORTEST, 0);
     int fraction = exactFractionDigits(value);
     int exactCount = fraction ? shortest.point + fraction : static_cast<int>(shortest.digits.size());
-    if (exactCount == count + 1 && (fraction || (shortest.digits.last() == '5' && std::abs(value) < 9007199254740992.0)))
+    // If rounding up carried all the way, as from 9.5 to 10, the digit that was rounded to is a zero, and even.
+    bool didCarry = result.point != shortest.point;
+    if (!didCarry && exactCount == count + 1 && (fraction || (shortest.digits.last() == '5' && std::abs(value) < 9007199254740992.0)))
         roundTieToEven(result, count - 1);
     return result;
 }
@@ -386,7 +388,7 @@ double roundToDigits(double value, int digits)
 
 // ---- The format specification
 
-std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* globalObject, StringView text, const String& typeName)
+std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* globalObject, StringView text, const String& typeName, bool isForString)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -412,8 +414,10 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
         result.align = characters[0];
         i = 1;
     }
-    if (i < end && (characters[i] == '+' || characters[i] == '-' || characters[i] == ' '))
+    if (i < end && (characters[i] == '+' || characters[i] == '-' || characters[i] == ' ')) {
         result.sign = characters[i++];
+        result.hasSign = true;
+    }
     if (i < end && characters[i] == 'z') {
         result.noNegativeZero = true;
         ++i;
@@ -424,7 +428,7 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     }
     if (i < end && characters[i] == '0' && !hasFill) {
         result.fill = '0';
-        if (!result.align)
+        if (!result.align && !isForString)
             result.align = '=';
         ++i;
     }
@@ -438,18 +442,18 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     }
     if (i < end && (characters[i] == ',' || characters[i] == '_')) {
         result.grouping = characters[i++];
-        if (i < end && (characters[i] == ',' || characters[i] == '_')) {
-            raiseValueError(globalObject, scope, characters[i] == static_cast<char32_t>(result.grouping) ? makeString("Cannot specify '"_s, result.grouping, "' with '"_s, result.grouping, "'."_s) : "Cannot specify both ',' and '_'."_s);
+        if (i < end && (characters[i] == ',' || characters[i] == '_') && characters[i] != static_cast<char32_t>(result.grouping)) {
+            raiseValueError(globalObject, scope, "Cannot specify both ',' and '_'."_s);
             return std::nullopt;
         }
     }
     if (i < end && characters[i] == '.') {
         ++i;
-        if (i >= end || !isASCIIDigit(characters[i])) {
-            raiseValueError(globalObject, scope, "Format specifier missing precision"_s);
-            return std::nullopt;
+        bool hasSomething = false;
+        if (i < end && isASCIIDigit(characters[i])) {
+            hasSomething = true;
+            result.precision = 0;
         }
-        result.precision = 0;
         while (i < end && isASCIIDigit(characters[i])) {
             if (result.precision > 100000000) {
                 raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
@@ -457,11 +461,61 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
             }
             result.precision = result.precision * 10 + (characters[i++] - '0');
         }
+        if (i < end && (characters[i] == ',' || characters[i] == '_')) {
+            hasSomething = true;
+            result.fractionGrouping = characters[i++];
+            if (i < end && (characters[i] == ',' || characters[i] == '_') && characters[i] != static_cast<char32_t>(result.fractionGrouping)) {
+                raiseValueError(globalObject, scope, "Cannot specify both ',' and '_'."_s);
+                return std::nullopt;
+            }
+        }
+        if (!hasSomething) {
+            raiseValueError(globalObject, scope, "Format specifier missing precision"_s);
+            return std::nullopt;
+        }
     }
     if (end - i > 1)
         return invalid();
     if (i < end)
         result.type = characters[i];
+
+    // What can be told to be wrong without knowing what is being formatted.
+    auto cannotSpecify = [&] (char separator) -> std::optional<FormatSpecification> {
+        StringBuilder message;
+        message.append("Cannot specify '"_s, separator, "' with '"_s);
+        if (result.type > 32 && result.type < 128)
+            message.append(static_cast<char>(result.type));
+        else
+            message.append("\\x"_s, hex(static_cast<unsigned>(result.type), Lowercase));
+        message.append("'."_s);
+        raiseValueError(globalObject, scope, message.toString());
+        return std::nullopt;
+    };
+    if (result.grouping) {
+        switch (result.type) {
+        case 'd':
+        case 'e':
+        case 'f':
+        case 'g':
+        case 'E':
+        case 'G':
+        case '%':
+        case 'F':
+        case 0:
+            break;
+        case 'b':
+        case 'o':
+        case 'x':
+        case 'X':
+            if (result.grouping == '_')
+                break;
+            [[fallthrough]];
+        default:
+            return cannotSpecify(result.grouping);
+        }
+    }
+    if (result.type == 'n' && result.fractionGrouping)
+        return cannotSpecify(result.fractionGrouping);
     return result;
 }
 
@@ -469,7 +523,10 @@ static String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& s
 {
     StringBuilder builder;
     builder.append("Unknown format code '"_s);
-    builder.append(code);
+    if (code > 32 && code < 128)
+        builder.append(static_cast<char>(code));
+    else
+        builder.append("\\x"_s, hex(static_cast<unsigned>(code), Lowercase));
     builder.append("' for object of type '"_s, typeName, '\'');
     raiseValueError(globalObject, scope, builder.toString());
     return { };
@@ -584,7 +641,6 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
     auto scope = DECLARE_THROW_SCOPE(vm);
     Number number = classify(value);
     ASSERT(number.isInt());
-
     unsigned radix = 10;
     ASCIILiteral prefix = ""_s;
     switch (specification.type) {
@@ -609,8 +665,24 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         prefix = "0X"_s;
         break;
     case 'c': {
-        if (specification.sign != '-') {
+        if (specification.precision >= 0) {
+            raiseValueError(globalObject, scope, "Precision not allowed in integer format specifier"_s);
+            return { };
+        }
+        if (specification.noNegativeZero) {
+            raiseValueError(globalObject, scope, "Negative zero coercion (z) not allowed in integer format specifier"_s);
+            return { };
+        }
+        if (specification.hasSign) {
             raiseValueError(globalObject, scope, "Sign not allowed with integer format specifier 'c'"_s);
+            return { };
+        }
+        if (specification.alternate) {
+            raiseValueError(globalObject, scope, "Alternate form (#) not allowed with integer format specifier 'c'"_s);
+            return { };
+        }
+        if (number.kind == Number::Kind::Big && number.big->length() > 1) {
+            raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C long"_s);
             return { };
         }
         if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
@@ -619,7 +691,7 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         }
         StringBuilder builder;
         builder.append(static_cast<char32_t>(number.small));
-        return pad(builder.toString(), 0, specification, '<');
+        return pad(builder.toString(), 0, specification, '>');
     }
     case 'e':
     case 'E':
@@ -633,10 +705,14 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         RELEASE_AND_RETURN(scope, formatFloat(globalObject, real, specification));
     }
     default:
-        return raiseUnknownFormatCode(globalObject, scope, specification.type, "int"_s);
+        return raiseUnknownFormatCode(globalObject, scope, specification.type, value.isBoolean() ? "bool"_s : "int"_s);
     }
     if (specification.precision >= 0) {
         raiseValueError(globalObject, scope, "Precision not allowed in integer format specifier"_s);
+        return { };
+    }
+    if (specification.noNegativeZero) {
+        raiseValueError(globalObject, scope, "Negative zero coercion (z) not allowed in integer format specifier"_s);
         return { };
     }
     if (specification.grouping == ',' && radix != 10) {
@@ -710,6 +786,9 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     } else if (!type && precision < 0) {
         // As repr() has it.
         String text = reprOfDouble(std::abs(value));
+        // '#' is for there to be a point, come what may.
+        if (size_t exponentAt = text.find('e'); specification.alternate && exponentAt != notFound && !text.contains('.'))
+            text = makeString(StringView(text).left(exponentAt), '.', StringView(text).substring(exponentAt));
         body.append(text);
     } else {
         bool addPointZero = false;
@@ -735,7 +814,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
             int significant = precision ? precision : 1;
             Digits digits = significantDigits(magnitude, significant);
             int exponent = magnitude ? digits.point - 1 : 0;
-            bool usesExponent = exponent < -4 || exponent >= (addPointZero && specification.precision >= 0 ? significant : significant);
+            bool usesExponent = exponent < -4 || exponent >= (addPointZero ? significant - 1 : significant);
             // Zeros at the end are dropped, unless '#' says otherwise.
             int kept = specification.alternate ? significant : std::max<int>(digits.digits.size(), 1);
             if (usesExponent)
@@ -744,7 +823,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
                 int places = std::max(kept - (exponent + 1), 0);
                 appendFixed(body, digits, places, specification.alternate);
                 if (addPointZero && !places)
-                    body.append(".0"_s);
+                    body.append(specification.alternate ? "0"_s : ".0"_s);
             }
             break;
         }
@@ -758,6 +837,22 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
             isAllZeros &= text[i] == '0' || text[i] == '.';
         if (isAllZeros)
             isNegative = false;
+    }
+
+    if (specification.fractionGrouping && std::isfinite(value)) {
+        // In threes from the point.
+        if (size_t point = text.find('.'); point != notFound) {
+            StringBuilder grouped;
+            grouped.append(StringView(text).left(point + 1));
+            unsigned i = point + 1;
+            for (unsigned count = 0; i < text.length() && isASCIIDigit(text[i]); ++i, ++count) {
+                if (count && !(count % 3))
+                    grouped.append(specification.fractionGrouping);
+                grouped.append(text[i]);
+            }
+            grouped.append(StringView(text).substring(i));
+            text = grouped.toString();
+        }
     }
 
     StringBuilder builder;
@@ -906,7 +1001,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             readNumber(specification.precision);
             RETURN_IF_EXCEPTION(scope, { });
         }
-        while (i < length && (format[i] == 'l' || format[i] == 'h' || format[i] == 'L'))
+        if (i < length && (format[i] == 'l' || format[i] == 'h' || format[i] == 'L'))
             ++i;
         if (i >= length)
             return raiseValueError(globalObject, scope, "incomplete format"_s);
@@ -973,6 +1068,12 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     text = String(byteCast<Latin1Character>(*buffer));
                 } else {
                     Number number = classify(argument);
+                    if (!number && typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_index)) {
+                        auto index = toIndex(globalObject, argument, true);
+                        RETURN_IF_EXCEPTION(scope, { });
+                        argument = intFromInt64(globalObject, *index);
+                        number = classify(argument);
+                    }
                     if (!number.isInt())
                         return raiseTypeError(globalObject, scope, makeString("%c requires an integer in range(256) or a single byte, not "_s, typeName(globalObject, argument)));
                     if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 255) {
@@ -988,6 +1089,12 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
             } else {
                 Number number = classify(argument);
+                if (!number && typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_index)) {
+                    auto index = toIndex(globalObject, argument, true);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    argument = intFromInt64(globalObject, *index);
+                    number = classify(argument);
+                }
                 if (!number.isInt())
                     return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, argument)));
                 if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
@@ -1011,6 +1118,12 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         case 'X': {
             Number number = classify(argument);
             if (number.kind == Number::Kind::Float && (conversion == 'd' || conversion == 'i' || conversion == 'u')) {
+                if (std::isnan(number.real))
+                    return raiseValueError(globalObject, scope, "cannot convert float NaN to integer"_s);
+                if (std::isinf(number.real)) {
+                    raise(globalObject, scope, BuiltinType::OverflowError, "cannot convert float infinity to integer"_s);
+                    return { };
+                }
                 argument = intFromDouble(globalObject, number.real);
                 number = classify(argument);
             }
@@ -1069,8 +1182,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         case 'F':
         case 'g':
         case 'G': {
-            if (!classify(argument))
-                return raiseTypeError(globalObject, scope, makeString("must be real number, not "_s, typeName(globalObject, argument)));
+            if (!classify(argument) && !typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_float) && !typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_index))
+                return raiseTypeError(globalObject, scope, isForBytes ? makeString("float argument required, not "_s, typeName(globalObject, argument)) : makeString("must be real number, not "_s, typeName(globalObject, argument)));
             auto real = toDouble(globalObject, argument);
             RETURN_IF_EXCEPTION(scope, { });
             specification.type = conversion;

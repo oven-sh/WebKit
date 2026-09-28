@@ -506,7 +506,7 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
 
     PyType* base = realm->typeBaseException();
     addMethods(globalObject, base, {
-        { "__new__"_s, exceptionNew, Kind::Function },
+        { "__new__"_s, exceptionNew, Kind::New },
         { "__init__"_s, exceptionInit },
         { "__str__"_s, exceptionStr },
         { "__repr__"_s, nativeRepr },
@@ -530,7 +530,7 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
     addFields(realm->typeSystemExit(), { "code"_s });
     addMethods(globalObject, realm->typeKeyError(), { { "__str__"_s, keyErrorStr } });
     addMethods(globalObject, realm->typeOSError(), {
-        { "__new__"_s, osErrorNew, Kind::Function },
+        { "__new__"_s, osErrorNew, Kind::New },
         { "__init__"_s, osErrorInit },
         { "__str__"_s, osErrorStr },
     });
@@ -722,7 +722,7 @@ PYTHON_NATIVE(builtinFormat_)
     String specification = emptyString();
     if (args.size() > 1) {
         if (!args[1].isString())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, typeName(globalObject, args[1]))));
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
         specification = asString(args[1])->value(globalObject);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, args[0], specification)));

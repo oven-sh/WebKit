@@ -42,6 +42,7 @@ public:
         Function, // len. As an attribute of a class it is what it is.
         Method, // list.append. Got from an instance it is bound to it, and its first argument is the instance.
         ClassMethod, // dict.fromkeys. It is bound to the class, and its first argument is the class.
+        New, // list.__new__. Like Function, and its first argument is a class that is the owner or derived from it.
     };
 
     template<typename CellType, SubspaceAccess mode>

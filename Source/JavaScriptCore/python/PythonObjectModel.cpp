@@ -84,6 +84,7 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
                 switch (native->kind()) {
                 case PyNativeFunction::Kind::Function:
+                case PyNativeFunction::Kind::New:
                     return realm->typeBuiltinFunction();
                 case PyNativeFunction::Kind::Method:
                     return realm->typeMethodDescriptor();
@@ -276,6 +277,7 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
         if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
             switch (native->kind()) {
             case PyNativeFunction::Kind::Function:
+            case PyNativeFunction::Kind::New:
                 return { };
             case PyNativeFunction::Kind::Method:
                 return { DescriptorKind::Function, false, { } };

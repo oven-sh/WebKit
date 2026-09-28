@@ -764,192 +764,320 @@ PYTHON_NATIVE(strReplace)
 
 // ---- format()
 
+// A port of Objects/stringlib/unicode_format.h of CPython. What is an error, and which, depends on just how the string is gone through.
 class Formatter {
 public:
-    Formatter(JSGlobalObject* globalObject, const NativeArguments& args)
+    // With `mapping`, it is format_map(): names are looked up in it, and there are no positional arguments.
+    Formatter(JSGlobalObject* globalObject, const NativeArguments& args, JSValue mapping)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_args(args)
+        , m_mapping(mapping)
     {
     }
 
     // Null if it raised.
-    String format(StringView text, unsigned depth)
+    String format(const String& text)
+    {
+        Characters characters;
+        for (char32_t c : StringView(text).codePoints())
+            characters.append(c);
+        return buildString(characters, 0, characters.size(), 2);
+    }
+
+private:
+    using Characters = Vector<char32_t, 64>;
+
+    struct Range {
+        size_t start { 0 };
+        size_t end { 0 };
+        bool isEmpty() const { return start >= end; }
+    };
+
+    static String toString(const Characters& characters, Range range)
+    {
+        StringBuilder builder;
+        for (size_t i = range.start; i < range.end; ++i)
+            builder.append(characters[i]);
+        String result = builder.toString();
+        return result.isNull() ? emptyString() : result;
+    }
+
+    String buildString(const Characters& s, size_t start, size_t end, int recursionDepth)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (depth > 2) {
+        if (recursionDepth <= 0) {
             raiseValueError(m_globalObject, scope, "Max string recursion exceeded"_s);
             return { };
         }
         StringBuilder result;
-        unsigned length = text.length();
-        for (unsigned i = 0; i < length;) {
-            char16_t c = text[i++];
-            if (c == '}') {
-                if (i < length && text[i] == '}') {
-                    result.append('}');
-                    ++i;
-                    continue;
+        size_t position = start;
+        while (position < end) {
+            // Literal text, up to a brace.
+            size_t literalStart = position;
+            char32_t c = 0;
+            bool markupFollows = false;
+            while (position < end) {
+                c = s[position++];
+                if (c == '{' || c == '}') {
+                    markupFollows = true;
+                    break;
                 }
+            }
+            bool atEnd = position >= end;
+            size_t length = position - literalStart;
+            if (markupFollows && c == '}' && (atEnd || s[position] != c)) {
                 raiseValueError(m_globalObject, scope, "Single '}' encountered in format string"_s);
                 return { };
             }
-            if (c != '{') {
-                result.append(c);
-                continue;
-            }
-            if (i < length && text[i] == '{') {
-                result.append('{');
-                ++i;
-                continue;
-            }
-            // Up to the brace that closes this one. There may be others inside, in the format specification.
-            unsigned start = i;
-            unsigned nesting = 1;
-            while (i < length && nesting) {
-                if (text[i] == '{')
-                    ++nesting;
-                else if (text[i] == '}')
-                    --nesting;
-                ++i;
-            }
-            if (nesting) {
-                raiseValueError(m_globalObject, scope, start >= length ? "Single '{' encountered in format string"_s : "expected '}' before end of string"_s);
+            if (markupFollows && atEnd && c == '{') {
+                raiseValueError(m_globalObject, scope, "Single '{' encountered in format string"_s);
                 return { };
             }
-            String piece = formatField(text.substring(start, i - 1 - start), depth);
+            if (markupFollows && !atEnd) {
+                if (s[position] == c) {
+                    // A doubled brace stands for one.
+                    ++position;
+                    markupFollows = false;
+                } else
+                    --length;
+            }
+            for (size_t i = literalStart; i < literalStart + length; ++i)
+                result.append(s[i]);
+            if (!markupFollows)
+                continue;
+
+            Range fieldName;
+            Range specification;
+            bool specificationNeedsExpanding = false;
+            char32_t conversion = 0;
+            if (!parseField(s, position, end, fieldName, specification, specificationNeedsExpanding, conversion))
+                return { };
+            String piece = outputMarkup(s, fieldName, specification, specificationNeedsExpanding, conversion, recursionDepth);
             RETURN_IF_EXCEPTION(scope, { });
             result.append(piece);
         }
-        return result.toString();
+        String text = result.toString();
+        return text.isNull() ? emptyString() : text;
     }
 
-private:
-    // name[!conversion][:specification]
-    String formatField(StringView field, unsigned depth)
+    bool parseField(const Characters& s, size_t& position, size_t end, Range& fieldName, Range& specification, bool& specificationNeedsExpanding, char32_t& conversion)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        unsigned length = field.length();
-        unsigned nameEnd = 0;
-        unsigned brackets = 0;
-        while (nameEnd < length && (brackets || (field[nameEnd] != '!' && field[nameEnd] != ':'))) {
-            if (field[nameEnd] == '[')
-                ++brackets;
-            else if (field[nameEnd] == ']' && brackets)
-                --brackets;
-            ++nameEnd;
+        auto fail = [&] (ASCIILiteral message) {
+            raiseValueError(m_globalObject, scope, message);
+            return false;
+        };
+        char32_t c = 0;
+        fieldName.start = position;
+        while (position < end) {
+            c = s[position++];
+            if (c == '{')
+                return fail("unexpected '{' in field name"_s);
+            if (c == '[') {
+                for (; position < end; ++position) {
+                    if (s[position] == ']')
+                        break;
+                }
+                continue;
+            }
+            if (c == '}' || c == ':' || c == '!')
+                break;
         }
-        JSValue value = lookUp(field.left(nameEnd));
-        RETURN_IF_EXCEPTION(scope, { });
+        fieldName.end = position - 1;
+        if (c == '!' || c == ':') {
+            if (c == '!') {
+                if (position >= end)
+                    return fail("end of string while looking for conversion specifier"_s);
+                conversion = s[position++];
+                if (position < end) {
+                    c = s[position++];
+                    if (c == '}')
+                        return true;
+                    if (c != ':')
+                        return fail("expected ':' after conversion specifier"_s);
+                }
+            }
+            specification.start = position;
+            unsigned count = 1;
+            while (position < end) {
+                c = s[position++];
+                if (c == '{') {
+                    specificationNeedsExpanding = true;
+                    ++count;
+                } else if (c == '}' && !--count) {
+                    specification.end = position - 1;
+                    return true;
+                }
+            }
+            return fail("unmatched '{' in format spec"_s);
+        }
+        if (c != '}')
+            return fail("expected '}' before end of string"_s);
+        return true;
+    }
 
-        unsigned i = nameEnd;
-        if (i < length && field[i] == '!') {
-            if (i + 1 >= length || (i + 2 < length && field[i + 2] != ':')) {
-                raiseValueError(m_globalObject, scope, i + 1 >= length ? "unmatched '{' in format spec"_s : "expected ':' after conversion specifier"_s);
-                return { };
+    // The number that the characters spell, or -1 if they spell none. -2 if it raised.
+    int64_t getInteger(const Characters& s, Range range)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (range.isEmpty())
+            return -1;
+        int64_t accumulator = 0;
+        for (size_t i = range.start; i < range.end; ++i) {
+            int digit = u_charType(s[i]) == U_DECIMAL_DIGIT_NUMBER ? u_charDigitValue(s[i]) : -1;
+            if (digit < 0)
+                return -1;
+            if (accumulator > (std::numeric_limits<int64_t>::max() - digit) / 10) {
+                raiseValueError(m_globalObject, scope, "Too many decimal digits in format string"_s);
+                return -2;
             }
-            char16_t conversion = field[i + 1];
-            String text;
-            if (conversion == 's')
-                text = str(m_globalObject, value);
-            else if (conversion == 'r' || conversion == 'a')
-                text = repr(m_globalObject, value);
+            accumulator = accumulator * 10 + digit;
+        }
+        return accumulator;
+    }
+
+    JSValue getFieldObject(const Characters& s, Range input)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        // Up to the first '.' or '['.
+        size_t i = input.start;
+        while (i < input.end && s[i] != '[' && s[i] != '.')
+            ++i;
+        Range first { input.start, i };
+        int64_t index = getInteger(s, first);
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isEmpty = first.isEmpty();
+        if (isEmpty || index != -1) {
+            if (m_numbering == Numbering::Undecided)
+                m_numbering = isEmpty ? Numbering::Automatic : Numbering::Manual;
+            if (m_numbering == Numbering::Manual && isEmpty)
+                return raiseValueError(m_globalObject, scope, "cannot switch from manual field specification to automatic field numbering"_s);
+            if (m_numbering == Numbering::Automatic && !isEmpty)
+                return raiseValueError(m_globalObject, scope, "cannot switch from automatic field numbering to manual field specification"_s);
+            if (isEmpty)
+                index = m_nextIndex++;
+        }
+
+        JSValue object;
+        if (index == -1) {
+            JSValue key = jsString(m_vm, toString(s, first));
+            if (m_mapping)
+                object = getItem(m_globalObject, m_mapping, key);
             else {
-                raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier "_s, conversion));
+                String name = asString(key)->value(m_globalObject);
+                for (unsigned k = 0; k < m_args.keywordCount() && !object; ++k) {
+                    if (m_args.keywordName(k)->value(m_globalObject).data == name)
+                        object = m_args.keywordValue(k);
+                }
+                if (!object)
+                    return raise(m_globalObject, scope, BuiltinType::KeyError, key);
+            }
+            RETURN_IF_EXCEPTION(scope, { });
+        } else {
+            if (m_mapping)
+                return raiseValueError(m_globalObject, scope, "Format string contains positional fields"_s);
+            // The first argument is the format string itself.
+            if (index >= static_cast<int64_t>(m_args.size()) - 1)
+                return raise(m_globalObject, scope, BuiltinType::IndexError, makeString("Replacement index "_s, index, " out of range for positional args tuple"_s));
+            object = m_args[index + 1];
+        }
+
+        // .attribute and [item], as many as there are.
+        while (i < input.end) {
+            char32_t c = s[i++];
+            Range name;
+            name.start = i;
+            if (c == '.') {
+                while (i < input.end && s[i] != '.' && s[i] != '[')
+                    ++i;
+                name.end = i;
+                if (name.isEmpty())
+                    return raiseValueError(m_globalObject, scope, "Empty attribute in format string"_s);
+                object = getAttribute(m_globalObject, object, Identifier::fromString(m_vm, toString(s, name)));
+            } else if (c == '[') {
+                bool sawBracket = false;
+                while (i < input.end) {
+                    if (s[i++] == ']') {
+                        sawBracket = true;
+                        break;
+                    }
+                }
+                if (!sawBracket)
+                    return raiseValueError(m_globalObject, scope, "Missing ']' in format string"_s);
+                name.end = i - 1;
+                int64_t item = getInteger(s, name);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (name.isEmpty())
+                    return raiseValueError(m_globalObject, scope, "Empty attribute in format string"_s);
+                object = getItem(m_globalObject, object, item == -1 ? JSValue(jsString(m_vm, toString(s, name))) : intFromInt64(m_globalObject, item));
+            } else
+                return raiseValueError(m_globalObject, scope, "Only '.' or '[' may follow ']' in format field specifier"_s);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return object;
+    }
+
+    String outputMarkup(const Characters& s, Range fieldName, Range specification, bool specificationNeedsExpanding, char32_t conversion, int recursionDepth)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        JSValue object = getFieldObject(s, fieldName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (conversion) {
+            String text;
+            if (conversion == 'r')
+                text = repr(m_globalObject, object);
+            else if (conversion == 's')
+                text = str(m_globalObject, object);
+            else if (conversion == 'a') {
+                text = repr(m_globalObject, object);
+                if (!text.isNull())
+                    text = escapeNonASCII(text);
+            } else {
+                if (conversion > 32 && conversion < 127)
+                    raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier "_s, static_cast<char>(conversion)));
+                else
+                    raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier \\x"_s, hex(static_cast<unsigned>(conversion), Lowercase)));
                 return { };
             }
             RETURN_IF_EXCEPTION(scope, { });
-            value = jsString(m_vm, text);
-            i += 2;
+            object = jsString(m_vm, text);
         }
-        String specification = emptyString();
-        if (i < length && field[i] == ':') {
-            specification = format(field.substring(i + 1), depth + 1);
+        String specificationText;
+        if (specificationNeedsExpanding) {
+            specificationText = buildString(s, specification.start, specification.end, recursionDepth - 1);
             RETURN_IF_EXCEPTION(scope, { });
-        }
-        JSValue result = Python::format(m_globalObject, value, specification);
+        } else
+            specificationText = toString(s, specification);
+        JSValue result = Python::format(m_globalObject, object, specificationText);
         RETURN_IF_EXCEPTION(scope, { });
         return asString(result)->value(m_globalObject);
     }
 
-    // 0, name, 0.attribute, name[key], and so on. Nothing at all is the next argument in turn.
-    JSValue lookUp(StringView name)
-    {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
-        unsigned length = name.length();
-        unsigned firstEnd = 0;
-        while (firstEnd < length && name[firstEnd] != '.' && name[firstEnd] != '[')
-            ++firstEnd;
-        StringView first = name.left(firstEnd);
-
-        JSValue value;
-        bool isNumber = !first.isEmpty();
-        for (unsigned i = 0; i < first.length(); ++i)
-            isNumber &= isASCIIDigit(first[i]);
-        if (first.isEmpty() || isNumber) {
-            unsigned index;
-            if (first.isEmpty()) {
-                if (m_usesManualNumbering)
-                    return raiseValueError(m_globalObject, scope, "cannot switch from manual field specification to automatic field numbering"_s);
-                m_usesAutomaticNumbering = true;
-                index = m_nextIndex++;
-            } else {
-                if (m_usesAutomaticNumbering)
-                    return raiseValueError(m_globalObject, scope, "cannot switch from automatic field numbering to manual field specification"_s);
-                m_usesManualNumbering = true;
-                index = parseInteger<unsigned>(first).value_or(UINT_MAX);
-            }
-            // The first argument is the format string itself.
-            if (index >= m_args.size() - 1)
-                return raise(m_globalObject, scope, BuiltinType::IndexError, makeString("Replacement index "_s, index, " out of range for positional args tuple"_s));
-            value = m_args[index + 1];
-        } else {
-            for (unsigned i = 0; i < m_args.keywordCount() && !value; ++i) {
-                if (m_args.keywordName(i)->value(m_globalObject).data == first)
-                    value = m_args.keywordValue(i);
-            }
-            if (!value)
-                return raise(m_globalObject, scope, BuiltinType::KeyError, jsString(m_vm, first.toString()));
-        }
-
-        for (unsigned i = firstEnd; i < length;) {
-            if (name[i] == '.') {
-                unsigned start = ++i;
-                while (i < length && name[i] != '.' && name[i] != '[')
-                    ++i;
-                if (i == start)
-                    return raiseValueError(m_globalObject, scope, "Empty attribute in format string"_s);
-                value = getAttribute(m_globalObject, value, Identifier::fromString(m_vm, name.substring(start, i - start).toString()));
-            } else {
-                unsigned start = ++i;
-                while (i < length && name[i] != ']')
-                    ++i;
-                if (i >= length)
-                    return raiseValueError(m_globalObject, scope, "Missing ']' in format string"_s);
-                StringView key = name.substring(start, i - start);
-                ++i;
-                if (i < length && name[i] != '.' && name[i] != '[')
-                    return raiseValueError(m_globalObject, scope, "Only '.' or '[' may follow ']' in format field specifier"_s);
-                auto number = parseInteger<int32_t>(key);
-                value = getItem(m_globalObject, value, number ? JSValue(jsNumber(*number)) : JSValue(jsString(m_vm, key.toString())));
-            }
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-        return value;
-    }
+    enum class Numbering : uint8_t { Undecided, Automatic, Manual };
 
     JSGlobalObject* m_globalObject;
     VM& m_vm;
     const NativeArguments& m_args;
-    unsigned m_nextIndex { 0 };
-    bool m_usesAutomaticNumbering { false };
-    bool m_usesManualNumbering { false };
+    JSValue m_mapping;
+    int64_t m_nextIndex { 0 };
+    Numbering m_numbering { Numbering::Undecided };
 };
 
 PYTHON_NATIVE(strFormat)
 {
     STR_PROLOGUE("format");
-    String result = Formatter(globalObject, args).format(self, 0);
+    String result = Formatter(globalObject, args, JSValue()).format(self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(toJS(vm, result));
+}
+
+PYTHON_NATIVE(strFormatMap)
+{
+    STR_PROLOGUE("format_map");
+    if (!args.check(globalObject, scope, "str.format_map"_s, 2, 2))
+        return { };
+    String result = Formatter(globalObject, args, args[1]).format(self);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(toJS(vm, result));
 }
@@ -960,7 +1088,7 @@ void initializeStrType(JSGlobalObject* globalObject)
     PyType* type = realm->typeStr();
     using Kind = PyNativeFunction::Kind;
     addMethods(globalObject, type, {
-        { "__new__"_s, strNew, Kind::Function },
+        { "__new__"_s, strNew, Kind::New },
         { "__str__"_s, strStr },
         { "__repr__"_s, nativeRepr },
         { "__hash__"_s, nativeHash },
@@ -1012,6 +1140,7 @@ void initializeStrType(JSGlobalObject* globalObject)
         { "count"_s, strCount },
         { "replace"_s, strReplace },
         { "format"_s, strFormat },
+        { "format_map"_s, strFormatMap },
     });
     addComparisons(globalObject, type, true);
     addBinaryOperators(globalObject, type, { BinaryOperator::Add, BinaryOperator::Mod }, false, false);

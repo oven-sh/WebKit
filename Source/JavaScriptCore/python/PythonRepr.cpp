@@ -396,7 +396,7 @@ JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String&
         RETURN_IF_EXCEPTION(scope, { });
         return jsString(vm, text);
     }
-    auto specification = parseFormatSpecification(globalObject, specificationText, typeName(globalObject, value));
+    auto specification = parseFormatSpecification(globalObject, specificationText, typeName(globalObject, value), isString);
     RETURN_IF_EXCEPTION(scope, { });
     String result;
     if (isString)

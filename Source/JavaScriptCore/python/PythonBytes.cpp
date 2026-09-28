@@ -2250,12 +2250,12 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         });
     }
     addMethods(globalObject, bytes, {
-        { "__new__"_s, bytesNew, Kind::Function },
+        { "__new__"_s, bytesNew, Kind::New },
         { "__hash__"_s, bytesHash },
         { "__bytes__"_s, bytesBytes },
     });
     addMethods(globalObject, byteArray, {
-        { "__new__"_s, byteArrayNew, Kind::Function },
+        { "__new__"_s, byteArrayNew, Kind::New },
         { "__init__"_s, byteArrayInit },
         { "__setitem__"_s, byteArraySetItem },
         { "__delitem__"_s, byteArraySetItem },
@@ -2282,7 +2282,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
     PyType* memory = realm->typeMemoryView();
     memory->setInstanceStructure(vm, PyMemoryView::createStructure(vm, globalObject, memory));
     addMethods(globalObject, memory, {
-        { "__new__"_s, memoryNew, Kind::Function },
+        { "__new__"_s, memoryNew, Kind::New },
         { "__len__"_s, memoryLen },
         { "__getitem__"_s, memoryGetItem },
         { "__setitem__"_s, memorySetItem },

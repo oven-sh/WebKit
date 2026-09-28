@@ -552,7 +552,7 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     addOperator(globalObject, intType, NumberType::Int, BinaryOperator::BitOr);
     addOperator(globalObject, intType, NumberType::Int, BinaryOperator::BitXor);
     addMethods(globalObject, intType, {
-        { "__new__"_s, intNew, Kind::Function },
+        { "__new__"_s, intNew, Kind::New },
         { "__index__"_s, numberInt },
         { "__invert__"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::Invert) },
         { "bit_length"_s, intBitLength },
@@ -566,13 +566,13 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     PyType* floatType = realm->typeFloat();
     addArithmetic(globalObject, floatType, NumberType::Float);
     addMethods(globalObject, floatType, {
-        { "__new__"_s, floatNew, Kind::Function },
+        { "__new__"_s, floatNew, Kind::New },
         { "is_integer"_s, floatIsInteger },
         { "as_integer_ratio"_s, floatAsIntegerRatio },
     });
 
     addMethods(globalObject, realm->typeBool(), {
-        { "__new__"_s, boolNew, Kind::Function },
+        { "__new__"_s, boolNew, Kind::New },
         { "__repr__"_s, nativeRepr },
     });
 }
