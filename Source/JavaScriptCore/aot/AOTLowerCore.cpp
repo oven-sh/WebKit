@@ -407,9 +407,17 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotArgument)
             jit.addPtr(CCallHelpers::TrustedImm32(slotArgument->second), params[params.size() - 1].gpr(), slotArgument->first);
-        for (auto& immediate : immediates)
-            jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
-        stubCalls->call(jit, stub);
+        std::optional<uint32_t> valueOfT9;
+        for (auto& immediate : immediates) {
+            if (immediate.reg == GPRInfo::regT9)
+                valueOfT9 = immediate.value;
+            else
+                jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
+        }
+        if (valueOfT9)
+            stubCalls->call(jit, stub, *valueOfT9);
+        else
+            stubCalls->call(jit, stub);
         // A function that was passed too few arguments, or that ended in a tail call, does not leave the stack pointer where it was.
         if (callsJS)
             jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);

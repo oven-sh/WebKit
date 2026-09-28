@@ -584,6 +584,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
             arityChecked = jit.jump();
     }
     CCallHelpers::Label startOfCode = jit.label();
+    jit.setOopsIsJustABreakpoint();
     B3::generate(proc, jit);
 
     CCallHelpers::Label entryLabel = proc.code().entrypointLabel(0);

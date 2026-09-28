@@ -310,7 +310,7 @@ Vector<uint8_t> ImageBuilder::finish()
     }
 
     unsigned capacity = 16;
-    while (capacity < m_functions.size() * 2)
+    while (capacity * 3 < m_functions.size() * 4)
         capacity *= 2;
 
     // The shapes that objects are made with and the names that properties are read by, numbered for the whole program in the order
@@ -523,7 +523,7 @@ Vector<uint8_t> ImageBuilder::finish()
     size_t codeSize = 0;
     for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
         auto& function = m_functions[indexOfFunction];
-        recordsSize += sizeof(ImageFunction) + function.code.info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey) + function.code.info.plans.sizeInBytes();
+        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey) + function.code.info.plans.sizeInBytes();
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
         if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
@@ -641,7 +641,6 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& function : m_functions) {
             auto& info = function.code.info;
             heads += sizeof(ImageFunction);
-            calleeSaves += info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave);
             catchEntrypoints += info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint);
             sites += info.sites.size() * sizeof(Site);
             siteConstants += info.sites.size() * sizeof(uint32_t);
@@ -689,13 +688,19 @@ Vector<uint8_t> ImageBuilder::finish()
         ImageFunction record { };
         record.codeOffset = codeAt;
         record.codeSize = function.code.bytes.size();
-        record.entryOffset = info.entryOffset;
-        record.arityCheckOffset = info.arityCheckOffset;
-        record.directEntryOffset = info.directEntryOffset;
+        record.entryOffset = safeCast<uint16_t>(info.entryOffset);
+        record.arityCheckOffset = safeCast<uint16_t>(info.arityCheckOffset);
+        record.directEntryOffset = safeCast<uint16_t>(info.directEntryOffset);
         record.frameSizeInBytes = info.frameSizeInBytes;
         record.numSlots = info.numSlots;
         record.bytecodeHash = info.bytecodeHash;
-        record.numberOfCalleeSaves = info.calleeSaveRegisters.registerCount();
+        for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
+            const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
+            RELEASE_ASSERT(entry.reg().index() < 64 && entry.offset() == info.calleeSaveRegisters.at(0).offset() + static_cast<ptrdiff_t>(i * sizeof(CPURegister)) && (!i || entry.reg().index() > info.calleeSaveRegisters.at(i - 1).reg().index()));
+            record.calleeSaveRegisters[entry.reg().index() / 32] |= 1u << (entry.reg().index() % 32);
+        }
+        if (info.calleeSaveRegisters.registerCount())
+            record.offsetOfCalleeSaves = safeCast<int32_t>(info.calleeSaveRegisters.at(0).offset());
         record.numberOfCatchEntrypoints = info.catchEntrypoints.size();
         record.numberOfKnownCallees = info.knownCallees.size();
         record.usesStaticImports = info.usesStaticImports;
@@ -728,12 +733,6 @@ Vector<uint8_t> ImageBuilder::finish()
 
         memcpy(records + recordAt, &record, sizeof(record));
         recordAt += sizeof(record);
-        for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
-            const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
-            ImageCalleeSave save { entry.reg().index(), static_cast<int32_t>(entry.offset()) };
-            memcpy(records + recordAt, &save, sizeof(save));
-            recordAt += sizeof(save);
-        }
         for (auto& [bytecodeOffset, codeOffset] : info.catchEntrypoints) {
             ImageCatchEntrypoint entrypoint { bytecodeOffset, codeOffset };
             memcpy(records + recordAt, &entrypoint, sizeof(entrypoint));
@@ -752,7 +751,7 @@ Vector<uint8_t> ImageBuilder::finish()
         uint32_t indexInProgram = index;
         memcpy(code + codeAt + OBJECT_OFFSETOF(CodeHeader, index), &indexInProgram, sizeof(indexInProgram));
         for (auto& call : info.stubCalls)
-            retargetStubCall(code, codeAt + call.offset, stubsForThis + stubs.offsets[static_cast<unsigned>(call.stub)], call.isTailCall);
+            retargetStubCall(code, codeAt + call.offset, stubsForThis + (call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)]), call.isTailCall);
     }
 
     // With every function in its place: the calls from one to another.

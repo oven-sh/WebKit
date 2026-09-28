@@ -6017,6 +6017,7 @@ struct BytecodeLinkEncoder::Impl {
             uint64_t rank;
             UnlinkedCodeBlock* codeBlock;
             unsigned module;
+            UnlinkedFunctionExecutable* executableForStatistics { nullptr }; // TEMPORARY-IMAGE-STATS
         };
         Vector<Job> jobs;
         for (unsigned index = 0; index < modules.size(); ++index) {
@@ -6061,7 +6062,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (!keys.insert({ key.module, key.start, key.kind }).second)
                     continue;
                 // In the order the modules are loaded in, and in a module in the order of the text.
-                jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module });
+                jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable });
             }
         }
 
@@ -6228,6 +6229,29 @@ struct BytecodeLinkEncoder::Impl {
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock))) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
                     AOT::collectConstructSites(code.info, jobs[index].codeBlock);
+                    if (Options::aotReportStats()) [[unlikely]] {
+                        // TEMPORARY-IMAGE-STATS: whose the code is.
+                        static Lock statisticsLock;
+                        static NeverDestroyed<UncheckedKeyHashMap<String, std::array<uint64_t, 4>>> statistics;
+                        auto* executable = jobs[index].executableForStatistics;
+                        String name = executable ? executable->name().string() : String();
+                        bool isProgram = !!dynamicDowncast<UnlinkedCodeBlock>(modules[jobs[index].module].root.get());
+                        ASCIILiteral kind = !isProgram ? "an internal module's"_s : !executable ? "top level of a module"_s : name.startsWith("init_"_s) ? "init_*"_s : name.startsWith("require_"_s) ? "require_*"_s
+                            : executable->isClassConstructorFunction() ? "class constructor"_s : name.isEmpty() ? "anonymous"_s : "named"_s;
+                        Locker locker { statisticsLock };
+                        auto& entry = statistics->add(makeString(kind, code.info.startsCold ? ""_s : " (with a loop or the like)"_s), std::array<uint64_t, 4> { }).iterator->value;
+                        entry[0]++;
+                        entry[1] += code.bytes.size();
+                        entry[2] += jobs[index].codeBlock->instructionsSize();
+                        entry[3] += code.info.numSlots;
+                        static std::once_flag once;
+                        std::call_once(once, [] {
+                            atexit([] {
+                                for (auto& entry : statistics.get())
+                                    dataLogLn("IMAGE: ", entry.key, ": ", entry.value[0], " functions, ", entry.value[1], " bytes of code for ", entry.value[2], " of bytecode, ", entry.value[3], " slots");
+                            });
+                        });
+                    }
                     auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
                     // (An embedder's builtin has its text wherever the embedder has it.)

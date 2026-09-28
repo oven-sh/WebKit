@@ -74,9 +74,8 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<uint32_t>(arguments.size()), callSiteBits = callSiteBitsOf(node), isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call);
+            stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
             jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
         });
         return patchpoint;

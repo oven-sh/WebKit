@@ -907,6 +907,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 }
                 s_tdzBeingBuilt = nullptr;
                 s_factsBeingBuilt = { };
+                // (See parentScopeTDZVariablesOf().)
+                if (whatIsKeptOfPayloadStartsAt) {
+                    Region::AllocationScope notInRegion(false);
+                    tdz = { };
+                }
                 std::ranges::sort(tdz, { }, &StaticHeapTDZ::executable);
                 header.tdz = std::bit_cast<uint64_t>(copy(asByteSpan(tdz.span())).data());
                 header.numberOfTDZ = tdz.size();

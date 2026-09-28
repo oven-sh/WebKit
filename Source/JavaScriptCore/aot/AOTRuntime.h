@@ -522,37 +522,35 @@ struct CompiledFunctionInfo {
     Vector<KnownShape> shapes;
 };
 
-struct ImageCalleeSave {
-    uint32_t reg;
-    int32_t offset;
-};
 struct ImageCatchEntrypoint {
     uint32_t bytecodeOffset;
     uint32_t codeOffset;
 };
 
-// Followed by numberOfCalleeSaves ImageCalleeSave, then numberOfCatchEntrypoints ImageCatchEntrypoint, then numSlots Site, then
+// Followed by numberOfCatchEntrypoints ImageCatchEntrypoint, then numSlots Site, then
 // numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero for none), then numberOfKnownCallees ImageKey,
 // then CompiledFunctionInfo::plans.
 struct ImageFunction {
-    uint64_t codeOffset; // In the code.
+    uint32_t codeOffset; // In the code.
     uint32_t codeSize;
-    uint32_t entryOffset;
-    uint32_t arityCheckOffset;
+    uint16_t entryOffset;
+    uint16_t arityCheckOffset;
+    uint16_t directEntryOffset;
+    uint16_t numberOfCatchEntrypoints;
     uint32_t frameSizeInBytes;
     uint32_t numSlots;
-    uint16_t numberOfCalleeSaves;
-    uint16_t numberOfCatchEntrypoints;
     uint32_t bytecodeHash;
-    uint32_t numberOfKnownCallees;
-    uint32_t usesStaticImports; // See Graph::usesStaticImports.
-    uint32_t directEntryOffset;
-    uint32_t startsCold; // See CompiledFunctionInfo::startsCold.
+    uint32_t numberOfKnownCallees : 30;
+    uint32_t usesStaticImports : 1; // See Graph::usesStaticImports.
+    uint32_t startsCold : 1; // See CompiledFunctionInfo::startsCold.
     uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none.
     uint32_t constructSites; // Likewise. See Image::constructsAt().
+    // The registers that the function saves, by Reg::index(). They are next to each other in the frame, in that order, the way
+    // Air::Code puts them: this is where the first of them is.
+    uint32_t calleeSaveRegisters[2];
+    int32_t offsetOfCalleeSaves;
 
-    const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
-    const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }
+    const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(this + 1); }
     const Site* sites() const { return reinterpret_cast<const Site*>(catchEntrypoints() + numberOfCatchEntrypoints); }
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
     const ImageKey* knownCallees() const { return reinterpret_cast<const ImageKey*>(siteConstants() + numSlots); }

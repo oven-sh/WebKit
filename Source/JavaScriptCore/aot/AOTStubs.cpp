@@ -1908,6 +1908,30 @@ FOR_EACH_AOT_STUB(AOT_NO_STUB)
 
 #endif // CPU(ARM64)
 
+// What calls an operation is told which by where it is in the runtime's table. What calls a function is told how many arguments.
+static constexpr Stub stubsThatCallOperations[] = {
+    Stub::OperationValue, Stub::OperationVoid, Stub::OperationDouble, Stub::OperationValueWithGlobalObject, Stub::OperationVoidWithGlobalObject, Stub::OperationDoubleWithGlobalObject,
+    Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithVM,
+};
+static constexpr Stub stubsThatCallFunctions[] = { Stub::Call, Stub::Construct, Stub::CallAndLink, Stub::ConstructAndLink };
+static constexpr unsigned mostArgumentsWithThunk = 8;
+static constexpr unsigned numberOfThunks = std::size(stubsThatCallOperations) * numberOfEntries + std::size(stubsThatCallFunctions) * mostArgumentsWithThunk;
+
+std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
+{
+    if constexpr (!usesStubs)
+        return std::nullopt;
+    for (unsigned i = 0; i < std::size(stubsThatCallOperations); ++i) {
+        if (stubsThatCallOperations[i] == stub)
+            return valueOfT9 % sizeof(void*) || valueOfT9 / sizeof(void*) >= numberOfEntries ? std::nullopt : std::optional<unsigned> { i * numberOfEntries + valueOfT9 / sizeof(void*) };
+    }
+    for (unsigned i = 0; i < std::size(stubsThatCallFunctions); ++i) {
+        if (stubsThatCallFunctions[i] == stub)
+            return !valueOfT9 || valueOfT9 > mostArgumentsWithThunk ? std::nullopt : std::optional<unsigned> { static_cast<unsigned>(std::size(stubsThatCallOperations) * numberOfEntries + i * mostArgumentsWithThunk + valueOfT9 - 1) };
+    }
+    return std::nullopt;
+}
+
 const StubBlob& stubBlob()
 {
     static LazyNeverDestroyed<StubBlob> blob;
@@ -1923,10 +1947,48 @@ const StubBlob& stubBlob()
         FOR_EACH_AOT_STUB(AOT_GENERATE_STUB)
 #undef AOT_GENERATE_STUB
 
+        Vector<CCallHelpers::Label> thunkLabels;
+        if constexpr (usesStubs) {
+            for (Stub stub : stubsThatCallOperations) {
+                for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
+                    thunkLabels.append(jit.label());
+                    jit.move(CCallHelpers::TrustedImm32(entry * sizeof(void*)), GPRInfo::regT9);
+                    jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
+                }
+            }
+            // These are on the way of everything a program does, and short: each has the stub all over again, right after it.
+            for (Stub stub : stubsThatCallFunctions) {
+                for (unsigned argumentCount = 1; argumentCount <= mostArgumentsWithThunk; ++argumentCount) {
+                    jit.align();
+                    thunkLabels.append(jit.label());
+                    jit.move(CCallHelpers::TrustedImm32(argumentCount), GPRInfo::regT9);
+                    switch (stub) {
+                    case Stub::Call:
+                        generateCall(jit);
+                        break;
+                    case Stub::Construct:
+                        generateConstruct(jit);
+                        break;
+                    case Stub::CallAndLink:
+                        generateCallAndLink(jit);
+                        break;
+                    case Stub::ConstructAndLink:
+                        generateConstructAndLink(jit);
+                        break;
+                    default:
+                        RELEASE_ASSERT_NOT_REACHED();
+                    }
+                }
+            }
+            RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
+        }
+
         LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
         auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JITThunkPtrTag>().untaggedPtr());
         for (unsigned i = 0; i < numberOfStubs; ++i)
             blob->offsets[i] = static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(labels[i]).untaggedPtr()) - start;
+        for (auto& label : thunkLabels)
+            blob->thunkOffsets.append(static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(label).untaggedPtr()) - start);
         size_t size = linkBuffer.size();
         static NeverDestroyed<MacroAssemblerCodeRef<JITThunkPtrTag>> code;
         code.get() = FINALIZE_THUNK(linkBuffer, JITThunkPtrTag, "AOTStubs"_s, "Stubs of the static compiler");
@@ -1948,6 +2010,16 @@ const StubBlob& stubBlob()
 void StubCalls::call(CCallHelpers& jit, Stub stub)
 {
     m_pending.append({ jit.nearCall(), stub, false });
+}
+
+void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t valueOfT9)
+{
+    auto thunk = thunkFor(stub, valueOfT9);
+    if (!thunk)
+        jit.move(CCallHelpers::TrustedImm32(valueOfT9), GPRInfo::regT9);
+    m_pending.append({ jit.nearCall(), stub, false });
+    if (thunk)
+        m_pending.last().thunk = safeCast<uint16_t>(*thunk + 1);
 }
 
 void StubCalls::callFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect, bool hasNoOtherWay)
@@ -2005,11 +2077,11 @@ Vector<StubCall> StubCalls::link(LinkBuffer& linkBuffer)
     auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr());
     Vector<StubCall> result;
     for (auto& pending : m_pending) {
-        void* target = static_cast<uint8_t*>(blob.inJITMemory) + blob.offsets[static_cast<unsigned>(pending.stub)];
+        void* target = static_cast<uint8_t*>(blob.inJITMemory) + (pending.thunk ? blob.thunkOffsets[pending.thunk - 1] : blob.offsets[static_cast<unsigned>(pending.stub)]);
         linkBuffer.link<JITThunkPtrTag>(pending.call, CodeLocationLabel<JITThunkPtrTag>(tagCodePtr<JITThunkPtrTag>(target)));
         // The location of a near call is the end of the instruction; that of a near tail call is the instruction.
         auto* location = static_cast<uint8_t*>(linkBuffer.locationOfNearCall<JITThunkPtrTag>(pending.call).dataLocation());
-        result.append({ static_cast<uint32_t>(location - start - (pending.isTailCall ? 0 : sizeof(uint32_t))), pending.stub, pending.isTailCall, pending.skipsArityCheck, pending.isDirect, pending.hasNoOtherWay, pending.function });
+        result.append({ static_cast<uint32_t>(location - start - (pending.isTailCall ? 0 : sizeof(uint32_t))), pending.stub, pending.isTailCall, pending.skipsArityCheck, pending.isDirect, pending.hasNoOtherWay, pending.thunk, pending.function });
     }
     return result;
 }

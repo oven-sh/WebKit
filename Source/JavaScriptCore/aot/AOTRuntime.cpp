@@ -1232,19 +1232,13 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<RegisterAtOffsetList>, 1>>> lists;
 
-    auto* saves = function.calleeSaves();
-    uint64_t key = function.numberOfCalleeSaves ? static_cast<uint32_t>(saves[0].offset) : 0;
-    for (unsigned i = 0; i < function.numberOfCalleeSaves; ++i)
-        key ^= 1ULL << (saves[i].reg & 63);
-    key = key * 2 + 1; // Not one of the two that a table has a use for.
+    uint64_t mask = static_cast<uint64_t>(function.calleeSaveRegisters[1]) << 32 | function.calleeSaveRegisters[0];
+    uint64_t key = (mask ^ static_cast<uint64_t>(static_cast<uint32_t>(function.offsetOfCalleeSaves)) * 0x9e3779b97f4a7c15ULL) * 2 + 1; // Not one of the two that a table has a use for.
     auto isThat = [&](const RegisterAtOffsetList& list) {
-        if (list.registerCount() != function.numberOfCalleeSaves)
-            return false;
-        for (unsigned i = 0; i < function.numberOfCalleeSaves; ++i) {
-            if (list.at(i).reg().index() != saves[i].reg || list.at(i).offset() != saves[i].offset)
-                return false;
-        }
-        return true;
+        uint64_t registers = 0;
+        for (unsigned i = 0; i < list.registerCount(); ++i)
+            registers |= 1ULL << list.at(i).reg().index();
+        return registers == mask && (!mask || list.at(0).offset() == function.offsetOfCalleeSaves);
     };
 
     Locker locker { lock };
@@ -1253,13 +1247,14 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
         if (isThat(*candidate))
             return candidate.get();
     }
-    // Made the way Air::Code makes it: the registers in their order, next to each other, somewhere in the frame.
     RegisterSet registers;
-    for (unsigned i = 0; i < function.numberOfCalleeSaves; ++i)
-        registers.add(Reg::fromIndex(saves[i].reg), IgnoreVectors);
+    for (unsigned index = 0; index < 64; ++index) {
+        if (mask >> index & 1)
+            registers.add(Reg::fromIndex(index), IgnoreVectors);
+    }
     auto list = makeUnique<RegisterAtOffsetList>(registers);
-    if (function.numberOfCalleeSaves)
-        list->adjustOffsets(saves[0].offset - list->at(0).offset());
+    if (mask)
+        list->adjustOffsets(function.offsetOfCalleeSaves - list->at(0).offset());
     RELEASE_ASSERT(isThat(*list));
     candidates.append(WTF::move(list));
     return candidates.last().get();

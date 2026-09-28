@@ -240,12 +240,18 @@ struct StubCall {
     bool skipsArityCheck { false };
     bool isDirect { false }; // To CompiledFunctionInfo::directEntryOffset: nobody has seen to it that the function has been called before.
     bool hasNoOtherWay { false }; // Nothing was passed that the stub could find the function by. If it is out of reach, it is got to in two steps.
+    uint16_t thunk { 0 }; // One more than which of StubBlob::thunkOffsets it is by way of. Zero: none.
     uint32_t function { noFunction };
 };
+
+// A way into a stub that puts a number in T9 first. There are few enough numbers that a stub is given there, and enough places that
+// give them, for it to be worth an instruction at each. None: there is no such way in, and the number is for the caller to put there.
+std::optional<unsigned> thunkFor(Stub, uint32_t valueOfT9);
 
 struct StubBlob {
     Vector<uint8_t> bytes;
     unsigned offsets[numberOfStubs];
+    Vector<unsigned> thunkOffsets; // By thunkFor().
     void* inJITMemory; // A copy that code in the JIT's memory can call.
 };
 const StubBlob& stubBlob();
@@ -275,6 +281,7 @@ private:
 class StubCalls {
 public:
     void call(CCallHelpers&, Stub);
+    void call(CCallHelpers&, Stub, uint32_t valueOfT9);
     void tailCall(CCallHelpers&, Stub);
     void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false, bool hasNoOtherWay = false);
     // Links them to the copy in the JIT's memory, and says where they are.
@@ -289,6 +296,7 @@ private:
         bool isDirect { false };
         bool hasNoOtherWay { false };
         uint32_t function { StubCall::noFunction };
+        uint16_t thunk { 0 };
     };
     Vector<Pending, 8> m_pending;
 };

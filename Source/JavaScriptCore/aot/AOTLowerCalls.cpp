@@ -87,9 +87,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
                 params.addLatePath([=](CCallHelpers& jit) {
                     AllowMacroScratchRegisterUsage allowScratch(jit);
                     isNotInitialized.link(&jit);
-                    jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
                     jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-                    stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call);
+                    stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
                     jit.jump().linkTo(done, &jit);
                 });
             }
@@ -112,9 +111,8 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
             AllowMacroScratchRegisterUsage allowScratch(jit);
             slow.link(&jit);
             jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), data);
-            jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            stubCalls->call(jit, isConstruct ? Stub::ConstructAndLink : Stub::CallAndLink);
+            stubCalls->call(jit, isConstruct ? Stub::ConstructAndLink : Stub::CallAndLink, argc);
             jit.jump().linkTo(done, &jit);
         });
     });
@@ -151,9 +149,8 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         uint32_t callSiteBits = callSiteBitsOf(node);
         patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.move(CCallHelpers::TrustedImm32(argc), GPRInfo::regT9);
             jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call);
+            stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
             jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
         });
         if (hasResult)
