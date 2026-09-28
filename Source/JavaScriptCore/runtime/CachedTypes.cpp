@@ -6228,7 +6228,12 @@ struct BytecodeLinkEncoder::Impl {
                 AOT::CompiledCode code;
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock))) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
-                    AOT::collectConstructSites(code.info, jobs[index].codeBlock);
+                    {
+                        auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                        bool isTopLevel = !(jobs[index].rank & 2);
+                        bool startIsKnown = isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody;
+                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? modules[jobs[index].module].source.provider()->source() : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
+                    }
                     if (Options::aotReportStats()) [[unlikely]] {
                         // TEMPORARY-IMAGE-STATS: whose the code is.
                         static Lock statisticsLock;
@@ -6293,8 +6298,11 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
         AOT::forgetDeclaredNames();
-        return builder.finish();
+        Vector<uint8_t> image = builder.finish();
+        reportableSites = builder.takeReportableSites();
+        return image;
     }
+    Vector<ReportableSitesOfFunction> reportableSites;
 
     struct FunctionToCompile {
         unsigned module;
@@ -6413,6 +6421,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     // While the code is still rooted, and now that every module has its number.
     if (m_impl->compilesAheadOfTime)
         result.aotImage = m_impl->compileImage();
+    result.reportableSites = WTF::move(m_impl->reportableSites);
 #endif
     BytecodeCacheError error;
     result.payload = encoder.release(error);

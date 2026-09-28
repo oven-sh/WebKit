@@ -92,6 +92,7 @@ uint32_t Lowering::callSiteBitsOf(Node* node)
 {
     if (mayBeQuoted(m_graph, node))
         m_graph.quotableSites.append(node->bytecodeIndex.offset());
+    m_graph.callSites.append(node->bytecodeIndex.offset());
     return CallSiteIndex(node->bytecodeIndex).bits();
 }
 

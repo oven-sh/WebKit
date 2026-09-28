@@ -460,6 +460,19 @@ struct CachedCodeDigest {
 JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedCode(VM&, const SourceCode&, bool isModule, Ref<CachedBytecode>);
 JS_EXPORT_PRIVATE std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM&, const SourceCode&, unsigned embedderStamp, Ref<CachedBytecode>);
 
+// Where a frame of a function that was compiled ahead of time can say it is.
+struct ReportableSitesOfFunction {
+    struct Construction {
+        uint32_t offset;
+        // Where the expression starts (the `new`), from where the frame says it is: that many lines up, and then at this column,
+        // counting from one; or, on the same line, this many columns to the left.
+        uint32_t linesUp;
+        uint32_t columnOrColumnsLeft;
+    };
+    Vector<uint32_t> offsets; // In the bytecode. In order.
+    Vector<Construction> constructions; // Those of them that construct something, if it is known where the `new` is.
+};
+
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid
 // out by how the recorded run used it. Regions, in file order, each written to completion before the next starts:
 //   0 heads (cache entry, key, top-level code, its functions' records) of modules the run evaluated, or did not know
@@ -485,6 +498,7 @@ public:
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
         Vector<uint32_t> entryOffsetsOfModules; // Of those, what StaticHeap::build() takes.
+        Vector<ReportableSitesOfFunction> reportableSites; // Likewise. By the numbers that the functions have in aotImage.
         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT
         unsigned functionsWithoutName { 0 }; // functions with code that the names of their module, which has some, do not cover

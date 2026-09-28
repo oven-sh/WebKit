@@ -238,6 +238,8 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
             ScriptExecutable* executable = ownerExecutableOf(jsFrame);
             if (!executable)
                 return "[native code]"_s;
+            if (auto position = reportedPosition(); position && position->source)
+                return StaticHeap::nameOfSource(position->source);
             return processSourceURL(vm, *this, executable->sourceURL(), allowOverride);
         },
         [](const WasmFrameData& wasmFrame) -> String {
@@ -312,6 +314,25 @@ String StackFrame::functionName(VM& vm) const
             return WTF::toString(wasmFrame.functionIndexOrName.name()->span());
         }
     );
+}
+
+std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::OfConstruction ofConstruction) const
+{
+#if ENABLE(FTL_JIT)
+    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+    if (!jsFrame || !StaticHeap::hasPositionsOfCallSites())
+        return std::nullopt;
+    AOT::FunctionRef function;
+    if (jsFrame->aotExecutable)
+        function = AOT::FunctionRef::of(jsFrame->aotExecutable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind);
+    else if (jsFrame->codeBlock)
+        function = AOT::FunctionRef::of(jsFrame->codeBlock.get());
+    if (function)
+        return function.reportedPositionFor(jsFrame->bytecodeIndex, ofConstruction);
+#else
+    UNUSED_PARAM(ofConstruction);
+#endif
+    return std::nullopt;
 }
 
 LineColumn StackFrame::computeLineAndColumn() const

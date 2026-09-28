@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "BytecodeIndex.h"
 #include "Heap.h"
 #include "CodeSpecializationKind.h"
@@ -143,6 +144,9 @@ public:
     }
 
     LineColumn computeLineAndColumn() const;
+    // Of a frame of code that was compiled ahead of time, if that says where it is in the sources that the program was made from:
+    // then computeLineAndColumn() and sourceURL() go by this too.
+    JS_EXPORT_PRIVATE std::optional<AOT::FunctionRef::ReportedPosition> reportedPosition(AOT::FunctionRef::OfConstruction = AOT::FunctionRef::OfConstruction::WhereItIs) const;
     String functionName(VM&) const;
     SourceID sourceID() const;
     JS_EXPORT_PRIVATE String sourceURL(VM&, AllowURLOverride = AllowURLOverride::Yes) const;

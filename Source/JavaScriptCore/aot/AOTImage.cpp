@@ -205,20 +205,55 @@ std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& funct
     return std::nullopt;
 }
 
-void collectConstructSites(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock)
+void collectConstructSites(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock, StringView text, unsigned sourceOffset)
 {
     for (const auto& instruction : codeBlock->instructions()) {
         switch (instruction->opcodeID()) {
         case op_construct:
         case op_construct_varargs:
         case op_super_construct:
-        case op_super_construct_varargs:
+        case op_super_construct_varargs: {
             info.constructSites.append(instruction.offset());
+            std::pair<uint32_t, uint32_t> start { 0, 0 };
+            if (!text.isNull() && codeBlock->hasExpressionInfo()) {
+                auto entry = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(instruction.offset()));
+                int64_t divot = static_cast<int64_t>(entry.divot) + sourceOffset;
+                int64_t at = divot - entry.startOffset;
+                if (at >= 0 && divot < text.length()) {
+                    for (int64_t i = at + 1; i <= divot; ++i)
+                        start.first += text[i] == '\n';
+                    start.second = entry.startOffset;
+                    if (start.first) {
+                        start.second = 1;
+                        for (int64_t i = at - 1; i > 0 && text[i] != '\n'; --i)
+                            start.second++;
+                    }
+                }
+            }
+            info.startsOfConstructions.append(start);
             break;
+        }
         default:
             break;
         }
     }
+}
+
+Vector<ReportableSitesOfFunction> ImageBuilder::reportableSites()
+{
+    Vector<ReportableSitesOfFunction> all;
+    all.reserveInitialCapacity(m_functions.size());
+    for (auto& function : m_functions) {
+        auto& info = function.code.info;
+        ReportableSitesOfFunction result;
+        result.offsets = WTF::move(info.callSites);
+        for (unsigned i = 0; i < info.constructSites.size(); ++i) {
+            if (info.startsOfConstructions[i].first || info.startsOfConstructions[i].second)
+                result.constructions.append({ info.constructSites[i], info.startsOfConstructions[i].first, info.startsOfConstructions[i].second });
+        }
+        all.append(WTF::move(result));
+    }
+    return all;
 }
 
 // How many there are. Then for each, in order, how much further on in the bytecode it is than the one before.
@@ -792,6 +827,7 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
     }
+    m_reportableSites = reportableSites();
     m_functions.clear();
     return image;
 }

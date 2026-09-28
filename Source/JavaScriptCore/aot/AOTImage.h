@@ -111,6 +111,7 @@ public:
     void clear() { m_functions.clear(); } // Of functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
     Vector<uint8_t> finish();
+    Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // After that. By CodeHeader::index.
 
 private:
     struct Function {
@@ -122,6 +123,8 @@ private:
     Vector<Function> m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
+    Vector<ReportableSitesOfFunction> reportableSites();
+    Vector<ReportableSitesOfFunction> m_reportableSites;
 };
 
 // An image that is ready to be run. There is one list of them for the process, and they stay.
@@ -211,7 +214,8 @@ struct ImageCode {
 };
 // Fills in info.quotes, from info.quotableSites. `text` is what the function is in, and its own source starts at sourceOffset.
 JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
-JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*);
+// `text` is what the function is in, if that is known, and its own source starts at sourceOffset.
+JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text = { }, unsigned sourceOffset = 0);
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
 // Of the module that the scope is in, or is: whether code that takes its imports for what they were when it was compiled
 // (ImageFunction::usesStaticImports) may.

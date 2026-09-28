@@ -92,6 +92,14 @@ struct FunctionRef {
     uint32_t siteConstantOf(const Slot*) const;
     // What the source says there, and whether it is exactly that: of a program that goes without its text (Image::quoteAt()).
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
+    // Where a frame that is there is to be reported to be. If `source` is not zero that is a place in one of the sources that the
+    // program was made from (StaticHeap::nameOfSource()), and otherwise in the text of the module. None: go by lineColumnFor().
+    struct ReportedPosition {
+        LineColumn lineColumn;
+        uint32_t source { 0 };
+    };
+    enum class OfConstruction : bool { WhereItIs, WhereItStarts }; // The latter: at the `new`.
+    JS_EXPORT_PRIVATE std::optional<ReportedPosition> reportedPositionFor(BytecodeIndex, OfConstruction = OfConstruction::WhereItIs) const;
     // Whether the instruction there is one of those that construct: for whoever would look at it, if it were there to look at.
     JS_EXPORT_PRIVATE bool constructsAt(BytecodeIndex) const;
     AllocationPlan planOf(const Slot* firstOfSite) const; // None, if the code is not from an image: then there is bytecode.

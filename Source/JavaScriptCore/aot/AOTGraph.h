@@ -428,6 +428,7 @@ public:
     void noteSelectorOfSite(unsigned slot, UniquedStringImpl*);
     void noteShapeOfSite(unsigned slot, KnownShape&&);
     Vector<uint32_t> quotableSites; // CompiledFunctionInfo::quotableSites
+    Vector<uint32_t> callSites; // CompiledFunctionInfo::callSites
     Vector<uint32_t> plans;
     void notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words); // AllocationPlan
     // An op_new_object that is made whole (Node::numberOfLiteralProperties): what with. Nothing, if it is not a shape to be known by.

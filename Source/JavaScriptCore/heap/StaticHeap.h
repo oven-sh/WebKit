@@ -6,9 +6,11 @@
 #pragma once
 
 #include "CodeSpecializationKind.h"
+#include "LineColumn.h"
 #include <bmalloc/StaticRegion.h>
 #include <span>
 #include <wtf/Forward.h>
+#include <wtf/Function.h>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -31,6 +33,7 @@ class ScriptExecutable;
 class SourceCodeKey;
 class SourceOrigin;
 class SourceProvider;
+struct ReportableSitesOfFunction;
 class TDZEnvironmentLink;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
@@ -54,9 +57,17 @@ public:
 
     // Everything that can be made ahead of time, as a file. `strings` is what EncoderStringTable::serialize() returned; the payload
     // and the entries of its modules are BytecodeLinkEncoder::finish()'s. Empty if it cannot be done here.
+    // Instead of what says where in the text of a module every instruction came from: for each place that a frame of a function can
+    // say it is at, where that is in the sources that the program was made from, as far as `find` knows. It is given a module (where
+    // its entry is in the payload) and a place in its text, and says which source and where in it; or false, and then it is the
+    // place in the text of the module that is kept. Nothing at all is kept of the payload then.
+    struct PositionsToKeep {
+        const Vector<ReportableSitesOfFunction>& sites; // By the numbers that the functions have in the image of the code.
+        Function<bool(uint32_t entryOffsetOfModule, LineColumn inModule, CString& nameOfSource, LineColumn& inSource)> find;
+    };
     // What comes before `whatIsKeptOfPayloadStartsAt` in the payload is left out, if that is not zero: it had better be where
     // BytecodeLinkRegions::ExpressionInfo starts. Then nothing of the program can be interpreted, or decoded again.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0);
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0, const PositionsToKeep* = nullptr);
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
@@ -77,6 +88,7 @@ public:
         size_t sizeOfPayload;
         bool payloadIsLeftOut; // Not all of it is there, so it is nowhere.
         uintptr_t addressOfPayload; // payloadThatIsLeftOut().data(), when the program runs.
+        bool hasPositionsOfCallSites; // See PositionsToKeep.
     };
     JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
     // On a thread that is going to have a VM other than the first, before it has made an atom: as map() does for its own thread.
@@ -105,6 +117,9 @@ public:
     // See build(). Then this is where the payload would be and how long it is, for whoever has to say which payload they mean:
     // most of it is not there to be read.
     JS_EXPORT_PRIVATE static bool payloadIsLeftOut();
+    // See PositionsToKeep, and AOT::FunctionRef::reportedPositionFor().
+    static bool hasPositionsOfCallSites();
+    JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // From one.
     // Of what is said to be a payload: it is that one, or the static heap it would be in has not been mapped at all.
     static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsLeftOut()); }
     JS_EXPORT_PRIVATE static std::span<const uint8_t> payloadThatIsLeftOut();

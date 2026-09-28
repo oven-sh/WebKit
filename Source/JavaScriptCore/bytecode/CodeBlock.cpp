@@ -2695,6 +2695,13 @@ void CodeBlock::removeExceptionHandlerForCallSite(DisposableCallSiteIndex callSi
 
 LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
+#if ENABLE(FTL_JIT)
+    // Code that was compiled ahead of time may have another way of saying.
+    if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
+        if (auto position = function.reportedPositionFor(bytecodeIndex))
+            return position->lineColumn;
+    }
+#endif
     RELEASE_ASSERT(bytecodeIndex.offset() < instructions().size());
     auto lineColumn = m_unlinkedCode->lineColumnForBytecodeIndex(bytecodeIndex);
     lineColumn.column += lineColumn.line ? 1 : firstLineColumnOffset();
@@ -2704,6 +2711,16 @@ LineColumn CodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex) co
 
 ExpressionInfo::Entry CodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex) const
 {
+#if ENABLE(FTL_JIT)
+    if (auto function = AOT::FunctionRef::of(const_cast<CodeBlock*>(this))) {
+        if (auto position = function.reportedPositionFor(bytecodeIndex)) {
+            ExpressionInfo::Entry entry;
+            entry.instPC = bytecodeIndex.offset();
+            entry.lineColumn = position->lineColumn;
+            return entry;
+        }
+    }
+#endif
     auto entry = m_unlinkedCode->expressionInfoForBytecodeIndex(bytecodeIndex);
     entry.divot += sourceOffset();
     entry.lineColumn.column += entry.lineColumn.line ? 1 : firstLineColumnOffset();

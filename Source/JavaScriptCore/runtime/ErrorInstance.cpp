@@ -84,7 +84,15 @@ ErrorInstance* ErrorInstance::create(JSGlobalObject* globalObject, Structure* st
 
 String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, const String& message, RuntimeType type, ErrorInstance::SourceAppender appender)
 {
-    if (!codeBlock->hasExpressionInfo() || message.isNull())
+    if (message.isNull())
+        return message;
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasNoText = codeBlock->source().provider()->hasNoText();
+#else
+    bool hasNoText = false;
+#endif
+    // (What goes without its text goes by something else.)
+    if (!codeBlock->hasExpressionInfo() && !hasNoText)
         return message;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -96,11 +104,11 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (codeBlock->source().provider()->hasNoText()) {
+    if (hasNoText) {
 #if ENABLE(FTL_JIT)
         // What it said, as far as that was kept, is with the code.
-        if (auto* data = codeBlock->aotData()) {
-            if (auto quote = data->function().quoteAt(bytecodeIndex))
+        if (auto function = AOT::FunctionRef::of(codeBlock)) {
+            if (auto quote = function.quoteAt(bytecodeIndex))
                 return appender(message, quote->first, type, quote->second ? ErrorInstance::SourceTextWhereErrorOccurred::FoundExactSource : ErrorInstance::SourceTextWhereErrorOccurred::FoundApproximateSource);
         }
 #endif

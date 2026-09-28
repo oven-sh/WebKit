@@ -577,8 +577,11 @@ std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex byteco
 
 FunctionRef FunctionRef::of(CodeBlock* codeBlock)
 {
-    Data* data = codeBlock->aotData();
-    return data ? data->function() : FunctionRef { };
+    // (Not by way of its Data, which code that is not going to run again has let go of: CodeBlock::releaseAOTData().)
+    if (codeBlock->jitType() != JITType::AOTJIT)
+        return { };
+    auto* code = static_cast<JITCode*>(codeBlock->jitCode().get());
+    return code->instance() ? FunctionRef { code->instance(), code->header().index } : FunctionRef { };
 }
 
 bool FunctionRef::constructsAt(BytecodeIndex bytecodeIndex) const
@@ -667,7 +670,7 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
     parts.functionExprs = functionExprs();
     if (const uint32_t* words = facts->find(FunctionFacts::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
-    if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo))
+    if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
         parts.expressionInfo = StaticHeap::inData<uint8_t>(*word);
     return makeFunctionCodeFromParts(*instance->vm, parts);
 }
@@ -706,7 +709,62 @@ const FunctionFacts* FunctionRef::facts() const
     if (!instance->factsOfFunctions)
         return nullptr;
     uint32_t at = instance->factsOfFunctions[index];
-    return at ? StaticHeap::inData<FunctionFacts>(at) : nullptr;
+    // (Odd: see reportedPositionFor().)
+    return at && !(at & 1) ? StaticHeap::inData<FunctionFacts>(at) : nullptr;
+}
+
+static uint64_t readVarint(const uint8_t*& at)
+{
+    uint64_t value = 0;
+    for (unsigned shift = 0;; shift += 7) {
+        uint8_t byte = *at++;
+        value |= static_cast<uint64_t>(byte & 0x7f) << shift;
+        if (!(byte & 0x80))
+            return value;
+    }
+}
+
+// What StaticHeap's makePositions() wrote.
+auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstruction ofConstruction) const -> std::optional<ReportedPosition>
+{
+    if (!instance->factsOfFunctions || !StaticHeap::hasPositionsOfCallSites())
+        return std::nullopt;
+    const uint8_t* at = nullptr;
+    if (uint32_t word = instance->factsOfFunctions[index]; word & 1)
+        at = StaticHeap::inData<uint8_t>(word - 1);
+    else if (auto* facts = this->facts()) {
+        if (const uint32_t* where = facts->find(FunctionFacts::ExpressionInfo))
+            at = StaticHeap::inData<uint8_t>(*where);
+    }
+    if (!at)
+        return std::nullopt;
+    ReportedPosition result;
+    uint64_t offset = 0;
+    int64_t line = 0;
+    uint32_t source = 0;
+    auto readPosition = [&]() -> ReportedPosition {
+        uint64_t word = readVarint(at);
+        uint64_t down = word >> 1;
+        line += static_cast<int64_t>(down >> 1) ^ -static_cast<int64_t>(down & 1);
+        if (word & 1)
+            source = static_cast<uint32_t>(readVarint(at));
+        unsigned column = static_cast<unsigned>(readVarint(at));
+        return { { static_cast<unsigned>(line), column }, source };
+    };
+    // The last that is not past it: every place that a frame can say it is at is there, so that is the very one.
+    for (uint64_t count = readVarint(at); count--;) {
+        uint64_t word = readVarint(at);
+        offset += word >> 1;
+        if (offset > bytecodeIndex.offset())
+            break;
+        result = readPosition();
+        if (word & 1) {
+            ReportedPosition start = readPosition();
+            if (ofConstruction == OfConstruction::WhereItStarts)
+                result = start;
+        }
+    }
+    return result;
 }
 
 CodeType FunctionRef::codeType() const
@@ -856,6 +914,8 @@ CodeBlock* Data::ensureCodeBlock()
 
 LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
 {
+    if (auto position = reportedPositionFor(bytecodeIndex))
+        return position->lineColumn;
     ScriptExecutable* executable = this->executable();
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
     LineColumn lineColumn;

@@ -60,6 +60,7 @@ static Vector<StaticHeapTDZ>* s_tdzBeingBuilt;
 static JSString* s_emptyStringBeingBuilt;
 static SymbolRegistry* s_symbolRegistriesBeingBuilt[2];
 static size_t s_moduleBeingBuilt;
+static uint32_t s_entryOffsetOfModuleBeingBuilt;
 
 // The file: this, then each arena, on a page boundary.
 struct StaticHeap::Header {
@@ -91,6 +92,11 @@ struct StaticHeap::Header {
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::CodeHeader::index.
     uint64_t factsOfFunctions; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
     uint64_t numberOfFunctions;
+    // See PositionsToKeep. If there are any, FunctionFacts::ExpressionInfo is where the positions of a function's call sites are, and
+    // an odd number among factsOfFunctions is one more than where those of code that has no facts are.
+    uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: where each starts in what follows them, which is UTF-8.
+    uint64_t numberOfSources;
+    uint64_t hasPositionsOfCallSites;
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
     uint32_t numberOfStructures;
@@ -450,11 +456,109 @@ static void* addressOfSourceProvider(size_t moduleIndex)
 
 // AOT::FunctionFacts of a function whose code is not going to be here. What they refer to stays (UnlinkedCodeBlock::leaveToStaticHeap()).
 static std::span<uint32_t> s_factsBeingBuilt;
+static const StaticHeap::PositionsToKeep* s_positionsToKeep;
+static UncheckedKeyHashMap<CString, uint32_t>* s_sourcesBeingBuilt;
+static Vector<CString>* s_namesOfSourcesBeingBuilt;
+static uint64_t s_bytesOfPositions;
+static uint64_t s_numberOfPositions;
 
-static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock)
+static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
+{
+    while (value >= 0x80) {
+        bytes.append(static_cast<uint8_t>(value) | 0x80);
+        value >>= 7;
+    }
+    bytes.append(static_cast<uint8_t>(value));
+}
+
+// How many there are. Then for each, in the order of the bytecode: twice how much further on it is than the one before, and one more
+// if something is constructed there; a position; and if something is constructed there another, of where that expression starts.
+// A position is twice how many lines further down it is than the one before (as a number that has its sign at the bottom), and one
+// more if it is in another source, which then follows (zero: none, it is a place in the text of the module); and the column.
+static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned firstLine, unsigned startColumn, uint32_t entryOffsetOfModule)
+{
+    Vector<uint8_t> stream;
+    {
+        Region::AllocationScope notInRegion(false);
+        auto& sites = s_positionsToKeep->sites[index];
+        Vector<uint32_t> offsets = sites.offsets;
+        // Where an async function that is waiting says it is (FunctionRef::resumePointOf()).
+        if (size_t count = codeBlock->numberOfUnlinkedSwitchJumpTables(); count && isAsyncFunctionBodyParseMode(codeBlock->parseMode())) {
+            auto& table = codeBlock->unlinkedSwitchJumpTable(count - 1);
+            for (int32_t offset : table.m_branchOffsets)
+                offsets.append(std::max(offset ? offset : table.m_defaultOffset, 0));
+            std::ranges::sort(offsets);
+            offsets.shrink(std::ranges::unique(offsets).begin() - offsets.begin());
+        }
+        if (!codeBlock->hasExpressionInfo())
+            offsets.clear();
+        appendVarint(stream, offsets.size());
+        uint32_t previousOffset = 0;
+        int64_t previousLine = 0;
+        uint32_t previousSource = 0;
+        auto appendPosition = [&](LineColumn inModule) {
+            CString name;
+            LineColumn position = inModule;
+            uint32_t source = 0;
+            if (s_positionsToKeep->find(entryOffsetOfModule, inModule, name, position)) {
+                source = s_sourcesBeingBuilt->ensure(name, [&] {
+                    s_namesOfSourcesBeingBuilt->append(name);
+                    return static_cast<uint32_t>(s_namesOfSourcesBeingBuilt->size());
+                }).iterator->value;
+            } else
+                position = inModule;
+            int64_t down = static_cast<int64_t>(position.line) - previousLine;
+            appendVarint(stream, (static_cast<uint64_t>(down << 1) ^ static_cast<uint64_t>(down >> 63)) << 1 | (source != previousSource));
+            if (source != previousSource)
+                appendVarint(stream, source);
+            appendVarint(stream, position.column);
+            previousLine = position.line;
+            previousSource = source;
+            ++s_numberOfPositions;
+        };
+        size_t nextConstruction = 0;
+        for (uint32_t offset : offsets) {
+            if (offset >= codeBlock->instructions().size())
+                offset = 0;
+            while (nextConstruction < sites.constructions.size() && sites.constructions[nextConstruction].offset < offset)
+                ++nextConstruction;
+            const auto* construction = nextConstruction < sites.constructions.size() && sites.constructions[nextConstruction].offset == offset ? &sites.constructions[nextConstruction] : nullptr;
+            LineColumn position = codeBlock->lineColumnForBytecodeIndex(BytecodeIndex(offset));
+            position.column += position.line ? 1 : startColumn;
+            position.line += firstLine;
+            appendVarint(stream, static_cast<uint64_t>(offset - previousOffset) << 1 | !!construction);
+            previousOffset = offset;
+            appendPosition(position);
+            if (construction) {
+                LineColumn start = position;
+                if (construction->linesUp) {
+                    start.line = position.line > construction->linesUp ? position.line - construction->linesUp : 1;
+                    start.column = construction->columnOrColumnsLeft;
+                } else if (position.column > construction->columnOrColumnsLeft)
+                    start.column = position.column - construction->columnOrColumnsLeft;
+                appendPosition(start);
+            }
+        }
+    }
+    // (At an even address: see Header::hasPositionsOfCallSites.)
+    auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, stream.size(), 2));
+    memcpySpan(std::span { copy, stream.size() }, stream.span());
+    s_bytesOfPositions += stream.size();
+    Region::AllocationScope notInRegion(false);
+    stream = { };
+    return copy;
+}
+
+static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
 {
     if (s_factsBeingBuilt.empty() || s_factsBeingBuilt[index])
         return;
+    if (codeBlock->codeType() != FunctionCode) {
+        // The code of a module, whose UnlinkedCodeBlock is here to say everything else about it.
+        if (s_positionsToKeep)
+            s_factsBeingBuilt[index] = static_cast<uint32_t>(std::bit_cast<uintptr_t>(makePositions(index, codeBlock, 1, 1, entryOffsetOfModule)) - Region::startOf(Region::Arena::Data)) | 1;
+        return;
+    }
     using Facts = AOT::FunctionFacts;
     auto in = [](Region::Arena arena, const void* pointer) {
         uintptr_t offset = std::bit_cast<uintptr_t>(pointer) - Region::startOf(arena);
@@ -463,7 +567,13 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock)
     };
     RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Facts::shiftOfInstructionsSize)));
     Vector<uint32_t, 10> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Facts::shiftOfInstructionsSize | (codeBlock->isBuiltinFunction() ? Facts::isBuiltinFunction : 0) };
-    if (const void* record = codeBlock->cachedExpressionInfo()) {
+    if (s_positionsToKeep) {
+        // (A constructor that nobody wrote has an executable of its own in every realm, and is nowhere in any source.)
+        if (executable) {
+            words[0] |= Facts::ExpressionInfo;
+            words.append(in(Region::Arena::Data, makePositions(index, codeBlock, executable->firstLine(), executable->startColumn(), entryOffsetOfModule)));
+        }
+    } else if (const void* record = codeBlock->cachedExpressionInfo()) {
         words[0] |= Facts::ExpressionInfo;
         words.append(in(Region::Arena::Data, record));
     }
@@ -546,8 +656,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.numSlots = function.numSlots;
     // (It takes a Data to say which executable's the code is, if this does not.)
     info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | (isCall(kind) ? 0 : AOT::FunctionInfo::constructs) | (constantsWillDo ? AOT::FunctionInfo::constantsAreOfNoRealm : 0);
-    if (codeBlock->codeType() == FunctionCode)
-        fillFacts(function.index, codeBlock);
+    fillFacts(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
 }
 
 // The functions of `codeBlock`, whose source is `source`, and theirs.
@@ -830,8 +939,17 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     return nullptr;
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep)
 {
+    if (positionsToKeep)
+        whatIsKeptOfPayloadStartsAt = payload.size();
+    UncheckedKeyHashMap<CString, uint32_t> sources;
+    Vector<CString> namesOfSources;
+    s_positionsToKeep = positionsToKeep;
+    s_sourcesBeingBuilt = &sources;
+    s_namesOfSourcesBeingBuilt = &namesOfSources;
+    s_bytesOfPositions = 0;
+    s_numberOfPositions = 0;
     if (!Region::beginBuilding())
         return { };
     PreciseAllocation* containerBefore = PreciseAllocation::containerOfStaticCells();
@@ -925,6 +1043,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 s_emptyStringBeingBuilt = nullptr;
                 for (size_t i = 0; i < sortedOffsets.size(); ++i) {
                     s_moduleBeingBuilt = i;
+                    s_entryOffsetOfModuleBeingBuilt = sortedOffsets[i];
                     RefPtr<CachedBytecode> cachedBytecode;
                     {
                         Region::AllocationScope notInRegion(false);
@@ -1006,6 +1125,31 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     memset(address, 0, sizeof(Decoder));
                 }
                 s_tdzBeingBuilt = nullptr;
+                if (positionsToKeep && !s_factsBeingBuilt.empty()) {
+                    size_t sizeOfText = 0;
+                    for (auto& name : namesOfSources)
+                        sizeOfText += name.length();
+                    auto* starts = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, (namesOfSources.size() + 1) * sizeof(uint32_t) + sizeOfText, alignof(uint32_t)));
+                    auto* text = reinterpret_cast<char*>(starts + namesOfSources.size() + 1);
+                    uint32_t at = 0;
+                    for (size_t i = 0; i < namesOfSources.size(); ++i) {
+                        starts[i] = at;
+                        memcpy(text + at, namesOfSources[i].data(), namesOfSources[i].length());
+                        at += namesOfSources[i].length();
+                    }
+                    starts[namesOfSources.size()] = at;
+                    header.namesOfSources = std::bit_cast<uint64_t>(starts);
+                    header.numberOfSources = namesOfSources.size();
+                    header.hasPositionsOfCallSites = true;
+                    if (Options::aotReportStats()) [[unlikely]]
+                        dataLogLn("StaticHeap: ", s_numberOfPositions, " positions of call sites: ", s_bytesOfPositions, " bytes, in ", namesOfSources.size(), " sources whose names take ", sizeOfText);
+                }
+                s_positionsToKeep = nullptr;
+                {
+                    Region::AllocationScope notInRegion(false);
+                    sources.clear();
+                    namesOfSources.clear();
+                }
                 s_factsBeingBuilt = { };
                 // (See parentScopeTDZVariablesOf().)
                 if (whatIsKeptOfPayloadStartsAt) {
@@ -1162,7 +1306,7 @@ std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> 
     auto payload = offsetOf(header.payload, header.payloadSize);
     if (!strings || (!payload && !header.sizeOfHoleInData))
         return std::nullopt;
-    return Copies { *strings, static_cast<size_t>(header.stringsSize), payload.value_or(0), static_cast<size_t>(header.payloadSize), !payload, static_cast<uintptr_t>(header.payload) };
+    return Copies { *strings, static_cast<size_t>(header.stringsSize), payload.value_or(0), static_cast<size_t>(header.payloadSize), !payload, static_cast<uintptr_t>(header.payload), !!header.hasPositionsOfCallSites };
 }
 
 bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile)
@@ -1284,6 +1428,19 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     // module, and that is all it is asked.
     auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
     return decodeParentScopeTDZVariablesForStaticHeap(decoderOfWhatWasLeftInPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
+}
+
+bool StaticHeap::hasPositionsOfCallSites()
+{
+    return s_header && s_header->hasPositionsOfCallSites;
+}
+
+String StaticHeap::nameOfSource(uint32_t source)
+{
+    RELEASE_ASSERT(s_header && source && source <= s_header->numberOfSources);
+    auto* starts = std::bit_cast<const uint32_t*>(s_header->namesOfSources);
+    auto* text = reinterpret_cast<const char8_t*>(starts + s_header->numberOfSources + 1);
+    return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
 }
 
 bool StaticHeap::payloadIsLeftOut()

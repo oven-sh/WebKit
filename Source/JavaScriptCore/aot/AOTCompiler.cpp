@@ -676,6 +676,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
+    info.callSites = WTF::move(graph.callSites);
+    info.callSites.append(0); // generateThrowStackOverflowAtPrologue()
+    std::ranges::sort(info.callSites);
+    info.callSites.shrink(std::ranges::unique(info.callSites).begin() - info.callSites.begin());
     while (info.siteConstants.size() < info.numSlots)
         info.siteConstants.append(0);
     info.selectors = WTF::move(graph.selectors);
