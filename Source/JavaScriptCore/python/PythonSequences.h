@@ -72,6 +72,8 @@ bool builtinSetItem(JSGlobalObject*, JSValue, JSValue key, JSValue); // False if
 JSValue builtinGetIterator(JSGlobalObject*, JSValue);
 int64_t builtinHash(JSGlobalObject*, JSValue);
 JSValue setOperation(JSGlobalObject*, BinaryOperator, bool inPlace, PySet*, PySet*);
+// What to look for in a set when it is asked whether `key` is in it. Empty if it raised.
+JSValue keyToLookForInSet(JSGlobalObject*, JSValue key);
 JSValue setCompare(JSGlobalObject*, ComparisonOperator, PySet*, PySet*);
 PySet* setFromIterable(JSGlobalObject*, Structure*, JSValue);
 

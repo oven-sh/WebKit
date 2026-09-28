@@ -456,11 +456,12 @@ PYTHON_NATIVE(returnNotImplemented)
 
 std::optional<Identifier> attributeName(JSGlobalObject* globalObject, ThrowScope& scope, JSValue name)
 {
-    if (!name.isString()) {
+    JSString* string = stringIn(name);
+    if (!string) {
         raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
         return std::nullopt;
     }
-    return asString(name)->toIdentifier(globalObject);
+    return string->toIdentifier(globalObject);
 }
 
 PYTHON_NATIVE(objectGetAttribute)

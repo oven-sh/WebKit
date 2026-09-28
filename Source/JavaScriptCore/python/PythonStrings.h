@@ -35,7 +35,7 @@ bool isIdentifier(StringView);
 JSValue stringGetItem(JSGlobalObject*, JSString*, JSValue key);
 JSValue stringRepeat(JSGlobalObject*, JSString*, int64_t count);
 // format % values
-JSValue stringPercentFormat(JSGlobalObject*, JSString* format, JSValue values);
+JSValue stringPercentFormat(JSGlobalObject*, JSValue format, JSValue values);
 // The same of bytes. The result has a character for each byte, and is null if it raised.
 String bytesPercentFormat(JSGlobalObject*, std::span<const uint8_t> format, JSValue values);
 // What ascii() does to what repr() gives.
@@ -55,6 +55,7 @@ struct FormatSpecification {
     int precision { -1 };
     char fractionGrouping { 0 }; // The same, of the digits after the point.
     char32_t type { 0 };
+    String typeName; // Of what it is for, which is said if it will not do.
 };
 
 // Nothing if it makes no sense, and then ValueError has been raised. `typeName` is what it was meant for.
@@ -65,6 +66,7 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject*, Str
 String formatInt(JSGlobalObject*, JSValue, const FormatSpecification&);
 String formatFloat(JSGlobalObject*, double, const FormatSpecification&);
 String formatString(JSGlobalObject*, const String&, const FormatSpecification&);
+String raiseUnknownFormatCode(JSGlobalObject*, ThrowScope&, char32_t code, const String& typeName);
 
 // The digits of a float rounded to so many places after the point, correctly, with ties going to the even digit.
 String fixedDigits(double, int precision);

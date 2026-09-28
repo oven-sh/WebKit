@@ -180,9 +180,10 @@ PYTHON_NATIVE(builtinFormat_)
     NATIVE_PROLOGUE();
     String specification = emptyString();
     if (args.size() > 1) {
-        if (!args[1].isString())
+        JSString* given = stringIn(args[1]);
+        if (!given)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("format() argument 2 must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
-        specification = asString(args[1])->value(globalObject);
+        specification = given->value(globalObject);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, args[0], specification)));
 }
@@ -191,11 +192,12 @@ PYTHON_NATIVE(builtinFormat_)
 
 static std::optional<Identifier> attributeNameArgument(JSGlobalObject* globalObject, ThrowScope& scope, JSValue name)
 {
-    if (!name.isString()) {
+    JSString* string = stringIn(name);
+    if (!string) {
         raiseTypeError(globalObject, scope, makeString("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
         return std::nullopt;
     }
-    return asString(name)->toIdentifier(globalObject);
+    return string->toIdentifier(globalObject);
 }
 
 PYTHON_NATIVE(builtinGetAttr)
@@ -339,17 +341,119 @@ PYTHON_NATIVE(builtinSum)
     NATIVE_PROLOGUE();
     if (!args.size() || args.size() > 2)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sum() takes at most 2 arguments ("_s, args.size(), " given)"_s)));
+    JSValue iterator = getIterator(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue total = args.at(1);
     if (!total)
         total = jsNumber(0);
-    if (total.isString())
+    else if (stringIn(total))
         return JSValue::encode(raiseTypeError(globalObject, scope, "sum() can't sum strings [use ''.join(seq) instead]"_s));
-    forEach(globalObject, args[0], [&] (JSValue value) {
-        total = binaryOperation(globalObject, BinaryOperator::Add, false, total, value);
-        return !!total;
-    });
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(total);
+    else if (isInstance(globalObject, total, realm->typeBytes()))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "sum() can't sum bytes [use b''.join(seq) instead]"_s));
+    else if (isInstance(globalObject, total, realm->typeByteArray()))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "sum() can't sum bytearray [use b''.join(seq) instead]"_s));
+
+    // Neumaier's improvement on Kahan and Babuska's way of adding up: what is lost off the end each time is kept, and put back at the end.
+    struct CompensatedSum {
+        void add(double x)
+        {
+            double sum = high + x;
+            low += std::abs(high) >= std::abs(x) ? (high - sum) + x : (x - sum) + high;
+            high = sum;
+        }
+        // Not to lose the sign of nought, nor make a NaN of what has gone off to infinity.
+        double value() const { return low && std::isfinite(low) ? high + low : high; }
+
+        double high { 0 };
+        double low { 0 };
+    };
+    // Empty when there are no more, or it has raised.
+    auto next = [&] { return iteratorNext(globalObject, iterator); };
+    auto addTo = [&] (JSValue sum, JSValue item) { return binaryOperation(globalObject, BinaryOperator::Add, false, sum, item); };
+    // The double that an int is. Nothing if it is too large, and then it has raised.
+    auto doubleOfInt = [&] (JSValue item) -> std::optional<double> {
+        double result = toDouble(globalObject, scope, classify(item));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return result;
+    };
+    auto isExact = [&] (JSValue value, BuiltinType type) { return isExactly(globalObject, value, type); };
+
+    // While it is ints that are added to an int there is nothing to it. What follows is gone through once, in this order, each part until something comes that it is not for.
+    if (isExact(total, BuiltinType::Int)) {
+        while (true) {
+            JSValue item = next();
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!item)
+                return JSValue::encode(total);
+            bool goesOn = isExact(item, BuiltinType::Int) || item.isBoolean();
+            total = addTo(total, item);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!goesOn)
+                break;
+        }
+    }
+    if (isExact(total, BuiltinType::Float)) {
+        CompensatedSum sum { classify(total).real };
+        while (true) {
+            JSValue item = next();
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!item)
+                return JSValue::encode(floatFromDouble(sum.value()));
+            if (isExact(item, BuiltinType::Float)) {
+                sum.add(classify(item).real);
+                continue;
+            }
+            if (classify(item).isInt()) {
+                auto value = doubleOfInt(item);
+                if (!value)
+                    return { };
+                sum.add(*value);
+                continue;
+            }
+            total = addTo(floatFromDouble(sum.value()), item);
+            RETURN_IF_EXCEPTION(scope, { });
+            break;
+        }
+    }
+    if (isExact(total, BuiltinType::Complex)) {
+        auto* start = uncheckedDowncast<PyComplex>(total.asCell());
+        CompensatedSum real { start->real() };
+        CompensatedSum imaginary { start->imaginary() };
+        while (true) {
+            JSValue item = next();
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!item)
+                return JSValue::encode(PyComplex::create(globalObject, real.value(), imaginary.value()));
+            if (isExact(item, BuiltinType::Complex)) {
+                real.add(uncheckedDowncast<PyComplex>(item.asCell())->real());
+                imaginary.add(uncheckedDowncast<PyComplex>(item.asCell())->imaginary());
+                continue;
+            }
+            Number number = classify(item);
+            if (number.isInt()) {
+                auto value = doubleOfInt(item);
+                if (!value)
+                    return { };
+                real.add(*value);
+                continue;
+            }
+            if (number.kind == Number::Kind::Float) {
+                real.add(number.real);
+                continue;
+            }
+            total = addTo(PyComplex::create(globalObject, real.value(), imaginary.value()), item);
+            RETURN_IF_EXCEPTION(scope, { });
+            break;
+        }
+    }
+    while (true) {
+        JSValue item = next();
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!item)
+            return JSValue::encode(total);
+        total = addTo(total, item);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
 }
 
 // min(iterable, *, key=None, default=...) and min(a, b, ..., key=None)
@@ -481,12 +585,20 @@ PYTHON_NATIVE(builtinChr)
 PYTHON_NATIVE(builtinOrd)
 {
     NATIVE_PROLOGUE();
-    if (!args[0].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected string of length 1, but "_s, typeName(globalObject, args[0]), " found"_s)));
-    unsigned count = stringLength(globalObject, asString(args[0]));
+    JSString* string = stringIn(args[0]);
+    if (!string) {
+        // One byte will do as well.
+        if (!isInstance(globalObject, args[0], realm->typeBytes()) && !isInstance(globalObject, args[0], realm->typeByteArray()))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected string of length 1, but "_s, typeName(globalObject, args[0]), " found"_s)));
+        Buffer buffer { args[0] };
+        if (buffer.size() != 1)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected a character, but string of length "_s, buffer.size(), " found"_s)));
+        return JSValue::encode(jsNumber(buffer[0]));
+    }
+    unsigned count = stringLength(globalObject, string);
     if (count != 1)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected a character, but string of length "_s, count, " found"_s)));
-    auto view = asString(args[0])->view(globalObject);
+    auto view = string->view(globalObject);
     return JSValue::encode(jsNumber(static_cast<int32_t>(*view->codePoints().begin())));
 }
 

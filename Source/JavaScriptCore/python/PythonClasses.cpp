@@ -723,6 +723,47 @@ JSValue getSuperAttribute(JSGlobalObject* globalObject, JSValue superObject, Pro
 
 // ---- isinstance() and issubclass()
 
+// abstract_get_bases(). Null if it has none, or they are not a tuple.
+static PyTuple* abstractBasesOf(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue bases = getAttributeIfPresent(globalObject, value, vm.pythonNames().dunder_bases);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return bases && isTuple(bases) ? asTuple(bases) : nullptr;
+}
+
+// abstract_issubclass()
+static bool abstractIsSubclass(JSGlobalObject* globalObject, JSValue derived, JSValue base)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        raiseRecursionError(globalObject);
+        return false;
+    }
+    while (true) {
+        if (derived == base)
+            return true;
+        PyTuple* bases = abstractBasesOf(globalObject, derived);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!bases || !bases->length())
+            return false;
+        // Not to go down where there is only the one way to go.
+        if (bases->length() == 1) {
+            derived = bases->at(0);
+            continue;
+        }
+        for (unsigned i = 0; i < bases->length(); ++i) {
+            bool result = abstractIsSubclass(globalObject, bases->at(i), base);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result)
+                return true;
+        }
+        return false;
+    }
+}
+
 static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue classInfo, bool isInstanceCheck)
 {
     VM& vm = globalObject->vm();
@@ -744,6 +785,7 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
         return false;
     }
 
+    bool knowsWhatItsClassDoes = false;
     if (isClass(classInfo)) {
         auto* type = asType(classInfo);
         if (isInstanceCheck && typeOf(globalObject, value) == type)
@@ -752,24 +794,42 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
         if (type->metatype() == realm->typeType()) {
             if (isInstanceCheck)
                 return isInstance(globalObject, value, type);
-            if (!isClass(value)) {
-                raiseTypeError(globalObject, scope, "issubclass() arg 1 must be a class"_s);
-                return false;
-            }
-            return asType(value)->isSubtypeOf(type);
+            if (isClass(value))
+                return asType(value)->isSubtypeOf(type);
+            knowsWhatItsClassDoes = true;
         }
     }
 
     JSValue self;
-    JSValue method = lookupSpecial(globalObject, classInfo, isInstanceCheck ? names.dunder_instancecheck : names.dunder_subclasscheck, self);
+    JSValue method = knowsWhatItsClassDoes ? JSValue() : lookupSpecial(globalObject, classInfo, isInstanceCheck ? names.dunder_instancecheck : names.dunder_subclasscheck, self);
     RETURN_IF_EXCEPTION(scope, false);
     if (method) {
         JSValue result = callMethod(globalObject, method, self, value);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
     }
-    raiseTypeError(globalObject, scope, isInstanceCheck ? "isinstance() arg 2 must be a type, a tuple of types, or a union"_s : "issubclass() arg 2 must be a class, a tuple of classes, or a union"_s);
-    return false;
+    // recursive_issubclass() and object_recursive_isinstance(): whatever has a tuple for its __bases__ will do for a class.
+    if (!isInstanceCheck) {
+        PyTuple* bases = abstractBasesOf(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!bases) {
+            raiseTypeError(globalObject, scope, "issubclass() arg 1 must be a class"_s);
+            return false;
+        }
+    }
+    PyTuple* bases = abstractBasesOf(globalObject, classInfo);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!bases) {
+        raiseTypeError(globalObject, scope, isInstanceCheck ? "isinstance() arg 2 must be a type, a tuple of types, or a union"_s : "issubclass() arg 2 must be a class, a tuple of classes, or a union"_s);
+        return false;
+    }
+    if (isInstanceCheck) {
+        value = getAttributeIfPresent(globalObject, value, names.dunder_class);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!value)
+            return false;
+    }
+    RELEASE_AND_RETURN(scope, abstractIsSubclass(globalObject, value, classInfo));
 }
 
 bool isInstanceOf(JSGlobalObject* globalObject, JSValue value, JSValue classInfo)

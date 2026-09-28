@@ -599,7 +599,9 @@ PYTHON_NATIVE(setRemove)
 {
     auto raises = unpack<bool>(callFrame, 0);
     SET_PROLOGUE("remove");
-    JSValue removed = self->remove(globalObject, args[1]);
+    JSValue key = keyToLookForInSet(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue removed = self->remove(globalObject, key);
     RETURN_IF_EXCEPTION(scope, { });
     if (!removed && raises)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::KeyError, args[1]));
@@ -628,7 +630,11 @@ PYTHON_NATIVE(setClear)
 PYTHON_NATIVE(setCopy)
 {
     SET_PROLOGUE("copy");
-    PySet* copy = PySet::create(vm, self->structure());
+    // A frozenset is as good as a copy of it. And of an instance of a class derived from either, the copy is of the class that it is derived from.
+    if (isExactly(globalObject, self, BuiltinType::FrozenSet))
+        return JSValue::encode(self);
+    bool isFrozen = typeOf(globalObject, self)->isSubtypeOf(realm->typeFrozenSet());
+    PySet* copy = PySet::create(vm, realm->structureFor(isFrozen ? BuiltinType::FrozenSet : BuiltinType::Set));
     copy->copyFrom(vm, globalObject, *self);
     return JSValue::encode(copy);
 }

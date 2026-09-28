@@ -247,8 +247,12 @@ static JSValue toJS(JSGlobalObject* globalObject, Complex value)
 
 JSValue powerOfNegativeFloat(JSGlobalObject* globalObject, double base, double exponent)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Failure failure = Failure::None;
-    return toJS(globalObject, powerOfComplex({ base, 0 }, { exponent, 0 }, failure));
+    Complex result = powerOfComplex({ base, 0 }, { exponent, 0 }, failure);
+    if (failure == Failure::Range)
+        return raise(globalObject, scope, BuiltinType::OverflowError, "complex exponentiation"_s);
+    return toJS(globalObject, result);
 }
 
 // ---- Operators
@@ -440,19 +444,34 @@ PYTHON_NATIVE(complexRepr)
 PYTHON_NATIVE(complexFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args[1].isString())
+    JSString* given = stringIn(args[1]);
+    if (!given)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     Complex self = valueOf(tryComplex(args[0]));
-    String text = asString(args[1])->value(globalObject);
+    String text = given->value(globalObject);
     if (text.isEmpty())
         return JSValue::encode(jsString(vm, reprOfComplex(self)));
-    auto parsed = parseFormatSpecification(globalObject, text, "complex"_s);
+    auto parsed = parseFormatSpecification(globalObject, text, typeName(globalObject, args[0]));
     RETURN_IF_EXCEPTION(scope, { });
     FormatSpecification specification = *parsed;
+    switch (specification.type) {
+    case 0:
+    case 'e':
+    case 'E':
+    case 'f':
+    case 'F':
+    case 'g':
+    case 'G':
+    case 'n':
+        break;
+    default:
+        raiseUnknownFormatCode(globalObject, scope, specification.type, specification.typeName);
+        return { };
+    }
+    if (specification.fill == '0')
+        return JSValue::encode(raiseValueError(globalObject, scope, "Zero padding is not allowed in complex format specifier"_s));
     if (specification.align == '=')
         return JSValue::encode(raiseValueError(globalObject, scope, "'=' alignment flag is not allowed in complex format specifier"_s));
-    if (specification.fill == '0' && !specification.align)
-        return JSValue::encode(raiseValueError(globalObject, scope, "Zero padding is not allowed in complex format specifier"_s));
 
     bool skipReal = false;
     bool addParentheses = false;

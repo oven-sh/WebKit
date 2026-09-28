@@ -218,9 +218,10 @@ PYTHON_NATIVE(numberRound)
 PYTHON_NATIVE(numberFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args[1].isString())
+    JSString* specification = stringIn(args[1]);
+    if (!specification)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
-    RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], asString(args[1])->value(globalObject))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 
 // ---- int
@@ -314,13 +315,7 @@ PYTHON_NATIVE(intNew)
             return JSValue::encode(raiseTypeError(globalObject, scope, "int() missing string argument"_s));
         result = jsNumber(0);
     } else if (baseValue || unbox(value).isString()) {
-        JSValue string = unbox(value);
-        // What is in a bytes or a bytearray is read as ASCII.
-        JSValue original = string;
-        if (bytesKindOf(string) != BytesKind::None)
-            string = jsString(vm, String(byteCast<Latin1Character>(*builtinBufferOf(string))));
-        if (!string.isString())
-            return JSValue::encode(raiseTypeError(globalObject, scope, "int() can't convert non-string with explicit base"_s));
+        // The base is looked at first.
         int64_t base = 10;
         if (baseValue) {
             auto index = toIndex(globalObject, baseValue, true);
@@ -329,6 +324,13 @@ PYTHON_NATIVE(intNew)
             if (base && (base < 2 || base > 36))
                 return JSValue::encode(raiseValueError(globalObject, scope, "int() base must be >= 2 and <= 36, or 0"_s));
         }
+        JSValue string = unbox(value);
+        // What is in a bytes or a bytearray is read as ASCII.
+        JSValue original = string;
+        if (bytesKindOf(string) != BytesKind::None)
+            string = jsString(vm, String(byteCast<Latin1Character>(*builtinBufferOf(string))));
+        if (!string.isString())
+            return JSValue::encode(raiseTypeError(globalObject, scope, "int() can't convert non-string with explicit base"_s));
         auto view = asString(string)->view(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         result = parseInt(globalObject, view, base);

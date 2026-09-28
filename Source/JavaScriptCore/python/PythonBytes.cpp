@@ -446,19 +446,19 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
     JSValue source = args.at(1);
     JSValue encodingValue = args.at(2);
     JSValue errorsValue = args.at(3);
-    auto textOf = [&] (JSValue value, ASCIILiteral name, unsigned position) -> String {
+    auto textOf = [&] (JSValue value, ASCIILiteral name) -> String {
         if (!value)
             return { };
-        if (!value.isString()) {
-            raiseTypeError(globalObject, scope, makeString(typeText, "() argument "_s, position, " must be str, not "_s, typeName(globalObject, value)));
-            UNUSED_PARAM(name);
+        JSString* string = stringIn(value);
+        if (!string) {
+            raiseTypeError(globalObject, scope, makeString(typeText, "() argument '"_s, name, "' must be str, not "_s, isNone(value) ? "None"_str : typeName(globalObject, value)));
             return { };
         }
-        return asString(value)->value(globalObject);
+        return string->value(globalObject);
     };
-    String encoding = textOf(encodingValue, "encoding"_s, 2);
+    String encoding = textOf(encodingValue, "encoding"_s);
     RETURN_IF_EXCEPTION(scope, false);
-    String errors = textOf(errorsValue, "errors"_s, 3);
+    String errors = textOf(errorsValue, "errors"_s);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (!source) {

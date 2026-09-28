@@ -390,6 +390,9 @@ String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // PyUnicode_FromEncodedObject(): nothing comes to nothing, and it is not so much as asked whether there is such an encoding.
+    if (input.empty())
+        return emptyString();
     auto info = findCodec(encoding);
     if (!info) {
         raiseUnknownEncoding(globalObject, scope, encoding);

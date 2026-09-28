@@ -208,13 +208,34 @@ PySet* setFromIterable(JSGlobalObject* globalObject, Structure* structure, JSVal
     return set;
 }
 
+// set_contains(), set_remove() and set_discard(): a set cannot be in a set, but it can be asked whether a frozenset that has the same in it is.
+JSValue keyToLookForInSet(JSGlobalObject* globalObject, JSValue key)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSet(key))
+        return key;
+    hash(globalObject, key);
+    if (!scope.exception()) [[likely]]
+        return key;
+    if (!catchException(globalObject, BuiltinType::TypeError))
+        return { };
+    PySet* frozen = PySet::create(vm, globalObject->pyRealm()->structureFor(BuiltinType::FrozenSet));
+    frozen->copyFrom(vm, globalObject, *uncheckedDowncast<PySet>(key.asCell()));
+    return frozen;
+}
+
 JSValue setOperation(JSGlobalObject* globalObject, BinaryOperator op, bool inPlace, PySet* left, PySet* right)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // What comes of it is of the type of the left operand.
-    PySet* result = PySet::create(vm, typeOf(globalObject, left)->hasFlag(PyType::IsHeapType) ? globalObject->pyRealm()->structureFor(BuiltinType::Set) : left->structure());
+    // What comes of it is a set or a frozenset, as the left operand is or is derived from. A frozenset is not changed, whatever the operator: `a -= b` is `a = a - b`.
+    PyRealm* realm = globalObject->pyRealm();
+    bool isFrozen = typeOf(globalObject, left)->isSubtypeOf(realm->typeFrozenSet());
+    if (isFrozen)
+        inPlace = false;
+    PySet* result = PySet::create(vm, realm->structureFor(isFrozen ? BuiltinType::FrozenSet : BuiltinType::Set));
     auto addAll = [&] (PySet* from, PySet* unlessIn, PySet* onlyIfIn) -> bool {
         for (unsigned entry = 0; entry < from->entryCount(); ++entry) {
             JSValue key = from->keyAt(entry);

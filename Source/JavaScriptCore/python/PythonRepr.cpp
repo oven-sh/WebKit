@@ -392,6 +392,7 @@ JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String&
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue given = value;
     if (auto* boxed = tryBoxedValue(value))
         value = boxed->value();
     bool isString = value.isString();
@@ -403,11 +404,17 @@ JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String&
         RETURN_IF_EXCEPTION(scope, { });
         return jsString(vm, text);
     }
-    auto specification = parseFormatSpecification(globalObject, specificationText, typeName(globalObject, value), isString);
+    auto specification = parseFormatSpecification(globalObject, specificationText, typeName(globalObject, given), isString);
     RETURN_IF_EXCEPTION(scope, { });
     String result;
-    if (isString)
-        result = formatString(globalObject, asString(value)->value(globalObject), *specification);
+    if (isString) {
+        String text = asString(value)->value(globalObject);
+        result = formatString(globalObject, text, *specification);
+        RETURN_IF_EXCEPTION(scope, { });
+        // As with `format % values`: what is left as it was is what was given.
+        if (result == text)
+            return given;
+    }
     else if (number.kind == Number::Kind::Float)
         result = formatFloat(globalObject, number.real, *specification);
     else
@@ -431,7 +438,7 @@ JSValue format(JSGlobalObject* globalObject, JSValue value, const String& specif
     RETURN_IF_EXCEPTION(scope, { });
     JSValue result = callMethod(globalObject, method, self, jsString(vm, specification));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!result.isString())
+    if (!stringIn(result))
         return raiseTypeError(globalObject, scope, makeString("__format__ must return a str, not "_s, typeName(globalObject, result)));
     return result;
 }

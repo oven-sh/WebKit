@@ -144,17 +144,17 @@ PYTHON_NATIVE(strNew)
     JSValue errorsValue = args.at(3);
     if (encodingValue || errorsValue) {
         for (JSValue option : { encodingValue, errorsValue }) {
-            if (option && !option.isString())
+            if (option && !stringIn(option))
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("str() argument '"_s, option == encodingValue ? "encoding"_s : "errors"_s, "' must be str, not "_s, typeName(globalObject, option))));
         }
         if (value) {
-            if (value.isString())
+            if (stringIn(value))
                 return JSValue::encode(raiseTypeError(globalObject, scope, "decoding str is not supported"_s));
             auto buffer = tryBufferOf(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });
             if (!buffer)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
-            String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(asString(encodingValue)->value(globalObject)) : String(), errorsValue ? String(asString(errorsValue)->value(globalObject)) : String());
+            String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(stringIn(encodingValue)->value(globalObject)) : String(), errorsValue ? String(stringIn(errorsValue)->value(globalObject)) : String());
             RETURN_IF_EXCEPTION(scope, { });
             result = jsString(vm, text);
         }
@@ -176,9 +176,10 @@ PYTHON_NATIVE(strStr)
 PYTHON_NATIVE(strFormatMethod)
 {
     NATIVE_PROLOGUE();
-    if (!args[1].isString())
+    JSString* specification = stringIn(args[1]);
+    if (!specification)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
-    RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], asString(args[1])->value(globalObject))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], specification->value(globalObject))));
 }
 
 // ---- Joining and splitting
@@ -1049,6 +1050,9 @@ PYTHON_NATIVE(strFormat)
     STR_PROLOGUE("format");
     String result = Formatter(globalObject, args, JSValue()).format(self);
     RETURN_IF_EXCEPTION(scope, { });
+    // As with `format % values`: where there is nothing to fill in, it is itself.
+    if (!self.contains('{') && !self.contains('}'))
+        return JSValue::encode(args[0]);
     return JSValue::encode(toJS(vm, result));
 }
 

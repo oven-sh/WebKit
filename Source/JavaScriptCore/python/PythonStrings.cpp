@@ -393,6 +393,7 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     FormatSpecification result;
+    result.typeName = typeName;
     Vector<char32_t, 32> characters;
     for (char32_t c : text.codePoints())
         characters.append(c);
@@ -519,7 +520,7 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     return result;
 }
 
-static String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& scope, char32_t code, ASCIILiteral typeName)
+String raiseUnknownFormatCode(JSGlobalObject* globalObject, ThrowScope& scope, char32_t code, const String& typeName)
 {
     StringBuilder builder;
     builder.append("Unknown format code '"_s);
@@ -604,7 +605,7 @@ String formatString(JSGlobalObject* globalObject, const String& value, const For
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (specification.type && specification.type != 's')
-        return raiseUnknownFormatCode(globalObject, scope, specification.type, "str"_s);
+        return raiseUnknownFormatCode(globalObject, scope, specification.type, specification.typeName);
     if (specification.hasSign) {
         raiseValueError(globalObject, scope, specification.sign == ' ' ? "Space not allowed in string format specifier"_s : "Sign not allowed in string format specifier"_s);
         return { };
@@ -709,7 +710,7 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         RELEASE_AND_RETURN(scope, formatFloat(globalObject, real, specification));
     }
     default:
-        return raiseUnknownFormatCode(globalObject, scope, specification.type, value.isBoolean() ? "bool"_s : "int"_s);
+        return raiseUnknownFormatCode(globalObject, scope, specification.type, specification.typeName);
     }
     if (specification.precision >= 0) {
         raiseValueError(globalObject, scope, "Precision not allowed in integer format specifier"_s);
@@ -769,7 +770,7 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     case '%':
         break;
     default:
-        return raiseUnknownFormatCode(globalObject, scope, type, "float"_s);
+        return raiseUnknownFormatCode(globalObject, scope, type, specification.typeName);
     }
 
     bool isUpper = type == 'E' || type == 'F' || type == 'G';
@@ -910,7 +911,8 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
     PyTuple* tuple = isTuple(values) ? uncheckedDowncast<PyTuple>(values.asCell()) : nullptr;
     unsigned argumentCount = tuple ? tuple->length() : 1;
     unsigned nextArgument = 0;
-    bool usedMapping = false;
+    // Whatever can be subscripted, but for what is plainly the one argument. Of that it is not asked whether it was used.
+    bool isMapping = !tuple && !stringIn(values) && !(isForBytes && bytesKindOf(values) != BytesKind::None) && typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem);
     auto takeArgument = [&] () -> JSValue {
         if (nextArgument >= argumentCount) {
             raiseTypeError(globalObject, scope, "not enough arguments for format string"_s);
@@ -945,12 +947,11 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             }
             if (depth)
                 return raiseValueError(globalObject, scope, "incomplete format key"_s);
-            if (tuple || values.isString() || bytesKindOf(values) != BytesKind::None || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem))
+            if (!isMapping)
                 return raiseTypeError(globalObject, scope, "format requires a mapping"_s);
             String key = format.substring(start, i - 1 - start);
             argument = getItem(globalObject, values, isForBytes ? JSValue(newBytes(globalObject, key.span8())) : JSValue(jsString(vm, key)));
             RETURN_IF_EXCEPTION(scope, { });
-            usedMapping = true;
         }
 
         FormatSpecification specification;
@@ -1213,20 +1214,23 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         result.append(piece);
     }
 
-    if (nextArgument < argumentCount && !usedMapping && (tuple || !typeOf(globalObject, values)->lookup(vm, vm.pythonNames().dunder_getitem) || values.isString() || bytesKindOf(values) != BytesKind::None))
+    if (nextArgument < argumentCount && !isMapping)
         return raiseTypeError(globalObject, scope, isForBytes ? "not all arguments converted during bytes formatting"_s : "not all arguments converted during string formatting"_s);
     String text = result.toString();
     return text.isNull() ? emptyString() : text;
 }
 
-JSValue stringPercentFormat(JSGlobalObject* globalObject, JSString* format, JSValue values)
+JSValue stringPercentFormat(JSGlobalObject* globalObject, JSValue format, JSValue values)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = format->value(globalObject);
+    String text = stringIn(format)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     String result = percentFormat(globalObject, text, values, false);
     RETURN_IF_EXCEPTION(scope, { });
+    // Where all that is written is one string, CPython gives that string back, and not another like it. It shows if it is of a class derived from str.
+    if (!text.contains('%'))
+        return format;
     return jsString(vm, result);
 }
 

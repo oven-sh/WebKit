@@ -111,10 +111,21 @@ static JSValue tupleRepeat(JSGlobalObject* globalObject, PyTuple* tuple, int64_t
 
 // What the built-in types other than the numbers do. Empty, with nothing raised, if it is not for them. This is what their __add__
 // and the like are, so it looks at what kind of cell it has and not at the class.
+// What str does with an instance of a class derived from it, it does with the string that is in that.
+static JSValue stringIfHasOne(JSValue value)
+{
+    JSString* string = stringIn(value);
+    return string ? JSValue(string) : value;
+}
+
 JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool inPlace, JSValue left, JSValue right)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue givenLeft = left;
+    JSValue givenRight = right;
+    left = stringIfHasOne(left);
+    right = stringIfHasOne(right);
 
     switch (op) {
     case BinaryOperator::Add:
@@ -177,7 +188,7 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
 
     case BinaryOperator::Mod:
         if (left.isString())
-            RELEASE_AND_RETURN(scope, stringPercentFormat(globalObject, asString(left), right));
+            RELEASE_AND_RETURN(scope, stringPercentFormat(globalObject, givenLeft, givenRight));
         return { };
 
     case BinaryOperator::BitOr:
@@ -373,6 +384,77 @@ static JSValue inverseModulo(JSGlobalObject* globalObject, JSValue value, JSValu
     return b;
 }
 
+// What a class has for pow() with three arguments: nb_power. A class derived from one of the built-in ones has what that has, unless it says something of its own.
+enum class PowerSlot : uint8_t { None, Int, Float, Complex, Methods };
+
+static PowerSlot powerSlotOf(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyRealm* realm = globalObject->pyRealm();
+    JSValue method = type->lookup(vm, names.method(BinaryOperator::Pow));
+    JSValue reflected = type->lookup(vm, names.reflectedMethod(BinaryOperator::Pow));
+    if (!method && !reflected)
+        return PowerSlot::None;
+    auto ownerOf = [] (JSValue function) -> JSObject* {
+        auto* native = dynamicDowncast<PyNativeFunction>(function);
+        return native ? native->owner() : nullptr;
+    };
+    JSObject* owner = ownerOf(method);
+    if (!owner || owner != ownerOf(reflected))
+        return PowerSlot::Methods;
+    if (owner == realm->typeInt())
+        return PowerSlot::Int;
+    if (owner == realm->typeFloat())
+        return PowerSlot::Float;
+    if (owner == realm->typeComplex())
+        return PowerSlot::Complex;
+    return PowerSlot::Methods;
+}
+
+static JSValue powerOfInts(JSGlobalObject*, JSValue base, JSValue exponent, JSValue modulus);
+
+// slot_nb_power(), with a modulus
+static JSValue powerByMethods(JSGlobalObject* globalObject, JSValue self, JSValue other, JSValue modulus)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSValue notImplemented = globalObject->pyRealm()->notImplemented();
+    PyType* selfType = typeOf(globalObject, self);
+    PyType* otherType = typeOf(globalObject, other);
+    const Identifier& methodName = names.method(BinaryOperator::Pow);
+    const Identifier& reflectedName = names.reflectedMethod(BinaryOperator::Pow);
+    // vectorcall_maybe()
+    auto callIfPresent = [&] (PyType* type, const Identifier& name, JSValue receiver, JSValue argument) -> JSValue {
+        JSValue method = type->lookup(vm, name);
+        if (!method)
+            return notImplemented;
+        return call(globalObject, method, receiver, argument, modulus);
+    };
+    bool triesOther = selfType != otherType && powerSlotOf(globalObject, otherType) == PowerSlot::Methods;
+    if (powerSlotOf(globalObject, selfType) == PowerSlot::Methods) {
+        if (triesOther && otherType->isSubtypeOf(selfType)) {
+            JSValue reflected = otherType->lookup(vm, reflectedName);
+            if (reflected && reflected != selfType->lookup(vm, reflectedName)) {
+                JSValue result = call(globalObject, reflected, other, self, modulus);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (result != notImplemented)
+                    return result;
+                triesOther = false;
+            }
+        }
+        JSValue result = callIfPresent(selfType, methodName, self, other);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented || otherType == selfType)
+            return result;
+    }
+    if (triesOther)
+        RELEASE_AND_RETURN(scope, callIfPresent(otherType, reflectedName, other, self));
+    return notImplemented;
+}
+
+// ternary_op()
 JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
 {
     VM& vm = globalObject->vm();
@@ -380,11 +462,71 @@ JSValue power(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSVa
     if (isNone(modulus))
         RELEASE_AND_RETURN(scope, binaryOperation(globalObject, BinaryOperator::Pow, false, base, exponent));
 
-    Number b = classify(base);
+    JSValue notImplemented = globalObject->pyRealm()->notImplemented();
+    auto isNumber = [&] (JSValue value) { return classify(value) || isInstance(globalObject, value, globalObject->pyRealm()->typeComplex()); };
+    auto apply = [&] (PowerSlot slot) -> JSValue {
+        switch (slot) {
+        case PowerSlot::None:
+            break;
+        case PowerSlot::Int:
+            // long_pow()
+            if (!classify(base).isInt() || !classify(exponent).isInt() || !classify(modulus).isInt())
+                return notImplemented;
+            return powerOfInts(globalObject, base, exponent, modulus);
+        case PowerSlot::Float:
+            // float_pow()
+            return raiseTypeError(globalObject, scope, "pow() 3rd argument not allowed unless all arguments are integers"_s);
+        case PowerSlot::Complex:
+            // complex_pow()
+            if (!isNumber(base) || !isNumber(exponent))
+                return notImplemented;
+            return raiseValueError(globalObject, scope, "complex modulo"_s);
+        case PowerSlot::Methods:
+            return powerByMethods(globalObject, base, exponent, modulus);
+        }
+        return notImplemented;
+    };
+    PyType* baseType = typeOf(globalObject, base);
+    PyType* exponentType = typeOf(globalObject, exponent);
+    PowerSlot baseSlot = powerSlotOf(globalObject, baseType);
+    PowerSlot exponentSlot = exponentType != baseType ? powerSlotOf(globalObject, exponentType) : PowerSlot::None;
+    if (exponentSlot == baseSlot)
+        exponentSlot = PowerSlot::None;
+    if (baseSlot != PowerSlot::None) {
+        if (exponentSlot != PowerSlot::None && exponentType->isSubtypeOf(baseType)) {
+            JSValue result = apply(exponentSlot);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (result != notImplemented)
+                return result;
+            exponentSlot = PowerSlot::None;
+        }
+        JSValue result = apply(baseSlot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+    }
+    if (exponentSlot != PowerSlot::None) {
+        JSValue result = apply(exponentSlot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+    }
+    PowerSlot modulusSlot = powerSlotOf(globalObject, typeOf(globalObject, modulus));
+    if (modulusSlot != PowerSlot::None && modulusSlot != baseSlot && modulusSlot != exponentSlot) {
+        JSValue result = apply(modulusSlot);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result != notImplemented)
+            return result;
+    }
+    return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for ** or pow(): '"_s, typeName(globalObject, base), "', '"_s, typeName(globalObject, exponent), "', '"_s, typeName(globalObject, modulus), '\''));
+}
+
+static JSValue powerOfInts(JSGlobalObject* globalObject, JSValue base, JSValue exponent, JSValue modulus)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Number e = classify(exponent);
     Number m = classify(modulus);
-    if (!b.isInt() || !e.isInt() || !m.isInt())
-        return raiseTypeError(globalObject, scope, "pow() 3rd argument not allowed unless all arguments are integers"_s);
     if (m.kind == Number::Kind::Small && !m.small)
         return raiseValueError(globalObject, scope, "pow() 3rd argument cannot be 0"_s);
     JSValue remaining = exponent.isBoolean() ? jsNumber(exponent.asBoolean()) : exponent;
@@ -624,6 +766,8 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isEquality = op == ComparisonOperator::Eq || op == ComparisonOperator::NotEq;
+    left = stringIfHasOne(left);
+    right = stringIfHasOne(right);
 
     if (Number a = classify(left)) {
         Number b = classify(right);
@@ -855,6 +999,7 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
         JSCell* cell = container.asCell();
         switch (cell->type()) {
         case StringType: {
+            value = stringIfHasOne(value);
             if (!value.isString()) {
                 raiseTypeError(globalObject, scope, makeString("'in <string>' requires string as left operand, not "_s, typeName(globalObject, value)));
                 return false;
@@ -868,6 +1013,8 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
         case PyDictType:
             RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(cell)->contains(globalObject, value));
         case PySetType: {
+            value = keyToLookForInSet(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, false);
             int entry = uncheckedDowncast<PySet>(cell)->find(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
             return entry >= 0;
@@ -1149,6 +1296,8 @@ std::optional<int64_t> toIndex(JSGlobalObject* globalObject, JSValue value, bool
         uint64_t magnitude = number.big->digit(0);
         if (magnitude <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
             return number.big->sign() ? -static_cast<int64_t>(magnitude) : static_cast<int64_t>(magnitude);
+        if (number.big->sign() && magnitude == static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1)
+            return std::numeric_limits<int64_t>::min();
     }
     if (clamp)
         return number.big->sign() ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
@@ -1345,6 +1494,9 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         RELEASE_AND_RETURN(scope, rangeGetItem(globalObject, uncheckedDowncast<PyRange>(cell), key));
     }
     default:
+        // An instance of a class derived from str, which has the string in it.
+        if (JSString* string = stringIn(base))
+            RELEASE_AND_RETURN(scope, stringGetItem(globalObject, string, key));
         return { };
     }
 }
@@ -1535,6 +1687,9 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
     default:
         if (isListCell(cell))
             return PyIterator::create(globalObject, Kind::List, value);
+        // An instance of a class derived from str, which has the string in it.
+        if (JSString* string = stringIn(value))
+            return builtinGetIterator(globalObject, string);
         return { };
     }
 }
