@@ -331,6 +331,8 @@ const KnownFunction* Graph::knownCallee(const Node* node) const
         return m_hints->find(name, bytecode.m_offset);
     if (type == Dynamic)
         return nullptr;
+    if (auto variable = const_cast<Graph*>(this)->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == StaticVariable::Import)
+        return variable.import.function;
     return m_hints->find(name, std::nullopt);
 }
 
@@ -981,7 +983,12 @@ private:
                         if (auto* known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), bytecode.m_offset))
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     } else if (type != Dynamic) {
-                        if (auto* known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), std::nullopt))
+                        const KnownFunction* known;
+                        if (auto variable = m_graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); variable.kind == Graph::StaticVariable::Import)
+                            known = variable.import.function;
+                        else
+                            known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), std::nullopt);
+                        if (known)
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }

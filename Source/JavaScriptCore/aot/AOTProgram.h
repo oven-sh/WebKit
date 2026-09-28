@@ -79,6 +79,7 @@ struct StaticImport {
     unsigned slot { 0 }; // JSModuleEnvironment::importSlot(), of the environment of the module that imports.
     unsigned scopeOffsetOfSlot { 0 }; // JSModuleEnvironment::importSlotScopeOffset() of that.
     unsigned scopeOffset { 0 }; // Of the variable, in the environment of the module that has it.
+    const KnownFunction* function { nullptr }; // What that module's code puts in the variable, if it is a function (ModuleHints).
 };
 
 // What is known of a module because the whole program is there when it is compiled. Unlike a hint, code rests on it with no check

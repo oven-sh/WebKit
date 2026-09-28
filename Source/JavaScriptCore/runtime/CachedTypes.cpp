@@ -5782,7 +5782,7 @@ struct BytecodeLinkEncoder::Impl {
 #if ENABLE(FTL_JIT)
     // Where each import that the embedder resolved to a variable of another module is: the modules are all here, so what their
     // environments are going to look like is known.
-    Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules()
+    Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules(const Vector<std::unique_ptr<AOT::ModuleHints>>& hints)
     {
         using Graph = PrelinkedModuleGraph;
         Vector<std::unique_ptr<AOT::ModuleLinkage>> result(modules.size());
@@ -5839,7 +5839,8 @@ struct BytecodeLinkEncoder::Impl {
                 SymbolTableEntry::Fast entry = exporter.symbolTable->get(nameInExporter.impl());
                 if (entry.isNull() || !entry.varOffset().isScope())
                     continue;
-                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset() });
+                const AOT::KnownFunction* function = hints[exporter.index] ? hints[exporter.index]->find(nameInExporter.impl(), entry.scopeOffset().offset()) : nullptr;
+                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function });
                 namesOfLinkage.append(WTF::move(localName));
             }
             result[importer.index] = WTF::move(linkage);
@@ -5906,7 +5907,7 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
-        auto linkages = linkModules();
+        auto linkages = linkModules(hints);
         AOT::ImageBuilder builder;
         std::atomic<size_t> next { 0 };
         auto work = [&] {

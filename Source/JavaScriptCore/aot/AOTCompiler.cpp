@@ -45,6 +45,7 @@ struct Statistics {
     uint64_t scopeReads[5] { }; // op_get_from_scope by name, by Graph::StaticVariable::Kind.
     uint64_t scopeReadsInGlobalScopes { 0 };
     uint64_t slots { 0 };
+    UncheckedKeyHashMap<String, uint64_t> provability; // TEMPORARY-PROVABILITY-STATS
 };
 
 Statistics& statistics()
@@ -123,6 +124,265 @@ static void estimateFrequencies(B3::Procedure& proc)
         constexpr unsigned depthThatCounts = 6;
         double frequency = pow(10.0, std::min(loops.loopDepth(block), depthThatCounts));
         block->setFrequency(likely.contains(block) ? frequency : frequency * Lowering::coldFrequency);
+    }
+}
+
+// TEMPORARY-PROVABILITY-STATS: how much there is to know about the program without running it.
+static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>& counters)
+{
+    UnlinkedCodeBlock* codeBlock = graph.codeBlock();
+    auto count = [&](const String& what) { counters.add(what, 0).iterator->value++; };
+    auto strip = [&](Node* node) {
+        for (;;) {
+            if (node->kind == NodeKind::Narrow)
+                node = node->uses[0].node;
+            else if (node->isBytecode(op_check_type))
+                node = node->use(node->as<OpCheckType>().m_value);
+            else if (node->isBytecode(op_to_this))
+                node = node->use(node->as<OpToThis>().m_srcDst);
+            else if (node->isBytecode(op_check_tdz))
+                node = node->use(node->as<OpCheckTdz>().m_targetVirtualRegister);
+            else
+                return node;
+        }
+    };
+    auto origin = [&](Node* node) -> String {
+        node = strip(node);
+        switch (node->kind) {
+        case NodeKind::Constant:
+        case NodeKind::ConstantCell:
+            return "a constant"_s;
+        case NodeKind::Argument:
+            if (node->reg == virtualRegisterForArgumentIncludingThis(0))
+                return "this"_s;
+            if (node->reg == VirtualRegister(CallFrameSlot::callee))
+                return "the callee"_s;
+            return "a parameter"_s;
+        case NodeKind::Phi:
+            return "a phi"_s;
+        case NodeKind::Proj:
+            return "a proj"_s;
+        case NodeKind::GetStack:
+            return "a variable in memory"_s;
+        case NodeKind::Bytecode:
+            break;
+        default:
+            return "other"_s;
+        }
+        switch (node->opcode) {
+        case op_get_by_id:
+            return "a property"_s;
+        case op_get_by_val:
+            return "an element"_s;
+        case op_get_from_scope: {
+            auto bytecode = node->as<OpGetFromScope>();
+            ResolveType type = bytecode.m_getPutInfo.resolveType();
+            if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
+                return "a closure variable"_s;
+            auto variable = graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+            if (variable.isInGlobalScopes)
+                return "a global"_s;
+            switch (variable.kind) {
+            case Graph::StaticVariable::Closure: return "a closure variable"_s;
+            case Graph::StaticVariable::Import: return "a linked import"_s;
+            case Graph::StaticVariable::ModuleImport: return "another import"_s;
+            default: return "an unresolved variable"_s;
+            }
+        }
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call:
+        case op_call_varargs:
+            return "the result of a call"_s;
+        case op_construct:
+            return "the result of new"_s;
+        case op_new_object:
+        case op_create_this:
+            return "an object made here"_s;
+        case op_new_array:
+        case op_new_array_buffer:
+        case op_new_array_with_size:
+        case op_new_array_with_spread:
+            return "an array made here"_s;
+        case op_new_func:
+        case op_new_func_exp:
+        case op_new_async_func:
+        case op_new_async_func_exp:
+        case op_new_generator_func:
+        case op_new_generator_func_exp:
+            return "a function made here"_s;
+        default:
+            return makeString("op "_s, opcodeNames[node->opcode]);
+        }
+    };
+    auto typeName = [&](Type type) -> ASCIILiteral {
+        if (!type) return "nothing"_s;
+        if (isSubtype(type, TInt32)) return "int32"_s;
+        if (isSubtype(type, TNumber)) return "number"_s;
+        if (isSubtype(type, TString)) return "string"_s;
+        if (isSubtype(type, TBoolean)) return "boolean"_s;
+        if (isSubtype(type, TFunction)) return "function"_s;
+        if (isSubtype(type, TArray)) return "array"_s;
+        if (isSubtype(type, TTypedArray)) return "typed array"_s;
+        if (isSubtype(type, TAnyObject)) return "some object"_s;
+        if (isSubtype(type, TPrimitive)) return "some primitive"_s;
+        return "anything"_s;
+    };
+
+    // Who uses what.
+    UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, VirtualRegister>, 4>> users;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->isGeneric)
+            continue;
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                users.add(strip(use.node), Vector<std::pair<Node*, VirtualRegister>, 4>()).iterator->value.append({ node, use.reg });
+        }
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                users.add(strip(use.node), Vector<std::pair<Node*, VirtualRegister>, 4>()).iterator->value.append({ phi, use.reg });
+        }
+    }
+    auto calleeRegisterOf = [&](Node* node) -> std::optional<VirtualRegister> {
+        switch (node->kind == NodeKind::Bytecode ? node->opcode : op_nop) {
+        case op_call: return node->as<OpCall>().m_callee;
+        case op_call_ignore_result: return node->as<OpCallIgnoreResult>().m_callee;
+        case op_tail_call: return node->as<OpTailCall>().m_callee;
+        case op_construct: return node->as<OpConstruct>().m_callee;
+        default: return std::nullopt;
+        }
+    };
+    // Where a value that is made here goes.
+    auto fate = [&](Node* made) -> String {
+        bool isArgument = false, isStored = false, isReturned = false, isMerged = false, isOther = false, isCaptured = false;
+        String argumentOf;
+        auto it = users.find(made);
+        if (it == users.end())
+            return "is not used"_s;
+        for (auto [user, reg] : it->value) {
+            if (user->kind == NodeKind::Guard || user->kind == NodeKind::Narrow)
+                continue;
+            if (user->kind == NodeKind::Phi) { isMerged = true; continue; }
+            if (user->kind == NodeKind::SetStack) { isCaptured = true; continue; }
+            if (user->kind != NodeKind::Bytecode) { isOther = true; continue; }
+            if (auto calleeRegister = calleeRegisterOf(user)) {
+                if (reg == *calleeRegister)
+                    continue; // Called.
+                isArgument = true;
+                Node* callee = strip(user->use(*calleeRegister));
+                if (graph.knownCallee(user))
+                    argumentOf = "a known function"_s;
+                else if (callee->isBytecode(op_get_by_id))
+                    argumentOf = makeString("method "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl()));
+                else
+                    argumentOf = origin(callee);
+                continue;
+            }
+            switch (user->opcode) {
+            case op_get_by_id:
+            case op_get_by_val:
+            case op_get_length:
+            case op_check_type:
+            case op_check_tdz:
+            case op_to_this:
+            case op_jtrue: case op_jfalse: case op_typeof: case op_is_object: case op_instanceof: case op_in_by_id:
+                break; // Looked at.
+            case op_put_by_id:
+                if (reg == user->as<OpPutById>().m_value) isStored = true;
+                break;
+            case op_put_by_val:
+                if (reg == user->as<OpPutByVal>().m_value) isStored = true;
+                break;
+            case op_put_to_scope:
+                isCaptured = true;
+                break;
+            case op_ret:
+                isReturned = true;
+                break;
+            case op_new_object: case op_create_this: case op_new_array:
+                isStored = true; // Part of a literal.
+                break;
+            default:
+                isOther = true;
+            }
+        }
+        if (isOther) return "goes somewhere else"_s;
+        if (isCaptured) return "goes in a variable of a scope"_s;
+        if (isStored) return "is stored in an object"_s;
+        if (isReturned) return "is returned"_s;
+        if (isMerged) return "is merged"_s;
+        if (isArgument) return makeString("is only passed to "_s, argumentOf);
+        return "stays here"_s;
+    };
+
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->isGeneric)
+            continue;
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            if (auto calleeRegister = calleeRegisterOf(node)) {
+                Node* callee = strip(node->use(*calleeRegister));
+                if (graph.knownCallee(node))
+                    count("CALL known callee"_s);
+                else if (callee->isBytecode(op_get_by_id)) {
+                    count("CALL method"_s);
+                    count(makeString("METHODBASE "_s, origin(callee->use(callee->as<OpGetById>().m_base)), ", "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
+                    count(makeString("METHODNAME "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl())));
+                } else {
+                    count(makeString("CALL "_s, origin(callee)));
+                    if (callee->kind == NodeKind::ConstantCell) {
+                        bool isLinkTime = codeBlock->constantSourceCodeRepresentation(callee->reg) == SourceCodeRepresentation::LinkTimeConstant;
+                        JSValue value = codeBlock->getConstant(callee->reg);
+                        count(makeString("CALLCONST cell "_s, isLinkTime ? makeString("link time constant "_s, value.asInt32AsAnyInt()) : value.isCell() ? String::fromLatin1(value.asCell()->classInfo()->className.characters()) : "?"_s, codeBlock->isBuiltinFunction() ? " in a builtin"_s : ""_s));
+                    } else if (callee->kind == NodeKind::Constant)
+                        count(makeString("CALLCONST value "_s, callee->constant.isUndefined() ? "undefined"_s : callee->constant.isEmpty() ? "empty"_s : "other"_s, " after "_s, node->use(*calleeRegister)->kind == NodeKind::Bytecode ? opcodeNames[node->use(*calleeRegister)->opcode] : "nothing"_s));
+                }
+                continue;
+            }
+            switch (node->opcode) {
+            case op_get_by_id:
+                count(makeString("GET base is "_s, origin(node->use(node->as<OpGetById>().m_base)), ", "_s, typeName(node->use(node->as<OpGetById>().m_base)->type)));
+                break;
+            case op_put_by_id:
+                count(makeString("PUT base is "_s, origin(node->use(node->as<OpPutById>().m_base))));
+                break;
+            case op_add: case op_sub: case op_mul: case op_div: case op_mod:
+            case op_less: case op_lesseq: case op_greater: case op_greatereq:
+            case op_jless: case op_jlesseq: case op_jgreater: case op_jgreatereq: case op_jnless: case op_jnlesseq: case op_jngreater: case op_jngreatereq:
+            case op_bitand: case op_bitor: case op_bitxor: case op_lshift: case op_rshift: case op_urshift:
+            case op_inc: case op_dec: case op_negate: {
+                bool numbers = true, strings = true;
+                for (auto& use : node->uses) {
+                    numbers &= isSubtype(use.node->type, TNumber);
+                    strings &= isSubtype(use.node->type, TString);
+                }
+                count(makeString("ARITH "_s, node->opcode == op_add ? "add "_s : "other "_s, numbers ? "numbers"_s : strings ? "strings"_s : "not proven"_s));
+                break;
+            }
+            case op_eq: case op_neq: case op_stricteq: case op_nstricteq: case op_jeq: case op_jneq: case op_jstricteq: case op_jnstricteq: {
+                bool cheap = false;
+                for (auto& use : node->uses)
+                    cheap |= isSubtype(use.node->type, TInt32 | TBoolean | TOther | TAnyObject | TSymbol);
+                count(makeString("EQUALITY "_s, cheap ? "one side settles it"_s : "not proven"_s));
+                break;
+            }
+            case op_new_func_exp: case op_new_async_func_exp: case op_new_generator_func_exp:
+                count(makeString("FUNCTION "_s, codeBlock->codeType() == ModuleCode ? "(module) "_s : ""_s, fate(node)));
+                break;
+            case op_new_object:
+                count(makeString("OBJECT "_s, codeBlock->codeType() == ModuleCode ? "(module) "_s : ""_s, fate(node)));
+                break;
+            case op_new_array: case op_new_array_buffer: case op_new_array_with_spread:
+                count(makeString("ARRAY "_s, codeBlock->codeType() == ModuleCode ? "(module) "_s : ""_s, fate(node)));
+                break;
+            case op_create_lexical_environment:
+                count("SCOPE made"_s);
+                break;
+            default:
+                break;
+            }
+        }
     }
 }
 
@@ -365,6 +625,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         }
         stats.slots += info.numSlots;
         stats.byOrigin[0].first++;
+        countWhatIsKnown(graph, stats.provability);
     }
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::aotDumpDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
@@ -479,6 +740,16 @@ void reportStatistics()
     std::ranges::sort(sorted, [](auto& a, auto& b) { return a.first > b.first; });
     for (auto& entry : sorted)
         dataLogLn("    ", entry.first, "  ", entry.second);
+    {
+        Vector<std::pair<uint64_t, String>> known;
+        for (auto& entry : stats.provability)
+            known.append({ entry.value, entry.key });
+        std::ranges::sort(known, [](auto& a, auto& b) { return a.first > b.first; });
+        for (auto& entry : known) {
+            if (entry.first >= 200)
+                dataLogLn("  KNOWN ", entry.first, " ", entry.second);
+        }
+    }
     for (unsigned tag = 0; tag < stats.byOrigin.size(); ++tag) {
         auto [count, bytes] = stats.byOrigin[tag];
         if (!count && !bytes)
