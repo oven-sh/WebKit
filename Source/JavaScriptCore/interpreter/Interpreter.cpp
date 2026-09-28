@@ -864,12 +864,18 @@ public:
         if (m_codeBlock) {
             if (!m_isTermination) {
                 // An exception in Python remembers each frame that it comes to. It has been in the one that throws it again.
-                if (m_codeBlock->source().provider()->isPython() && !m_isInFrameThatRethrew) [[unlikely]]
+                bool isPython = m_codeBlock->source().provider()->isPython();
+                if (isPython && !m_isInFrameThatRethrew) [[unlikely]]
                     Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
+                if (isPython && m_vm.isPythonWatched()) [[unlikely]]
+                    tellPython(visitor, m_isInFrameThatRethrew ? Python::ExceptionProgress::WasRaisedAgain : Python::ExceptionProgress::CameToFrame);
                 m_isInFrameThatRethrew = false;
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
-                if (m_handler.m_valid)
+                if (m_handler.m_valid) {
+                    if (isPython && m_vm.isPythonWatched()) [[unlikely]]
+                        tellPython(visitor, Python::ExceptionProgress::IsHandled);
                     return IterationStatus::Done;
+                }
             }
         }
 
@@ -909,8 +915,11 @@ public:
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
         }
 
-        if (m_codeBlock && m_codeBlock->source().provider()->isPython()) [[unlikely]]
-            Python::leaveFrame(m_vm, m_callFrame, visitor->bytecodeIndex());
+        if (m_codeBlock && m_codeBlock->source().provider()->isPython()) [[unlikely]] {
+            if (m_vm.isPythonWatched() && !m_isTermination)
+                tellPython(visitor, Python::ExceptionProgress::LeavesFrame);
+            Python::unwindFrame(m_vm, m_callFrame, visitor->bytecodeIndex());
+        }
 
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
@@ -925,16 +934,28 @@ public:
     }
 
 private:
+    // What is told may raise something, and then that is what is being thrown.
+    void tellPython(StackVisitor& visitor, Python::ExceptionProgress progress) const
+    {
+        Exception* replacement = Python::tellOfException(m_vm, m_callFrame, visitor->bytecodeIndex(), m_thrownValue, progress);
+        if (!replacement)
+            return;
+        m_thrownValue = replacement->value();
+#if ENABLE(WEBASSEMBLY)
+        m_exception = replacement;
+#endif
+    }
+
     CallFrame*& m_callFrame;
     bool m_isTermination;
     CodeBlock*& m_codeBlock;
     CatchInfo& m_handler;
     JSRemoteFunction*& m_seenRemoteFunction;
-    JSValue m_thrownValue;
+    mutable JSValue m_thrownValue;
     mutable bool m_isInFrameThatRethrew;
 
 #if ENABLE(WEBASSEMBLY)
-    Exception* m_exception;
+    mutable Exception* m_exception;
     mutable RefPtr<const Wasm::Tag> m_wasmTag;
     bool m_catchableFromWasm { false };
 #endif

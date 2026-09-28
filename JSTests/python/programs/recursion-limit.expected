@@ -1,0 +1,41 @@
+default => (1000, (996, 'maximum recursion depth exceeded'))
+limit 20 => (15, 'maximum recursion depth exceeded')
+limit 50 => (45, 'maximum recursion depth exceeded')
+limit 100 => (95, 'maximum recursion depth exceeded')
+limit 500 => (495, 'maximum recursion depth exceeded')
+limit 3000 => (2995, 'maximum recursion depth exceeded')
+again, so it is counted down => ((996, 'maximum recursion depth exceeded'), (996, 'maximum recursion depth exceeded'), (996, 'maximum recursion depth exceeded'))
+how deep => (4, 'cannot set the recursion limit to 3 at the recursion depth 3: the limit is too low')
+deeper => (11, 'cannot set the recursion limit to 10 at the recursion depth 10: the limit is too low')
+after an exception => 3
+in a generator => [4, 4, 4]
+after a generator => (3, 3)
+after a generator raises => 3
+after throw() => 3
+after throw() that is caught => (4, 4, 4, 3)
+yield from => ([5, 5, 5], 3)
+coroutines => ((5, 6, 5), 3)
+suspended => (5, 3, 5, 3)
+asynchronous generators => ([6, 6], 3)
+generator expressions => ([4, 4], 3)
+comprehensions => ([3, 3], {3}, 3)
+special methods => (4, 4, 4, 4, [4], 4, 4, 3)
+by way of built-in functions => ([4], 3, 3)
+class bodies => (2, 3)
+exec and eval => (4, (None, 5), 3)
+through finally => (3, 3)
+caught at the bottom => (True, 3)
+generators all the way down => ('maximum recursion depth exceeded', 3)
+by way of repr() => ('RecursionError', 3)
+by way of __getattr__ => ('RecursionError', 3)
+set 0 !! ValueError recursion limit must be greater or equal than 1
+set -1 !! ValueError recursion limit must be greater or equal than 1
+set 1 !! RecursionError cannot set the recursion limit to 1 at the recursion depth 3: the limit is too low
+set 'a' !! TypeError 'str' object cannot be interpreted as an integer
+set 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+set None !! TypeError 'NoneType' object cannot be interpreted as an integer
+set 1099511627776 !! OverflowError Python int too large to convert to C int
+set True !! RecursionError cannot set the recursion limit to 1 at the recursion depth 3: the limit is too low
+set nothing !! TypeError sys.setrecursionlimit() takes exactly one argument (0 given)
+high => True
+RecursionError => ('RuntimeError', True)

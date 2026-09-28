@@ -1452,6 +1452,27 @@ op :py_ret,
         frame: VirtualRegister,
     }
 
+# What a piece of Python code begins with, each time that it is entered: a generator does this each time it is resumed. It counts how deep in Python's calls the thread
+# is, VM::m_pythonDepth, which py_ret, py_leave and the unwinder count down again. If that is beyond VM::m_pythonLimitUnlessWatched it takes the slow path, which raises
+# RecursionError. That is 0 while anything is being told of what is run (sys.monitoring, sys.settrace(), sys.setprofile()), so the one comparison finds that too.
+op :py_enter,
+    args: {
+        isResume: bool,
+    }
+
+# The beginning of a line, or of what there is of one before some other line is gone to. It does nothing unless VM::m_pythonLimitUnlessWatched is 0.
+# `kind` is a Python::LineKind.
+op :py_line,
+    args: {
+        kind: unsigned,
+    }
+
+# What comes before a generator is left because it yields.
+op :py_leave,
+    args: {
+        value: VirtualRegister,
+    }
+
 op :mov,
     args: {
         dst: VirtualRegister,

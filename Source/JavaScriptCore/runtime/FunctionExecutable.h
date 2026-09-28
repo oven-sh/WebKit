@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSFunction.h"
+#include "PythonMonitoring.h"
 #include "ScriptExecutable.h"
 #include "SourceCode.h"
 #include <wtf/Box.h>
@@ -293,6 +294,15 @@ public:
     // A generator is two functions, one that makes it and one that resumes it, and to Python they are one piece of code. For the second,
     // this is the first.
     FunctionExecutable* pythonGeneratorFunction() const { return m_rareData ? m_rareData->m_pythonGeneratorFunction.get() : nullptr; }
+    // What sys.monitoring has been asked to tell of this code in particular, if anything.
+    Python::CodeMonitor* pythonMonitor() const { return m_rareData ? m_rareData->m_pythonMonitor.get() : nullptr; }
+    Python::CodeMonitor& ensurePythonMonitor()
+    {
+        auto& monitor = ensureRareData().m_pythonMonitor;
+        if (!monitor)
+            monitor = makeUnique<Python::CodeMonitor>();
+        return *monitor;
+    }
 
     JSString* asStringConcurrently() const
     {
@@ -331,6 +341,7 @@ public:
         WriteBarrier<JSObject> m_pythonCodeObject;
         WriteBarrier<FunctionExecutable> m_pythonGeneratorFunction;
         FixedVector<WriteBarrier<FunctionExecutable>> m_pythonFunctionExpressions;
+        std::unique_ptr<Python::CodeMonitor> m_pythonMonitor;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
     };

@@ -328,6 +328,8 @@ std::optional<BytecodeIndex> PyFrame::bytecodeIndex(VM& vm)
 
 unsigned PyFrame::line(VM& vm)
 {
+    if (m_lineOverride >= 0)
+        return m_lineOverride;
     auto index = bytecodeIndex(vm);
     if (!index)
         return functionInfo().firstLine + functionInfo().lineDelta;

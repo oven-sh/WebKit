@@ -2678,12 +2678,67 @@ llintOpWithMetadata(op_py_load_global, OpPyLoadGlobal, macro (size, get, dispatc
 end)
 
 
+llintOp(op_py_enter, OpPyEnter, macro (size, get, dispatch)
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_vm[t0], t0
+    loadi VM::m_pythonDepth[t0], t1
+    addi 1, t1
+    storei t1, VM::m_pythonDepth[t0]
+    loadi VM::m_pythonLimitUnlessWatched[t0], t2
+    bia t1, t2, .opPyEnterSlow
+    dispatch()
+
+.opPyEnterSlow:
+    callSlowPath(_slow_path_py_enter)
+    dispatch()
+end)
+
+
+llintOp(op_py_line, OpPyLine, macro (size, get, dispatch)
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_vm[t0], t0
+    loadi VM::m_pythonLimitUnlessWatched[t0], t1
+    btiz t1, .opPyLineSlow
+    dispatch()
+
+.opPyLineSlow:
+    callSlowPath(_slow_path_py_line)
+    dispatch()
+end)
+
+
+llintOp(op_py_leave, OpPyLeave, macro (size, get, dispatch)
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_vm[t0], t0
+    loadi VM::m_pythonLimitUnlessWatched[t0], t1
+    btinz t1, .opPyLeaveNotWatched
+    callSlowPath(_slow_path_py_leave)
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_vm[t0], t0
+.opPyLeaveNotWatched:
+    loadi VM::m_pythonDepth[t0], t1
+    subi 1, t1
+    storei t1, VM::m_pythonDepth[t0]
+    dispatch()
+end)
+
+
 llintOp(op_py_ret, OpPyRet, macro (size, get, dispatch)
+    loadp CodeBlock[cfr], t3
+    loadp CodeBlock::m_vm[t3], t3
+    loadi VM::m_pythonLimitUnlessWatched[t3], t0
+    btiz t0, .opPyRetSlow
     get(m_frame, t1)
     loadq [cfr, t1, 8], t0
-    bqeq t0, ValueUndefined, .opPyRetNoFrameObject
+    bqeq t0, ValueUndefined, .opPyRetLeave
+.opPyRetSlow:
     callSlowPath(_slow_path_py_leave_frame)
-.opPyRetNoFrameObject:
+    loadp CodeBlock[cfr], t3
+    loadp CodeBlock::m_vm[t3], t3
+.opPyRetLeave:
+    loadi VM::m_pythonDepth[t3], t0
+    subi 1, t0
+    storei t0, VM::m_pythonDepth[t3]
     checkSwitchToJITForEpilogue()
     get(m_value, t2)
     loadConstantOrVariable(size, t2, r0)

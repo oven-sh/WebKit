@@ -27,6 +27,7 @@
 
 #include "JSObject.h"
 #include "PyType.h"
+#include "PythonMonitoring.h"
 #include "WeakGCMap.h"
 
 namespace JSC {
@@ -312,12 +313,12 @@ public:
     void setAsyncGeneratorFirstIterationHook(VM& vm, JSValue hook) { m_asyncGeneratorFirstIterationHook.set(vm, this, hook); }
     void setAsyncGeneratorFinalizerHook(VM& vm, JSValue hook) { m_asyncGeneratorFinalizerHook.set(vm, this, hook); }
     int maximumDigitsOfIntAsString { 4300 }; // 0 for as many as there are.
-    int recursionLimit { 1000 };
     int coroutineOriginTrackingDepth { 0 };
     double switchInterval { 0.005 };
 
     // What is in the middle of being written out. See Python::ReprGuard. Each is on the stack besides, and so is not visited.
     Vector<JSCell*, 16>& objectsBeingWrittenOut() { return m_objectsBeingWrittenOut; }
+    Python::MonitoringState& monitoring() { return m_monitoring; }
 
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
@@ -359,6 +360,7 @@ private:
     WriteBarrier<PyType> m_frameLocalsProxyType;
     WriteBarrier<JSObject> m_builtinsModule;
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
+    Python::MonitoringState m_monitoring;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;
     WriteBarrier<JSArray> m_auditHooks;

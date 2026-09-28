@@ -109,6 +109,11 @@ public:
 
     JSValue trace() const { return m_trace.get(); }
     void setTrace(VM& vm, JSValue trace) { m_trace.set(vm, this, trace); }
+    // The line that it was last found to be on, by op_py_line, or -1.
+    int lastLine() const { return m_lastLine; }
+    void setLastLine(int line) { m_lastLine = line; }
+    // What f_lineno is to be for the time being, or -1 for it to be worked out.
+    void setLineOverride(int line) { m_lineOverride = line; }
     bool tracesLines() const { return m_tracesLines; }
     void setTracesLines(bool value) { m_tracesLines = value; }
     bool tracesOpcodes() const { return m_tracesOpcodes; }
@@ -143,6 +148,8 @@ private:
     CallFrame* m_callFrame { nullptr }; // While it is on the stack, unless it is a generator's, which is looked for when it is wanted.
     BytecodeIndex m_bytecodeIndex; // Once it is over.
     unsigned m_variableCount;
+    int m_lastLine { -1 };
+    int m_lineOverride { -1 };
     bool m_isOver { false };
     bool m_tracesLines { true };
     bool m_tracesOpcodes { false };

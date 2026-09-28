@@ -99,6 +99,8 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_create_cloned_arguments:
     case op_create_rest:
     case op_check_traps:
+    case op_py_enter:
+    case op_py_line:
     case op_get_argument:
     case op_nop:
     case op_unreachable:
@@ -178,6 +180,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     USES(OpPyDelAttr, base)
     USES(OpPyLoadMethod, base)
     USES(OpPyRet, value, frame)
+    USES(OpPyLeave, value)
     USES(OpPyLoadGlobal, globals, builtins)
     USES(OpPyGetItem, base, property)
     USES(OpPySetItem, base, property, value)
@@ -441,6 +444,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_debug:
     case op_ret:
     case op_py_ret:
+    case op_py_leave:
     case op_jmp:
     case op_jtrue:
     case op_jfalse:
@@ -491,6 +495,8 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_call_ignore_result:
     case op_set_function_name:
     case op_check_traps:
+    case op_py_enter:
+    case op_py_line:
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:
     case op_yield:

@@ -484,7 +484,7 @@ std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
 PYTHON_NATIVE(sysGetRecursionLimit)
 {
     UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNumber(globalObject->pyRealm()->recursionLimit));
+    return JSValue::encode(jsNumber(globalObject->vm().pythonRecursionLimit()));
 }
 
 PYTHON_NATIVE(sysSetRecursionLimit)
@@ -494,7 +494,10 @@ PYTHON_NATIVE(sysSetRecursionLimit)
     RETURN_IF_EXCEPTION(scope, { });
     if (*limit < 1)
         return JSValue::encode(raiseValueError(globalObject, scope, "recursion limit must be greater or equal than 1"_s));
-    realm->recursionLimit = *limit;
+    // It is not to be made so low that where this is called from is already beyond it.
+    if (vm.pythonDepth() >= static_cast<uint32_t>(*limit))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RecursionError, makeString("cannot set the recursion limit to "_s, *limit, " at the recursion depth "_s, vm.pythonDepth(), ": the limit is too low"_s)));
+    vm.setPythonRecursionLimit(*limit);
     RETURN_NONE();
 }
 
@@ -904,6 +907,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     for (ASCIILiteral name : { "is_available"_s, "is_enabled"_s, "is_active"_s })
         addFunction(globalObject, jit, name, returnFalse);
     set("_jit"_s, jit);
+    addMonitoring(globalObject, module);
     return module;
 }
 

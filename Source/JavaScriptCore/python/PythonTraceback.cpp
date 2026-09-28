@@ -77,6 +77,14 @@ void leaveFrame(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
     frame->leave(vm, callFrame, bytecodeIndex);
 }
 
+void unwindFrame(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
+{
+    leaveFrame(vm, callFrame, bytecodeIndex);
+    // If it got as far as being counted.
+    if (bytecodeIndex.offset() >= pythonInfoOfFrame(callFrame)->details->enterOffset)
+        vm.leavePythonFrame();
+}
+
 static int lineOf(JSValue traceback)
 {
     PyNativeObject* entry = asNative(traceback);
@@ -85,6 +93,17 @@ static int lineOf(JSValue traceback)
         return line.asInt32();
     PyFrame* frame = asFrame(entry->field(TracebackField::Frame));
     return frame->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line + frame->functionInfo().lineDelta;
+}
+
+int lineOfTracebackFor(JSGlobalObject* globalObject, JSValue exception, PyFrame* frame)
+{
+    VM& vm = globalObject->vm();
+    JSValue traceback = getAttributeIfPresent(globalObject, exception, vm.pythonNames().dunder_traceback);
+    for (JSValue cursor = traceback; cursor && !isNone(cursor); cursor = asNative(cursor)->field(TracebackField::Next)) {
+        if (asNative(cursor)->field(TracebackField::Frame) == JSValue(frame))
+            return lineOf(cursor);
+    }
+    return -1;
 }
 
 template<unsigned field>

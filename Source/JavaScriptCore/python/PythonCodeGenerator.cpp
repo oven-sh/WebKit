@@ -122,6 +122,14 @@ public:
         }
     }
 
+    // What was written begins here. Its arguments have been given to its parameters and its variables are where they are looked for.
+    void emitEnter()
+    {
+        m_details->enterOffset = g.instructions().size();
+        OpPyEnter::emit(&g, false);
+        m_isArtificial = false;
+    }
+
     void generateKind(void* root)
     {
         switch (m_info.kind) {
@@ -134,7 +142,9 @@ public:
             auto& node = *static_cast<FunctionDef*>(root);
             collectDeletedNames(node.body);
             generateFunction([&] {
-                emit(node.body);
+                emit(m_block.hasDocstring ? node.body.subspan(1) : node.body);
+                if (!m_numberOfLines)
+                    mark(node);
             });
             break;
         }
@@ -184,15 +194,65 @@ private:
         // What is never come to is nowhere.
         if (m_isNeverComeTo)
             return;
+        g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
+        // What was not written is on no line. Where it is said to be from is for if it goes wrong.
+        if (m_isArtificial)
+            return;
+        bool isOnAnotherLine = node.line != m_lastMarkedLine;
+        m_lastMarkedLine = node.line;
+        // What follows is from the same place, having nothing to say otherwise.
+        if (isOnAnotherLine) {
+            OpPyLine::emit(&g, static_cast<unsigned>(LineKind::Line));
+            ++m_numberOfLines;
+        }
+    }
+
+    // What comes next can be come to from some other line, whatever line was last written for: it is jumped to.
+    void forgetLine() { m_lastMarkedLine = 0; }
+
+    void emitLabel(Label& label)
+    {
+        g.emitLabel(label);
+        forgetLine();
+    }
+
+    // Going round a loop again, to where the node is.
+    void emitLineAfterBackwardJump(const Node& node)
+    {
+        if (m_isNeverComeTo)
+            return;
         m_lastMarkedLine = node.line;
         g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
+        OpPyLine::emit(&g, static_cast<unsigned>(LineKind::AfterBackwardJump));
+    }
+
+    // update_start_location_to_match_attr(): if what has the attribute is on some earlier line, getting the attribute is on the line that its name is on.
+    static Node locationOf(const Attribute& node)
+    {
+        Node location = node;
+        if (node.line != node.endLine) {
+            unsigned length = std::min<unsigned>(node.attribute->length(), node.endColumn);
+            location.line = node.endLine;
+            location.column = node.endColumn - length;
+            location.start = node.end - length;
+        }
+        return location;
     }
 
     // For what cannot go wrong, and need only say where it is if that is a line of its own: co_lines().
     void markIfOnAnotherLine(const Node& node)
     {
-        if (node.line != m_lastMarkedLine)
+        if (node.line != m_lastMarkedLine && !m_isInConstantDisplay && !m_isArtificial)
             mark(node);
+    }
+
+    // Whether CPython makes one constant of it, which is then all on the line that it begins on: a tuple of constants, or a list or a set of three or more.
+    static bool isConstant(Expression* expression)
+    {
+        if (expression->is<Constant>())
+            return true;
+        auto* tuple = expression->tryAs<Tuple>();
+        return tuple && std::ranges::all_of(tuple->elements, isConstant);
     }
 
     // What a condition comes to, if that is plain from the source.
@@ -240,7 +300,7 @@ private:
             SetForScope isNeverComeTo(m_isNeverComeTo, true);
             emit(statements);
         }
-        g.emitLabel(after.get());
+        emitLabel(after.get());
     }
 
     // ---- Registers
@@ -282,6 +342,7 @@ private:
     // A call to a function of PythonRuntimeFunctions.h.
     RegisterID* emitRuntimeCall(RegisterID* dst, ASCIILiteral name, std::initializer_list<RegisterID*> arguments, const Node& node)
     {
+        markIfOnAnotherLine(node);
         Reg function = g.newTemporary();
         g.emitGetById(function.get(), runtime(), Identifier::fromString(m_vm, name));
         CallArguments call(g, nullptr, arguments.size());
@@ -296,6 +357,7 @@ private:
     // The same, of registers that are one after another as the elements of a display are.
     RegisterID* emitRuntimeCall(RegisterID* dst, ASCIILiteral name, const Vector<Reg, 8>& arguments, const Node& node)
     {
+        markIfOnAnotherLine(node);
         Reg function = g.newTemporary();
         g.emitGetById(function.get(), runtime(), Identifier::fromString(m_vm, name));
         CallArguments call(g, nullptr, arguments.size());
@@ -370,7 +432,7 @@ private:
             for (size_t i = 0; i + 1 < boolean->values.size(); ++i)
                 emitBranch(boolean->values[i], skip.get(), shortCircuitsOn);
             emitBranch(boolean->values.back(), target, jumpIfTrue);
-            g.emitLabel(skip.get());
+            emitLabel(skip.get());
             return;
         }
         if (auto* comparison = condition->tryAs<Compare>(); comparison && comparison->ops.size() == 1 && isNoneConstant(comparison->comparators[0])
@@ -507,7 +569,7 @@ private:
             Ref<Label> hasValue = g.newLabel();
             OpJneqPtr::emit(&g, result.get(), marker(), hasValue->bind(&g));
             g.moveEmptyValue(result.get());
-            g.emitLabel(hasValue.get());
+            emitLabel(hasValue.get());
         }
         emitCheckBound(result.get(), name, node);
         return result.get();
@@ -544,6 +606,7 @@ private:
         Location location = locateAndNote(name);
         switch (location.where) {
         case Where::Register:
+            markIfOnAnotherLine(node);
             if (!location.isAlwaysBound)
                 emitCheckBound(location.local, name, node);
             // What it is now is what is wanted, and it could be changed before that is used: by an assignment expression further on, or by anything that is
@@ -567,7 +630,7 @@ private:
             Ref<Label> found = g.newLabel();
             OpJneqPtr::emit(&g, result.get(), marker(), found->bind(&g));
             emitLoadClosure(result.get(), name, node);
-            g.emitLabel(found.get());
+            emitLabel(found.get());
             return finish(dst, result.get());
         }
         }
@@ -576,6 +639,7 @@ private:
 
     void emitStoreName(const Identifier& rawName, RegisterID* value, const Node& node)
     {
+        markIfOnAnotherLine(node);
         const Identifier& name = mangle(rawName);
         Location location = locateAndNote(name);
         switch (location.where) {
@@ -725,6 +789,17 @@ private:
 
     RegisterID* emit(Expression* expression, RegisterID* dst = nullptr)
     {
+        unsigned lineBefore = m_lastMarkedLine;
+        unsigned numberOfLines = m_numberOfLines;
+        RegisterID* result = emitWithoutLine(expression, dst);
+        // What is all on one line leaves off on that line, whichever way through it was taken, if it has been said that it is on it.
+        if (!m_lastMarkedLine && expression->line == expression->endLine && (lineBefore == expression->line || m_numberOfLines != numberOfLines))
+            m_lastMarkedLine = expression->line;
+        return result;
+    }
+
+    RegisterID* emitWithoutLine(Expression* expression, RegisterID* dst)
+    {
         if (!m_vm.isSafeToRecurse()) [[unlikely]] {
             fail("maximum recursion depth exceeded during compilation"_s, *expression);
             return g.emitLoad(dst, jsUndefined());
@@ -769,13 +844,13 @@ private:
                 emitInto(result.get(), node.values[i]);
                 if (i + 1 == node.values.size())
                     break;
-                mark(*node.values[i]);
+                mark(node);
                 if (node.op == BooleanOperator::And)
                     emitJumpIfFalse(result.get(), end.get());
                 else
                     emitJumpIfTrue(result.get(), end.get());
             }
-            g.emitLabel(end.get());
+            emitLabel(end.get());
             return finish(dst, result.get());
         }
         case Expression::Kind::IfExp: {
@@ -786,9 +861,9 @@ private:
             emitBranch(node.test, otherwise.get(), false);
             emitInto(result.get(), node.body);
             g.emitJump(end.get());
-            g.emitLabel(otherwise.get());
+            emitLabel(otherwise.get());
             emitInto(result.get(), node.orElse);
-            g.emitLabel(end.get());
+            emitLabel(end.get());
             return finish(dst, result.get());
         }
         case Expression::Kind::Compare:
@@ -803,7 +878,7 @@ private:
             auto& node = expression->as<Attribute>();
             Reg base = emit(node.value);
             Reg result = destination(dst);
-            mark(node);
+            mark(locationOf(node));
             return emitGetAttribute(result.get(), base.get(), mangle(*node.attribute));
         }
         case Expression::Kind::Subscript: {
@@ -900,7 +975,7 @@ private:
                 emitJumpIfFalse(result.get(), end.get());
             left = right;
         }
-        g.emitLabel(end.get());
+        emitLabel(end.get());
         return finish(dst, result.get());
     }
 
@@ -977,7 +1052,12 @@ private:
             }
         }
         Vector<Reg, 8> registers;
-        emitElements(elements, registers);
+        {
+            bool isOneConstant = (display == Display::Tuple || elements.size() >= 3) && &node != m_tupleThatIsUnpacked && std::ranges::all_of(elements, isConstant);
+            SetForScope isInConstantDisplay(m_isInConstantDisplay, m_isInConstantDisplay || isOneConstant);
+            emitElements(elements, registers);
+        }
+        markIfOnAnotherLine(node);
         switch (display) {
         case Display::List:
             return emitNewList(destination(dst).get(), registers);
@@ -1153,7 +1233,7 @@ private:
         Reg function = g.newTemporary();
         CallArguments call(g, nullptr, count + 1);
         RegisterID* self = call.argumentRegister(0);
-        mark(*attribute);
+        mark(locationOf(*attribute));
         addOnce(m_details->names, mangle(*attribute->attribute));
         OpPyLoadMethod::emit(&g, function.get(), self, base.get(), g.addConstant(mangle(*attribute->attribute)), g.nextValueProfileIndex());
         g.emitLoad(call.thisRegister(), jsUndefined());
@@ -1168,13 +1248,13 @@ private:
         g.emitJumpIfTrue(isEmpty.get(), isNotMethod.get());
         emitRawCall(result.get(), function.get(), call, count + 1, node);
         g.emitJump(done.get());
-        g.emitLabel(isNotMethod.get());
+        emitLabel(isNotMethod.get());
         // If it is a function of JavaScript's, it expects what it was got from as `this`. Python's own make nothing of it.
         g.move(call.thisRegister(), base.get());
         for (unsigned i = 0; i < count; ++i)
             g.move(call.argumentRegister(i), call.argumentRegister(i + 1));
         emitRawCall(result.get(), function.get(), call, count, node);
-        g.emitLabel(done.get());
+        emitLabel(done.get());
         return finish(dst, result.get());
     }
 
@@ -1433,7 +1513,11 @@ private:
         Reg defaults;
         if (!arguments->defaults.empty()) {
             Vector<Reg, 8> values;
-            emitElements(arguments->defaults, values);
+            {
+                SetForScope isInConstantDisplay(m_isInConstantDisplay, m_isInConstantDisplay || std::ranges::all_of(arguments->defaults, isConstant));
+                emitElements(arguments->defaults, values);
+            }
+            markIfOnAnotherLine(node);
             defaults = g.newTemporary();
             emitNewTuple(defaults.get(), values);
         }
@@ -1615,10 +1699,10 @@ private:
                 g.emitBinaryOp<OpGreater>(isGiven.get(), given.get(), constant(jsNumber(i)), OperandTypes());
                 g.emitJumpIfTrue(isGiven.get(), wasGiven.get());
                 emitGetItem(parameterRegister(i), defaults.get(), constant(jsNumber(i)));
-                g.emitLabel(wasGiven.get());
+                emitLabel(wasGiven.get());
             }
         }
-        g.emitLabel(enough.get());
+        emitLabel(enough.get());
 
         for (unsigned i = positionalCount; i < positionalCount + m_info.keywordOnlyCount; ++i)
             emitRuntimeCall(parameterRegister(i), "keywordDefault"_s, { callee.get(), constant(jsNumber(i)) }, node);
@@ -1626,7 +1710,7 @@ private:
             emitRuntimeCall(parameterRegister(m_info.variadicIndex()), "listToTuple"_s, { rest.get() }, node);
         if (m_info.hasKeywordVariadic)
             emitRuntimeCall(parameterRegister(m_info.keywordVariadicIndex()), "newDict"_s, { }, node);
-        g.emitLabel(bound.get());
+        emitLabel(bound.get());
     }
 
     bool usesGlobals()
@@ -1687,6 +1771,7 @@ private:
             for (unsigned i = 0; i < m_info.parameterNames.size(); ++i)
                 emitStoreClosure(m_info.parameterNames[i], parameterRegister(i), node);
 
+            emitEnter();
             auto info = m_info.copy();
             info->isGeneratorBody = true;
             Reg body = g.newTemporary();
@@ -1717,6 +1802,7 @@ private:
             if (m_block.scopeOf(name) == NameScope::Cell)
                 emitStoreClosure(name, parameterRegister(i), node);
         }
+        emitEnter();
         noteDocstring();
         emitBody();
         emitReturnAtEnd();
@@ -1743,6 +1829,7 @@ private:
         if (usesGlobals())
             emitLoadGlobals();
         emitDeclareVariables(true);
+        emitEnter();
 
         // The first time, there is nowhere for a value or an exception to be sent to.
         Ref<Label> start = g.newLabel();
@@ -1750,10 +1837,13 @@ private:
         g.emitJumpIfTrue(g.emitEqualityOp<OpStricteq>(g.newTemporary(), g.generatorResumeModeRegister(), g.emitLoad(nullptr, JSGenerator::ResumeMode::NormalMode)), start.get());
         g.emitJumpIfTrue(g.emitEqualityOp<OpStricteq>(g.newTemporary(), g.generatorResumeModeRegister(), g.emitLoad(nullptr, JSGenerator::ResumeMode::ThrowMode)), thrown.get());
         g.emitReturn(g.generatorValueRegister());
-        g.emitLabel(thrown.get());
-        mark(m_block.location);
+        emitLabel(thrown.get());
+        {
+            SetForScope isArtificial(m_isArtificial, true);
+            mark(m_block.location);
+        }
         g.emitThrow(g.generatorValueRegister());
-        g.emitLabel(start.get());
+        emitLabel(start.get());
 
         noteDocstring();
         emitBody();
@@ -1859,7 +1949,7 @@ private:
 
         Ref<Label> loop = g.newLabel();
         Ref<Label> done = g.newLabel();
-        g.emitLabel(loop.get());
+        emitLabel(loop.get());
         g.emitLoopHint();
         emitRuntimeCall(yielded.get(), "yieldFromStep"_s, { iterator.get(), received.get(), wasThrown.get(), g.generatorRegister() }, node);
         OpJeqPtr::emit(&g, yielded.get(), marker(), done->bind(&g));
@@ -1873,13 +1963,13 @@ private:
         g.popTry(tryData, tryEnd.get());
         g.emitJump(loop.get());
 
-        g.emitLabel(catchLabel.get());
+        emitLabel(catchLabel.get());
         g.emitOutOfLineCatchHandler(received.get(), nullptr, tryData);
         g.restoreScopeRegister();
         g.emitLoad(wasThrown.get(), jsBoolean(true));
         g.emitJump(loop.get());
 
-        g.emitLabel(done.get());
+        emitLabel(done.get());
         return emitRuntimeCall(dst, "takeReturnValue"_s, { }, node);
     }
 
@@ -1907,7 +1997,7 @@ private:
         }
         Ref<Label> loop = g.newLabel();
         Ref<Label> end = g.newLabel();
-        g.emitLabel(loop.get());
+        emitLabel(loop.get());
         g.emitLoopHint();
         {
             Reg value = g.newTemporary();
@@ -1922,11 +2012,16 @@ private:
             }
             emitAssign(generator.target, value.get());
         }
+        Ref<Label> again = g.newLabel();
         for (Expression* condition : generator.conditions)
-            emitBranch(condition, loop.get(), false);
+            emitBranch(condition, again.get(), false);
         emitComprehensionLoops(generators, index + 1, nullptr, innermost);
+        emitLabel(again.get());
+        emitLineAfterBackwardJump(*generator.iterable);
         g.emitJump(loop.get());
-        g.emitLabel(end.get());
+        emitLabel(end.get());
+        // As CPython has it, what comes next follows on from the jump back, which is where the element is, and begins no line if it is on the same one.
+        m_lastMarkedLine = m_comprehensionElementLine;
     }
 
     // [element for ...], {element for ...} and {key: value for ...} are part of the code they are in, with variables of their own.
@@ -1993,6 +2088,7 @@ private:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
+        SetForScope elementLine(m_comprehensionElementLine, element->line);
         emitComprehensionLoops(generators, 0, iterator, [&] {
             switch (type) {
             case ComprehensionType::List: {
@@ -2095,6 +2191,7 @@ private:
     {
         generateFunction([&] {
             Reg iterator = emitLoadClosure(nullptr, m_info.parameterNames[0], node);
+            SetForScope elementLine(m_comprehensionElementLine, node.element->line);
             emitComprehensionLoops(node.generators, 0, iterator.get(), [&] {
                 Reg value = emitToTemporary(node.element);
                 emitYieldValue(value.get(), node);
@@ -2113,7 +2210,7 @@ private:
         case Expression::Kind::Attribute: {
             auto& node = target->as<Attribute>();
             Reg base = emit(node.value);
-            mark(node);
+            mark(locationOf(node));
             emitSetAttribute(base.get(), mangle(*node.attribute), value);
             return;
         }
@@ -2169,7 +2266,7 @@ private:
         case Expression::Kind::Attribute: {
             auto& node = target->as<Attribute>();
             Reg base = emit(node.value);
-            mark(node);
+            mark(locationOf(node));
             OpPyDelAttr::emit(&g, base.get(), g.addConstant(mangle(*node.attribute)));
             return;
         }
@@ -2256,17 +2353,35 @@ private:
         if (!m_vm.isSafeToRecurse()) [[unlikely]]
             return fail("maximum recursion depth exceeded during compilation"_s, statement);
 
-        // Whatever comes first in it is on its line, so that every line that does something is the line of some instruction: co_lines(). The generator takes back an
-        // instruction that the next one makes pointless, and where this says the next one is would then be wrong.
+        // The generator takes back an instruction that the next one makes pointless, and what has been said of where the next one is would then be wrong.
         g.disablePeepholeOptimization();
-        // What is decorated begins with its decorators, which say where they are.
-        auto isDecorated = [&] {
-            if (statement.is<FunctionDef>())
-                return !statement.as<FunctionDef>().decorators.empty();
-            return statement.is<ClassDef>() && !statement.as<ClassDef>().decorators.empty();
-        };
-        if (!isDecorated())
+        // It begins a line, which is the line of whatever in it is done first: that of `b` in `a = (\n b)`. That says so when it is come to. These do something themselves
+        // before anything that is in them does, or have nothing in them.
+        forgetLine();
+        unsigned numberOfLines = m_numberOfLines;
+        switch (statement.kind) {
+        case Statement::Kind::Break:
+        case Statement::Kind::Continue:
+        case Statement::Kind::Try:
+        case Statement::Kind::Import:
+        case Statement::Kind::ImportFrom:
             mark(statement);
+            break;
+        case Statement::Kind::Return:
+            if (!statement.as<Return>().value)
+                mark(statement);
+            break;
+        default:
+            break;
+        }
+        emitWithoutLine(statement);
+        // Every line that there is a statement on is the line of some instruction, though the statement do nothing: co_lines(). `global` and `nonlocal` are not there to be run.
+        if (m_numberOfLines == numberOfLines && !statement.is<Global>() && !statement.is<Nonlocal>() && !m_error)
+            mark(statement);
+    }
+
+    void emitWithoutLine(Statement& statement)
+    {
         switch (statement.kind) {
         case Statement::Kind::Expr: {
             Expression* value = statement.as<Expr>().value;
@@ -2277,10 +2392,8 @@ private:
                 return;
             }
             // A docstring, or some other constant that does nothing. It is passed through all the same.
-            if (value->is<Constant>()) {
-                OpNop::emit(&g);
+            if (value->is<Constant>())
                 return;
-            }
             Reg ignored = emit(value);
             return;
         }
@@ -2289,9 +2402,21 @@ private:
             if (node.targets.size() == 1) {
                 if (RegisterID* local = registerForStore(node.targets[0])) {
                     emitInto(local, node.value);
+                    markIfOnAnotherLine(*node.targets[0]);
                     return;
                 }
             }
+            // As CPython has it, no tuple is made of two or three things that are to be taken apart again at once.
+            auto elementsOf = [] (Expression* expression) -> std::optional<Sequence<Expression*>> {
+                if (auto* tuple = expression->tryAs<Tuple>())
+                    return tuple->elements;
+                if (auto* list = expression->tryAs<List>())
+                    return list->elements;
+                return std::nullopt;
+            };
+            auto targets = node.targets.size() == 1 ? elementsOf(node.targets[0]) : std::nullopt;
+            bool isTakenApart = targets && node.value->is<Tuple>() && targets->size() == node.value->as<Tuple>().elements.size() && targets->size() <= 3;
+            SetForScope tupleThatIsUnpacked(m_tupleThatIsUnpacked, isTakenApart ? static_cast<const Node*>(node.value) : nullptr);
             Reg value = emitToTemporary(node.value);
             for (Expression* target : node.targets)
                 emitAssign(target, value.get());
@@ -2311,8 +2436,11 @@ private:
             if (node.value && m_info.isCoroutine && m_info.isGenerator)
                 return fail("'return' with value in async generator"_s, node);
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
-            if (!g.emitReturnViaFinallyIfNeeded(value.get()))
+            markIfOnAnotherLine(node);
+            if (!g.emitReturnViaFinallyIfNeeded(value.get())) {
+                mark(node);
                 g.emitReturn(value.get());
+            }
             return;
         }
         case Statement::Kind::Delete:
@@ -2320,16 +2448,14 @@ private:
                 emitDelete(target);
             return;
         case Statement::Kind::Pass:
-            // It is passed through, as whoever is following the lines will want to know.
-            OpNop::emit(&g);
-            return;
         case Statement::Kind::Global:
         case Statement::Kind::Nonlocal:
             return;
         case Statement::Kind::If: {
             auto& node = statement.as<If>();
             if (auto truth = constantTruth(node.test)) {
-                OpNop::emit(&g);
+                // The line is come to, though there is nothing to find out.
+                mark(*node.test);
                 emitNeverComeTo(*truth ? node.orElse : node.body);
                 emit(*truth ? node.body : node.orElse);
                 return;
@@ -2338,14 +2464,14 @@ private:
             emitBranch(node.test, otherwise.get(), false);
             emit(node.body);
             if (node.orElse.empty()) {
-                g.emitLabel(otherwise.get());
+                emitLabel(otherwise.get());
                 return;
             }
             Ref<Label> end = g.newLabel();
             g.emitJump(end.get());
-            g.emitLabel(otherwise.get());
+            emitLabel(otherwise.get());
             emit(node.orElse);
-            g.emitLabel(end.get());
+            emitLabel(end.get());
             return;
         }
         case Statement::Kind::While: {
@@ -2355,23 +2481,26 @@ private:
             Ref<Label> otherwise = g.newLabel();
             auto truth = constantTruth(node.test);
             if (truth && !*truth) {
-                OpNop::emit(&g);
+                mark(*node.test);
                 emitNeverComeTo(node.body);
                 emit(node.orElse);
-                g.emitLabel(scope->breakTarget());
+                emitLabel(scope->breakTarget());
                 return;
             }
-            g.emitLabel(*scope->continueTarget());
+            Ref<Label> head = g.newLabel();
+            emitLabel(head.get());
             g.emitLoopHint();
             if (truth)
-                OpNop::emit(&g);
+                mark(*node.test);
             else
                 emitBranch(node.test, otherwise.get(), false);
             emit(node.body);
-            g.emitJump(*scope->continueTarget());
-            g.emitLabel(otherwise.get());
+            emitLabel(*scope->continueTarget());
+            emitLineAfterBackwardJump(*node.test);
+            g.emitJump(head.get());
+            emitLabel(otherwise.get());
             emit(node.orElse);
-            g.emitLabel(scope->breakTarget());
+            emitLabel(scope->breakTarget());
             return;
         }
         case Statement::Kind::For:
@@ -2428,7 +2557,7 @@ private:
             emitBranch(node.test, holds.get(), true);
             Reg message = node.message ? Reg(emit(node.message)) : Reg(marker());
             emitRuntimeCall(nullptr, "raiseAssertionError"_s, { message.get() }, node);
-            g.emitLabel(holds.get());
+            emitLabel(holds.get());
             return;
         }
         case Statement::Kind::Import:
@@ -2635,10 +2764,10 @@ private:
                 g.move(target->value.get(), capture.value.get());
             }
             g.emitJump(matched.get());
-            g.emitLabel(next.get());
+            emitLabel(next.get());
         }
         g.emitJump(mismatch);
-        g.emitLabel(matched.get());
+        emitLabel(matched.get());
         for (auto& capture : common)
             addCapture(context, *capture.name, capture.value.get(), node);
     }
@@ -2784,6 +2913,8 @@ private:
             Ref<Label> next = g.newLabel();
             PatternContext context;
             context.allowIrrefutable = matchCase.guard || i + 1 == node.cases.size();
+            // `case _:` is come to, though there is nothing to it.
+            markIfOnAnotherLine(*matchCase.pattern);
             emitPattern(*matchCase.pattern, subject.get(), next.get(), context);
             if (m_error)
                 return;
@@ -2794,9 +2925,9 @@ private:
                 emitBranch(matchCase.guard, next.get(), false);
             emit(matchCase.body);
             g.emitJump(end.get());
-            g.emitLabel(next.get());
+            emitLabel(next.get());
         }
-        g.emitLabel(end.get());
+        emitLabel(end.get());
     }
 
     void emitFor(For& node)
@@ -2815,7 +2946,8 @@ private:
         Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
         SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
         Ref<Label> exhausted = g.newLabel();
-        g.emitLabel(*scope->continueTarget());
+        Ref<Label> head = g.newLabel();
+        emitLabel(head.get());
         g.emitLoopHint();
         {
             RegisterID* local = registerForStore(node.target);
@@ -2836,10 +2968,12 @@ private:
                 emitAssign(node.target, value.get());
         }
         emit(node.body);
-        g.emitJump(*scope->continueTarget());
-        g.emitLabel(exhausted.get());
+        emitLabel(*scope->continueTarget());
+        emitLineAfterBackwardJump(*node.iterable);
+        g.emitJump(head.get());
+        emitLabel(exhausted.get());
         emit(node.orElse);
-        g.emitLabel(scope->breakTarget());
+        emitLabel(scope->breakTarget());
     }
 
     // @a @b def f: ... is f = a(b(f)). The decorators are evaluated first, from the top.
@@ -2901,14 +3035,14 @@ private:
 
         g.popFinallyControlFlowScope();
         g.emitOutOfLineFinallyHandler(context.completionValueRegister(), context.completionTypeRegister(), tryData);
-        g.emitLabel(finallyLabel.get());
+        emitLabel(finallyLabel.get());
         g.restoreScopeRegister();
         if constexpr (std::is_invocable_v<Finalizer, RegisterID*, RegisterID*>)
             finalizer(context.completionTypeRegister(), context.completionValueRegister());
         else
             finalizer();
         g.emitFinallyCompletion(context, finallyEndLabel.get());
-        g.emitLabel(finallyEndLabel.get());
+        emitLabel(finallyEndLabel.get());
     }
 
     // try: body() except: handler(the exception, the same as it was thrown) else: otherwise()
@@ -2926,13 +3060,13 @@ private:
         otherwise();
         g.emitJump(endLabel.get());
 
-        g.emitLabel(catchLabel.get());
+        emitLabel(catchLabel.get());
         Reg exception = g.newTemporary();
         Reg thrown = g.newTemporary();
         g.emitOutOfLineExceptionHandler(thrown.get(), exception.get(), nullptr, tryData);
         g.restoreScopeRegister();
         handler(exception.get(), thrown.get());
-        g.emitLabel(endLabel.get());
+        emitLabel(endLabel.get());
     }
 
     // While it runs, `thrown` is the exception being handled, and whichever way it is left, what was being handled before is again.
@@ -2940,9 +3074,13 @@ private:
     void emitWhileHandling(RegisterID* thrown, const Node& node, const Body& body)
     {
         Reg previous = g.newTemporary();
-        emitRuntimeCall(previous.get(), "pushHandledException"_s, { thrown }, node);
+        {
+            SetForScope isArtificial(m_isArtificial, true);
+            emitRuntimeCall(previous.get(), "pushHandledException"_s, { thrown }, node);
+        }
         m_handledExceptions.append(thrown);
         emitTryFinally(body, [&] {
+            SetForScope isArtificial(m_isArtificial, true);
             emitRuntimeCall(nullptr, "popHandledException"_s, { previous.get() }, node);
         });
         m_handledExceptions.removeLast();
@@ -2958,10 +3096,14 @@ private:
                 Reg previous = g.newTemporary();
                 Reg wasThrown = g.newTemporary();
                 g.emitEqualityOp<OpStricteq>(wasThrown.get(), completionType, constant(jsNumber(static_cast<int>(CompletionType::Throw))));
-                emitRuntimeCall(previous.get(), "pushIfThrown"_s, { wasThrown.get(), completionValue }, node);
+                {
+                    SetForScope isArtificial(m_isArtificial, true);
+                    emitRuntimeCall(previous.get(), "pushIfThrown"_s, { wasThrown.get(), completionValue }, node);
+                }
                 emitTryFinally([&] {
                     emit(node.finalBody);
                 }, [&] {
+                    SetForScope isArtificial(m_isArtificial, true);
                     emitRuntimeCall(nullptr, "popHandledException"_s, { previous.get() }, node);
                 });
             });
@@ -3002,17 +3144,18 @@ private:
                         emitTryFinally([&] {
                             emit(handler->body);
                         }, [&] {
+                            SetForScope isArtificial(m_isArtificial, true);
                             emitStoreName(*handler->name, none(), *handler);
                             emitDeleteName(*handler->name, *handler);
                         });
                     } else
                         emit(handler->body);
                     g.emitJump(handled.get());
-                    g.emitLabel(next.get());
+                    emitLabel(next.get());
                 }
                 // Nothing wanted it.
                 g.emitThrow(thrown);
-                g.emitLabel(handled.get());
+                emitLabel(handled.get());
             });
         }, [&] {
             emit(node.orElse);
@@ -3057,6 +3200,7 @@ private:
                                 emitTryFinally([&] {
                                     emit(handler->body);
                                 }, [&] {
+                                    SetForScope isArtificial(m_isArtificial, true);
                                     emitStoreName(*handler->name, none(), *handler);
                                     emitDeleteName(*handler->name, *handler);
                                 });
@@ -3064,10 +3208,12 @@ private:
                                 emit(handler->body);
                         });
                     }, [&] (RegisterID* raised, RegisterID*) {
+                        SetForScope isArtificial(m_isArtificial, true);
                         emitRuntimeCall(nullptr, "listAppend"_s, { results.get(), raised }, *handler);
                     }, [] { });
-                    g.emitLabel(next.get());
+                    emitLabel(next.get());
                 }
+                SetForScope isArtificial(m_isArtificial, true);
                 emitRuntimeCall(nullptr, "listAppend"_s, { results.get(), rest.get() }, node);
                 Reg toRaise = g.newTemporary();
                 emitRuntimeCall(toRaise.get(), "prepareReraiseStar"_s, { original, results.get() }, node);
@@ -3078,7 +3224,7 @@ private:
                 // It goes on from here as what was caught would have, whether or not it is the same object.
                 emitRuntimeCall(toRaise.get(), "asThrown"_s, { toRaise.get() }, node);
                 g.emitThrow(toRaise.get());
-                g.emitLabel(done.get());
+                emitLabel(done.get());
             });
         }, [&] {
             emit(node.orElse);
@@ -3121,8 +3267,9 @@ private:
                         emitAwaitValue(suppress.get(), suppress.get(), position, AwaitContext::AsyncExit);
                     Ref<Label> suppressed = g.newLabel();
                     emitJumpIfTrue(suppress.get(), suppressed.get());
+                    OpPyLine::emit(&g, static_cast<unsigned>(LineKind::OfHandledException));
                     g.emitThrow(thrown);
-                    g.emitLabel(suppressed.get());
+                    emitLabel(suppressed.get());
                 });
             }, [] { });
         }, [&] {
@@ -3132,7 +3279,7 @@ private:
             emitRuntimeCall(result.get(), "callExit"_s, { exit.get(), none() }, position);
             if (node.isAsync)
                 emitAwaitValue(result.get(), result.get(), position, AwaitContext::AsyncExit);
-            g.emitLabel(done.get());
+            emitLabel(done.get());
         });
     }
 
@@ -3190,6 +3337,7 @@ private:
     {
         m_namespace = parameterRegister(0);
         emitLoadGlobals();
+        emitEnter();
 
         Vector<const Identifier*, 8> cells;
         if (m_block.needsClassClosure)
@@ -3479,7 +3627,7 @@ private:
                         emitJumpIfFalse(isIn.get(), notComeTo.get());
                     }
                     add(mangle(*deferred.statement->target->as<Name>().id), *deferred.statement->annotation);
-                    g.emitLabel(notComeTo.get());
+                    emitLabel(notComeTo.get());
                 }
             }
             g.emitReturn(annotations.get());
@@ -3705,12 +3853,12 @@ private:
         emitRuntimeCall(module.get(), "importName"_s, { m_globals.get(), moduleName.get(), fromList.get(), constant(jsNumber(node.level)), constant(jsBoolean(false)) }, node);
         for (Alias* alias : node.names) {
             if (*alias->name == "*"_s) {
-                emitRuntimeCall(nullptr, "importStar"_s, { module.get(), m_globals.get() }, *alias);
+                emitRuntimeCall(nullptr, "importStar"_s, { module.get(), m_globals.get() }, node);
                 continue;
             }
             Reg value = g.newTemporary();
-            emitRuntimeCall(value.get(), "importFrom"_s, { module.get(), stringConstant(*alias->name) }, *alias);
-            emitStoreName(alias->asName ? *alias->asName : *alias->name, value.get(), *alias);
+            emitRuntimeCall(value.get(), "importFrom"_s, { module.get(), stringConstant(*alias->name) }, node);
+            emitStoreName(alias->asName ? *alias->asName : *alias->name, value.get(), node);
         }
     }
 
@@ -3730,6 +3878,7 @@ private:
         if (m_info.usesNamespace)
             m_namespace = parameterRegister(0);
         emitLoadGlobals();
+        emitEnter();
         emitModuleBody(module);
     }
 
@@ -3772,6 +3921,11 @@ private:
     bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.
     bool m_isNeverComeTo { false }; // In `if 0:` or the like.
     unsigned m_lastMarkedLine { 0 };
+    bool m_isInConstantDisplay { false };
+    unsigned m_numberOfLines { 0 }; // How many times op_py_line has been emitted.
+    unsigned m_comprehensionElementLine { 0 };
+    const Node* m_tupleThatIsUnpacked { nullptr };
+    bool m_isArtificial { true }; // In what has to be done that nobody wrote, which is on no line. So it is until what was written begins.
     unsigned m_decoratorLine { 0 }; // Of the first decorator of the definition that is being made, if it has any.
     CommonNames& m_names;
     Arena& m_arena;

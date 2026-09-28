@@ -5608,6 +5608,10 @@ void BytecodeGenerator::emitRequireObjectCoercibleForDestructuring(RegisterID* v
 
 void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::AsyncGeneratorSuspendReason result)
 {
+    // Python counts the frames that it is in, and a generator that is not running is in none.
+    if (m_pythonFrameObjectRegister)
+        OpPyLeave::emit(this, argument);
+
     Ref<Label> mergePoint = newLabel();
     unsigned yieldPointIndex = m_yieldPoints++;
     auto state = Checked<int32_t>(yieldPointIndex) + 1;
@@ -5637,6 +5641,8 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
     // Restore the try contexts, which start offset is updated to the merge point.
     m_tryContextStack.swap(savedTryContextStack);
     emitLabel(mergePoint.get());
+    if (m_pythonFrameObjectRegister)
+        OpPyEnter::emit(this, true);
 }
 
 RegisterID* BytecodeGenerator::emitYield(RegisterID* argument)

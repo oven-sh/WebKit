@@ -765,6 +765,7 @@ python/PythonIterators.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
 python/PythonModules.cpp
+python/PythonMonitoring.cpp
 python/PythonNumberTypes.cpp
 python/PythonNumbers.cpp
 python/PythonObjectModel.cpp

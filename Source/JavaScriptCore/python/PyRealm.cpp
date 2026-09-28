@@ -52,6 +52,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_hashStorageStructure);
     visitor.append(thisObject->m_emptyTuple);
     visitor.append(thisObject->m_notImplemented);
+    thisObject->m_monitoring.visit(visitor);
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_noDefault);
     visitor.append(thisObject->m_boundArgumentsMarker);

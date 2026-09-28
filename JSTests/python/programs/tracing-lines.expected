@@ -1,0 +1,270 @@
+simple
+    simple call 0 None
+    simple line 1 None
+    simple line 2 None
+    simple line 3 None
+    simple return 3 3
+one_line
+    one_line call 0 None
+    one_line line 0 None
+    one_line return 0 1
+branches
+    branches call 0 None
+    branches line 1 None
+    branches line 2 None
+    branches line 5 None
+    branches return 5 1
+branches
+    branches call 0 None
+    branches line 1 None
+    branches line 4 None
+    branches line 5 None
+    branches return 5 2
+loop
+    loop call 0 None
+    loop line 1 None
+    loop line 2 None
+    loop line 3 None
+    loop line 2 None
+    loop line 3 None
+    loop line 2 None
+    loop line 4 None
+    loop return 4 1
+while_loop
+    while_loop call 0 None
+    while_loop line 1 None
+    while_loop line 2 None
+    while_loop line 3 None
+    while_loop line 2 None
+    while_loop line 3 None
+    while_loop line 2 None
+    while_loop line 5 None
+    while_loop line 6 None
+    while_loop return 6 9
+same_line_loop
+    same_line_loop call 0 None
+    same_line_loop line 1 None
+    same_line_loop line 2 None
+    same_line_loop line 2 None
+    same_line_loop line 2 None
+    same_line_loop line 2 None
+    same_line_loop line 3 None
+    same_line_loop line 3 None
+    same_line_loop line 3 None
+    same_line_loop line 4 None
+    same_line_loop return 4 0
+calls
+    calls call 0 None
+    calls line 1 None
+    simple call 0 None
+    simple line 1 None
+    simple line 2 None
+    simple line 3 None
+    simple return 3 3
+    calls line 2 None
+    calls return 2 3
+multi_line
+    multi_line call 0 None
+    multi_line line 1 None
+    multi_line line 4 None
+    multi_line line 5 None
+    multi_line line 4 None
+    multi_line line 6 None
+    multi_line line 7 None
+    multi_line line 6 None
+    multi_line return 6 ([1, 2, 3], 2)
+passes
+    passes call 0 None
+    passes line 1 None
+    passes line 2 None
+    passes line 3 None
+    passes line 4 None
+    passes return 4 None
+breaks
+    breaks call 0 None
+    breaks line 1 None
+    breaks line 2 None
+    breaks line 4 None
+    breaks line 1 None
+    breaks line 2 None
+    breaks line 3 None
+    breaks line 1 None
+    breaks line 2 None
+    breaks line 4 None
+    breaks line 5 None
+    breaks line 8 None
+    breaks return 8 2
+tries
+    tries call 0 None
+    tries line 1 None
+    tries line 2 None
+    tries line 3 None
+    tries exception 3 ValueError
+    tries line 4 None
+    tries line 6 None
+    tries line 7 None
+    tries line 11 None
+    tries line 12 None
+    tries return 12 5
+raises
+    raises call 0 None
+    raises line 1 None
+    raises line 2 None
+    raises exception 2 KeyError
+    raises return 2 None
+catches
+    catches call 0 None
+    catches line 1 None
+    catches line 2 None
+    propagates call 0 None
+    propagates line 1 None
+    raises call 0 None
+    raises line 1 None
+    raises line 2 None
+    raises exception 2 KeyError
+    raises return 2 None
+    propagates exception 1 KeyError
+    propagates return 1 None
+    catches exception 2 KeyError
+    catches line 3 None
+    catches line 4 None
+    catches return 4 caught
+uses_gen
+    uses_gen call 0 None
+    uses_gen line 1 None
+    uses_gen line 2 None
+    gen call 0 None
+    gen line 1 None
+    gen return 1 1
+    uses_gen line 3 None
+    gen call 1 None
+    gen line 2 None
+    gen return 2 2
+    uses_gen line 4 None
+    gen call 2 None
+    gen line 3 None
+    gen return 3 3
+    uses_gen exception 4 StopIteration
+    uses_gen line 6 None
+    uses_gen return 6 1
+with_block
+    with_block call 0 None
+    with_block line 1 None
+    __enter__ call 0 None
+    __enter__ line 1 None
+    __enter__ return 1 cm
+    with_block line 2 None
+    with_block line 1 None
+    __exit__ call 0 None
+    __exit__ line 1 None
+    __exit__ return 1 False
+    with_block line 3 None
+    with_block return 3 1
+klass
+    klass call 0 None
+    klass line 1 None
+    K call 0 None
+    K line 0 None
+    K line 1 None
+    K line 2 None
+    K return 2 None
+    klass line 4 None
+    klass return 4 type
+lambdas
+    lambdas call 0 None
+    lambdas line 1 None
+    lambdas line 2 None
+    <lambda> call 0 None
+    <lambda> line 0 None
+    <lambda> return 0 1
+    lambdas return 2 1
+comps
+    comps call 0 None
+    comps line 1 None
+    comps line 1 None
+    comps line 1 None
+    comps line 3 None
+    comps line 2 None
+    comps line 3 None
+    comps line 2 None
+    comps line 3 None
+    comps line 2 None
+    comps line 3 None
+    comps line 4 None
+    comps return 4 [0, 1]
+nested
+    nested call 0 None
+    nested line 1 None
+    nested line 3 None
+    inner call 0 None
+    inner line 1 None
+    inner return 1 1
+    nested return 3 1
+ternary
+    ternary call 0 None
+    ternary line 1 None
+    ternary line 3 None
+    ternary line 4 None
+    ternary line 3 None
+    ternary line 6 None
+    ternary return 6 1
+ternary
+    ternary call 0 None
+    ternary line 1 None
+    ternary line 2 None
+    ternary line 1 None
+    ternary line 3 None
+    ternary line 5 None
+    ternary line 3 None
+    ternary line 6 None
+    ternary return 6 2
+decorated
+    decorated call 0 None
+    decorated line 1 None
+    decorated line 2 None
+    decorated line 3 None
+    decorated line 2 None
+    deco call 0 None
+    deco line 0 None
+    deco return 0 function
+    decorated line 1 None
+    deco call 0 None
+    deco line 0 None
+    deco return 0 function
+    decorated line 3 None
+    decorated line 5 None
+    decorated return 5 function
+semis
+    semis call 0 None
+    semis line 1 None
+    semis line 2 None
+    semis return 2 1
+dels
+    dels call 0 None
+    dels line 1 None
+    dels line 2 None
+    dels line 4 None
+    dels line 5 None
+    dels line 6 None
+    dels return 6 None
+match_stmt
+    match_stmt call 0 None
+    match_stmt line 1 None
+    match_stmt line 2 None
+    match_stmt line 3 None
+    match_stmt return 3 one
+match_stmt
+    match_stmt call 0 None
+    match_stmt line 1 None
+    match_stmt line 2 None
+    match_stmt line 4 None
+    match_stmt line 5 None
+    match_stmt return 5 pair
+match_stmt
+    match_stmt call 0 None
+    match_stmt line 1 None
+    match_stmt line 2 None
+    match_stmt line 4 None
+    match_stmt line 6 None
+    match_stmt line 7 None
+    match_stmt return 7 other

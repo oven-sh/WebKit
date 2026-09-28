@@ -72,15 +72,41 @@ void JIT::emit_op_py_load_global(const JSInstruction* currentInstruction)
     emitPutVirtualRegister(bytecode.m_dst, regT2);
 }
 
+void JIT::emit_op_py_enter(const JSInstruction*)
+{
+    load32(vm().addressOfPythonDepth(), regT0);
+    add32(TrustedImm32(1), regT0);
+    store32(regT0, vm().addressOfPythonDepth());
+    load32(vm().addressOfPythonLimitUnlessWatched(), regT1);
+    addSlowCase(branch32(Above, regT0, regT1));
+}
+
+void JIT::emit_op_py_line(const JSInstruction*)
+{
+    addSlowCase(branchTest32(Zero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched())));
+}
+
+void JIT::emit_op_py_leave(const JSInstruction*)
+{
+    Jump isNotWatched = branchTest32(NonZero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched()));
+    JITSlowPathCall slowPathCall(this, slow_path_py_leave);
+    slowPathCall.call();
+    isNotWatched.link(this);
+    sub32(TrustedImm32(1), AbsoluteAddress(vm().addressOfPythonDepth()));
+}
+
 void JIT::emit_op_py_ret(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpPyRet>();
+    Jump isWatched = branchTest32(Zero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched()));
     emitGetVirtualRegister(bytecode.m_frame, regT0);
     // This is not a slow case, since those end by going on to the next instruction, and there may be none.
     Jump hasNoFrameObject = branch64(Equal, regT0, TrustedImm64(JSValue::encode(jsUndefined())));
+    isWatched.link(this);
     JITSlowPathCall slowPathCall(this, slow_path_py_leave_frame);
     slowPathCall.call();
     hasNoFrameObject.link(this);
+    sub32(TrustedImm32(1), AbsoluteAddress(vm().addressOfPythonDepth()));
     emitGetVirtualRegister(bytecode.m_value, returnValueGPR);
     jumpThunk(CodeLocationLabel { vm().getCTIStub(CommonJITThunkID::ReturnFromBaseline).retaggedCode<NoPtrTag>() });
 }

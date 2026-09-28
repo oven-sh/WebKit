@@ -328,6 +328,36 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner); // Wher
 void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
 // A frame of Python code is about to be no more. If it has a frame object, that outlives it. The unwinder calls it, and op_py_ret.
 void leaveFrame(VM&, CallFrame*, BytecodeIndex);
+// The slow path of op_py_enter: either it is too deep, and RecursionError is raised, or something is to be told that a frame has begun or been resumed.
+void enterFrame(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isResume);
+// Those of op_py_line, op_py_ret and op_py_leave, which are only come to if something is to be told.
+enum class LineKind : uint8_t {
+    Line,
+    AfterBackwardJump, // Going round a loop again, which sys.settrace() is told of though it be all on one line.
+    OfHandledException, // Nothing is told. The frame is back on the line that what is being handled was raised on, as it is when `with` lets an exception go on its way.
+};
+void frameIsAtLine(JSGlobalObject*, CallFrame*, BytecodeIndex, LineKind);
+int lineOfTracebackFor(JSGlobalObject*, JSValue exception, PyFrame*); // The line that an exception came to a frame on, or -1.
+void frameIsReturning(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
+void frameIsYielding(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
+// A generator that the frame was going through, or waiting on, has returned. To be called if VM::isPythonWatched().
+void generatorHasReturnedTo(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue returned);
+// What is no generator says that there is no more by raising StopIteration, which is caught at once by what asked. It was raised all the same, and the frame that asked is told
+// of as one that it came to. The first is for what catches it, the second for what began the asking, before and after. All are for if VM::isPythonWatched().
+void noteCaughtStopIteration(JSGlobalObject*, JSValue exception);
+void forgetCaughtStopIteration(JSGlobalObject*);
+void tellOfCaughtStopIteration(JSGlobalObject*, CallFrame*, BytecodeIndex);
+// The unwinder has done with a frame of Python code, which is counted no more.
+void unwindFrame(VM&, CallFrame*, BytecodeIndex);
+// What becomes of an exception in a frame of Python code, which the unwinder tells of if VM::isPythonWatched(). What is told may raise something itself, which is then what is
+// being thrown, and is returned.
+enum class ExceptionProgress : uint8_t {
+    CameToFrame, // By being raised in it, or by coming out of what it called.
+    WasRaisedAgain, // By what had caught it, in the same frame.
+    IsHandled,
+    LeavesFrame,
+};
+Exception* tellOfException(VM&, CallFrame*, BytecodeIndex, JSValue thrown, ExceptionProgress);
 // What Python prints when an exception gets away: the traceback, and those of what led to it.
 String formatException(JSGlobalObject*, JSValue exception);
 String formatTraceback(JSGlobalObject*, JSValue traceback); // "Traceback (most recent call last):" and what follows, or nothing if it is not a traceback.
@@ -358,10 +388,16 @@ void deleteItem(JSGlobalObject*, JSValue, JSValue key);
 // len(). Negative if it raised.
 int64_t length(JSGlobalObject*, JSValue);
 
+// Whether what is in it can be taken straight out of it: it is a dict, of a class that may be derived from dict but goes through it as dict does. As in dict_merge(), a
+// __getitem__() or a keys() of its own is not asked.
+bool isGoneThroughAsDict(JSGlobalObject*, JSValue);
+void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
+
 // ---- Iteration
 
 JSValue getIterator(JSGlobalObject*, JSValue);
-JSValue iteratorNext(JSGlobalObject*, JSValue iterator); // Empty when there is no more, with nothing raised.
+// Empty when there is no more, with nothing raised. If that is because a generator has returned, what it returned is given too.
+JSValue iteratorNext(JSGlobalObject*, JSValue iterator, JSValue* returnedByGenerator = nullptr);
 // Calls the function with each. It returns false to stop. Returns false if something was raised.
 bool forEach(JSGlobalObject*, JSValue iterable, const ScopedLambda<bool(JSValue)>&);
 bool collect(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&);

@@ -1499,6 +1499,12 @@ private:
 
     bool m_hasSideData { false };
     bool m_hasTerminationRequest { false };
+
+    // See op_py_enter.
+    uint32_t m_pythonDepth { 0 };
+    uint32_t m_pythonLimitUnlessWatched { 1000 };
+    uint32_t m_pythonLimit { 1000 }; // sys.setrecursionlimit()
+    unsigned m_pythonWatcherCount { 0 };
     bool m_executionForbidden { false };
     bool m_executionForbiddenOnTermination { false };
     bool m_isDebuggerHookInjected { false };
@@ -1529,6 +1535,32 @@ private:
     friend class ThrowScope; // Friend for exception checking purpose only.
     friend class JSDollarVMHelper;
     friend class LLIntOffsetsExtractor;
+
+public:
+    uint32_t pythonDepth() const { return m_pythonDepth; }
+    void leavePythonFrame() { --m_pythonDepth; }
+    uint32_t pythonRecursionLimit() const { return m_pythonLimit; }
+    void setPythonRecursionLimit(uint32_t limit)
+    {
+        m_pythonLimit = limit;
+        m_pythonLimitUnlessWatched = m_pythonWatcherCount ? 0 : limit;
+    }
+    // Whether anything is being told of what Python code does. Each realm that has something to tell counts for one.
+    bool isPythonWatched() const { return m_pythonWatcherCount; }
+    void addPythonWatcher()
+    {
+        ++m_pythonWatcherCount;
+        m_pythonLimitUnlessWatched = 0;
+    }
+    void removePythonWatcher()
+    {
+        if (!--m_pythonWatcherCount)
+            m_pythonLimitUnlessWatched = m_pythonLimit;
+    }
+    uint32_t* addressOfPythonDepth() { return &m_pythonDepth; }
+    uint32_t* addressOfPythonLimitUnlessWatched() { return &m_pythonLimitUnlessWatched; }
+
+private:
     friend class TerminationDeadline;
     friend class SuspendExceptionScope;
 #if USE(BUN_JSC_ADDITIONS)

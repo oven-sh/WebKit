@@ -88,11 +88,6 @@ inline bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments...
     return auditSlow(globalObject, event, buffer);
 }
 
-// Whether what is in it can be taken straight out of it: it is a dict, of a class that may be derived from dict but goes through it as dict does. As in dict_merge(), a
-// __getitem__() or a keys() of its own is not asked.
-bool isGoneThroughAsDict(JSGlobalObject*, JSValue);
-void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
-
 // Code objects: PythonCode.cpp
 FunctionExecutable* executableOfCode(JSValue code);
 const FunctionInfo& infoOfExecutable(FunctionExecutable*);
@@ -100,6 +95,7 @@ bool isCode(JSGlobalObject*, JSValue);
 Vector<Identifier> sortedFreeVariables(const FunctionInfo&); // In the order of co_freevars.
 void initializeCodeType(JSGlobalObject*);
 
+void addMonitoring(JSGlobalObject*, JSObject* sys); // sys.monitoring, sys.settrace() and sys.setprofile(): PythonMonitoring.cpp
 JSObject* createSysModule(JSGlobalObject*);
 JSValue findOrLoadModule(JSGlobalObject*, const String& name);
 

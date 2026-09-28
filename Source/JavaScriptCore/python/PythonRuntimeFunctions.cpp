@@ -565,6 +565,8 @@ JSValue catchStopIteration(JSGlobalObject* globalObject)
     JSValue value = exception->value();
     if (!catchException(globalObject, BuiltinType::StopIteration))
         return { };
+    if (vm.isPythonWatched()) [[unlikely]]
+        noteCaughtStopIteration(globalObject, value);
     return stopIterationValue(globalObject, value);
 }
 
@@ -585,8 +587,19 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
         return JSValue::encode(realm->boundArgumentsMarker());
     };
     JSValue returned;
+    if (vm.isPythonWatched()) [[unlikely]]
+        forgetCaughtStopIteration(globalObject);
     JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
     RETURN_IF_EXCEPTION(scope, { });
+    if (!yielded && vm.isPythonWatched()) [[unlikely]] {
+        if (CallFrame* caller = callerOf(callFrame)) {
+            if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType)
+                generatorHasReturnedTo(globalObject, caller, caller->bytecodeIndex(), returned ? returned : jsUndefined());
+            else
+                tellOfCaughtStopIteration(globalObject, caller, caller->bytecodeIndex());
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
     return yielded ? JSValue::encode(yielded) : finish(returned);
 }
 

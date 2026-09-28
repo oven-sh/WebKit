@@ -95,6 +95,8 @@ struct CodeDetails {
     // Where what was written begins. Before it the arguments are being given to the parameters, and to Python there is no frame yet: what
     // is raised there is raised by the call.
     unsigned firstTraceableOffset { 0 };
+    // Where op_py_enter is. What is thrown from before it is thrown from a frame that has not been counted.
+    unsigned enterOffset { 0 };
 };
 
 // What has to be known about a piece of Python code before it is compiled, to call it and to compile it. It is worked out when what

@@ -1489,7 +1489,7 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
     return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not iterable"_s));
 }
 
-JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator)
+JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator, JSValue* returnedByGenerator)
 {
     if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass())
         return native->next(globalObject);
@@ -1498,7 +1498,11 @@ JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType && generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell())) == GeneratorKind::Generator) {
         JSValue returned;
-        RELEASE_AND_RETURN(scope, resumeGenerator(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell()), jsUndefined(), JSGenerator::ResumeMode::NormalMode, returned));
+        JSValue yielded = resumeGenerator(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell()), jsUndefined(), JSGenerator::ResumeMode::NormalMode, returned);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!yielded && returnedByGenerator)
+            *returnedByGenerator = returned ? returned : jsUndefined();
+        return yielded;
     }
 
     JSValue self;
@@ -1508,7 +1512,9 @@ JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator)
         return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
     JSValue value = callMethod(globalObject, method, self);
     if (scope.exception()) [[unlikely]] {
-        catchException(globalObject, BuiltinType::StopIteration);
+        JSValue raised = scope.exception()->value();
+        if (catchException(globalObject, BuiltinType::StopIteration) && vm.isPythonWatched())
+            noteCaughtStopIteration(globalObject, raised);
         return { };
     }
     return value;

@@ -1837,7 +1837,37 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_load_global)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_leave_frame)
 {
     BEGIN();
-    Python::leaveFrame(vm, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)));
+    auto bytecode = pc->as<OpPyRet>();
+    BytecodeIndex index(codeBlock->bytecodeOffset(pc));
+    if (vm.isPythonWatched()) [[unlikely]] {
+        Python::frameIsReturning(globalObject, callFrame, index, GET_C(bytecode.m_value).jsValue());
+        CHECK_EXCEPTION();
+    }
+    Python::leaveFrame(vm, callFrame, index);
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_enter)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyEnter>();
+    Python::enterFrame(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), bytecode.m_isResume);
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_line)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyLine>();
+    Python::frameIsAtLine(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), static_cast<Python::LineKind>(bytecode.m_kind));
+    END();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_leave)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyLeave>();
+    Python::frameIsYielding(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), GET_C(bytecode.m_value).jsValue());
     END();
 }
 
@@ -1877,7 +1907,18 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_iter_next)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyIterNext>();
-    JSValue result = Python::iteratorNext(globalObject, GET_C(bytecode.m_iterator).jsValue());
+    if (vm.isPythonWatched()) [[unlikely]]
+        Python::forgetCaughtStopIteration(globalObject);
+    JSValue returnedByGenerator;
+    JSValue result = Python::iteratorNext(globalObject, GET_C(bytecode.m_iterator).jsValue(), &returnedByGenerator);
+    if (!result && vm.isPythonWatched()) [[unlikely]] {
+        CHECK_EXCEPTION();
+        BytecodeIndex index(codeBlock->bytecodeOffset(pc));
+        if (returnedByGenerator)
+            Python::generatorHasReturnedTo(globalObject, callFrame, index, returnedByGenerator);
+        else
+            Python::tellOfCaughtStopIteration(globalObject, callFrame, index);
+    }
     RETURN_PROFILED(result);
 }
 
