@@ -47,7 +47,8 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& function : thisObject->m_functions)
         visitor.append(function);
     visitor.append(thisObject->m_tupleStructure);
-    visitor.append(thisObject->m_nativeFunctionStructure);
+    for (auto& structure : thisObject->m_nativeFunctionStructures)
+        visitor.append(structure);
     visitor.append(thisObject->m_hashStorageStructure);
     visitor.append(thisObject->m_emptyTuple);
     visitor.append(thisObject->m_notImplemented);
@@ -68,6 +69,17 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(PyRealm);
+
+static constexpr BuiltinType classesOfNativeFunctions[] = { BuiltinType::BuiltinFunction, BuiltinType::MethodDescriptor, BuiltinType::WrapperDescriptor, BuiltinType::ClassMethodDescriptor };
+
+Structure* PyRealm::nativeFunctionStructure(BuiltinType type) const
+{
+    for (unsigned i = 0; i < std::size(classesOfNativeFunctions); ++i) {
+        if (classesOfNativeFunctions[i] == type)
+            return m_nativeFunctionStructures[i].get();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 void PyRealm::destroy(JSCell* cell)
 {
@@ -132,7 +144,8 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
 
     m_tupleStructure.set(vm, this, PyTuple::createStructure(vm, globalObject, typeTuple()));
     m_hashStorageStructure.set(vm, this, PyHashStorage::createStructure(vm, globalObject, jsNull()));
-    m_nativeFunctionStructure.set(vm, this, PyNativeFunction::createStructure(vm, globalObject, globalObject->functionPrototype()));
+    for (unsigned i = 0; i < std::size(classesOfNativeFunctions); ++i)
+        m_nativeFunctionStructures[i].set(vm, this, PyNativeFunction::createStructure(vm, globalObject, type(classesOfNativeFunctions[i])));
     m_emptyTuple.set(vm, this, PyTuple::create(vm, m_tupleStructure.get(), 0));
     for (auto& type : m_types)
         type->finishBuiltin(vm, globalObject, typeType());

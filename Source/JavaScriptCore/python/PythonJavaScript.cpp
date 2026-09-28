@@ -609,12 +609,18 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
         // A class of JavaScript's has a name.
         if (name == vm.propertyNames->name)
             return asType(receiver)->name();
+        // And is written out as its source, which there is none of here to speak of.
+        if (name == vm.propertyNames->toString)
+            return function("toString"_s);
         return { };
     }
 
     // Names that Python has no use for, and that JavaScript expects. An exception is left to Error.prototype, which makes "name: message".
     if (name == vm.propertyNames->constructor)
         return type->object();
+    // What is called has a name.
+    if (name == vm.propertyNames->name && receiver.isCallable())
+        RELEASE_AND_RETURN(scope, getAttributeIfPresent(globalObject, receiver, names.dunder_name));
     if (name == vm.propertyNames->toString && !type->isExceptionType())
         return function("toString"_s);
     bool isMapping = type->hasFlag(PyType::IsMapping);

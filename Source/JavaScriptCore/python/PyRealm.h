@@ -249,7 +249,8 @@ public:
 #undef DECLARE
 
     Structure* tupleStructure() const { return m_tupleStructure.get(); }
-    Structure* nativeFunctionStructure() const { return m_nativeFunctionStructure.get(); }
+    // Of a PyNativeFunction, which is of one of four classes.
+    Structure* nativeFunctionStructure(BuiltinType) const;
     Structure* hashStorageStructure() const { return m_hashStorageStructure.get(); }
     // Of what a cell class makes for the built-in type it is the cell of. They are made by the class when the type is set up.
     Structure* structureFor(BuiltinType type) const { return this->type(type)->instanceStructure(); }
@@ -344,7 +345,7 @@ private:
     WriteBarrier<PyType> m_types[numberOfBuiltinTypes];
     WriteBarrier<JSObject> m_functions[static_cast<unsigned>(WellKnownFunction::Count)];
     WriteBarrier<Structure> m_tupleStructure;
-    WriteBarrier<Structure> m_nativeFunctionStructure;
+    WriteBarrier<Structure> m_nativeFunctionStructures[4];
     WriteBarrier<Structure> m_hashStorageStructure;
     WriteBarrier<PyTuple> m_emptyTuple;
     WriteBarrier<JSObject> m_notImplemented;

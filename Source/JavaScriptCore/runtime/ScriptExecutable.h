@@ -75,6 +75,7 @@ public:
 
     bool usesArguments() const { return m_features & ArgumentsFeature; }
     bool isArrowFunctionContext() const { return m_isArrowFunctionContext; }
+    bool isPython() const { return m_isPython; }
     DerivedContextType derivedContextType() const { return static_cast<DerivedContextType>(m_derivedContextType); }
     EvalContextType evalContextType() const { return static_cast<EvalContextType>(m_evalContextType); }
     bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
@@ -191,6 +192,7 @@ protected:
     bool m_canUseOSRExitFuzzing : 1;
     bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
+    bool m_isPython : 1;
     unsigned m_derivedContextType : 2; // DerivedContextType
     unsigned m_evalContextType : 2; // EvalContextType
 };

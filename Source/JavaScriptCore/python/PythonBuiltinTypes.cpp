@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "FunctionExecutable.h"
+#include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSGenerator.h"
 #include "PythonGenerators.h"
@@ -875,7 +876,13 @@ static void setFunctionName(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseTypeError(globalObject, scope, qualified ? "__qualname__ must be set to a string object"_s : "__name__ must be set to a string object"_s);
         return;
     }
-    asFunction(self)->putDirect(vm, qualified ? vm.pythonNames().private_qualname : vm.pythonNames().private_name, value);
+    if (qualified) {
+        asFunction(self)->putDirect(vm, vm.pythonNames().private_qualname, value);
+        return;
+    }
+    scope.release();
+    PropertyDescriptor descriptor(value, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    asFunction(self)->methodTable()->defineOwnProperty(asFunction(self), globalObject, vm.propertyNames->name, descriptor, true);
 }
 
 // An attribute of a function that is kept in a property that Python cannot name, and is None until it is set.
@@ -1661,6 +1668,10 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     realm->typeGetSetDescriptor()->setInstanceStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeGetSetDescriptor()));
     realm->typeMemberDescriptor()->setInstanceStructure(vm, PyGetSetDescriptor::createStructure(vm, globalObject, realm->typeMemberDescriptor()));
 
+    // What JavaScript can do with a function it can do with one of these.
+    for (PyType* type : { realm->typeFunction(), realm->typeMethod(), realm->typeBuiltinFunction(), realm->typeMethodDescriptor(), realm->typeWrapperDescriptor(), realm->typeClassMethodDescriptor(), realm->typeMethodWrapper() })
+        type->setPrototypeDirect(vm, globalObject->functionPrototype());
+    realm->typeFunction()->setInstanceStructure(vm, Structure::create(vm, globalObject, realm->typeFunction(), TypeInfo(JSFunctionType, JSFunction::StructureFlags | IsImmutablePrototypeExoticObject), JSFunction::info()));
     addMethods(globalObject, realm->typeFunction(), {
         { "__repr__"_s, nativeRepr },
         { "__call__"_s, callableCall },

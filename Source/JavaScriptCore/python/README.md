@@ -247,6 +247,12 @@ descriptor or a `__getattribute__`, `__setattr__` or `__delattr__` after it was 
 
 Every kind of cell that can have attributes has these methods (`PYTHON_DECLARE_EXOTIC_METHODS`).
 
+**A function is a `JSFunction` and has none of them, and needs none.** It inherits from the class `function`, and by way of that from `Function.prototype`
+(`JSFunction::selectStructureForNewFuncExp()`). A class that is come to as a prototype answers for whatever came to it, for `[[Get]]` and for `[[Set]]` alike, so
+`f.__doc__`, `f.__defaults__ = ...` and `f.call()` are all found. Only `[[Delete]]` looks no further than the object, and `JSFunction::deleteProperty()` sends on what the function has
+no property for. What is written in C++, and a bound method, inherit from their classes in the same way. What a function is called is its `name`, which `__name__` gets and
+sets. It costs JavaScript a test of a bit when a closure is made: nothing in the interpreter, the DFG or the FTL, and 0.2ns of 11 in Baseline.
+
 ### What Python sees
 
 An object of JavaScript's is an instance of its class: `type(js.Map.new()) is js.Map`. All are derived from `js.Object`, and a function that is no class is

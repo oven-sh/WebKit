@@ -248,6 +248,23 @@ void PyNativeFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyNativeFunction);
 
+static BuiltinType classOfKind(PyNativeFunction::Kind kind)
+{
+    switch (kind) {
+    case PyNativeFunction::Kind::Function:
+    case PyNativeFunction::Kind::New:
+    case PyNativeFunction::Kind::StaticMethod:
+        return BuiltinType::BuiltinFunction;
+    case PyNativeFunction::Kind::Method:
+        return BuiltinType::MethodDescriptor;
+    case PyNativeFunction::Kind::Wrapper:
+        return BuiltinType::WrapperDescriptor;
+    case PyNativeFunction::Kind::ClassMethod:
+        return BuiltinType::ClassMethodDescriptor;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, Kind kind, JSObject* owner, unsigned data, ImplementationVisibility visibility, ASCIILiteral signature, Arguments arguments)
 {
     using Python::BuiltinDescription;
@@ -282,7 +299,7 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
     RELEASE_ASSERT_WITH_MESSAGE(!signature.isNull() || visibility == ImplementationVisibility::Private, "A function of Python's that is written in C++ has a signature");
 
     NativeExecutable* executable = vm.getHostFunction(nativeFunction, visibility, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
-    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, executable, globalObject, globalObject->pyRealm()->nativeFunctionStructure(), kind, owner, data);
+    auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, executable, globalObject, globalObject->pyRealm()->nativeFunctionStructure(classOfKind(kind)), kind, owner, data);
     function->finishCreation(vm);
     function->m_description = description;
     if (!signature.isNull())

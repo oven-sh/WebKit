@@ -91,7 +91,8 @@ String nameOfFunction(JSGlobalObject* globalObject, JSFunction* function, bool q
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
-    if (JSValue set = function->getDirect(vm, qualified ? names.private_qualname : names.private_name); set && set.isString())
+    // What it is called is what JavaScript calls it: its `name`, which is not there until it is asked for or set.
+    if (JSValue set = function->getDirect(vm, qualified ? names.private_qualname : vm.propertyNames->name); set && set.isString())
         return asString(set)->value(globalObject);
     if (!function->isHostOrBuiltinFunction()) {
         if (auto* info = function->jsExecutable()->unlinkedExecutable()->pythonInfo())

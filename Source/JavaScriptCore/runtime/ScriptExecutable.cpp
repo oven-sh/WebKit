@@ -62,6 +62,7 @@ ScriptExecutable::ScriptExecutable(Structure* structure, VM& vm, const SourceCod
     , m_canUseOSRExitFuzzing(true)
     , m_codeForGeneratorBodyWasGenerated(false)
     , m_isInsideOrdinaryFunction(isInsideOrdinaryFunction)
+    , m_isPython(source.provider() && source.provider()->isPython())
     , m_derivedContextType(static_cast<unsigned>(derivedContextType))
     , m_evalContextType(static_cast<unsigned>(evalContextType))
 {

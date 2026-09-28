@@ -39,6 +39,8 @@
 #include "ObjectConstructor.h"
 #include "ObjectPrototype.h"
 #include "PropertyNameArray.h"
+#include "PyRealm.h"
+#include "PythonOperations.h"
 #include "StackVisitor.h"
 #include "TopExceptionScope.h"
 #include "TypeError.h"
@@ -72,6 +74,9 @@ bool JSFunction::isHostFunctionNonInline() const
 Structure* JSFunction::selectStructureForNewFuncExp(JSGlobalObject* globalObject, FunctionExecutable* executable)
 {
     ASSERT(!executable->isHostFunction());
+    // A function of Python's inherits from the class `function`, and from Function.prototype by way of that.
+    if (executable->isPython()) [[unlikely]]
+        return globalObject->pyRealm()->structureFor(BuiltinType::Function);
     bool isBuiltin = executable->isBuiltinFunction();
     // Arrow functions will never have a prototype, so no need to check
     if (executable->isArrowFunction())
@@ -418,6 +423,9 @@ bool JSFunction::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Prop
     RETURN_IF_EXCEPTION(scope, false);
     if (isLazy(propertyType))
         slot.disableCaching();
+    // Not all that a function of Python's has is a property of its own, and what is not is deleted by its class: `delete f.__doc__` is `del f.__doc__`.
+    if (isType(thisObject->getPrototypeDirect()) && !propertyName.isSymbol() && !isValidOffset(thisObject->getDirectOffset(vm, propertyName))) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Python::deletePropertyFromJavaScript(globalObject, thisObject, propertyName));
     RELEASE_AND_RETURN(scope, Base::deleteProperty(thisObject, globalObject, propertyName, slot));
 }
 

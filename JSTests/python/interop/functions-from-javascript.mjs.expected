@@ -1,0 +1,37 @@
+attributes => ["f", "f", "the doc", "functions-from-javascript", 1, "(2,)", "{'c': 3}", "object", 2, "object", undefined]
+JavaScript's own => ["f", 3, "function", true, "function", "function", "function"]
+call bind apply => ["(1, 2, 3)", "(1, 5, 3)", "(9, 2, 3)", "(7, 2, 3)"]
+as a string => ["<function f at 0x>", "<function f at 0x>", "<function f at 0x>", "<function f at 0x>", "<function <lambda> at 0x>"]
+prototype chain => [true, true, "<class 'function'>", true, true]
+has => [true, true, true, false, true, false, true, true]
+keys => ["custom", "custom,length,name", undefined]
+for in => ["custom"]
+set doc => ["new doc", "new doc", false]
+set name => ["renamed", "renamed", "renamed", "<function g at 0x>"]
+set name wrong !! TypeError: __name__ must be set to a string object
+set custom => ["('custom', 10),('other', 2)", 2]
+set read only !! AttributeError: readonly attribute
+set defaults => "(1, 7, 3)"
+delete => ["('custom', 10)", undefined]
+delete doc => [undefined, undefined]
+missing => [undefined, "undefined"]
+dict => ["{'custom': 10}", 10]
+kinds => ["<function gen at 0x>", "<function co at 0x>", "gen", 128]
+methods => ["m", true, true, "<bound method C.m of <functions-from-javascript.C object at 0x>>", "function", true, "('m', 1)", "m", 0]
+from the class => ["m", "C.m", "<function C.m at 0x>", "s", true, "C"]
+built in => ["len", "builtins", "<built-in function len>", "Return the number of", "($module, obj, /)", "len", "function", true, 2]
+bound built in => ["append", "<built-in method append of list object at 0x>", ""]
+classes as strings => ["<class 'functions-from-javascript.C'>", "<class 'functions-from-javascript.C'>", "<class 'functions-from-javascript.C'>", "<class 'functions-from-javascript.C'>", "<M class D>", "<class 'function'>", "<class 'type'>", "true"]
+class attributes => ["C", "class doc", "functions-from-javascript", 5, "C", "function", false, "(<class 'functions-from-javascript.C'>, <class 'object'>)", "(<class 'object'>,)"]
+hot => 1400000
+hot call => 4999950000
+one name => ["from JavaScript", "from JavaScript", "from JavaScript"]
+descriptors => ["{\"value\":10,\"writable\":true,\"enumerable\":true,\"configurable\":true}", "{\"value\":\"f\",\"writable\":false,\"enumerable\":false,\"configurable\":true}", undefined]
+what is written in C++ => ["__init__", "<slot wrapper '__init__' of 'object' objects>", "__init__", "<method-wrapper '__init__' of C object at 0x>", "mro", "<method 'mro' of 'type' objects>", "function", true]
+set on what is written in C++ !! AttributeError: attribute '__name__' of 'builtin_function_or_method' objects is not writable
+new attribute on what is written in C++ !! AttributeError: 'builtin_function_or_method' object has no attribute 'other' and no __dict__ for setting new attributes
+set on a method !! AttributeError: 'method' object has no attribute 'other' and no __dict__ for setting new attributes
+Reflect => ["f", true, true, 1, true, undefined, "custom,length,name"]
+spread and assign => ["{\"custom\":10}", "{\"custom\":10}"]
+the prototype cannot be changed !! TypeError: Cannot set prototype of immutable prototype object
+a JavaScript function is not one => [undefined, true, "js"]
