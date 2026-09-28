@@ -1369,7 +1369,7 @@ private:
 
     bool usesGlobals()
     {
-        if (!isFunctionLike())
+        if (!isFunctionLike() || m_block.hasImport)
             return true;
         for (Symbol& symbol : m_block.symbols) {
             if (symbol.scope == NameScope::GlobalImplicit || symbol.scope == NameScope::GlobalExplicit)

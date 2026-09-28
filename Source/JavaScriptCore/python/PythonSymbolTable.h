@@ -133,6 +133,8 @@ struct Block {
     Vector<Block*> children;
     // For a class: each x for which something inside it, though not the body itself, has `self.x = ...`. It is __static_attributes__.
     Vector<const Identifier*> staticAttributes;
+    // Whether there is an import statement in it, which goes by the globals of the code that it is in.
+    bool hasImport { false };
     Block* annotationBlock { nullptr };
 
     struct Directive {

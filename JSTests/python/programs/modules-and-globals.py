@@ -105,3 +105,16 @@ show("truth and hash", lambda: (bool(me), hash(me) == hash(me), me == me, me != 
 show("dir", lambda: [n for n in dir(M("d"))])
 show("builtins module", lambda: (builtins.__name__, sys.modules["builtins"] is builtins, builtins.len is original, "print" in vars(builtins)))
 show("PEP 562 says why", lambda: me.other)
+
+# A function that imports, and has nothing else to do with any global variable.
+def only_imports():
+    from sys import maxsize
+    return maxsize > 0
+def only_imports_a_module():
+    import sys
+    return sys.maxsize > 0
+class OnlyImports:
+    def method(self):
+        from sys import maxsize as m
+        return m > 0
+print(only_imports(), only_imports_a_module(), OnlyImports().method(), (lambda: __import__("sys").maxsize > 0)())

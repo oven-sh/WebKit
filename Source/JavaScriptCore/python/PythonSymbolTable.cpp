@@ -606,8 +606,10 @@ private:
             return visit(node.test) && (!node.message || visit(node.message));
         }
         case Statement::Kind::Import:
+            m_current->hasImport = true;
             return visit(statement->as<Import>().names);
         case Statement::Kind::ImportFrom: {
+            m_current->hasImport = true;
             auto& node = statement->as<ImportFrom>();
             return visit(node.names) && checkFutureImport(node);
         }
